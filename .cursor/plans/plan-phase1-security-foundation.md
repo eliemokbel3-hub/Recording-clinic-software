@@ -258,13 +258,13 @@ Format /review will append:
 - [x] 🟩 Step 2: Protocol contract — done 2026-07-24; 6 valid + 9 invalid fixtures + meta.json; both mirrors pass 18 fixture-driven tests each
   - Author `protocol/fixtures/*.json` (canonical): envelope `protocol_version`/`type`/`request_id?`/`session_nonce?`/`payload`; messages `hello`, `hello_ack`, `ping`, `pong`, `error`; per-type nonce presence rules; version floor; valid AND invalid cases. Mirror as `extension/src/protocol.ts` and `desktop/.../protocol.py` (pydantic + throwaway connection-state enum), each tested against the same fixtures
   - Ref: Key Design Decision (fixtures-canonical protocol)
-- [ ] 🟥 Step 3: Extension identity
+- [x] 🟩 Step 3: Extension identity — done 2026-07-24; ID `mbmhglgadhdohpgbmpbjnaifjagfdfid` pinned + recorded in `extension/KEY.md`; key.pem gitignored; in-Chrome load check deferred to Step 12 gate
   - Generate the RSA keypair (commands in executor facts), pin `key` in the CRXJS manifest, record the derived extension ID in `extension/KEY.md`, gitignore `key.pem`
   - Done when: two consecutive unpacked loads yield the same extension ID, and that ID is recorded for Step 5's `allowed_origins`
-- [ ] 🟥 Step 4: Logging + stdio framing (host core)
+- [x] 🟩 Step 4: Logging + stdio framing (host core) — done 2026-07-24; framing in `framing.py` (11 edge tests), logging tripwire proven against f-string misuse
   - `logging_setup.py`: structural wrapper + tripwire filter + rotation per the logging Design Decision; `native_host.py`: binary-mode stdio (`O_BINARY` + `.buffer`), 4-byte native-order framing with the 1 MB policy bound and all framing edge cases from Validation
   - Ref: executor facts (binary-stdio fix); Critical Constraints (stdout purity)
-- [ ] 🟥 Step 5: Handshake + origin verification
+- [ ] 🟨 Step 5: Handshake + origin verification
   - Host startup: log resolved manifest/launcher/executable paths; verify bare-argv origin (`chrome-extension://<id>/`, tolerate `--parent-window=`), exit non-zero before reading stdin when missing/unknown; hello → hello_ack (version floor check, `os.urandom` nonce) → ping/pong nonce echo; typed `error` + clean exit on every violation; full state-machine unit tests
   - Ref: Key Design Decision (authentication and trust model)
 - [ ] 🟥 Step 6: Registration tooling
