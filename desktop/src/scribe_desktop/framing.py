@@ -65,11 +65,16 @@ def read_frame(stream: BinaryIO) -> Any:
     Raises EndOfStream on clean EOF, FramingError on any violation.
     Handles back-to-back frames naturally (reads exactly one frame's bytes).
     """
+    # Assemble the prefix with short-read tolerance (LOW-008): a raw pipe may
+    # legally return fewer bytes than requested mid-stream.
     prefix = stream.read(_LENGTH.size)
     if prefix == b"":
         raise EndOfStream()
-    if len(prefix) < _LENGTH.size:
-        raise FramingError("malformed", "truncated length prefix")
+    while len(prefix) < _LENGTH.size:
+        more = stream.read(_LENGTH.size - len(prefix))
+        if not more:
+            raise FramingError("malformed", "truncated length prefix")
+        prefix += more
     (length,) = _LENGTH.unpack(prefix)
     if length > MAX_FRAME_BYTES:
         # Reject BEFORE allocating (a 4-byte prefix can declare ~4 GB).

@@ -38,8 +38,14 @@ class SecureStorageProvider:
             raise ValueError("clinic_id must be a non-empty identifier without '/'")
         return f"{_SERVICE_PREFIX}/{clinic_id}"
 
+    @staticmethod
+    def _check_name(secret_name: str) -> str:
+        if not secret_name:
+            raise ValueError("secret_name must be non-empty")
+        return secret_name
+
     def store(self, clinic_id: str, secret_name: str, value: str) -> None:
-        keyring.set_password(self._service(clinic_id), secret_name, value)
+        keyring.set_password(self._service(clinic_id), self._check_name(secret_name), value)
 
     def retrieve(self, clinic_id: str, secret_name: str) -> str | None:
         return keyring.get_password(self._service(clinic_id), secret_name)

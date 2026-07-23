@@ -1,12 +1,14 @@
 """Step 5: handshake state machine + origin verification + protocol-loop tests."""
 
 import io
-import json
+import logging
 import struct
 from pathlib import Path
 
 import pytest
 
+from conftest import NONCE, frame, hello, ping, read_frames
+from scribe_desktop.logging_setup import setup_logging
 from scribe_desktop.native_host import (
     EXPECTED_ORIGIN,
     HostSession,
@@ -17,41 +19,9 @@ from scribe_desktop.native_host import (
 )
 from scribe_desktop.protocol import parse_envelope
 
-NONCE = "f" * 32
-
 
 def make_session() -> HostSession:
     return HostSession(nonce_factory=lambda: NONCE)
-
-
-def hello(request_id: str = "req-1") -> dict:
-    return {"protocol_version": 1, "type": "hello", "request_id": request_id, "payload": {}}
-
-
-def ping(nonce: str, request_id: str = "req-2") -> dict:
-    return {
-        "protocol_version": 1,
-        "type": "ping",
-        "request_id": request_id,
-        "session_nonce": nonce,
-        "payload": {},
-    }
-
-
-def frame(value: dict) -> bytes:
-    body = json.dumps(value).encode()
-    return struct.pack("=I", len(body)) + body
-
-
-def read_frames(data: bytes) -> list[dict]:
-    stream = io.BytesIO(data)
-    frames = []
-    while True:
-        prefix = stream.read(4)
-        if not prefix:
-            return frames
-        (length,) = struct.unpack("=I", prefix)
-        frames.append(json.loads(stream.read(length).decode()))
 
 
 # --- origin verification -------------------------------------------------
@@ -142,53 +112,70 @@ def test_inbound_pong_violates() -> None:
 # --- protocol loop over pipes -------------------------------------------
 
 
-def run(data: bytes, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[int, list[dict]]:
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+def make_logger(tmp_path: Path) -> logging.Logger:
+    return setup_logging("scribe-host-test", log_dir=tmp_path, stderr=False)
+
+
+def run(data: bytes, tmp_path: Path) -> tuple[int, list[dict]]:
     out = io.BytesIO()
-    code = run_host(io.BytesIO(data), out, logger_name="scribe-host-test")
+    code = run_host(io.BytesIO(data), out, make_logger(tmp_path))
     return code, read_frames(out.getvalue())
 
 
-def test_loop_full_handshake_then_eof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    code, frames = run(frame(hello()), tmp_path, monkeypatch)
+def test_loop_full_handshake_then_eof(tmp_path: Path) -> None:
+    code, frames = run(frame(hello()), tmp_path)
     assert code == 0
     assert [f["type"] for f in frames] == ["hello_ack"]
 
 
-def test_loop_foreign_nonce_gets_typed_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The loop issues a random nonce; a ping with a foreign nonce must produce
-    hello_ack then a typed bad_nonce error and exit 1. (The full hello->ping
-    happy path with the issued nonce is covered by the state-machine tests.)"""
-    code, frames = run(frame(hello()) + frame(ping("9" * 32)), tmp_path, monkeypatch)
+def test_loop_foreign_nonce_gets_typed_error(tmp_path: Path) -> None:
+    """The loop issues a random nonce; a ping with a foreign (but present)
+    nonce must produce hello_ack then a typed bad_nonce error and exit 1."""
+    code, frames = run(frame(hello()) + frame(ping("9" * 32)), tmp_path)
     assert code == 1
     assert [f["type"] for f in frames] == ["hello_ack", "error"]
     assert frames[1]["payload"]["code"] == "bad_nonce"
 
 
-def test_loop_framing_violation_sends_typed_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_loop_missing_nonce_gets_bad_nonce(tmp_path: Path) -> None:
+    """MED-001 alignment: a ping with NO nonce yields bad_nonce (as TS does)."""
+    no_nonce = {"protocol_version": 1, "type": "ping", "request_id": "r", "payload": {}}
+    code, frames = run(frame(hello()) + frame(no_nonce), tmp_path)
+    assert code == 1
+    assert frames[1]["payload"]["code"] == "bad_nonce"
+
+
+def test_loop_framing_violation_sends_typed_error(tmp_path: Path) -> None:
     bad = struct.pack("=I", 0xFFFF_FFF0)
-    code, frames = run(bad, tmp_path, monkeypatch)
+    code, frames = run(bad, tmp_path)
     assert code == 1
     assert frames[0]["type"] == "error"
     assert frames[0]["payload"]["code"] == "oversized"
 
 
-def test_loop_invalid_envelope_sends_typed_error(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_loop_invalid_envelope_sends_typed_error(tmp_path: Path) -> None:
     bad = frame({"protocol_version": 1, "type": "nope", "payload": {}})
-    code, frames = run(bad, tmp_path, monkeypatch)
+    code, frames = run(bad, tmp_path)
     assert code == 1
     assert frames[0]["payload"]["code"] == "malformed"
 
 
-def test_loop_version_below_floor_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_loop_version_below_floor_typed_code(tmp_path: Path) -> None:
+    """MED-001: below-floor version yields the version_below_floor code."""
     msg = hello()
     msg["protocol_version"] = 0
-    code, frames = run(frame(msg), tmp_path, monkeypatch)
+    code, frames = run(frame(msg), tmp_path)
     assert code == 1
     assert frames[0]["type"] == "error"
+    assert frames[0]["payload"]["code"] == "version_below_floor"
+
+
+def test_loop_survives_dead_peer_on_write(tmp_path: Path) -> None:
+    """MED-003: a broken output pipe is logged and returned, not raised."""
+
+    class BrokenPipe(io.BytesIO):
+        def write(self, *_args: object) -> int:
+            raise BrokenPipeError()
+
+    code = run_host(io.BytesIO(frame(hello())), BrokenPipe(), make_logger(tmp_path))
+    assert code == 1

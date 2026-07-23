@@ -42,7 +42,7 @@ def test_meta_matches_constants() -> None:
 @pytest.mark.parametrize("path", VALID, ids=lambda p: p.stem)
 def test_valid_fixtures_parse(path: Path) -> None:
     envelope = parse_envelope(json.loads(path.read_text(encoding="utf-8")))
-    assert envelope.type == path.stem.split(".")[0].replace("-", "_") or True
+    assert envelope.type == path.stem  # fixture filename must match its message type
     # round-trip: serialising and re-parsing yields an equal envelope
     assert parse_envelope(envelope.model_dump(exclude_none=True)) == envelope
 

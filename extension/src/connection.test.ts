@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { ChromeLike, PortLike } from "./connection";
-import { ConnectionManager, PING_ALARM, RECONNECT_ALARM } from "./connection";
+import { ConnectionManager, PING_ALARM, RECONNECT_ALARM, WATCHDOG_ALARM } from "./connection";
 import { PROTOCOL_VERSION } from "./protocol";
 
 const NONCE = "n".repeat(32);
@@ -165,17 +165,73 @@ describe("disconnect and reconnect", () => {
     expect(delays).toEqual([0.5, 1, 2]);
   });
 
-  test("every reconnect is a fresh handshake with a new request_id", () => {
+  test("every reconnect is a fresh handshake with a new request_id and nonce", () => {
     const { api, manager } = handshake();
     api.lastPort.drop();
     manager.onAlarm(RECONNECT_ALARM);
     expect(api.ports.length).toBe(2);
     expect(api.lastPort.sent[0]).toMatchObject({ type: "hello", request_id: "req-2" });
-    // stale nonce discarded: a pong with the OLD nonce during connecting is a failure
     api.lastPort.receive(ack("req-2", "m".repeat(32)));
     expect(manager.state).toBe("connected");
     manager.onAlarm(PING_ALARM);
     expect(api.lastPort.sent[1]).toMatchObject({ session_nonce: "m".repeat(32) });
+  });
+
+  test("a pong carrying the STALE pre-reconnect nonce is rejected (LOW-017)", () => {
+    const { api, manager } = handshake(); // session nonce = NONCE
+    api.lastPort.drop();
+    manager.onAlarm(RECONNECT_ALARM);
+    api.lastPort.receive(ack("req-2", "m".repeat(32))); // fresh nonce
+    manager.onAlarm(PING_ALARM);
+    api.lastPort.receive({
+      protocol_version: 1,
+      type: "pong",
+      request_id: "req-3",
+      session_nonce: NONCE, // stale nonce from the previous session
+      payload: {},
+    });
+    expect(manager.state).toBe("error");
+  });
+
+  test("watchdog fires while connecting -> error + reconnect scheduled (HIGH-002)", () => {
+    const api = new FakeChrome();
+    const manager = new ConnectionManager(api);
+    manager.connect(); // host never answers hello
+    expect(api.alarms.some((a) => a.name === WATCHDOG_ALARM)).toBe(true);
+    manager.onAlarm(WATCHDOG_ALARM);
+    expect(manager.state).toBe("error");
+    expect(api.alarms.some((a) => a.name === RECONNECT_ALARM)).toBe(true);
+  });
+
+  test("watchdog is cleared by a successful handshake", () => {
+    const { api, manager } = handshake();
+    expect(api.cleared).toContain(WATCHDOG_ALARM);
+    manager.onAlarm(WATCHDOG_ALARM); // late fire must be a no-op when connected
+    expect(manager.state).toBe("connected");
+  });
+
+  test("silent host: second ping alarm without a pong fails the session (MED-005)", () => {
+    const { api, manager } = handshake();
+    manager.onAlarm(PING_ALARM); // ping sent, never answered
+    expect(manager.state).toBe("connected");
+    manager.onAlarm(PING_ALARM); // outstanding ping detected
+    expect(manager.state).toBe("error");
+    expect(api.alarms.some((a) => a.name === RECONNECT_ALARM)).toBe(true);
+  });
+
+  test("answered pings keep the session healthy across alarms", () => {
+    const { api, manager } = handshake();
+    for (const requestId of ["req-2", "req-3"]) {
+      manager.onAlarm(PING_ALARM);
+      api.lastPort.receive({
+        protocol_version: 1,
+        type: "pong",
+        request_id: requestId,
+        session_nonce: NONCE,
+        payload: {},
+      });
+    }
+    expect(manager.state).toBe("connected");
   });
 
   test("backoff resets after a successful handshake", () => {

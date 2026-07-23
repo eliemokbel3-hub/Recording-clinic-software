@@ -177,7 +177,7 @@ All new — the repo currently contains only documentation and workflow tooling 
 - **Windows binary-stdio fix (classic killer):** Python opens stdio in text mode on Windows; the host MUST set `O_BINARY` on stdin/stdout (`msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)`, same for stdout) and read/write via `sys.stdin.buffer` / `sys.stdout.buffer`, or `\n`→`\r\n` translation corrupts frames
 - **Origin argv:** Chrome passes the caller as the bare first argument `chrome-extension://<id>/` (no `--origin=` flag) and appends `--parent-window=<HWND>` on Windows; the launcher must forward `%*`
 - **Registry:** `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`, default value = absolute path to the host manifest JSON; `allowed_origins` entries are exact `chrome-extension://<id>/` strings (trailing slash, no wildcards); manifest `path` may point to a `.bat`
-- **Launcher rules:** `@echo off` first line; invoke the venv python by ABSOLUTE path (no `activate`, no bare `python`); set an explicit working directory; forward `%*`; Chrome spawns the host with an arbitrary cwd
+- **Launcher rules:** `@echo off` first line; invoke the venv interpreter by ABSOLUTE path (no `activate`, no bare `python`); set an explicit working directory; forward `%*`; Chrome spawns the host with an arbitrary cwd. The generator prefers `pythonw.exe` when present (suppresses the console window; stdio pipes work normally — verified by the launcher integration test; LOW-018) and writes the `.bat` in the ANSI/OEM codepage (`mbcs`), since `cmd.exe` does not read batch files as UTF-8
 - **Extension identity:** manifest `key` = base64 DER SubjectPublicKeyInfo of an RSA public key (`openssl genrsa 2048 > key.pem; openssl rsa -in key.pem -pubout -outform DER | openssl base64 -A`); the ID is derived from SHA-256 of the public key (first 16 bytes → a–p). Commit the public key + derived ID (`extension/KEY.md`); keep `key.pem` out of the repo (gitignore it); note: an unpacked extension's `key` gives ID *stability*, not secrecy — and the Chrome Web Store assigns its own ID at Phase-7 publication (migration noted there)
 - **MV3 service-worker lifecycle:** an active native-messaging port extends SW lifetime (Chrome ≥ ~116), but the SW still dies on browser restart/update/crash; `setTimeout` does not survive suspension — reconnect logic must run at SW top level and in `onDisconnect`/`onStartup`/`onInstalled`, with `chrome.alarms` for backoff intervals
 - **keyring→Credential Manager:** generic-credential blob limit is 2560 bytes (~1280 chars via keyring's UTF-16) — Cliniko API keys fit with huge margin
@@ -240,7 +240,7 @@ Each /review invocation appends a one-line entry here. /review uses
 this section to detect which round it is. Ignore the placeholder line
 when counting rounds.
 
-- (no reviews yet — /review-plan hardening 2026-07-23 predates execution; code review rounds start after /execute)
+- 2026-07-24 round 1: 1 CRIT / 3 HIGH / 7 MED / 18 LOW; skew=none; action=none
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -248,14 +248,181 @@ Format /review will append:
 ## Review Findings Log
 /fix reads from this section when a round has pending decisions.
 
-- (no findings logged yet)
+### Round 1 — 2026-07-24
+Round status: Open (1 pending — LOW-009 lands with Step 11's threat model)
+Source: Claude Code
+
+#### CRIT-001: `extension/src/manifest.ts:13` — missing "alarms" permission kills the service worker
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: background.ts registers chrome.alarms listeners at SW top level; without the "alarms" permission chrome.alarms is undefined in real Chrome, the top-level addListener throws, and the entire service worker dies — no connect, no badge, no reconnect. Mocked unit tests cannot catch this.
+- Current behaviour: permissions = ["nativeMessaging"] only
+- Desired behaviour: permissions include "alarms"
+- Verification: rebuild; dist/manifest.json contains "alarms"; Step 12 in-Chrome gate loads without SW error
+- Regression risk: none — additive manifest change
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### HIGH-001: `extension/src/manifest.ts` — missing "action" key breaks all badge calls
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: chrome.action is undefined without an "action" manifest key; setBadge throws inside ConnectionManager.setState, aborting connect() — and the badge is the Phase-1 gate's primary connectivity indicator.
+- Current behaviour: no action key in manifest
+- Desired behaviour: "action": {} (with default_title) declared
+- Verification: rebuild; dist/manifest.json contains action; badge renders at Step 12 gate
+- Regression risk: none — additive
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### HIGH-002: `extension/src/connection.ts:58-72` — no handshake timeout; manager wedges in "connecting" forever
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: a host that opens the port but never sends hello_ack leaves state="connecting" permanently: connect() early-returns in that state, ping() no-ops, no alarm is scheduled on entering connecting, and the open port keeps the SW alive — nothing ever fires again. Permanent "…" badge until browser restart.
+- Current behaviour: no watchdog on the connecting state
+- Desired behaviour: a handshake-timeout alarm scheduled on entering connecting; unanswered hello → fail() → backoff reconnect
+- Invariant: from every reachable ConnectionManager state, some listener or alarm eventually fires that can advance or reset the state.
+- Verification: unit test — connect, deliver no ack, fire the timeout alarm, assert error state + reconnect scheduled
+- Regression risk: connect()/onMessage paths used by background.ts top level, onStartup, onInstalled, both alarms
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### HIGH-003: `desktop/src/scribe_desktop/logging_setup.py:44-51` — tripwire misses unquoted-key (pydantic repr) leaks
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: the promised misuse case — logger.info(f"{envelope}") with a pydantic Envelope — renders as protocol_version=1 type='ping' session_nonce='…' payload={} (unquoted keys). All _PAYLOAD_SIGNATURES are JSON-quoted style, so nothing matches and the real nonce reaches the log. The existing test uses json.dumps of a dict, which passes while the promised case leaks.
+- Current behaviour: only quoted-key signatures detected
+- Desired behaviour: unquoted signatures (session_nonce=, payload=, protocol_version=) also trip; test logs an actual Envelope via f-string
+- Pattern siblings: none found (single tripwire site)
+- Verification: new test with a real Envelope f-string is dropped + counted
+- Regression risk: legit operational lines containing "count=" etc. must not false-positive — log_event's whitelisted keys must stay disjoint from signature strings
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-001: both protocol mirrors — error-code taxonomy divergence (version_below_floor dead; bad_nonce vs malformed)
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: version_below_floor is unreachable on BOTH sides (ge=1 / <1 checks fire first while floor==1) yet the plan promises "version below floor → typed error"; a missing required nonce yields bad_nonce in TS but malformed in Python; explicit "session_nonce": null is accepted by pydantic, rejected by TS. Round-one drift in the exact taxonomy the fixtures-canonical decision exists to prevent.
+- Current behaviour: same wire input classified differently per side; floor code dead
+- Desired behaviour: aligned codes on both mirrors; floor violation emits version_below_floor from run_host; explicit null rejected in Python; tests assert codes, not just type=="error"
+- Verification: tightened fixture/loop tests asserting payload code on both sides
+- Regression risk: extension treats any error as fail(), so behaviour-compatible; fixture tests on both sides
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-002: `desktop/src/scribe_desktop/native_host.py:128,169` — double setup_logging leaves an orphaned open handler; Windows rotation breaks
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: setup_logging clears handlers without closing them; main() + run_host() both configure "scribe-host", leaving two open handles on the same log file — on Windows the rotation rename at 1 MB fails (file locked) and rotation stops.
+- Current behaviour: duplicate configuration, unclosed replaced handlers
+- Desired behaviour: run_host accepts a configured logger (main passes its own; tests pass tmp-dir loggers); setup_logging closes handlers it clears
+- Verification: rollover test (tiny maxBytes) passes; single handler set after main-path setup
+- Regression risk: run_host's test callers use logger_name — keep that path working
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-003: `desktop/src/scribe_desktop/native_host.py:138-159` — unguarded write_frame calls in run_host
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: if the peer dies mid-session (exactly when error-reply paths run), write_frame raises BrokenPipeError/OSError uncaught — traceback to stderr, no clean log event, ungraceful exit.
+- Current behaviour: replies written without exception handling
+- Desired behaviour: protocol-loop writes wrapped; whitelisted log event; non-zero return
+- Verification: unit test with a broken output stream
+- Regression risk: run_host callers (entry point, tests); stdout purity unaffected
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-004: `scripts/register-native-host.py:24-27` + siblings — identity constants re-declared as literals in four places
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: HOST_NAME/EXTENSION_ID/EXPECTED_ORIGIN/REGISTRY_KEY exist independently in register-native-host.py, native_host.py, status.py, protocol.py, and the integration test; drift in EXTENSION_ID silently breaks the allowed_origins/origin-check pairing — the "never re-derived" invariant the plan locks.
+- Current behaviour: four literal copies
+- Desired behaviour: one canonical module (scribe_desktop.protocol or .identity) imported everywhere; the script runs inside the venv so it can import it
+- Pattern siblings: `desktop/tests/test_integration_no_sockets.py:29` (hard-coded origin), `desktop/src/scribe_desktop/status.py:17`
+- Verification: grep shows one definition site; all tests green
+- Regression risk: registration script import path (runs from repo root inside venv)
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-005: `extension/src/connection.ts:75-79` — ping liveness cannot detect a silently-dead host
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: a pong that never arrives is never noticed (no outstanding-ping tracking), so a hung host keeps the badge "OK" forever; only a wrong pong triggers fail(). Also makes the beyond-plan PING_ALARM actually load-bearing (documented in plan note).
+- Current behaviour: each ping overwrites pingRequestId; silence = healthy
+- Desired behaviour: if the next PING_ALARM fires with the previous ping unanswered → fail()
+- Verification: unit test — ping, no pong, next alarm → error + reconnect scheduled
+- Regression risk: ping()/onAlarm callers; connection tests
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-006: `protocol/fixtures/invalid/` — no fixture exercises an unknown extra envelope key
+- Triage: Fix-now
+- Fix route: fix-on-fast (mechanical fixture + both suites already glob the dir)
+- Why it matters: TS ENVELOPE_KEYS rejection vs pydantic extra="forbid" symmetry — the exact drift the fixtures-canonical design exists to catch — is untested by the shared suite.
+- Current behaviour: extra-key rejection tested on neither side via fixtures
+- Desired behaviour: invalid/extra_envelope_key.json with a stray field; both suites pick it up automatically
+- Verification: both fixture suites reject the new file
+- Regression risk: none
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### MED-007: `desktop/src/scribe_desktop/native_host.py:169-172` — startup tripwire logs less than the plan claims
+- Triage: Fix-now
+- Fix route: premium-only
+- Why it matters: the plan's trust-model decision and Step 5's completion note promise logging of the resolved MANIFEST and LAUNCHER paths (the hijack tripwire); main() logs only executable, module, and cwd.
+- Current behaviour: registry-resolved manifest path and launcher path never logged
+- Desired behaviour: read the HKCU value at startup, log the manifest path and its "path" entry via log_event
+- Verification: unit test with a registry stub or the real registered machine; log contains both paths
+- Regression risk: none (additive logging via whitelisted "path" key)
+- /fix decision: Applied
+- /fix notes: applied and verified in the round-1 fix pass 2026-07-24 (both QA suites green: 71 desktop + 36 extension tests); pattern siblings touched where listed
+- /fix date: 2026-07-24
+- /fix applied by: Claude Code
+
+#### LOW-001: `desktop/tests/test_protocol.py:45` — vacuous assertion (`… or True`) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-002: desktop test files — frame/builder helpers copy-pasted across three files; consolidate in conftest — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-003: `scripts/register-native-host.py:61` — ascii encode crashes on non-ASCII paths; cmd reads OEM codepage — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-004: `extension/src/background.ts:7` — dead re-export of HOST_NAME — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-005: `desktop/tests/test_integration_no_sockets.py:29,78` — hard-coded origin + magic nonce length 64 — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-006: `extension/src/background.ts:10` — onDisconnect never reads chrome.runtime.lastError (loses "host not found" diagnostic) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-007: `extension/src/connection.ts:124-142` — fail() + queued onDisconnect can double-increment backoff — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-008: `desktop/src/scribe_desktop/framing.py:68-72` — prefix read should use _read_exact (short-read robustness) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-009: `desktop/src/scribe_desktop/secure_storage.py` — zeroization is best-effort (immutable copies survive); document residual in threat model at Step 11 — Triage: Fix-now-if-tied (Step 11); Decision: Pending (lands with Step 11's threat model)
+#### LOW-010: `desktop/src/scribe_desktop/status.py:37-41` — only FileNotFoundError caught; PermissionError crashes scribe-app at launch — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-011: `desktop/src/scribe_desktop/secure_storage.py:41-51` — secret_name never validated (empty accepted) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-012: `desktop/src/scribe_desktop/logging_setup.py:89` — unguarded mkdir; unwritable LOCALAPPDATA crashes host before origin check — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-013: plan Step 2 note overclaims "6 valid fixtures / 18 tests each" (5 valid; 17 protocol tests/side) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-014: `desktop/tests/test_logging_setup.py:58-61` — rotation asserted by configuration only; add a real rollover test — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-015: `desktop/tests/test_integration_no_sockets.py:31-34` — silent auto-skip hides the no-sockets proof on fresh clones/CI — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-016: `desktop/tests/test_status_and_app.py:10-18` — registration test vacuous when machine unregistered — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-017: `extension/src/connection.test.ts:174-176` — comment claims a stale-nonce-rejection scenario the test never exercises — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
+#### LOW-018: generated launcher silently substitutes pythonw.exe for the plan's "python" — document the choice in the plan/AGENTS.md — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
 
 ## Tasks
 
 - [x] 🟩 Step 1: Scaffolding + QA tooling — done 2026-07-24; dev machine runs Python 3.14.6 (plan targeted 3.12; `requires-python = ">=3.12"`, all deps installed clean — revalidate ML wheels at the Phase 2 benchmark); pinned: CRXJS 2.7.1, Vite 8.1.5, TS 6.0.3, vitest 4.1.10, eslint 10.7.0
   - `extension/` (Vite + CRXJS pinned exact versions, TS strict, eslint, vitest), `desktop/` (pyproject with PySide6, pydantic, cryptography, keyring, psutil; ruff + mypy --strict + pytest; entry points `scribe-app`, `scribe-host`), `protocol/fixtures/`, `scripts/`, `docs/security/` skeletons; one trivial passing test per side; lint rules: `QtNetwork`/socket-server import ban, no `message`/`payload`/`envelope` interpolation in logging calls
   - Done when: `npm run build` yields an unpacked MV3 bundle, `pip install -e desktop` succeeds, one documented command per side runs its full QA suite green
-- [x] 🟩 Step 2: Protocol contract — done 2026-07-24; 6 valid + 9 invalid fixtures + meta.json; both mirrors pass 18 fixture-driven tests each
+- [x] 🟩 Step 2: Protocol contract — done 2026-07-24; 5 valid + 11 invalid fixtures (2 added in round-1 fixes) + meta.json; both mirrors fixture-tested (count corrected per LOW-013)
   - Author `protocol/fixtures/*.json` (canonical): envelope `protocol_version`/`type`/`request_id?`/`session_nonce?`/`payload`; messages `hello`, `hello_ack`, `ping`, `pong`, `error`; per-type nonce presence rules; version floor; valid AND invalid cases. Mirror as `extension/src/protocol.ts` and `desktop/.../protocol.py` (pydantic + throwaway connection-state enum), each tested against the same fixtures
   - Ref: Key Design Decision (fixtures-canonical protocol)
 - [x] 🟩 Step 3: Extension identity — done 2026-07-24; ID `mbmhglgadhdohpgbmpbjnaifjagfdfid` pinned + recorded in `extension/KEY.md`; key.pem gitignored; in-Chrome load check deferred to Step 12 gate

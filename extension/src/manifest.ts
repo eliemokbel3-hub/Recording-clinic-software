@@ -10,8 +10,11 @@ export default defineManifest({
   name: "Cliniko Scribe Companion",
   version: "0.1.0",
   description: "Privacy-first clinical scribe companion for Cliniko (Phase 1: security foundation)",
-  permissions: ["nativeMessaging"],
+  permissions: ["nativeMessaging", "alarms"],
   host_permissions: ["https://*.cliniko.com/*"],
+  action: {
+    default_title: "Cliniko Scribe Companion",
+  },
   background: {
     service_worker: "src/background.ts",
     type: "module",

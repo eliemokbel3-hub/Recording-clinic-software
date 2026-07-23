@@ -4,10 +4,28 @@
 import type { ChromeLike, PortLike } from "./connection";
 import { ConnectionManager, PING_ALARM } from "./connection";
 
-export { HOST_NAME } from "./protocol";
-
 const api: ChromeLike = {
-  connectNative: (hostName: string): PortLike => chrome.runtime.connectNative(hostName),
+  connectNative: (hostName: string): PortLike => {
+    const port = chrome.runtime.connectNative(hostName);
+    return {
+      postMessage: (message: unknown) => port.postMessage(message),
+      disconnect: () => port.disconnect(),
+      onMessage: {
+        addListener: (cb: (message: unknown) => void) =>
+          port.onMessage.addListener((message: unknown) => cb(message)),
+      },
+      onDisconnect: {
+        addListener: (cb: () => void) =>
+          port.onDisconnect.addListener(() => {
+            // LOW-006: surface the disconnect diagnostic (e.g. "Specified
+            // native messaging host not found") instead of discarding it.
+            const err = chrome.runtime.lastError;
+            if (err?.message) console.warn("native host disconnect:", err.message);
+            cb();
+          }),
+      },
+    };
+  },
   createAlarm: (name: string, delayInMinutes: number) => {
     void chrome.alarms.create(name, { delayInMinutes });
   },

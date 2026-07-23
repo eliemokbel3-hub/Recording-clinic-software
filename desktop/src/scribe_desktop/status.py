@@ -11,10 +11,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from scribe_desktop.protocol import HOST_NAME
+from scribe_desktop.identity import REGISTRY_KEY
 from scribe_desktop.secure_storage import SecureStorageProvider, SessionCrypto
-
-REGISTRY_KEY = rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}"
 
 
 @dataclass(frozen=True)
@@ -37,7 +35,7 @@ def read_registration_status() -> RegistrationStatus:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
                 value, _ = winreg.QueryValueEx(key, "")
                 registry_value = str(value)
-        except FileNotFoundError:
+        except OSError:  # LOW-010: PermissionError etc. must not crash the app
             registry_value = None
     manifest = Path(registry_value) if registry_value else None
     launcher_exists = False

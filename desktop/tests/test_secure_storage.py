@@ -48,6 +48,11 @@ def test_invalid_clinic_id_rejected(store: SecureStorageProvider) -> None:
         store.store("a/b", NAME, "x")
 
 
+def test_empty_secret_name_rejected(store: SecureStorageProvider) -> None:
+    with pytest.raises(ValueError):
+        store.store(CLINIC, "", "x")
+
+
 # --- session crypto -------------------------------------------------------
 
 

@@ -8,13 +8,13 @@ from scribe_desktop.status import read_registration_status, run_self_test
 
 
 def test_registration_status_reads_real_machine_state() -> None:
-    # Step 6 registered the host on this dev machine; the structure must be
-    # coherent either way (informational only, never a security signal).
+    # LOW-016: skip loudly on unregistered machines instead of passing vacuously.
     status = read_registration_status()
-    if status.registry_value is not None:
-        assert status.manifest_exists
-        assert status.launcher_exists
-        assert status.registered
+    if status.registry_value is None:
+        pytest.skip("machine not registered — run scripts/register-native-host.py")
+    assert status.manifest_exists
+    assert status.launcher_exists
+    assert status.registered
 
 
 def test_self_test_passes_end_to_end() -> None:

@@ -24,14 +24,29 @@ from pathlib import Path
 import psutil
 import pytest
 
+from scribe_desktop.identity import EXPECTED_ORIGIN as ORIGIN
+from scribe_desktop.identity import NONCE_HEX_LENGTH
+
 REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = REPO / "scripts" / "dev-host-launcher.bat"
-ORIGIN = "chrome-extension://mbmhglgadhdohpgbmpbjnaifjagfdfid/"
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only launcher"),
-    pytest.mark.skipif(not LAUNCHER.exists(), reason="run scripts/register-native-host.py first"),
+    # LOW-015: skipping the no-sockets proof must be a deliberate, loud choice.
+    pytest.mark.skipif(
+        os.environ.get("SCRIBE_SKIP_INTEGRATION") == "1",
+        reason="integration explicitly skipped via SCRIBE_SKIP_INTEGRATION=1",
+    ),
 ]
+
+
+@pytest.fixture(autouse=True)
+def require_registration() -> None:
+    if not LAUNCHER.exists():
+        pytest.fail(
+            "dev-host-launcher.bat missing — run scripts/register-native-host.py "
+            "first, or set SCRIBE_SKIP_INTEGRATION=1 to skip deliberately"
+        )
 
 
 def frame(value: dict) -> bytes:
@@ -72,7 +87,7 @@ def test_full_handshake_via_launcher_with_no_sockets() -> None:
         ack = read_one_frame(host.stdout)
         assert ack["type"] == "hello_ack"
         nonce = ack["session_nonce"]
-        assert len(nonce) == 64
+        assert len(nonce) == NONCE_HEX_LENGTH
 
         # Poll the whole process tree (the .bat wraps cmd -> python) mid-session.
         procs = [ps_host, *ps_host.children(recursive=True)]

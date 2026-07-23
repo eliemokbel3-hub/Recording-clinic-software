@@ -6,13 +6,9 @@ import struct
 
 import pytest
 
+from conftest import frame as frame_bytes
 from scribe_desktop.framing import EndOfStream, FramingError, read_frame, write_frame
 from scribe_desktop.protocol import MAX_FRAME_BYTES
-
-
-def frame_bytes(value: object) -> bytes:
-    body = json.dumps(value).encode("utf-8")
-    return struct.pack("=I", len(body)) + body
 
 
 def test_round_trip() -> None:

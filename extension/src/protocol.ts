@@ -62,9 +62,11 @@ export function parseEnvelope(value: unknown): Envelope {
   }
   const { protocol_version, type, request_id, session_nonce, payload } = value;
 
-  if (!Number.isInteger(protocol_version) || (protocol_version as number) < 1) {
-    throw new ProtocolError("malformed", "protocol_version must be a positive integer");
+  if (!Number.isInteger(protocol_version)) {
+    throw new ProtocolError("malformed", "protocol_version must be an integer");
   }
+  // Floor check BEFORE the positivity check (MED-001): any integer below the
+  // floor — including 0 — classifies as version_below_floor on both mirrors.
   if ((protocol_version as number) < MIN_SUPPORTED_VERSION) {
     throw new ProtocolError(
       "version_below_floor",

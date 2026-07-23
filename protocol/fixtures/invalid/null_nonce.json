@@ -1,0 +1,12 @@
+{
+  "reason": "an explicit null session_nonce is rejected (absent is the only valid omission)",
+  "message": {
+    "protocol_version": 1,
+    "type": "error",
+    "session_nonce": null,
+    "payload": {
+      "code": "internal",
+      "message": "probe"
+    }
+  }
+}

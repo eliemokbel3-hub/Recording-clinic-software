@@ -21,10 +21,10 @@ import json
 import sys
 from pathlib import Path
 
-HOST_NAME = "com.scribe.cliniko_host"
-EXTENSION_ID = "mbmhglgadhdohpgbmpbjnaifjagfdfid"  # extension/KEY.md
-ALLOWED_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
-REGISTRY_KEY = rf"Software\Google\Chrome\NativeMessagingHosts\{HOST_NAME}"
+# Canonical identity constants — the script runs inside the project venv
+# (see usage), so it imports the same definitions the host enforces.
+from scribe_desktop.identity import EXPECTED_ORIGIN as ALLOWED_ORIGIN
+from scribe_desktop.identity import HOST_NAME, REGISTRY_KEY
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "scripts"
@@ -58,7 +58,17 @@ def generate_manifest() -> dict[str, object]:
 def register() -> int:
     import winreg
 
-    LAUNCHER_PATH.write_bytes(generate_launcher().encode("ascii"))
+    # cmd.exe reads .bat files in the ANSI/OEM codepage, and repo/venv paths
+    # may contain non-ASCII characters (LOW-003): encode accordingly.
+    try:
+        LAUNCHER_PATH.write_bytes(generate_launcher().encode("mbcs"))
+    except UnicodeEncodeError:
+        print(
+            "ERROR: repo/venv path contains characters the ANSI codepage cannot "
+            "encode; move the project to a representable path.",
+            file=sys.stderr,
+        )
+        return 1
     MANIFEST_PATH.write_text(json.dumps(generate_manifest(), indent=2) + "\n", encoding="utf-8")
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:

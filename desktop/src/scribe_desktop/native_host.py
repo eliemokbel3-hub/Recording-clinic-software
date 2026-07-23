@@ -15,10 +15,12 @@ Critical Constraint: stdout carries ONLY framed protocol bytes.
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import BinaryIO
 
 from pydantic import ValidationError
@@ -30,18 +32,17 @@ from scribe_desktop.framing import (
     set_binary_stdio,
     write_frame,
 )
+from scribe_desktop.identity import EXPECTED_ORIGIN
 from scribe_desktop.logging_setup import log_event, setup_logging
 from scribe_desktop.protocol import (
-    PROTOCOL_VERSION,
+    MIN_SUPPORTED_VERSION,
+    NONCE_REQUIRED,
     Envelope,
     ErrorCode,
+    make_envelope,
     make_error,
     parse_envelope,
 )
-
-# Pinned extension identity — see extension/KEY.md (plan Step 3).
-EXTENSION_ID = "mbmhglgadhdohpgbmpbjnaifjagfdfid"
-EXPECTED_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
 
 
 def find_origin(argv: list[str]) -> str | None:
@@ -90,12 +91,11 @@ class HostSession:
             # Version negotiation: parse_envelope already enforced the floor;
             # reply with OUR version — the peer decides whether to proceed.
             self.session_nonce = self.nonce_factory()
-            return Envelope(
-                protocol_version=PROTOCOL_VERSION,
-                type="hello_ack",
+            return make_envelope(
+                "hello_ack",
+                payload={},
                 request_id=envelope.request_id,
                 session_nonce=self.session_nonce,
-                payload={},
             )
         if not self.ready:
             raise SessionViolation(
@@ -106,12 +106,11 @@ class HostSession:
                 raise SessionViolation(
                     make_error(ErrorCode.BAD_NONCE, "session nonce mismatch", envelope.request_id)
                 )
-            return Envelope(
-                protocol_version=PROTOCOL_VERSION,
-                type="pong",
+            return make_envelope(
+                "pong",
+                payload={},
                 request_id=envelope.request_id,
                 session_nonce=self.session_nonce,
-                payload={},
             )
         # pong / hello_ack / error are not valid inbound messages for the host.
         raise SessionViolation(
@@ -123,9 +122,37 @@ class HostSession:
         )
 
 
-def run_host(stdin: BinaryIO, stdout: BinaryIO, logger_name: str = "scribe-host") -> int:
+def _classify_raw(raw: object) -> Envelope | None:
+    """Pre-validation alignment checks (MED-001): classify violations that
+    pydantic would report generically so both mirrors emit the same codes.
+
+    Returns an error envelope to send, or None if no pre-check fires.
+    """
+    if not isinstance(raw, dict):
+        return None
+    version = raw.get("protocol_version")
+    if isinstance(version, int) and version < MIN_SUPPORTED_VERSION:
+        return make_error(
+            ErrorCode.VERSION_BELOW_FLOOR,
+            f"protocol_version below supported floor {MIN_SUPPORTED_VERSION}",
+        )
+    if raw.get("type") in NONCE_REQUIRED and raw.get("session_nonce") is None:
+        return make_error(ErrorCode.BAD_NONCE, "required session_nonce missing")
+    return None
+
+
+def _safe_write(stdout: BinaryIO, envelope: Envelope, logger: logging.Logger) -> bool:
+    """Write a reply, tolerating a peer that died mid-session (MED-003)."""
+    try:
+        write_frame(stdout, envelope.model_dump(exclude_none=True))
+        return True
+    except (OSError, FramingError):
+        log_event(logger, "write_failed", state="peer_gone")
+        return False
+
+
+def run_host(stdin: BinaryIO, stdout: BinaryIO, logger: logging.Logger) -> int:
     """Protocol loop over already-binary streams. Returns the process exit code."""
-    logger = setup_logging(logger_name)
     session = HostSession()
     while True:
         try:
@@ -135,28 +162,32 @@ def run_host(stdin: BinaryIO, stdout: BinaryIO, logger_name: str = "scribe-host"
             return 0
         except FramingError as exc:
             code = ErrorCode(exc.code) if exc.code in ErrorCode else ErrorCode.MALFORMED
-            write_frame(stdout, make_error(code, str(exc)).model_dump(exclude_none=True))
+            _safe_write(stdout, make_error(code, str(exc)), logger)
             log_event(logger, "framing_violation", error_code=exc.code)
+            return 1
+        pre_error = _classify_raw(raw)
+        if pre_error is not None:
+            _safe_write(stdout, pre_error, logger)
+            log_event(
+                logger, "protocol_violation", error_code=str(pre_error.payload.get("code"))
+            )
             return 1
         try:
             envelope = parse_envelope(raw)
         except ValidationError:
             # Never echo the offending content (log whitelisted metadata only).
-            write_frame(
-                stdout,
-                make_error(ErrorCode.MALFORMED, "envelope failed validation").model_dump(
-                    exclude_none=True
-                ),
-            )
+            reply_error = make_error(ErrorCode.MALFORMED, "envelope failed validation")
+            _safe_write(stdout, reply_error, logger)
             log_event(logger, "protocol_violation", error_code="malformed")
             return 1
         try:
             reply = session.handle(envelope)
         except SessionViolation as exc:
-            write_frame(stdout, exc.error.model_dump(exclude_none=True))
+            _safe_write(stdout, exc.error, logger)
             log_event(logger, "session_violation", error_code=str(exc.error.payload.get("code")))
             return 1
-        write_frame(stdout, reply.model_dump(exclude_none=True))
+        if not _safe_write(stdout, reply, logger):
+            return 1
         log_event(
             logger,
             "message_handled",
@@ -165,11 +196,32 @@ def run_host(stdin: BinaryIO, stdout: BinaryIO, logger_name: str = "scribe-host"
         )
 
 
+def _log_registration_paths(logger: logging.Logger) -> None:
+    """Hijack tripwire (MED-007): log the registry-resolved manifest path and
+    the launcher path it points at, alongside our own executable paths."""
+    if sys.platform != "win32":
+        return
+    import json
+    import winreg
+
+    from scribe_desktop.identity import REGISTRY_KEY
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+            manifest_path, _ = winreg.QueryValueEx(key, "")
+        log_event(logger, "host_manifest", path=str(manifest_path))
+        launcher = json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("path", "")
+        log_event(logger, "host_launcher", path=str(launcher))
+    except (OSError, ValueError):
+        log_event(logger, "host_manifest", state="unreadable")
+
+
 def main() -> int:
     logger = setup_logging("scribe-host")
     log_event(logger, "host_start", path=sys.executable, pid=os.getpid())
     log_event(logger, "host_module", path=os.path.abspath(__file__))
     log_event(logger, "host_cwd", path=os.getcwd())
+    _log_registration_paths(logger)
 
     if not verify_origin(sys.argv):
         # Exit BEFORE reading stdin: never enter protocol mode without a
@@ -179,7 +231,7 @@ def main() -> int:
 
     set_binary_stdio()
     log_event(logger, "origin_verified", state="ok")
-    return run_host(sys.stdin.buffer, sys.stdout.buffer)
+    return run_host(sys.stdin.buffer, sys.stdout.buffer, logger)
 
 
 if __name__ == "__main__":

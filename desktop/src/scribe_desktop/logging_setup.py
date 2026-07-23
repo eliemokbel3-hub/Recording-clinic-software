@@ -41,11 +41,18 @@ ALLOWED_KEYS: Final[frozenset[str]] = frozenset(
 )
 
 # Signatures that indicate a protocol envelope/payload leaked into a log line.
+# Both quoted (JSON/dict repr) and unquoted (pydantic model repr, e.g.
+# "session_nonce='...' payload={}") forms are covered (HIGH-003). These
+# strings MUST stay disjoint from log_event's ALLOWED_KEYS renderings —
+# payload/session_nonce/request_id are deliberately not whitelisted keys.
 _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"payload"',
     "'payload'",
+    "payload=",
     '"session_nonce"',
     "'session_nonce'",
+    "session_nonce=",
+    "request_id=",
     '"protocol_version":',
     "'protocol_version':",
 )
@@ -80,26 +87,40 @@ def default_log_dir() -> Path:
     return Path(base) / "ClinikoScribe" / "logs"
 
 
-def setup_logging(name: str, *, log_dir: Path | None = None, stderr: bool = True) -> logging.Logger:
+def setup_logging(
+    name: str,
+    *,
+    log_dir: Path | None = None,
+    stderr: bool = True,
+    max_bytes: int = 1_000_000,
+) -> logging.Logger:
     """Configure the process logger: rotating file + optional stderr, tripwired.
 
     NEVER attaches a stdout handler (Critical Constraint: stdout purity).
+    Replaced handlers are CLOSED, not just detached (MED-002: an orphaned
+    open handle on the log file breaks rotation renames on Windows).
     """
-    directory = log_dir if log_dir is not None else default_log_dir()
-    directory.mkdir(parents=True, exist_ok=True)
-
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
+    for handler in logger.handlers:
+        handler.close()
     logger.handlers.clear()
     tripwire = PayloadTripwireFilter()
-
-    file_handler = logging.handlers.RotatingFileHandler(
-        directory / f"{name}.log", maxBytes=1_000_000, backupCount=3, encoding="utf-8"
-    )
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    file_handler.setFormatter(formatter)
-    file_handler.addFilter(tripwire)
-    logger.addHandler(file_handler)
+
+    directory = log_dir if log_dir is not None else default_log_dir()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            directory / f"{name}.log", maxBytes=max_bytes, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.addFilter(tripwire)
+        logger.addHandler(file_handler)
+    except OSError:
+        # LOW-012: an unwritable log dir must not kill the process before the
+        # origin check — fall back to stderr-only logging.
+        pass
 
     if stderr:
         stderr_handler = logging.StreamHandler(sys.stderr)

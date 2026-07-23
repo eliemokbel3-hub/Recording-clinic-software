@@ -57,6 +57,18 @@ class Envelope(BaseModel):
     session_nonce: str | None = Field(default=None, min_length=16, max_length=128)
     payload: dict[str, Any]
 
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_explicit_null(cls, data: Any) -> Any:
+        # Mirror alignment (MED-001): TS rejects an explicit JSON null for
+        # optional string fields; pydantic would otherwise coerce it to
+        # "absent". Same wire input must classify identically on both sides.
+        if isinstance(data, dict):
+            for field_name in ("session_nonce", "request_id"):
+                if field_name in data and data[field_name] is None:
+                    raise ValueError(f"{field_name} must not be an explicit null")
+        return data
+
     @model_validator(mode="after")
     def _check_rules(self) -> Envelope:
         if self.protocol_version < MIN_SUPPORTED_VERSION:
@@ -86,10 +98,30 @@ def parse_envelope(data: Any) -> Envelope:
     return Envelope.model_validate(data)
 
 
+def make_envelope(
+    message_type: MessageType,
+    *,
+    payload: dict[str, Any],
+    request_id: str | None = None,
+    session_nonce: str | None = None,
+) -> Envelope:
+    """Build an outbound envelope, OMITTING absent optional fields — an
+    explicit null is a wire-contract violation (see _reject_explicit_null)."""
+    kwargs: dict[str, Any] = {
+        "protocol_version": PROTOCOL_VERSION,
+        "type": message_type,
+        "payload": payload,
+    }
+    if request_id is not None:
+        kwargs["request_id"] = request_id
+    if session_nonce is not None:
+        kwargs["session_nonce"] = session_nonce
+    return Envelope(**kwargs)
+
+
 def make_error(code: ErrorCode, message: str, request_id: str | None = None) -> Envelope:
-    return Envelope(
-        protocol_version=PROTOCOL_VERSION,
-        type="error",
-        request_id=request_id,
+    return make_envelope(
+        "error",
         payload={"code": code.value, "message": message},
+        request_id=request_id,
     )

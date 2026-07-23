@@ -16,8 +16,11 @@ import { HOST_NAME, makeHello, makePing, parseEnvelope } from "./protocol";
 
 export const RECONNECT_ALARM = "scribe-reconnect";
 export const PING_ALARM = "scribe-ping";
+// HIGH-002: watchdog for a host that opens the port but never answers hello.
+export const WATCHDOG_ALARM = "scribe-handshake-watchdog";
 // chrome.alarms minimum is 30s; cap backoff at 5 minutes.
 const BACKOFF_MINUTES = [0.5, 1, 2, 5] as const;
+const WATCHDOG_MINUTES = 0.5;
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
 
@@ -50,14 +53,18 @@ export class ConnectionManager {
   private sessionNonce: string | null = null;
   private helloRequestId: string | null = null;
   private pingRequestId: string | null = null;
+  private pingOutstanding = false; // MED-005: silence between alarms = dead host
   private backoffIndex = 0;
+  private reconnectScheduled = false; // LOW-007: fail()+onDisconnect must not double-step backoff
 
   constructor(private readonly api: ChromeLike) {}
 
   /** Full fresh handshake. Safe to call repeatedly (idempotent while connecting/connected). */
   connect(): void {
     if (this.state === "connecting" || this.state === "connected") return;
+    this.reconnectScheduled = false;
     this.sessionNonce = null; // discard any stale nonce (plan acceptance criterion)
+    this.pingOutstanding = false;
     this.setState("connecting");
     try {
       this.port = this.api.connectNative(HOST_NAME);
@@ -69,11 +76,20 @@ export class ConnectionManager {
     this.port.onDisconnect.addListener(() => this.onDisconnected());
     this.helloRequestId = this.api.newRequestId();
     this.port.postMessage(makeHello(this.helloRequestId));
+    // HIGH-002: a host that never answers hello must not wedge us in
+    // "connecting" — the watchdog fires unless hello_ack clears it.
+    this.api.createAlarm(WATCHDOG_ALARM, WATCHDOG_MINUTES);
   }
 
   /** Periodic liveness probe (PING_ALARM); no-op unless connected. */
   ping(): void {
     if (this.state !== "connected" || !this.port || !this.sessionNonce) return;
+    if (this.pingOutstanding) {
+      // MED-005: previous ping never answered — the host is dead or hung.
+      this.fail();
+      return;
+    }
+    this.pingOutstanding = true;
     this.pingRequestId = this.api.newRequestId();
     this.port.postMessage(makePing(this.pingRequestId, this.sessionNonce));
   }
@@ -82,6 +98,7 @@ export class ConnectionManager {
   onAlarm(name: string): void {
     if (name === RECONNECT_ALARM) this.connect();
     if (name === PING_ALARM) this.ping();
+    if (name === WATCHDOG_ALARM && this.state === "connecting") this.fail();
   }
 
   private onMessage(raw: unknown): void {
@@ -100,6 +117,7 @@ export class ConnectionManager {
       this.sessionNonce = envelope.session_nonce ?? null;
       this.backoffIndex = 0;
       this.api.clearAlarm(RECONNECT_ALARM);
+      this.api.clearAlarm(WATCHDOG_ALARM);
       this.setState("connected");
       return;
     }
@@ -110,7 +128,9 @@ export class ConnectionManager {
         envelope.request_id !== this.pingRequestId
       ) {
         this.fail();
+        return;
       }
+      this.pingOutstanding = false;
       return;
     }
     if (envelope.type === "error") {
@@ -142,6 +162,9 @@ export class ConnectionManager {
   }
 
   private scheduleReconnect(): void {
+    if (this.reconnectScheduled) return; // LOW-007: one backoff step per failure
+    this.reconnectScheduled = true;
+    this.api.clearAlarm(WATCHDOG_ALARM);
     const minutes = BACKOFF_MINUTES[Math.min(this.backoffIndex, BACKOFF_MINUTES.length - 1)];
     this.backoffIndex += 1;
     this.api.createAlarm(RECONNECT_ALARM, minutes ?? 5);
