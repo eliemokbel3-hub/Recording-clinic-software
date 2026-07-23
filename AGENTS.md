@@ -13,7 +13,7 @@ A single-practitioner clinical scribe for two Cliniko clinics: a thin Chrome ext
 | DNS | | Only if used |
 
 ## Links
-- GitHub:
+- GitHub: https://github.com/eliemokbel3-hub/Recording-clinic-software
 - Production:
 - Dev database:
 - Live URL:
