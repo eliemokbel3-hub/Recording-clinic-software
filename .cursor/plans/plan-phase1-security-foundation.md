@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase1-security-foundation
-**Overall Progress:** `50%`
+**Overall Progress:** `83%`
 
 ## Lifecycle State
 - Active
@@ -229,9 +229,9 @@ N/A — no database in Phase 1.
 See `Planning Extraction Summary` → Deferred / Excluded / Accepted Assumptions (single source of truth; all dispositions user-confirmed 2026-07-23 during plan hardening).
 
 ## Current State / Handoff Note
-- Last completed step: Step 2 (protocol contract) — fixtures canonical, both mirrors verified
+- Last completed step: Step 10 (integration test) — all implementation tasks 🟩; 64 desktop + 29 extension tests green
 - Current in-progress step: None
-- Immediate next action: Step 3 (extension identity)
+- Immediate next action: Step 11 (security documents), then Step 12 (manual completion gate — needs the user at Chrome)
 - Open blockers / open questions: None
 - Last plan sync: 2026-07-24
 
@@ -273,13 +273,13 @@ Format /review will append:
 - [x] 🟩 Step 7: Extension shell — done 2026-07-24; ConnectionManager unit-tested (10 tests: handshake, foreign nonce, backoff growth+reset, fresh-handshake-per-reconnect); note: executed AFTER this, Step 9 was built BEFORE Step 8 (self-test button consumes secure_storage) — ordering adaptation only, no scope change
   - CRXJS manifest: pinned `key`, `https://*.cliniko.com/*` + `nativeMessaging` only, NO content scripts; `background.ts`: connect at SW top level, full handshake with hello_ack/nonce validation, badge state per connection-state enum, `onDisconnect`/`onStartup`/`onInstalled` reconnect, `chrome.alarms` backoff, fresh handshake + discarded stale nonce on every reconnect; vitest with mocked `chrome.runtime`
   - Ref: executor facts (MV3 service-worker lifecycle)
-- [ ] 🟨 Step 8: Desktop window (minimal)
+- [x] 🟩 Step 8: Desktop window (minimal) — done 2026-07-24; logic split into GUI-free `status.py`; offscreen smoke test passes; self-test PASS on dev machine
   - `app.py`: PySide6 window with host-registration status (reads registry + manifest existence, informational only) and a "run self-test" button executing Flow 2; no host↔UI live-state plumbing (excluded)
   - Done when: self-test passes end-to-end on the dev machine
 - [x] 🟩 Step 9: Secure storage foundation (pulled ahead of Step 8) — done 2026-07-24; keyring namespacing, AES-GCM tamper + post-destruction tests, real Credential Manager round-trip verified
   - `secure_storage.py`: minimal `SecureStorageProvider` keyed `(clinic_id, secret_name)` over keyring; AES-256-GCM session-key lifecycle with explicit destruction; unit tests incl. tamper detection and post-destruction decryption failure
   - Ref: Key Design Decision (ephemeral session keys)
-- [ ] 🟥 Step 10: No-network-sockets integration test
+- [x] 🟩 Step 10: No-network-sockets integration test — done 2026-07-24; hello→ping via real launcher, stdout-purity assertion, full net_connections() empty on host tree AND scribe-app, polled mid-session
   - Spawn the real host through the real launcher over real pipes; complete the full handshake; assert first stdout bytes are a valid length prefix; poll `net_connections()` on the host AND a launched `scribe-app` throughout — both must stay empty
   - Ref: Critical Constraints (no listening sockets)
 - [ ] 🟥 Step 11: Security documents
