@@ -273,10 +273,10 @@ Format /review will append:
 - [x] 🟩 Step 7: Extension shell — done 2026-07-24; ConnectionManager unit-tested (10 tests: handshake, foreign nonce, backoff growth+reset, fresh-handshake-per-reconnect); note: executed AFTER this, Step 9 was built BEFORE Step 8 (self-test button consumes secure_storage) — ordering adaptation only, no scope change
   - CRXJS manifest: pinned `key`, `https://*.cliniko.com/*` + `nativeMessaging` only, NO content scripts; `background.ts`: connect at SW top level, full handshake with hello_ack/nonce validation, badge state per connection-state enum, `onDisconnect`/`onStartup`/`onInstalled` reconnect, `chrome.alarms` backoff, fresh handshake + discarded stale nonce on every reconnect; vitest with mocked `chrome.runtime`
   - Ref: executor facts (MV3 service-worker lifecycle)
-- [ ] 🟥 Step 8: Desktop window (minimal)
+- [ ] 🟨 Step 8: Desktop window (minimal)
   - `app.py`: PySide6 window with host-registration status (reads registry + manifest existence, informational only) and a "run self-test" button executing Flow 2; no host↔UI live-state plumbing (excluded)
   - Done when: self-test passes end-to-end on the dev machine
-- [ ] 🟨 Step 9: Secure storage foundation (pulled ahead of Step 8 — see Step 7 note)
+- [x] 🟩 Step 9: Secure storage foundation (pulled ahead of Step 8) — done 2026-07-24; keyring namespacing, AES-GCM tamper + post-destruction tests, real Credential Manager round-trip verified
   - `secure_storage.py`: minimal `SecureStorageProvider` keyed `(clinic_id, secret_name)` over keyring; AES-256-GCM session-key lifecycle with explicit destruction; unit tests incl. tamper detection and post-destruction decryption failure
   - Ref: Key Design Decision (ephemeral session keys)
 - [ ] 🟥 Step 10: No-network-sockets integration test
