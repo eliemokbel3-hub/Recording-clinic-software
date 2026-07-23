@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase1-security-foundation
-**Overall Progress:** `17%`
+**Overall Progress:** `50%`
 
 ## Lifecycle State
 - Active
@@ -264,13 +264,13 @@ Format /review will append:
 - [x] 🟩 Step 4: Logging + stdio framing (host core) — done 2026-07-24; framing in `framing.py` (11 edge tests), logging tripwire proven against f-string misuse
   - `logging_setup.py`: structural wrapper + tripwire filter + rotation per the logging Design Decision; `native_host.py`: binary-mode stdio (`O_BINARY` + `.buffer`), 4-byte native-order framing with the 1 MB policy bound and all framing edge cases from Validation
   - Ref: executor facts (binary-stdio fix); Critical Constraints (stdout purity)
-- [ ] 🟨 Step 5: Handshake + origin verification
+- [x] 🟩 Step 5: Handshake + origin verification — done 2026-07-24; state machine + loop + origin-refusal-before-stdin all unit-tested (14 new tests)
   - Host startup: log resolved manifest/launcher/executable paths; verify bare-argv origin (`chrome-extension://<id>/`, tolerate `--parent-window=`), exit non-zero before reading stdin when missing/unknown; hello → hello_ack (version floor check, `os.urandom` nonce) → ping/pong nonce echo; typed `error` + clean exit on every violation; full state-machine unit tests
   - Ref: Key Design Decision (authentication and trust model)
-- [ ] 🟥 Step 6: Registration tooling
+- [x] 🟩 Step 6: Registration tooling — done 2026-07-24; HKCU registered + verified on dev machine; launcher smoke test passed (hello_ack through real .bat, stdout pure, no-origin refused exit 2); generated .bat/.json gitignored (machine-specific paths)
   - `scripts/register-native-host.py`: generates the host manifest (pinned `allowed_origins` from Step 3) and `dev-host-launcher.bat` (`@echo off`, absolute venv python, explicit cwd, `%*` forwarding) from the CURRENT interpreter path; writes + verifies the HKCU registry value; `--unregister` removes key + generated files
   - Ref: executor facts (registry, launcher rules)
-- [ ] 🟥 Step 7: Extension shell
+- [ ] 🟨 Step 7: Extension shell
   - CRXJS manifest: pinned `key`, `https://*.cliniko.com/*` + `nativeMessaging` only, NO content scripts; `background.ts`: connect at SW top level, full handshake with hello_ack/nonce validation, badge state per connection-state enum, `onDisconnect`/`onStartup`/`onInstalled` reconnect, `chrome.alarms` backoff, fresh handshake + discarded stale nonce on every reconnect; vitest with mocked `chrome.runtime`
   - Ref: executor facts (MV3 service-worker lifecycle)
 - [ ] 🟥 Step 8: Desktop window (minimal)

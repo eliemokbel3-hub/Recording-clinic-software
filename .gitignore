@@ -23,3 +23,7 @@ extension/dist/
 
 # Extension signing key — never commit (see plan Critical Constraints)
 key.pem
+
+# Machine-generated native-host registration artifacts (absolute local paths)
+scripts/dev-host-launcher.bat
+scripts/com.scribe.cliniko_host.json
