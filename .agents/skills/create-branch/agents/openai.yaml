@@ -1,0 +1,8 @@
+# Codex Skill metadata for $create-branch.
+#
+# Create-branch is side-effecting: it runs `git checkout -b <name>` which
+# changes the active branch (and may interact with uncommitted changes).
+# Require explicit $create-branch invocation so Codex does not create
+# branches based on ambiguous prompts.
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,9 @@
+# Codex Skill metadata for $execute-loop.
+#
+# execute-loop is side-effecting: it spawns paid per-phase executor and
+# cross-family peer agents and drives $execute / $fix cycles and commits
+# that edit source files in place. Require explicit $execute-loop
+# invocation so Codex does not start an automated build/review/commit
+# loop without a clear intent.
+policy:
+  allow_implicit_invocation: false

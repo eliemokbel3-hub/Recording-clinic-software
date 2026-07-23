@@ -1,0 +1,19 @@
+# Codex Skill metadata for $document.
+#
+# Document is side-effecting: it writes to durable user-visible docs
+# (AGENTS.md, AGENTS.local.md, CHANGELOG.md, docs/*.md) and reconciles
+# plan-file lifecycle state. As of v27.2, implicit ($document) invocation
+# is permitted so an agent can drive it (for example at the end of a loop);
+# safety comes from the in-skill gates ($document's propose-and-confirm
+# migrations and the AGENTS.md bloat guard), not from invocation-locking.
+# It can still be invoked explicitly.
+#
+# History: $document was added to the side-effecting Skill set in v23.0
+# (Round-1 peer-review PR-MED-001 partial-accept), extending the original 5
+# (execute, fix, push, end-session, create-branch). In v27.2 the invocation
+# locks were relaxed: $execute, $fix, and $document became agent-invocable
+# (allow_implicit_invocation: true), while $push, $end-session,
+# $create-branch, $review-loop, and $document-review stay explicit-only
+# (allow_implicit_invocation: false).
+policy:
+  allow_implicit_invocation: true

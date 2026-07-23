@@ -1,0 +1,8 @@
+# Codex Skill metadata for $review-loop.
+#
+# review-loop is side-effecting: it orchestrates $review -> $fix cycles
+# that edit source files and update the Findings Log in place. Require
+# explicit $review-loop invocation so Codex does not start an automated
+# review/fix loop without a clear intent.
+policy:
+  allow_implicit_invocation: false

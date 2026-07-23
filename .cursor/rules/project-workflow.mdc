@@ -1,0 +1,237 @@
+---
+description: Core project workflow, git safety, deployment safety, environment rules, and documentation standards.
+alwaysApply: true
+---
+
+# Project Workflow Rules
+
+## Scope
+These rules assume this project is:
+- version controlled in GitHub
+- deployed on the hosting platform recorded in `AGENTS.md → Tech Stack → Hosting`
+- worked on from one or more computers
+
+Read the recorded Hosting target's provenance before trusting it: a target marked `source=config:<repo-relative-path>` (whose path still exists and supports the label) or `source=user-confirmed:<YYYY-MM-DD>` is verified platform context; an unmarked, stale, or invalidly marked target is a CLAIM, not verified context. Provider-specific assumptions in these rules activate only on a validly marked target. If current config evidence contradicts the recorded target, or the Hosting row is blank or missing, say so before applying any platform-specific assumption — never resolve the contradiction silently; suggest `/document` to evidence-check the row.
+
+## Start of Session
+- Read `AGENTS.md` before making meaningful changes.
+- Check git state before pulling:
+  - first run `git status --short --branch`
+  - if the working tree is dirty, explain the risk and ask before pulling
+  - if there is no upstream configured yet, do not blindly run `git pull`
+- Confirm what the project currently does, what was last worked on, and what looks next.
+
+## Documentation
+- Keep `AGENTS.md` current after meaningful work, but keep it concise.
+- Keep `CHANGELOG.md` current under `Unreleased`.
+- Verify documentation against the actual code before updating it.
+- Use layered documentation:
+  - `AGENTS.md` = project briefing, current status, and conditional pointers (canonical source)
+  - `CLAUDE.md` = thin bridge that imports `AGENTS.md` via `@AGENTS.md`; do not duplicate AGENTS.md content here
+  - `docs/integrations/*.md` = durable external system / API / integration knowledge
+  - `docs/testing/*.md` = repeatable test procedures and verification flows
+  - `docs/build/*.md` or `docs/architecture/*.md` = durable subsystem or feature notes where appropriate
+  - `docs/lessons.md` = curated, run-evidenced workflow/process lessons (when it exists)
+  - `docs/design-system.md` = per-project UI design cues and recorded visual patterns (when it exists)
+  - `.cursor/plans/plan-*.md` = active execution state and temporary implementation history
+- Before planning or building, consult `docs/lessons.md` for recurring gotchas and, for UI work, `docs/design-system.md` for recorded design cues — when they exist.
+- Do not dump detailed subsystem or integration knowledge into `AGENTS.md` when a focused doc would be clearer.
+- `/document` includes a propose-and-confirm `AGENTS.md` bloat guard: when the briefing grows large with stale session/version history, it offers to migrate that history into `docs/` and leave pointers (never moving `CHANGELOG.md`).
+- Before a plan is archived or deleted, migrate any still-useful enduring knowledge out of it into the appropriate permanent doc.
+- Before planning or modifying work in an area that has a dedicated doc referenced from the `Subsystem Documentation` section in `AGENTS.md`, read that documentation first.
+- Those pointers identify which deeper docs exist for which subsystems, integrations, testing flows, or architecture areas.
+- Do not modify a documented subsystem based on assumptions when verified reference material is available.
+- Before editing, re-read the exact target file(s) and any relevant subsystem doc — do not rely on memory or earlier conversation when verified code is available.
+- After significant feature work or before a major handoff, run `/document` to consolidate durable knowledge into the right docs and keep `AGENTS.md` concise and pointer-based.
+- For a deep, periodic, all-docs audit — accuracy + placement + bloat + staleness across every doc, with propose-and-confirm migrations — run `/document-review`, the heavier counterpart to `/document`'s in-run bloat guard; run it occasionally, not after every change.
+- Be concise, practical, grammatical, and code-verified.
+
+## Active Plan Discipline
+- If work relates to a feature that already has an active file in `.cursor/plans/plan-*.md`, treat that plan as the feature-level source of truth.
+- Master/stage convention for staged programs: a coordination-level master plan may exist alongside per-stage execution plans. The STAGE plan is the active execution plan; the master holds cross-stage coordination context and is never `/execute`d directly. `Plan Lineage` links them (the stage plan records the master as its parent). When both are Active, execute against the current stage plan.
+
+### Plan lifecycle states
+Saved plans in `.cursor/plans/` can be in one of these lifecycle states:
+
+- **Active**
+  - normal in-progress execution plan
+  - this is the default state during implementation
+
+- **Completed — Follow-ups Retained**
+  - the main implementation is complete
+  - the plan still holds deferred / excluded / accepted-assumption follow-up items that may be resumed later
+  - this plan remains loadable from `/load-plan`, but it is NOT the current active execution plan unless the user chooses to continue follow-up work
+  - loading this state should prompt the user to:
+    1. continue now and create a follow-up plan
+    2. review retained follow-up items only
+    3. take no action now
+
+- **Completed — Archivable**
+  - implementation is complete
+  - any enduring knowledge has been migrated out as needed
+  - no meaningful follow-up execution context needs to remain in the plan
+  - this plan can be archived or deleted when the user is ready
+
+Rules:
+- Do not treat `Completed — Follow-ups Retained` the same as a normal active plan.
+- Do not archive or delete a plan in `Completed — Follow-ups Retained` state unless the user explicitly chooses to close out the retained follow-ups.
+- If follow-up work is resumed from a retained-complete plan, create a new saved follow-up execution plan such as:
+  `.cursor/plans/plan-[feature]-followup-1.md`
+- If later follow-up rounds are needed, increment the suffix:
+  `.cursor/plans/plan-[feature]-followup-2.md`, etc.
+- Prefer `followup-N` over `phase-N` unless the project explicitly uses phase-based delivery language.
+- The original completed plan remains the context source for why the follow-up work exists unless the user explicitly wants it archived.
+- Follow-up plans are subject to the same lifecycle states as any other plan.
+- A follow-up plan can itself complete with retained follow-ups, spawning further follow-up plans with incremented suffixes.
+
+- For significant multi-step work, prefer native Plan Mode first.
+- If an approved native plan exists, run `/review-plan` in Agent mode before `/execute`.
+- If no plan exists and no planning conversation has happened yet, suggest native Plan Mode first or `/explore` then `/create-plan`.
+- If native Plan Mode was skipped, or if deeper discovery is needed before planning, use `/explore` then `/create-plan`.
+- When a meaningful implementation change, new design decision, new constraint, new verification step, or new deployment/schema/environment impact is discovered, update the active plan file before moving on.
+- Do not leave durable reasoning only in the conversation if it materially affects implementation or handoff.
+- If work starts outside `/execute` but clearly belongs to an existing active plan, keep the plan aligned anyway.
+- Keep plan updates concise, code-verified, and implementation-relevant.
+- Do not turn the plan into a raw research log or a play-by-play transcript.
+
+### Executor labels on plan tasks
+Tasks in saved plans may carry an executor label:
+- no label (default) — runs on whatever model is active
+- `[executor: premium-only]` — must run on a premium reasoning model
+  (the current generation's top reasoning tier for your tool family;
+  no specific model name is pinned here)
+
+Plan-time executor tier recording (Step 0 Executor Capability Gate):
+- `/create-plan` Step 0 and `/review-plan` Step 0 hard-stop at the
+  Executor Capability Gate before producing the plan. The gate is not
+  satisfied without a recordable answer.
+- The answer is written to the plan's `Planning Extraction Summary`
+  as `Executor tier: entirely premium | fast/medium involved` — the
+  recognized value leads, and free-text enrichment may follow it on
+  the same line. Pre-v22
+  plans omit this line; commands fall back to legacy behaviour (no
+  executor-tier-aware checks, no `Executor tier:` line surfaced in
+  `/start-session`).
+- The Critique Gate (Step 0.5 in `/create-plan`; Step 1.5 in
+  `/review-plan`) includes an executor-tier-aware item: if
+  `fast/medium involved` is recorded, confirm tasks that need premium
+  (concurrency, auth, schema migrations, hook ordering, final UX
+  polish) are explicitly labelled `[executor: premium-only]`.
+- `/start-session` surfaces the recorded `Executor tier:` when reading
+  the active plan, suppressed at the default `entirely premium`.
+
+Executor-tier hard stops in /execute:
+- /execute hard-stops when entering a `[executor: premium-only]` task
+  (BEFORE marking it 🟨) and asks the user to confirm a premium model
+  is loaded
+- /execute hard-stops when leaving a contiguous premium-only block
+  back to a default task, telling the user they may switch back to
+  a fast model
+- /execute hard-stops after two consecutive failed verifications on
+  the same task and recommends escalating to premium. The user must
+  confirm before /execute updates the plan label.
+
+What counts as a failed verification:
+- the same relevant test, build, typecheck, or targeted verification
+  fails after two fix attempts on this task
+- pre-existing warnings unrelated to the task DO NOT count
+- flaky external failures (network, external services) DO NOT count
+- checks that were already failing before this task started DO NOT
+  count, unless the task was meant to fix them
+
+Beyond those hard signals, do not have the agent self-assess fitness.
+Subjective triggers like "if execution stalls" are unreliable — the
+real signal for executor mismatch is /review's Round Classification,
+applied empirically after the fact.
+
+Two-state, not three. Do not invent a `fast-safe` middle tier. Two
+states with explicit hard stops at transitions is sufficient and avoids
+forcing planners to predict mechanical work in advance.
+
+For the full set of hard-stop conditions including operational stops
+(safety boundaries, context/handoff, plan-mandated review pauses,
+completion handoff) and the recommended-checkpoint conditions, see the
+Default execution mode and Hard-stop conditions sections in
+`.agents/skills/execute/SKILL.md`. The executor-tier rules above remain
+authoritative for model-tier transitions; the operational rules in
+the execute skill cover everything else.
+
+## Planning Discipline
+- In Plan Mode for significant multi-step work, prefer clarifying questions over assumptions.
+- Before presenting a final plan, identify any missing high-impact requirements, unresolved assumptions, or scope ambiguities.
+- If no important clarifying questions are needed, say so explicitly before presenting the plan.
+
+### Hard work needs multiple review rounds
+Some categories of work — concurrency, transactional invariants, lock
+ordering, hook ordering, race conditions, multi-step migrations,
+permission-matrix coverage — intrinsically require 2–3 review rounds
+even with a perfect plan and a premium executor. This is not a
+workflow defect.
+
+Calibrate against finding quality, not round count:
+- if round-2 findings are mostly fix-induced regressions, the executor
+  is the problem — escalate the model
+- if round-2 findings are mostly the same family as round-1 (lock added
+  but in the wrong place; pattern fixed at one site, missed at three),
+  the prior review didn't capture pattern siblings or invariants
+  fully — strengthen the next /review
+- if round-2 findings are mostly pre-existing LOWs surfacing now
+  because the review went deeper, this is the natural tail — LOWs
+  default to Fix-now, but recommend Accept (no benefit / net downside)
+  through the Deferral Confirmation Gate for any not worth the churn,
+  and ship once no CRIT/HIGH/MED remain. More generally, the Deferral
+  Confirmation Gate's recommended disposition should prefer `Fix now` /
+  `Include in plan` and reserve `Defer` for genuinely large or
+  out-of-scope work
+
+## Environment and Secrets
+- Never commit secrets.
+- Never stage `.env`, `.env.*`, private keys, certificate files, database dumps, or obvious secret exports.
+- Before any commit, check staged files for sensitive content risk.
+- Production secrets belong in the hosting platform's secret store (e.g. Railway Variables, AWS Secrets Manager, Vercel env vars), not in source control.
+- Do not rename existing environment variables without explicit confirmation.
+- When a new environment variable is introduced, remind the user to update:
+  1. local `.env`
+  2. the hosting platform's production variables
+  3. `.env.example` with the name only and no real value
+
+## Database and Migrations
+- Before any schema change, identify whether a migration is required.
+- Non-destructive schema changes can proceed after being flagged clearly.
+- Destructive schema changes require explicit confirmation first.
+- After local migrations, remind the user if the same migration must be run in the production environment.
+- Before destructive production migrations, remind the user to take a production database backup first (via the hosting platform's backup/snapshot tooling).
+
+## Deployment Safety
+- Pushing to `main` may trigger a production deployment on the hosting platform.
+- Do not modify deployment configuration files such as `railway.toml`, `fly.toml`, `render.yaml`, `vercel.json`, `Dockerfile`, `Procfile`, CI files, or build commands without flagging it first.
+- After a push that can affect production, remind the user to check the hosting platform's deployment logs.
+- If a change adds or changes required variables, remind the user to update the platform's production variables before relying on the deploy.
+
+## Git Safety
+- Always inspect `git status` before committing.
+- Show the user what is about to be committed.
+- Do not default to `git add .` unless the user explicitly wants every relevant changed file staged.
+- Prefer staging only the files relevant to the task.
+- Warn before destructive git operations such as reset, rebase with history rewrite, force push, or branch deletion.
+- If the current branch is `main`, explicitly warn that pushing may deploy the app.
+- Commit messages and PR descriptions must never mention AI, Cursor, Claude, agents, or internal workflow jargon. Keep them professional and human-sounding.
+- Never run two agent sessions against the same checkout concurrently — give each concurrent session its own worktree or clone; a shared working tree lets the sessions corrupt each other's work.
+
+## Repository Config
+- The `.cursor/` folder must be committed to GitHub. It must NOT be listed in `.gitignore`.
+- The `.claude/` folder must be committed to GitHub. It must NOT be listed in `.gitignore`.
+- The `.agents/` folder (shared Cursor/Codex Skills) must be committed to GitHub. It must NOT be listed in `.gitignore`.
+- The `.codex/` folder (Codex configuration) must be committed to GitHub. It must NOT be listed in `.gitignore`.
+- Exception: `.cursor/loops/` SHOULD be gitignored. It holds transient `/execute-loop` run logs (per-phase role output) that must not be committed. This is the single documented carve-out from the "do not ignore `.cursor/`" rule — the rest of `.cursor/` stays committed, so do not remove the `.cursor/loops/` ignore to "fix" the apparent contradiction.
+- `CLAUDE.md` should be committed — it's the thin bridge file that imports `AGENTS.md` so Claude Code shares project context with Cursor.
+- `CLAUDE.local.md`, if used for private per-developer Claude Code notes, should be in `.gitignore`.
+- `AGENTS.local.md`, if used for machine-specific or per-developer run notes (local paths, personal DB endpoints; never secrets), should be in `.gitignore`. It is tool-agnostic and additive to `CLAUDE.local.md`.
+- This is how rules and commands transfer between computers and sessions.
+
+## Build and Code Quality
+- Keep code simple, readable, and consistent with the existing project.
+- Follow the existing architecture unless there is a clear reason not to.
+- Use project-appropriate logging; avoid unnecessary debug noise in production code.
+- Explain new packages before installing them.
+- When there is uncertainty, ask a focused question rather than silently guessing.

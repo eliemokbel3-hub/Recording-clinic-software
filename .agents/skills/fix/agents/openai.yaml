@@ -1,0 +1,10 @@
+# Codex Skill metadata for $fix.
+#
+# Fix is side-effecting: it edits source files based on a Findings Log
+# round and updates the Log in place. As of v27.2, implicit ($fix)
+# invocation is permitted so an agent can drive it (for example inside a
+# review/fix loop); safety comes from the in-skill gates (per-finding
+# re-read, verification, and stop-on-failure), not from invocation-locking.
+# It can still be invoked explicitly.
+policy:
+  allow_implicit_invocation: true

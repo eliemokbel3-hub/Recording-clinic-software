@@ -1,0 +1,8 @@
+# Codex Skill metadata for $peer-loop.
+#
+# peer-loop is side-effecting: it spawns paid headless cross-family peer
+# agents and drives $fix cycles that edit source files and update the
+# Findings Log in place. Require explicit $peer-loop invocation so Codex
+# does not start an automated peer-review/fix loop without a clear intent.
+policy:
+  allow_implicit_invocation: false

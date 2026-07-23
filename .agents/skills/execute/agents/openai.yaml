@@ -1,0 +1,10 @@
+# Codex Skill metadata for $execute.
+#
+# Execute is side-effecting: it writes code, runs verification, and updates
+# the active plan file. As of v27.2, implicit ($execute) invocation is
+# permitted so an agent can drive it (for example inside a loop); safety
+# comes from the in-skill gates (the Deferral Confirmation Gate, the
+# verification-failure stop, and the scope-expansion hard-stops), not from
+# invocation-locking. It can still be invoked explicitly.
+policy:
+  allow_implicit_invocation: true

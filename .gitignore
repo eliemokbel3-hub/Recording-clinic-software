@@ -1,0 +1,10 @@
+# Local environment — never commit real values
+.env
+
+# Machine-specific / per-developer notes (never secrets)
+AGENTS.local.md
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Transient /execute-loop run logs (rest of .cursor/ stays committed)
+.cursor/loops/

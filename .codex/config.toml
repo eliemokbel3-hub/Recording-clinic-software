@@ -1,0 +1,12 @@
+# Project-scoped Codex configuration for the Cursor-Bootstrap-Guide repo.
+#
+# This file is read by Codex (CLI and IDE extension) in addition to
+# ~/.codex/config.toml. Settings here apply only when Codex runs with
+# this repository as cwd or an ancestor.
+
+# AGENTS.md in this repo is intentionally large — it serves as the
+# shared project briefing for Cursor, Claude Code, and Codex.
+# The default Codex project-doc limit is 32768 bytes (32 KiB), which
+# would truncate it. Raise to 65536 bytes (64 KiB) so Codex sees the
+# full briefing.
+project_doc_max_bytes = 65536

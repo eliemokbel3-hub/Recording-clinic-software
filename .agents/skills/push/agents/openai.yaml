@@ -1,0 +1,7 @@
+# Codex Skill metadata for $push.
+#
+# Push is side-effecting: it stages, commits, and pushes git changes
+# (potentially triggering deployment). Require explicit $push invocation
+# so Codex does not run git push as an implicit action.
+policy:
+  allow_implicit_invocation: false

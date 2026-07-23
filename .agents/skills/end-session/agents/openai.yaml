@@ -1,0 +1,8 @@
+# Codex Skill metadata for $end-session.
+#
+# End-session is side-effecting: it can update AGENTS.md and CHANGELOG.md
+# and optionally stage, commit, and push git changes. Require explicit
+# $end-session invocation so Codex does not run closeout actions without
+# the user asking for them.
+policy:
+  allow_implicit_invocation: false

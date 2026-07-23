@@ -1,0 +1,12 @@
+# Codex Skill metadata for $document-review.
+#
+# document-review is side-effecting: it migrates and rewrites durable
+# user-visible docs (AGENTS.md, AGENTS.local.md, README.md, docs/*.md) in a
+# single confirmed pass. Like $document it writes straight through to
+# documentation once the user confirms the proposed migrations, so require
+# explicit $document-review invocation: a vague prompt like "audit the docs"
+# must not auto-start an all-docs migration pass. Locked explicit-only
+# (mirrors the SKILL.md frontmatter's disable-model-invocation: true for
+# Cursor / Claude Code).
+policy:
+  allow_implicit_invocation: false
