@@ -1,7 +1,7 @@
 # Security documentation
 
-The five governing documents for the Cliniko clinical scribe, written in plan
-Step 11 once the Phase 1 architecture is built:
+The five governing documents for the Cliniko clinical scribe, grounded in the
+Phase 1 architecture as built:
 
 - `intended-use.md` — intended-use statement (documentation only; no clinical decision support)
 - `data-flow-map.md` — where data lives and moves (including log files; there is no status file)

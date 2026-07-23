@@ -53,6 +53,9 @@ Add concise "if working on X, read Y" pointers here for any subsystem that has f
 These pointers are treated as required reading by the agent before planning or modifying work in that area.
 
 - Before planning or building any feature, read `PLAN.md` (product spec: architecture, phased roadmap, safety and test requirements, commercial path).
+- If touching security, crypto, logging, the native-messaging channel, or data handling, read `docs/security/threat-model.md` and `docs/security/data-flow-map.md` first (trust boundaries, accepted residual risks, enforced constraints).
+- If changing what data is kept or for how long, read `docs/security/retention-schedule.md`.
+- If working on the message protocol, the canonical contract is `protocol/fixtures/` (both mirrors are tested against it — see `protocol/fixtures/README.md`).
 
 <!-- Example entries:
 - If working on bank feeds, read `docs/integrations/aciss-bank-feeds.md`

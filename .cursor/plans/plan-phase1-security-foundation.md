@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase1-security-foundation
-**Overall Progress:** `83%`
+**Overall Progress:** `92%`
 
 ## Lifecycle State
 - Active
@@ -229,9 +229,11 @@ N/A — no database in Phase 1.
 See `Planning Extraction Summary` → Deferred / Excluded / Accepted Assumptions (single source of truth; all dispositions user-confirmed 2026-07-23 during plan hardening).
 
 ## Current State / Handoff Note
-- Last completed step: Step 10 (integration test) — all implementation tasks 🟩; 64 desktop + 29 extension tests green
+- Last completed step: Step 11 (security documents); review round 1 Closed (29/29 processed, 28 code/test fixes + 1 doc residual); 71 desktop + 36 extension tests green
 - Current in-progress step: None
-- Immediate next action: Step 11 (security documents), then Step 12 (manual completion gate — needs the user at Chrome)
+- Immediate next action: Step 12 — manual completion gate (REQUIRES THE USER at Chrome: load unpacked `extension/dist`, observe badge, self-test, netstat, kill-host reconnect check); optional round-2 /review first
+- Open blockers / open questions: Step 12 cannot be completed without the user at the machine
+- Last plan sync: 2026-07-24
 - Open blockers / open questions: None
 - Last plan sync: 2026-07-24
 
@@ -249,7 +251,7 @@ Format /review will append:
 /fix reads from this section when a round has pending decisions.
 
 ### Round 1 — 2026-07-24
-Round status: Open (1 pending — LOW-009 lands with Step 11's threat model)
+Round status: Closed
 Source: Claude Code
 
 #### CRIT-001: `extension/src/manifest.ts:13` — missing "alarms" permission kills the service worker
@@ -406,7 +408,7 @@ Source: Claude Code
 #### LOW-006: `extension/src/background.ts:10` — onDisconnect never reads chrome.runtime.lastError (loses "host not found" diagnostic) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
 #### LOW-007: `extension/src/connection.ts:124-142` — fail() + queued onDisconnect can double-increment backoff — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
 #### LOW-008: `desktop/src/scribe_desktop/framing.py:68-72` — prefix read should use _read_exact (short-read robustness) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
-#### LOW-009: `desktop/src/scribe_desktop/secure_storage.py` — zeroization is best-effort (immutable copies survive); document residual in threat model at Step 11 — Triage: Fix-now-if-tied (Step 11); Decision: Pending (lands with Step 11's threat model)
+#### LOW-009: `desktop/src/scribe_desktop/secure_storage.py` — zeroization is best-effort (immutable copies survive); document residual in threat model at Step 11 — Triage: Fix-now-if-tied (Step 11); Decision: Applied; applied by: Claude Code (2026-07-24 — documented in docs/security/threat-model.md "Data-at-rest residual risks")
 #### LOW-010: `desktop/src/scribe_desktop/status.py:37-41` — only FileNotFoundError caught; PermissionError crashes scribe-app at launch — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
 #### LOW-011: `desktop/src/scribe_desktop/secure_storage.py:41-51` — secret_name never validated (empty accepted) — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
 #### LOW-012: `desktop/src/scribe_desktop/logging_setup.py:89` — unguarded mkdir; unwritable LOCALAPPDATA crashes host before origin check — Triage: Fix-now; Decision: Applied; applied by: Claude Code (2026-07-24)
@@ -449,7 +451,7 @@ Source: Claude Code
 - [x] 🟩 Step 10: No-network-sockets integration test — done 2026-07-24; hello→ping via real launcher, stdout-purity assertion, full net_connections() empty on host tree AND scribe-app, polled mid-session
   - Spawn the real host through the real launcher over real pipes; complete the full handshake; assert first stdout bytes are a valid length prefix; poll `net_connections()` on the host AND a launched `scribe-app` throughout — both must stay empty
   - Ref: Critical Constraints (no listening sockets)
-- [ ] 🟥 Step 11: Security documents
+- [x] 🟩 Step 11: Security documents — done 2026-07-24; five docs written grounded in the built system (threat model covers stdio boundary, same-user residual risks, tripwires, LOW-009 zeroization residual, Phase-2 topology; data-flow map + retention enumerate log files/rotation); AGENTS.md pointers added
   - Write the five `docs/security/` docs grounded in the built system. Threat model MUST cover: the stdio trust boundary (nonce = session identifier, not auth), same-user residual risks (HKCU/manifest/launcher/venv hijack) with the startup path-logging tripwire, and the Phase-2 named-pipe topology. Data-flow map + retention schedule MUST enumerate log files (rotation/retention) — there is no status file. Add `AGENTS.md` Subsystem Documentation pointers
 - [ ] 🟥 Step 12: Completion gate
   - Run every manual item in Validation / Verification; update `AGENTS.md` (stack rows, Local Run Steps incl. per-user registration + venv-move rule, Current Status) and `CHANGELOG.md`; record results in the handoff note
