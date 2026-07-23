@@ -6,9 +6,9 @@ A single-practitioner clinical scribe for two Cliniko clinics: a thin Chrome ext
 ## Tech Stack
 | Layer | Technology | Notes |
 |---|---|---|
-| Frontend | | |
-| Backend | | |
-| Database | | |
+| Frontend | Chrome extension (Manifest V3) | Runs only on authorised Cliniko domains; UI embedded in the treatment-note workflow |
+| Backend | Windows desktop companion | Talks to Chrome via authenticated Native Messaging; local Whisper transcription + local `gpt-oss-20b` note generation |
+| Database | Local encrypted session storage | Per-session encryption keys; Cliniko is the permanent system of record — no clinical data synced between machines |
 | Hosting | None (local-only) | Chrome extension + local Windows desktop app; may move to a hosting platform later when commercialising; source=user-confirmed:2026-07-23 |
 | DNS | | Only if used |
 
@@ -21,7 +21,7 @@ A single-practitioner clinical scribe for two Cliniko clinics: a thin Chrome ext
 ## Environment Variables
 | Variable | Purpose | Local | Production |
 |---|---|---|---|
-| DATABASE_URL | Main database connection | Dev DB | Prod DB |
+| _None yet_ | Cliniko API keys are stored in Windows Credential Manager, not env vars; add rows here if env vars are introduced | — | — |
 
 ## Database Notes
 [List the main tables, key entities, or schema notes here.]
@@ -51,6 +51,8 @@ Planning stage — `PLAN.md` holds the product plan; no application code exists 
 ## Subsystem Documentation
 Add concise "if working on X, read Y" pointers here for any subsystem that has focused documentation.
 These pointers are treated as required reading by the agent before planning or modifying work in that area.
+
+- Before planning or building any feature, read `PLAN.md` (product spec: architecture, phased roadmap, safety and test requirements, commercial path).
 
 <!-- Example entries:
 - If working on bank feeds, read `docs/integrations/aciss-bank-feeds.md`
