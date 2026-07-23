@@ -1,0 +1,8 @@
+{
+  "protocol_version": 1,
+  "type": "error",
+  "payload": {
+    "code": "bad_nonce",
+    "message": "session nonce missing or mismatched"
+  }
+}

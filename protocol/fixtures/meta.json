@@ -1,0 +1,6 @@
+{
+  "protocol_version": 1,
+  "min_supported_version": 1,
+  "host_name": "com.scribe.cliniko_host",
+  "max_frame_bytes": 1048576
+}

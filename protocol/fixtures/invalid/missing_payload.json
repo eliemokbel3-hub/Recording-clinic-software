@@ -1,0 +1,9 @@
+{
+  "reason": "payload is required on every message",
+  "message": {
+    "protocol_version": 1,
+    "type": "ping",
+    "request_id": "req-0002",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a"
+  }
+}

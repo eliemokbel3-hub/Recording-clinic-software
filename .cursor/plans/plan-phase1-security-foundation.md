@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase1-security-foundation
-**Overall Progress:** `8%`
+**Overall Progress:** `17%`
 
 ## Lifecycle State
 - Active
@@ -229,9 +229,9 @@ N/A — no database in Phase 1.
 See `Planning Extraction Summary` → Deferred / Excluded / Accepted Assumptions (single source of truth; all dispositions user-confirmed 2026-07-23 during plan hardening).
 
 ## Current State / Handoff Note
-- Last completed step: Step 1 (scaffolding + QA tooling) — both QA suites green, MV3 bundle builds
+- Last completed step: Step 2 (protocol contract) — fixtures canonical, both mirrors verified
 - Current in-progress step: None
-- Immediate next action: Step 2 (protocol contract)
+- Immediate next action: Step 3 (extension identity)
 - Open blockers / open questions: None
 - Last plan sync: 2026-07-24
 
@@ -255,7 +255,7 @@ Format /review will append:
 - [x] 🟩 Step 1: Scaffolding + QA tooling — done 2026-07-24; dev machine runs Python 3.14.6 (plan targeted 3.12; `requires-python = ">=3.12"`, all deps installed clean — revalidate ML wheels at the Phase 2 benchmark); pinned: CRXJS 2.7.1, Vite 8.1.5, TS 6.0.3, vitest 4.1.10, eslint 10.7.0
   - `extension/` (Vite + CRXJS pinned exact versions, TS strict, eslint, vitest), `desktop/` (pyproject with PySide6, pydantic, cryptography, keyring, psutil; ruff + mypy --strict + pytest; entry points `scribe-app`, `scribe-host`), `protocol/fixtures/`, `scripts/`, `docs/security/` skeletons; one trivial passing test per side; lint rules: `QtNetwork`/socket-server import ban, no `message`/`payload`/`envelope` interpolation in logging calls
   - Done when: `npm run build` yields an unpacked MV3 bundle, `pip install -e desktop` succeeds, one documented command per side runs its full QA suite green
-- [ ] 🟥 Step 2: Protocol contract
+- [x] 🟩 Step 2: Protocol contract — done 2026-07-24; 6 valid + 9 invalid fixtures + meta.json; both mirrors pass 18 fixture-driven tests each
   - Author `protocol/fixtures/*.json` (canonical): envelope `protocol_version`/`type`/`request_id?`/`session_nonce?`/`payload`; messages `hello`, `hello_ack`, `ping`, `pong`, `error`; per-type nonce presence rules; version floor; valid AND invalid cases. Mirror as `extension/src/protocol.ts` and `desktop/.../protocol.py` (pydantic + throwaway connection-state enum), each tested against the same fixtures
   - Ref: Key Design Decision (fixtures-canonical protocol)
 - [ ] 🟥 Step 3: Extension identity

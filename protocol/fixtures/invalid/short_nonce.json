@@ -1,0 +1,10 @@
+{
+  "reason": "session_nonce must be 16-128 characters",
+  "message": {
+    "protocol_version": 1,
+    "type": "pong",
+    "request_id": "req-0002",
+    "session_nonce": "abc",
+    "payload": {}
+  }
+}

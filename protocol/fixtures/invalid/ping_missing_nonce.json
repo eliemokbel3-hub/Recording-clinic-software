@@ -1,0 +1,9 @@
+{
+  "reason": "ping requires the session_nonce issued in hello_ack",
+  "message": {
+    "protocol_version": 1,
+    "type": "ping",
+    "request_id": "req-0002",
+    "payload": {}
+  }
+}

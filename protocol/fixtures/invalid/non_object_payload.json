@@ -1,0 +1,9 @@
+{
+  "reason": "payload must be a JSON object",
+  "message": {
+    "protocol_version": 1,
+    "type": "hello",
+    "request_id": "req-0001",
+    "payload": "not-an-object"
+  }
+}

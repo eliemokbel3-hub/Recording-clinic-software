@@ -1,0 +1,10 @@
+{
+  "reason": "error payload requires a known code and a message",
+  "message": {
+    "protocol_version": 1,
+    "type": "error",
+    "payload": {
+      "message": "something went wrong"
+    }
+  }
+}
