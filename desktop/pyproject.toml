@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scribe-desktop"
+version = "0.1.0"
+description = "Windows desktop companion for the Cliniko clinical scribe (Phase 1: security foundation)"
+# Plan targets 3.12+; dev machine runs 3.14 (recorded in plan Key Findings)
+requires-python = ">=3.12"
+dependencies = [
+    "PySide6>=6.8",
+    "pydantic>=2.7",
+    "cryptography>=43",
+    "keyring>=25",
+    "psutil>=6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.scripts]
+scribe-app = "scribe_desktop.app:main"
+scribe-host = "scribe_desktop.native_host:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",    # pycodestyle / pyflakes
+    "I",              # isort
+    "B",              # bugbear
+    "UP",             # pyupgrade
+    "G",              # flake8-logging-format: G004 bans f-strings in logging calls
+    "TID",            # flake8-tidy-imports: banned-api enforcement below
+]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+# Critical Constraint: neither desktop process may open a network socket.
+"PySide6.QtNetwork" = { msg = "Network APIs are banned: no sockets in the desktop app (plan Critical Constraints)" }
+"socket" = { msg = "The socket module is banned: no network sockets in the desktop app (plan Critical Constraints)" }
+"http" = { msg = "HTTP client/server APIs are banned in Phase 1 (plan Critical Constraints)" }
+"urllib.request" = { msg = "Network APIs are banned in Phase 1 (plan Critical Constraints)" }
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["scribe_desktop"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

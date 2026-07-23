@@ -1,0 +1,24 @@
+{
+  "name": "scribe-extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Chrome MV3 companion for the Cliniko clinical scribe (Phase 1: security foundation)",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "qa": "npm run typecheck && npm run lint && npm run test"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "2.7.1",
+    "@types/chrome": "0.2.2",
+    "eslint": "10.7.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
+  }
+}
