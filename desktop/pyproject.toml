@@ -23,7 +23,10 @@ dev = [
     "mypy>=1.11",
 ]
 
-[project.scripts]
+[project.gui-scripts]
+# gui-scripts (not scripts): pip generates pythonw-backed .exe launchers, so
+# Chrome spawning the host shows no console window. They MUST be .exe —
+# current Chrome refuses to launch .bat/.cmd native messaging hosts.
 scribe-app = "scribe_desktop.app:main"
 scribe-host = "scribe_desktop.native_host:main"
 

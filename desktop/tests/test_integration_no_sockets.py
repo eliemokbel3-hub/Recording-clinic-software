@@ -1,6 +1,8 @@
-"""Step 10: end-to-end integration through the REAL launcher + no-sockets proof.
+"""Step 10: end-to-end integration through the REAL host exe + no-sockets proof.
 
-Spawns the host exactly as Chrome would (dev-host-launcher.bat, origin argv),
+Spawns the host exactly as Chrome does — the venv's `scribe-host.exe` with the
+bare origin argv, no shell, CREATE_NO_WINDOW, and a foreign working directory
+(Chrome cannot launch .bat hosts at all, so the exe IS the shipped path),
 completes the full hello -> ping handshake over real pipes, asserts the first
 stdout bytes are a valid length prefix (launcher stdout-purity), and polls the
 FULL net_connections() list of the host — and a launched scribe-app — during
@@ -28,7 +30,8 @@ from scribe_desktop.identity import EXPECTED_ORIGIN as ORIGIN
 from scribe_desktop.identity import NONCE_HEX_LENGTH
 
 REPO = Path(__file__).resolve().parents[2]
-LAUNCHER = REPO / "scripts" / "dev-host-launcher.bat"
+LAUNCHER = Path(sys.executable).parent / "scribe-host.exe"
+CREATE_NO_WINDOW = 0x08000000  # Chrome spawns native hosts windowless
 
 pytestmark = [
     pytest.mark.skipif(sys.platform != "win32", reason="Windows-only launcher"),
@@ -44,8 +47,8 @@ pytestmark = [
 def require_registration() -> None:
     if not LAUNCHER.exists():
         pytest.fail(
-            "dev-host-launcher.bat missing — run scripts/register-native-host.py "
-            "first, or set SCRIBE_SKIP_INTEGRATION=1 to skip deliberately"
+            "scribe-host.exe missing — run `pip install -e desktop` in this venv, "
+            "or set SCRIBE_SKIP_INTEGRATION=1 to skip deliberately"
         )
 
 
@@ -75,6 +78,8 @@ def test_full_handshake_via_launcher_with_no_sockets() -> None:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        cwd=os.environ.get("SystemRoot", "C:\\Windows"),  # Chrome uses an arbitrary cwd
+        creationflags=CREATE_NO_WINDOW,
     )
     try:
         ps_host = psutil.Process(host.pid)

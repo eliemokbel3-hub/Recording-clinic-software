@@ -11,7 +11,7 @@ today and pre-commits the rules later phases must honour.
 | Self-test credential (`ClinikoScribe/test` / `probe`) | Windows Credential Manager | Seconds (created and deleted within the self-test / test run) | `keyring.delete_password`; idempotent |
 | Session encryption keys | Process memory only | Lifetime of the session object | `destroy()` zeroes the bytearray and drops the key; ciphertext becomes unrecoverable (best-effort memory scrubbing — residual documented in the threat model) |
 | Encrypted test payloads | Process memory only | Transient (never persisted in Phase 1) | Freed with the process; unrecoverable after key destruction |
-| Registration artifacts (host manifest, launcher `.bat`, HKCU key) | `scripts/` + `HKCU\Software\Google\Chrome\NativeMessagingHosts\` | Until unregistered | `scripts/register-native-host.py --unregister` removes all three |
+| Registration artifacts (host manifest + HKCU key; host exe lives in the venv) | `scripts/` + `HKCU\Software\Google\Chrome\NativeMessagingHosts\` | Until unregistered | `scripts/register-native-host.py --unregister` removes both |
 | Extension identity (`key.pem`) | `extension/key.pem` (gitignored) | Indefinite — losing it changes the extension ID and breaks registration | Manual; deliberate decision only |
 
 ## Pre-committed rules for later phases (from PLAN.md)

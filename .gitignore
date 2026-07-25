@@ -25,5 +25,5 @@ extension/dist/
 key.pem
 
 # Machine-generated native-host registration artifacts (absolute local paths)
-scripts/dev-host-launcher.bat
 scripts/com.scribe.cliniko_host.json
+scripts/dev-host-launcher.bat

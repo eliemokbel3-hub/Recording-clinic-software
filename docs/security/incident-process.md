@@ -7,7 +7,7 @@ When in doubt, stop using the software and investigate before resuming.
 
 - Suspected compromise of the clinic machine or Windows user account
 - Unexpected change to the registration chain: the startup tripwire log
-  (`host_manifest` / `host_launcher` / `host_start` paths in
+  (`host_manifest` / `host_launcher` (the host exe) / `host_start` paths in
   `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-host.log`) shows a path you did
   not set, or registration verification fails
 - Any sign of payload content in log files (the tripwire also counts drops —

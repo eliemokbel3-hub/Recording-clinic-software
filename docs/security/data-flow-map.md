@@ -42,10 +42,10 @@ and **no network sockets** on either desktop process (enforced by
    nothing encrypted is persisted to disk.
 
 5. **Registration artifacts (machine-local, gitignored).**
-   `scripts/com.scribe.cliniko_host.json` (host manifest) and
-   `scripts/dev-host-launcher.bat`, referenced from
-   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`.
-   Contain paths and the pinned extension ID — no secrets.
+   `scripts/com.scribe.cliniko_host.json` (host manifest), referenced from
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`
+   and pointing at `.venv\Scripts\scribe-host.exe`. Contain paths and the
+   pinned extension ID — no secrets.
 
 ## Explicit non-flows
 

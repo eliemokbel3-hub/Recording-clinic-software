@@ -1,13 +1,14 @@
 """Register (or unregister) the Chrome native-messaging host — plan Step 6.
 
-Generates BOTH the host manifest and the launcher from the CURRENT
-interpreter path (executor facts / Config Impact: never hand-edit; rerun
-after any venv move; registration is per Windows user via HKCU), writes the
-registry value, and verifies what actually landed.
+Generates the host manifest pointing at the venv's `scribe-host.exe`, resolved
+from the CURRENT interpreter path (never hand-edit; rerun after any venv move;
+registration is per Windows user via HKCU), writes the registry value, and
+verifies what actually landed.
 
-Launcher rules (plan executor facts): @echo off, absolute venv pythonw path,
-explicit working directory, %* forwarding so Chrome's origin argv and
---parent-window reach the host.
+The host MUST be an .exe: current Chrome silently refuses to launch .bat/.cmd
+native messaging hosts — the process is never spawned. `scribe-host.exe` comes
+from the gui-scripts entry point, so it also shows no console window and
+receives Chrome's origin argv directly.
 
 Usage (from the repo root, inside the project venv):
     .venv/Scripts/python.exe scripts/register-native-host.py
@@ -29,27 +30,19 @@ from scribe_desktop.identity import HOST_NAME, REGISTRY_KEY
 REPO = Path(__file__).resolve().parents[1]
 SCRIPTS = REPO / "scripts"
 MANIFEST_PATH = SCRIPTS / f"{HOST_NAME}.json"
-LAUNCHER_PATH = SCRIPTS / "dev-host-launcher.bat"
+LEGACY_LAUNCHER = SCRIPTS / "dev-host-launcher.bat"  # removed by --unregister
 
 
-def generate_launcher() -> str:
-    python = Path(sys.executable)
-    if python.name.lower() == "python.exe":
-        pythonw = python.with_name("pythonw.exe")
-        if pythonw.exists():
-            python = pythonw
-    return (
-        "@echo off\r\n"
-        f'cd /d "{REPO}"\r\n'
-        f'"{python}" -m scribe_desktop.native_host %*\r\n'
-    )
+def host_executable() -> Path:
+    """The venv's scribe-host.exe, resolved from the running interpreter."""
+    return Path(sys.executable).parent / "scribe-host.exe"
 
 
 def generate_manifest() -> dict[str, object]:
     return {
         "name": HOST_NAME,
         "description": "Cliniko clinical scribe native host (Phase 1)",
-        "path": str(LAUNCHER_PATH),
+        "path": str(host_executable()),
         "type": "stdio",
         "allowed_origins": [ALLOWED_ORIGIN],
     }
@@ -58,17 +51,16 @@ def generate_manifest() -> dict[str, object]:
 def register() -> int:
     import winreg
 
-    # cmd.exe reads .bat files in the ANSI/OEM codepage, and repo/venv paths
-    # may contain non-ASCII characters (LOW-003): encode accordingly.
-    try:
-        LAUNCHER_PATH.write_bytes(generate_launcher().encode("mbcs"))
-    except UnicodeEncodeError:
+    exe = host_executable()
+    if not exe.is_file():
         print(
-            "ERROR: repo/venv path contains characters the ANSI codepage cannot "
-            "encode; move the project to a representable path.",
+            f"ERROR: {exe} not found — run `pip install -e desktop` in this venv "
+            "so the scribe-host launcher is generated.",
             file=sys.stderr,
         )
         return 1
+    if LEGACY_LAUNCHER.exists():
+        LEGACY_LAUNCHER.unlink()  # Chrome cannot launch .bat hosts; remove stale copies
     MANIFEST_PATH.write_text(json.dumps(generate_manifest(), indent=2) + "\n", encoding="utf-8")
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
@@ -77,10 +69,10 @@ def register() -> int:
     # Verify what actually landed (plan: write + verify, never assume).
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
         value, _ = winreg.QueryValueEx(key, "")
-    ok = value == str(MANIFEST_PATH) and MANIFEST_PATH.is_file() and LAUNCHER_PATH.is_file()
+    ok = value == str(MANIFEST_PATH) and MANIFEST_PATH.is_file() and exe.is_file()
     manifest_ok = json.loads(MANIFEST_PATH.read_text(encoding="utf-8")) == generate_manifest()
 
-    print(f"launcher : {LAUNCHER_PATH}")
+    print(f"host exe : {exe}")
     print(f"manifest : {MANIFEST_PATH}")
     print(f"registry : HKCU\\{REGISTRY_KEY} -> {value}")
     print(f"verified : {'OK' if ok and manifest_ok else 'FAIL'}")
@@ -97,7 +89,7 @@ def unregister() -> int:
         removed.append(f"HKCU\\{REGISTRY_KEY}")
     except FileNotFoundError:
         pass
-    for path in (MANIFEST_PATH, LAUNCHER_PATH):
+    for path in (MANIFEST_PATH, LEGACY_LAUNCHER):
         if path.exists():
             path.unlink()
             removed.append(str(path))

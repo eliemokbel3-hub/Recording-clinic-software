@@ -122,7 +122,8 @@ def setup_logging(
         # origin check — fall back to stderr-only logging.
         pass
 
-    if stderr:
+    # sys.stderr is None under a pythonw-backed launcher with no redirection.
+    if stderr and sys.stderr is not None:
         stderr_handler = logging.StreamHandler(sys.stderr)
         stderr_handler.setFormatter(formatter)
         stderr_handler.addFilter(tripwire)

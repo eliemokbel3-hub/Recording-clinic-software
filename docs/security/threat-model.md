@@ -24,17 +24,17 @@ honest BEFORE clinical data arrives.
    Malware running as the logged-in Windows user owns both endpoints. It can:
    - repoint `HKCU\...\NativeMessagingHosts\com.scribe.cliniko_host` at its
      own binary (registration hijack);
-   - replace or edit the generated launcher `.bat` or host manifest (both in
-     user-writable locations);
-   - modify the venv's interpreter or site-packages (code hijack via the
-     launcher);
+   - replace or edit the host manifest, or the venv's `scribe-host.exe`
+     (both in user-writable locations);
+   - modify the venv's interpreter or site-packages (code hijack through the
+     host executable);
    - read process memory, including session keys and — in later phases —
      Credential Manager secrets accessible to the user session.
    No extension-side or pipe-side control changes this; message-level crypto
    would be theater against an attacker who owns both endpoints. **Cheap
    tripwire in place:** the host logs its resolved executable, module, cwd,
-   registry-resolved manifest path, and the manifest's launcher path at every
-   startup, so a hijacked chain is visible in the log history. **Real
+   registry-resolved manifest path, and the manifest's host-executable path at
+   every startup, so a hijacked chain is visible in the log history. **Real
    mitigation** is Phase 7 packaging/signing plus normal OS hygiene
    (up-to-date OS, AV, no untrusted software in the clinic user session).
 
