@@ -24,6 +24,7 @@ extension/dist/
 # Extension signing key — never commit (see plan Critical Constraints)
 key.pem
 
-# Machine-generated native-host registration artifacts (absolute local paths)
+# Machine-generated native-host registration artifacts (pre-gate locations;
+# registration now installs into %LOCALAPPDATA%\ClinikoScribe, outside the repo)
 scripts/com.scribe.cliniko_host.json
 scripts/dev-host-launcher.bat

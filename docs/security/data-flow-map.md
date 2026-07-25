@@ -41,11 +41,12 @@ and **no network sockets** on either desktop process (enforced by
    encrypted under it unrecoverable. Phase 1 encrypts test payloads only;
    nothing encrypted is persisted to disk.
 
-5. **Registration artifacts (machine-local, gitignored).**
-   `scripts/com.scribe.cliniko_host.json` (host manifest), referenced from
-   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`
-   and pointing at `.venv\Scripts\scribe-host.exe`. Contain paths and the
-   pinned extension ID — no secrets.
+5. **Registration artifacts (machine-local, outside the repo).**
+   `%LOCALAPPDATA%\ClinikoScribe\` holds the host manifest and a copy of
+   `scribe-host.exe`, referenced from
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`.
+   Contain paths and the pinned extension ID — no secrets. (Chrome resolves
+   the manifest only from a space-free path — see the threat model.)
 
 ## Explicit non-flows
 

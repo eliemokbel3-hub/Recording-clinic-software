@@ -1,14 +1,19 @@
-"""Register (or unregister) the Chrome native-messaging host — plan Step 6.
+r"""Register (or unregister) the Chrome native-messaging host — plan Step 6.
 
-Generates the host manifest pointing at the venv's `scribe-host.exe`, resolved
-from the CURRENT interpreter path (never hand-edit; rerun after any venv move;
-registration is per Windows user via HKCU), writes the registry value, and
-verifies what actually landed.
+Installs the native-messaging registration into %LOCALAPPDATA%\ClinikoScribe:
+a copy of the venv's `scribe-host.exe` plus the host manifest, then writes and
+verifies the HKCU registry value. Rerun after any venv move; registration is
+per Windows user.
 
-The host MUST be an .exe: current Chrome silently refuses to launch .bat/.cmd
-native messaging hosts — the process is never spawned. `scribe-host.exe` comes
-from the gui-scripts entry point, so it also shows no console window and
-receives Chrome's origin argv directly.
+Two hard requirements learned at the Phase-1 gate, both of which fail SILENTLY
+(Chrome reports only "Specified native messaging host not found"):
+1. The install path must contain NO SPACES. A manifest under
+   `C:\Recording clinic software\...` is never resolved by Chrome — which is
+   why %LOCALAPPDATA%\ClinikoScribe is used instead of the repo.
+2. The host must be an `.exe` (not `.bat`/`.cmd`). `scribe-host.exe` comes
+   from the gui-scripts entry point, so it is windowless and receives
+   Chrome's bare origin argv plus `--parent-window` directly. The copy still
+   runs the repo's code — the launcher embeds the venv interpreter path.
 
 Usage (from the repo root, inside the project venv):
     .venv/Scripts/python.exe scripts/register-native-host.py
@@ -19,6 +24,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -28,12 +35,19 @@ from scribe_desktop.identity import EXPECTED_ORIGIN as ALLOWED_ORIGIN
 from scribe_desktop.identity import HOST_NAME, REGISTRY_KEY
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPTS = REPO / "scripts"
-MANIFEST_PATH = SCRIPTS / f"{HOST_NAME}.json"
-LEGACY_LAUNCHER = SCRIPTS / "dev-host-launcher.bat"  # removed by --unregister
+# Install target: space-free, stable, outside the repo (see module docstring).
+INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ClinikoScribe"
+MANIFEST_PATH = INSTALL_DIR / f"{HOST_NAME}.json"
+INSTALLED_EXE = INSTALL_DIR / "scribe-host.exe"
+
+# Pre-gate artifacts that lived in the repo; removed on register/unregister.
+LEGACY_ARTIFACTS = (
+    REPO / "scripts" / "dev-host-launcher.bat",
+    REPO / "scripts" / f"{HOST_NAME}.json",
+)
 
 
-def host_executable() -> Path:
+def venv_executable() -> Path:
     """The venv's scribe-host.exe, resolved from the running interpreter."""
     return Path(sys.executable).parent / "scribe-host.exe"
 
@@ -42,7 +56,7 @@ def generate_manifest() -> dict[str, object]:
     return {
         "name": HOST_NAME,
         "description": "Cliniko clinical scribe native host (Phase 1)",
-        "path": str(host_executable()),
+        "path": str(INSTALLED_EXE),
         "type": "stdio",
         "allowed_origins": [ALLOWED_ORIGIN],
     }
@@ -51,17 +65,28 @@ def generate_manifest() -> dict[str, object]:
 def register() -> int:
     import winreg
 
-    exe = host_executable()
-    if not exe.is_file():
+    source_exe = venv_executable()
+    if not source_exe.is_file():
         print(
-            f"ERROR: {exe} not found — run `pip install -e desktop` in this venv "
-            "so the scribe-host launcher is generated.",
+            f"ERROR: {source_exe} not found — run `pip install -e desktop` in this "
+            "venv so the scribe-host launcher is generated.",
             file=sys.stderr,
         )
         return 1
-    if LEGACY_LAUNCHER.exists():
-        LEGACY_LAUNCHER.unlink()  # Chrome cannot launch .bat hosts; remove stale copies
+    if " " in str(INSTALL_DIR):
+        print(
+            f"ERROR: install dir {INSTALL_DIR} contains a space; Chrome will not "
+            "resolve the host manifest there.",
+            file=sys.stderr,
+        )
+        return 1
+
+    INSTALL_DIR.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_exe, INSTALLED_EXE)
     MANIFEST_PATH.write_text(json.dumps(generate_manifest(), indent=2) + "\n", encoding="utf-8")
+    for stale in LEGACY_ARTIFACTS:
+        if stale.exists():
+            stale.unlink()
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(MANIFEST_PATH))
@@ -69,10 +94,10 @@ def register() -> int:
     # Verify what actually landed (plan: write + verify, never assume).
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
         value, _ = winreg.QueryValueEx(key, "")
-    ok = value == str(MANIFEST_PATH) and MANIFEST_PATH.is_file() and exe.is_file()
+    ok = value == str(MANIFEST_PATH) and MANIFEST_PATH.is_file() and INSTALLED_EXE.is_file()
     manifest_ok = json.loads(MANIFEST_PATH.read_text(encoding="utf-8")) == generate_manifest()
 
-    print(f"host exe : {exe}")
+    print(f"host exe : {INSTALLED_EXE}")
     print(f"manifest : {MANIFEST_PATH}")
     print(f"registry : HKCU\\{REGISTRY_KEY} -> {value}")
     print(f"verified : {'OK' if ok and manifest_ok else 'FAIL'}")
@@ -89,7 +114,7 @@ def unregister() -> int:
         removed.append(f"HKCU\\{REGISTRY_KEY}")
     except FileNotFoundError:
         pass
-    for path in (MANIFEST_PATH, LEGACY_LAUNCHER):
+    for path in (MANIFEST_PATH, INSTALLED_EXE, *LEGACY_ARTIFACTS):
         if path.exists():
             path.unlink()
             removed.append(str(path))

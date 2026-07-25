@@ -24,8 +24,8 @@ honest BEFORE clinical data arrives.
    Malware running as the logged-in Windows user owns both endpoints. It can:
    - repoint `HKCU\...\NativeMessagingHosts\com.scribe.cliniko_host` at its
      own binary (registration hijack);
-   - replace or edit the host manifest, or the venv's `scribe-host.exe`
-     (both in user-writable locations);
+   - replace or edit the host manifest or the installed `scribe-host.exe` in
+     `%LOCALAPPDATA%\ClinikoScribe\` (both user-writable);
    - modify the venv's interpreter or site-packages (code hijack through the
      host executable);
    - read process memory, including session keys and — in later phases —
