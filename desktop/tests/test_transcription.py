@@ -1,0 +1,706 @@
+"""Step 9 tests: the transcription pipeline (`scribe_desktop.transcription`).
+
+Layers:
+- pure unit tests: uncertainty marking, segment-PCM extraction, speaker
+  clustering (numpy-only), transcript artifact model + atomic write
+- mock-provider pipeline tests over encrypted stores (no ML stack):
+  uncertainty marks, speaker labels, atomic write, custody ordering,
+  crash-restart idempotence
+- controller integration (Windows: DPAPI custody) for finish -> transcribe
+  -> queued -> Complete and the failure -> recoverable path
+- one live end-to-end test against the real silero VAD + whisper `small`
+  models (skip-if-absent for CI; SAPI synthesis is Windows-only)
+
+No clinical audio anywhere: fixtures are tones/silence or SAPI speech of
+non-clinical text.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+import struct
+import sys
+from pathlib import Path
+
+import pytest
+
+from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
+from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
+from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session import (
+    SessionActivityError,
+    SessionController,
+    SessionState,
+)
+from scribe_desktop.session_store import (
+    KEY_FILENAME,
+    TRANSCRIPT_FILENAME,
+    SessionChunkStore,
+    StoreCorruptError,
+    complete_session,
+    store_has_footer,
+)
+from scribe_desktop.speech import (
+    BYTES_PER_SAMPLE,
+    SAMPLE_RATE,
+    MockSpeechProvider,
+    SpeechSegment,
+    TranscribedWord,
+    vad_model_available,
+)
+from scribe_desktop.transcription import (
+    SPEAKER_1,
+    SPEAKER_2,
+    TranscriptDocument,
+    TranscriptionModelError,
+    TranscriptSegment,
+    TranscriptWord,
+    WhisperSpeechProvider,
+    extract_segment_pcm,
+    is_name_like_token,
+    is_number_token,
+    label_speakers,
+    mark_words,
+    read_transcript,
+    recover_session_transcription,
+    transcribe_session,
+    whisper_model_available,
+    write_transcript,
+)
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
+
+
+@pytest.fixture(autouse=True)
+def _offline_env() -> None:
+    """Offline kill-switches active for every test in this file: the
+    pipeline's ML-stack imports (numpy included) assert them (PR round 15)."""
+    apply_offline_env()
+
+
+# ---------------------------------------------------------------------------
+# synthetic PCM helpers (mirrors test_speech.py)
+# ---------------------------------------------------------------------------
+
+
+def tone_pcm(seconds: float, frequency: float = 440.0, amplitude: float = 0.5) -> bytes:
+    count = int(seconds * SAMPLE_RATE)
+    scale = amplitude * 32767
+    return struct.pack(
+        f"<{count}h",
+        *(int(scale * math.sin(2 * math.pi * frequency * i / SAMPLE_RATE)) for i in range(count)),
+    )
+
+
+def silence_pcm(seconds: float) -> bytes:
+    return b"\0" * (int(seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE)
+
+
+def amplitude_vad(frame: bytes) -> float:
+    samples = struct.unpack(f"<{len(frame) // 2}h", frame)
+    peak = max(abs(s) for s in samples)
+    return 0.95 if peak > 1000 else 0.02
+
+
+def _make_store(session_dir: Path, pcm: bytes, *, finish: bool = True) -> SessionCrypto:
+    """Encrypted store with a stub key file (store-format tests only)."""
+    session_dir.mkdir(parents=True, exist_ok=True)
+    (session_dir / KEY_FILENAME).write_bytes(b"\0" * 64)
+    crypto = SessionCrypto()
+    store = SessionChunkStore.create(session_dir / "audio.enc", crypto, session_dir.name)
+    for i in range(0, len(pcm), 32_000):
+        store.append_chunk(pcm[i : i + 32_000])
+    if finish:
+        store.finish()
+    else:
+        store.close()
+    return crypto
+
+
+def _word(text: str, probability: float = 0.95) -> TranscribedWord:
+    return TranscribedWord(
+        text=text, start_seconds=0.0, end_seconds=0.2, probability=probability
+    )
+
+
+# ---------------------------------------------------------------------------
+# uncertainty marking
+# ---------------------------------------------------------------------------
+
+
+class TestUncertaintyMarking:
+    @pytest.mark.parametrize(
+        "token",
+        ["17", "3.5mg", "seventeen", "fourteenth", "Twenty", "hundred,",
+         "twenty-one", "Thirty-fourth,", "one-third"],
+    )
+    def test_number_tokens(self, token: str) -> None:
+        assert is_number_token(token)
+
+    @pytest.mark.parametrize(
+        "token", ["hello", "tide.", "returning", "", "well-known", "-"]
+    )
+    def test_non_number_tokens(self, token: str) -> None:
+        assert not is_number_token(token)
+
+    def test_name_like_requires_capital(self) -> None:
+        assert is_name_like_token("Margaret", first_in_segment=False)
+        assert not is_name_like_token("harbour", first_in_segment=False)
+        assert not is_name_like_token("'quoted", first_in_segment=False)
+
+    def test_segment_initial_names_still_marked(self) -> None:
+        # PR round 15: an utterance can OPEN with a name; only common
+        # sentence-starting function words are exempt at segment start.
+        assert is_name_like_token("Margaret,", first_in_segment=True)
+        assert not is_name_like_token("The", first_in_segment=True)
+        assert not is_name_like_token("Okay", first_in_segment=True)
+        assert not is_name_like_token("She", first_in_segment=True)
+
+    def test_low_confidence_marked(self) -> None:
+        words = mark_words([_word("harbour", probability=0.3)])
+        assert words[0].uncertain
+        confident = mark_words([_word("harbour", probability=0.9)])
+        assert not confident[0].uncertain
+
+    def test_numbers_and_names_marked_even_when_confident(self) -> None:
+        (first, number, name) = mark_words(
+            [_word("The"), _word("seventeen"), _word("Margaret")]
+        )
+        assert not first.uncertain  # common sentence starter, not a name
+        assert number.uncertain
+        assert name.uncertain
+        # a NAME opening the segment is still marked (PR round 15)
+        (opener,) = mark_words([_word("Margaret,")])
+        assert opener.uncertain
+
+    def test_offset_applied(self) -> None:
+        (word,) = mark_words([_word("hello")], offset_seconds=10.0)
+        assert word.start_seconds == pytest.approx(10.0)
+        assert word.end_seconds == pytest.approx(10.2)
+        assert word.word_text == "hello"
+
+
+# ---------------------------------------------------------------------------
+# extract_segment_pcm — streaming span extraction
+# ---------------------------------------------------------------------------
+
+
+class TestExtractSegmentPcm:
+    def test_exact_spans_across_odd_chunks(self) -> None:
+        pcm = bytes(range(256)) * 250  # 64 000 B = 2.0 s
+        chunks = [pcm[i : i + 7_333] for i in range(0, len(pcm), 7_333)]
+        segments = [
+            SpeechSegment(start_seconds=0.25, end_seconds=0.75),
+            SpeechSegment(start_seconds=1.0, end_seconds=1.5),
+        ]
+        extracted = list(extract_segment_pcm(chunks, segments))
+        for segment, data in zip(segments, extracted, strict=True):
+            lo = int(segment.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+            hi = int(segment.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+            assert data == pcm[lo:hi]
+
+    def test_segment_past_audio_end_yields_partial(self) -> None:
+        pcm = b"\x01" * 32_000  # 1.0 s
+        segments = [SpeechSegment(start_seconds=0.5, end_seconds=1.5)]
+        (data,) = list(extract_segment_pcm([pcm], segments))
+        assert data == b"\x01" * 16_000  # what exists on disk
+
+    def test_no_segments(self) -> None:
+        assert list(extract_segment_pcm([b"\x01" * 100], [])) == []
+
+    def test_overlapping_segments_rejected(self) -> None:
+        segments = [
+            SpeechSegment(start_seconds=0.0, end_seconds=1.0),
+            SpeechSegment(start_seconds=0.5, end_seconds=1.5),
+        ]
+        with pytest.raises(ValueError, match="non-overlapping"):
+            list(extract_segment_pcm([b"\0" * 64_000], segments))
+
+
+# ---------------------------------------------------------------------------
+# speaker labels — D8 numpy-only clustering
+# ---------------------------------------------------------------------------
+
+
+class TestLabelSpeakers:
+    def test_empty(self) -> None:
+        assert label_speakers([]) == []
+
+    def test_single_segment_single_speaker(self) -> None:
+        assert label_speakers([tone_pcm(1.0)]) == [SPEAKER_1]
+
+    def test_identical_segments_collapse_to_one_speaker(self) -> None:
+        pytest.importorskip("numpy")
+        pcm = tone_pcm(1.0)
+        assert label_speakers([pcm, pcm, pcm]) == [SPEAKER_1] * 3
+
+    def test_two_distinct_voices_alternating(self) -> None:
+        pytest.importorskip("numpy")
+        low = tone_pcm(1.0, frequency=220.0)
+        high = tone_pcm(1.0, frequency=2600.0)
+        labels = label_speakers([low, high, low, high])
+        assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_1, SPEAKER_2]
+
+    def test_first_segment_is_always_speaker_one(self) -> None:
+        pytest.importorskip("numpy")
+        labels = label_speakers(
+            [tone_pcm(1.0, frequency=2600.0), tone_pcm(1.0, frequency=220.0)]
+        )
+        assert labels[0] == SPEAKER_1
+
+    def test_empty_segment_pcm_degrades_to_single_speaker(self) -> None:
+        assert label_speakers([tone_pcm(1.0), b""]) == [SPEAKER_1, SPEAKER_1]
+
+
+# ---------------------------------------------------------------------------
+# transcript artifact: model, atomic write, read path, tripwire
+# ---------------------------------------------------------------------------
+
+
+def _document(session_id: str = "a" * 32) -> TranscriptDocument:
+    from datetime import UTC, datetime
+
+    return TranscriptDocument(
+        session_id=session_id,
+        created_at=datetime.now(UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=(
+            TranscriptSegment(
+                start_seconds=1.0,
+                end_seconds=2.0,
+                speaker=SPEAKER_1,
+                transcript_words=(
+                    TranscriptWord(
+                        word_text="seventeen",
+                        start_seconds=1.1,
+                        end_seconds=1.4,
+                        probability=0.9,
+                        uncertain=True,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+class TestTranscriptArtifact:
+    def test_serialization_round_trip(self) -> None:
+        document = _document()
+        assert TranscriptDocument.from_bytes(document.to_bytes()) == document
+
+    def test_write_and_read_encrypted(self, tmp_path: Path) -> None:
+        crypto = SessionCrypto()
+        document = _document()
+        write_transcript(tmp_path, crypto, document)
+        assert (tmp_path / TRANSCRIPT_FILENAME).is_file()
+        assert not (tmp_path / (TRANSCRIPT_FILENAME + ".tmp")).exists()
+        assert read_transcript(tmp_path, crypto) == document
+
+    def test_atomic_overwrite_of_stale_partial(self, tmp_path: Path) -> None:
+        crypto = SessionCrypto()
+        (tmp_path / TRANSCRIPT_FILENAME).write_bytes(b"partial garbage from a crash")
+        document = _document()
+        write_transcript(tmp_path, crypto, document)
+        assert read_transcript(tmp_path, crypto).session_id == document.session_id
+
+    def test_wrong_key_raises_corrupt(self, tmp_path: Path) -> None:
+        write_transcript(tmp_path, SessionCrypto(), _document())
+        with pytest.raises(StoreCorruptError, match="authentication"):
+            read_transcript(tmp_path, SessionCrypto())
+
+    def test_malformed_payload_raises_corrupt(self, tmp_path: Path) -> None:
+        crypto = SessionCrypto()
+        (tmp_path / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b'{"nope": 1}'))
+        with pytest.raises(StoreCorruptError, match="malformed"):
+            read_transcript(tmp_path, crypto)
+
+    def test_tripwire_drops_transcript_representations(self) -> None:
+        logger = logging.getLogger("test-transcript-tripwire")
+        logger.setLevel(logging.INFO)
+        logger.addHandler(logging.NullHandler())
+        logger.addFilter(PayloadTripwireFilter())
+        try:
+            document = _document()
+            before = dropped_record_count()
+            logger.info("%s", repr(document))
+            logger.info("%s", document.model_dump_json())
+            logger.info("%s", repr(document.transcript_segments[0]))
+            logger.info("%s", repr(document.transcript_segments[0].transcript_words[0]))
+            assert dropped_record_count() - before == 4
+        finally:
+            logger.filters.clear()
+            logger.handlers.clear()
+
+
+class TestStoreHasFooter:
+    def test_finished_store(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("d" * 32)
+        _make_store(session_dir, tone_pcm(1.0), finish=True)
+        assert store_has_footer(session_dir / "audio.enc")
+
+    def test_unfinished_store(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("e" * 32)
+        _make_store(session_dir, tone_pcm(1.0), finish=False)
+        assert not store_has_footer(session_dir / "audio.enc")
+
+    def test_truncated_footer(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("f" * 32)
+        _make_store(session_dir, tone_pcm(1.0), finish=True)
+        path = session_dir / "audio.enc"
+        path.write_bytes(path.read_bytes()[:-10])
+        assert not store_has_footer(path)
+
+    def test_missing_file(self, tmp_path: Path) -> None:
+        assert not store_has_footer(tmp_path / "nope.enc")
+
+
+# ---------------------------------------------------------------------------
+# mock-provider pipeline over encrypted stores
+# ---------------------------------------------------------------------------
+
+
+class TestTranscribeSessionMock:
+    def test_full_pipeline_on_finished_store(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("1" * 32)
+        pcm = silence_pcm(1.0) + tone_pcm(2.0) + silence_pcm(1.0)
+        crypto = _make_store(session_dir, pcm)
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(), amplitude_vad
+        )
+
+        assert document.session_id == session_dir.name
+        assert document.sample_rate == SAMPLE_RATE
+        assert len(document.transcript_segments) == 1
+        segment = document.transcript_segments[0]
+        assert segment.start_seconds == pytest.approx(1.0, abs=0.15)
+        assert segment.end_seconds == pytest.approx(3.0, abs=0.15)
+        assert segment.speaker == SPEAKER_1
+        assert segment.transcript_words  # mock produced words
+        for word in segment.transcript_words:
+            # word times are offset into session time, inside the segment
+            assert segment.start_seconds - 0.01 <= word.start_seconds
+            assert word.end_seconds <= segment.end_seconds + 0.01
+            assert word.uncertain  # "mock0" carries a digit -> number mark
+
+        # artifact is on disk, decrypts under the SAME key, no temp residue
+        assert read_transcript(session_dir, crypto) == document
+        assert not (session_dir / (TRANSCRIPT_FILENAME + ".tmp")).exists()
+
+    def test_silence_only_yields_empty_document(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("2" * 32)
+        crypto = _make_store(session_dir, silence_pcm(2.0))
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(), amplitude_vad
+        )
+        assert document.transcript_segments == ()
+        assert read_transcript(session_dir, crypto) == document
+
+    def test_two_voices_get_two_speakers(self, tmp_path: Path) -> None:
+        pytest.importorskip("numpy")
+        session_dir = tmp_path / ("3" * 32)
+        gap = silence_pcm(1.0)
+        pcm = (
+            gap
+            + tone_pcm(1.5, frequency=220.0)
+            + gap
+            + tone_pcm(1.5, frequency=2600.0)
+            + gap
+            + tone_pcm(1.5, frequency=220.0)
+            + gap
+        )
+        crypto = _make_store(session_dir, pcm)
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(), amplitude_vad
+        )
+        speakers = [s.speaker for s in document.transcript_segments]
+        assert speakers == [SPEAKER_1, SPEAKER_2, SPEAKER_1]
+
+    def test_post_finish_truncation_detected(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("4" * 32)
+        crypto = _make_store(session_dir, tone_pcm(1.0))
+        path = session_dir / "audio.enc"
+        path.write_bytes(path.read_bytes()[:-40])  # chop the footer
+        with pytest.raises(StoreCorruptError):
+            transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        assert not (session_dir / TRANSCRIPT_FILENAME).exists()
+
+    def test_unfinished_store_transcribes_without_footer(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("5" * 32)
+        pcm = silence_pcm(0.5) + tone_pcm(1.0) + silence_pcm(0.5)
+        crypto = _make_store(session_dir, pcm, finish=False)
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(), amplitude_vad, require_footer=False
+        )
+        assert len(document.transcript_segments) == 1
+
+    def test_crash_restart_is_idempotent(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("6" * 32)
+        pcm = silence_pcm(0.5) + tone_pcm(1.0) + silence_pcm(0.5)
+        crypto = _make_store(session_dir, pcm)
+        # simulate a crash mid-processing: partial garbage transcript on disk
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(b"\xde\xad partial")
+        first = transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        assert read_transcript(session_dir, crypto) == first
+        # and a SECOND restart still converges to an equivalent artifact
+        second = transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        assert second.transcript_segments == first.transcript_segments
+
+    def test_complete_ordering_after_pipeline(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("7" * 32)
+        crypto = _make_store(session_dir, silence_pcm(0.5) + tone_pcm(1.0))
+        transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        # Complete: fsync -> verify decrypt round-trip -> delete key custody
+        complete_session(session_dir, crypto)
+        assert not (session_dir / KEY_FILENAME).exists()
+        assert crypto.destroyed
+
+    def test_complete_keeps_key_when_transcript_tampered(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("8" * 32)
+        crypto = _make_store(session_dir, silence_pcm(0.5) + tone_pcm(1.0))
+        transcribe_session(session_dir, crypto, MockSpeechProvider(), amplitude_vad)
+        path = session_dir / TRANSCRIPT_FILENAME
+        blob = bytearray(path.read_bytes())
+        blob[-1] ^= 0xFF
+        path.write_bytes(bytes(blob))
+        with pytest.raises(StoreCorruptError):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()  # key retained
+        assert not crypto.destroyed
+
+
+# ---------------------------------------------------------------------------
+# WhisperSpeechProvider guards (no ML stack needed — guards fire first)
+# ---------------------------------------------------------------------------
+
+
+class TestWhisperProviderGuards:
+    def test_requires_offline_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from scribe_desktop.benchmark import OfflineEnvError
+
+        for key in OFFLINE_ENV:
+            monkeypatch.delenv(key, raising=False)
+        with pytest.raises(OfflineEnvError):
+            WhisperSpeechProvider(model_dir=Path("irrelevant"))
+
+    def test_missing_model_raises_before_ml_import(self, tmp_path: Path) -> None:
+        apply_offline_env()
+        with pytest.raises(TranscriptionModelError, match="setup-models"):
+            WhisperSpeechProvider(model_dir=tmp_path / "no-model")
+
+    def test_unc_model_path_rejected(self) -> None:
+        apply_offline_env()
+        with pytest.raises(TranscriptionModelError, match="UNC"):
+            WhisperSpeechProvider(model_dir=Path(r"\\evil-host\share\whisper"))
+
+
+# ---------------------------------------------------------------------------
+# SessionController integration (DPAPI custody: Windows-only)
+# ---------------------------------------------------------------------------
+
+
+@windows_only
+class TestControllerTranscription:
+    def _finished_controller(self, tmp_path: Path) -> tuple[SessionController, str]:
+        backend = MockCaptureBackend()
+        controller = SessionController(backend, sessions_root=tmp_path)
+        session = controller.start(0)
+        backend.feed(silence_pcm(0.5) + tone_pcm(1.0) + silence_pcm(0.5))
+        controller.finish()
+        return controller, session.session_id
+
+    def test_finish_transcribe_queue_complete(self, tmp_path: Path) -> None:
+        controller, session_id = self._finished_controller(tmp_path)
+        provider = MockSpeechProvider()
+
+        result = controller.transcribe(
+            lambda directory, crypto: transcribe_session(
+                directory, crypto, provider, amplitude_vad
+            )
+        )
+        assert result.state is SessionState.QUEUED
+        session_dir = tmp_path / session_id
+        assert (session_dir / TRANSCRIPT_FILENAME).is_file()
+
+        completed = controller.complete()
+        assert completed.state is SessionState.WRITTEN
+        assert not (session_dir / KEY_FILENAME).exists()  # cryptographic deletion
+        assert (session_dir / TRANSCRIPT_FILENAME).is_file()  # artifact retained
+
+    def test_transcriber_failure_routes_to_recoverable_failed(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_id = self._finished_controller(tmp_path)
+
+        def broken(directory: Path, crypto: SessionCrypto) -> None:
+            raise RuntimeError("model exploded")
+
+        with pytest.raises(RuntimeError, match="model exploded"):
+            controller.transcribe(broken)
+        assert controller.state is SessionState.FAILED
+        session_dir = tmp_path / session_id
+        assert (session_dir / KEY_FILENAME).is_file()  # key retained
+        assert (session_dir / "audio.enc").is_file()  # audio retained
+
+    def test_transcribe_requires_processing_state(self, tmp_path: Path) -> None:
+        controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
+        controller.start(0)  # recording, not processing
+        with pytest.raises(SessionActivityError, match="processing"):
+            controller.transcribe(lambda d, c: None)
+
+    def test_recovery_restarts_transcription_from_audio(self, tmp_path: Path) -> None:
+        # crash-mid-processing sim: session finished (footered store) but the
+        # process died before/half-way through the transcript write.
+        _controller, session_id = self._finished_controller(tmp_path)
+        session_dir = tmp_path / session_id
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(b"half a transcript")
+
+        outcome = recover_session_transcription(
+            session_dir, MockSpeechProvider(), amplitude_vad
+        )
+        assert outcome.store_finished  # footered store keeps enforcement
+        assert outcome.document.session_id == session_id
+        assert read_transcript(session_dir, outcome.crypto) == outcome.document
+        # custody flow still closes normally afterwards
+        complete_session(session_dir, outcome.crypto)
+        assert not (session_dir / KEY_FILENAME).exists()
+
+    def test_recovery_of_unfinished_store_tolerates_missing_footer(
+        self, tmp_path: Path
+    ) -> None:
+        # crash-mid-recording sim: no Finish, no footer — recovery must
+        # transcribe the durably written chunks without footer enforcement.
+        from scribe_desktop.session_store import wrap_key_to_file
+
+        session_dir = tmp_path / ("9" * 32)
+        session_dir.mkdir()
+        crypto = SessionCrypto()
+        wrap_key_to_file(crypto, session_dir)
+        store = SessionChunkStore.create(session_dir / "audio.enc", crypto, "9" * 32)
+        pcm = silence_pcm(0.5) + tone_pcm(1.0) + silence_pcm(0.5)
+        for i in range(0, len(pcm), 32_000):
+            store.append_chunk(pcm[i : i + 32_000])
+        store.close()  # crash: no footer
+
+        outcome = recover_session_transcription(
+            session_dir, MockSpeechProvider(), amplitude_vad
+        )
+        assert not outcome.store_finished  # UI must warn: tail may be missing
+        assert len(outcome.document.transcript_segments) == 1
+        assert read_transcript(session_dir, outcome.crypto) == outcome.document
+
+    def test_concurrent_transcribe_refused_while_in_flight(
+        self, tmp_path: Path
+    ) -> None:
+        # PR-HIGH-006 regression: a second transcribe() during an in-flight
+        # run must be refused — never race on the transcript temp path.
+        import threading
+
+        controller, _session_id = self._finished_controller(tmp_path)
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_transcriber(directory: Path, crypto: SessionCrypto) -> None:
+            started.set()
+            assert release.wait(timeout=10.0)
+
+        worker = threading.Thread(
+            target=lambda: controller.transcribe(slow_transcriber)
+        )
+        worker.start()
+        try:
+            assert started.wait(timeout=10.0)
+            with pytest.raises(SessionActivityError, match="already in progress"):
+                controller.transcribe(lambda d, c: None)
+        finally:
+            release.set()
+            worker.join(timeout=10.0)
+        assert controller.state is SessionState.QUEUED  # first run completed
+
+    def test_mark_queued_refused_while_transcribing(self, tmp_path: Path) -> None:
+        # PR-HIGH-008 regression: mark_queued must not bypass the in-flight
+        # guard — queued would unlock Complete (key deletion) mid-write.
+        import threading
+
+        controller, _session_id = self._finished_controller(tmp_path)
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_transcriber(directory: Path, crypto: SessionCrypto) -> None:
+            started.set()
+            assert release.wait(timeout=10.0)
+
+        worker = threading.Thread(
+            target=lambda: controller.transcribe(slow_transcriber)
+        )
+        worker.start()
+        try:
+            assert started.wait(timeout=10.0)
+            with pytest.raises(SessionActivityError, match="in progress"):
+                controller.mark_queued()
+        finally:
+            release.set()
+            worker.join(timeout=10.0)
+        assert controller.state is SessionState.QUEUED
+
+
+# ---------------------------------------------------------------------------
+# live end-to-end: real silero VAD + real whisper `small` (skip-if-absent)
+# ---------------------------------------------------------------------------
+
+requires_live_stack = pytest.mark.skipif(
+    sys.platform != "win32"
+    or not vad_model_available()
+    or not whisper_model_available(),
+    reason="live e2e needs Windows (SAPI) + local silero and whisper-small models",
+)
+
+
+@requires_live_stack
+class TestLiveEndToEnd:
+    def test_record_transcribe_verify(self, tmp_path: Path) -> None:
+        # offline env BEFORE any ML import (PR-MED-009/-014 pattern)
+        apply_offline_env()
+        pytest.importorskip("numpy")
+        pytest.importorskip("onnxruntime")
+        pytest.importorskip("faster_whisper")
+        from scribe_desktop.speech import SileroVad
+        from test_speech import _sapi_speech_pcm
+
+        speech = _sapi_speech_pcm(
+            "Margaret counted seventeen boats near the lighthouse on Tuesday "
+            "the fourteenth of March."
+        )
+        session_dir = tmp_path / ("a" * 32)
+        pcm = silence_pcm(1.0) + speech + silence_pcm(1.0)
+        crypto = _make_store(session_dir, pcm)
+
+        vad = SileroVad()
+        provider = WhisperSpeechProvider()
+        document = transcribe_session(
+            session_dir, crypto, provider, vad.frame_probability
+        )
+
+        assert document.transcript_segments, "no speech detected in live fixture"
+        words = [
+            word
+            for segment in document.transcript_segments
+            for word in segment.transcript_words
+        ]
+        assert len(words) >= 8, "whisper produced implausibly few words"
+        text = " ".join(w.word_text.lower().strip(".,") for w in words)
+        assert "seventeen" in text or "17" in text
+        # numbers must carry uncertainty marks (plan: words, numbers, names)
+        number_words = [w for w in words if is_number_token(w.word_text)]
+        assert number_words and all(w.uncertain for w in number_words)
+        # word probabilities are real (not all saturated placeholder 1.0)
+        assert any(w.probability < 1.0 for w in words)
+        # timestamps are ordered inside the session timeline
+        assert all(w.end_seconds >= w.start_seconds for w in words)
+
+        # transcript decrypts under the SAME session key; custody closes
+        assert read_transcript(session_dir, crypto) == document
+        complete_session(session_dir, crypto)
+        assert not (session_dir / KEY_FILENAME).exists()

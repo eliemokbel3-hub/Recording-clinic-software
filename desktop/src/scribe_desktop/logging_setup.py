@@ -70,6 +70,20 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"encounter_context"',
     "'encounter_context'",
     "encounter_context=",
+    # Phase 2 Step 9: transcript artifact markers. The transcript model's
+    # field names are DELIBERATELY distinctive (transcript_segments /
+    # transcript_words / word_text) so any repr, model_dump, or JSON of a
+    # TranscriptDocument/Segment/Word — clinical content — is dropped by
+    # this last-line filter in quoted and unquoted forms alike.
+    '"transcript_segments"',
+    "'transcript_segments'",
+    "transcript_segments=",
+    '"transcript_words"',
+    "'transcript_words'",
+    "transcript_words=",
+    '"word_text"',
+    "'word_text'",
+    "word_text=",
 )
 
 _dropped_records = 0

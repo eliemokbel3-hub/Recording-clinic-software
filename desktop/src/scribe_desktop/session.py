@@ -41,6 +41,7 @@ import enum
 import logging
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -208,6 +209,11 @@ class _LiveSession:
     crypto: SessionCrypto
     store: SessionChunkStore | None
     worker: CaptureWorker | None
+    # PR-HIGH-006: True while a transcribe() run is in flight — a second
+    # concurrent transcribe on the same PROCESSING session must be refused
+    # (both would race on the shared transcript temp path and a late writer
+    # could mutate transcript.enc after Complete's verify).
+    transcribing: bool = False
 
 
 class SessionController:
@@ -377,11 +383,68 @@ class SessionController:
             self._transition_locked(live, SessionState.PROCESSING)
             return live.session
 
+    def transcribe(
+        self, transcriber: Callable[[Path, SessionCrypto], object]
+    ) -> RecordingSession:
+        """Step 9: run the transcription pipeline for the PROCESSING session.
+
+        ``transcriber(directory, crypto)`` (typically a closure over
+        ``transcription.transcribe_session``) runs OUTSIDE the lock — it is
+        long-running ML work and must never block controls or the failure
+        callback. Per the PR-HIGH-001 contract the method operates on the
+        first-lock SNAPSHOT with identity checks: a session retired or
+        replaced concurrently is never transitioned.
+
+        Success: processing -> queued (``transcript.enc`` is durably on
+        disk). Failure: the exception propagates AND the session goes to
+        ``failed`` (RECOVERABLE — key + audio retained; Flow 3 offers
+        resume-processing or discard). Audio is never deleted here.
+        """
+        with self._lock:
+            live = self._require_state(SessionState.PROCESSING)
+            # PR-HIGH-006 (locking/ordering only, pending user ratification):
+            # exactly ONE transcription run per session may be in flight.
+            # Without this guard two callers could both pass the PROCESSING
+            # check, race on the shared transcript temp path, and a late
+            # writer could replace transcript.enc AFTER a concurrent
+            # Complete verified it — violating the fsync->verify->delete-key
+            # ordering.
+            if live.transcribing:
+                raise SessionActivityError(
+                    "transcription already in progress for this session"
+                )
+            live.transcribing = True
+        try:
+            transcriber(live.directory, live.crypto)
+        except Exception:
+            with self._lock:
+                live.transcribing = False
+                if (
+                    self._live is live
+                    and live.session.state == SessionState.PROCESSING
+                ):
+                    self._fail_locked(live)
+            raise
+        with self._lock:
+            live.transcribing = False
+            if self._live is live and live.session.state == SessionState.PROCESSING:
+                self._transition_locked(live, SessionState.QUEUED)
+            return live.session
+
     def mark_queued(self) -> RecordingSession:
         """processing -> queued. Called by the Step 9 transcription pipeline
         once ``transcript.enc`` is durably written."""
         with self._lock:
             live = self._require_state(SessionState.PROCESSING)
+            # PR-HIGH-008 (locking/ordering only, pending user ratification):
+            # while transcribe() is in flight it owns the processing->queued
+            # transition; queueing here would let Complete verify and delete
+            # the key while the transcriber is still writing — the same
+            # late-writer race PR-HIGH-006 closes.
+            if live.transcribing:
+                raise SessionActivityError(
+                    "transcription in progress; it queues the session itself"
+                )
             self._transition_locked(live, SessionState.QUEUED)
             return live.session
 

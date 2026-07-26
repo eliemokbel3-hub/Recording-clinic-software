@@ -417,6 +417,33 @@ def iter_chunks(
             raise StoreCorruptError("finished store is missing its footer (truncated after Finish)")
 
 
+def store_has_footer(path: Path) -> bool:
+    """True when the store carries a COMPLETE footer record (reached Finish).
+
+    Structural scan only — record type bytes are plaintext; nothing is
+    decrypted and no key is needed. Truncated tails and malformed lengths
+    simply yield False (an unfinished or damaged store is handled by the
+    recovery path, which decides footer enforcement with this answer).
+    """
+    try:
+        with path.open("rb") as stream:
+            _read_header(stream)
+            while True:
+                prefix = stream.read(_LENGTH.size)
+                if len(prefix) < _LENGTH.size:
+                    return False
+                (length,) = _LENGTH.unpack(prefix)
+                if length > MAX_RECORD_BYTES or length < _MIN_RECORD_BYTES:
+                    return False
+                payload = stream.read(length)
+                if len(payload) < length:
+                    return False
+                if payload[0] == _REC_FOOTER:
+                    return True
+    except (OSError, SessionStoreError):
+        return False
+
+
 # --------------------------------------------------------------------------
 # DPAPI key custody (Windows-only; CryptProtectData, current-user scope).
 # --------------------------------------------------------------------------
