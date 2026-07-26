@@ -38,16 +38,6 @@ class ErrorCode(enum.StrEnum):
     INTERNAL = "internal"
 
 
-class ConnectionState(enum.StrEnum):
-    """Phase-1 throwaway connection state (NOT PLAN.md's SessionState —
-    that arrives with Phase 2's recording lifecycle; see plan Deferred)."""
-
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    DISCONNECTED = "disconnected"
-    ERROR = "error"
-
-
 class Envelope(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 

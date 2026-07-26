@@ -14,6 +14,9 @@ dependencies = [
     "cryptography>=43",
     "keyring>=25",
     "psutil>=6",
+    # Phase 2: DPAPI key custody (win32crypt.CryptProtectData) — user-approved
+    # dependency in the hardened Phase 2 plan.
+    'pywin32>=306; sys_platform == "win32"',
 ]
 
 [project.optional-dependencies]
@@ -60,6 +63,26 @@ python_version = "3.12"
 strict = true
 mypy_path = "src"
 packages = ["scribe_desktop"]
+
+# Untyped native/ML modules (Phase 2 plan Step 1): pywin32 ships no stubs and
+# the ML stack is untyped; strict mode would otherwise block every later step
+# with "Cannot find implementation or library stub".
+[[tool.mypy.overrides]]
+module = [
+    "win32crypt",
+    "win32api",
+    "win32con",
+    "win32pipe",
+    "win32file",
+    "win32security",
+    "pywintypes",
+    "sounddevice",
+    "faster_whisper",
+    "faster_whisper.*",
+    "onnxruntime",
+    "onnxruntime.*",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

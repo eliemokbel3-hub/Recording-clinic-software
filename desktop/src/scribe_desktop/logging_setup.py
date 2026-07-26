@@ -37,6 +37,15 @@ ALLOWED_KEYS: Final[frozenset[str]] = frozenset(
         "detail_code",
         "count",
         "pid",
+        # Phase 2 session event keys — extended DELIBERATELY (plan Step 1);
+        # each is non-clinical metadata: random session id, audio-format
+        # numbers, chunk ordinal, hardware device ordinal. NEVER add keys
+        # that could carry audio, transcript text, or patient data.
+        "session_id",
+        "session_state",
+        "chunk_index",
+        "sample_rate",
+        "device_id",
     }
 )
 
@@ -55,6 +64,12 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     "request_id=",
     '"protocol_version":',
     "'protocol_version':",
+    # Phase 2 (PR-MED-001): a RecordingSession repr/dict/JSON carries
+    # encounter_context (patient/booking identifiers per PLAN.md) — drop it
+    # in quoted and unquoted forms, like payload/session_nonce above.
+    '"encounter_context"',
+    "'encounter_context'",
+    "encounter_context=",
 )
 
 _dropped_records = 0

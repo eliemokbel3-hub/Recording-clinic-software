@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase2-recording-transcription
-**Overall Progress:** `0%`
+**Overall Progress:** `7%`
 
 ## Lifecycle State
 - Active
@@ -166,21 +166,43 @@ New (planned): `scribe_desktop/session.py` (SessionState machine + RecordingSess
 See `Planning Extraction Summary` (single source of truth).
 
 ## Current State / Handoff Note
-- Last completed step: `/review-plan` hardening pass complete (2026-07-26): four-lens critique (coverage/practicality/risk/simplicity), pipe deferred to Phase 5, offline enforcement + concurrency model + custody ordering + mypy overrides + CI task added, D8 constrained, tasks renumbered (14 tasks, all 🟥) — no execution started
-- Current in-progress step: None
-- Immediate next action: `/execute` or `/execute-loop` from Step 1. Step 11 verifies the FIRST CI run (pushed 2026-07-26, never observed; likely-if-red culprits: keyring/audio quirks on the runner, not the code)
+- Last completed step: Step 1 complete (2026-07-26, P1 executor run stage-1): `session.py` created (SessionState 9-state enum + frozen RecordingSession model + ACTIVE/RECOVERABLE/TERMINAL state groups); Phase-1 `ConnectionState` retired from `protocol.py` (zero Python usages; the extension's TS ConnectionState is its own badge type and stays); `ALLOWED_KEYS` extended deliberately with session_id/session_state/chunk_index/sample_rate/device_id + tripwire tests; `desktop/pyproject.toml` gained `pywin32>=306; sys_platform == "win32"` dep + `[[tool.mypy.overrides]]` (ignore_missing_imports) for win32crypt/win32api/win32con/win32pipe/win32file/win32security/pywintypes/sounddevice/faster_whisper/onnxruntime; pywin32 installed directly into the venv (deliberately NOT `pip install -e` — avoids invalidating the native-host registration; next full reinstall picks it up from pyproject). QA green: ruff clean, mypy clean, pytest 85 passed (72 existing + 13 new in tests/test_session_types.py)
+- Current in-progress step: None — Step 1 fully closed: review-loop converged round 2 (1 LOW fixed); peer-loop converged round 3 (PR-MED-001/002/003 all MED, all applied + peer-verified). Final QA: ruff clean, mypy clean, pytest 103 passed. BINDING for Step 2: `key_reference` is the opaque literal `key.dpapi`; resolve strictly as `<sessions root>/<validated session_id>/key.dpapi`
+- Immediate next action: composer commits P1; then P2 executor (Step 2). Step 11 verifies the FIRST CI run (pushed 2026-07-26, never observed; likely-if-red culprits: keyring/audio quirks on the runner, not the code)
 - Open blockers / open questions: None. Fresh-session reading order: this plan top-to-bottom, then plan-phase1-security-foundation.md "Codebase Integration Notes — executor facts" (binding Chrome/logging/registration rules), then docs/security/threat-model.md
 - Last plan sync: 2026-07-26
+- Loop config: executor=cursor-subagent model="fable"; peer=codex model="gpt-5.6-sol" effort=xhigh; architect=off; cadence=every-phase; caps=review:3,peer:3; scope=all; autocommit=on; isolation=none; merge=off
+- Run state: /execute-loop run cliniko-p2-20260726-170200-k7 preflight complete 2026-07-26 ~17:05; phase grouping: P1=Step 1, P2=Step 2 (security-isolated), P3=Steps 3–4, P4=Step 5+D6, P5=Steps 7+D8, P6=Step 9, P7=Step 10 (UI — live-smoke pause), P8=Steps 11–12, P9=Step 13 (manual gate), P10=Step H; next: spawn P1 executor
 
 ## Review History
-- (no reviews yet)
+- 2026-07-26 round 1: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none
+- 2026-07-26 round 2: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none
 
 ## Review Findings Log
-- (no findings logged yet)
+
+### 2026-07-26 round 1 (Step 1 scope; Source: Claude Code, stage-1 P1 executor, headless)
+- Status: Closed (0 pending)
+- **[LOW-001]** `desktop/tests/test_session_types.py` — `test_log_event_accepts_new_session_keys` was vacuous: logger at NOTSET (effective WARNING) meant `logger.info` never reached the tripwire filter, so the drop-count assertion passed without exercising it — Triage: Fix-now (auto-disposable); Decision: Applied. Fix: `setLevel(INFO)` + NullHandler + logger-level filter (handler-level filter on NullHandler would be skipped — `NullHandler.handle` bypasses filters). Verified: full QA green (85 passed). Finding verification round 1: 3 candidates; 2 dropped (RECOVERABLE_STATES grouping matches plan Flow 3; `session_state`/`state` coexistence deliberate); 0 downgraded.
+
+### 2026-07-26 peer round 1 (Step 1 scope; Source: Codex peer-review, gpt-5.6-sol xhigh, read-only — block appended by executor; peer summary: 0 confirmed / 0 disputed / 2 new / 0 regression; 4 candidates / 2 dropped / 0 downgraded)
+- Status: Closed (0 pending)
+- **[PR-MED-001]** `logging_setup.py` — tripwire had no `encounter_context` signature: logging a populated `RecordingSession` repr would leak patient/booking identifiers past the last-line filter — Triage: Fix-now (auto-disposable); Decision: Applied 2026-07-26 by stage-1 executor. Fix: three `encounter_context` signatures (quoted/unquoted) added to `_PAYLOAD_SIGNATURES` + `test_tripwire_drops_recording_session_representations` (repr / model_dump / JSON forms). Verified by executor before applying (probe confirmed leak).
+- **[PR-MED-002]** `session.py` — `session_id` accepted free-form/path-like values (`../../escape`), breaking the opaque-id assumption behind the log whitelist and the future `sessions/<id>/` path segment — Triage: Fix-now (auto-disposable); Decision: Applied 2026-07-26 by stage-1 executor. Fix: `pattern=r"^[0-9a-f]{32}$"` on the field + 8 parametrized rejection tests. Verified by executor before applying.
+- Post-fix QA: ruff clean, mypy clean, pytest 94 passed (85 + 9 new).
+
+### 2026-07-26 peer round 2 (Step 1 scope; Source: Codex peer-review, gpt-5.6-sol xhigh, read-only — block appended by executor; peer summary: 2 applied fixes verified / 0 disputed / 1 new / 0 regression; 4 candidates / 3 dropped / 0 downgraded)
+- Status: Closed (0 pending)
+- Applied-fix verification: PR-MED-001 and PR-MED-002 both independently verified by the peer; ConnectionState retirement confirmed zero Python references, TS type intact.
+- **[PR-MED-003]** `session.py` — `key_reference` accepted unrestricted filesystem paths (empty, traversal, absolute, patient-named), an unsafe deletion boundary once Step 2's Complete/Discard/sweep delete the referenced key — Triage: Fix-now (auto-disposable); Decision: Applied 2026-07-26 by stage-1 executor. Fix: field constrained to the literal opaque value `key.dpapi` (`pattern=r"^key\.dpapi$"`); Step 2 must resolve it strictly as `<sessions root>/<validated session_id>/key.dpapi` (binding note for Step 2). 8 rejection tests + 1 acceptance test added.
+- Post-fix QA: ruff clean, mypy clean, pytest 103 passed (94 + 9 new).
+
+### 2026-07-26 peer round 3 (Step 1 scope; Source: Codex peer-review, gpt-5.6-sol xhigh, read-only)
+- Status: Closed — converged (zero findings)
+- PR-MED-003 fix verified (traversal/absolute/whitespace/NUL/newline variants rejected); no downstream breakage; 3 candidates / 3 dropped / 0 downgraded. Peer-loop converged at round 3 of cap 3.
 
 ## Tasks
 
-- [ ] 🟥 Step 1: Core types + tooling prep
+- [x] 🟩 Step 1: Core types + tooling prep
   - `session.py`: real `SessionState` enum + `RecordingSession` model per PLAN.md core types (retire Phase 1's throwaway `ConnectionState` where superseded); `desktop/pyproject.toml`: `[[tool.mypy.overrides]]` (`ignore_missing_imports = true`) for `win32crypt`/`win32api`/`sounddevice`/ML modules + add `pywin32` dep; `logging_setup.py`: extend `ALLOWED_KEYS` with the new session event keys (deliberately, whitelisted) with tripwire tests
   - Verifies: types unit tests + tripwire tests; existing suites stay green
 - [ ] 🟥 Step 2: Encrypted session store + key custody
