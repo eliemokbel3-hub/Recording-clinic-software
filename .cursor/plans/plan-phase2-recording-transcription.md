@@ -155,10 +155,10 @@ New (planned): `scribe_desktop/pipe_protocol.py`, `pipe_transport.py` (server+cl
 See `Planning Extraction Summary` (single source of truth).
 
 ## Current State / Handoff Note
-- Last completed step: Planning complete (2026-07-26)
+- Last completed step: Planning complete (2026-07-26); session handed off same day — no execution started, all 15 tasks 🟥
 - Current in-progress step: None
-- Immediate next action: `/review-plan` hardening pass recommended (non-trivial: crypto custody, concurrency, ML stack), then `/execute` or `/execute-loop`
-- Open blockers / open questions: None
+- Immediate next action: `/review-plan` hardening pass recommended (non-trivial: crypto custody, concurrency, ML stack), then `/execute` or `/execute-loop`. Also verify the FIRST CI run passed (GitHub Actions tab — pushed 2026-07-26, never observed; likely-if-red culprits: keyring/audio quirks on the runner, not the code)
+- Open blockers / open questions: None for planning. Fresh-session reading order: this plan top-to-bottom, then plan-phase1-security-foundation.md "Codebase Integration Notes — executor facts" (binding Chrome/logging/registration rules), then docs/security/threat-model.md
 - Last plan sync: 2026-07-26
 
 ## Review History

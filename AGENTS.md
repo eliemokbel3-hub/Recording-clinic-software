@@ -47,8 +47,8 @@ Machine-specific run notes (local absolute paths, personal DB endpoints, machine
 
 ## Last Session
 - Date: 2026-07-26
-- Worked on: Phase 1 execution, review round 1 (29 findings fixed), gate debugging (three Chrome registration gotchas — see plan executor facts), gate PASSED
-- Next priority: CI workflow (due before Phase 2), then /create-plan for Phase 2 (local recording + transcription; first task = named-pipe host↔app IPC)
+- Worked on: Phase 1 gate PASSED and plan closed (Completed — Follow-ups Retained); CI workflow added (.github/workflows/ci.yml — first run unverified, check the GitHub Actions tab); Phase 2 plan created (plan-phase2-recording-transcription.md, Active, 0%)
+- Next priority: /review-plan hardening pass on the Phase 2 plan (recommended — crypto custody, concurrency, ML stack), then /execute or /execute-loop
 
 ## Known Issues / Next Tasks
 - [ ]
