@@ -20,6 +20,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# ML stack for local transcription (Step 5 spike verified all wheels install
+# cleanly on Python 3.14). huggingface_hub is only used by the setup-time
+# scripts/setup-models.py; runtime stays offline (kill-switches asserted).
+ml = [
+    "faster-whisper>=1.2",
+    "onnxruntime>=1.28",
+    "huggingface_hub>=1.0",
+]
 dev = [
     "pytest>=8",
     "ruff>=0.6",
@@ -76,6 +84,9 @@ module = [
     "win32file",
     "win32security",
     "pywintypes",
+    "win32com",
+    "win32com.*",
+    "psutil",
     "sounddevice",
     "faster_whisper",
     "faster_whisper.*",

@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 from scribe_desktop.logging_setup import log_event, setup_logging
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.status import read_registration_status, run_self_test
@@ -56,6 +57,10 @@ class StatusWindow(QMainWindow):
 
 def main() -> int:
     logger = setup_logging("scribe-app")
+    # Offline kill-switches: set AND asserted before any ML code can run
+    # (plan Design Decision "Runtime offline enforcement").
+    apply_offline_env()
+    assert_offline_env()
     log_event(logger, "app_start", state="starting")
     app = QApplication([])
     window = StatusWindow()
