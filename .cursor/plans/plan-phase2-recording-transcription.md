@@ -15,7 +15,7 @@
 - Follow-up plans: None (Phases 3–7 of `PLAN.md` will become their own plans)
 
 ## Goal
-Local recording and transcription (`PLAN.md` Phase 2): the desktop app records the microphone with immediate per-chunk encryption, survives crashes within a 24-hour recovery window, and transcribes locally (Whisper + VAD + speaker segmentation, timestamps, uncertainty marking) — with the hardware benchmark gating model choice and a verified absence of AI network traffic at runtime. Builds the named-pipe host↔app channel from the locked Phase-1 topology. No note generation, no Cliniko API, no Chrome-side commands yet.
+Local recording and transcription (`PLAN.md` Phase 2): the desktop app records the microphone with immediate per-chunk encryption, survives crashes within a 24-hour recovery window, and transcribes locally (Whisper + VAD + speaker segmentation, timestamps, uncertainty marking) — with the hardware benchmark gating model choice and a verified absence of AI network traffic at runtime. No note generation, no Cliniko API, no Chrome-side commands, and no host↔app pipe yet (pipe deferred to Phase 5, its real consumer — hardening decision 2026-07-26).
 
 ## Planning Extraction Summary
 
@@ -24,24 +24,31 @@ Local recording and transcription (`PLAN.md` Phase 2): the desktop app records t
 **Executor tier:** entirely premium — planned on Fable 5; executor may be Opus-class; tier-gap dosing applied (decisions locked, contracts specified, per-task acceptance criteria; carried over from the Phase-1 gate answer)
 
 ### Agreed Scope (Build Now)
-- Named-pipe host↔app IPC (Phase-1 locked topology): pipe server in the long-lived app, client in the thin host; user-only DACL; reuses the Phase-1 framing + envelope over pipe handles; Python-only message set (both ends are Python — no TS mirror)
 - Real core types from `PLAN.md`: `SessionState` (idle/recording/paused/processing/queued/written/failed/discarded/expired), `RecordingSession`; retire Phase 1's throwaway connection enum where superseded
 - Audio capture: device enumeration + selection (sounddevice/WASAPI), chunked capture worker, level metering
 - Encrypted session store: every audio chunk AES-256-GCM-encrypted at write time; session key DPAPI-protected at rest ONLY during the active/recovery window; key destroyed on finish-success or 24h expiry (cryptographic deletion preserved); startup + periodic expiry sweep
 - Session state machine with start/pause/resume/finish/discard controls and crash recovery (resume or discard an interrupted session)
 - ML stack: explicit one-time model-setup script (the ONLY sanctioned network use, separate process); silero-VAD segmentation; Whisper transcription behind the `SpeechProvider` interface with word timestamps + low-confidence marking (words, numbers, names); speaker labels per the segmentation decision task
 - Hardware benchmark: real-time-factor measurement on the device, threshold report, warning on failure — never cloud fallback
-- Desktop UI additions: microphone screen, session controls, recovery screen, benchmark/model screen (extends the Phase-1 status window)
-- Runtime no-network proof extended: recorder app during capture AND transcription keeps zero sockets (model setup script exempt, runs separately)
+- Desktop UI additions: microphone screen, session controls, recovery screen, transcript-inspection view, benchmark/model report panel (extends the Phase-1 status window; benchmark folded into a panel, not its own screen)
+- Runtime no-network proof extended: recorder app during capture AND transcription keeps zero sockets (model setup script exempt, runs separately) PLUS enforced offline mode for ML libraries (env kill-switches + local-only model loading + network-stubbed test) — polling alone cannot catch short-lived telemetry calls
+- Tooling/CI enablement: mypy strict overrides for untyped native/ML deps; `.github/workflows/ci.yml` updated for the `[ml]` extra (skip-if-absent), mock audio, Windows-only test marks
+- Logging safety: `ALLOWED_KEYS` extended deliberately for new session events; `_PAYLOAD_SIGNATURES` extended with transcript markers; tripwire tests for both
+- Explicit Phase-2 "Complete" user action (distinct from Discard) that triggers cryptographic deletion — write-back does not exist until Phase 4
 - Completion gate (from `PLAN.md`): user-recorded synthetic osteopathic consultations transcribe locally with verified absence of AI network traffic
 
 ### Deferred — Actionable Later
+- Named-pipe host↔app IPC (server in app, client in host, user-only DACL, Phase-1 framing over pipe handles, Python-only message set)
+  - Why deferred: nothing in the Phase-2 completion gate consumes it; Chrome sees nothing new until Phase 5, whose consent/command flow is the real consumer and will shape the message set (hardening decision 2026-07-26)
+  - Recommended next action: Phase 5 plan builds it, including the hardening this pass identified — `FILE_FLAG_FIRST_PIPE_INSTANCE`, `nMaxInstances=1`, host verifies server via `GetNamedPipeServerProcessId` + image-path check, bounded `WaitNamedPipe` connect contract where "pipe exists but server unverified" is a hard error (not graceful-absent)
+  - Risk if deferred: minor: the Phase-1 locked topology (pipe, not sockets/files) still stands as a design note; `pywin32` arrives in Phase 2 anyway for DPAPI
+  - Revisit by: Phase 5 planning
 - Clinical-content filtering and note generation
   - Why deferred: `PLAN.md` Phase 3 owns them
   - Recommended next action: Phase 3 plan
   - Risk if deferred: minor: intentional staging
 - Chrome-side recording commands, consent flow, and page UI
-  - Why deferred: `PLAN.md` Phase 5; the pipe built here is their transport when they arrive
+  - Why deferred: `PLAN.md` Phase 5; Phase 5 also builds the host↔app pipe (deferred above) as their transport
   - Recommended next action: Phase 5 plan
   - Risk if deferred: minor: intentional staging
 - Cliniko API, write-back, queueing (`PracticeManagementConnector`)
@@ -62,46 +69,50 @@ Local recording and transcription (`PLAN.md` Phase 2): the desktop app records t
 
 ### Accepted Assumptions — Revalidate Later
 - Python 3.14 has usable wheels for the chosen ML stack (sounddevice, onnxruntime/silero, Whisper backend)
-  - Why accepted for now: resolved empirically by the Step 6 spike; contingency recorded (Design Decisions)
+  - Why accepted for now: resolved empirically by the Step 5 spike; contingency recorded (Design Decisions)
   - Risk if assumption becomes false: desktop venv pins to 3.12 (declared floor) — contingency, not rework
-  - Trigger for revisit: Step 6
+  - Trigger for revisit: Step 5
 - User-recorded synthetic consultations are a sufficient completion-gate corpus
   - Why accepted for now: the practitioner can record realistic two-speaker material; the formal 50-encounter validation set is Phase 7
   - Risk if assumption becomes false: gate repeats with better material
-  - Trigger for revisit: Step 14 gate
+  - Trigger for revisit: Step 13 gate
 - Same-user attacker remains outside the defended boundary (Phase-1 threat model carries over to the session store)
   - Trigger for revisit: Phase 7 packaging
 
 ### Key Design Decisions
-- **Pipe transport reuses Phase-1 framing/envelope; message set is Python-only.** Both pipe ends are Python, so the fixtures-canonical TS/py mirroring is unnecessary; pipe messages live in `scribe_desktop.pipe_protocol` with their own fixture files under `protocol/pipe-fixtures/`. The Chrome↔host protocol is UNCHANGED in Phase 2.
-  - Alternatives rejected: extending the shared TS/py fixtures (drags the extension into churn it cannot observe)
-  - Still applies to follow-up work: Yes — Phase 5 adds Chrome-visible messages to the SHARED fixtures and relays them over this pipe
-- **Pipe security:** named pipe `\\.\pipe\ClinikoScribe.host` created by the app with an explicit DACL granting only the current user SID; host connects as client; first message is a hello carrying the pipe protocol version. Not a network socket — the no-sockets constraint stands.
-  - Alternatives rejected: localhost sockets (violates constraint); shared files (Phase-1 hardening already rejected polling files)
-- **Crash-recovery key custody:** the per-session AES-GCM key is wrapped with DPAPI (CryptProtectData, current-user scope) and stored beside the session store while the session is active or recoverable; unwrapped only in memory; the wrapped blob is deleted on finish-success, discard, or 24h expiry — that deletion IS the cryptographic deletion of the audio.
-  - Alternatives rejected: key only in memory (crash recovery impossible — violates PLAN.md); Credential Manager per-session entries (2560-byte blobs fine, but orphan cleanup is messier than a file beside the store)
+- **Named-pipe transport DEFERRED to Phase 5** (see Deferred — Actionable Later). The Phase-1 locked topology (named pipe, never sockets or polled files) remains binding when it is built. The Chrome↔host protocol is UNCHANGED in Phase 2.
+- **Crash-recovery key custody:** the per-session AES-GCM key is wrapped with DPAPI (CryptProtectData, current-user scope) and stored beside the session store while the session is active or recoverable; unwrapped only in memory; the wrapped blob is deleted on Complete, discard, or 24h expiry — that deletion is the cryptographic deletion of the audio *at the same-user trust boundary*.
+  - Durability ordering (binding): `key.dpapi` is written atomically (temp file + fsync + `os.replace`) BEFORE the first chunk is appended; on Complete — fsync `transcript.enc`, verify a decrypt round-trip, THEN delete the key; on Discard — delete the key FIRST, then best-effort remove the rest; the sweep garbage-collects orphan session dirs with no key
+  - Accepted residual (user decision 2026-07-26): plain unlink on NTFS is not anti-forensic (free clusters/USN/VSS can retain the wrapped blob); deletion security holds at the same-user boundary the threat model already accepts — Step 12 documents this residual explicitly; no overwrite code
+  - Alternatives rejected: key only in memory (crash recovery impossible — violates PLAN.md); Credential Manager per-session entries (orphan cleanup messier); best-effort overwrite-before-delete (weak on NTFS/SSD anyway)
   - Still applies to follow-up work: Yes — Phase 4's queued-draft encryption reuses this custody pattern
-- **Audio store format:** append-only chunk file per session: fixed header (session id, created-at, format), then length-prefixed AES-GCM records (fresh 12-byte nonce each, chunk index as associated data so records cannot be reordered undetected). Plaintext audio exists only in capture buffers.
-  - Alternatives rejected: encrypt-whole-file-at-finish (violates "encrypt immediately"); SQLite (no benefit for append-only streams)
+- **Audio store format (reconciled scheme, user decision 2026-07-26):** append-only chunk file per session: fixed header (session id, created-at, format), then length-prefixed AES-GCM records — fresh RANDOM 12-byte nonce each (never counter-derived; a crash-restored counter risks catastrophic nonce reuse), chunk index as AAD (cheap reorder detection), bounded record length on read (reject-without-allocation, mirroring `framing.py`), record-count bound asserted (GCM safety margin; fail safe, never silently exceed), truncated tail tolerated as expected crash behaviour, and a sealed FOOTER record written at Finish (final count) so post-Finish truncation is detectable. Plaintext audio exists only in capture buffers. One reorder-tamper test suffices — no dedicated battery.
+  - Alternatives rejected: encrypt-whole-file-at-finish (violates "encrypt immediately"); SQLite (no benefit); plain records without AAD/footer (blind to tampering for one parameter of cost); full reorder-tamper battery (exceeds threat model)
+- **Concurrency model (binding):** the capture worker is the SINGLE writer to `audio.enc` (owns the file handle); `SessionState` transitions are serialized through one lock (UI via Qt signals/queued connections); the expiry sweep skips any session in `recording`/`paused`/`processing` (keyed off live state, not mtime); `SessionCrypto` access is guarded. Pause/finish/discard vs an in-flight chunk write: the chunk is either fully written or cleanly dropped — tested.
+- **Runtime offline enforcement (binding):** ML model loading uses explicit local paths with `local_files_only=True`; `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1` (and onnxruntime telemetry off) are set AND asserted at runtime; an integration test runs transcription with network stubbed to fail and expects success. The polling no-sockets test remains, but env enforcement is the primary proof (short-lived telemetry connections can dodge a poll).
 - **Capture stack: `sounddevice` (PortAudio/WASAPI), 16 kHz mono PCM16, ~1 s chunks.** Whisper consumes 16 kHz mono; capturing at target rate avoids resampling complexity. Level metering from the same stream.
   - Alternatives rejected: pyaudio (unmaintained); WinRT APIs (heavy interop for no Phase-2 gain)
 - **Model acquisition is an explicit setup step (`scripts/setup-models.py`), never runtime.** Runtime processes must stay socketless (Phase-1 Critical Constraint extended to the recorder under load); the setup script is the single sanctioned network user, run separately and documented in the data-flow map.
   - Alternatives rejected: lazy download on first transcription (breaks the no-sockets proof and can silently stall a clinical workflow)
-- **Whisper backend + model size are `[decision]` tasks, decided on benchmark evidence** (Step 7). Preferred: faster-whisper (CTranslate2); fallbacks: whisper.cpp bindings, or pinning the venv to Python 3.12 if 3.14 wheels are the blocker. Uncertainty marking uses the backend's word-level probabilities.
-- **Speaker segmentation is a `[decision]` task** (Step 9). Candidates: lightweight 2-speaker clustering over VAD segments (practitioner+patient is the dominant case) vs pyannote-class diarization (quality, but heavy + gated models vs the local-only posture). PLAN.md requires segmentation, not named identification.
-- **UI extends the existing PySide6 status window** into a small multi-screen app (mic / session / recovery / benchmark); no new UI framework.
+- **Whisper backend + model size are `[decision]` tasks, decided on benchmark evidence** (Step D6). Preferred: faster-whisper (CTranslate2); fallbacks: whisper.cpp bindings, or pinning the venv to Python 3.12 if 3.14 wheels are the blocker. Uncertainty marking uses the backend's word-level probabilities.
+- **Speaker segmentation is a `[decision]` task CONSTRAINED to choosing the approach** (Step D8): lightweight 2-speaker clustering over VAD segments (practitioner+patient is the dominant case) vs pyannote-class diarization (quality, but heavy + gated models vs the local-only posture). Dropping segmentation is NOT a legal option — PLAN.md Phase 2 requires it as a gate deliverable (user decision 2026-07-26). PLAN.md requires segmentation, not named identification.
+- **Single-active-session invariant:** at most one session may be in `recording`/`paused`/`processing` at a time; multiple RECOVERABLE stores may coexist and are listed by the recovery screen.
+- **Phase-2 "Complete" action:** since Phase 4's write-back does not exist yet, an explicit user action on the transcript-inspection view ("Complete" — distinct from Discard) triggers cryptographic deletion per the custody ordering. Until then a finished session sits `queued` with its key retained, bounded by the 24 h sweep.
+- **UI extends the existing PySide6 status window** into a small multi-screen app (mic / session / recovery / transcript-inspection); the benchmark/model status is a report panel, not its own screen; no new UI framework.
 
 ## Key Findings
 
 ### Files / Symbols Involved
 Existing (Phase 1 — reuse, do not rewrite): `desktop/src/scribe_desktop/{framing,protocol,identity,logging_setup,secure_storage,native_host,status,app}.py`; `protocol/fixtures/`; QA config in `desktop/pyproject.toml`.
-New (planned): `scribe_desktop/pipe_protocol.py`, `pipe_transport.py` (server+client), `session.py` (SessionState machine + RecordingSession), `audio_capture.py`, `session_store.py` (encrypted chunk store + DPAPI key custody + expiry sweep), `speech.py` (`SpeechProvider` + VAD + segmentation), `benchmark.py`, UI screens under `scribe_desktop/ui/`; `scripts/setup-models.py`; `protocol/pipe-fixtures/`; tests mirroring each.
+New (planned): `scribe_desktop/session.py` (SessionState machine + RecordingSession), `audio_capture.py`, `session_store.py` (encrypted chunk store + DPAPI key custody + expiry sweep), `speech.py` (`SpeechProvider` + VAD + segmentation), `benchmark.py`, UI screens under `scribe_desktop/ui/`; repo-root `scripts/setup-models.py` (NOT `desktop/scripts/` — must sit outside desktop ruff/mypy so its network use is legal); `.github/workflows/ci.yml` edits; tests mirroring each. (Pipe modules removed — deferred to Phase 5.)
 
 ### Codebase Integration Notes — executor facts (do not rediscover)
 - Phase-1 executor facts still bind (see plan-phase1-security-foundation.md): stdout purity in the host, binary stdio, registration rules (exe, space-free, fresh Chrome process), logging whitelist + tripwire (extend `ALLOWED_KEYS` deliberately, never ad hoc), no-sockets ruff bans (`socket`, `http`, `urllib.request`, `PySide6.QtNetwork`)
-- **Named pipes are NOT sockets:** `pywin32`'s `win32pipe`/`win32file` or `multiprocessing.connection` — but `multiprocessing.connection.Listener` does not expose DACLs; use pywin32 (`CreateNamedPipe` with an explicit `SECURITY_ATTRIBUTES`) — add `pywin32` to dependencies
-- The framing module reads/writes `BinaryIO`; pipe handles need a thin file-like adapter (pywin32 returns handles, not streams)
-- The logging tripwire drops any record containing `payload=`/`session_nonce=`/`request_id=` — pipe code must log through `log_event` like everything else; transcripts/audio must NEVER pass through logging (extend `_PAYLOAD_SIGNATURES` with transcript markers when the transcript type lands)
+- **mypy is `strict = true` with NO overrides** (`desktop/pyproject.toml`): `import win32crypt`, `sounddevice`, `faster_whisper`, `onnxruntime` etc. each fail with "Cannot find implementation or library stub" — add a `[[tool.mypy.overrides]]` block (`ignore_missing_imports = true`) for the native/ML modules at first use (Step 1), or every later step is blocked
+- `sounddevice` loads the PortAudio DLL at IMPORT time — import it lazily inside functions so `audio_capture.py` stays importable on CI (mock backend must not touch PortAudio at collection time)
+- `SessionCrypto._key` is private with no accessor — DPAPI custody needs a key-export/wrap method (or `from_wrapped` constructor) added to the class (extend, don't fork); name it in Step 2, don't rediscover
+- DPAPI and pipe APIs are Windows-only: guard pywin32 imports and mark those tests `pytest.mark.skipif(sys.platform != "win32")` (CI runners are Windows — keep it that way)
+- The logging tripwire drops any record containing `payload=`/`session_nonce=`/`request_id=` — all new code logs through `log_event`; transcripts/audio must NEVER pass through logging (extend `_PAYLOAD_SIGNATURES` with transcript markers when the transcript type lands — a planned task, not an afterthought)
 - `SessionCrypto` (secure_storage.py) is per-session-in-memory; Phase 2's DPAPI custody wraps ITS key — extend, don't fork, the class
 - DPAPI via `win32crypt.CryptProtectData` (pywin32) — current-user scope, no extra entropy needed for this threat model (documented residual: same-user attacker)
 - The no-sockets integration test (`test_integration_no_sockets.py`) is the pattern to extend: poll full `net_connections()` on the recorder during capture AND transcription
@@ -117,37 +128,37 @@ New (planned): `scribe_desktop/pipe_protocol.py`, `pipe_transport.py` (server+cl
 - App running → mic screen shows devices → Start → `RecordingSession` created (state=recording), session key generated + DPAPI-wrapped beside the store → capture worker streams 1 s chunks → each chunk AES-GCM-encrypted and appended → Pause/Resume flip state; Finish → state=processing → transcription flow; Discard → key + store deleted (state=discarded)
 
 ### Flow 2 — Transcribe on finish
-- Decrypt chunks streamwise → VAD segments → Whisper per segment (word timestamps + probabilities) → uncertainty marks on low-confidence words/numbers/names → speaker labels per segmentation decision → encrypted transcript artifact written under the SAME session key → state=queued (write-back is Phase 4; Phase 2 displays the transcript for inspection) → on explicit completion: key custody deleted (cryptographic deletion)
+- Decrypt chunks streamwise → VAD segments → Whisper per segment (word timestamps + probabilities) → uncertainty marks on low-confidence words/numbers/names → speaker labels per segmentation decision → encrypted transcript artifact written ATOMICALLY (temp + replace) under the SAME session key → state=queued (write-back is Phase 4; Phase 2 displays the transcript on the inspection view) → on the explicit Complete action: fsync transcript → verify decrypt round-trip → delete key custody (cryptographic deletion). Crash mid-processing: recovery restarts transcription from audio (idempotent; partial transcript overwritten atomically); audio is never deleted before the transcript verifies.
 
 ### Flow 3 — Crash recovery
 - App start → sweep session stores: expired (>24 h) → destroy key custody + store (state=expired); recoverable → recovery screen lists them → user chooses Resume-processing or Discard — never auto-resume recording
 
-### Flow 4 — Host↔app pipe
-- App creates the user-ACL'd pipe at startup → host (spawned by Chrome) connects when present → pipe hello/version → host may query `session_status` → host badge-relevant state becomes available to Phase 5 (Chrome sees nothing new in Phase 2)
-
-## Design Decisions
+### Design Decisions
 (Consolidated in Key Design Decisions above.)
 
 ## Schema / Data Changes
 - New on-disk artifacts (all under `%LOCALAPPDATA%\ClinikoScribe\`): `sessions/<id>/audio.enc` (chunk store), `sessions/<id>/key.dpapi` (wrapped session key), `sessions/<id>/transcript.enc`, `models/` cache — all enumerated in the retention schedule update (Step 13)
 
 ## Config / Environment / Deployment Impact
-- New runtime dependencies: `pywin32`, `sounddevice`, VAD/Whisper stack per Step 6/7 (grouped under a `[ml]` extra so CI without audio/ML can still run core QA)
-- New setup step for a fresh machine: run `scripts/setup-models.py` once (network use, documented)
-- No env vars, no hosting impact; CI needs mock-audio + ml-extra guards (executor facts)
+- New runtime dependencies: `pywin32` (DPAPI), `sounddevice`, VAD/Whisper stack per Steps 5/D6 (ML/audio grouped under a `[ml]` extra so CI without audio/ML can still run core QA); mypy overrides block for all untyped native/ML modules
+- New setup step for a fresh machine: run `scripts/setup-models.py` once (repo-root; the ONLY sanctioned network use, documented)
+- Offline env kill-switches (`HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`) set by the app at startup and asserted in tests — enforced by env + integration test, NOT by ruff import bans (ML libs use `requests`/`httpx` transitively, which the ban list cannot see)
+- CI (`.github/workflows/ci.yml`) updated in-plan (Step 11): `[ml]` extra with skip-if-import-fails guards (3.14 wheels are an open assumption), mock audio, Windows-only marks; verify the outstanding FIRST CI run is green before layering new deps
 
 ## Critical Constraints
 - All Phase-1 Critical Constraints remain in force (no listening sockets, stdout purity, no custom crypto, whitelisted logging, extension permission scope)
 - Plaintext audio exists ONLY in transient capture/processing memory — never on disk, never in logs; transcripts at rest are encrypted under the session key
-- Deleting the DPAPI-wrapped key blob is the cryptographic deletion of the session — nothing else may retain the key or plaintext
-- 24-hour recovery cap is enforced by code (sweep), not convention
-- Runtime processes perform ZERO network I/O — model acquisition only via the explicit setup script; the no-sockets test covers the recorder mid-capture and mid-transcription
-- Never auto-resume RECORDING after a crash; recovery is user-initiated and limited to processing or discard
-- The Chrome↔host wire protocol does not change in Phase 2
+- Deleting the DPAPI-wrapped key blob is the cryptographic deletion of the session (at the same-user boundary; NTFS forensic residual documented) — nothing else may retain the key or plaintext; deletion/durability ordering per the key-custody Design Decision is binding
+- `key.dpapi` is durably written before the first audio chunk; disk-write failure (full/failing disk) transitions the session to `failed` (recoverable) — never silent data loss
+- 24-hour recovery cap is enforced by code (sweep), not convention; the sweep never touches sessions in `recording`/`paused`/`processing`
+- At most ONE active session at a time (single-active-session invariant)
+- Runtime processes perform ZERO network I/O — model acquisition only via the explicit setup script; offline env kill-switches set AND asserted; the no-sockets test covers the recorder mid-capture and mid-transcription
+- Never auto-resume RECORDING after a crash; recovery is user-initiated and limited to resume-processing or discard
+- The Chrome↔host wire protocol does not change in Phase 2 (and no pipe exists until Phase 5)
 
 ## Validation / Verification
-- Unit: pipe protocol fixtures (valid+invalid); pipe transport round-trip + DACL check (second-user access denied is not CI-testable — assert the DACL contents instead); session state machine (every legal/illegal transition); chunk store (append, tamper via AAD reorder, truncated tail from crash-sim, decrypt-stream); DPAPI custody (wrap/unwrap, delete = undecryptable); expiry sweep (fresh kept, >24 h destroyed); capture worker with mock backend; uncertainty marking thresholds; benchmark math
-- Integration: record→finish→transcribe on a bundled short PCM fixture (synthetic tone+speech clip, no network); crash-sim (kill mid-recording, restart, recover, transcribe); no-sockets poll on the recorder during capture AND transcription
+- Unit: session state machine (every legal/illegal transition, incl. Complete vs Discard); chunk store (append, one AAD-reorder tamper test, truncated tail from crash-sim, Finish footer detects post-Finish truncation, bounded record length on read, no nonce repeats across simulated restart-append, record-count bound, decrypt-stream); DPAPI custody (wrap/unwrap, delete = undecryptable, zero-length/truncated `key.dpapi` handled by the sweep); expiry sweep (fresh kept, >24 h destroyed, active sessions skipped, orphan dirs GC'd); disk-full → `failed` (recoverable); capture worker with mock backend (module importable without PortAudio); pause/finish vs in-flight chunk synchronization; logging tripwire on new keys + transcript signatures; uncertainty marking thresholds; benchmark math
+- Integration: record→finish→transcribe on a bundled short PCM fixture (synthetic tone+speech clip, no network); crash-sim (kill mid-recording, restart, recover, transcribe; kill mid-processing, recovery restarts transcription); transcription succeeds with network stubbed to fail (offline enforcement proof); no-sockets poll on the recorder during capture AND transcription
 - Manual completion gate: on the dev machine — record real synthetic consultations (practitioner+patient roleplay), verify transcripts (timestamps, uncertainty marks, speaker labels), observe recovery flow after a forced kill, and run the network monitor check (`netstat` + the automated poll) proving no AI-service traffic
 - All existing Phase-1 suites stay green (regression bar)
 
@@ -155,10 +166,10 @@ New (planned): `scribe_desktop/pipe_protocol.py`, `pipe_transport.py` (server+cl
 See `Planning Extraction Summary` (single source of truth).
 
 ## Current State / Handoff Note
-- Last completed step: Planning complete (2026-07-26); session handed off same day — no execution started, all 15 tasks 🟥
+- Last completed step: `/review-plan` hardening pass complete (2026-07-26): four-lens critique (coverage/practicality/risk/simplicity), pipe deferred to Phase 5, offline enforcement + concurrency model + custody ordering + mypy overrides + CI task added, D8 constrained, tasks renumbered (14 tasks, all 🟥) — no execution started
 - Current in-progress step: None
-- Immediate next action: `/review-plan` hardening pass recommended (non-trivial: crypto custody, concurrency, ML stack), then `/execute` or `/execute-loop`. Also verify the FIRST CI run passed (GitHub Actions tab — pushed 2026-07-26, never observed; likely-if-red culprits: keyring/audio quirks on the runner, not the code)
-- Open blockers / open questions: None for planning. Fresh-session reading order: this plan top-to-bottom, then plan-phase1-security-foundation.md "Codebase Integration Notes — executor facts" (binding Chrome/logging/registration rules), then docs/security/threat-model.md
+- Immediate next action: `/execute` or `/execute-loop` from Step 1. Step 11 verifies the FIRST CI run (pushed 2026-07-26, never observed; likely-if-red culprits: keyring/audio quirks on the runner, not the code)
+- Open blockers / open questions: None. Fresh-session reading order: this plan top-to-bottom, then plan-phase1-security-foundation.md "Codebase Integration Notes — executor facts" (binding Chrome/logging/registration rules), then docs/security/threat-model.md
 - Last plan sync: 2026-07-26
 
 ## Review History
@@ -169,46 +180,45 @@ See `Planning Extraction Summary` (single source of truth).
 
 ## Tasks
 
-- [ ] 🟥 Step 1: Pipe protocol + core types
-  - `pipe_protocol.py`: pipe envelope (reusing framing), message set (`pipe_hello`, `pipe_hello_ack`, `session_status` request/response, `error`), real `SessionState` enum + `RecordingSession` model; fixtures under `protocol/pipe-fixtures/` (valid+invalid), fixture-driven tests
-  - Ref: Key Design Decision (Python-only pipe protocol)
-- [ ] 🟥 Step 2: Named-pipe transport
-  - `pipe_transport.py`: pywin32 server (app side, explicit current-user-only DACL, file-like handle adapter for framing) + client (host side, connect-if-present, non-blocking); add `pywin32` dep; round-trip + DACL-content tests
-  - Ref: executor facts (pywin32, framing adapter)
-- [ ] 🟥 Step 3: Host session_status passthrough
-  - `native_host.py`: on `session_status`-relevant state, host queries the app over the pipe when connected and degrades gracefully when not (app-absent is NOT an error); unit tests with a fake pipe. Chrome wire protocol untouched
-- [ ] 🟥 Step 4: Encrypted session store + key custody
-  - `session_store.py`: chunk store per Design Decision (AAD chunk index, crash-tolerant truncated tail), DPAPI wrap/unwrap via `win32crypt` extending `SessionCrypto`, delete-custody = cryptographic deletion, 24 h expiry sweep; the full unit batteries from Validation
-  - Ref: Key Design Decisions (store format, key custody)
-- [ ] 🟥 Step 5: Audio capture
-  - `audio_capture.py`: sounddevice enumeration, 16 kHz mono PCM16 capture worker with ~1 s chunks feeding the store, level metering, mock backend for CI; device-loss mid-session → session state=failed (recoverable), never silent data loss
-- [ ] 🟥 Step 6: Session state machine + controls
-  - `session.py`: `SessionState` transitions with start/pause/resume/finish/discard, wiring capture↔store↔custody; exhaustive transition tests (legal and illegal)
-- [ ] 🟥 Step 7: ML stack spike + model setup script
-  - `scripts/setup-models.py` (explicit downloads to `%LOCALAPPDATA%\ClinikoScribe\models\`); install-and-run spike of faster-whisper (and fallback candidates) on Python 3.14; produce the RTF benchmark harness in `benchmark.py`; record wheel availability findings in this plan
-  - Ref: Accepted Assumption (3.14 wheels), Key Design Decision (setup-step-only network)
-- [ ] 🟥 Step D8: Choose Whisper backend + model size          [decision]
+- [ ] 🟥 Step 1: Core types + tooling prep
+  - `session.py`: real `SessionState` enum + `RecordingSession` model per PLAN.md core types (retire Phase 1's throwaway `ConnectionState` where superseded); `desktop/pyproject.toml`: `[[tool.mypy.overrides]]` (`ignore_missing_imports = true`) for `win32crypt`/`win32api`/`sounddevice`/ML modules + add `pywin32` dep; `logging_setup.py`: extend `ALLOWED_KEYS` with the new session event keys (deliberately, whitelisted) with tripwire tests
+  - Verifies: types unit tests + tripwire tests; existing suites stay green
+- [ ] 🟥 Step 2: Encrypted session store + key custody
+  - `session_store.py`: chunk store per the Audio store format Design Decision (random nonces, AAD index, bounded reads, record-count bound, truncated-tail tolerance, Finish footer); `secure_storage.py`: add a key-export/wrap method to `SessionCrypto` (extend, don't fork); DPAPI wrap/unwrap via `win32crypt` (Windows-only guards); atomic `key.dpapi` write BEFORE first chunk; deletion ordering per the key-custody Design Decision; 24 h expiry sweep (skips active, GCs orphans, handles truncated key blobs); disk-full → `failed`
+  - Verifies: the full chunk-store/custody/sweep unit batteries from Validation
+- [ ] 🟥 Step 3: Audio capture
+  - `audio_capture.py`: lazy `sounddevice` import (module importable without PortAudio), device enumeration, 16 kHz mono PCM16 capture worker with ~1 s chunks feeding the store, level metering, mock backend for CI; device-loss mid-session → session state=failed (recoverable), never silent data loss
+- [ ] 🟥 Step 4: Session state machine + controls + concurrency
+  - `session.py`: transitions with start/pause/resume/finish/discard/Complete, wiring capture↔store↔custody under the Concurrency model Design Decision (single writer, serialized transitions, guarded `SessionCrypto`); single-active-session invariant enforced
+  - Verifies: exhaustive legal/illegal transition tests + pause/finish-vs-in-flight-chunk test
+- [ ] 🟥 Step 5: ML stack spike + model setup script
+  - Repo-root `scripts/setup-models.py` (explicit downloads to `%LOCALAPPDATA%\ClinikoScribe\models\`); install-and-run spike of faster-whisper (and fallback candidates) on Python 3.14; RTF benchmark harness in `benchmark.py`; app sets + asserts the offline env kill-switches; record wheel availability findings in this plan
+  - Ref: Accepted Assumption (3.14 wheels), Design Decisions (setup-step-only network, Runtime offline enforcement)
+- [ ] 🟥 Step D6: Choose Whisper backend + model size          [decision]
   - Options: faster-whisper on 3.14 / faster-whisper on a 3.12-pinned venv / whisper.cpp bindings; model: distil vs small/medium/large per RTF+quality
-  - Decide after: Step 7's benchmark numbers on the dev machine
-  - Blocks: Steps 9–11 (pipeline + benchmark thresholds)
-- [ ] 🟥 Step 9: VAD + segmentation scaffolding
+  - Decide after: Step 5's benchmark numbers on the dev machine
+  - Blocks: Steps 7–9 (pipeline + benchmark thresholds)
+- [ ] 🟥 Step 7: VAD + segmentation scaffolding
   - `speech.py`: silero-VAD over decrypted chunk stream → speech segments with timestamps; `SpeechProvider` interface per PLAN.md core types
-- [ ] 🟥 Step D10: Choose speaker-segmentation approach        [decision]
-  - Options: 2-speaker clustering over VAD segments / pyannote-class diarization / defer speaker labels to Phase 3 with `Risk if deferred: ux-degradation`
-  - Decide after: Step 9 segments + Step D8 backend are in place (clustering quality is testable then)
-  - Blocks: Step 11's speaker labels
-- [ ] 🟥 Step 11: Transcription pipeline
-  - `speech.py`: segments → Whisper (word timestamps + probabilities) → uncertainty marks (low-confidence words, numbers, names) → speaker labels per D10 → encrypted `transcript.enc` under the session key; state processing→queued; integration test on the bundled PCM fixture
-- [ ] 🟥 Step 12: Benchmark + UI screens
-  - `benchmark.py` thresholds + report per D8; PySide6 screens: microphone (device pick + level), session controls, recovery list (Flow 3, resume-processing/discard only), benchmark/model screen with the failed-device warning + report; offscreen smoke tests
-- [ ] 🟥 Step 13: Docs + retention sync
-  - Update `docs/security/` (data-flow map: sessions/models artifacts + the setup-script network exception; retention schedule: session stores, transcripts, model cache, 24 h rule; threat model: DPAPI custody residual) and `AGENTS.md` (setup-models step, new deps)
-- [ ] 🟥 Step 14: No-network proof + completion gate
-  - Extend the integration suite: recorder polled socketless during capture AND transcription; crash-sim end-to-end; then the manual gate (user records synthetic consultations; transcript inspection; forced-kill recovery; network monitor check) — results recorded in the handoff note
+- [ ] 🟥 Step D8: Choose speaker-segmentation approach         [decision]
+  - Options: 2-speaker clustering over VAD segments / pyannote-class diarization (approach choice ONLY — segmentation itself is a PLAN.md gate requirement and cannot be dropped)
+  - Decide after: Step 7 segments + Step D6 backend are in place (clustering quality is testable then)
+  - Blocks: Step 9's speaker labels
+- [ ] 🟥 Step 9: Transcription pipeline
+  - `speech.py`: segments → Whisper (word timestamps + probabilities, `local_files_only=True`, explicit local model paths) → uncertainty marks (low-confidence words, numbers, names) → speaker labels per D8 → `transcript.enc` written atomically under the session key; state processing→queued; Complete action: fsync→verify→delete-key per Flow 2; crash-mid-processing recovery restarts transcription; `_PAYLOAD_SIGNATURES` extended with transcript markers + tripwire test
+  - Verifies: integration test on the bundled PCM fixture + network-stubbed-to-fail offline test
+- [ ] 🟥 Step 10: Benchmark report + UI screens
+  - `benchmark.py` thresholds + report per D6; PySide6 screens: microphone (device pick + level + benchmark/model report panel with failed-threshold warning), session controls, recovery list (Flow 3, resume-processing/discard only), transcript-inspection view with the Complete/Discard actions; offscreen smoke tests
+- [ ] 🟥 Step 11: CI workflow update
+  - `.github/workflows/ci.yml`: verify the outstanding first run is green, then add `[ml]` extra with skip-if-import-fails guards (3.14 leg may lack wheels — that's a skip, not a failure), mock-audio env, Windows-only marks honoured
+- [ ] 🟥 Step 12: Docs + retention sync
+  - Update `docs/security/` (data-flow map: sessions/models artifacts + the setup-script network exception + offline-enforcement note; retention schedule: session stores, transcripts, model cache, 24 h rule; threat model: DPAPI custody residual + NTFS unlink-not-anti-forensic residual + pipe-deferred note) and `AGENTS.md` (setup-models step, new deps)
+- [ ] 🟥 Step 13: No-network proof + completion gate
+  - Extend the integration suite: recorder polled socketless during capture AND transcription + offline env asserts; crash-sim end-to-end; then the manual gate (user records synthetic consultations; transcript inspection; forced-kill recovery; network monitor check) — results recorded in the handoff note
 - [ ] 🟥 Step H: Hardening stage
   - [ ] 🟥 H1: `/review` → `/fix` to convergence
   - [ ] 🟥 H2: `/simplify` — findings logged; trivial → `/fix`, substantial → scoped `/review-plan`
-  - [ ] 🟥 H3: `/security-review` — same routing (crypto custody + pipe DACL deserve it)
+  - [ ] 🟥 H3: `/security-review` — same routing (crypto custody + store format deserve it)
   - [ ] 🟥 H4: final `/review` re-check
 
 ## Retained Follow-Up Items
@@ -216,7 +226,7 @@ See `Planning Extraction Summary` (single source of truth).
 
 ## Follow-Up Continuation Notes
 - Next follow-up: Phase 3 (local note generation) — consumes the encrypted transcript artifact
-- Design decisions that persist: pipe transport + custody pattern (Phase 4 queueing reuses it), setup-script-only network rule, no-sockets-at-runtime bar
+- Design decisions that persist: key-custody pattern (Phase 4 queueing reuses it), pipe topology + hardening notes (Phase 5 builds it — see Deferred), setup-script-only network rule, offline env enforcement, no-sockets-at-runtime bar
 - Do not rediscover: Phase-1 executor facts (referenced above) + this plan's executor facts
 
 ---
