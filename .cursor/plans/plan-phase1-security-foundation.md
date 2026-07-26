@@ -12,7 +12,7 @@
 
 ## Plan Lineage
 - Parent plan: None (derived from `PLAN.md` Phase 1 — Security foundation; hardened by /review-plan 2026-07-23)
-- Follow-up plans: None (Phases 2–7 of `PLAN.md` will become their own plans)
+- Follow-up plans: plan-phase2-recording-transcription.md (created 2026-07-26; Phases 3–7 pending)
 
 ## Goal
 Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 extension shell restricted to Cliniko domains and a Windows desktop companion shell (Python + PySide6), talking exclusively over Chrome Native Messaging, with credential storage in Windows Credential Manager, an encrypted-session-storage foundation, and the five governing security documents. No clinical features, no audio, no Cliniko API calls yet.
