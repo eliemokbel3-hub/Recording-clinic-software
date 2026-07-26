@@ -3,7 +3,7 @@
 **Overall Progress:** `100%`
 
 ## Lifecycle State
-- Active
+- Completed — Follow-ups Retained
 
 ## Completion Status
 - Completion timestamp: 2026-07-26
@@ -230,9 +230,9 @@ N/A — no database in Phase 1.
 See `Planning Extraction Summary` → Deferred / Excluded / Accepted Assumptions (single source of truth; all dispositions user-confirmed 2026-07-23 during plan hardening).
 
 ## Current State / Handoff Note
-- Last completed step: Step 12 completion gate PASSED (2026-07-26) — main implementation complete at 100%
-- Current in-progress step: Completion-state decision pass (lifecycle choice pending with user)
-- Immediate next action: record lifecycle state; then Phase 2 planning (its first task: named-pipe host↔app IPC per the locked topology) and the CI workflow (Revisit by: before Phase 2)
+- Last completed step: Completion-state pass done — lifecycle set to Completed — Follow-ups Retained (2026-07-26)
+- Current in-progress step: None — plan closed
+- Immediate next action: CI workflow (due), then /create-plan for Phase 2
 - Open blockers / open questions: None
 - Last plan sync: 2026-07-26
 - Last plan sync: 2026-07-24
@@ -460,7 +460,17 @@ Source: Claude Code
   - Done when: all automated suites green and every manual gate item observed
 
 ## Retained Follow-Up Items
-(Not applicable while plan is Active.)
+Completion review 2026-07-26 (user-confirmed at the completion-state pass): every
+Deferred / Excluded / Accepted-Assumption item in the `Planning Extraction
+Summary` above is classified **Carried Forward**, unchanged, with the phase
+anchors already recorded there — none Resolved, Superseded, or Re-deferred.
+The extraction summary remains the single source of truth for the item details;
+this section records only the completion-review disposition to avoid duplication.
+
+Priority order for pickup:
+1. GitHub Actions CI — its `Revisit by: before Phase 2 begins` trigger is NOW DUE (both QA suites exist to run)
+2. Phase 2 plan (`/create-plan`) — first task: named-pipe host↔app IPC per the locked process topology; revalidate ML wheels on Python 3.14 at the benchmark task
+3. Everything else lands with its owning phase (allowlist → 5, packaging → 7, etc.)
 
 ## Follow-Up Continuation Notes
 - Next follow-up: Phase 2 (local recording + transcription) via its own `/create-plan` — its first task is the named-pipe host↔app IPC per the locked topology
