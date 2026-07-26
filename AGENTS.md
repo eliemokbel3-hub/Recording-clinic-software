@@ -27,23 +27,28 @@ A single-practitioner clinical scribe for two Cliniko clinics: a thin Chrome ext
 [List the main tables, key entities, or schema notes here.]
 
 ## Local Run Steps
-**Prerequisites:** [runtime and tooling versions, e.g. Node 20+, Python 3.12, pnpm 9]
+**Prerequisites:** Python 3.12+ (dev machine runs 3.14), Node 20+, Google Chrome.
 
 1. Clone the repo
-2. Create `.env` from `.env.example`
-3. Install dependencies: `[e.g. npm install]`
-4. Run the development server: `[e.g. npm run dev]`
-5. Verify it's running: open `[local URL, e.g. http://localhost:3000]` — `[what a healthy response looks like, e.g. the login page renders]`
+2. `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e ".\desktop[dev]"`
+3. `cd extension && npm install && npm run build` (bundle lands in `extension/dist`)
+4. Register the native host: `.venv\Scripts\python.exe scripts\register-native-host.py` (per Windows user; rerun after any venv move or reinstall — installs to `%LOCALAPPDATA%\ClinikoScribe`, which must stay space-free and `.exe`-based or Chrome silently reports "host not found")
+5. Load `extension/dist` as an unpacked extension in `chrome://extensions` (Developer mode), pin its icon
+6. **Fully restart Chrome** — window-close is not a restart when background mode is on; verify no `chrome.exe` remains before relaunching
+7. Verify: pinned icon shows a green **OK** badge; `.venv\Scripts\scribe-app.exe` self-test passes 2/2
+8. QA suites: `desktop:` `ruff check . && mypy && pytest` (in `desktop/`); `extension:` `npm run qa`
+
+No `.env` needed — the project has no environment variables (secrets live in Windows Credential Manager).
 
 Machine-specific run notes (local absolute paths, personal DB endpoints, machine-local ports) belong in a gitignored `AGENTS.local.md`, not here — and never put secrets in it.
 
 ## Current Status
-Planning stage — `PLAN.md` holds the product plan; no application code exists yet.
+**Phase 1 (security foundation) COMPLETE** — gate passed 2026-07-26. Working: Chrome MV3 extension shell (pinned ID, Cliniko-only permissions, badge connection indicator) ↔ Windows native host over authenticated Native Messaging (fixture-canonical protocol, binary framing, watchdog/backoff reconnect), secure-storage foundation (Credential Manager + AES-GCM session crypto with cryptographic deletion), structural no-clinical-data logging, five security docs in `docs/security/`, 72+36 tests incl. a no-network-sockets proof. No clinical features yet — Phases 2–7 of `PLAN.md` pending.
 
 ## Last Session
-- Date: 2026-07-23
-- Worked on: Bootstrap FULL INSTALL (workflow rules, commands, and Skills)
-- Next priority: Explore/plan the first implementation slice from PLAN.md
+- Date: 2026-07-26
+- Worked on: Phase 1 execution, review round 1 (29 findings fixed), gate debugging (three Chrome registration gotchas — see plan executor facts), gate PASSED
+- Next priority: CI workflow (due before Phase 2), then /create-plan for Phase 2 (local recording + transcription; first task = named-pipe host↔app IPC)
 
 ## Known Issues / Next Tasks
 - [ ]

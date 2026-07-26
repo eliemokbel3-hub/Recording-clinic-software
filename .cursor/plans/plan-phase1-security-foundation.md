@@ -1,14 +1,14 @@
 # Feature Implementation Plan
 **Feature:** phase1-security-foundation
-**Overall Progress:** `92%`
+**Overall Progress:** `100%`
 
 ## Lifecycle State
 - Active
 
 ## Completion Status
-- Completion timestamp:
-- Main implementation complete: No
-- Ready for archive: No
+- Completion timestamp: 2026-07-26
+- Main implementation complete: Yes
+- Ready for archive: No (completion-state pass pending)
 
 ## Plan Lineage
 - Parent plan: None (derived from `PLAN.md` Phase 1 — Security foundation; hardened by /review-plan 2026-07-23)
@@ -230,10 +230,11 @@ N/A — no database in Phase 1.
 See `Planning Extraction Summary` → Deferred / Excluded / Accepted Assumptions (single source of truth; all dispositions user-confirmed 2026-07-23 during plan hardening).
 
 ## Current State / Handoff Note
-- Last completed step: Step 12 gate debugging RESOLVED (2026-07-26): live Chrome↔host session confirmed (hello_ack + 1-min pings in host log). Three real fixes landed en route (exe host, space-free install dir, fresh-process requirement — see executor facts); probe diagnostics removed
-- Current in-progress step: Step 12 — remaining manual gate items (user at Chrome: badge observed green, self-test, kill-host reconnect, netstat)
-- Immediate next action: user confirms remaining gate observations; then completion pass (AGENTS.md/CHANGELOG update, 100%, lifecycle decision)
-- Open blockers / open questions: None — connection proven live from the host log
+- Last completed step: Step 12 completion gate PASSED (2026-07-26) — main implementation complete at 100%
+- Current in-progress step: Completion-state decision pass (lifecycle choice pending with user)
+- Immediate next action: record lifecycle state; then Phase 2 planning (its first task: named-pipe host↔app IPC per the locked topology) and the CI workflow (Revisit by: before Phase 2)
+- Open blockers / open questions: None
+- Last plan sync: 2026-07-26
 - Last plan sync: 2026-07-24
 - Open blockers / open questions: None
 - Last plan sync: 2026-07-24
@@ -454,7 +455,7 @@ Source: Claude Code
   - Ref: Critical Constraints (no listening sockets)
 - [x] 🟩 Step 11: Security documents — done 2026-07-24; five docs written grounded in the built system (threat model covers stdio boundary, same-user residual risks, tripwires, LOW-009 zeroization residual, Phase-2 topology; data-flow map + retention enumerate log files/rotation); AGENTS.md pointers added
   - Write the five `docs/security/` docs grounded in the built system. Threat model MUST cover: the stdio trust boundary (nonce = session identifier, not auth), same-user residual risks (HKCU/manifest/launcher/venv hijack) with the startup path-logging tripwire, and the Phase-2 named-pipe topology. Data-flow map + retention schedule MUST enumerate log files (rotation/retention) — there is no status file. Add `AGENTS.md` Subsystem Documentation pointers
-- [ ] 🟥 Step 12: Completion gate
+- [x] 🟩 Step 12: Completion gate — PASSED 2026-07-26. User observed: badge green (OK), self-test 2/2 PASS, kill-host reconnect recovered to OK. Host log independently confirmed authenticated handshake + 1-min liveness pings. Automated: 72 desktop + 36 extension tests green incl. no-network-sockets proof polled mid-handshake
   - Run every manual item in Validation / Verification; update `AGENTS.md` (stack rows, Local Run Steps incl. per-user registration + venv-move rule, Current Status) and `CHANGELOG.md`; record results in the handoff note
   - Done when: all automated suites green and every manual gate item observed
 
