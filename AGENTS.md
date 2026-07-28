@@ -30,25 +30,28 @@ A single-practitioner clinical scribe for two Cliniko clinics: a thin Chrome ext
 **Prerequisites:** Python 3.12+ (dev machine runs 3.14), Node 20+, Google Chrome.
 
 1. Clone the repo
-2. `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e ".\desktop[dev]"`
-3. `cd extension && npm install && npm run build` (bundle lands in `extension/dist`)
-4. Register the native host: `.venv\Scripts\python.exe scripts\register-native-host.py` (per Windows user; rerun after any venv move or reinstall — installs to `%LOCALAPPDATA%\ClinikoScribe`, which must stay space-free and `.exe`-based or Chrome silently reports "host not found")
-5. Load `extension/dist` as an unpacked extension in `chrome://extensions` (Developer mode), pin its icon
-6. **Fully restart Chrome** — window-close is not a restart when background mode is on; verify no `chrome.exe` remains before relaunching
-7. Verify: pinned icon shows a green **OK** badge; `.venv\Scripts\scribe-app.exe` self-test passes 2/2
-8. QA suites: `desktop:` `ruff check . && mypy && pytest` (in `desktop/`); `extension:` `npm run qa`
+2. `python -m venv .venv` then `.venv\Scripts\python.exe -m pip install -e ".\desktop[dev,ml]"` and `.venv\Scripts\python.exe -m pip install sounddevice` (the `[ml]` extra = faster-whisper/onnxruntime/huggingface_hub; `sounddevice` is deliberately not in pyproject — the test suite is absent-safe without it, but recording needs it)
+3. Download the local ML models (one-time, the ONLY sanctioned network step): `.venv\Scripts\python.exe scripts\setup-models.py` — **run this YOURSELF from a normal terminal (PowerShell/cmd), never from an agent shell**: agent shells on this machine are MSIX-virtualized and their `%LOCALAPPDATA%` writes land in a package-private location invisible to user-launched apps (`docs/lessons.md`). ~3.0 GiB with all four benchmark candidates; silero + whisper `small` alone ≈ 470 MiB
+4. `cd extension && npm install && npm run build` (bundle lands in `extension/dist`)
+5. Register the native host: `.venv\Scripts\python.exe scripts\register-native-host.py` (per Windows user; rerun after any venv move or reinstall — installs to `%LOCALAPPDATA%\ClinikoScribe`, which must stay space-free and `.exe`-based or Chrome silently reports "host not found")
+6. Load `extension/dist` as an unpacked extension in `chrome://extensions` (Developer mode), pin its icon
+7. **Fully restart Chrome** — window-close is not a restart when background mode is on; verify no `chrome.exe` remains before relaunching
+8. Verify: pinned icon shows a green **OK** badge; `.venv\Scripts\scribe-app.exe` self-test passes 2/2
+9. QA suites: `desktop:` `ruff check . && mypy && pytest` (in `desktop/`); `extension:` `npm run qa`
 
-No `.env` needed — the project has no environment variables (secrets live in Windows Credential Manager).
+**Launching the desktop app:** double-click `.venv\Scripts\scribe-app.exe` in Explorer, or run it from a PERSISTENT terminal (`.venv\Scripts\python.exe -m scribe_desktop.app` keeps console output). NEVER launch it from an ephemeral terminal (e.g. a chat Run button) — the closing terminal kills the GUI child (`docs/lessons.md`). Only one instance runs per user: a second launch shows "already running" and exits (named-mutex guard).
+
+No `.env` needed — the project has no environment variables (secrets live in Windows Credential Manager; the offline ML kill-switches are set by the app itself).
 
 Machine-specific run notes (local absolute paths, personal DB endpoints, machine-local ports) belong in a gitignored `AGENTS.local.md`, not here — and never put secrets in it.
 
 ## Current Status
-**Phase 1 (security foundation) COMPLETE** — gate passed 2026-07-26. Working: Chrome MV3 extension shell (pinned ID, Cliniko-only permissions, badge connection indicator) ↔ Windows native host over authenticated Native Messaging (fixture-canonical protocol, binary framing, watchdog/backoff reconnect), secure-storage foundation (Credential Manager + AES-GCM session crypto with cryptographic deletion), structural no-clinical-data logging, five security docs in `docs/security/`, 72+36 tests incl. a no-network-sockets proof. No clinical features yet — Phases 2–7 of `PLAN.md` pending.
+**Phase 1 (security foundation) COMPLETE** — gate passed 2026-07-26. **Phase 2 (local recording + transcription) implementation COMPLETE through Step 12** — live user smoke PASSED 2026-07-28; remaining before phase close: Step 13 (extended no-network proof + manual completion gate) and the hardening stage. Working now: multi-screen desktop app (microphone / session / recovery / transcript / status) recording 16 kHz mono with immediate per-chunk AES-256-GCM encryption; DPAPI key custody with a 24 h crash-recovery window and cryptographic deletion (Complete / Discard / expiry sweep, ≤15-min sweep granularity); fully-local transcription (silero-VAD + faster-whisper `small` CPU int8, word timestamps, uncertainty marks on low-confidence words/numbers/names, 2-speaker labels) with offline env kill-switches set AND asserted (`scripts/setup-models.py` is the only sanctioned network user, run by the USER from a normal terminal); hardware benchmark panel (all four candidates RTF ≤ 0.5 on the dev machine); single-instance named-mutex guard; 481 desktop + 36 extension tests; CI (3.12 + 3.14, windows-latest) with best-effort `[ml]`/audio install. Not yet: note generation (Phase 3), Cliniko write-back (Phase 4), Chrome-side recording UI + host↔app pipe (Phase 5).
 
 ## Last Session
-- Date: 2026-07-26
-- Worked on: Phase 1 gate PASSED and plan closed (Completed — Follow-ups Retained); CI workflow added (.github/workflows/ci.yml — first run unverified, check the GitHub Actions tab); Phase 2 plan created (plan-phase2-recording-transcription.md, Active, 0%)
-- Next priority: /review-plan hardening pass on the Phase 2 plan (recommended — crypto custody, concurrency, ML stack), then /execute or /execute-loop
+- Date: 2026-07-28
+- Worked on: Phase 2 Steps 11–12 (stage-8 executor): CI workflow updated for the ML stack (best-effort `[ml]` + sounddevice, offline env, first CI run verified GREEN — but note all three green runs predate the Phase 2 commits, which are still unpushed); security docs synced to Phase 2 (threat model, data-flow map, retention schedule — DPAPI custody, NTFS unlink, clipboard, sweep-granularity, transcript-view residuals); single-instance named-mutex guard implemented with tests (peer-18 PR4, raised priority)
+- Next priority: push + watch both CI matrix legs, then P9 (Step 13: extended no-network proof + manual completion gate), then Step H hardening
 
 ## Known Issues / Next Tasks
 - [ ]

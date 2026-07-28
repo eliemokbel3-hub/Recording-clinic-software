@@ -1,10 +1,20 @@
-"""Step 8: status/self-test logic tests + offscreen window smoke test."""
+"""Step 8: status/self-test logic tests + offscreen window smoke test.
+
+Phase 2 Step 12 adds the single-instance guard battery (named mutex,
+peer round 18 PR4 — priority raised by the 2026-07-28 live smoke).
+"""
 
 import os
+import sys
+from uuid import uuid4
 
 import pytest
 
 from scribe_desktop.status import read_registration_status, run_self_test
+
+windows_only = pytest.mark.skipif(
+    sys.platform != "win32", reason="named mutexes are Windows-only"
+)
 
 
 def test_registration_status_reads_real_machine_state() -> None:
@@ -62,3 +72,94 @@ def test_window_offscreen_smoke(tmp_path) -> None:
     assert "FAIL" not in panel.self_test_label.text()
     window.close()
     del app
+
+
+# ---------------------------------------------------------------------------
+# Step 12: single-instance guard (named mutex; peer round 18 PR4)
+# ---------------------------------------------------------------------------
+
+
+def _unique_mutex_name() -> str:
+    # Global\ deliberately: the production default uses the Global namespace,
+    # so these tests also prove a standard user can create there.
+    return f"Global\\ClinikoScribe-test-{uuid4().hex}"
+
+
+@windows_only
+class TestSingleInstanceLock:
+    def test_first_acquire_owns_and_second_refuses(self) -> None:
+        from scribe_desktop.app import acquire_single_instance_lock, release_single_instance_lock
+
+        name = _unique_mutex_name()
+        acquired, handle = acquire_single_instance_lock(name)
+        assert acquired and handle
+        try:
+            assert acquire_single_instance_lock(name) == (False, 0)
+        finally:
+            release_single_instance_lock(handle)
+
+    def test_released_lock_can_be_reacquired(self) -> None:
+        from scribe_desktop.app import acquire_single_instance_lock, release_single_instance_lock
+
+        name = _unique_mutex_name()
+        acquired, handle = acquire_single_instance_lock(name)
+        assert acquired
+        release_single_instance_lock(handle)
+        acquired_again, handle_again = acquire_single_instance_lock(name)
+        assert acquired_again and handle_again
+        release_single_instance_lock(handle_again)
+
+    def test_busy_probe_does_not_pin_the_name(self) -> None:
+        # The (False, 0) path must CLOSE the handle CreateMutexW returned:
+        # a refused second launch must not keep the name alive after the
+        # first instance exits.
+        from scribe_desktop.app import acquire_single_instance_lock, release_single_instance_lock
+
+        name = _unique_mutex_name()
+        _, owner_handle = acquire_single_instance_lock(name)
+        assert acquire_single_instance_lock(name) == (False, 0)
+        release_single_instance_lock(owner_handle)
+        acquired, handle = acquire_single_instance_lock(name)
+        assert acquired and handle, "busy probe leaked a handle and pinned the mutex name"
+        release_single_instance_lock(handle)
+
+    def test_default_name_is_per_user_and_namespace_safe(self) -> None:
+        from scribe_desktop.app import _single_instance_mutex_name
+
+        name = _single_instance_mutex_name()
+        assert name.startswith("Global\\ClinikoScribe-app-")
+        # Backslash is the kernel object-namespace separator — the user part
+        # must never introduce one.
+        assert "\\" not in name.removeprefix("Global\\")
+
+
+@windows_only
+def test_main_refuses_second_instance(monkeypatch: pytest.MonkeyPatch) -> None:
+    """main() wiring: a refused lock shows the warning and exits 0 BEFORE any
+    backend/controller/sweep exists (no MainWindow, no sessions-root touch)."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    from scribe_desktop import app as app_module
+
+    warned: list[str] = []
+    monkeypatch.setattr(
+        app_module, "acquire_single_instance_lock", lambda name=None: (False, 0)
+    )
+    monkeypatch.setattr(
+        app_module, "_show_already_running_warning", lambda: warned.append("warned")
+    )
+    # A QApplication may already exist in this pytest process; main()'s
+    # unconditional QApplication([]) is only valid in a fresh app process.
+    monkeypatch.setattr(
+        app_module, "QApplication", lambda argv: QApplication.instance() or QApplication(argv)
+    )
+    # Guard proof: the refusal path must return before SoundDeviceBackend is
+    # even constructed — poison it so any touch fails loudly.
+    monkeypatch.setattr(
+        app_module,
+        "SoundDeviceBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("refused instance touched the backend")),
+    )
+    assert app_module.main() == 0
+    assert warned == ["warned"]

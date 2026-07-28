@@ -1,10 +1,10 @@
-# Threat Model (Phase 1)
+# Threat Model (Phases 1–2)
 
-Scope: the implemented security foundation — extension shell, native-messaging
-host, registration chain, logging, credential/session-crypto foundations.
-Phase 1 handles no clinical data, so consequences today are limited to the
-control channel and test data; this model exists to make the boundaries
-honest BEFORE clinical data arrives.
+Scope: the implemented system — extension shell, native-messaging host,
+registration chain, logging, credential/session-crypto foundations (Phase 1),
+plus local recording, encrypted session stores with DPAPI key custody, and
+local transcription (Phase 2). Clinical data now exists: audio and
+transcripts, encrypted at rest, bounded by a 24-hour recovery window.
 
 ## Trust boundaries
 
@@ -71,16 +71,88 @@ honest BEFORE clinical data arrives.
   granularity — same-user access is by design (the host must read keys
   unattended in Phase 4).
 
-## Out of scope for Phase 1 (tracked in PLAN.md phases)
+## Phase 2: audio, transcripts, and session-key custody
 
-Consent workflow and recording indicators (Phase 5), transcript
-prompt-injection handling (Phase 3), audio-at-rest encryption and recovery
-windows (Phase 2), OneDrive/backup exclusions and audit records (Phase 6),
+All Phase-2 protections are calibrated to boundary 2 above: the defended
+adversary is outside the user's Windows session; the same-user attacker
+remains an accepted residual.
+
+1. **DPAPI key custody (crash-recovery window).** Each session's AES-256-GCM
+   key is wrapped with `CryptProtectData` (current-user scope, no extra
+   entropy) and stored as `sessions\<id>\key.dpapi` while the session is
+   active or recoverable (≤ 24 h); it is unwrapped only in memory. Deleting
+   that blob IS the cryptographic deletion of the session's audio and
+   transcript (deletion ordering: on Complete — fsync transcript, verify a
+   decrypt round-trip, THEN delete the key; on Discard — key first, then
+   best-effort store removal). Residual: any process in the user's session
+   can call `CryptUnprotectData` on the blob while it exists — subsumed by
+   boundary 2.
+2. **NTFS unlink is not anti-forensic (ACCEPTED RESIDUAL, user decision
+   2026-07-26).** `key.dpapi`, `audio.enc`, and `transcript.enc` are removed
+   by plain deletion; free clusters, the USN journal, or VSS shadow copies
+   may retain the wrapped key blob or ciphertext until overwritten.
+   Cryptographic deletion therefore holds at the same-user boundary the
+   model already accepts, not against a forensic examiner with the disk.
+   No overwrite-before-delete code (weak on NTFS/SSD anyway); full-volume
+   encryption (BitLocker) is the real mitigation and is OS hygiene, not app
+   scope.
+3. **Runtime offline enforcement (primary proof: environment, not
+   polling).** The ML stack (silero-VAD ONNX, faster-whisper/CTranslate2)
+   loads only explicit local paths with `local_files_only=True`;
+   `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, `HF_HUB_DISABLE_TELEMETRY=1`
+   are set AND asserted at startup and before every ML import; the
+   real-model tests run entirely under the enforced-offline env, and the
+   Phase-2 completion gate (plan Step 13) adds a test proving transcription
+   succeeds with network stubbed to fail plus socket polling during capture
+   and transcription. The idle-app no-sockets polling test already runs,
+   but env enforcement is the primary control — short-lived telemetry
+   connections can dodge a poll.
+   The ONLY sanctioned network user is `scripts/setup-models.py`, a separate
+   explicit setup process (SHA-pinned downloads).
+4. **Clipboard / same-user UI surface.** The transcript-inspection view is
+   display-only (`NoTextInteraction`) so clinical text cannot drift into the
+   Windows clipboard (clipboard history / cloud clipboard sync) through
+   casual selection. This is cheap defense-in-depth, not a boundary — a
+   same-user process can still read process memory (boundary 2).
+5. **Single-instance guard (named mutex) — convenience guard, NOT a
+   boundary.** A per-user `Global\ClinikoScribe-app-<user>` mutex makes a
+   second `scribe-app` show "already running" and exit before it constructs
+   a controller or sweep (two instances over one sessions root produced
+   real, confusing split-brain state in the 2026-07-28 live smoke). The
+   guard fails OPEN on unexpected mutex errors, and a same-user process can
+   squat the name — that is a denial-of-convenience inside boundary 2, not
+   a data exposure.
+6. **24 h recovery cap has sweep-granularity overshoot (ACCEPTED
+   RESIDUAL).** The cap is enforced by the startup sweep, a 15-minute
+   periodic sweep, and an age filter on the recovery listing; worst-case
+   retention overshoot is therefore ≤ ~15 minutes past 24 h while the app
+   runs (unbounded only while the app is closed, resolved at next launch —
+   the sweep runs before the recovery screen lists anything). Timestamp
+   handling is fail-safe: untrusted (non-finite or future) candidates are
+   discarded and can never extend retention — age comes from the earliest
+   TRUSTED candidate; if candidates exist but none is trusted the store
+   fails CLOSED (expires); if nothing is readable at all it is kept and
+   retried next sweep — transient filesystem errors must never trigger
+   cryptographic deletion.
+7. **Transcript-view availability residual (no custody impact).** The shared
+   transcript view can be visually replaced if a live transcription
+   finishes while a recovered session's transcript is open; the overwritten
+   recovered session remains protected on disk and recoverable after
+   restart. Availability-only; Complete/Discard custody ordering is
+   unaffected.
+
+## Out of scope for Phases 1–2 (tracked in PLAN.md phases)
+
+Transcript prompt-injection handling at the note model (Phase 3), consent
+workflow and recording indicators (Phase 5), the host↔app named pipe
+(deferred from Phase 2 to Phase 5 — its consent/command flow is the real
+consumer; the locked topology and pipe-hardening notes are recorded in the
+Phase 2 plan), OneDrive/backup exclusions and audit records (Phase 6),
 packaging/signing (Phase 7).
 
 ## Review triggers
 
-Re-review this model when: the named-pipe host↔app channel lands (Phase 2);
-real Cliniko keys are first stored (Phase 4); any component starts handling
-audio or transcripts (Phase 2/3); or the software is installed on the second
-clinic machine (Phase 7).
+Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
+deferred from Phase 2); the transcript becomes input to the local note model
+(Phase 3); real Cliniko keys are first stored (Phase 4); or the software is
+installed on the second clinic machine (Phase 7).

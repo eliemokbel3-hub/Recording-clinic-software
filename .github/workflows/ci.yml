@@ -19,6 +19,13 @@ jobs:
       # (see desktop/tests/test_integration_no_sockets.py) — deliberate skip.
       SCRIBE_SKIP_INTEGRATION: "1"
       QT_QPA_PLATFORM: offscreen
+      # Offline kill-switches (scribe_desktop.benchmark.OFFLINE_ENV) as
+      # defense-in-depth: nothing in the ML stack may perform network I/O on
+      # the runner. Tests that exercise the unset/violated cases override
+      # these via monkeypatch, so job-level values cannot affect them.
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,6 +33,28 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install
         run: python -m pip install -e ".\desktop[dev]"
+      - name: Install audio + ML stack (best-effort — tests skip if absent)
+        shell: pwsh
+        run: |
+          # sounddevice is deliberately not in pyproject (installed venv-direct
+          # per the Phase 2 plan, Step 3). The suite is absent-safe — the mock
+          # backend plus lazy import cover every test path — so a failed
+          # install degrades to skips, never a red leg.
+          python -m pip install sounddevice
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "sounddevice install failed - audio paths stay absent-safe (mock backend)"
+          }
+          # [ml] extra (faster-whisper / onnxruntime / huggingface_hub):
+          # wheels verified on 3.12 + 3.14 win_amd64 (plan Step 5 spike). If a
+          # future Python leg lacks wheels this is a SKIP for ML tests, not a
+          # failure: importorskip guards every ML import, and real-model tests
+          # additionally skip when the local model cache is absent (it always
+          # is on CI — models arrive only via scripts/setup-models.py).
+          python -m pip install -e ".\desktop[dev,ml]"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "[ml] extra install failed - ML tests will importorskip"
+          }
+          exit 0
       - name: Ruff
         working-directory: desktop
         run: python -m ruff check .
@@ -35,6 +64,8 @@ jobs:
       - name: Pytest
         working-directory: desktop
         run: python -m pytest -q
+    # Windows-only marks (DPAPI, SAPI, launcher tests) run for real on this
+    # matrix — windows-latest keeps sys.platform == "win32" legs exercised.
 
   extension:
     name: extension (typecheck, lint, test, build)

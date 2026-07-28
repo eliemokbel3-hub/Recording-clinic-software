@@ -1,10 +1,13 @@
-# Data-Flow Map (Phase 1)
+# Data-Flow Map (Phases 1–2)
 
-Every place data lives or moves in the implemented system. Phase 1 carries
-**no clinical data** — flows below carry protocol control messages and test
-data only. There is **no status file** (that design was cut in plan hardening)
-and **no network sockets** on either desktop process (enforced by
-`desktop/tests/test_integration_no_sockets.py` and ruff import bans).
+Every place data lives or moves in the implemented system. Since Phase 2 the
+desktop app carries **clinical data**: consultation audio and transcripts,
+encrypted at rest under per-session keys and bounded by a 24-hour recovery
+window. There is **no status file** (that design was cut in plan hardening)
+and **no network sockets** on either desktop process at runtime (enforced by
+`desktop/tests/test_integration_no_sockets.py`, ruff import bans, and the
+offline env kill-switches in flow 7) — the ONLY sanctioned network user is
+the explicit model-setup script (flow 9).
 
 ## Components
 
@@ -12,7 +15,8 @@ and **no network sockets** on either desktop process (enforced by
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Status app (`scribe-app`) | Standalone PySide6 process | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / status); single instance per user enforced by a named mutex | Runs as the logged-in Windows user |
+| Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 
 ## Flows
 
@@ -36,10 +40,13 @@ and **no network sockets** on either desktop process (enforced by
    transient self-test credential (`test/probe`), deleted by the test itself.
    Real Cliniko API keys arrive in Phase 4 and live ONLY here.
 
-4. **Session crypto (in-memory only).** AES-256-GCM keys from `os.urandom`
-   exist only in process memory; `destroy()` drops the key, making anything
-   encrypted under it unrecoverable. Phase 1 encrypts test payloads only;
-   nothing encrypted is persisted to disk.
+4. **Session crypto.** AES-256-GCM keys from `os.urandom`; `destroy()`
+   drops the in-memory key, making anything encrypted under it
+   unrecoverable. UNWRAPPED keys exist only in process memory; since
+   Phase 2 a DPAPI-wrapped copy lives on disk for the crash-recovery
+   window (`key.dpapi`, flow 6) and encrypted artifacts persist under
+   `sessions\<id>\` (flows 6–7) — deleting the wrapped key is the
+   cryptographic deletion of those artifacts.
 
 5. **Registration artifacts (machine-local, outside the repo).**
    `%LOCALAPPDATA%\ClinikoScribe\` holds the host manifest and a copy of
@@ -48,19 +55,76 @@ and **no network sockets** on either desktop process (enforced by
    Contain paths and the pinned extension ID — no secrets. (Chrome resolves
    the manifest only from a space-free path — see the threat model.)
 
+6. **Microphone → encrypted session store (Phase 2).** `scribe-app` captures
+   16 kHz mono PCM16 (sounddevice/WASAPI, ~1 s chunks). Each chunk is
+   AES-256-GCM-encrypted IN MEMORY and appended to
+   `%LOCALAPPDATA%\ClinikoScribe\sessions\<id>\audio.enc` (fresh random
+   nonce per record, chunk index as AAD, sealed footer at Finish). The
+   per-session key is DPAPI-wrapped (current-user) at
+   `sessions\<id>\key.dpapi`, written durably BEFORE the first chunk.
+   Plaintext audio exists ONLY in transient capture/processing buffers —
+   never on disk, never in logs. Deleting `key.dpapi` is the cryptographic
+   deletion of the session (same-user boundary; NTFS unlink residual — see
+   the threat model). The microphone screen's idle level monitor feeds the
+   meter only; monitor audio is never stored.
+
+7. **Local transcription (Phase 2, in-process, zero network).** On Finish,
+   chunks are decrypted streamwise → silero-VAD segmentation → faster-whisper
+   (CTranslate2, model `small` per decision D6) with word timestamps →
+   uncertainty marks (low-confidence words, numbers, names) → 2-speaker
+   labels → `sessions\<id>\transcript.enc`, written atomically under the
+   SAME session key. The transcript renders in a display-only view; the
+   explicit Complete action runs fsync → decrypt-verify → key deletion.
+   Offline enforcement: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
+   `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
+   ML import; models load from explicit local paths with
+   `local_files_only=True`; the real-model tests run entirely under the
+   enforced-offline env. The Phase-2 completion gate (plan Step 13) adds
+   the network-stubbed-to-fail transcription test and socket polling
+   during capture and transcription. Env enforcement is the primary
+   proof — socket polling alone can miss short-lived telemetry.
+
+8. **Model cache (read-only at runtime).**
+   `%LOCALAPPDATA%\ClinikoScribe\models\` — `silero-vad\silero_vad.onnx`
+   (~2 MiB) plus CTranslate2 whisper snapshots (runtime uses
+   `whisper\small`, ~465 MiB; with all four benchmark candidates the cache
+   is ~3.0 GiB). Static program data, no clinical content. Written ONLY by
+   flow 9; runtime processes never write here.
+
+9. **The ONE sanctioned network flow: `scripts/setup-models.py`
+   (setup-time, separate process).** Explicit one-time HTTPS downloads into
+   the model cache: silero-vad from its pinned GitHub release tag
+   (SHA-256-verified) and whisper snapshots from Hugging Face pinned to
+   immutable commit SHAs. Idempotent; never invoked by the app; runtime
+   processes stay socketless. It must be run BY THE USER from a normal
+   terminal — agent/MSIX-virtualized shells write to a package-private
+   location invisible to user-launched processes (see `docs/lessons.md`).
+
 ## Explicit non-flows
 
-- No audio, transcripts, or clinical content anywhere (Phase 2+ concerns).
-- No network traffic from either desktop process (tested, not just asserted).
-- No cloud AI services; no telemetry.
+- No plaintext clinical content at rest — audio and transcripts exist on
+  disk ONLY encrypted under per-session keys inside `sessions\<id>\`.
+- No network traffic from either desktop process at runtime (no-sockets
+  integration test on host and app, plus offline env kill-switches set and
+  asserted; the during-capture/during-transcription poll and the
+  network-stubbed transcription test land with the Step 13 completion
+  gate). Model downloads happen only in the separate setup script.
+- No cloud AI services; no telemetry (HF telemetry disabled; onnxruntime
+  telemetry off).
+- No clinical content in logs — the whitelist + tripwire now also drops
+  transcript-model markers (`transcript_segments`/`transcript_words`/
+  `word_text`) and `encounter_context`.
 - No data in Chrome extension storage (plan: credentials/models/audio never
-  enter extension storage).
+  enter extension storage); no Chrome-side recording surface at all until
+  Phase 5.
 - Log/temp locations are user-local; exclusion from OneDrive/backup sweep is
   a Phase 6 task (`PLAN.md`), noted in the retention schedule.
 
-## Phase 2 preview (locked topology)
+## Phase 5 preview (locked topology — pipe deferred)
 
-Recording will live in a long-lived desktop app; the Chrome-spawned host
-stays a thin, stateless relay. They will connect via a user-ACL'd Windows
-**named pipe** (local IPC — still zero network sockets). This map must be
-updated when that flow exists.
+The Chrome-spawned host stays a thin, stateless relay; nothing new crosses
+the Chrome boundary in Phase 2. The host↔app link — a user-ACL'd Windows
+**named pipe** (local IPC, still zero network sockets) — was deliberately
+deferred to Phase 5, whose consent/command flow is its real consumer; the
+pipe-hardening notes live in the Phase 2 plan. This map must be updated when
+that flow exists.
