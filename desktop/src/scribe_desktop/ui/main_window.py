@@ -1,0 +1,196 @@
+"""Main window: the Phase-1 status window EXTENDED into the Step 10
+multi-screen app (mic / session / recovery / transcript-inspection, plus
+the Phase-1 registration/self-test panel as a Status tab)."""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+
+from PySide6.QtGui import QCloseEvent
+from PySide6.QtWidgets import (
+    QLabel,
+    QMainWindow,
+    QPushButton,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from scribe_desktop.audio_capture import CaptureBackend
+from scribe_desktop.benchmark import BenchmarkResult
+from scribe_desktop.protocol import HOST_NAME
+from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session_store import complete_session, discard_session
+from scribe_desktop.status import read_registration_status, run_self_test
+from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
+from scribe_desktop.ui import models
+from scribe_desktop.ui.microphone import MicrophoneScreen
+from scribe_desktop.ui.recovery import RecoveryScreen
+from scribe_desktop.ui.session_screen import SessionScreen
+from scribe_desktop.ui.transcript import TranscriptScreen
+
+
+class StatusPanel(QWidget):
+    """The Phase-1 status window content (registration + self-test)."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.registration_label = QLabel()
+        self.self_test_label = QLabel("Self-test: not run")
+        self.self_test_button = QPushButton("Run self-test")
+        self.self_test_button.clicked.connect(self.on_self_test)
+
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(f"Native host: {HOST_NAME}"))
+        layout.addWidget(self.registration_label)
+        layout.addWidget(self.self_test_button)
+        layout.addWidget(self.self_test_label)
+        layout.addStretch(1)
+        self.setLayout(layout)
+        self.refresh_registration()
+
+    def refresh_registration(self) -> None:
+        status = read_registration_status()
+        if status.registered:
+            text = "registered ✓"
+        else:
+            text = "NOT registered — run scripts/register-native-host.py"
+        self.registration_label.setText(f"Registration: {text}")
+
+    def on_self_test(self) -> None:
+        results = run_self_test()
+        lines = [f"{r.name}: {'PASS' if r.passed else 'FAIL'} ({r.detail})" for r in results]
+        self.self_test_label.setText("Self-test:\n" + "\n".join(lines))
+
+
+class MainWindow(QMainWindow):
+    def __init__(
+        self,
+        controller: models.SessionControllerLike,
+        backend: CaptureBackend,
+        *,
+        sessions_root: Path | None = None,
+        benchmark_runner: Callable[[], list[BenchmarkResult]] | None = None,
+        transcriber_factory: Callable[
+            [], Callable[[Path, SessionCrypto], TranscriptDocument]
+        ] = models.build_transcriber,
+        recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
+    ) -> None:
+        super().__init__()
+        self.setWindowTitle("Cliniko Scribe")
+        self._controller = controller
+        # PR round 20 (PR-HIGH-009): which session the transcript view is
+        # showing — "live", a recovered session id, or None. Closing the
+        # view releases ONLY its own recovery checkout; a live transcript
+        # closing must never release an unrelated recovered session's
+        # sweep/relist protection.
+        self._transcript_source: str | None = None
+
+        self.microphone_screen = MicrophoneScreen(
+            controller, backend, benchmark_runner=benchmark_runner
+        )
+        self.session_screen = SessionScreen(
+            controller,
+            device_provider=self.microphone_screen.selected_device_id,
+            transcriber_factory=transcriber_factory,
+        )
+        self.recovery_screen = RecoveryScreen(
+            sessions_root,
+            active_ids_provider=self._live_session_ids,
+            recovery_runner=recovery_runner,
+        )
+        self.transcript_screen = TranscriptScreen()
+        self.status_panel = StatusPanel()
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.microphone_screen, "Microphone")
+        self.tabs.addTab(self.session_screen, "Session")
+        self.tabs.addTab(self.recovery_screen, "Recovery")
+        self.tabs.addTab(self.transcript_screen, "Transcript")
+        self.tabs.addTab(self.status_panel, "Status")
+        self.setCentralWidget(self.tabs)
+
+        self.session_screen.transcript_ready.connect(self._on_live_transcript)
+        self.recovery_screen.recovered.connect(self._on_recovered)
+        self.transcript_screen.closed.connect(self._on_transcript_closed)
+
+    # --- routing -----------------------------------------------------------
+
+    def _live_session_ids(self) -> frozenset[str]:
+        """Exclude the controller's live session from the recovery list in
+        ANY non-terminal state (PR round 18, PR1): a queued/failed session
+        the controller still owns must not be recoverable/discardable
+        through a second custody path while this process is alive."""
+        session = self._controller.session
+        if session is not None and not session.is_terminal:
+            return frozenset({session.session_id})
+        return frozenset()
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Refuse to close while a worker thread runs (PR round 18, PR6):
+        destroying a running QThread aborts the process. A force-kill is
+        still safe — crash recovery (Flow 3) covers it — but a normal close
+        must not tear down a live transcription/benchmark thread."""
+        if (
+            self.session_screen.is_busy
+            or self.recovery_screen.is_busy
+            or self.microphone_screen.is_busy
+        ):
+            self.statusBar().showMessage(
+                "Work in progress - wait for transcription/benchmark to "
+                "finish before closing."
+            )
+            event.ignore()
+            return
+        # Release the idle level-monitor's device before the window goes away
+        # (smoke round 21) — never leave a PortAudio stream running teardown.
+        self.microphone_screen.stop_monitor()
+        super().closeEvent(event)
+
+    def _on_live_transcript(self, document: object) -> None:
+        assert isinstance(document, TranscriptDocument)
+        # Live path: the controller owns custody (queued -> Complete/Discard).
+        self.transcript_screen.show_document(
+            document,
+            on_complete=self._controller.complete,
+            on_discard=self._controller.discard,
+            store_finished=True,
+        )
+        # If a recovered transcript was open it stays CHECKED OUT (protected
+        # from sweep/relist) until app restart — availability residual only,
+        # never a custody violation (PR round 20 residual, recorded in plan).
+        self._transcript_source = "live"
+        self.tabs.setCurrentWidget(self.transcript_screen)
+
+    def _on_recovered(self, payload: object) -> None:
+        assert isinstance(payload, tuple) and len(payload) == 2
+        directory, outcome = payload
+        assert isinstance(directory, Path)
+        assert isinstance(outcome, RecoveryOutcome)
+        # Recovered path: custody primitives run directly on the store dir
+        # (Flow 2 ordering inside complete_session; key-first in discard).
+        # PR round 18 (PR7): the callbacks close over the crypto ONLY —
+        # never over the outcome, so no plaintext document reference
+        # outlives the inspection view.
+        crypto = outcome.crypto
+        self.transcript_screen.show_document(
+            outcome.document,
+            on_complete=lambda: complete_session(directory, crypto),
+            on_discard=lambda: discard_session(directory, crypto),
+            store_finished=outcome.store_finished,
+        )
+        self._transcript_source = directory.name
+        self.tabs.setCurrentWidget(self.transcript_screen)
+
+    def _on_transcript_closed(self, _outcome: str) -> None:
+        self.session_screen.refresh()
+        # PR round 20 (PR-HIGH-009): release ONLY the checkout owned by the
+        # transcript that just closed — never an unscoped clear.
+        source = self._transcript_source
+        self._transcript_source = None
+        if source is not None and source != "live":
+            self.recovery_screen.release_checkout(source)
+        else:
+            self.recovery_screen.refresh()
+        self.tabs.setCurrentWidget(self.session_screen)

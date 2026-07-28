@@ -55,13 +55,15 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
     ),
 }
 
-# A CTranslate2 whisper snapshot is complete only with all of these present.
-REQUIRED_WHISPER_FILES = ("model.bin", "config.json", "tokenizer.json")
-
-
-def whisper_snapshot_complete(target: Path) -> bool:
-    return all((target / f).is_file() and (target / f).stat().st_size > 0
-               for f in REQUIRED_WHISPER_FILES)
+# Snapshot completeness is defined ONCE, in scribe_desktop.benchmark (smoke
+# round 21): model.bin + config.json + (tokenizer.json OR vocabulary.txt OR
+# vocabulary.json) — both CT2 export layouts are valid. The skip guard, the
+# post-download assert, the benchmark, the UI model report and the
+# transcription provider all share that checker.
+from scribe_desktop.benchmark import (  # noqa: E402
+    whisper_snapshot_complete,
+    whisper_snapshot_missing,
+)
 
 
 def models_root() -> Path:
@@ -124,10 +126,11 @@ def fetch_whisper(root: Path, name: str, repo_id: str, revision: str) -> None:
         local_dir=str(target),
         allow_patterns=["*.bin", "*.json", "*.txt"],
     )
-    if not whisper_snapshot_complete(target):
+    missing = whisper_snapshot_missing(target)
+    if missing:
         raise SystemExit(
             f"whisper/{name} download finished but required files are missing "
-            f"({', '.join(REQUIRED_WHISPER_FILES)}); re-run setup"
+            f"({', '.join(missing)}); re-run setup"
         )
     print(f"[ok  ] whisper/{name} ({human(dir_size_bytes(target))}) -> {target}")
 

@@ -1,58 +1,28 @@
-"""PySide6 status window (`scribe-app`) — plan Step 8 (minimal by design).
+"""PySide6 desktop app (`scribe-app`) — Phase 2 Step 10.
 
-Shows host-registration state (informational only) and a self-test button
-running the Flow 2 storage round-trip. NO host<->UI live-state plumbing in
-Phase 1 (plan Excluded); connection state is proven by the extension badge.
+The Phase-1 status window is now the Status tab of the multi-screen
+main window (microphone / session / recovery / transcript-inspection).
+Startup order (binding): offline kill-switches set AND asserted before
+any ML code can run; then the 24-hour expiry sweep (Flow 3) before the
+recovery screen lists anything; a periodic sweep keeps the cap enforced
+while the app stays open.
 """
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QApplication,
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
 
+from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 from scribe_desktop.logging_setup import log_event, setup_logging
-from scribe_desktop.protocol import HOST_NAME
-from scribe_desktop.status import read_registration_status, run_self_test
+from scribe_desktop.session import SessionController
+from scribe_desktop.session_store import default_sessions_root, sweep_sessions
+from scribe_desktop.ui.main_window import MainWindow
 
-
-class StatusWindow(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.setWindowTitle("Cliniko Scribe — Phase 1")
-        self.registration_label = QLabel()
-        self.self_test_label = QLabel("Self-test: not run")
-        self.self_test_button = QPushButton("Run self-test")
-        self.self_test_button.clicked.connect(self.on_self_test)
-
-        layout = QVBoxLayout()
-        layout.addWidget(QLabel(f"Native host: {HOST_NAME}"))
-        layout.addWidget(self.registration_label)
-        layout.addWidget(self.self_test_button)
-        layout.addWidget(self.self_test_label)
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
-        self.refresh_registration()
-
-    def refresh_registration(self) -> None:
-        status = read_registration_status()
-        if status.registered:
-            text = "registered ✓"
-        else:
-            text = "NOT registered — run scripts/register-native-host.py"
-        self.registration_label.setText(f"Registration: {text}")
-
-    def on_self_test(self) -> None:
-        results = run_self_test()
-        lines = [f"{r.name}: {'PASS' if r.passed else 'FAIL'} ({r.detail})" for r in results]
-        self.self_test_label.setText("Self-test:\n" + "\n".join(lines))
+# PR round 18 (PR8): 15-minute cadence bounds the worst-case overshoot of
+# the 24 h cap to minutes, not an hour. The startup sweep runs immediately.
+_SWEEP_INTERVAL_MS = 15 * 60 * 1000
 
 
 def main() -> int:
@@ -62,8 +32,36 @@ def main() -> int:
     apply_offline_env()
     assert_offline_env()
     log_event(logger, "app_start", state="starting")
+
     app = QApplication([])
-    window = StatusWindow()
+    backend = SoundDeviceBackend()
+    controller = SessionController(backend, logger=logger)
+    sessions_root = default_sessions_root()
+
+    def run_sweep(extra_protected: frozenset[str] = frozenset()) -> None:
+        # Skips live sessions by STATE via active_session_ids (never mtime).
+        sweep_sessions(
+            sessions_root,
+            active_session_ids=controller.active_session_ids() | extra_protected,
+            logger=logger,
+        )
+
+    run_sweep()  # Flow 3: app start -> sweep BEFORE the recovery list renders
+    window = MainWindow(controller, backend, sessions_root=sessions_root)
+
+    sweep_timer = QTimer(window)
+    sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
+
+    def periodic_sweep() -> None:
+        # PR round 18 (PR2): a resume-processing run and a recovered session
+        # awaiting Complete/Discard are protected from the sweep too — the
+        # sweep must never destroy a store mid-recovery.
+        run_sweep(window.recovery_screen.protected_session_ids())
+        window.recovery_screen.refresh()
+
+    sweep_timer.timeout.connect(periodic_sweep)
+    sweep_timer.start()
+
     window.show()
     code = app.exec()
     log_event(logger, "app_exit", state="closed")

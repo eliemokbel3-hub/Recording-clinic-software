@@ -32,6 +32,7 @@ import tempfile
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Final
 
 # RTF thresholds (plan Step 5 / Step 10). RTF < 1.0 is required; the margin
 # leaves headroom for clinic machines slower than the dev machine.
@@ -97,14 +98,40 @@ def default_models_root() -> Path:
     return Path(local_app_data) / "ClinikoScribe" / "models"
 
 
+# --- shared whisper snapshot completeness (smoke round 21) -----------------
+# ONE checker for setup-models, the benchmark, the UI model report and the
+# transcription provider. CTranslate2 whisper conversions ship EITHER a
+# tokenizer.json (distil-* repos) OR a vocabulary.txt/vocabulary.json
+# (Systran small/medium repos) — both layouts load fine; require one of them.
+WHISPER_REQUIRED_FILES: Final = ("model.bin", "config.json")
+WHISPER_TOKENIZER_FILES: Final = ("tokenizer.json", "vocabulary.txt", "vocabulary.json")
+
+
+def _present(path: Path) -> bool:
+    try:
+        return path.is_file() and path.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def whisper_snapshot_missing(model_dir: Path) -> list[str]:
+    """Names of required pieces missing from a CT2 whisper snapshot dir."""
+    missing = [name for name in WHISPER_REQUIRED_FILES if not _present(model_dir / name)]
+    if not any(_present(model_dir / name) for name in WHISPER_TOKENIZER_FILES):
+        missing.append(" or ".join(WHISPER_TOKENIZER_FILES))
+    return missing
+
+
+def whisper_snapshot_complete(model_dir: Path) -> bool:
+    return not whisper_snapshot_missing(model_dir)
+
+
 def list_whisper_candidates(models_root: Path) -> list[str]:
-    """Model names present in the local cache (dirs containing model.bin)."""
+    """Model names present in the local cache (complete CT2 snapshots)."""
     whisper_dir = models_root / "whisper"
     if not whisper_dir.is_dir():
         return []
-    return sorted(
-        p.name for p in whisper_dir.iterdir() if (p / "model.bin").is_file()
-    )
+    return sorted(p.name for p in whisper_dir.iterdir() if whisper_snapshot_complete(p))
 
 
 @dataclass(frozen=True)

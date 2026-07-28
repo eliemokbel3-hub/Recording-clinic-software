@@ -43,17 +43,22 @@ def test_self_test_passes_end_to_end() -> None:
 
 
 @pytest.mark.skipif(os.environ.get("SCRIBE_SKIP_GUI") == "1", reason="GUI smoke disabled")
-def test_window_offscreen_smoke() -> None:
+def test_window_offscreen_smoke(tmp_path) -> None:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtWidgets import QApplication
 
-    from scribe_desktop.app import StatusWindow
+    from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.session import SessionController
+    from scribe_desktop.ui.main_window import MainWindow
 
     app = QApplication.instance() or QApplication([])
-    window = StatusWindow()
-    assert "Registration:" in window.registration_label.text()
-    window.on_self_test()
-    assert "PASS" in window.self_test_label.text()
-    assert "FAIL" not in window.self_test_label.text()
+    backend = MockCaptureBackend()
+    controller = SessionController(backend, sessions_root=tmp_path / "sessions")
+    window = MainWindow(controller, backend, sessions_root=tmp_path / "sessions")
+    panel = window.status_panel
+    assert "Registration:" in panel.registration_label.text()
+    panel.on_self_test()
+    assert "PASS" in panel.self_test_label.text()
+    assert "FAIL" not in panel.self_test_label.text()
     window.close()
     del app

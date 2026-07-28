@@ -136,16 +136,57 @@ class TestOfflineEnv:
             benchmark.run_single(tmp_path / "whisper" / "small", tmp_path / "a.wav", 1.0)
 
 
+def _snapshot(root: Path, name: str, *files: str) -> Path:
+    target = root / "whisper" / name
+    target.mkdir(parents=True, exist_ok=True)
+    for filename in files:
+        (target / filename).write_bytes(b"x")
+    return target
+
+
 class TestCandidateDiscovery:
-    def test_lists_only_dirs_with_model_bin(self, tmp_path: Path) -> None:
-        whisper = tmp_path / "whisper"
-        (whisper / "small").mkdir(parents=True)
-        (whisper / "small" / "model.bin").write_bytes(b"x")
-        (whisper / "incomplete").mkdir()
+    def test_lists_only_complete_snapshots(self, tmp_path: Path) -> None:
+        _snapshot(tmp_path, "small", "model.bin", "config.json", "vocabulary.txt")
+        _snapshot(tmp_path, "binonly", "model.bin")
+        (tmp_path / "whisper" / "incomplete").mkdir()
         assert list_whisper_candidates(tmp_path) == ["small"]
 
     def test_empty_when_cache_missing(self, tmp_path: Path) -> None:
         assert list_whisper_candidates(tmp_path / "nope") == []
+
+
+class TestSnapshotCompleteness:
+    """Smoke round 21: BOTH CT2 export layouts are complete — tokenizer.json
+    (distil-*) OR vocabulary.txt / vocabulary.json (Systran small/medium)."""
+
+    def test_tokenizer_json_layout_complete(self, tmp_path: Path) -> None:
+        target = _snapshot(tmp_path, "d", "model.bin", "config.json", "tokenizer.json")
+        assert benchmark.whisper_snapshot_complete(target)
+        assert benchmark.whisper_snapshot_missing(target) == []
+
+    def test_vocabulary_txt_layout_complete(self, tmp_path: Path) -> None:
+        target = _snapshot(tmp_path, "s", "model.bin", "config.json", "vocabulary.txt")
+        assert benchmark.whisper_snapshot_complete(target)
+
+    def test_vocabulary_json_layout_complete(self, tmp_path: Path) -> None:
+        target = _snapshot(tmp_path, "j", "model.bin", "config.json", "vocabulary.json")
+        assert benchmark.whisper_snapshot_complete(target)
+
+    def test_missing_tokenizer_reported(self, tmp_path: Path) -> None:
+        target = _snapshot(tmp_path, "m", "model.bin", "config.json")
+        missing = benchmark.whisper_snapshot_missing(target)
+        assert missing == ["tokenizer.json or vocabulary.txt or vocabulary.json"]
+
+    def test_empty_files_not_complete(self, tmp_path: Path) -> None:
+        target = tmp_path / "whisper" / "z"
+        target.mkdir(parents=True)
+        for name in ("model.bin", "config.json", "tokenizer.json"):
+            (target / name).touch()  # zero bytes
+        assert not benchmark.whisper_snapshot_complete(target)
+
+    def test_missing_model_bin_reported(self, tmp_path: Path) -> None:
+        target = _snapshot(tmp_path, "n", "config.json", "vocabulary.txt")
+        assert "model.bin" in benchmark.whisper_snapshot_missing(target)
 
 
 @pytest.mark.skipif(

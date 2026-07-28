@@ -44,7 +44,12 @@ from typing import Any
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from scribe_desktop.benchmark import assert_offline_env, default_models_root
+from scribe_desktop.benchmark import (
+    assert_offline_env,
+    default_models_root,
+    whisper_snapshot_complete,
+    whisper_snapshot_missing,
+)
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -433,10 +438,7 @@ def whisper_model_available(model_name: str = DEFAULT_WHISPER_MODEL) -> bool:
         model_dir = default_whisper_model_dir(model_name)
     except (RuntimeError, OSError):
         return False
-    return all(
-        (model_dir / name).is_file()
-        for name in ("model.bin", "config.json", "tokenizer.json")
-    )
+    return whisper_snapshot_complete(model_dir)
 
 
 class WhisperSpeechProvider:
@@ -464,11 +466,7 @@ class WhisperSpeechProvider:
             raise TranscriptionModelError(
                 f"whisper model path must be a local path, not UNC: {path}"
             )
-        missing = [
-            name
-            for name in ("model.bin", "config.json", "tokenizer.json")
-            if not (path / name).is_file()
-        ]
+        missing = whisper_snapshot_missing(path)
         if missing:
             raise TranscriptionModelError(
                 f"whisper model at {path} is missing {', '.join(missing)} - "
