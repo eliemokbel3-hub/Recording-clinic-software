@@ -16,8 +16,9 @@ test covers the recorder mid-capture and mid-transcription):
   every poll provably lands inside the claimed phase); the offline env
   kill-switches are applied AND asserted inside every child before any ML
   import (mirroring app startup);
-- the same poll runs against the REAL local ML stack (silero VAD +
-  faster-whisper `small`), including the model-load window where any
+- the same poll runs against the REAL local ML stack (silero VAD + the
+  RESOLVED faster-whisper model: `medium` default, `small` fallback —
+  Step 13 policy), including the model-load window where any
   download/telemetry attempt would occur (skip-if-absent for CI);
 - a crash-sim runs END-TO-END: hard-kill mid-recording, then a fresh
   process recovers the session (DPAPI unwrap), re-transcribes the durable
@@ -69,6 +70,7 @@ from scribe_desktop.speech import MockSpeechProvider, vad_model_available
 from scribe_desktop.transcription import (
     read_transcript,
     recover_session_transcription,
+    resolve_whisper_model,
     whisper_model_available,
 )
 
@@ -87,8 +89,10 @@ pytestmark = [
 
 # Real-ML legs are skip-if-absent for CI (plan: model files never live on
 # runners); everything else in this module runs everywhere on Windows.
+# The gate mirrors production model resolution (Step 13: medium default,
+# small fallback) so a fallback-only machine still runs the proof.
 requires_ml_models = pytest.mark.skipif(
-    not vad_model_available() or not whisper_model_available(),
+    not vad_model_available() or not whisper_model_available(resolve_whisper_model()),
     reason="local silero + whisper models required (run scripts/setup-models.py)",
 )
 
@@ -626,10 +630,12 @@ print("TRANSCRIBING", flush=True)
 line = sys.stdin.readline()
 assert line.strip() == "GO", "parent gate broken: %r" % line
 from scribe_desktop.speech import SileroVad
-from scribe_desktop.transcription import WhisperSpeechProvider
+from scribe_desktop.transcription import WhisperSpeechProvider, resolve_whisper_model
 
 vad = SileroVad()
-provider = WhisperSpeechProvider()
+# Step 13: load the RESOLVED model (medium default, small fallback) inside
+# the armed poll window — the production model is the one proven socketless.
+provider = WhisperSpeechProvider(model_name=resolve_whisper_model())
 controller.transcribe(
     lambda directory, crypto: transcribe_session(
         directory, crypto, provider, vad.frame_probability
@@ -898,6 +904,7 @@ from scribe_desktop.speech import SAMPLE_RATE, SileroVad
 from scribe_desktop.transcription import (
     WhisperSpeechProvider,
     read_transcript,
+    resolve_whisper_model,
     transcribe_session,
 )
 
@@ -937,7 +944,8 @@ for i in range(0, len(pcm), 32000):
 store.finish()
 
 vad = SileroVad()
-provider = WhisperSpeechProvider()
+# Step 13: the resolved production model must succeed with sockets dead.
+provider = WhisperSpeechProvider(model_name=resolve_whisper_model())
 document = transcribe_session(session_dir, crypto, provider, vad.frame_probability)
 assert document.transcript_segments, "no speech found with network stubbed"
 words = [w for s in document.transcript_segments for w in s.transcript_words]

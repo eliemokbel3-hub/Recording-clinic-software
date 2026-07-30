@@ -73,10 +73,79 @@ from scribe_desktop.speech import (
 )
 
 # D6 (user decision 2026-07-27): faster-whisper CTranslate2 CPU int8,
-# model `small`; `medium` is the recorded quality fallback.
-DEFAULT_WHISPER_MODEL = "small"
+# model `small`, with `medium` recorded as the quality fallback "if pilot
+# transcripts disappoint". REVISED at the Step 13 manual gate (user
+# decision 2026-07-28): the pilot transcripts DID disappoint on hard
+# words, so `medium` is now the default (single-call benchmark on this
+# hardware: RTF 0.498 vs small's 0.151, ~1.8 GiB peak — inside the
+# RTF<=0.75 margin; NOTE the per-VAD-segment PIPELINE runs slower than
+# the single-call benchmark — each segment costs a full 30 s encoder
+# window; measured pipeline RTF up to ~5.3 on pause-rich audio, see the
+# plan's Step 13 accuracy-uplift entry before quoting speed numbers).
+# `small` stays fully supported as the graceful fallback when the
+# medium snapshot was never downloaded: degrade VISIBLY (UI report
+# names the fallback), never fail outright and never silently.
+DEFAULT_WHISPER_MODEL = "medium"
+FALLBACK_WHISPER_MODEL = "small"
 
-# Words at or below this backend probability are marked uncertain.
+# ---------------------------------------------------------------------------
+# Clinical vocabulary priming (Step 13 user decision 2026-07-28).
+#
+# faster-whisper passes ``initial_prompt`` to the decoder as left-hand
+# context, biasing recognition toward this vocabulary without any
+# fine-tuning. ``transcribe_segment`` runs per VAD segment with
+# ``condition_on_previous_text=False``, so every segment receives this
+# primer fresh — it never accumulates with transcript text and no
+# transcript content ever feeds back into it.
+#
+# HARD CONSTRAINTS (all deliberate — keep them when editing):
+# - Token budget: faster-whisper keeps only the LAST ``max_length//2 - 1``
+#   = 223 prompt tokens (transcribe.py ``get_prompt``, verified against
+#   the installed 1.2.1 source) and silently drops the HEAD of an
+#   overlong prompt — the first clusters are exactly what would vanish.
+#   This text measures 193 tokens with the model's own tokenizer
+#   (identical count on small and medium, measured 2026-07-30 the way
+#   faster-whisper encodes it: leading space, no special tokens). Clinical
+#   latinate terms cost ~3 tokens per word, so word count is a treacherous
+#   proxy — RE-MEASURE with the real tokenizer before growing this, and
+#   stay under ~210 to keep headroom.
+# - NO patient-identifying content, ever. Anatomy, presentations, exam
+#   manoeuvres, techniques, medications, and units only. Never add example
+#   patient names: a primed name is exactly what Whisper will hallucinate
+#   into unclear audio, and the name-like uncertainty heuristic cannot
+#   flag what looks contextually plausible.
+# - This constant must never pass through logging (tripwire discipline —
+#   this module logs nothing; keep it that way).
+# - Australian-English clinic-note spellings on purpose (mobilisation,
+#   paraesthesia): priming steers output spelling too.
+#
+# Why each cluster is here (osteopathic/musculoskeletal scribe domain;
+# only mangle-prone terms earn their tokens — common words Whisper already
+# gets right, e.g. trapezius/hamstrings/ibuprofen, were trimmed to fit):
+# - anatomy + muscles: latinate terms Whisper mangles into near-homophones
+# - presentations: assessment/diagnosis vocabulary heard in histories
+# - exam manoeuvres: multiword test names otherwise get fused or split
+# - treatment techniques: osteopathy-specific phrases rare in general text
+# - medications: the mangle-prone analgesic/adjunct names
+# - units/scores: pain scores are spoken "out of ten"
+CLINICAL_INITIAL_PROMPT = (
+    "Osteopathic consultation. Cervical, thoracic, lumbar spine, "
+    "sacroiliac joint, acromioclavicular, rotator cuff, supraspinatus, "
+    "levator scapulae, erector spinae, multifidus, quadratus lumborum, "
+    "psoas, piriformis, gastrocnemius, plantar fascia. Low back pain, "
+    "sciatica, radiculopathy, paraesthesia, cervicogenic headache, "
+    "tendinopathy, bursitis. Palpation, range of motion, flexion, "
+    "straight leg raise, Spurling's test, dermatomes, myotomes. "
+    "Myofascial release, muscle energy technique, high velocity low "
+    "amplitude manipulation, mobilisation, dry needling. Pain seven out "
+    "of ten. Meloxicam, amitriptyline."
+)
+
+# Words strictly below this backend probability are marked uncertain
+# (``mark_words``: ``probability < threshold``). Step 13 calibration
+# check (2026-07-30, recorded in the plan): medium shifts probabilities
+# UP on identical audio yet marks neither vanish nor flood at 0.60 —
+# KEPT; recalibrate only on evidence from real re-test transcripts.
 UNCERTAINTY_THRESHOLD = 0.60
 
 # Spelled-out number tokens (cardinals, common ordinals, scale words) —
@@ -423,8 +492,9 @@ def label_speakers(segment_pcms: list[bytes], *, sample_rate: int = SAMPLE_RATE)
 
 
 # ---------------------------------------------------------------------------
-# WhisperSpeechProvider — the real SpeechProvider (D6: faster-whisper,
-# CTranslate2 CPU int8, model `small`).
+# WhisperSpeechProvider — the real SpeechProvider (D6 as revised at the
+# Step 13 gate: faster-whisper, CTranslate2 CPU int8, model `medium`
+# by default with `small` as the visible fallback).
 # ---------------------------------------------------------------------------
 
 
@@ -433,12 +503,42 @@ def default_whisper_model_dir(model_name: str = DEFAULT_WHISPER_MODEL) -> Path:
 
 
 def whisper_model_available(model_name: str = DEFAULT_WHISPER_MODEL) -> bool:
-    """True when the local whisper snapshot looks complete (skip-if-absent)."""
+    """True when the local whisper snapshot looks complete (skip-if-absent).
+
+    Peer round 36: a UNC-redirected ``LOCALAPPDATA`` must not cause SMB
+    I/O here — this probe STATS the path, so it applies the same UNC
+    refusal as the provider (PR-MED-012 pattern) BEFORE touching the
+    filesystem and reports such a model as simply unavailable.
+    """
     try:
         model_dir = default_whisper_model_dir(model_name)
     except (RuntimeError, OSError):
         return False
+    if str(model_dir).startswith(("\\\\", "//")):
+        return False  # UNC: never stat (no SMB I/O); unusable by policy
     return whisper_snapshot_complete(model_dir)
+
+
+def resolve_whisper_model(model_name: str = DEFAULT_WHISPER_MODEL) -> str:
+    """The model the pipeline should actually load (Step 13 fallback policy).
+
+    Returns ``model_name`` when its local snapshot is complete; otherwise
+    ``FALLBACK_WHISPER_MODEL`` when THAT snapshot is complete (degrade to
+    ``small`` visibly — the UI report names the fallback — rather than
+    fail on a machine that never downloaded ``medium``); otherwise
+    ``model_name`` unchanged, so the provider's missing-snapshot error
+    names the PREFERRED model and its setup-models remedy.
+
+    Resolution is composition-layer policy: ``WhisperSpeechProvider``
+    itself stays strict and loads exactly the model it is asked for.
+    """
+    if whisper_model_available(model_name):
+        return model_name
+    if model_name != FALLBACK_WHISPER_MODEL and whisper_model_available(
+        FALLBACK_WHISPER_MODEL
+    ):
+        return FALLBACK_WHISPER_MODEL
+    return model_name
 
 
 class WhisperSpeechProvider:
@@ -449,6 +549,15 @@ class WhisperSpeechProvider:
     before any ML import (plan: Runtime offline enforcement). Word
     timestamps and word probabilities are always requested — the
     uncertainty marking depends on them.
+
+    The provider is STRICT about the requested model: it loads exactly
+    ``model_name`` (or ``model_dir``) or raises. The medium→small
+    fallback policy lives in ``resolve_whisper_model`` at the
+    composition layer (``ui.models`` factories), never in here.
+
+    ``initial_prompt`` (default: ``CLINICAL_INITIAL_PROMPT``) primes the
+    decoder with clinical vocabulary per segment; pass ``None`` to
+    disable priming, or a custom string to replace it.
     """
 
     def __init__(
@@ -457,6 +566,7 @@ class WhisperSpeechProvider:
         *,
         model_name: str = DEFAULT_WHISPER_MODEL,
         language: str | None = "en",
+        initial_prompt: str | None = CLINICAL_INITIAL_PROMPT,
     ) -> None:
         assert_offline_env()
         path = model_dir if model_dir is not None else default_whisper_model_dir(model_name)
@@ -477,6 +587,7 @@ class WhisperSpeechProvider:
 
         self._language = language
         self._model_name = path.name
+        self._initial_prompt = initial_prompt
         try:
             self._model = WhisperModel(
                 str(path), device="cpu", compute_type="int8", local_files_only=True
@@ -503,6 +614,9 @@ class WhisperSpeechProvider:
             language=self._language,
             beam_size=5,
             condition_on_previous_text=False,
+            # Clinical vocabulary priming (Step 13): fresh left-context per
+            # VAD segment; None disables cleanly (faster-whisper default).
+            initial_prompt=self._initial_prompt,
         )
         words: list[TranscribedWord] = []
         for segment in segments:
@@ -701,7 +815,9 @@ def recover_session_transcription(
 
 
 __all__ = [
+    "CLINICAL_INITIAL_PROMPT",
     "DEFAULT_WHISPER_MODEL",
+    "FALLBACK_WHISPER_MODEL",
     "SPEAKER_1",
     "SPEAKER_2",
     "UNCERTAINTY_THRESHOLD",
@@ -720,6 +836,7 @@ __all__ = [
     "mark_words",
     "read_transcript",
     "recover_session_transcription",
+    "resolve_whisper_model",
     "transcribe_session",
     "whisper_model_available",
     "write_transcript",

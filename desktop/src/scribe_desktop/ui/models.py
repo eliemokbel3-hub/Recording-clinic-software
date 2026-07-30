@@ -34,6 +34,7 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
     WhisperSpeechProvider,
     recover_session_transcription,
+    resolve_whisper_model,
     transcribe_session,
     whisper_model_available,
 )
@@ -229,19 +230,36 @@ def format_transcript_text(document: TranscriptDocument) -> str:
 
 
 def model_report_lines() -> list[str]:
-    """Model-readiness lines for the microphone screen's report panel."""
-    whisper_ready = whisper_model_available()
+    """Model-readiness lines for the microphone screen's report panel.
+
+    Step 13 fallback policy: when the default (medium) snapshot is absent
+    but the fallback (small) is present, the pipeline degrades to the
+    fallback and this report says so VISIBLY — the clinician must never
+    discover the quality difference by surprise.
+    """
+    resolved = resolve_whisper_model()
+    missing = "MISSING - run scripts/setup-models.py"
+    if whisper_model_available(DEFAULT_WHISPER_MODEL):
+        whisper_line = f"Whisper model ({DEFAULT_WHISPER_MODEL}): ready"
+    elif resolved != DEFAULT_WHISPER_MODEL and whisper_model_available(resolved):
+        whisper_line = (
+            f"Whisper model ({DEFAULT_WHISPER_MODEL}): MISSING - using "
+            f"fallback {resolved}; run scripts/setup-models.py for "
+            f"{DEFAULT_WHISPER_MODEL}"
+        )
+    else:
+        whisper_line = f"Whisper model ({DEFAULT_WHISPER_MODEL}): {missing}"
     vad_ready = vad_model_available()
-    missing = " MISSING - run scripts/setup-models.py"
     return [
-        f"Whisper model ({DEFAULT_WHISPER_MODEL}): "
-        + ("ready" if whisper_ready else missing.strip()),
-        "VAD model (silero): " + ("ready" if vad_ready else missing.strip()),
+        whisper_line,
+        "VAD model (silero): " + ("ready" if vad_ready else missing),
     ]
 
 
 def models_ready() -> bool:
-    return whisper_model_available() and vad_model_available()
+    """True when a USABLE whisper model (default or fallback) and the VAD
+    model are both locally complete."""
+    return whisper_model_available(resolve_whisper_model()) and vad_model_available()
 
 
 # ---------------------------------------------------------------------------
@@ -250,39 +268,47 @@ def models_ready() -> bool:
 
 
 def build_transcriber(
-    model_name: str = DEFAULT_WHISPER_MODEL,
+    model_name: str | None = None,
 ) -> Callable[[Path, SessionCrypto], TranscriptDocument]:
     """A ``SessionController.transcribe`` transcriber over the real ML stack.
 
     Models load inside the call (worker thread) so the GUI thread never
-    blocks on CTranslate2/onnxruntime initialisation.
+    blocks on CTranslate2/onnxruntime initialisation. ``model_name=None``
+    (the default) applies the Step 13 fallback policy at call time via
+    ``resolve_whisper_model``; the resolved name is recorded in the
+    transcript document so the artifact says which model actually ran.
     """
 
     def transcriber(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocument:
+        name = model_name if model_name is not None else resolve_whisper_model()
         vad = SileroVad()
-        provider = WhisperSpeechProvider(model_name=model_name)
+        provider = WhisperSpeechProvider(model_name=name)
         return transcribe_session(
             session_dir,
             crypto,
             provider,
             vad.frame_probability,
             require_footer=True,
-            model_name=model_name,
+            model_name=name,
         )
 
     return transcriber
 
 
 def build_recovery_runner(
-    model_name: str = DEFAULT_WHISPER_MODEL,
+    model_name: str | None = None,
 ) -> Callable[[Path], RecoveryOutcome]:
-    """Flow 3 resume-processing over the real ML stack (worker thread)."""
+    """Flow 3 resume-processing over the real ML stack (worker thread).
+
+    Same Step 13 call-time model resolution as ``build_transcriber``.
+    """
 
     def runner(session_dir: Path) -> RecoveryOutcome:
+        name = model_name if model_name is not None else resolve_whisper_model()
         vad = SileroVad()
-        provider = WhisperSpeechProvider(model_name=model_name)
+        provider = WhisperSpeechProvider(model_name=name)
         return recover_session_transcription(
-            session_dir, provider, vad.frame_probability, model_name=model_name
+            session_dir, provider, vad.frame_probability, model_name=name
         )
 
     return runner

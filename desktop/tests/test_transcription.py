@@ -8,8 +8,9 @@ Layers:
   crash-restart idempotence
 - controller integration (Windows: DPAPI custody) for finish -> transcribe
   -> queued -> Complete and the failure -> recoverable path
-- one live end-to-end test against the real silero VAD + whisper `small`
-  models (skip-if-absent for CI; SAPI synthesis is Windows-only)
+- one live end-to-end test against the real silero VAD + the RESOLVED
+  whisper model (`medium` default, `small` fallback — Step 13 policy;
+  skip-if-absent for CI; SAPI synthesis is Windows-only)
 
 No clinical audio anywhere: fixtures are tones/silence or SAPI speech of
 non-clinical text.
@@ -51,6 +52,9 @@ from scribe_desktop.speech import (
     vad_model_available,
 )
 from scribe_desktop.transcription import (
+    CLINICAL_INITIAL_PROMPT,
+    DEFAULT_WHISPER_MODEL,
+    FALLBACK_WHISPER_MODEL,
     SPEAKER_1,
     SPEAKER_2,
     TranscriptDocument,
@@ -65,6 +69,7 @@ from scribe_desktop.transcription import (
     mark_words,
     read_transcript,
     recover_session_transcription,
+    resolve_whisper_model,
     transcribe_session,
     whisper_model_available,
     write_transcript,
@@ -497,6 +502,223 @@ class TestWhisperProviderGuards:
 
 
 # ---------------------------------------------------------------------------
+# Step 13 model policy: medium default, small visible fallback, clinical
+# vocabulary priming.
+# ---------------------------------------------------------------------------
+
+
+def _fake_snapshot(local_app_data: Path, name: str) -> Path:
+    """Minimally complete CT2 snapshot under a fake LOCALAPPDATA."""
+    target = local_app_data / "ClinikoScribe" / "models" / "whisper" / name
+    target.mkdir(parents=True, exist_ok=True)
+    for filename in ("model.bin", "config.json", "vocabulary.txt"):
+        (target / filename).write_bytes(b"x")
+    return target
+
+
+class TestModelPolicy:
+    def test_step13_user_decision_pinned(self) -> None:
+        # USER DECISION 2026-07-28 (Step 13 manual gate): default medium,
+        # small retained as the fallback. A drive-by edit of either constant
+        # must trip a test, not slip through.
+        assert DEFAULT_WHISPER_MODEL == "medium"
+        assert FALLBACK_WHISPER_MODEL == "small"
+
+    def test_resolves_default_when_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
+        assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
+
+    def test_resolves_fallback_when_default_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+        assert resolve_whisper_model() == FALLBACK_WHISPER_MODEL
+
+    def test_prefers_default_when_both_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
+        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+        assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
+
+    def test_returns_preferred_name_when_nothing_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No usable model: return the PREFERRED name unchanged so the
+        # provider's error message names it and its setup-models remedy.
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
+
+    def test_explicit_request_honoured_before_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_snapshot(tmp_path, "distil-small.en")
+        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+        assert resolve_whisper_model("distil-small.en") == "distil-small.en"
+        # ... but an absent explicit request still degrades to the fallback.
+        assert resolve_whisper_model("distil-medium.en") == FALLBACK_WHISPER_MODEL
+
+    def test_unc_localappdata_reports_unavailable_without_io(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Peer round 36 (PR-MED-012 pattern extended): availability probes
+        # STAT the LOCALAPPDATA-derived path, so a UNC-redirected
+        # LOCALAPPDATA must short-circuit to False BEFORE any filesystem
+        # touch (no SMB I/O), for the default, the fallback, and the
+        # resolver; the provider then raises its explicit UNC error.
+        monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
+        assert not whisper_model_available()
+        assert not whisper_model_available(FALLBACK_WHISPER_MODEL)
+        assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
+        apply_offline_env()
+        with pytest.raises(TranscriptionModelError, match="UNC"):
+            WhisperSpeechProvider()
+
+
+class TestClinicalPrompt:
+    def test_prompt_is_nonempty_prose(self) -> None:
+        assert CLINICAL_INITIAL_PROMPT.strip()
+        assert CLINICAL_INITIAL_PROMPT.isascii()
+
+    def test_prompt_stays_inside_whisper_token_budget_proxy(self) -> None:
+        # faster-whisper keeps only the LAST 223 prompt tokens and silently
+        # drops the head of an overlong prompt. The real tokenizer measured
+        # 193 tokens for this 66-word / 602-char text (2026-07-30; measured
+        # density ~3.1 chars per token for this vocabulary). ML-free
+        # proxies keep a guard runnable on CI: BOTH bounds must hold, and
+        # the char bound is the tighter one (650 chars at ~3.1 chars/token
+        # ≈ 208 tokens, under the documented 210 headroom bar). Peer round
+        # 36: proxies cannot be exact — the test below runs the REAL
+        # tokenizer whenever the model files are present (the dev
+        # machine), which is the binding check.
+        assert len(CLINICAL_INITIAL_PROMPT.split()) <= 70
+        assert len(CLINICAL_INITIAL_PROMPT) <= 650
+
+    @pytest.mark.skipif(
+        not whisper_model_available(resolve_whisper_model()),
+        reason="exact token count needs a local whisper snapshot's tokenizer",
+    )
+    def test_prompt_token_count_exact_with_real_tokenizer(self) -> None:
+        # The binding budget check (peer round 36): measure the prompt the
+        # exact way faster-whisper encodes it (leading space, no special
+        # tokens) with the resolved model's own tokenizer file; 210 is the
+        # documented headroom bar under the hard 223-token keep-window.
+        tokenizers = pytest.importorskip("tokenizers")
+
+        from scribe_desktop.transcription import default_whisper_model_dir
+
+        model_dir = default_whisper_model_dir(resolve_whisper_model())
+        tokenizer_path = model_dir / "tokenizer.json"
+        if not tokenizer_path.is_file():
+            pytest.skip("snapshot has no tokenizer.json (vocabulary layout)")
+        tokenizer = tokenizers.Tokenizer.from_file(str(tokenizer_path))
+        ids = tokenizer.encode(
+            " " + CLINICAL_INITIAL_PROMPT.strip(), add_special_tokens=False
+        ).ids
+        assert len(ids) <= 210, (
+            f"CLINICAL_INITIAL_PROMPT measures {len(ids)} tokens - over the "
+            "documented 210 headroom bar (hard truncation at 223)"
+        )
+
+    def test_prompt_carries_no_patient_identifying_content(self) -> None:
+        # Structural hygiene only (a test cannot judge semantics): no
+        # digits (dates/DOBs/phone numbers) and none of the honorific
+        # patterns that would smuggle an example patient name in.
+        assert not any(ch.isdigit() for ch in CLINICAL_INITIAL_PROMPT)
+        lowered = CLINICAL_INITIAL_PROMPT.lower()
+        for honorific in ("mr ", "mr.", "mrs", "ms ", "ms.", "miss ", "dr ", "dr."):
+            assert honorific not in lowered
+
+    def test_prompt_covers_the_documented_clusters(self) -> None:
+        # One sentinel per documented cluster: anatomy, presentation, exam
+        # manoeuvre, technique, medication, units/scores.
+        lowered = CLINICAL_INITIAL_PROMPT.lower()
+        for sentinel in (
+            "supraspinatus",
+            "radiculopathy",
+            "spurling",
+            "mobilisation",
+            "meloxicam",
+            "out of ten",
+        ):
+            assert sentinel in lowered
+
+
+class _RecordingWhisperModel:
+    """Stands in for faster_whisper.WhisperModel: records transcribe kwargs."""
+
+    calls: list[dict[str, object]] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def transcribe(self, audio: object, **kwargs: object) -> tuple[list[object], None]:
+        type(self).calls.append(dict(kwargs))
+        return [], None
+
+
+class TestProviderPromptWiring:
+    """The provider must pass the priming prompt through to faster-whisper.
+
+    Uses a recording fake injected as ``faster_whisper`` so the wiring is
+    provable on CI without models; the live e2e below covers the real lib.
+    """
+
+    def _provider(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        **provider_kwargs: object,
+    ) -> WhisperSpeechProvider:
+        pytest.importorskip("numpy")  # provider's _numpy() is real
+        apply_offline_env()
+        import types
+
+        snapshot = _fake_snapshot(tmp_path, "fake-model")
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = _RecordingWhisperModel  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+        _RecordingWhisperModel.calls = []
+        return WhisperSpeechProvider(model_dir=snapshot, **provider_kwargs)  # type: ignore[arg-type]
+
+    def test_default_passes_clinical_prompt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider = self._provider(tmp_path, monkeypatch)
+        assert provider.transcribe_segment(b"\x00\x00" * 160, 16_000) == []
+        (call,) = _RecordingWhisperModel.calls
+        assert call["initial_prompt"] == CLINICAL_INITIAL_PROMPT
+        # Uncertainty marking still depends on these — priming must not
+        # have disturbed them.
+        assert call["word_timestamps"] is True
+        assert call["condition_on_previous_text"] is False
+
+    def test_none_disables_priming(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider = self._provider(tmp_path, monkeypatch, initial_prompt=None)
+        provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
+        (call,) = _RecordingWhisperModel.calls
+        assert call["initial_prompt"] is None
+
+    def test_custom_prompt_overrides(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider = self._provider(
+            tmp_path, monkeypatch, initial_prompt="physiotherapy assessment"
+        )
+        provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
+        (call,) = _RecordingWhisperModel.calls
+        assert call["initial_prompt"] == "physiotherapy assessment"
+
+
+# ---------------------------------------------------------------------------
 # SessionController integration (DPAPI custody: Windows-only)
 # ---------------------------------------------------------------------------
 
@@ -647,14 +869,16 @@ class TestControllerTranscription:
 
 
 # ---------------------------------------------------------------------------
-# live end-to-end: real silero VAD + real whisper `small` (skip-if-absent)
+# live end-to-end: real silero VAD + the RESOLVED whisper model (medium
+# default, small fallback — mirrors production composition; skip-if-absent)
 # ---------------------------------------------------------------------------
 
 requires_live_stack = pytest.mark.skipif(
     sys.platform != "win32"
     or not vad_model_available()
-    or not whisper_model_available(),
-    reason="live e2e needs Windows (SAPI) + local silero and whisper-small models",
+    or not whisper_model_available(resolve_whisper_model()),
+    reason="live e2e needs Windows (SAPI) + local silero and a whisper model "
+    "(medium, or the small fallback)",
 )
 
 
@@ -678,7 +902,9 @@ class TestLiveEndToEnd:
         crypto = _make_store(session_dir, pcm)
 
         vad = SileroVad()
-        provider = WhisperSpeechProvider()
+        # Production composition: the resolved model (medium, or small on a
+        # fallback-only machine) with the clinical priming default active.
+        provider = WhisperSpeechProvider(model_name=resolve_whisper_model())
         document = transcribe_session(
             session_dir, crypto, provider, vad.frame_probability
         )

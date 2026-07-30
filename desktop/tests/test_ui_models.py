@@ -174,20 +174,35 @@ class TestListRecoverableSessions:
         assert info.created_at is None
 
 
+def _fake_whisper_snapshot(local_app_data: Path, name: str) -> None:
+    """A minimally complete CT2 snapshot dir under a fake LOCALAPPDATA."""
+    target = local_app_data / "ClinikoScribe" / "models" / "whisper" / name
+    target.mkdir(parents=True, exist_ok=True)
+    for filename in ("model.bin", "config.json", "vocabulary.txt"):
+        (target / filename).write_bytes(b"x")
+
+
 class TestModelReport:
-    def test_report_lines_name_both_models(self) -> None:
+    def test_report_lines_name_the_default_model(self) -> None:
+        from scribe_desktop.transcription import DEFAULT_WHISPER_MODEL
+
         lines = models.model_report_lines()
         assert len(lines) == 2
-        assert lines[0].startswith("Whisper model (small):")
+        assert lines[0].startswith(f"Whisper model ({DEFAULT_WHISPER_MODEL}):")
         assert lines[1].startswith("VAD model (silero):")
         for line in lines:
             assert ("ready" in line) or ("setup-models" in line)
 
-    def test_models_ready_matches_availability(self) -> None:
+    def test_models_ready_matches_resolved_availability(self) -> None:
         from scribe_desktop.speech import vad_model_available
-        from scribe_desktop.transcription import whisper_model_available
+        from scribe_desktop.transcription import (
+            resolve_whisper_model,
+            whisper_model_available,
+        )
 
-        expected = vad_model_available() and whisper_model_available()
+        expected = vad_model_available() and whisper_model_available(
+            resolve_whisper_model()
+        )
         assert models.models_ready() == expected
 
     def test_vad_availability_is_a_file_presence_check(self, tmp_path: Path) -> None:
@@ -205,16 +220,67 @@ class TestModelReport:
     ) -> None:
         # Smoke round 21: the UI report uses the SAME checker as the
         # benchmark/provider — a vocabulary.txt (Systran CT2) layout with no
-        # tokenizer.json must report ready.
-        from scribe_desktop.transcription import whisper_model_available
+        # tokenizer.json must report ready. Exercises the DEFAULT model dir.
+        from scribe_desktop.transcription import (
+            DEFAULT_WHISPER_MODEL,
+            whisper_model_available,
+        )
 
-        target = tmp_path / "ClinikoScribe" / "models" / "whisper" / "small"
-        target.mkdir(parents=True)
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
         assert not whisper_model_available()
-        for name in ("model.bin", "config.json", "vocabulary.txt"):
-            (target / name).write_bytes(b"x")
+        _fake_whisper_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
         assert whisper_model_available()
+
+    # ------------------------------------------------------------------
+    # Step 13 fallback policy: medium default, small visible fallback.
+    # ------------------------------------------------------------------
+
+    def test_report_ready_when_default_model_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.transcription import DEFAULT_WHISPER_MODEL
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_whisper_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
+        line = models.model_report_lines()[0]
+        assert line == f"Whisper model ({DEFAULT_WHISPER_MODEL}): ready"
+
+    def test_report_names_fallback_when_only_fallback_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The clinician must SEE the quality degradation, never discover it.
+        from scribe_desktop.transcription import (
+            DEFAULT_WHISPER_MODEL,
+            FALLBACK_WHISPER_MODEL,
+        )
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        _fake_whisper_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+        line = models.model_report_lines()[0]
+        assert f"Whisper model ({DEFAULT_WHISPER_MODEL}):" in line
+        assert f"using fallback {FALLBACK_WHISPER_MODEL}" in line
+        assert "setup-models" in line  # remedy for getting the default back
+
+    def test_report_missing_when_no_model_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        line = models.model_report_lines()[0]
+        assert "MISSING - run scripts/setup-models.py" in line
+        assert "fallback" not in line
+
+    def test_models_ready_accepts_fallback_only_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.transcription import FALLBACK_WHISPER_MODEL
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        vad_dir = tmp_path / "ClinikoScribe" / "models" / "silero-vad"
+        vad_dir.mkdir(parents=True)
+        (vad_dir / "silero_vad.onnx").write_bytes(b"onnx")
+        assert not models.models_ready()  # no whisper model at all
+        _fake_whisper_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+        assert models.models_ready()  # fallback-only cache is usable
 
 
 class TestUnfinishedWarningText:
