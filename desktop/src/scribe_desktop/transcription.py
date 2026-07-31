@@ -1,13 +1,25 @@
-"""Transcription pipeline (Phase 2 Step 9).
+"""Transcription pipeline (Phase 2 Step 9; windowed batching Step 13).
 
-Flow 2 (plan): decrypt chunks streamwise -> VAD segments -> Whisper per
-segment (word timestamps + probabilities, ``local_files_only=True``,
-explicit local model path) -> uncertainty marks on low-confidence words
+Flow 2 (plan): decrypt chunks streamwise -> VAD segments -> consecutive
+segments PACKED into ~30 s contiguous transcription windows -> Whisper per
+WINDOW (word timestamps + probabilities, ``local_files_only=True``,
+explicit local model path; window words attributed back to their VAD
+segments by midpoint) -> uncertainty marks on low-confidence words
 PLUS all numbers and proper-name-like tokens -> speaker labels per the
 D8 decision (2-speaker clustering over VAD segments, numpy-only spectral
 embeddings + 2-means) -> encrypted transcript artifact written ATOMICALLY
 (temp + fsync + ``os.replace``) as ``transcript.enc`` under the SAME
 session key -> the session machine moves processing -> queued.
+
+Why windows (Step 13 batching, user decision 2026-07-30): Whisper charges
+a full 30 s encoder window per ``transcribe`` call regardless of input
+length, so per-VAD-segment calls paid ~10x on short utterances (measured
+pipeline RTF up to ~5.3x real time on pause-rich audio — clinically
+unusable). Packing consecutive segments into one contiguous window
+([first.start, last.end] INCLUDING the silence gaps, so returned word
+times stay linear with absolute session time) cuts the call count by the
+segments-per-window factor while keeping every downstream contract:
+per-VAD-segment speaker attribution, uncertainty marks, and word times.
 
 Crash-mid-processing: recovery restarts transcription from audio —
 ``transcribe_session`` is idempotent and a partial/stale ``transcript.enc``
@@ -27,15 +39,15 @@ Constraints honoured (plan Critical Constraints / executor facts):
   signatures in ``logging_setup._PAYLOAD_SIGNATURES`` so even a misuse
   elsewhere cannot leak a transcript repr into a log line.
 - Plaintext audio/transcript exist only in transient processing memory;
-  the pipeline streams the store per segment and never materialises the
-  whole recording.
+  the pipeline streams the store one transcription window at a time and
+  never materialises the whole recording.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,13 +90,16 @@ from scribe_desktop.speech import (
 # decision 2026-07-28): the pilot transcripts DID disappoint on hard
 # words, so `medium` is now the default (single-call benchmark on this
 # hardware: RTF 0.498 vs small's 0.151, ~1.8 GiB peak — inside the
-# RTF<=0.75 margin; NOTE the per-VAD-segment PIPELINE runs slower than
-# the single-call benchmark — each segment costs a full 30 s encoder
-# window; measured pipeline RTF up to ~5.3 on pause-rich audio, see the
-# plan's Step 13 accuracy-uplift entry before quoting speed numbers).
-# `small` stays fully supported as the graceful fallback when the
-# medium snapshot was never downloaded: degrade VISIBLY (UI report
-# names the fallback), never fail outright and never silently.
+# RTF<=0.75 margin). The per-VAD-segment pipeline of stages 6-10 ran WELL
+# above the single-call benchmark (each short segment cost a full 30 s
+# encoder window); Step 13 batching packs segments into ~30 s windows,
+# and the measured end-to-end pipeline RTF is ~0.54-0.60 for
+# medium+prompt on an idle machine (~2x the single-call cost, ~2x faster
+# than per-segment under identical conditions — see the plan's Step 13
+# batching sub-entry, including the machine-load caveat, before quoting
+# speed numbers). `small` stays fully supported as the graceful fallback
+# when the medium snapshot was never downloaded: degrade VISIBLY (UI
+# report names the fallback), never fail outright and never silently.
 DEFAULT_WHISPER_MODEL = "medium"
 FALLBACK_WHISPER_MODEL = "small"
 
@@ -93,10 +108,10 @@ FALLBACK_WHISPER_MODEL = "small"
 #
 # faster-whisper passes ``initial_prompt`` to the decoder as left-hand
 # context, biasing recognition toward this vocabulary without any
-# fine-tuning. ``transcribe_segment`` runs per VAD segment with
-# ``condition_on_previous_text=False``, so every segment receives this
-# primer fresh — it never accumulates with transcript text and no
-# transcript content ever feeds back into it.
+# fine-tuning. ``transcribe_segment`` runs per packed ~30 s transcription
+# window (Step 13 batching) with ``condition_on_previous_text=False``, so
+# every window receives this primer fresh — it never accumulates with
+# transcript text and no transcript content ever feeds back into it.
 #
 # HARD CONSTRAINTS (all deliberate — keep them when editing):
 # - Token budget: faster-whisper keeps only the LAST ``max_length//2 - 1``
@@ -140,6 +155,26 @@ CLINICAL_INITIAL_PROMPT = (
     "amplitude manipulation, mobilisation, dry needling. Pain seven out "
     "of ten. Meloxicam, amitriptyline."
 )
+
+# Windowed batching (Step 13 speed fix). Whisper's encoder always
+# processes a full 30 s window, so the packer aims windows at exactly that
+# budget: a window spans [first_segment.start, last_segment.end] read
+# CONTIGUOUSLY (silence gaps between its segments included — word times
+# returned by the model then stay linear with absolute session time).
+# ``TRANSCRIBE_WINDOW_SECONDS`` must stay <= 30: faster-whisper applies
+# ``initial_prompt`` only to the FIRST internal 30 s window of a call when
+# ``condition_on_previous_text=False`` (verified in installed 1.2.1
+# transcribe.py: ``prompt_reset_since = len(all_tokens)`` after every
+# window), so a longer packed window would silently lose clinical priming
+# for its tail. A single VAD segment longer than the budget becomes its
+# own window and faster-whisper seeks through it internally — identical
+# priming behaviour to the old per-segment call for that segment.
+TRANSCRIBE_WINDOW_SECONDS = 30.0
+# A silence gap longer than this breaks the window even when the budget
+# has room: long dead air buys no accuracy, spends encoder budget, and is
+# exactly where Whisper is most prone to hallucinate. Gaps at or under
+# this bound are natural speech rhythm and transcribe fine in context.
+TRANSCRIBE_WINDOW_MAX_GAP_SECONDS = 3.0
 
 # Words strictly below this backend probability are marked uncertain
 # (``mark_words``: ``probability < threshold``). Step 13 calibration
@@ -377,6 +412,83 @@ def extract_segment_pcm(
 
 
 # ---------------------------------------------------------------------------
+# Window packing + word->segment attribution (Step 13 batching, pure).
+# ---------------------------------------------------------------------------
+
+
+def pack_transcription_windows(
+    segments: Sequence[SpeechSegment],
+    *,
+    window_seconds: float = TRANSCRIBE_WINDOW_SECONDS,
+    max_gap_seconds: float = TRANSCRIBE_WINDOW_MAX_GAP_SECONDS,
+) -> list[tuple[int, int]]:
+    """Group consecutive VAD segments into contiguous transcription windows.
+
+    Returns ``[start, stop)`` index pairs into ``segments``. Greedy packing:
+    a window grows while the NEXT segment (a) keeps the window's contiguous
+    span ``[first.start, next.end]`` within ``window_seconds`` and (b) sits
+    within ``max_gap_seconds`` of the previous segment's end. Every segment
+    lands in exactly one window; a single segment longer than the budget
+    becomes its own (oversized) window — the provider seeks through it
+    internally, exactly as the old per-segment call did.
+    """
+    if window_seconds <= 0:
+        raise ValueError("window_seconds must be positive")
+    if max_gap_seconds < 0:
+        raise ValueError("max_gap_seconds must be non-negative")
+    windows: list[tuple[int, int]] = []
+    i = 0
+    while i < len(segments):
+        j = i + 1
+        while j < len(segments):
+            fits = (
+                segments[j].end_seconds - segments[i].start_seconds <= window_seconds
+            )
+            gap = segments[j].start_seconds - segments[j - 1].end_seconds
+            if not fits or gap > max_gap_seconds:
+                break
+            j += 1
+        windows.append((i, j))
+        i = j
+    return windows
+
+
+def assign_words_to_segments(
+    words: Sequence[TranscribedWord],
+    segments: Sequence[SpeechSegment],
+    *,
+    window_start_seconds: float,
+) -> list[list[TranscribedWord]]:
+    """Attribute window-transcribed words back to the window's VAD segments.
+
+    ``words`` carry times relative to the window's PCM; ``segments`` are the
+    window's VAD segments in absolute session time. Each word goes to the
+    segment whose ``[start, end]`` contains its absolute midpoint; a word
+    whose midpoint lands in a gap between segments goes to the NEAREST
+    segment (earlier one on a tie). No word is ever dropped or duplicated —
+    the returned lists partition ``words`` in order, one list per segment.
+    """
+    if not segments:
+        raise ValueError("a transcription window must contain segments")
+    assigned: list[list[TranscribedWord]] = [[] for _ in segments]
+    for word in words:
+        midpoint = window_start_seconds + (word.start_seconds + word.end_seconds) / 2.0
+        best_index = 0
+        best_distance = float("inf")
+        for index, segment in enumerate(segments):
+            distance = max(
+                segment.start_seconds - midpoint, midpoint - segment.end_seconds, 0.0
+            )
+            if distance < best_distance:
+                best_index = index
+                best_distance = distance
+            if distance == 0.0:
+                break  # containment: no later segment can beat it
+        assigned[best_index].append(word)
+    return assigned
+
+
+# ---------------------------------------------------------------------------
 # Speaker labels — D8: numpy-only spectral embeddings + 2-means clustering.
 # ---------------------------------------------------------------------------
 
@@ -542,7 +654,8 @@ def resolve_whisper_model(model_name: str = DEFAULT_WHISPER_MODEL) -> str:
 
 
 class WhisperSpeechProvider:
-    """Local faster-whisper transcription over one speech segment.
+    """Local faster-whisper transcription over one contiguous audio span
+    (a packed ~30 s transcription window, or a lone VAD segment).
 
     Loads the CTranslate2 model from an EXPLICIT local path with
     ``local_files_only=True``; the offline env kill-switches are asserted
@@ -556,8 +669,9 @@ class WhisperSpeechProvider:
     composition layer (``ui.models`` factories), never in here.
 
     ``initial_prompt`` (default: ``CLINICAL_INITIAL_PROMPT``) primes the
-    decoder with clinical vocabulary per segment; pass ``None`` to
-    disable priming, or a custom string to replace it.
+    decoder with clinical vocabulary per call — i.e. per packed window,
+    which is why windows stay <= 30 s (see ``TRANSCRIBE_WINDOW_SECONDS``);
+    pass ``None`` to disable priming, or a custom string to replace it.
     """
 
     def __init__(
@@ -615,7 +729,8 @@ class WhisperSpeechProvider:
             beam_size=5,
             condition_on_previous_text=False,
             # Clinical vocabulary priming (Step 13): fresh left-context per
-            # VAD segment; None disables cleanly (faster-whisper default).
+            # call — one packed <=30 s window (or one oversized lone
+            # segment); None disables cleanly (faster-whisper default).
             initial_prompt=self._initial_prompt,
         )
         words: list[TranscribedWord] = []
@@ -701,8 +816,9 @@ def transcribe_session(
     model_name: str = "",
     uncertainty_threshold: float = UNCERTAINTY_THRESHOLD,
 ) -> TranscriptDocument:
-    """Flow 2: VAD -> Whisper per segment -> uncertainty marks -> speaker
-    labels -> ``transcript.enc`` written atomically under the session key.
+    """Flow 2: VAD -> Whisper per ~30 s window of consecutive segments ->
+    word->segment attribution -> uncertainty marks -> speaker labels ->
+    ``transcript.enc`` written atomically under the session key.
 
     Idempotent by construction: rerunning after a crash mid-processing
     reproduces and atomically replaces the transcript. ``require_footer``
@@ -719,29 +835,73 @@ def transcribe_session(
         audio_path, crypto, frame_probability, require_footer=require_footer
     )
 
-    # PR round 15: segment PCM is processed and DROPPED per iteration —
-    # only the 25-float speaker embedding is retained, never the plaintext
-    # audio of the whole consultation.
+    # Step 13 batching: consecutive segments are packed into ~30 s windows
+    # and the provider runs ONCE per window over the contiguous PCM span
+    # [first.start, last.end] (gaps included), so word times stay linear
+    # with absolute session time. Per-segment PCM for the D8 embeddings is
+    # SLICED out of the same window buffer — the slice arithmetic floors
+    # exactly like ``extract_segment_pcm``, so embeddings stay bit-identical
+    # to the old per-segment path and speaker attribution is unchanged.
+    #
+    # PR round 15 invariant, restated for windows: plaintext PCM is bounded
+    # by ONE window per iteration (packed windows are <= 30 s ~= 960 KB at
+    # 16 kHz mono; a lone VAD segment longer than the budget materialises
+    # whole — exactly as the old per-segment path did) and DROPPED at loop
+    # advance — only the 25-float speaker embeddings are retained, never
+    # the plaintext audio of the whole consultation.
     np = _numpy() if len(segments) >= 2 else None
     marked_segments: list[tuple[SpeechSegment, tuple[TranscriptWord, ...]]] = []
     embeddings: list[Any] = []
     saw_empty_segment = False
-    pcm_stream = extract_segment_pcm(
-        iter_chunks(audio_path, crypto, require_footer=require_footer), segments
-    )
-    for segment, pcm in zip(segments, pcm_stream, strict=True):
-        raw_words = provider.transcribe_segment(pcm, SAMPLE_RATE)
-        words = mark_words(
-            raw_words,
-            threshold=uncertainty_threshold,
-            offset_seconds=segment.start_seconds,
+    window_spans = pack_transcription_windows(segments)
+    window_segments = [
+        SpeechSegment(
+            start_seconds=segments[first].start_seconds,
+            end_seconds=segments[last - 1].end_seconds,
         )
-        marked_segments.append((segment, words))
-        if np is not None:
-            if pcm:
-                embeddings.append(_segment_embedding(pcm, np))
-            else:
-                saw_empty_segment = True
+        for first, last in window_spans
+    ]
+    pcm_stream = extract_segment_pcm(
+        iter_chunks(audio_path, crypto, require_footer=require_footer), window_segments
+    )
+    for (first, last), window, window_pcm in zip(
+        window_spans, window_segments, pcm_stream, strict=True
+    ):
+        raw_words = provider.transcribe_segment(window_pcm, SAMPLE_RATE)
+        window_group = segments[first:last]
+        per_segment_words = assign_words_to_segments(
+            raw_words, window_group, window_start_seconds=window.start_seconds
+        )
+        window_byte_start = int(window.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        for segment, seg_words in zip(window_group, per_segment_words, strict=True):
+            # ``first_in_segment`` (the name heuristic's capitalized-opener
+            # exemption) now means "first word ATTRIBUTED to this segment":
+            # window-initial words are still model-capitalized exactly like
+            # per-segment calls were; mid-window segment openers are only
+            # capitalized when the model starts a sentence there, which the
+            # same exemption list handles (fail-toward-marking preserved).
+            words = mark_words(
+                seg_words,
+                threshold=uncertainty_threshold,
+                offset_seconds=window.start_seconds,
+            )
+            marked_segments.append((segment, words))
+            if np is not None:
+                lo = (
+                    int(segment.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+                    - window_byte_start
+                )
+                hi = (
+                    int(segment.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+                    - window_byte_start
+                )
+                segment_pcm = window_pcm[lo:hi]
+                if segment_pcm:
+                    embeddings.append(_segment_embedding(segment_pcm, np))
+                else:
+                    # Beyond-audio-end segment (VAD zero-pads its last
+                    # frame): same degradation as the old per-segment path.
+                    saw_empty_segment = True
 
     if np is None or saw_empty_segment or len(embeddings) < 2:
         speakers = [SPEAKER_1] * len(segments)
@@ -820,6 +980,8 @@ __all__ = [
     "FALLBACK_WHISPER_MODEL",
     "SPEAKER_1",
     "SPEAKER_2",
+    "TRANSCRIBE_WINDOW_MAX_GAP_SECONDS",
+    "TRANSCRIBE_WINDOW_SECONDS",
     "UNCERTAINTY_THRESHOLD",
     "RecoveryOutcome",
     "TranscriptDocument",
@@ -828,12 +990,14 @@ __all__ = [
     "TranscriptionError",
     "TranscriptionModelError",
     "WhisperSpeechProvider",
+    "assign_words_to_segments",
     "default_whisper_model_dir",
     "extract_segment_pcm",
     "is_name_like_token",
     "is_number_token",
     "label_speakers",
     "mark_words",
+    "pack_transcription_windows",
     "read_transcript",
     "recover_session_transcription",
     "resolve_whisper_model",

@@ -93,10 +93,13 @@ class TranscribedWord:
 
 
 class SpeechProvider(Protocol):
-    """PLAN.md core type: local speech-to-text over one speech segment.
+    """PLAN.md core type: local speech-to-text over one contiguous audio
+    span — a packed ~30 s transcription window of consecutive VAD segments
+    (Step 13 batching), or a lone segment.
 
     Implemented initially by local Whisper (Step 9); ``MockSpeechProvider``
-    stands in for CI and scaffolding. ``pcm`` is 16 kHz mono PCM16.
+    stands in for CI and scaffolding. ``pcm`` is 16 kHz mono PCM16; word
+    times in the result are relative to the START of the given ``pcm``.
     """
 
     def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:

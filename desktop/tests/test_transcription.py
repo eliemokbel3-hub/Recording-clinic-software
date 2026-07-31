@@ -62,11 +62,13 @@ from scribe_desktop.transcription import (
     TranscriptSegment,
     TranscriptWord,
     WhisperSpeechProvider,
+    assign_words_to_segments,
     extract_segment_pcm,
     is_name_like_token,
     is_number_token,
     label_speakers,
     mark_words,
+    pack_transcription_windows,
     read_transcript,
     recover_session_transcription,
     resolve_whisper_model,
@@ -222,6 +224,174 @@ class TestExtractSegmentPcm:
         ]
         with pytest.raises(ValueError, match="non-overlapping"):
             list(extract_segment_pcm([b"\0" * 64_000], segments))
+
+
+# ---------------------------------------------------------------------------
+# window packing + word->segment attribution (Step 13 batching, pure)
+# ---------------------------------------------------------------------------
+
+
+def _seg(start: float, end: float) -> SpeechSegment:
+    return SpeechSegment(start_seconds=start, end_seconds=end)
+
+
+class TestPackTranscriptionWindows:
+    def test_empty(self) -> None:
+        assert pack_transcription_windows([]) == []
+
+    def test_single_segment(self) -> None:
+        assert pack_transcription_windows([_seg(1.0, 4.0)]) == [(0, 1)]
+
+    def test_packs_consecutive_segments_within_budget(self) -> None:
+        segments = [_seg(0.0, 10.0), _seg(11.0, 20.0), _seg(21.0, 29.0)]
+        assert pack_transcription_windows(segments) == [(0, 3)]
+
+    def test_budget_overflow_starts_new_window(self) -> None:
+        # fourth segment would stretch the span past 30 s from the first
+        segments = [
+            _seg(0.0, 10.0),
+            _seg(11.0, 20.0),
+            _seg(21.0, 29.0),
+            _seg(29.5, 31.0),
+        ]
+        assert pack_transcription_windows(segments) == [(0, 3), (3, 4)]
+
+    def test_span_exactly_at_budget_is_packed(self) -> None:
+        segments = [_seg(0.0, 15.0), _seg(16.0, 30.0)]
+        assert pack_transcription_windows(segments) == [(0, 2)]
+
+    def test_gap_over_max_breaks_window(self) -> None:
+        segments = [_seg(0.0, 2.0), _seg(2.5, 4.0), _seg(10.0, 12.0)]  # 6 s gap
+        assert pack_transcription_windows(segments) == [(0, 2), (2, 3)]
+
+    def test_gap_exactly_at_max_is_packed(self) -> None:
+        segments = [_seg(0.0, 2.0), _seg(5.0, 6.0)]  # gap == 3.0 default
+        assert pack_transcription_windows(segments) == [(0, 2)]
+
+    def test_oversized_segment_gets_its_own_window(self) -> None:
+        segments = [_seg(0.0, 1.0), _seg(2.0, 40.0), _seg(40.5, 41.0)]
+        assert pack_transcription_windows(segments) == [(0, 1), (1, 2), (2, 3)]
+
+    def test_oversized_first_segment(self) -> None:
+        segments = [_seg(0.0, 45.0), _seg(45.5, 46.0)]
+        assert pack_transcription_windows(segments) == [(0, 1), (1, 2)]
+
+    def test_windows_partition_all_segments(self) -> None:
+        segments = [_seg(i * 4.0, i * 4.0 + 2.0) for i in range(25)]
+        windows = pack_transcription_windows(segments)
+        covered = [i for first, last in windows for i in range(first, last)]
+        assert covered == list(range(len(segments)))  # each exactly once, in order
+        for first, last in windows:
+            span = segments[last - 1].end_seconds - segments[first].start_seconds
+            assert last - first == 1 or span <= 30.0
+
+    def test_custom_budget_and_gap(self) -> None:
+        segments = [_seg(0.0, 4.0), _seg(5.0, 9.0), _seg(10.0, 14.0)]
+        assert pack_transcription_windows(segments, window_seconds=10.0) == [
+            (0, 2),
+            (2, 3),
+        ]
+        assert pack_transcription_windows(segments, max_gap_seconds=0.5) == [
+            (0, 1),
+            (1, 2),
+            (2, 3),
+        ]
+
+    def test_invalid_parameters_rejected(self) -> None:
+        with pytest.raises(ValueError, match="window_seconds"):
+            pack_transcription_windows([_seg(0.0, 1.0)], window_seconds=0.0)
+        with pytest.raises(ValueError, match="max_gap_seconds"):
+            pack_transcription_windows([_seg(0.0, 1.0)], max_gap_seconds=-1.0)
+
+
+class TestAssignWordsToSegments:
+    @staticmethod
+    def _tw(start: float, end: float, text: str = "w") -> TranscribedWord:
+        return TranscribedWord(
+            text=text, start_seconds=start, end_seconds=end, probability=0.9
+        )
+
+    def test_containment_attribution(self) -> None:
+        segments = [_seg(10.0, 12.0), _seg(13.0, 15.0)]
+        # window starts at 10.0; word times are window-relative
+        words = [self._tw(0.2, 0.6, "a"), self._tw(3.2, 3.8, "b")]
+        assigned = assign_words_to_segments(words, segments, window_start_seconds=10.0)
+        assert [[w.text for w in group] for group in assigned] == [["a"], ["b"]]
+
+    def test_gap_word_goes_to_nearest_segment_never_dropped(self) -> None:
+        segments = [_seg(0.0, 2.0), _seg(4.0, 6.0)]
+        words = [
+            self._tw(2.0, 2.4, "near_left"),   # midpoint 2.2 -> left (0.2 vs 1.8)
+            self._tw(3.4, 4.0, "near_right"),  # midpoint 3.7 -> right (1.7 vs 0.3)
+        ]
+        assigned = assign_words_to_segments(words, segments, window_start_seconds=0.0)
+        assert [w.text for w in assigned[0]] == ["near_left"]
+        assert [w.text for w in assigned[1]] == ["near_right"]
+
+    def test_equidistant_gap_word_goes_to_earlier_segment(self) -> None:
+        segments = [_seg(0.0, 2.0), _seg(4.0, 6.0)]
+        words = [self._tw(2.8, 3.2, "middle")]  # midpoint 3.0: 1.0 vs 1.0
+        assigned = assign_words_to_segments(words, segments, window_start_seconds=0.0)
+        assert [w.text for w in assigned[0]] == ["middle"]
+        assert assigned[1] == []
+
+    def test_words_outside_window_ends_clamp_to_edge_segments(self) -> None:
+        segments = [_seg(5.0, 6.0), _seg(7.0, 8.0)]
+        words = [self._tw(-0.4, -0.2, "before"), self._tw(3.5, 3.9, "after")]
+        assigned = assign_words_to_segments(words, segments, window_start_seconds=5.0)
+        assert [w.text for w in assigned[0]] == ["before"]
+        assert [w.text for w in assigned[1]] == ["after"]
+
+    def test_partition_no_loss_no_duplication_order_kept(self) -> None:
+        segments = [_seg(0.0, 1.0), _seg(1.5, 2.5), _seg(3.0, 4.0)]
+        words = [self._tw(i * 0.25, i * 0.25 + 0.2, f"w{i}") for i in range(16)]
+        assigned = assign_words_to_segments(words, segments, window_start_seconds=0.0)
+        flattened = [w.text for group in assigned for w in group]
+        assert flattened == [w.text for w in words]  # every word exactly once, ordered
+
+    def test_empty_words(self) -> None:
+        segments = [_seg(0.0, 1.0), _seg(2.0, 3.0)]
+        assert assign_words_to_segments([], segments, window_start_seconds=0.0) == [
+            [],
+            [],
+        ]
+
+    def test_empty_segments_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must contain segments"):
+            assign_words_to_segments([], [], window_start_seconds=0.0)
+
+
+class TestWindowPcmSliceIdentity:
+    def test_window_slices_equal_per_segment_extraction(self) -> None:
+        """The pipeline slices per-segment PCM for the D8 embeddings out of
+        the window buffer; those slices must be BIT-IDENTICAL to what the
+        old per-segment ``extract_segment_pcm`` produced, so speaker
+        clustering input is unchanged by batching."""
+        pcm = bytes(range(256)) * 500  # 128 000 B = 4.0 s
+        segments = [
+            _seg(0.25, 0.75),
+            _seg(1.0, 1.5),
+            _seg(2.125, 3.0),
+        ]
+        per_segment = list(
+            extract_segment_pcm([pcm], segments)
+        )
+        window = SpeechSegment(
+            start_seconds=segments[0].start_seconds,
+            end_seconds=segments[-1].end_seconds,
+        )
+        (window_pcm,) = list(extract_segment_pcm([pcm], [window]))
+        window_byte_start = int(window.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        for segment, expected in zip(segments, per_segment, strict=True):
+            lo = (
+                int(segment.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+                - window_byte_start
+            )
+            hi = (
+                int(segment.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+                - window_byte_start
+            )
+            assert window_pcm[lo:hi] == expected
 
 
 # ---------------------------------------------------------------------------
@@ -474,6 +644,136 @@ class TestTranscribeSessionMock:
             complete_session(session_dir, crypto)
         assert (session_dir / KEY_FILENAME).exists()  # key retained
         assert not crypto.destroyed
+
+
+class _CountingProvider:
+    """Wraps a SpeechProvider and records the PCM length of every call —
+    the batching regression pin (calls per WINDOW, not per segment)."""
+
+    def __init__(self, inner: MockSpeechProvider) -> None:
+        self._inner = inner
+        self.call_pcm_lengths: list[int] = []
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        self.call_pcm_lengths.append(len(pcm))
+        return self._inner.transcribe_segment(pcm, sample_rate)
+
+
+class TestWindowedPipeline:
+    """Step 13 batching: the pipeline transcribes per packed window while
+    every per-segment contract (attribution, marks, speakers, no word
+    loss) holds."""
+
+    def test_provider_called_once_per_window_not_per_segment(
+        self, tmp_path: Path
+    ) -> None:
+        session_dir = tmp_path / ("a1" * 16)
+        gap = silence_pcm(1.0)  # 1 s gaps: same window (<= 3 s, span < 30 s)
+        pcm = gap + tone_pcm(1.5) + gap + tone_pcm(1.5) + gap + tone_pcm(1.5) + gap
+        crypto = _make_store(session_dir, pcm)
+        provider = _CountingProvider(MockSpeechProvider())
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        assert len(document.transcript_segments) == 3
+        assert len(provider.call_pcm_lengths) == 1  # ONE window call, was 3
+        # the window PCM is the contiguous span incl. gaps: > sum of segments
+        assert provider.call_pcm_lengths[0] > 3 * len(tone_pcm(1.5))
+
+    def test_large_gap_splits_into_two_windows(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("b2" * 16)
+        pcm = tone_pcm(1.0) + silence_pcm(5.0) + tone_pcm(1.0)  # 5 s > max gap
+        crypto = _make_store(session_dir, pcm)
+        provider = _CountingProvider(MockSpeechProvider())
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        assert len(document.transcript_segments) == 2
+        assert len(provider.call_pcm_lengths) == 2
+        # SECOND-window words must be offset by the SECOND window's start
+        # (peer round 41): offsetting every window by the first window's
+        # start would leave them stranded near t=0. The mock spans each
+        # window's PCM, so its words must land inside their own segment.
+        for segment in document.transcript_segments:
+            assert segment.transcript_words, "each window produced words"
+            for word in segment.transcript_words:
+                assert segment.start_seconds - 0.01 <= word.start_seconds
+                assert word.end_seconds <= segment.end_seconds + 0.01
+
+    def test_no_word_loss_or_duplication_across_window(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("c3" * 16)
+        gap = silence_pcm(1.0)
+        pcm = gap + tone_pcm(1.5) + gap + tone_pcm(1.5) + gap
+        crypto = _make_store(session_dir, pcm)
+        provider = _CountingProvider(MockSpeechProvider())
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+
+        # the mock emitted words across the WHOLE window (gaps included);
+        # every one of them must appear exactly once in the document —
+        # gap-centered words are attributed to the nearest segment, never
+        # dropped, never duplicated
+        (window_pcm_len,) = provider.call_pcm_lengths
+        expected = MockSpeechProvider().transcribe_segment(
+            b"\0" * window_pcm_len, SAMPLE_RATE
+        )
+        emitted = [
+            w.word_text
+            for seg in document.transcript_segments
+            for w in seg.transcript_words
+        ]
+        assert emitted == [w.text for w in expected]
+
+    def test_word_times_absolute_and_monotone(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("d4" * 16)
+        gap = silence_pcm(1.0)
+        pcm = gap + tone_pcm(1.5) + gap + tone_pcm(1.5) + gap
+        crypto = _make_store(session_dir, pcm)
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(), amplitude_vad
+        )
+        words = [
+            w for seg in document.transcript_segments for w in seg.transcript_words
+        ]
+        assert words
+        # absolute session time: first word starts at/after the first
+        # segment's window start (~1 s), NOT at zero
+        first_segment = document.transcript_segments[0]
+        assert words[0].start_seconds >= first_segment.start_seconds - 0.01
+        starts = [w.start_seconds for w in words]
+        assert starts == sorted(starts)
+
+    def test_speaker_labels_survive_batching(self, tmp_path: Path) -> None:
+        """Alternating voices in ONE window still get per-segment D8 labels
+        (embeddings come from window slices, bit-identical to the old
+        per-segment extraction)."""
+        pytest.importorskip("numpy")
+        session_dir = tmp_path / ("e5" * 16)
+        gap = silence_pcm(1.0)
+        pcm = (
+            gap
+            + tone_pcm(1.5, frequency=220.0)
+            + gap
+            + tone_pcm(1.5, frequency=2600.0)
+            + gap
+            + tone_pcm(1.5, frequency=220.0)
+            + gap
+        )
+        crypto = _make_store(session_dir, pcm)
+        provider = _CountingProvider(MockSpeechProvider())
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        assert len(provider.call_pcm_lengths) == 1  # all three segments batched
+        speakers = [s.speaker for s in document.transcript_segments]
+        assert speakers == [SPEAKER_1, SPEAKER_2, SPEAKER_1]
+
+    def test_oversized_segment_transcribed_in_own_window(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / ("f6" * 16)
+        # one continuous 31 s tone -> a single VAD segment over the budget
+        pcm = tone_pcm(31.0) + silence_pcm(0.5) + tone_pcm(1.0)
+        crypto = _make_store(session_dir, pcm)
+        provider = _CountingProvider(MockSpeechProvider())
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        segments = document.transcript_segments
+        assert len(segments) >= 1
+        assert segments[0].end_seconds - segments[0].start_seconds > 30.0
+        assert segments[0].transcript_words  # words attributed, none lost
+        # the oversized segment occupied a window by itself
+        assert provider.call_pcm_lengths[0] >= int(30.0 * SAMPLE_RATE) * BYTES_PER_SAMPLE
 
 
 # ---------------------------------------------------------------------------
