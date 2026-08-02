@@ -8,7 +8,6 @@ returns a string for DISPLAY ONLY.
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from collections.abc import Callable
@@ -26,6 +25,7 @@ from scribe_desktop.session_store import (
     default_sessions_root,
     read_store_header,
     store_has_footer,
+    trusted_timestamps,
 )
 from scribe_desktop.speech import SileroVad, vad_model_available
 from scribe_desktop.transcription import (
@@ -174,9 +174,11 @@ def list_recoverable_sessions(
         # PR round 18: the 24 h cap applies to the LISTING too, not only the
         # sweep — never offer recovery of a session past its window. Same
         # fail-safe posture as the sweep: earliest trusted timestamp wins;
-        # readable-but-untrusted values fail closed (not listed).
+        # readable-but-untrusted values fail closed (not listed). The rule
+        # itself lives in session_store.trusted_timestamps so this listing and
+        # the sweep can never disagree about what "trusted" means.
         readable = [t for t in (created_at, key_mtime) if t is not None]
-        trusted = [t for t in readable if math.isfinite(t) and t <= now]
+        trusted = trusted_timestamps(readable, now)
         if trusted:
             if now - min(trusted) >= RECOVERY_WINDOW.total_seconds():
                 continue  # expired; the sweep destroys it

@@ -173,6 +173,33 @@ class TestListRecoverableSessions:
         assert info.store_finished is False
         assert info.created_at is None
 
+    def test_marginally_future_key_mtime_still_listed(self, tmp_path: Path) -> None:
+        """With no store header the 24 h cap has only the key mtime to trust,
+        and Windows' coarse clock can put that a few ms ahead of a later
+        time.time(). This test used to pass or fail by luck on Python 3.12
+        (it read as "future = untrusted" and the session vanished from the
+        recovery listing); CLOCK_SKEW_TOLERANCE makes it deterministic."""
+        import os
+        import time
+
+        session_id = _make_session_dir(tmp_path, finished=False, with_audio=False)
+        skewed = time.time() + 0.05  # ~3x the 15.6 ms Windows clock tick
+        os.utime(tmp_path / session_id / KEY_FILENAME, (skewed, skewed))
+        assert [i.session_id for i in models.list_recoverable_sessions(tmp_path)] == [
+            session_id
+        ]
+
+    def test_wildly_future_key_mtime_still_fails_closed(self, tmp_path: Path) -> None:
+        """Beyond the tolerance a future stamp means a broken or tampered
+        clock — the listing must keep failing closed."""
+        import os
+        import time
+
+        session_id = _make_session_dir(tmp_path, finished=False, with_audio=False)
+        future = time.time() + 7 * 86400
+        os.utime(tmp_path / session_id / KEY_FILENAME, (future, future))
+        assert models.list_recoverable_sessions(tmp_path) == []
+
 
 def _fake_whisper_snapshot(local_app_data: Path, name: str) -> None:
     """A minimally complete CT2 snapshot dir under a fake LOCALAPPDATA."""

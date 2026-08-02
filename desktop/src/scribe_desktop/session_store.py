@@ -52,7 +52,7 @@ import shutil
 import struct
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -100,6 +100,19 @@ _MIN_KEY_BLOB_BYTES: Final = 16
 _SESSION_ID_RE: Final = re.compile(r"^[0-9a-f]{32}$")
 
 RECOVERY_WINDOW: Final = timedelta(hours=24)
+
+# Filesystem timestamps can read marginally AHEAD of a later time.time().
+# Windows' wall clock is coarse — on Python <= 3.12 time.time() comes from
+# GetSystemTimeAsFileTime() at ~15.6 ms granularity, while NTFS records mtimes
+# at 100 ns — and FAT-family volumes round mtimes up to a 2 s boundary. So a
+# file written moments ago can carry a stamp a fraction of a second in the
+# "future". The fail-closed rule below reads any future stamp as untrusted and
+# ACTS on it, which for a freshly created session means the sweep expiring it
+# (cryptographic deletion) or the recovery listing hiding it. Tolerate skew up
+# to this bound — orders of magnitude above both quirks, and 0.006% of the 24 h
+# window — and keep failing closed beyond it, where a future stamp really does
+# mean a broken or tampered clock.
+CLOCK_SKEW_TOLERANCE: Final = 5.0  # seconds
 
 _FOOTER_AAD: Final = b"footer"
 
@@ -550,13 +563,32 @@ class SweepResult:
     action: str  # kept | skipped_active | expired | orphan_gc | error
 
 
+def trusted_timestamps(candidates: Iterable[float], now: float) -> list[float]:
+    """The fail-safe timestamp rule for the 24 h cap, in ONE place.
+
+    Shared by the sweep and the recovery listing — they enforce the same cap
+    and previously carried separate copies of this rule, which is how both
+    inherited the same clock-skew defect.
+
+    Drops non-finite values and anything further than ``CLOCK_SKEW_TOLERANCE``
+    into the future (a real clock problem: never allowed to extend retention).
+    Values inside that tolerance are clamped to ``now``, so a file written
+    milliseconds ago is aged from now rather than being thrown away.
+    """
+    return [
+        min(value, now)
+        for value in candidates
+        if math.isfinite(value) and value <= now + CLOCK_SKEW_TOLERANCE
+    ]
+
+
 def _session_created_at(session_dir: Path, now: float) -> float:
     """Best available creation time, FAIL-SAFE for the 24 h cap (PR-MED-004):
     a malformed header timestamp (NaN/inf) or one claiming the future must
     not extend retention, so collect header created-at + key-blob mtime,
-    drop non-finite/future values, and take the EARLIEST survivor. Falls
-    back to the directory mtime, then to `now` (expires on the next window
-    rather than never)."""
+    filter through `trusted_timestamps`, and take the EARLIEST survivor.
+    Falls back to the directory mtime, then to `now` (expires on the next
+    window rather than never)."""
     candidates: list[float] = []
     audio_path = session_dir / AUDIO_FILENAME
     if audio_path.exists():
@@ -569,14 +601,15 @@ def _session_created_at(session_dir: Path, now: float) -> float:
             candidates.append(stat_target.stat().st_mtime)
         except OSError:
             pass
-    trusted = [value for value in candidates if math.isfinite(value) and value <= now]
+    trusted = trusted_timestamps(candidates, now)
     if trusted:
         return min(trusted)
     if candidates:
         # PR-MED-005: every readable timestamp is untrusted (non-finite or
-        # future) — fail CLOSED: report an age past any window so the 24 h
-        # cap cannot be defeated by clock skew. Active sessions are already
-        # protected by the caller's active_session_ids exemption.
+        # implausibly far in the future) — fail CLOSED: report an age past any
+        # window so the 24 h cap cannot be defeated by clock skew. Active
+        # sessions are already protected by the caller's active_session_ids
+        # exemption.
         return float("-inf")
     # Nothing readable at all (transient I/O trouble): keep this sweep and
     # retry next time rather than destroying on a possibly-flaky stat.
