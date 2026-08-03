@@ -1273,10 +1273,10 @@ class TestLiveEndToEnd:
         pytest.importorskip("numpy")
         pytest.importorskip("onnxruntime")
         pytest.importorskip("faster_whisper")
+        from sapi_fixture import synthesize_speech_pcm
         from scribe_desktop.speech import SileroVad
-        from test_speech import _sapi_speech_pcm
 
-        speech = _sapi_speech_pcm(
+        speech = synthesize_speech_pcm(
             "Margaret counted seventeen boats near the lighthouse on Tuesday "
             "the fourteenth of March."
         )

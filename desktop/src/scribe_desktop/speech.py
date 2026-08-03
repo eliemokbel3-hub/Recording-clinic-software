@@ -50,6 +50,12 @@ FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
 
 # Hysteresis defaults, tuned on the SAPI-synthesized probe (speech frames
 # score ~0.7 mean / ~1.0 peaks, silence < 0.02 against the cached model).
+# RE-VERIFIED 2026-07-31 on TRUE-speed audio: the original probe was fed SAPI's
+# 22050 Hz output as if it were 16 kHz (0.726x speed — see tests/sapi_fixture.py).
+# Re-probed at the correct rate over three fixtures, the distribution is
+# unchanged — frames above start threshold mean 0.98 (min 0.52), whole-span mean
+# 0.66-0.77, silence floor mean 0.003 / max 0.012, and detected coverage of the
+# spoken span rose slightly (81->83%, 72->75%, 87->88%). Thresholds UNCHANGED.
 START_THRESHOLD = 0.50
 END_THRESHOLD = 0.35
 MIN_SPEECH_SECONDS = 0.25

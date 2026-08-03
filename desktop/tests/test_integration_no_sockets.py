@@ -74,6 +74,7 @@ from scribe_desktop.transcription import (
 from scribe_desktop.ui.models import models_ready
 
 REPO = Path(__file__).resolve().parents[2]
+TESTS_DIR = Path(__file__).resolve().parent
 LAUNCHER = Path(sys.executable).parent / "scribe-host.exe"
 CREATE_NO_WINDOW = 0x08000000  # Chrome spawns native hosts windowless
 
@@ -331,8 +332,19 @@ def _poll_no_connections(
 
 
 def _write_child(tmp_path: Path, name: str, code: str) -> Path:
+    # Children run from a temp dir with cwd=REPO, so the tests directory is not
+    # importable by default; adding it lets them share `sapi_fixture` (the
+    # SAPI-renders-22050 Hz correction must exist in exactly ONE place, not
+    # re-copied into every child). Two stdlib statements, no imports of our own
+    # — the socket-stub child still stubs before anything else loads.
+    # SEC-001: APPEND, never insert(0, ...). At position 0 the tests directory
+    # would precede the stdlib, so a future tests/socket.py or _socket.py would
+    # be what the no-network-proof child imports and stubs — the proof would go
+    # green while testing nothing. Appending resolves `sapi_fixture` (no other
+    # source provides that name) and leaves stdlib resolution untouched.
+    prelude = f"import sys\nsys.path.append({str(TESTS_DIR)!r})\n"
     script = tmp_path / name
-    script.write_text(code, encoding="utf-8")
+    script.write_text(prelude + code, encoding="utf-8")
     return script
 
 
@@ -567,27 +579,11 @@ from scribe_desktop.transcription import read_transcript, transcribe_session
 
 root = Path(sys.argv[1])
 
+# TRUE 16 kHz mono PCM16 — SAPI renders 22050 Hz whatever format is asked
+# for, so the shared fixture resamples (see tests/sapi_fixture.py).
+from sapi_fixture import synthesize_speech_pcm
 
-def sapi_speech(text):
-    import tempfile
-    import wave
-
-    import win32com.client
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = str(Path(tmp) / "fixture.wav")
-        stream = win32com.client.Dispatch("SAPI.SpFileStream")
-        stream.Format.Type = 22  # SAFT16kHz16BitMono
-        stream.Open(path, 3)
-        voice = win32com.client.Dispatch("SAPI.SpVoice")
-        voice.AudioOutputStream = stream
-        voice.Speak(text)
-        stream.Close()
-        with wave.open(path, "rb") as wav:
-            return wav.readframes(wav.getnframes())
-
-
-speech = sapi_speech(
+speech = synthesize_speech_pcm(
     "Margaret counted seventeen boats near the lighthouse on Tuesday morning."
 )
 chunk_bytes = int(0.05 * SAMPLE_RATE) * 2
@@ -909,26 +905,11 @@ from scribe_desktop.transcription import (
 )
 
 
-def sapi_speech(text):
-    import tempfile
-    import wave
+# TRUE 16 kHz mono PCM16 (see tests/sapi_fixture.py). Imported AFTER the
+# stub registry above: the fixture reaches av/SAPI with sockets already dead.
+from sapi_fixture import synthesize_speech_pcm
 
-    import win32com.client
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = str(Path(tmp) / "fixture.wav")
-        stream = win32com.client.Dispatch("SAPI.SpFileStream")
-        stream.Format.Type = 22  # SAFT16kHz16BitMono
-        stream.Open(path, 3)
-        voice = win32com.client.Dispatch("SAPI.SpVoice")
-        voice.AudioOutputStream = stream
-        voice.Speak(text)
-        stream.Close()
-        with wave.open(path, "rb") as wav:
-            return wav.readframes(wav.getnframes())
-
-
-speech = sapi_speech(
+speech = synthesize_speech_pcm(
     "Margaret counted seventeen boats near the lighthouse on Tuesday morning."
 )
 session_id = "d" * 32

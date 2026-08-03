@@ -16,8 +16,10 @@ import pytest
 from scribe_desktop import session_store
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
+    CLOCK_SKEW_TOLERANCE,
     KEY_FILENAME,
     MAX_RECORD_BYTES,
+    RECOVERY_WINDOW,
     KeyCustodyError,
     SessionChunkStore,
     StoreCorruptError,
@@ -26,6 +28,7 @@ from scribe_desktop.session_store import (
     StoreWriteError,
     complete_session,
     discard_session,
+    earliest_trusted_timestamp,
     iter_chunks,
     read_store_header,
     resolve_key_path,
@@ -402,6 +405,69 @@ class TestDeletionOrdering:
 # ----------------------------------------------------------------- the sweep
 
 
+class TestEarliestTrustedTimestamp:
+    """The single fail-safe rule shared by the sweep and the recovery
+    listing (they used to carry separate copies and inherited the same
+    clock-skew defect). Round 48 HIGH-001 merged this branch's skew
+    tolerance into main's shared helper; these are the only direct unit
+    tests it has."""
+
+    NOW = 1_000_000.0
+
+    def test_tolerance_stays_a_filesystem_allowance_not_a_retention_knob(self) -> None:
+        """SEC-002: the tolerance is load-bearing for the 24 h cap, and both
+        security docs quote its cost as a bound. Nothing else pins the value,
+        so a bump would silently extend retention AND widen the band where a
+        tampered far-future stamp reads as trusted. These are ABSOLUTE bounds
+        on purpose — they do not derive from the constant, so raising it past
+        what the docs promise fails here and forces the docs to move with it.
+        """
+        assert CLOCK_SKEW_TOLERANCE > 0
+        assert CLOCK_SKEW_TOLERANCE < 60
+        assert CLOCK_SKEW_TOLERANCE < RECOVERY_WINDOW.total_seconds() / 1000
+
+    def test_earliest_past_value_wins(self) -> None:
+        assert (
+            earliest_trusted_timestamp([self.NOW - 60, self.NOW], self.NOW)
+            == self.NOW - 60
+        )
+
+    def test_marginally_future_values_are_clamped_to_now(self) -> None:
+        # Kept (a file written moments ago), but aged from now — never
+        # allowed to read as younger than the present.
+        skewed = self.NOW + CLOCK_SKEW_TOLERANCE / 2
+        assert earliest_trusted_timestamp([skewed], self.NOW) == self.NOW
+
+    def test_clamped_value_never_displaces_a_real_earlier_stamp(self) -> None:
+        """The safety property behind the merge (round 48 HIGH-001): adding
+        the tolerance can only ADD `now` to the trusted set, and every
+        pre-existing trusted value is already <= now, so the minimum — and
+        therefore every expiry decision — is unchanged wherever the
+        untoleranced rule had anything to work with."""
+        skewed = self.NOW + CLOCK_SKEW_TOLERANCE / 2
+        assert (
+            earliest_trusted_timestamp([self.NOW - 100, skewed], self.NOW)
+            == self.NOW - 100
+        )
+
+    def test_tolerance_boundary_is_inclusive(self) -> None:
+        edge = self.NOW + CLOCK_SKEW_TOLERANCE
+        assert earliest_trusted_timestamp([edge], self.NOW) == self.NOW
+
+    def test_values_beyond_the_tolerance_are_dropped(self) -> None:
+        # A real clock problem still fails closed — callers see no trusted
+        # candidate and expire (sweep) or hide (listing).
+        beyond = self.NOW + CLOCK_SKEW_TOLERANCE + 1
+        assert earliest_trusted_timestamp([beyond], self.NOW) is None
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_values_are_dropped(self, bad: float) -> None:
+        assert earliest_trusted_timestamp([bad], self.NOW) is None
+
+    def test_empty_input(self) -> None:
+        assert earliest_trusted_timestamp([], self.NOW) is None
+
+
 class TestExpirySweep:
     @staticmethod
     def _session_with_key(root: Path, *, age_hours: float = 0.0) -> str:
@@ -462,6 +528,47 @@ class TestExpirySweep:
         results = {r.session_id: r.action for r in sweep_sessions(tmp_path)}
         assert results[sid] == "expired"
         assert not session_dir.exists()
+
+    def test_marginally_future_timestamps_do_not_destroy_a_fresh_session(
+        self, tmp_path: Path
+    ) -> None:
+        """Windows' coarse wall clock lets a just-written file carry an mtime
+        a few ms AHEAD of a later time.time(). Before CLOCK_SKEW_TOLERANCE that
+        read as "future = untrusted", and the sweep CRYPTOGRAPHICALLY DELETED
+        the session. It must be kept."""
+        import time
+
+        sid = self._session_with_key(tmp_path)
+        now = time.time()
+        skewed = now + 0.05  # ~3x the 15.6 ms Windows clock tick
+        os.utime(tmp_path / sid / KEY_FILENAME, (skewed, skewed))
+        os.utime(tmp_path / sid, (skewed, skewed))
+        results = {r.session_id: r.action for r in sweep_sessions(tmp_path, now=now)}
+        assert results[sid] == "kept"
+        assert (tmp_path / sid / KEY_FILENAME).is_file()
+
+    def test_skew_tolerance_bounds_the_extra_retention_it_can_buy(
+        self, tmp_path: Path
+    ) -> None:
+        """Accepting a near-future stamp lets a session read younger than it
+        is, so it dies late — but by AT MOST CLOCK_SKEW_TOLERANCE. Pinned at
+        the worst case (maximum skew), which the retention schedule quotes."""
+        import time
+
+        sid = self._session_with_key(tmp_path)
+        now = time.time()
+        skewed = now + CLOCK_SKEW_TOLERANCE  # the most skew that is tolerated
+        os.utime(tmp_path / sid / KEY_FILENAME, (skewed, skewed))
+        os.utime(tmp_path / sid, (skewed, skewed))
+        window = RECOVERY_WINDOW.total_seconds()
+
+        # One second before the bound it is still alive...
+        kept = sweep_sessions(tmp_path, now=now + window + CLOCK_SKEW_TOLERANCE - 1)
+        assert {r.session_id: r.action for r in kept}[sid] == "kept"
+        # ...and at the bound it is destroyed. Overshoot can never exceed it.
+        expired = sweep_sessions(tmp_path, now=now + window + CLOCK_SKEW_TOLERANCE)
+        assert {r.session_id: r.action for r in expired}[sid] == "expired"
+        assert not (tmp_path / sid).exists()
 
     def test_all_future_timestamps_fail_closed(self, tmp_path: Path) -> None:
         # PR-MED-005: header + key mtime + dir mtime ALL in the future must

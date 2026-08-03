@@ -128,12 +128,20 @@ remains an accepted residual.
    retention overshoot is therefore ≤ ~15 minutes past 24 h while the app
    runs (unbounded only while the app is closed, resolved at next launch —
    the sweep runs before the recovery screen lists anything). Timestamp
-   handling is fail-safe: untrusted (non-finite or future) candidates are
-   discarded and can never extend retention — age comes from the earliest
-   TRUSTED candidate; if candidates exist but none is trusted the store
-   fails CLOSED (expires); if nothing is readable at all it is kept and
-   retried next sweep — transient filesystem errors must never trigger
-   cryptographic deletion.
+   handling is fail-safe: untrusted candidates (non-finite, or beyond the
+   clock-skew tolerance in the future) are discarded and can never extend
+   retention — age comes from the earliest TRUSTED candidate; if candidates
+   exist but none is trusted the store fails CLOSED (expires); if nothing
+   is readable at all it is kept and retried next sweep — transient
+   filesystem errors must never trigger cryptographic deletion. A bounded
+   `CLOCK_SKEW_TOLERANCE` (5 s) accepts mtimes that read marginally ahead
+   of `time.time()` — a real effect of Windows' coarse wall clock (~15.6 ms
+   on Python ≤ 3.12) against 100 ns NTFS mtimes, which previously made the
+   sweep cryptographically delete sessions it had just created. Beyond the
+   tolerance a future stamp is still treated as a broken/tampered clock and
+   fails closed. Adds ≤ 5 s to the retention overshoot above. The rule is
+   defined once (`session_store.earliest_trusted_timestamp`) and shared by the
+   sweep and the recovery listing.
 7. **Transcript-view availability residual (no custody impact).** The shared
    transcript view can be visually replaced if a live transcription
    finishes while a recovered session's transcript is open; the overwritten

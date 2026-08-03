@@ -205,18 +205,27 @@ def threshold_report(results: list[BenchmarkResult]) -> list[str]:
 
 
 def generate_speech_sample(target: Path) -> float:
-    """Synthesize the fixed benchmark script to a 16 kHz mono WAV via SAPI.
+    """Synthesize the fixed benchmark script to a mono WAV via SAPI.
 
-    Returns the audio duration in seconds. Windows-only (uses SAPI COM).
-    No network, no clinical content.
+    Returns the audio duration in seconds, read from the file's OWN header —
+    do not assume the requested rate. SAPI ignores the format asked for here:
+    the OneCore default voice overrides it at ``AudioOutputStream`` assignment
+    and renders 22050 Hz while ``stream.Format.Type`` still reads back 22
+    (measured on the dev machine 2026-07-30). That is harmless for benchmarking
+    because the WAV goes to faster-whisper by PATH and it resamples on decode,
+    and because the duration below comes from the real rate. Anything that
+    consumes the raw frames as 16 kHz PCM must resample first — see
+    ``tests/sapi_fixture.py``.
+
+    Windows-only (uses SAPI COM). No network, no clinical content.
     """
     import wave
 
     import win32com.client
 
     stream = win32com.client.Dispatch("SAPI.SpFileStream")
-    # 22 = SAFT16kHz16BitMono
-    stream.Format.Type = 22
+    # Requested, but not honoured on this machine (see docstring).
+    stream.Format.Type = 22  # 22 = SAFT16kHz16BitMono
     stream.Open(str(target), 3)  # 3 = SSFMCreateForWrite
     voice = win32com.client.Dispatch("SAPI.SpVoice")
     voice.AudioOutputStream = stream

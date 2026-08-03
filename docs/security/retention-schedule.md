@@ -30,13 +30,25 @@ always encrypted at rest, always bounded by the 24-hour rule below.
   retention overshoot is ≤ ~15 min past the 24 h cap; while the app is
   closed, expiry executes at the next launch (nothing can decrypt the store
   in the meantime without the user's DPAPI context).
-- Timestamp handling is fail-safe: untrusted candidates (non-finite or
-  future) are discarded and can never extend retention — age is computed
-  from the earliest TRUSTED candidate. If candidates exist but none is
-  trusted, the sweep fails CLOSED and expires the store; if no candidate
-  is readable at all (transient I/O trouble), the store is kept for that
-  sweep and retried next cycle — transient filesystem errors must never
-  trigger cryptographic deletion.
+- Timestamp handling is fail-safe: untrusted candidates (non-finite, or
+  more than the clock-skew tolerance in the future) are discarded and can
+  never extend retention — age is computed from the earliest TRUSTED
+  candidate. If candidates exist but none is trusted, the sweep fails
+  CLOSED and expires the store; if no candidate is readable at all
+  (transient I/O trouble), the store is kept for that sweep and retried
+  next cycle — transient filesystem errors must never trigger
+  cryptographic deletion. The rule lives in exactly one place
+  (`session_store.earliest_trusted_timestamp`), shared by the sweep and the
+  recovery listing so the two can never disagree.
+- Clock-skew tolerance (`CLOCK_SKEW_TOLERANCE`, 5 s): filesystem mtimes can
+  read marginally AHEAD of a later `time.time()` — Windows' wall clock is
+  coarse (~15.6 ms on Python ≤ 3.12) while NTFS records mtimes at 100 ns,
+  and FAT-family volumes round mtimes up to a 2 s boundary. Treating that
+  as "future = untrusted" made the sweep destroy sessions it had just
+  created, so stamps within the tolerance are accepted and clamped to the
+  present. A stamp beyond it is a genuine clock problem and still fails
+  closed. Cost: at most 5 s of extra retention in the worst case, on top of
+  the sweep-granularity overshoot below.
 
 ## Pre-committed rules for later phases (from PLAN.md)
 

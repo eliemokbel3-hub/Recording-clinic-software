@@ -181,8 +181,10 @@ def list_recoverable_sessions(
         # PR round 18: the 24 h cap applies to the LISTING too, not only the
         # sweep — never offer recovery of a session past its window. The
         # trust core is SHARED with the sweep (round 42 MED-009:
-        # earliest_trusted_timestamp); readable-but-untrusted values fail
-        # closed (not listed).
+        # earliest_trusted_timestamp), so the two can never disagree about
+        # what "trusted" means — including the clock-skew tolerance that
+        # keeps a just-created session visible here (round 48 HIGH-001).
+        # Readable-but-untrusted values fail closed (not listed).
         readable = [t for t in (created_at, key_mtime) if t is not None]
         earliest = earliest_trusted_timestamp(readable, now)
         if earliest is not None:

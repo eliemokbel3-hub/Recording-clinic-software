@@ -6,7 +6,8 @@ Layers:
   fake VAD backend — proves the frames->probabilities->segments wiring
   and the session-store decrypt-stream integration without ML
 - real-model tests against the downloaded silero_vad.onnx (skip-if-absent
-  for CI; SAPI synthesis is Windows-only)
+  for CI; SAPI synthesis is Windows-only, and goes through `sapi_fixture`
+  so the model hears TRUE 16 kHz — SAPI itself renders 22050 Hz)
 
 No clinical audio anywhere: all fixtures are generated tones/silence or
 SAPI text-to-speech of non-clinical text.
@@ -14,6 +15,7 @@ SAPI text-to-speech of non-clinical text.
 
 from __future__ import annotations
 
+import importlib.util
 import math
 import struct
 import sys
@@ -22,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from sapi_fixture import synthesize_speech_pcm
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import KEY_FILENAME, SessionChunkStore
@@ -458,27 +461,11 @@ class TestSegmentPcmResetContract:
 requires_real_model = pytest.mark.skipif(
     not vad_model_available(), reason="silero VAD model not in local cache"
 )
-requires_windows = pytest.mark.skipif(sys.platform != "win32", reason="SAPI is Windows-only")
-
-
-def _sapi_speech_pcm(text: str) -> bytes:
-    """Synthesize non-clinical speech to 16 kHz mono PCM16 via SAPI."""
-    import tempfile
-    import wave
-
-    import win32com.client
-
-    with tempfile.TemporaryDirectory() as tmp:
-        path = str(Path(tmp) / "vad_fixture.wav")
-        stream = win32com.client.Dispatch("SAPI.SpFileStream")
-        stream.Format.Type = 22  # SAFT16kHz16BitMono
-        stream.Open(path, 3)
-        voice = win32com.client.Dispatch("SAPI.SpVoice")
-        voice.AudioOutputStream = stream
-        voice.Speak(text)
-        stream.Close()
-        with wave.open(path, "rb") as wav:
-            return wav.readframes(wav.getnframes())
+requires_sapi_fixture = pytest.mark.skipif(
+    sys.platform != "win32" or importlib.util.find_spec("av") is None,
+    reason="SAPI speech fixtures need Windows (SAPI COM) plus av, which ships "
+    "with faster-whisper and does the true-16 kHz resample",
+)
 
 
 @requires_real_model
@@ -494,9 +481,9 @@ class TestSileroVadRealModel:
     def test_silence_only_yields_no_segments(self, vad: SileroVad) -> None:
         assert segment_pcm([silence_pcm(3.0)], vad.frame_probability) == []
 
-    @requires_windows
+    @requires_sapi_fixture
     def test_speech_boundaries_against_real_model(self, vad: SileroVad) -> None:
-        speech = _sapi_speech_pcm(
+        speech = synthesize_speech_pcm(
             "The lighthouse keeper counted eleven boats returning with the tide."
         )
         speech_seconds = len(speech) / (BYTES_PER_SAMPLE * SAMPLE_RATE)
@@ -512,12 +499,12 @@ class TestSileroVadRealModel:
         covered = sum(s.duration_seconds for s in segments)
         assert covered >= 0.5 * speech_seconds
 
-    @requires_windows
+    @requires_sapi_fixture
     def test_consecutive_streams_are_independent(self, vad: SileroVad) -> None:
         # segment_pcm auto-resets the bound backend (PR-MED-011): two runs
         # of the same audio through the SAME instance must agree without
         # any manual reset between them.
-        speech = _sapi_speech_pcm("A short reset check sentence.")
+        speech = synthesize_speech_pcm("A short reset check sentence.")
         first = segment_pcm([speech], vad.frame_probability)
         second = segment_pcm([speech], vad.frame_probability)
         assert first and second

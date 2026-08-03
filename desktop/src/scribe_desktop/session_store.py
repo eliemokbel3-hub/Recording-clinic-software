@@ -112,6 +112,19 @@ _SESSION_ID_RE: Final = re.compile(SESSION_ID_PATTERN)
 
 RECOVERY_WINDOW: Final = timedelta(hours=24)
 
+# Filesystem timestamps can read marginally AHEAD of a later time.time().
+# Windows' wall clock is coarse — on Python <= 3.12 time.time() comes from
+# GetSystemTimeAsFileTime() at ~15.6 ms granularity, while NTFS records mtimes
+# at 100 ns — and FAT-family volumes round mtimes up to a 2 s boundary. So a
+# file written moments ago can carry a stamp a fraction of a second in the
+# "future". The fail-closed rule below reads any future stamp as untrusted and
+# ACTS on it, which for a freshly created session means the sweep expiring it
+# (cryptographic deletion) or the recovery listing hiding it. Tolerate skew up
+# to this bound — orders of magnitude above both quirks, and 0.006% of the 24 h
+# window — and keep failing closed beyond it, where a future stamp really does
+# mean a broken or tampered clock.
+CLOCK_SKEW_TOLERANCE: Final = 5.0  # seconds
+
 _FOOTER_AAD: Final = b"footer"
 
 
@@ -591,7 +604,7 @@ class SweepResult:
 
 
 def earliest_trusted_timestamp(candidates: Iterable[float], now: float) -> float | None:
-    """The earliest candidate that is finite and not in the future, or None.
+    """The earliest trustworthy candidate, clamped to ``now``, or None.
 
     THE shared trust core of the 24 h cap (round 42 MED-009): non-finite
     or future timestamps must never extend retention, in the sweep OR the
@@ -599,8 +612,22 @@ def earliest_trusted_timestamp(candidates: Iterable[float], now: float) -> float
     each caller (the sweep fails closed to destruction; the listing fails
     closed to not-listing, and lists conservatively only when NOTHING was
     readable at all).
+
+    "Future" means beyond ``CLOCK_SKEW_TOLERANCE`` (round 48 HIGH-001).
+    Filesystem mtimes routinely read a fraction of a second ahead of a
+    later ``time.time()``, and treating that as untrusted DESTROYED
+    sessions that had just been created — measured at 106/400 surviving
+    the sweep under a coarse clock. Candidates inside the tolerance are
+    accepted and clamped to ``now``. Because every other trusted value is
+    already <= now, the clamp can never lower the minimum, so this is a
+    strict relaxation inside ``(now, now + CLOCK_SKEW_TOLERANCE]`` and
+    cannot make anything expire sooner than the untoleranced rule did.
     """
-    trusted = [value for value in candidates if math.isfinite(value) and value <= now]
+    trusted = [
+        min(value, now)
+        for value in candidates
+        if math.isfinite(value) and value <= now + CLOCK_SKEW_TOLERANCE
+    ]
     return min(trusted) if trusted else None
 
 
@@ -608,9 +635,10 @@ def _session_created_at(session_dir: Path, now: float) -> float:
     """Best available creation time, FAIL-SAFE for the 24 h cap (PR-MED-004):
     a malformed header timestamp (NaN/inf) or one claiming the future must
     not extend retention, so collect header created-at + key-blob mtime,
-    drop non-finite/future values, and take the EARLIEST survivor. Falls
-    back to the directory mtime, then to `now` (expires on the next window
-    rather than never)."""
+    filter through `earliest_trusted_timestamp`, which also applies the
+    clock-skew tolerance, and take the EARLIEST survivor.
+    Falls back to the directory mtime, then to `now` (expires on the next
+    window rather than never)."""
     candidates: list[float] = []
     audio_path = session_dir / AUDIO_FILENAME
     if audio_path.exists():
@@ -628,9 +656,10 @@ def _session_created_at(session_dir: Path, now: float) -> float:
         return earliest
     if candidates:
         # PR-MED-005: every readable timestamp is untrusted (non-finite or
-        # future) — fail CLOSED: report an age past any window so the 24 h
-        # cap cannot be defeated by clock skew. Active sessions are already
-        # protected by the caller's active_session_ids exemption.
+        # implausibly far in the future) — fail CLOSED: report an age past any
+        # window so the 24 h cap cannot be defeated by clock skew. Active
+        # sessions are already protected by the caller's active_session_ids
+        # exemption.
         return float("-inf")
     # Nothing readable at all (transient I/O trouble): keep this sweep and
     # retry next time rather than destroying on a possibly-flaky stat.
