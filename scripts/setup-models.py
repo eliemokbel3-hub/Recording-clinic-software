@@ -61,16 +61,19 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
 # post-download assert, the benchmark, the UI model report and the
 # transcription provider all share that checker.
 from scribe_desktop.benchmark import (  # noqa: E402
+    default_models_root,
     whisper_snapshot_complete,
     whisper_snapshot_missing,
 )
 
 
 def models_root() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise SystemExit("LOCALAPPDATA is not set; this script is Windows-only.")
-    return Path(local_app_data) / "ClinikoScribe" / "models"
+    # Single-sourced with the runtime (LOW-014): setup must download into the
+    # SAME cache the app reads, so the root is never re-implemented here.
+    try:
+        return default_models_root()
+    except RuntimeError as exc:  # LOCALAPPDATA unset — Windows-only script
+        raise SystemExit(f"{exc}; this script is Windows-only.") from exc
 
 
 def dir_size_bytes(path: Path) -> int:

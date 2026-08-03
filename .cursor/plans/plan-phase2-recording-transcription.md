@@ -1,14 +1,14 @@
 # Feature Implementation Plan
 **Feature:** phase2-recording-transcription
-**Overall Progress:** `90%`
+**Overall Progress:** `100%`
 
 ## Lifecycle State
-- Active
+- Completed — Follow-ups Retained
 
 ## Completion Status
-- Completion timestamp:
-- Main implementation complete: No
-- Ready for archive: No
+- Completion timestamp: 2026-08-02 (completion gate passed on the practitioner's own recordings; Step H hardening closed same day)
+- Main implementation complete: Yes — all 14 plan tasks 🟩, both `[decision]` tasks resolved by the user
+- Ready for archive: No — retained follow-ups below are live inputs to Phase 3 (multi-speaker labelling, diarization tuning, the Phase-3-opening structural moves in Continuation Notes)
 
 ## Plan Lineage
 - Parent plan: plan-phase1-security-foundation.md (foundation; Completed — Follow-ups Retained)
@@ -179,9 +179,10 @@ See `Planning Extraction Summary` (single source of truth).
 - GATE RESOLVED 2026-07-26: the user RATIFIED both HIGH fixes (live gate disposition, composer session), and a bounded codex confirmation round CONFIRMED all 5 applied fixes with no evidenced locking/deadlock regressions (peer round 9, logged below). Original gate text follows for the record — (1) PR-HIGH-001 wrong-session cryptographic deletion: `SessionController.pause/finish/discard` now operate on the first-lock snapshot with `self._live is live` identity checks instead of re-fetching `self._live` after the unlocked worker wait (pre-fix, a concurrent `start()` during discard's unlocked window could delete the NEW session's key); (2) PR-HIGH-003 non-atomic `CaptureWorker.stop()`: new `_stop_lock` makes concurrent/retried stops wait for the worker thread to actually exit before storage/key teardown (pre-fix, a concurrent finish+discard or a retried timed-out stop could tear down storage with the writer alive). Both fixes are pure locking/ordering tightening, no API change, covered by new deterministic regression tests; to reject either, revert the marked PR-HIGH-001/PR-HIGH-003 blocks in session.py/audio_capture.py. Ratify or revert before P4.
 - GATE RESOLVED 2026-07-27: user RATIFIED PR-HIGH-006 + PR-HIGH-008 (live gate disposition, composer session; both were already peer-confirmed round 17).
 - Smoke-feedback round 21 (2026-07-28, stage-7 executor, live user smoke via composer relay): mic tab now has a live idle-monitor level meter with visible failure/no-signal messaging (SMOKE-001), and model completeness is ONE shared checker accepting both CT2 layouts with a self-refreshing UI report (SMOKE-002 — the user's MISSING screenshot traced to a stale second instance, reinforcing PR4); Step 12 gained launch-methods + raised-priority single-instance sub-bullets (SMOKE-003). QA: ruff clean, mypy clean, pytest 476 passed; E2E offscreen against the real models dir: small + silero ready, UI benchmark run of small RTF 0.206 OK. NOTHING COMMITTED. User re-test: launch ONE instance via Explorer double-click of `.venv\Scripts\scribe-app.exe`, Microphone tab → meter should move immediately; unplug/re-select devices to see the actionable messages; model report should say ready and the benchmark should run.
-- Immediate next action (composer/user): (1) USER ratifies or reverts the round-42 guard batch (MED-001 / MED-002 / LOW-002 — see the stage-12 entry above); (2) commit + push the hardening work and watch both CI legs; (3) run the end-of-phase `/document` pass (fixes LOW-018 AGENTS.md staleness; also apply LOW-014's one-line setup-models fix); (4) close the Phase 2 plan lifecycle. Historical note superseded: the Step 13 RE-TEST ran and the manual completion gate PASSED 2026-08-02 on the user's own recordings (recorded in c0cd3ae); the single-instance guard remains live — a second scribe-app shows "already running" and exits
+- **PHASE 2 CLOSED 2026-08-02.** All four close-out items done: (1) the round-42 guard batch (MED-001 / MED-002 / LOW-002) was RATIFIED by the user at the live gate; (2) hardening committed (9080903) and pushed — CI green on all three jobs, the first Phase-2 code to run there; (3) the end-of-phase `/document` pass ran — AGENTS.md refreshed (LOW-018 closed), LOW-014's setup-models cache-root fix applied and verified, CHANGELOG entry added, `docs/design-system.md` created for the desktop UI conventions; (4) plan lifecycle closed to `Completed — Follow-ups Retained`.
+- Immediate next action (next session): Phase 3 (local `gpt-oss-20b` note generation) — Plan Mode → `/review-plan`. This plan stays loadable as retained follow-up context; carry in the multi-speaker + diarization items and the Continuation Notes' structural moves.
 - Open blockers / open questions: None. Fresh-session reading order: this plan top-to-bottom, then plan-phase1-security-foundation.md "Codebase Integration Notes — executor facts" (binding Chrome/logging/registration rules), then docs/security/threat-model.md
-- Last plan sync: 2026-08-02 (stage-12, Step H hardening complete — rounds 42-46; ratification gate open on the guard batch; QA 537)
+- Last plan sync: 2026-08-02 (`/document` close-out: guards ratified, hardening pushed + CI green, docs reconciled, lifecycle closed; QA 537)
 - Loop config: executor=cursor-subagent model="fable"; peer=codex model="gpt-5.6-sol" effort=xhigh; architect=off; cadence=every-phase; caps=review:3,peer:3; scope=all; autocommit=on; isolation=none; merge=off
 - Run state: /execute-loop run cliniko-p2-20260726-170200-k7 preflight complete 2026-07-26 ~17:05; phase grouping: P1=Step 1, P2=Step 2 (security-isolated), P3=Steps 3–4, P4=Step 5+D6, P5=Steps 7+D8, P6=Step 9, P7=Step 10 (UI — live-smoke pause), P8=Steps 11–12, P9=Step 13 (manual gate), P10=Step H; next: spawn P1 executor
 
