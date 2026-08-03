@@ -215,6 +215,7 @@ See `Planning Extraction Summary` (single source of truth).
 - 2026-07-28 peer round 30: 0 CRIT / 0 HIGH / 3 MED / 1 LOW; skew=none; action=all 4 verified and applied
 - 2026-07-28 peer round 31: 0 CRIT / 0 HIGH / 1 MED / 0 LOW new; skew=none; action=applied — 1 fix confirmed, 3 refutations accepted (valid/valid-in-part) and re-fixed
 - 2026-07-28 peer round 32: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — peer-loop CONVERGED at cap (all 4 round-31 re-fixes confirmed with line evidence)
+- 2026-08-02 round 42 (security): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=both LOWs applied and verified (/fix, Claude Code) — retention-rule change proved behaviour-identical outside the intended skew band
 
 ## Review Findings Log
 
@@ -551,6 +552,52 @@ See `Planning Extraction Summary` (single source of truth).
 - **[PR-LOW-005]** `test_transcription.py` — the two-window test asserted only call/segment counts, not that SECOND-window words carry the SECOND window's absolute offset: offsetting every window by the first window's start would have passed every existing test — VERIFIED CONFIRMED at LOW (real regression class). Decision: Applied 2026-07-30. Fix: the test now asserts every segment's words land inside that segment's own span (window-2 words stranded near t=0 would fail).
 - Filesystem-escape check: peer read-only; sorted-status md5 `494d755…` identical across the round (post-fix content changes are the executor's, same file set).
 - **Stage-11 FINAL QA (post-everything, verbatim):** ruff `All checks passed!`; mypy `Success: no issues found in 23 source files`; pytest `530 passed in 44.07s` (504 baseline + 26 net-new this stage).
+
+### Round 42 — 2026-08-02 (security pass; Source: Claude Code security-review, portable threat-model checklist)
+Round status: Closed
+Scope: branch `claude/determined-raman-17fdcc` vs `origin/main` — commits `fc2c092` (SAPI test-fixture resampling) and `3ebd95b` (`CLOCK_SKEW_TOLERANCE` + shared `trusted_timestamps`, recovery-listing rewire, threat-model + retention-schedule updates). Trust boundaries examined: the 24 h retention cap and the sweep's cryptographic-deletion path; the no-network proof children; local file I/O in test fixtures. Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=continue.
+
+**Retention-rule change assessed CLEAN, with a proof rather than an opinion.** Writing `T_old = {v : finite, v <= now}` and `T_new = trusted_timestamps(...)`, we have `T_new = T_old union {now for each v in (now, now+TOL]}`, and since every member of `T_old` is `<= now`, `min(T_new) = min(T_old)` whenever `T_old` is non-empty. So the computed age — and therefore every expiry decision — is IDENTICAL to the old rule except in the one intended band. Property-checked over 200,000 randomised candidate sets (ordinary past, skew band, real future, NaN/±inf, epoch 0): **0 divergences** where the old rule had any trusted value; 32,978 new-only keeps, all clamped to exactly `now`; 59,454 still fail-closed with candidates present and none trusted. The change is a strict relaxation inside `(now, now+TOL]` and cannot introduce a premature expiry.
+
+#### SEC-001: `desktop/tests/test_integration_no_sockets.py:335` — child sys.path prelude shadows stdlib ahead of the no-network proof
+- Classification: 🆕
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: `_write_child` now injects `sys.path.insert(0, TESTS_DIR)` into EVERY child, including `_STUBBED_NETWORK_CHILD`, whose entire purpose is to prove the real pipeline runs with the Python socket layer dead. Position 0 places the tests directory ahead of the stdlib, so a future `desktop/tests/socket.py` or `_socket.py` would be imported by that child instead of the real modules. The `_stub()` registry and the exit tamper-check would still pass (they assert against whatever object `socket` resolved to), so the proof would go green while testing nothing — and genuine network use through the real `_socket` would be unobserved. This degrades a security CONTROL silently and in the permissive direction. Not currently exploitable: no file in `desktop/tests/` shadows any stdlib name today (verified against `sys.stdlib_module_names`), and adding one requires repo write access.
+- Current behaviour: `prelude = f"import sys\nsys.path.insert(0, {str(TESTS_DIR)!r})\n"` — the tests dir precedes the stdlib for every child process.
+- Desired behaviour: `sys.path.append(...)` — the child only needs `sapi_fixture` to be findable, and nothing else provides that name, so appending resolves it while leaving stdlib resolution untouched. (Script-run children get `tmp_path` as `sys.path[0]`, so appending is sufficient.)
+- Pattern to follow: the module's existing posture that the no-sockets children must be conservative about anything that could weaken the proof (PR rounds 30/31: stub BOTH `socket` and `_socket`, re-verify the WHOLE stub set at exit).
+- Pattern siblings: none — `_write_child` is the single injection point for all four children.
+- Invariant: nothing added for fixture convenience may change how a no-network-proof child resolves a stdlib module.
+- Verification: `sys.path.append` variant; re-run `test_transcription_succeeds_with_sockets_stubbed_to_fail` and `test_recorder_no_sockets_during_real_whisper_transcription` (both must stay green); optionally assert inside the stub child that `socket.__file__` resolves under the stdlib prefix.
+- Regression risk: very low — one call changes; the children import `sapi_fixture` by a name nothing else provides.
+- /fix decision: Applied
+- /fix notes: `test_integration_no_sockets.py` `_write_child` — `sys.path.insert(0, TESTS_DIR)` -> `sys.path.append(TESTS_DIR)`, with the reason recorded inline so the position is not "tidied" back. Pattern siblings: none (single injection point, re-confirmed). Invariant verified empirically, not just by inspection: a decoy `socket.py` on the added directory SHADOWS the stdlib under `insert(0, ...)` (`socket.__file__` = the decoy) and does NOT under `append(...)` (`socket.__file__` = `C:\Python314\Lib\socket.py`), with the fixture helper importable in BOTH — so the fix removes the shadowing without costing the resolution it was added for. Named verification green: `test_transcription_succeeds_with_sockets_stubbed_to_fail` and `test_recorder_no_sockets_during_real_whisper_transcription`, 2 passed in 35.49s. The optional in-child `socket.__file__` assertion named under Verification was NOT added: `append` satisfies the finding's Invariant on its own, and wiring the tests-dir literal into every child to support the assertion would exceed the Desired behaviour as specified.
+- /fix date: 2026-08-02
+- /fix applied by: Claude Code
+
+#### SEC-002: `desktop/src/scribe_desktop/session_store.py:114` — retention-critical constant has a documented bound nothing enforces
+- Classification: 🆕
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: `CLOCK_SKEW_TOLERANCE = 5.0` is now load-bearing for the 24 h cap, and both `docs/security/threat-model.md` and `docs/security/retention-schedule.md` make a numeric promise about it ("<= 5 s of extra retention"). Nothing pins the value. A later well-meaning bump — e.g. someone widening it to chase a clock problem on a clinic machine — would silently extend retention past the documented bound AND widen the band in which a far-future (tampered) stamp is accepted as trusted, defeating the PR-MED-005 fail-closed posture that far-future stamps exist to catch. Low severity: requires a developer edit, not an attacker action; but it is a security control whose documented bound is currently unguarded.
+- Current behaviour: plain `Final` constant; `test_skew_tolerance_bounds_the_extra_retention_it_can_buy` derives its assertions FROM the constant, so it follows any change rather than catching it.
+- Desired behaviour: one assertion that the tolerance stays negligible against the window (e.g. `CLOCK_SKEW_TOLERANCE < 60` and `CLOCK_SKEW_TOLERANCE < RECOVERY_WINDOW.total_seconds() / 1000`), so a bump past the documented bound fails loudly and forces the docs to be revisited with it.
+- Pattern to follow: the existing absolute-bound tests in `test_session_store.py` that pin retention behaviour independent of the constants they exercise.
+- Pattern siblings: `RECOVERY_WINDOW` itself is likewise unpinned, but it is quoted in the docs as the headline 24 h figure and changing it is self-evidently a policy decision; the skew tolerance reads like a tuning knob, which is what makes it the risk.
+- Invariant: the clock-skew tolerance is a filesystem-quirk allowance, never a retention-policy knob.
+- Verification: add the bound assertion; `pytest tests/test_session_store.py`; confirm it fails when the constant is temporarily raised above the bound.
+- Regression risk: none — test-only addition.
+- /fix decision: Applied
+- /fix notes: `test_session_store.py` `TestTrustedTimestamps::test_tolerance_stays_a_filesystem_allowance_not_a_retention_knob` — asserts `0 < CLOCK_SKEW_TOLERANCE < 60` and `< RECOVERY_WINDOW.total_seconds() / 1000`, both ABSOLUTE (they do not derive from the constant, so they catch a bump rather than following it). Production source untouched. Pattern siblings: `RECOVERY_WINDOW` deliberately NOT pinned — per the finding it is the headline documented figure and changing it is self-evidently a policy decision, whereas the skew tolerance reads like a tuning knob. Full Verification field executed including the negative check: raising the constant to 120.0 fails the new test with `assert 120.0 < 60`, and the source was restored byte-for-byte (`git diff` clean on `session_store.py`). Positive run: `tests/test_session_store.py` 68 passed.
+- /fix date: 2026-08-02
+- /fix applied by: Claude Code
+
+- Checked and clean (categories examined that produced nothing): **AuthN/AuthZ** — n/a, single-user local app, no request handlers or role checks in scope; the sweep's `active_session_ids` exemption is checked before any timestamp logic and is untouched. **Injection & taint** — no new untrusted input reaches a sink; `resample_wav_to_pcm16` hands a path to `av.open()`, which does support network protocols, but every caller passes a `tempfile` path the process just wrote, and the helper is test-only. **Secrets & sensitive data** — nothing new logged; `sweep_sessions` still logs only whitelisted `session_id` + `detail_code`; `model_report_lines` emits model names and a setup-script hint, no secrets; no clinical content added to any log or artifact. **Crypto & key custody** — the `delete_session_key` -> `rmtree` ordering in `sweep_sessions` is byte-for-byte unchanged; no key material passes through `trusted_timestamps`; the DPAPI custody path is untouched. **Resource & availability** — `trusted_timestamps` is O(candidates) over a <=3-element list, no unbounded allocation, no regex. **Dependencies & config** — no new runtime dependency; `av` was already a faster-whisper transitive dep and is used only by test fixtures.
+- Deliberate pre-existing trade-offs re-confirmed, NOT re-flagged: a `key.dpapi` that fails `stat()` with a non-`FileNotFoundError` `OSError` leaves the listing with no age check at all (documented "list conservatively; the sweep, not the UI, decides"), and an epoch-0 or negative mtime is trusted and yields immediate expiry (consistent with the documented earliest-trusted-wins posture). Both predate this branch and match the retention schedule as written.
+- CI evidence for the scope: run 30731923940 (`3ebd95b`) SUCCESS on all three jobs — desktop 3.12, desktop 3.14, extension. Local QA: ruff clean, mypy clean (23 source files), pytest 547 passed.
+- Review History integrity: OK (counts, skew=, action= present).
+- Post-fix QA (verbatim): ruff `All checks passed!`; mypy `Success: no issues found in 23 source files`; pytest `548 passed in 66.09s` (547 + 1 net-new from SEC-002). Neither fix touched production behaviour: SEC-001 is test-harness sys.path ordering, SEC-002 is a test-only assertion.
 
 ## Tasks
 

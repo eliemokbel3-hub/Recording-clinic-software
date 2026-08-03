@@ -412,6 +412,18 @@ class TestTrustedTimestamps:
 
     NOW = 1_000_000.0
 
+    def test_tolerance_stays_a_filesystem_allowance_not_a_retention_knob(self) -> None:
+        """SEC-002: the tolerance is load-bearing for the 24 h cap, and both
+        security docs quote its cost as a bound. Nothing else pins the value,
+        so a bump would silently extend retention AND widen the band where a
+        tampered far-future stamp reads as trusted. These are ABSOLUTE bounds
+        on purpose — they do not derive from the constant, so raising it past
+        what the docs promise fails here and forces the docs to move with it.
+        """
+        assert CLOCK_SKEW_TOLERANCE > 0
+        assert CLOCK_SKEW_TOLERANCE < 60
+        assert CLOCK_SKEW_TOLERANCE < RECOVERY_WINDOW.total_seconds() / 1000
+
     def test_past_values_pass_through_unchanged(self) -> None:
         assert trusted_timestamps([self.NOW - 60, self.NOW], self.NOW) == [
             self.NOW - 60,

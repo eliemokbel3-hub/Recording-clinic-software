@@ -333,11 +333,16 @@ def _poll_no_connections(
 
 def _write_child(tmp_path: Path, name: str, code: str) -> Path:
     # Children run from a temp dir with cwd=REPO, so the tests directory is not
-    # importable by default; prepending it lets them share `sapi_fixture` (the
+    # importable by default; adding it lets them share `sapi_fixture` (the
     # SAPI-renders-22050 Hz correction must exist in exactly ONE place, not
     # re-copied into every child). Two stdlib statements, no imports of our own
     # — the socket-stub child still stubs before anything else loads.
-    prelude = f"import sys\nsys.path.insert(0, {str(TESTS_DIR)!r})\n"
+    # SEC-001: APPEND, never insert(0, ...). At position 0 the tests directory
+    # would precede the stdlib, so a future tests/socket.py or _socket.py would
+    # be what the no-network-proof child imports and stubs — the proof would go
+    # green while testing nothing. Appending resolves `sapi_fixture` (no other
+    # source provides that name) and leaves stdlib resolution untouched.
+    prelude = f"import sys\nsys.path.append({str(TESTS_DIR)!r})\n"
     script = tmp_path / name
     script.write_text(prelude + code, encoding="utf-8")
     return script
