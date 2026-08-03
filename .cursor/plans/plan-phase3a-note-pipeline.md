@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** phase3a-note-pipeline
-**Overall Progress:** `0%`
+**Overall Progress:** `2%`
 
 ## Lifecycle State
 - Active
@@ -15,7 +15,7 @@
 - Follow-up plans: Phase 3B — local `gpt-oss-20b` note model (not yet created; scoped in `Deferred — Actionable Later`)
 
 ## Goal
-Turn a finished `TranscriptDocument` into a reviewable clinical note, without a language model. The app fills a canonical 16-section internal schema, maps it onto whatever Cliniko template a given practitioner uses, applies clinician-authored autofill macros and body-region prefills, and runs a mechanical checking stage that flags anything the transcript does not support. Phase 3B adds `gpt-oss-20b` behind the provider seam this phase defines.
+Turn a finished `TranscriptDocument` into a reviewable clinical note, without a language model. The app fills a canonical 17-section internal schema, maps it onto whatever Cliniko template a given practitioner uses, applies clinician-authored autofill macros and body-region prefills, and runs a mechanical checking stage that flags anything the transcript does not support. Phase 3B adds `gpt-oss-20b` behind the provider seam this phase defines.
 
 ## Planning Extraction Summary
 Populate this during plan creation or plan hardening.
@@ -25,7 +25,7 @@ Populate this during plan creation or plan hardening.
 **Executor tier:** entirely premium
 
 ### Agreed Scope (Build Now)
-- Canonical 16-section note schema with stable keys, plus a per-practitioner template mapping layer (canonical → target field; many-to-one and omission both legal).
+- Canonical 17-section note schema with stable keys, plus a per-practitioner template mapping layer (canonical → target field; many-to-one and omission both legal).
 - `NoteModelProvider` Protocol plus the assertion-centric type model: `NoteAssertion` (the unit a section holds), `NoteSpan`, `NoteProposal`, `ConfirmationDecision`, `NoteRequest`, `GeneratedSection`, `NoteWarning`, `GeneratedNote`.
 - `ExtractiveNoteProvider` (the phase's shipping default; no LLM) and `MockNoteModelProvider` (deterministic adversarial instrument).
 - Speaker **role identification** — which cluster is the clinician — with a UI override. Clinician-owned sections accept clinician utterances only.
@@ -75,7 +75,7 @@ Populate this during plan creation or plan hardening.
   - Intended future outcome: `GptOssNoteProvider` behind the Protocol this phase defines, meeting `PLAN.md:175`.
   - Relevant files / subsystems: `note.py`, `scripts/setup-models.py`, `benchmark.py`, `ui/models.py`.
   - Dependencies / prerequisites: 3A gate passed.
-  - Recommended next action: open with D-N1 (runtime, quantisation, acceptability bar) — candidates llama-cpp-python (GGUF) and onnxruntime-genai; Ollama/llama-server rejected up front (a localhost HTTP server collides with the ruff bans on `socket`/`http`/`urllib.request` and the no-sockets test). Evidence order: wheel gate on py3.14 + py3.12 → measured peak RSS vs total RAM (~12-13 GiB weights; a 16 GB machine is probably not viable) → wall-clock for a 16-section note → quality on this phase's matrix → chat-template and `parse_special` control → SHA-pinned acquisition. Model-boundary injection defences (harmony role separation, per-call nonce delimiter, `parse_special=False`, no tool capability) land there too, plus `note_model_ready()` kept **separate** from `models_ready()`.
+  - Recommended next action: open with D-N1 (runtime, quantisation, acceptability bar) — candidates llama-cpp-python (GGUF) and onnxruntime-genai; Ollama/llama-server rejected up front (a localhost HTTP server collides with the ruff bans on `socket`/`http`/`urllib.request` and the no-sockets test). Evidence order: wheel gate on py3.14 + py3.12 → measured peak RSS vs total RAM (~12-13 GiB weights; a 16 GB machine is probably not viable) → wall-clock for a 17-section note → quality on this phase's matrix → chat-template and `parse_special` control → SHA-pinned acquisition. Model-boundary injection defences (harmony role separation, per-call nonce delimiter, `parse_special=False`, no tool capability) land there too, plus `note_model_ready()` kept **separate** from `models_ready()`.
   - Risk if deferred: blocked-work: note quality stays extractive until it lands.
   - Revisit by: Phase 3A completion gate
 
@@ -167,7 +167,7 @@ Populate this during plan creation or plan hardening.
   - Still applies to follow-up work: Yes — practitioner-ratified amendment to a documented non-negotiable; recorded in the threat model and design system, not applied silently.
 
 - **Speaker role identification lands in this phase.**
-  - Why: section routing is fundamentally a who-said-it problem, and no clinician/patient distinction exists in the codebase — `speaker_1`/`speaker_2` are cluster indices whose only guarantee is that the first segment is `speaker_1` (`transcription.py:586`). Without roles, a patient's "I think it's a slipped disc" routes into section 8, *Diagnosis* — precisely what `PLAN.md:14` forbids, emitted by a provider otherwise described as grounded by construction. Grounded is not the same as correctly attributed.
+  - Why: section routing is fundamentally a who-said-it problem, and no clinician/patient distinction exists in the codebase — `speaker_1`/`speaker_2` are cluster indices whose only guarantee is that the first segment is `speaker_1` (`transcription.py:586`). Without roles, a patient's "I think it's a slipped disc" routes into `diagnosis` — precisely what `PLAN.md:14` forbids, emitted by a provider otherwise described as grounded by construction. Grounded is not the same as correctly attributed.
   - **The heuristic is PRESELECTION ONLY.** Talk-time share, question-asking rate and first-speaker order are not stable role identifiers, and even a correct role does not make a clinician's *question* ("Could this be a disc problem?") a diagnosis. So: per-session clinician-role confirmation is **mandatory** before any clinician-owned section populates; the heuristic supplies the default selection and nothing more. If clustering is merged or the role is unresolved, clinician-owned sections stay **blank** and the UI surfaces candidate quotations for the clinician to place.
   - Alternatives rejected: restricting the extractive provider to speaker-neutral sections (ships a much thinner note); routing regardless and flagging (leans on warnings for a structural problem, worsening the false-positive load that is already the phase's top risk); trusting the heuristic unconfirmed (a wrong assignment restores the exact patient-speculation-to-Diagnosis failure this decision exists to prevent).
   - Still applies to follow-up work: Yes
@@ -255,6 +255,36 @@ Two additional structural decisions:
   Alternatives considered: one encoded union string (rejected); span text plus a lexical back-search (ambiguous on repeated words); no coordinates (leaves grounding heuristic and uncertainty unprovable).
 
 ## Schema / Data Changes
+- **Canonical section set (17, stable keys).** The plan previously referred to "the canonical 16-section constant" without listing it; reconciled against the captured template and recorded here as the single source. **Reference sections by KEY, never by ordinal** — the list has already grown once, and ordinal references are how off-by-one errors get baked into fixtures.
+
+  | # | Key | Meaning | Owner | Template A target |
+  |---|---|---|---|---|
+  | 1 | `presenting_complaint` | Why the patient came today | patient | Presenting complaint/patient progress |
+  | 2 | `history_presenting_complaint` | How the current problem developed | patient | Presenting complaint/patient progress |
+  | 3 | `progress_since_last_visit` | **NEW** — change since the last appointment | patient | Presenting complaint/patient progress |
+  | 4 | `past_medical_history` | Relevant prior history | patient | Presenting complaint/patient progress |
+  | 5 | `red_flags_screening` | Screening questions and answers | either | Assessment |
+  | 6 | `objective_examination` | Observed findings, tests performed | clinician | Assessment |
+  | 7 | `outcome_measures` | Pain scores, ROM, functional scales | either | Assessment |
+  | 8 | `assessment` | Clinical reasoning | **clinician** | Assessment |
+  | 9 | `diagnosis` | Working diagnosis / impression | **clinician** | Diagnosis |
+  | 10 | `treatment_performed` | What was done this session | clinician | Treatment |
+  | 11 | `response_to_treatment` | In-session response | either | Response to treatment |
+  | 12 | `advice_home_exercise` | Advice given, home programme | **clinician** | Management/Advice |
+  | 13 | `management_plan` | Ongoing plan | **clinician** | Management/Advice |
+  | 14 | `consent` | Consent discussion, as narrative | clinician | **intentionally unmapped** — Template A's only consent target is an attestation checkbox |
+  | 15 | `referrals_investigations` | Referrals made, imaging requested | clinician | Management/Advice |
+  | 16 | `precautions_contraindications` | Cautions affecting treatment | clinician | Assessment |
+  | 17 | `follow_up_review` | Next appointment, review timing | clinician | Management/Advice |
+
+  Clinician-owned (populate only after role confirmation): `assessment`, `diagnosis`, `advice_home_exercise`, `management_plan`.
+
+  **Mapping is a PROPOSAL pending practitioner confirmation** at Task 3.1 — where content belongs is a clinical judgment, not an engineering one. The non-obvious calls to confirm: `outcome_measures` → Assessment (vs Response to treatment), and `referrals_investigations` / `follow_up_review` → Management/Advice.
+
+  **The mapping config distinguishes UNMAPPED from INTENTIONALLY UNMAPPED.** A canonical section with no target because the mapping author overlooked it raises the `mapping_drop` review warning; one marked intentionally-unmapped is silent. Without the distinction, `consent` would warn on every note where consent is discussed — which is most of them — and warning fatigue is this phase's top risk. Practitioner decision 2026-08-04: fold `past_medical_history` into Presenting complaint/patient progress and `red_flags_screening` + `precautions_contraindications` into Assessment, so nothing safety-critical is dropped; mark `consent` intentionally unmapped, since the checkbox is ticked manually. **Assessment therefore carries screening and precaution content it would not have carried if written by hand** — a deliberate trade recorded here so it is not mistaken for a routing bug.
+
+  **Never map a canonical section to an attestation-typed target.** The rule keys on TARGET TYPE, not on the section: `consent` is legitimately mappable to a free-text consent field in some other practitioner's template, and is unmapped here only because Template A's target is a checkbox (see Critical Constraints).
+
 - **New encrypted artifact `note.enc`** in `sessions\<id>\`, under the same session key as audio and transcript, written via `atomic_write_bytes` with **no AAD** (matching `write_transcript`, whose docstring records why: `complete_session` verifies with a plain decrypt and the two must stay in agreement). `NOTE_FILENAME` joins the `Final` constants at `session_store.py:66-68`.
 - **New plaintext config files** under `%LOCALAPPDATA%\ClinikoScribe\config\` plus shipped in-repo defaults — clinician-authored boilerplate, not patient data, and deliberately outside the session store and the 24 h rule so they survive session destruction.
 - `GeneratedNote` carries `transcript_digest` and `config_digest` for staleness detection and attribution.
@@ -276,7 +306,8 @@ Two additional structural decisions:
 - **An unresolved `error` warning blocks `write_note`, blocks copy, and blocks Complete.** `review` warnings do not block but must be acknowledged before Complete.
 - **`transcript`-provenance spans are verified by exact-coordinate reconstruction** against the immutable transcript; any mismatch is an error. Cross-source recombination is rejected structurally, not detected lexically.
 - **Every non-transcript span is attributed on the face of the note** and carries a `clinician_asserted` review warning that cannot be suppressed.
-- **Clinician-owned sections (7, 8, 11, 12) populate only after per-session role confirmation.** Unresolved role ⇒ those sections stay blank.
+- **The clinician-owned sections — `assessment`, `diagnosis`, `advice_home_exercise`, `management_plan` — populate only after per-session role confirmation.** Unresolved role ⇒ those sections stay blank.
+- **The app NEVER writes, ticks, or proposes a consent attestation.** The practitioner's real template carries Informed Consent as a checkbox asserting that working diagnosis, benefits and risks were explained and consent was gained. That is a claim about a conversation having happened, not a description of findings — and unlike a wrong sentence in a note, a wrongly-ticked consent box is a false legal claim indistinguishable from a true one. No canonical section maps to it, no proposal path reaches it, and the note view renders it as a manual reminder only. Practitioner-ratified 2026-08-04.
 - **`mypy strict` and `ruff` must stay clean**; no new mypy override is required by this phase.
 
 ## Validation / Verification
@@ -309,8 +340,8 @@ Everything Cliniko-facing stays Phase 4: template fetch, draft creation, the wri
 ## Current State / Handoff Note
 - Last completed step: Planning complete — hardened via `/review-plan` (three parallel critique lenses), then re-hardened after a cross-family `/peer-review`
 - Current in-progress step: None
-- Immediate next action: Start Task 1.0 (capture both clinics' template section lists) via `/execute` or `/execute-loop`
-- Open blockers / open questions: **Task 1.0 needs the practitioner's real Cliniko template section lists for both clinics** — it now gates the canonical schema constant, not just the mapping
+- Immediate next action: Start Task 1.1 (note types in `note.py`) via `/execute` or `/execute-loop` — Task 1.0 is complete
+- Open blockers / open questions: None. Task 1.0 closed 2026-08-04 — both clinics share one template (captured in Task 1.0), the canonical set is reconciled to 17 sections, and the consent checkbox is recorded as never-written
 - Peer review: cross-family plan peer review by codex `gpt-5.6-sol`, 2026-08-04 — 10 findings (1 CRIT / 7 HIGH / 2 MED), all build-affecting, all accepted and folded in. Deliberately NOT logged to the `Review Findings Log`: plan critique must never reach `/fix`. Summary of what changed:
   - **CRIT** — provenance proves attribution, not truth. Autofill reversed from auto-insert to proposal; per-assertion confirmation now binds both accelerators.
   - Error warnings gained teeth (block write / copy / Complete).
@@ -355,9 +386,28 @@ Each /review invocation appends a detailed findings block here, with
 ## Tasks
 
 ### Phase 1 — Foundations, types, providers, custody
-- [ ] 🟥 1.0: Capture both clinics' real Cliniko treatment-note template section lists from the practitioner, and confirm whether they are identical. **Precedes the schema constant** — the canonical set is only defensible as a superset once both real templates have been seen.
-  - Done when: both lists are recorded in this plan, and each canonical key is annotated with its meaning, its clinician/patient ownership, and its mapping rule per clinic.
-- [ ] 🟥 1.1: Note types in `note.py` — `NoteAssertion`, `NoteSpan`, `NoteProposal`, `ConfirmationDecision`, `GeneratedSection`, `NoteWarning`, `GeneratedNote`, `NoteRequest`, `NoteModelProvider` Protocol, and the canonical 16-section constant reconciled against Task 1.0. Frozen pydantic, `extra="forbid"`, mirroring `TranscriptDocument` (`transcription.py:252-292`). Reuse `SESSION_ID_PATTERN`.
+- [x] 🟩 1.0: Capture both clinics' real Cliniko treatment-note template section lists, and confirm whether they are identical. **Precedes the schema constant** — the canonical set is only defensible as a superset once both real templates have been seen.
+
+  **Template A — captured 2026-08-04** (three groups, six text fields, one checkbox):
+
+  | Group | Field | Type |
+  |---|---|---|
+  | History | Presenting complaint/patient progress | rich text (HTML) |
+  | Examination | Assessment | plain text |
+  | Examination | Informed Consent | **checkbox — never written by this app** (see Critical Constraints) |
+  | Examination | Diagnosis | plain text |
+  | Treatment/Management | Treatment | plain text |
+  | Treatment/Management | Response to treatment | plain text |
+  | Treatment/Management | Management/Advice | plain text |
+
+  Three findings this capture forces, all to be resolved when the second template arrives:
+  - **The canonical schema is missing interval history.** "Presenting complaint/**patient progress**" carries progress-since-last-appointment, which is distinct from presenting complaint (canonical 1) and from response to treatment (canonical 10 — within-session). On a return-visit-heavy caseload this is the highest-volume field in the template, and nothing currently maps to it. Add a canonical section.
+  - **The mapping model must express more than `{canonical_key: target_field}`.** Targets carry a group, a content type (HTML vs plain — never emit formatting into a plain field), and in one case a non-text type that is explicitly unmappable.
+  - **Six-into-seventeen is heavily many-to-one.** Four canonical sections had no natural target; resolved 2026-08-04 by folding three into existing fields and marking `consent` intentionally unmapped (see `Schema / Data Changes`). The round-2 "Unmapped content" target therefore has no consumer under Template A — keep it, since a future practitioner's mapping will leave genuine gaps, but it is not exercised by this template.
+
+  - **Confirmed 2026-08-04: both clinics use this same template, and Management/Advice is the last field.** So there is exactly ONE mapping profile today. The per-practitioner mapping layer stays — it is the commercial requirement, for future practitioners with different templates — but `template_profile_id` resolves to the sole profile automatically. Do NOT make the clinician choose a profile from a list of one; surface a chooser only when more than one exists.
+  - **Done 2026-08-04.** The template is recorded, the canonical set is reconciled (17 sections with stable keys, `progress_since_last_visit` added, listed in `Schema / Data Changes`), every key carries its meaning, ownership and target, and the unmapped-content question is resolved. Carried to Task 3.1: practitioner confirmation of the two non-obvious mapping calls (`outcome_measures` → Assessment; `referrals_investigations` / `follow_up_review` → Management/Advice).
+- [ ] 🟥 1.1: Note types in `note.py` — `NoteAssertion`, `NoteSpan`, `NoteProposal`, `ConfirmationDecision`, `GeneratedSection`, `NoteWarning`, `GeneratedNote`, `NoteRequest`, `NoteModelProvider` Protocol, and the canonical 17-section constant (listed in `Schema / Data Changes`). Frozen pydantic, `extra="forbid"`, mirroring `TranscriptDocument` (`transcription.py:252-292`). Reuse `SESSION_ID_PATTERN`.
   - **`NoteAssertion` is the unit `GeneratedSection` holds** — not `NoteSpan`. A `transcript` assertion holds exactly one span with one contiguous `source_coords = (segment_index, first_word_index, last_word_index)`; the type makes multi-interval assembly unrepresentable rather than merely checked.
   - A non-`transcript` assertion carries `proposal_id`, `shown_text_digest`, `config_digest`, and a `ConfirmationDecision(decision, timestamp)`. `NoteProposal` is structurally distinct from `NoteAssertion`, so an unconfirmed proposal cannot be written by construction.
   - `GeneratedNote` additionally carries `session_id` (bound, `SESSION_ID_PATTERN`), `template_profile_id`, the confirmed cluster→role assignment, `transcript_digest`, and `config_digest`. **Define `transcript_digest` precisely**: algorithm, version tag, and exact byte domain — the decrypted canonical `TranscriptDocument.to_bytes()` output, not ciphertext — computed in one place and verified identically by `read_note` and `complete_session`.
@@ -375,9 +425,9 @@ Each /review invocation appends a detailed findings block here, with
 ### Phase 2 — Speaker roles and diarization measurement
 - [ ] 🟥 2.1: Per-segment cepstral mean normalisation in `_segment_embedding` (`transcription.py:507-543`), to remove the gain nuisance that makes one loud and one quiet speaker separable as two clusters.
   - Done when: existing diarization tests pass and a new test shows a gain-shifted copy of a segment clusters with its original.
-- [ ] 🟥 2.2: `speaker_role()` — **preselect** which cluster is the clinician from talk-time share, question-asking rate, and first-speaker order. The result is a default for the mandatory confirmation in Task 7.5, never an authority. Sections 7, 8, 11, 12 (assessment, diagnosis, advice, management plan) populate only from confirmed-clinician utterances; unresolved or merged clustering leaves them blank with candidate quotations surfaced instead.
+- [ ] 🟥 2.2: `speaker_role()` — **preselect** which cluster is the clinician from talk-time share, question-asking rate, and first-speaker order. The result is a default for the mandatory confirmation in Task 7.5, never an authority. The clinician-owned sections (`assessment`, `diagnosis`, `advice_home_exercise`, `management_plan`) populate only from confirmed-clinician utterances; unresolved or merged clustering leaves them blank with candidate quotations surfaced instead.
   - A clinician's *question* is not a diagnosis: cue matching into clinician-owned sections must exclude interrogative forms.
-  - Done when: role preselection is a pure function with fixture tests; a test asserts clinician-owned sections stay empty when the role is unconfirmed; and a test asserts an interrogative clinician utterance does not populate section 8.
+  - Done when: role preselection is a pure function with fixture tests; a test asserts clinician-owned sections stay empty when the role is unconfirmed; and a test asserts an interrogative clinician utterance does not populate `diagnosis`.
 - [ ] 🟥 2.3: Measure role and 2-way cluster accuracy on **several labelled human recordings** (not one), before and after 2.1, including at least one three-speaker recording. Record the numbers in this plan.
   - Done when: the measurements are recorded and D-S1 can be decided on evidence rather than a single sample.
 - [ ] 🟥 D-S1: Estimated-k speaker counting — adopt or defer.  `[decision]`
@@ -436,7 +486,7 @@ Each /review invocation appends a detailed findings block here, with
   - Text is selectable and **copy is enabled only when the Task 9.1 shipping gate has passed** — the copy affordance is bound to that decision, not unconditional. Cleared on close.
 - [ ] 🟥 7.2: `ui/transcript.py` — Generate action on a `TaskThread`, an `is_busy` property, and Complete refused while generating, while any proposal is unconfirmed, while an `error` is unresolved, or while a `review` warning is unacknowledged. **`write_note` must run in the `succeeded` handler on the GUI thread, not inside the `TaskThread` callable** — a worker-thread write can interleave with a GUI-thread Complete, which a button guard cannot prevent.
 - [ ] 🟥 7.5: The **clinician-role and template-profile controls — on the TRANSCRIPT screen, not the Note tab.** Both are consumed by `compose_draft()`, so a control on the Note tab would depend on the output it must precede. Role is preselected by Task 2.2's heuristic, overridable, and shows candidate quotations from each cluster so the choice is informed. **Generate** is disabled until both are confirmed; both are persisted onto `NoteRequest` and `GeneratedNote`.
-  - Done when: Generate is unreachable without both confirmations; the saved artifact records which cluster was confirmed as clinician; and a test pins that sections 7, 8, 11 and 12 stay empty when a note is somehow composed without a confirmed role.
+  - Done when: Generate is unreachable without both confirmations; the saved artifact records which cluster was confirmed as clinician; and a test pins that the clinician-owned sections stay empty when a note is somehow composed without a confirmed role.
 - [ ] 🟥 7.6: **Keep the full uncertainty-marked transcript visible beside the note** through the whole review, until copy or Complete. This is 3A's honest answer to "all uncertainty surfaced": the checker reaches only words the note *included*, so a low-confidence clinically material phrase that cue routing omitted is invisible to every automated check. Presentational coverage is real coverage for a clinician reviewing before signing — algorithmic coverage would need a materiality classifier this phase does not have.
   - Done when: every low-`probability` transcript word is reachable in the UI at review time, pinned by an offscreen test, and the threat-model text (Task 8.1) states this is presentational rather than detected.
 - [ ] 🟥 7.3: `ui/main_window.py` — register the tab, wire signals, add the note screen to the `closeEvent` busy check (`:154-158`), and clear note plaintext when a different transcript loads over a stale note. Update `tests/test_ui_screens.py:773-774`.
