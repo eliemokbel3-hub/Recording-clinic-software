@@ -25,7 +25,7 @@ from scribe_desktop.benchmark import (
     run_all,
     threshold_report,
 )
-from scribe_desktop.session import SessionState
+from scribe_desktop.session import ACTIVE_STATES, SessionState
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
 
@@ -274,6 +274,17 @@ class MicrophoneScreen(QWidget):
     def on_run_benchmark(self) -> None:
         if self._benchmark_task is not None and self._benchmark_task.isRunning():
             return
+        if self._controller.state in ACTIVE_STATES:
+            # Round 42 LOW-002 (guard-only, pending user ratification): the
+            # benchmark saturates every core for minutes — starving the
+            # live capture worker can overflow its queue and FAIL the
+            # session (recoverable, but user-manufactured). Never run it
+            # while a session records/pauses/processes.
+            self.benchmark_output.setPlainText(
+                "Benchmark unavailable while a session is active - finish "
+                "the session first (it would starve live capture)."
+            )
+            return
         self.benchmark_button.setEnabled(False)
         self.benchmark_warning_label.hide()
         self.benchmark_output.setPlainText("Benchmark running (local only)...")
@@ -290,7 +301,7 @@ class MicrophoneScreen(QWidget):
 
     def _join_task(self) -> None:
         if self._benchmark_task is not None:
-            self._benchmark_task.wait(2000)
+            self._benchmark_task.finish()
             self._benchmark_task = None
 
     def _on_benchmark_done(self, results: object) -> None:

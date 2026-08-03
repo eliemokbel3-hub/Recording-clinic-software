@@ -127,9 +127,14 @@ class TranscriptScreen(QWidget):
         try:
             self._on_complete()
         except Exception as exc:  # noqa: BLE001 - key custody kept on any failure
+            # Round 42 LOW-001: state only what THIS action verified — the
+            # Complete primitive deleted nothing on failure, but the key may
+            # be gone for another reason (e.g. the 24 h sweep at expiry).
             self.message_label.setText(
                 f"Complete failed: {type(exc).__name__}: {exc}. "
-                "The session key was kept; the session remains available."
+                "No key deletion was performed by this action; if the "
+                "session is still within its 24-hour window it remains "
+                "available."
             )
             return
         self._clear()

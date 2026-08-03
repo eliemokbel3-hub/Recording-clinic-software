@@ -140,7 +140,7 @@ remains an accepted residual.
    sweep cryptographically delete sessions it had just created. Beyond the
    tolerance a future stamp is still treated as a broken/tampered clock and
    fails closed. Adds ≤ 5 s to the retention overshoot above. The rule is
-   defined once (`session_store.trusted_timestamps`) and shared by the
+   defined once (`session_store.earliest_trusted_timestamp`) and shared by the
    sweep and the recovery listing.
 7. **Transcript-view availability residual (no custody impact).** The shared
    transcript view can be visually replaced if a live transcription

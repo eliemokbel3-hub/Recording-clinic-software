@@ -21,6 +21,7 @@ from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session import SessionState
 from scribe_desktop.session_store import complete_session, discard_session
 from scribe_desktop.status import read_registration_status, run_self_test
 from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
@@ -86,6 +87,12 @@ class MainWindow(QMainWindow):
         # closing must never release an unrelated recovered session's
         # sweep/relist protection.
         self._transcript_source: str | None = None
+        # Round 42 LOW-006: the recovered checkout's unwrapped in-memory
+        # key, retained so it can be destroy()ed (idempotent, in-memory
+        # copy ONLY — disk custody untouched) when the view is overwritten
+        # by a live transcript or closed; previously it was dropped to GC
+        # unzeroized. Matches _retire_locked's in-memory-copy semantics.
+        self._recovered_crypto: SessionCrypto | None = None
 
         self.microphone_screen = MicrophoneScreen(
             controller, backend, benchmark_runner=benchmark_runner
@@ -132,6 +139,18 @@ class MainWindow(QMainWindow):
         destroying a running QThread aborts the process. A force-kill is
         still safe — crash recovery (Flow 3) covers it — but a normal close
         must not tear down a live transcription/benchmark thread."""
+        if self._controller.state in (SessionState.RECORDING, SessionState.PAUSED):
+            # Round 42 MED-002 (guard-only, pending user ratification;
+            # sibling of the PR-round-18 PR6 thread guard below): closing
+            # would kill the daemon capture worker mid-chunk and silently
+            # drop the buffered tail of a LIVE consultation. Finish or
+            # Discard first; a force-kill remains safe via crash recovery.
+            self.statusBar().showMessage(
+                "Recording in progress - Finish or Discard the session "
+                "before closing."
+            )
+            event.ignore()
+            return
         if (
             self.session_screen.is_busy
             or self.recovery_screen.is_busy
@@ -160,6 +179,10 @@ class MainWindow(QMainWindow):
         # If a recovered transcript was open it stays CHECKED OUT (protected
         # from sweep/relist) until app restart — availability residual only,
         # never a custody violation (PR round 20 residual, recorded in plan).
+        # Round 42 LOW-006: its replaced callbacks are unreachable now, so
+        # destroy the in-memory key copy (disk custody remains for a
+        # post-restart recovery; adds zero availability loss).
+        self._destroy_recovered_crypto()
         self._transcript_source = "live"
         self.tabs.setCurrentWidget(self.transcript_screen)
 
@@ -180,13 +203,30 @@ class MainWindow(QMainWindow):
             on_discard=lambda: discard_session(directory, crypto),
             store_finished=outcome.store_finished,
         )
+        # Round 42 LOW-006: retain for destroy-on-overwrite/close (a prior
+        # retained copy cannot exist while a checkout blocks resume, but
+        # destroy() is idempotent — belt and braces).
+        self._destroy_recovered_crypto()
+        self._recovered_crypto = crypto
         self._transcript_source = directory.name
         self.tabs.setCurrentWidget(self.transcript_screen)
+
+    def _destroy_recovered_crypto(self) -> None:
+        """Zeroize the retained recovered-checkout key copy (round 42
+        LOW-006). Idempotent; a no-op after Complete/Discard already
+        destroyed it. In-memory copy only — key.dpapi is never touched."""
+        if self._recovered_crypto is not None:
+            self._recovered_crypto.destroy()
+            self._recovered_crypto = None
 
     def _on_transcript_closed(self, _outcome: str) -> None:
         self.session_screen.refresh()
         # PR round 20 (PR-HIGH-009): release ONLY the checkout owned by the
         # transcript that just closed — never an unscoped clear.
+        # Round 42 LOW-006: the closing custody action (Complete/Discard)
+        # already destroyed the key — this is the idempotent cleanup of the
+        # retained reference.
+        self._destroy_recovered_crypto()
         source = self._transcript_source
         self._transcript_source = None
         if source is not None and source != "live":

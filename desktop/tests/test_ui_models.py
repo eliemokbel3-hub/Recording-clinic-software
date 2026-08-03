@@ -146,6 +146,13 @@ class TestListRecoverableSessions:
         dead = tmp_path / uuid.uuid4().hex
         dead.mkdir()
         (dead / KEY_FILENAME).write_bytes(b"")  # zero-length: cryptographically dead
+        truncated = tmp_path / uuid.uuid4().hex
+        truncated.mkdir()
+        # Round 42 LOW-004: a TRUNCATED blob (< 16 bytes) is the same
+        # deadness class as zero-length — custody unwrap and the sweep
+        # already treat it as dead; the listing must agree (a listed entry
+        # would only offer a Resume that fails with KeyCustodyError).
+        (truncated / KEY_FILENAME).write_bytes(b"\x01" * 8)
         (tmp_path / "not-a-session").mkdir()
         assert models.list_recoverable_sessions(tmp_path) == []
 

@@ -54,6 +54,7 @@ from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
+    SESSION_ID_PATTERN,
     SessionChunkStore,
     StoreWriteError,
     complete_session,
@@ -83,7 +84,10 @@ ACTIVE_STATES: frozenset[SessionState] = frozenset(
     {SessionState.RECORDING, SessionState.PAUSED, SessionState.PROCESSING}
 )
 
-# States a crashed session may be recovered from (recovery screen lists these).
+# PLAN.md lifecycle documentation: states a crashed session may conceptually
+# be recovered from. NOTE the recovery screen lists by ON-DISK custody
+# (key.dpapi presence), not by state — session state is not persisted
+# across a crash (round 42 LOW-012).
 RECOVERABLE_STATES: frozenset[SessionState] = frozenset(
     {SessionState.RECORDING, SessionState.PAUSED, SessionState.PROCESSING, SessionState.FAILED}
 )
@@ -114,7 +118,7 @@ class RecordingSession(BaseModel):
     # Opaque, non-clinical identifier — exactly uuid4().hex. The strict
     # pattern keeps it safe as a single filesystem path segment
     # (sessions/<id>/) and as whitelisted log metadata (PR-MED-002).
-    session_id: str = Field(default_factory=_new_session_id, pattern=r"^[0-9a-f]{32}$")
+    session_id: str = Field(default_factory=_new_session_id, pattern=SESSION_ID_PATTERN)
     # Phase 5 delivers the real EncounterContext from Chrome; until then an
     # opaque optional reference keeps the PLAN.md shape without inventing data.
     encounter_context: str | None = Field(default=None, max_length=256)
@@ -402,7 +406,7 @@ class SessionController:
         """
         with self._lock:
             live = self._require_state(SessionState.PROCESSING)
-            # PR-HIGH-006 (locking/ordering only, pending user ratification):
+            # PR-HIGH-006 (locking/ordering only; user-ratified 2026-07-27):
             # exactly ONE transcription run per session may be in flight.
             # Without this guard two callers could both pass the PROCESSING
             # check, race on the shared transcript temp path, and a late
@@ -432,11 +436,17 @@ class SessionController:
             return live.session
 
     def mark_queued(self) -> RecordingSession:
-        """processing -> queued. Called by the Step 9 transcription pipeline
-        once ``transcript.enc`` is durably written."""
+        """processing -> queued, for a driver OTHER than ``transcribe()``.
+
+        The production pipeline does NOT call this: ``transcribe()`` owns
+        the processing -> queued transition itself (round 42 LOW-009 —
+        this docstring previously claimed the Step 9 pipeline calls here).
+        Kept as the explicit state-machine seam (exercised by tests, and
+        by any future external processing driver); the PR-HIGH-008 guard
+        below keeps it safe alongside an in-flight ``transcribe()``."""
         with self._lock:
             live = self._require_state(SessionState.PROCESSING)
-            # PR-HIGH-008 (locking/ordering only, pending user ratification):
+            # PR-HIGH-008 (locking/ordering only; user-ratified 2026-07-27):
             # while transcribe() is in flight it owns the processing->queued
             # transition; queueing here would let Complete verify and delete
             # the key while the transcriber is still writing — the same
@@ -470,6 +480,17 @@ class SessionController:
             if SessionState.DISCARDED not in LEGAL_TRANSITIONS[live.session.state]:
                 raise IllegalTransitionError(
                     f"illegal transition {live.session.state} -> discarded"
+                )
+            # Round 42 MED-003 — same in-flight guard family as
+            # transcribe()/mark_queued() (PR-HIGH-006/008, user-ratified
+            # 2026-07-27): discarding here would destroy the key under a
+            # live transcriber. The UI already disables Discard while
+            # PROCESSING; this makes the controller honour its own
+            # any-thread safety contract (a destroyed key would only make
+            # the transcriber fail — benign but wrong-by-contract).
+            if live.transcribing:
+                raise SessionActivityError(
+                    "transcription in progress; wait for it to finish or fail"
                 )
             worker = live.worker
         if worker is not None:

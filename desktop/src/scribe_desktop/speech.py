@@ -360,11 +360,20 @@ def segment_session_audio(
 
 
 def vad_model_available(model_path: Path | None = None) -> bool:
-    """True when the local silero model file exists (skip-if-absent guard)."""
+    """True when the local silero model file exists (skip-if-absent guard).
+
+    Mirrors ``whisper_model_available`` (peer round 36 / round 42 MED-004):
+    a UNC-redirected ``LOCALAPPDATA`` must not cause SMB I/O from this stat
+    probe — UNC paths are refused BEFORE any filesystem touch and report
+    unavailable (the ``SileroVad`` constructor keeps its own explicit UNC
+    error).
+    """
     try:
         path = model_path if model_path is not None else default_vad_model_path()
     except (RuntimeError, OSError):
         return False
+    if str(path).startswith(("\\\\", "//")):
+        return False  # UNC: never stat (no SMB I/O); unusable by policy
     return path.is_file()
 
 

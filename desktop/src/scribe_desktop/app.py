@@ -47,7 +47,11 @@ def _single_instance_mutex_name() -> str:
     logon session of the same user shares one %LOCALAPPDATA% sessions root."""
     try:
         user = getpass.getuser()
-    except OSError:  # no username env in an exotic service context
+    except (OSError, KeyError, ImportError):
+        # No username env in an exotic service context. Python raises
+        # OSError uniformly only since 3.13; on 3.12 (supported) the
+        # no-env path raises ImportError (no `pwd` on Windows) or
+        # KeyError instead — all must fail open (round 42 LOW-003).
         user = "default"
     # Backslash is the kernel object-namespace separator — sanitize.
     user = user.replace("\\", "_").replace("/", "_")
@@ -98,6 +102,28 @@ def _show_already_running_warning() -> None:
     box.exec()
 
 
+def sweep_protected_ids(
+    controller: SessionController, extra: frozenset[str] = frozenset()
+) -> frozenset[str]:
+    """Session ids the expiry sweep must skip.
+
+    State-active sessions (recording/paused/processing — the binding
+    Critical Constraint) PLUS the controller's own session in ANY
+    non-terminal state (round 42 MED-001, guard-only, pending user
+    ratification): PR-round-18 PR2 protects a RECOVERED session awaiting
+    Complete/Discard from the sweep; the controller-owned live path gets
+    the same custody courtesy, so a queued transcript open for review
+    cannot lose its key at the 24 h boundary mid-review. The 24 h cap
+    still applies from the first sweep after the session is retired or
+    the app restarts — this widens protection, never deletion.
+    """
+    protected = controller.active_session_ids() | extra
+    session = controller.session
+    if session is not None and not session.is_terminal:
+        protected = protected | {session.session_id}
+    return protected
+
+
 def main() -> int:
     logger = setup_logging("scribe-app")
     # Offline kill-switches: set AND asserted before any ML code can run
@@ -119,10 +145,12 @@ def main() -> int:
     sessions_root = default_sessions_root()
 
     def run_sweep(extra_protected: frozenset[str] = frozenset()) -> None:
-        # Skips live sessions by STATE via active_session_ids (never mtime).
+        # Skips live sessions by STATE (never mtime), plus the controller's
+        # own non-terminal session (round 42 MED-001 — see
+        # sweep_protected_ids).
         sweep_sessions(
             sessions_root,
-            active_session_ids=controller.active_session_ids() | extra_protected,
+            active_session_ids=sweep_protected_ids(controller, extra_protected),
             logger=logger,
         )
 

@@ -21,11 +21,13 @@ from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     KEY_FILENAME,
     RECOVERY_WINDOW,
+    SESSION_ID_PATTERN,
     SessionStoreError,
     default_sessions_root,
+    earliest_trusted_timestamp,
+    key_blob_is_dead,
     read_store_header,
     store_has_footer,
-    trusted_timestamps,
 )
 from scribe_desktop.speech import SileroVad, vad_model_available
 from scribe_desktop.transcription import (
@@ -39,7 +41,8 @@ from scribe_desktop.transcription import (
     whisper_model_available,
 )
 
-_SESSION_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+# Single-sourced session-id format (round 42 LOW-010).
+_SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
 
 # Binding Step-10 note (PR-HIGH-007 residual): shown whenever a recovered
 # store carries no complete Finish footer.
@@ -151,8 +154,12 @@ def list_recoverable_sessions(
         key_mtime: float | None = None
         try:
             key_stat = key_path.stat()
-            if key_stat.st_size <= 0:
-                continue  # cryptographically dead; the sweep will GC it
+            if key_blob_is_dead(key_stat.st_size):
+                # Cryptographically dead (zero-length/TRUNCATED — the same
+                # deadness definition custody and the sweep use, round 42
+                # LOW-004); the sweep will GC it. Listing it would only
+                # offer a Resume that must fail with KeyCustodyError.
+                continue
             key_mtime = key_stat.st_mtime
         except FileNotFoundError:
             continue  # orphan dir; sweep territory
@@ -172,15 +179,16 @@ def list_recoverable_sessions(
             except (SessionStoreError, OSError):
                 store_finished = False
         # PR round 18: the 24 h cap applies to the LISTING too, not only the
-        # sweep — never offer recovery of a session past its window. Same
-        # fail-safe posture as the sweep: earliest trusted timestamp wins;
-        # readable-but-untrusted values fail closed (not listed). The rule
-        # itself lives in session_store.trusted_timestamps so this listing and
-        # the sweep can never disagree about what "trusted" means.
+        # sweep — never offer recovery of a session past its window. The
+        # trust core is SHARED with the sweep (round 42 MED-009:
+        # earliest_trusted_timestamp), so the two can never disagree about
+        # what "trusted" means — including the clock-skew tolerance that
+        # keeps a just-created session visible here (round 48 HIGH-001).
+        # Readable-but-untrusted values fail closed (not listed).
         readable = [t for t in (created_at, key_mtime) if t is not None]
-        trusted = trusted_timestamps(readable, now)
-        if trusted:
-            if now - min(trusted) >= RECOVERY_WINDOW.total_seconds():
+        earliest = earliest_trusted_timestamp(readable, now)
+        if earliest is not None:
+            if now - earliest >= RECOVERY_WINDOW.total_seconds():
                 continue  # expired; the sweep destroys it
         elif readable:
             continue  # untrusted timestamps: fail closed, sweep decides

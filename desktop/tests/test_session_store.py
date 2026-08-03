@@ -28,11 +28,11 @@ from scribe_desktop.session_store import (
     StoreWriteError,
     complete_session,
     discard_session,
+    earliest_trusted_timestamp,
     iter_chunks,
     read_store_header,
     resolve_key_path,
     sweep_sessions,
-    trusted_timestamps,
     unwrap_key_from_file,
     wrap_key_to_file,
 )
@@ -405,10 +405,12 @@ class TestDeletionOrdering:
 # ----------------------------------------------------------------- the sweep
 
 
-class TestTrustedTimestamps:
+class TestEarliestTrustedTimestamp:
     """The single fail-safe rule shared by the sweep and the recovery
     listing (they used to carry separate copies and inherited the same
-    clock-skew defect)."""
+    clock-skew defect). Round 48 HIGH-001 merged this branch's skew
+    tolerance into main's shared helper; these are the only direct unit
+    tests it has."""
 
     NOW = 1_000_000.0
 
@@ -424,34 +426,46 @@ class TestTrustedTimestamps:
         assert CLOCK_SKEW_TOLERANCE < 60
         assert CLOCK_SKEW_TOLERANCE < RECOVERY_WINDOW.total_seconds() / 1000
 
-    def test_past_values_pass_through_unchanged(self) -> None:
-        assert trusted_timestamps([self.NOW - 60, self.NOW], self.NOW) == [
-            self.NOW - 60,
-            self.NOW,
-        ]
+    def test_earliest_past_value_wins(self) -> None:
+        assert (
+            earliest_trusted_timestamp([self.NOW - 60, self.NOW], self.NOW)
+            == self.NOW - 60
+        )
 
     def test_marginally_future_values_are_clamped_to_now(self) -> None:
         # Kept (a file written moments ago), but aged from now — never
         # allowed to read as younger than the present.
         skewed = self.NOW + CLOCK_SKEW_TOLERANCE / 2
-        assert trusted_timestamps([skewed], self.NOW) == [self.NOW]
+        assert earliest_trusted_timestamp([skewed], self.NOW) == self.NOW
+
+    def test_clamped_value_never_displaces_a_real_earlier_stamp(self) -> None:
+        """The safety property behind the merge (round 48 HIGH-001): adding
+        the tolerance can only ADD `now` to the trusted set, and every
+        pre-existing trusted value is already <= now, so the minimum — and
+        therefore every expiry decision — is unchanged wherever the
+        untoleranced rule had anything to work with."""
+        skewed = self.NOW + CLOCK_SKEW_TOLERANCE / 2
+        assert (
+            earliest_trusted_timestamp([self.NOW - 100, skewed], self.NOW)
+            == self.NOW - 100
+        )
 
     def test_tolerance_boundary_is_inclusive(self) -> None:
         edge = self.NOW + CLOCK_SKEW_TOLERANCE
-        assert trusted_timestamps([edge], self.NOW) == [self.NOW]
+        assert earliest_trusted_timestamp([edge], self.NOW) == self.NOW
 
     def test_values_beyond_the_tolerance_are_dropped(self) -> None:
         # A real clock problem still fails closed — callers see no trusted
         # candidate and expire (sweep) or hide (listing).
         beyond = self.NOW + CLOCK_SKEW_TOLERANCE + 1
-        assert trusted_timestamps([beyond], self.NOW) == []
+        assert earliest_trusted_timestamp([beyond], self.NOW) is None
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_non_finite_values_are_dropped(self, bad: float) -> None:
-        assert trusted_timestamps([bad], self.NOW) == []
+        assert earliest_trusted_timestamp([bad], self.NOW) is None
 
     def test_empty_input(self) -> None:
-        assert trusted_timestamps([], self.NOW) == []
+        assert earliest_trusted_timestamp([], self.NOW) is None
 
 
 class TestExpirySweep:

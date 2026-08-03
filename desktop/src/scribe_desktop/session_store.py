@@ -95,9 +95,20 @@ MAX_RECORDS: Final = 1_000_000
 # blobs are already cryptographically dead (sweep destroys the session).
 _MIN_KEY_BLOB_BYTES: Final = 16
 
+
+def key_blob_is_dead(size_bytes: int) -> bool:
+    """True when a key.dpapi of this size is cryptographically dead
+    (zero-length/truncated — cannot be a real DPAPI blob). THE single
+    deadness definition: custody unwrap, the sweep's orphan GC, and the
+    recovery listing must all agree (round 42 LOW-004)."""
+    return size_bytes < _MIN_KEY_BLOB_BYTES
+
 # Binding note from Step 1 (PR-MED-002/003): a session id is EXACTLY
 # uuid4().hex, and key_reference resolves ONLY through resolve_key_path.
-_SESSION_ID_RE: Final = re.compile(r"^[0-9a-f]{32}$")
+# SESSION_ID_PATTERN is THE single source of the id format (round 42
+# LOW-010): the pydantic models and the recovery listing reference it.
+SESSION_ID_PATTERN: Final = r"^[0-9a-f]{32}$"
+_SESSION_ID_RE: Final = re.compile(SESSION_ID_PATTERN)
 
 RECOVERY_WINDOW: Final = timedelta(hours=24)
 
@@ -151,6 +162,11 @@ class KeyCustodyError(SessionStoreError):
 
 
 def default_sessions_root() -> Path:
+    # Deliberately NO UNC refusal here (round 42 LOW-005): a
+    # folder-redirected LOCALAPPDATA would place session stores on SMB —
+    # refusing would block recording entirely, so this stays an accepted
+    # same-user deployment residual (documented in the data-flow map).
+    # Model paths DO refuse UNC: there refusal is cheap and report-only.
     base = os.environ.get("LOCALAPPDATA") or str(Path.home())
     return Path(base) / "ClinikoScribe" / "sessions"
 
@@ -264,7 +280,14 @@ class SessionChunkStore:
     def open_for_append(cls, path: Path, crypto: SessionCrypto) -> SessionChunkStore:
         """Reopen after a crash: scan complete records, truncate any partial
         tail record (expected crash behaviour), resume at the next index.
-        Refuses to append to a finished (footered) store."""
+        Refuses to append to a finished (footered) store.
+
+        NOT wired into any production flow (round 42 LOW-008): recording
+        is NEVER resumed after a crash (plan Critical Constraint — recovery
+        restarts TRANSCRIPTION, not capture). This reopen-and-append
+        primitive exists for the store-format contract and its validation
+        battery (restart-append nonce safety) only; do not wire it into a
+        resume-recording flow."""
         try:
             scan_stream: BinaryIO = path.open("rb")
         except OSError as exc:
@@ -458,6 +481,33 @@ def store_has_footer(path: Path) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Atomic durable write — THE binding durability idiom (round 42 MED-008).
+# --------------------------------------------------------------------------
+
+
+def atomic_write_bytes(path: Path, blob: bytes, *, error_label: str) -> None:
+    """Write ``blob`` durably and atomically: temp + fsync + ``os.replace``.
+
+    The single implementation of the binding durability idiom for
+    custody-critical artifacts (``key.dpapi`` here, ``transcript.enc`` in
+    the transcription module) — hardening (e.g. rename-durability changes)
+    lands once, in lockstep for both. Any failure raises
+    ``StoreWriteError`` and never leaves a partial file at ``path``.
+    """
+    tmp_path = path.with_name(path.name + ".tmp")
+    try:
+        with tmp_path.open("wb") as stream:
+            stream.write(blob)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        raise StoreWriteError(f"failed writing {error_label}: {exc}") from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+# --------------------------------------------------------------------------
 # DPAPI key custody (Windows-only; CryptProtectData, current-user scope).
 # --------------------------------------------------------------------------
 
@@ -477,17 +527,7 @@ def wrap_key_to_file(crypto: SessionCrypto, session_dir: Path) -> Path:
         crypto.export_key(), "ClinikoScribe session key", None, None, None, 0
     )
     key_path = session_dir / KEY_FILENAME
-    tmp_path = session_dir / (KEY_FILENAME + ".tmp")
-    try:
-        with tmp_path.open("wb") as stream:
-            stream.write(blob)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp_path, key_path)
-    except OSError as exc:
-        raise StoreWriteError(f"failed writing key custody blob: {exc}") from exc
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    atomic_write_bytes(key_path, blob, error_label="key custody blob")
     return key_path
 
 
@@ -502,7 +542,7 @@ def unwrap_key_from_file(session_dir: Path) -> SessionCrypto:
         blob = key_path.read_bytes()
     except OSError as exc:
         raise KeyCustodyError(f"key custody blob unreadable: {exc}") from exc
-    if len(blob) < _MIN_KEY_BLOB_BYTES:
+    if key_blob_is_dead(len(blob)):
         raise KeyCustodyError("key custody blob is zero-length or truncated")
     try:
         _description, key = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
@@ -563,30 +603,40 @@ class SweepResult:
     action: str  # kept | skipped_active | expired | orphan_gc | error
 
 
-def trusted_timestamps(candidates: Iterable[float], now: float) -> list[float]:
-    """The fail-safe timestamp rule for the 24 h cap, in ONE place.
+def earliest_trusted_timestamp(candidates: Iterable[float], now: float) -> float | None:
+    """The earliest trustworthy candidate, clamped to ``now``, or None.
 
-    Shared by the sweep and the recovery listing — they enforce the same cap
-    and previously carried separate copies of this rule, which is how both
-    inherited the same clock-skew defect.
+    THE shared trust core of the 24 h cap (round 42 MED-009): non-finite
+    or future timestamps must never extend retention, in the sweep OR the
+    recovery listing. Fallback policy when nothing is trusted stays with
+    each caller (the sweep fails closed to destruction; the listing fails
+    closed to not-listing, and lists conservatively only when NOTHING was
+    readable at all).
 
-    Drops non-finite values and anything further than ``CLOCK_SKEW_TOLERANCE``
-    into the future (a real clock problem: never allowed to extend retention).
-    Values inside that tolerance are clamped to ``now``, so a file written
-    milliseconds ago is aged from now rather than being thrown away.
+    "Future" means beyond ``CLOCK_SKEW_TOLERANCE`` (round 48 HIGH-001).
+    Filesystem mtimes routinely read a fraction of a second ahead of a
+    later ``time.time()``, and treating that as untrusted DESTROYED
+    sessions that had just been created — measured at 106/400 surviving
+    the sweep under a coarse clock. Candidates inside the tolerance are
+    accepted and clamped to ``now``. Because every other trusted value is
+    already <= now, the clamp can never lower the minimum, so this is a
+    strict relaxation inside ``(now, now + CLOCK_SKEW_TOLERANCE]`` and
+    cannot make anything expire sooner than the untoleranced rule did.
     """
-    return [
+    trusted = [
         min(value, now)
         for value in candidates
         if math.isfinite(value) and value <= now + CLOCK_SKEW_TOLERANCE
     ]
+    return min(trusted) if trusted else None
 
 
 def _session_created_at(session_dir: Path, now: float) -> float:
     """Best available creation time, FAIL-SAFE for the 24 h cap (PR-MED-004):
     a malformed header timestamp (NaN/inf) or one claiming the future must
     not extend retention, so collect header created-at + key-blob mtime,
-    filter through `trusted_timestamps`, and take the EARLIEST survivor.
+    filter through `earliest_trusted_timestamp`, which also applies the
+    clock-skew tolerance, and take the EARLIEST survivor.
     Falls back to the directory mtime, then to `now` (expires on the next
     window rather than never)."""
     candidates: list[float] = []
@@ -601,9 +651,9 @@ def _session_created_at(session_dir: Path, now: float) -> float:
             candidates.append(stat_target.stat().st_mtime)
         except OSError:
             pass
-    trusted = trusted_timestamps(candidates, now)
-    if trusted:
-        return min(trusted)
+    earliest = earliest_trusted_timestamp(candidates, now)
+    if earliest is not None:
+        return earliest
     if candidates:
         # PR-MED-005: every readable timestamp is untrusted (non-finite or
         # implausibly far in the future) — fail CLOSED: report an age past any
@@ -659,7 +709,7 @@ def sweep_sessions(
                 key_blob_size = key_path.stat().st_size
             except FileNotFoundError:
                 key_blob_size = -1  # confirmed absent: orphan custody
-            if key_blob_size < _MIN_KEY_BLOB_BYTES:
+            if key_blob_is_dead(key_blob_size):
                 # Orphan or cryptographically-dead custody: GC.
                 delete_session_key(child)
                 shutil.rmtree(child, ignore_errors=True)

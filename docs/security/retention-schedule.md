@@ -17,7 +17,7 @@ always encrypted at rest, always bounded by the 24-hour rule below.
 | DPAPI-wrapped session key (`key.dpapi`) | beside the store, `sessions\<id>\` | Until Complete, Discard, or 24 h expiry — whichever first | Complete: fsync transcript → verify decrypt round-trip → delete key. Discard: key deleted FIRST, then best-effort store removal. Expiry: sweep destroys custody then the store. Plain NTFS unlink — not anti-forensic; residual accepted at the same-user boundary (threat model) |
 | Encrypted transcript (`transcript.enc`) | `sessions\<id>\` | Same bound as the audio: the session sits `queued` after transcription until the explicit Complete/Discard, capped by the 24 h rule | Same key custody — undecryptable after key deletion; removed with the store |
 | In-memory plaintext (capture buffers, decrypted PCM, transcript objects) | Process memory only | Transient — dropped per chunk/segment during processing; task references released after Complete/Discard | Freed by the process; best-effort scrubbing residual documented in the threat model (LOW-009) |
-| ML model cache (silero ~2 MiB; `whisper\small` ~465 MiB; ~3.0 GiB with all four benchmark candidates) | `%LOCALAPPDATA%\ClinikoScribe\models\` | Indefinite — static program data, NO clinical content | Manual delete at any time; re-created by `scripts/setup-models.py` (run by the user, setup-time network only) |
+| ML model cache (silero ~2 MiB; runtime default `whisper\medium` ~1.43 GiB; fallback `whisper\small` ~465 MiB; ~3.0 GiB with all four benchmark candidates) | `%LOCALAPPDATA%\ClinikoScribe\models\` | Indefinite — static program data, NO clinical content | Manual delete at any time; re-created by `scripts/setup-models.py` (run by the user, setup-time network only) |
 
 ## The 24-hour rule (Phase 2, enforced by code)
 
@@ -38,7 +38,7 @@ always encrypted at rest, always bounded by the 24-hour rule below.
   (transient I/O trouble), the store is kept for that sweep and retried
   next cycle — transient filesystem errors must never trigger
   cryptographic deletion. The rule lives in exactly one place
-  (`session_store.trusted_timestamps`), shared by the sweep and the
+  (`session_store.earliest_trusted_timestamp`), shared by the sweep and the
   recovery listing so the two can never disagree.
 - Clock-skew tolerance (`CLOCK_SKEW_TOLERANCE`, 5 s): filesystem mtimes can
   read marginally AHEAD of a later `time.time()` — Windows' wall clock is

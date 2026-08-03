@@ -225,7 +225,7 @@ class SessionScreen(QWidget):
         # PR round 18 (PR6/PR7): join the finished worker, then drop the
         # closure chain so no plaintext transcript reference is retained.
         if self._task is not None:
-            self._task.wait(2000)
+            self._task.finish()
             self._task = None
         self.progress_bar.hide()
         self.progress_label.hide()
