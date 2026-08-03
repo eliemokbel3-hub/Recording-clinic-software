@@ -431,11 +431,19 @@ def run_cli(cmd: list[str], timeout: float, env: dict | None = None,
     status is one of: ok (ran, exit 0), failed (ran, nonzero), timeout,
     absent (executable not found). Never raises; never inherits stdin.
     cwd optionally redirects the subprocess (the neutral-cwd usage probes).
+
+    Decodes as UTF-8 with errors="replace" rather than the locale codec
+    (the codex app-server leg's established shape): a CLI emitting bytes
+    the locale codec cannot map -- codex's catalog carries typographic
+    punctuation, undecodable under cp1252 on a native Windows host --
+    otherwise raises UnicodeDecodeError straight through the never-raises
+    contract, from a reader thread the callers cannot guard.
     """
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
             stdin=subprocess.DEVNULL, env=env, cwd=cwd,
+            encoding="utf-8", errors="replace",
         )
         return ("ok" if proc.returncode == 0 else "failed",
                 proc.stdout, proc.stderr, proc.returncode)
@@ -485,6 +493,30 @@ def which_all(name: str) -> list[str]:
                     and cand not in hits):
                 hits.append(cand)
     return hits
+
+
+def codex_bin(timeout: float) -> str:
+    """The INVOCABLE codex program path -- the codex twin of claude's
+    candidate arbitration, and for the same two reasons.
+
+    subprocess does not apply PATHEXT to the program name on native
+    Windows (unlike shutil.which), so a bare "codex" raises
+    FileNotFoundError even with an npm-installed codex.cmd on PATH --
+    reported as an ABSENT backend, silently costing the run its only
+    cross-family peer. And the first which_all hit is NOT automatically
+    the invocable one: npm installs an extensionless sh shim beside the
+    .cmd, and candidate_names lists the literal name first, so hits[0]
+    is a non-Win32 image (WinError 193). Probe candidates in PATH order
+    and keep the first that actually runs.
+
+    Falls back to the bare name when nothing runs, so a genuinely absent
+    CLI still reports absent through run_cli's FileNotFoundError branch
+    with its existing message.
+    """
+    for cand in which_all("codex"):
+        if run_cli([cand, "--version"], timeout)[0] == "ok":
+            return cand
+    return "codex"
 
 
 def claude_env(candidate: str, is_wsl: bool, config_dir: str | None = None) -> dict:
@@ -996,7 +1028,8 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
 
 
 def probe_codex(timeout: float) -> dict:
-    status, out, err, rc = run_cli(["codex", "debug", "models"], timeout)
+    status, out, err, rc = run_cli([codex_bin(timeout), "debug", "models"],
+                                   timeout)
     if status == "absent":
         return {"status": "absent", "error": err, "listed_count": 0,
                 "total_count": 0, "models": []}
@@ -1061,7 +1094,7 @@ def probe_codex_usage(timeout: float) -> dict:
     deadline = max(timeout, 30.0)
     try:
         proc = subprocess.Popen(
-            ["codex", "app-server"], stdin=subprocess.PIPE,
+            [codex_bin(timeout), "app-server"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
             cwd=neutral_probe_cwd())

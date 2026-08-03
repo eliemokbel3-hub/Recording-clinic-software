@@ -1927,11 +1927,19 @@ def run_cli(cmd: list[str], timeout: float, env: dict | None = None,
     status is one of: ok (ran, exit 0), failed (ran, nonzero), timeout,
     absent (executable not found). Never raises; never inherits stdin.
     cwd optionally redirects the subprocess (the neutral-cwd usage probes).
+
+    Decodes as UTF-8 with errors="replace" rather than the locale codec
+    (the codex app-server leg's established shape): a CLI emitting bytes
+    the locale codec cannot map -- codex's catalog carries typographic
+    punctuation, undecodable under cp1252 on a native Windows host --
+    otherwise raises UnicodeDecodeError straight through the never-raises
+    contract, from a reader thread the callers cannot guard.
     """
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
             stdin=subprocess.DEVNULL, env=env, cwd=cwd,
+            encoding="utf-8", errors="replace",
         )
         return ("ok" if proc.returncode == 0 else "failed",
                 proc.stdout, proc.stderr, proc.returncode)
@@ -1981,6 +1989,30 @@ def which_all(name: str) -> list[str]:
                     and cand not in hits):
                 hits.append(cand)
     return hits
+
+
+def codex_bin(timeout: float) -> str:
+    """The INVOCABLE codex program path -- the codex twin of claude's
+    candidate arbitration, and for the same two reasons.
+
+    subprocess does not apply PATHEXT to the program name on native
+    Windows (unlike shutil.which), so a bare "codex" raises
+    FileNotFoundError even with an npm-installed codex.cmd on PATH --
+    reported as an ABSENT backend, silently costing the run its only
+    cross-family peer. And the first which_all hit is NOT automatically
+    the invocable one: npm installs an extensionless sh shim beside the
+    .cmd, and candidate_names lists the literal name first, so hits[0]
+    is a non-Win32 image (WinError 193). Probe candidates in PATH order
+    and keep the first that actually runs.
+
+    Falls back to the bare name when nothing runs, so a genuinely absent
+    CLI still reports absent through run_cli's FileNotFoundError branch
+    with its existing message.
+    """
+    for cand in which_all("codex"):
+        if run_cli([cand, "--version"], timeout)[0] == "ok":
+            return cand
+    return "codex"
 
 
 def claude_env(candidate: str, is_wsl: bool, config_dir: str | None = None) -> dict:
@@ -2492,7 +2524,8 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
 
 
 def probe_codex(timeout: float) -> dict:
-    status, out, err, rc = run_cli(["codex", "debug", "models"], timeout)
+    status, out, err, rc = run_cli([codex_bin(timeout), "debug", "models"],
+                                   timeout)
     if status == "absent":
         return {"status": "absent", "error": err, "listed_count": 0,
                 "total_count": 0, "models": []}
@@ -2557,7 +2590,7 @@ def probe_codex_usage(timeout: float) -> dict:
     deadline = max(timeout, 30.0)
     try:
         proc = subprocess.Popen(
-            ["codex", "app-server"], stdin=subprocess.PIPE,
+            [codex_bin(timeout), "app-server"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
             cwd=neutral_probe_cwd())
@@ -19293,7 +19326,7 @@ MANIFEST: 539dc0b4e0571d955d67ef22a9d6723dbbfb51010bc44bd9e5b3d679c96780bd 3235 
 MANIFEST: eadc139927c26b3cf75cc7bd2d3434678f61657f293ad19ad4b4f2b2a12572bd 1796 .cursor/commands/rollback.md
 MANIFEST: c57f8761a0ea0d346d8cd2bf5d904f67dbf8f3a7330bcd1bb37bfd49b314d886 756 .cursor/commands/git.md
 MANIFEST: d496ff9fe5b7cd72bd8a0f4b958948340c4fbbb2df16c2129304b39f8a1b5bdf 19606 .cursor/templates/implementation-plan-template.md
-MANIFEST: 46743f6fcd29a52989002441ed66fd971aaf7c80a918a254be7b57559e8e2bc4 78271 .cursor/bootstrap/probe-models.py
+MANIFEST: 175d425c754e986ef23c27f9f4c79c17dd18fcf892bc4c03b683a7bbf8656244 79888 .cursor/bootstrap/probe-models.py
 MANIFEST: 3d95b287374dc04250f0d43360d1b83156eac2e9581519ca4bd2a5492e7b3ebd 46487 scripts/loop-spawn-wrapper.sh
 MANIFEST: de6bae778ac1e2b008b22f8aae8b11f66f879cd05c04aeb958627e93de16749f 42573 scripts/loop-history-check.py
 MANIFEST: f8e92ff432c4a5effb6723a7a79ff2bf7fa4314ea03b5cdf019cdc8372626bfd 102542 scripts/loop-journal.py
