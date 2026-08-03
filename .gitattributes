@@ -1,0 +1,13 @@
+# Line-ending policy.
+#
+# This repo is developed on Windows with core.autocrlf=true, which rewrites
+# checked-out files to CRLF. Only the files that genuinely break under CRLF
+# are pinned here, so no existing source file gets renormalized.
+
+# Bash refuses CR line endings ("$'\r': command not found"), and
+# scripts/loop-spawn-wrapper.sh is executed directly by the build loop.
+*.sh text eol=lf
+
+# The installer parses this file and verifies every extracted payload
+# against the byte counts and hashes embedded in it.
+bootstrap.md text eol=lf
