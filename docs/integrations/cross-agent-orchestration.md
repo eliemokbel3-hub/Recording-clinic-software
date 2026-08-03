@@ -360,14 +360,17 @@ roles under different Anthropic accounts/orgs:
   claude was the probe-failing Windows npm shim; after the WSL-native install,
   the bogus-dir probe PASSED, profiles enumerated, headless scoped
   `--allowedTools` shell grants worked, and a nested `codex exec` peer spawn
-  worked — the install unlocks the cheap topology (in-executor `/peer-loop`,
-  executor-run smokes), not just profile selection. An agent may run the
+  worked — the install unlocks the full capability surface (executor-run
+  smokes, and the `peer-seat=executor` opt-in's in-executor `/peer-loop` —
+  from v31 the composer seat drives the peer pass by default either way, so
+  the opt-in is what the install unlocks, not the default topology), not just
+  profile selection. An agent may run the
   install only after explicit user confirmation, and only after checking WSL
   node/npm exist (absent → hand the user the install instruction instead). The
   inline `WSLENV` prefix (see the WSL interop caveat below) is a
   workaround-grade fallback for runs that must stay on the Windows shim;
   continuing degraded means default account only, composer-run verification,
-  and no in-executor peer pass.
+  and no in-executor peer pass (the composer-seat default is unaffected).
 - **List profiles:** the **default account** (no `CLAUDE_CONFIG_DIR` prefix;
   identity via the pinned binary's `auth status`) is always a choice — its
   config root may live outside `~/.claude*` (on this host it is Windows-side).

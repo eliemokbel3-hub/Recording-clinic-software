@@ -29,13 +29,23 @@ Look for findings to apply in this order:
    round(s) are plan-review-sourced, say so and point to the planning
    route instead of selecting one. If exactly one eligible round
    exists, use it. If multiple, ask the user which round to apply.
+   Compacted digest rounds (a `Compacted … → findings-[feature].md`
+   marker line under the round header) are `Closed` by construction
+   and never selectable; when an eligible finding references
+   prior-round detail that has been compacted, read the full block
+   from the named sidecar — a missing or partial sidecar is an error
+   to surface, never "no findings".
 
 2. **Conversation fallback.** If no plan file is in scope, the
    Findings Log doesn't exist, or the most recent round in the Log
    is fully applied but a /review output is visible in the current
    conversation, use the conversation output. Before processing,
    write the findings into the Findings Log (creating the section if
-   missing) so /fix can update per-finding state durably.
+   missing) so /fix can update per-finding state durably — but first
+   probe both pair signals and validate the plan+sidecar pair per
+   `/document` Step 6.7's pre-check (the same dual-signal gate
+   `/review` applies before its own append): an invalid pair FAILS
+   CLOSED — surface it instead of importing.
 
 3. **Paste fallback.** If neither source is available, stop and ask
    the user to paste a /review output or run /review first.
@@ -294,7 +304,16 @@ For each confirmed finding:
    verbatim. The invariant — not just "the fix compiled" — is the
    acceptance bar. For ordering invariants ("lock must be first
    inside tx"), check the actual statement order in the resulting
-   code, not just that the call exists.
+   code, not just that the call exists. When the invariant concerns
+   ordering or concurrency, demonstrate it mechanically — always,
+   not only when a check already exists: pin the schedule with a
+   deterministic rendezvous/barrier, forced interleaving, or
+   structural assertion, never scheduler-timing sleeps (a check that
+   passes because a sleep happened to win the race proves nothing).
+   If the finding supplies no suitable check, construct one; if a
+   deterministic check cannot be constructed, stop and surface that
+   the invariant cannot yet be verified — do not accept the fix on
+   generic-suite success (step 8's stop-on-failure applies).
 
 6. **Apply to all Pattern Siblings.** If the finding has Pattern
    Siblings, apply the same fix to every site listed, or explicitly
@@ -304,7 +323,11 @@ For each confirmed finding:
 
 7. **Verify before moving on.** Run the verification step from the
    finding. If the finding has no Verification field, run the
-   project's test or build command on the affected area. If the
+   project's test or build command on the affected area. Exercise
+   every exit path the fix changed — if it altered an error branch,
+   early return, or exception path, drive each changed exit at least
+   once (targeted test or forced-failure run); happy-path-only
+   verification does not verify the fix. If the
    change touches a function signature, return type, or schema,
    additionally re-read each caller listed under Regression Risk
    and confirm it still compiles and passes type checks.
@@ -354,6 +377,44 @@ For each confirmed finding:
    the entries were written into the Log at Step 0 — this step
    updates those entries.
 
+**Independent mechanical LOW batching — the one exception to
+one-at-a-time (proportional verification).** A set of LOW findings MAY
+be applied as a single batch with one aggregate verification pass when
+EVERY member is an independent mechanical LOW: severity LOW only
+(nothing CRIT/HIGH/MED); no Invariant field and no signature, schema,
+or data-shape change; mechanical in nature (copy/typo fixes, dead-code
+removal, import or formatting fixes); and no two members share a
+file or symbol — counting every site a member touches: its target
+file, its own Pattern Siblings sites, and any Regression-Risk callers
+or explicitly-allowed files its finding names (everything Step 2
+point 2 permits it to modify; step 6 applies per member):
+any overlap between two members' site sets disqualifies the
+later-listed member, which falls back to the one-at-a-time path (one
+batch per `/fix` round; overlap never seeds a second batch). Rollback
+isolation is required: before applying, capture an exact restorable
+pre-batch baseline for EVERY site the batch may touch (each member's
+full site set as defined by the eligibility rule above) — file
+existence, full
+byte content, and mode/status state, with staged, unstaged, and
+untracked state each represented (a plain `git diff` is NOT a
+sufficient snapshot: it emits nothing for an untracked file); a
+candidate whose intended hunk cannot be isolated from pre-existing
+uncommitted changes in the same file, or any of whose sites the
+mechanism at hand cannot snapshot restorably, is INELIGIBLE and falls
+back to the one-at-a-time path. Apply the eligible batch — steps 1–6
+above still run per finding; only step 7's verification is aggregated
+into one pass covering every member. If the aggregate verification
+fails: restore batch-owned hunks only — never a whole-file checkout
+or reset — and compare every touched site directly against the
+captured pre-batch baseline, asserting byte-identical content plus
+matching existence and mode/status, before replaying the findings one
+at a time through the normal path (step 8's stop-on-failure applies
+per finding during the replay).
+Step 9's per-finding log entries are retained for every batch member
+(note the batch in `/fix notes`). Everything else — any CRIT/HIGH/MED
+finding, anything carrying an Invariant, signature, or schema change —
+keeps per-finding verification exactly as written above.
+
 ## Step 3 — Wrap up
 Once all confirmed findings are applied (or skipped):
 - summarise what was done by walking the Round in the Findings Log
@@ -371,7 +432,10 @@ Once all confirmed findings are applied (or skipped):
   model-tier rules in the guide — do not retry on the same model
 
 ## What this command does NOT do
-- batch fixes and verify at the end
+- apply CRIT/HIGH/MED, Invariant-carrying, or signature/schema-touching
+  findings in batches — those are always one-at-a-time with per-finding
+  verification; the ONLY batch path is Step 2's independent mechanical
+  LOW batch, under its eligibility and rollback-isolation rules
 - introduce new code paths or abstractions the review did not request
 - expand scope beyond the plan — new features, product decisions, or
   scope expansions go to the plan's `Deferred / Out of Scope` section

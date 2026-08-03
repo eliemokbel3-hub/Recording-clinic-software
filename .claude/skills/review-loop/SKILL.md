@@ -35,9 +35,11 @@ the gates.
 
 ## Before starting
 
-A saved plan with a `Review Findings Log` is strongly recommended: the
-loop reads `Review History` to count rounds and detect `skew=`, and
-`/fix` reads the Findings Log to know what to apply. Without a plan,
+A saved plan with a `Review Findings Log` is strongly recommended:
+`/review` allocates each round's number from it (per its **Detect
+review round** rule), the loop reads `Review History` to detect
+`skew=` and escalation state, and `/fix` reads the Findings Log to
+know what to apply. Without a plan,
 round tracking is conversation-only — keep the cap at 1–2 rounds and
 tell the user the loop cannot track `skew` across sessions.
 
@@ -116,8 +118,10 @@ check. Start at round 1 with the active cap (default 3).
    loop is converged — go to **Convergence actions** and stop.
 
 3. **Run `/fix`** on this round's `Fix-now` / `Fix-now-if-tied`
-   findings, one at a time, with `/fix`'s stop-on-failure and
-   per-finding verification. `/fix`'s Step 1.5 Deferral Confirmation
+   findings per `/fix`'s own application contract — one at a time,
+   with `/fix`'s stop-on-failure and per-finding verification
+   (independent mechanical LOWs may batch per `/fix` Step 2's scoped
+   exception). `/fix`'s Step 1.5 Deferral Confirmation
    Gate fires for any skip candidate — the loop pauses for it on the
    interactive path (headless, `/fix`'s gate auto-disposes AUTO-DISPOSABLE
    candidates and pauses only MUST-PAUSE cases). If `/fix`
@@ -196,8 +200,9 @@ verification attempts on the same finding:
 - **In Codex or Claude Code:** the loop runs on whichever model the CLI
   or IDE extension is configured for. Suggest `/model` to switch to a
   higher-tier model if available, or switching to Claude Code / Cursor
-  for a fresh attempt. Do not try to detect the active model yourself —
-  the user is the source of truth.
+  for a fresh attempt. Do not infer the active model from its own
+  self-report — the user (or an explicit tool/harness readout) is the
+  source of truth.
 
 ## What `/review-loop` does NOT do
 

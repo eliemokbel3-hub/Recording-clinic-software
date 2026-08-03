@@ -104,5 +104,7 @@ If the state is `Completed — Archivable`:
   3. Leave it as is
 - Action the chosen option.
 
+For ANY archive/delete action in this step, probe BOTH pair signals first: a `Compacted … →` marker line in the plan's Review Findings Log, AND an exact-name `findings-[feature].md` companion beside the plan. Either signal makes the pair ONE unit — move both or delete both together, never orphan the sidecar. Fail closed and surface BEFORE archiving or deleting anything when: the marker names a sidecar that is missing, structurally partial, or carrying sidecar-only rounds with no in-plan counterpart (per `/document` Step 6.7's pre-check — the canonical completeness definition; a retained round header alone never passes), or an unmarked companion exists (the first-compaction interrupted state — route through Step 6.7 recovery first). Only a plan with neither signal archives or deletes alone.
+
 If the state is still Active or near-complete:
 - do not offer archive/delete

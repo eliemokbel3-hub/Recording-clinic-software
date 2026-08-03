@@ -16,13 +16,13 @@ Treat this as an independent peer review in a separate agent session. By default
 
 1. **Find the active plan.** Look in `.cursor/plans/` for `plan-*.md` files, excluding anything under `.cursor/plans/completed/`. If exactly one plan exists, use it. If multiple plans exist, prefer the one with the most recent `Last plan sync` timestamp in its `Current State / Handoff Note`. If no plan file is found, fall through to the Step 0 fallback menu below and skip the remaining sub-steps.
 
-2. **Read the latest applicable Findings Log round.** Locate the most recent round block in the plan's `Review Findings Log` section. If that round's `Source:` field is `Cursor peer-review`, `Claude Code peer-review`, or `Codex peer-review` — or a plan peer-review value (`Cursor plan peer-review`, `Claude Code plan peer-review`, or `Codex plan peer-review`; plan-scoped rounds written by the headless plan-review variant of the non-interactive contract below) — skip back to the most recent `/review`-class round instead — peer-review's job is to validate `/review`-class output, not to re-review other peer-reviews, and a plan peer-review round is never a code-validate target. A `/review`-class round is any round whose `Source:` is a `/review` (or `$review`) run OR a propose-only reviewer that writes `/review`-compatible findings: `… simplify` and `… security-review` rounds (carrying `SIMP-`/`SEC-` IDs) ARE `/review`-class and are valid targets to validate; only `… peer-review` rounds (which by construction includes `… plan peer-review`) are skipped. For each finding in the targeted round, read the severity / title / location header, the structured per-finding fields (`Triage:`, `Fix route:`, `Why it matters:`, `Current behaviour:`, `Desired behaviour:`, `Pattern to follow:`, `Pattern siblings:`, `Invariant:`, `Verification:`, `Regression risk:`, `Scope-expansion disposition:`), and the per-finding `/fix decision:`, `/fix notes:`, `/fix date:`, `/fix applied by:` fields. If the plan has no `Review Findings Log` section, the section contains only a `(no findings logged yet)` placeholder, or its only rounds are `… plan peer-review` rounds (plan-scoped critique does not make the plan "already reviewed"), this is a pre-execution (or not-yet-reviewed) plan — set **mode = plan review** (see `## Mode — plan review vs code review` below) rather than treating it as an error. The Step 0 fallback menu (sub-step 6) stays available, so the user can instead pick a code review of working-tree changes (option 3).
+2. **Read the latest applicable Findings Log round.** Locate the most recent round block in the plan's `Review Findings Log` section. If that round's `Source:` field is `Cursor peer-review`, `Claude Code peer-review`, or `Codex peer-review` — or a plan peer-review value (`Cursor plan peer-review`, `Claude Code plan peer-review`, or `Codex plan peer-review`; plan-scoped rounds written by the headless plan-review variant of the non-interactive contract below) — skip back to the most recent `/review`-class round instead — peer-review's job is to validate `/review`-class output, not to re-review other peer-reviews, and a plan peer-review round is never a code-validate target. A `/review`-class round is any round whose `Source:` is a `/review` (or `$review`) run OR a propose-only reviewer that writes `/review`-compatible findings: `… simplify` and `… security-review` rounds (carrying `SIMP-`/`SEC-` IDs) ARE `/review`-class and are valid targets to validate; only `… peer-review` rounds (which by construction includes `… plan peer-review`) are skipped. For each finding in the targeted round, read the severity / title / location header, the structured per-finding fields (`Triage:`, `Fix route:`, `Why it matters:`, `Current behaviour:`, `Desired behaviour:`, `Pattern to follow:`, `Pattern siblings:`, `Invariant:`, `Verification:`, `Regression risk:`, `Scope-expansion disposition:`), and the per-finding `/fix decision:`, `/fix notes:`, `/fix date:`, `/fix applied by:` fields. If the targeted round is a compacted digest (a `Compacted … → findings-[feature].md` marker line under its header), read those full per-finding blocks from the named sidecar instead; a missing or partial sidecar is an error to surface — fail closed, never treat compacted history as absent. If the plan has no `Review Findings Log` section, the section contains only a `(no findings logged yet)` placeholder, or its only rounds are `… plan peer-review` rounds (plan-scoped critique does not make the plan "already reviewed"), this is a pre-execution (or not-yet-reviewed) plan — set **mode = plan review** (see `## Mode — plan review vs code review` below) rather than treating it as an error. The Step 0 fallback menu (sub-step 6) stays available, so the user can instead pick a code review of working-tree changes (option 3).
 
 3. **Read the plan body for context.** From the plan file, read `Goal`, `Design Decisions`, `Critical Constraints`, `Files / Symbols Involved` (under `Key Findings`), `Validation / Verification`, `Current State / Handoff Note`, and `Review History`. These set the reference frame for the review — pattern matches, invariants, in-scope vs out-of-scope work, and what prior reviews already found.
 
 4. **Discover changed files on disk.** Run `git status --short` and `git diff --name-only HEAD`. If the plan's `Files / Symbols Involved` lists explicit files, filter the changed-files list to that set; otherwise show all changed files. **Cross-tool prerequisite:** when `/peer-review` runs in a different tool than the one that ran `/review` (e.g. Cursor `/review` → Claude Code `/peer-review`, Codex `$review` → Cursor `/peer-review`, or any other cross-tool pairing across Cursor / Claude Code / Codex), all tools must point at the same working directory on disk for uncommitted changes to be visible. If the tools sit on separate clones or worktrees, commit and push first, or use the paste fallback (option 2 of the menu below).
 
-5. **Auto-fire the model-diversity warning when same-tool same-model is detected.** Read the targeted round's `Source:` field. If `Source: Cursor` and this `/peer-review` is running in Cursor, OR `Source: Claude Code` and this `/peer-review` is running in Claude Code, OR `Source: Codex` and this `/peer-review` is running in Codex, surface the model-diversity expectation prominently — see the `## Model-diversity expectation (v22)` section below for the full warning text. The warning fires automatically here instead of relying on the user to volunteer model information; the user can override and proceed anyway after seeing it. If the `Source:` indicates a cross-tool run, mark model-diversity OK and continue silently — but note Codex defaults to GPT-5.x (same model family as Cursor's default), so cross-tool Cursor ↔ Codex peer-review delivers the tool diversity but not the cross-family gain; Claude Code is the stronger cross-family pairing for either.
+5. **Classify model-diversity from confirmed model FAMILIES — tool names alone never mark OK.** Read the targeted round's `Source:` field. If `Source: Cursor` and this `/peer-review` is running in Cursor, OR `Source: Claude Code` and this `/peer-review` is running in Claude Code, OR `Source: Codex` and this `/peer-review` is running in Codex, surface the model-diversity expectation prominently — see the `## Model-diversity expectation (v22)` section below for the full warning text. The warning fires automatically here instead of relying on the user to volunteer model information; the user can override and proceed anyway after seeing it. If the `Source:` indicates a cross-tool run, do NOT mark model-diversity OK on that basis alone — a cross-TOOL run is not automatically cross-FAMILY: Cursor and Codex commonly both run GPT-family models, so a Cursor ↔ Codex pairing can deliver tool diversity without the cross-family gain. Confirm the model family of BOTH runs first (probe the tool or ask the user which family each run used — never assume a tool's default model): confirmed cross-family → mark model-diversity OK; confirmed same-family → surface the same warning as the same-tool case (the user may override and proceed); families unconfirmed → report `unknown` in the sub-step 6 summary and ask before proceeding. When both runs were GPT-family, Claude Code is the stronger cross-family pairing for either.
 
 6. **Emit the confirmation summary and proceed prompt.** Print:
    - Mode: code review (a targetable `/review`-class round present) / plan review (no Findings Log, or only plan peer-review rounds — pre-execution plan)
@@ -30,7 +30,7 @@ Treat this as an independent peer review in a separate agent session. By default
    - Target round: round N from `<YYYY-MM-DD>` (or `no targetable round — plan-review mode`)
    - Findings counts: X CRIT / X HIGH / X MED / X LOW; `/fix decision` breakdown (P Pending / A Applied / etc.) — `n/a` in plan-review mode
    - Changed files: N files (list inline if ≤5; otherwise state the count and offer to expand)
-   - Model-diversity: OK (cross-tool) / WARNING (same-tool — see warning below) / n/a (plan-review mode)
+   - Model-diversity: OK (confirmed cross-family) / WARNING (same-tool or confirmed same-family — see warning below) / unknown (families unconfirmed — probe/ask before proceeding) / n/a (plan-review mode)
 
    Then ask: `Proceed with auto-detected inputs? (y / show menu)`. If the user types `show menu` or otherwise declines, switch to the Step 0 fallback menu below.
 
@@ -53,25 +53,24 @@ A second mode token **`PEER_LOOP_PLAN_REVIEW`** may be passed ALONGSIDE `PEER_LO
 When (and only when) `PEER_LOOP_NONINTERACTIVE` leads the control header, apply the 5-point contract below, overriding the interactive Step 0 / Handoff behaviour (validated over 4 fresh headless peer runs in the v27 Stage 4 keystone spike):
 
 1. **Suppress the Step 0 sub-step 6 proceed prompt** (`Proceed with auto-detected inputs? (y / show menu)`) — do not wait for input; proceed directly with the composer-supplied scope.
-2. **Suppress the Step 0 sub-step 5 model-diversity warning** — the composer already enforces cross-family (the peer family differs from the live executor's), so the warning is redundant headless.
+2. **Suppress the Step 0 sub-step 5 model-diversity warning and its family-confirmation ask** — the composer already enforces cross-family (the peer family differs from the live executor's), so both are redundant headless.
 3. **Force path (b)** (always write findings to the `Review Findings Log`) — skip the `## Handoff — choose your path` (a)/(b) choice; there is no live chat to paste into. Append a new Round block per path (b).
 4. **Force a fresh review of the composer-supplied scope, in the token-selected mode.** Without `PEER_LOOP_PLAN_REVIEW` (the default): force a fresh CODE review — review the specific changed files + plan path passed in the invocation, reading those files directly. Do not enter plan-review mode even when the Findings Log is empty, and do not target a stale prior round — always review the current (post-fix) code. This avoids the two traps the interactive auto-detect would otherwise hit: (i) an empty Findings Log routing into plan-review mode; (ii) a later loop iteration targeting the stale prior round instead of the post-fix code (`Step 0 sub-step 2`). With `PEER_LOOP_PLAN_REVIEW`: force a fresh PLAN review of the composer-supplied plan path instead — critique the plan itself across the `## Mode — plan review vs code review` lenses; scope is plan-only and the escape baseline is plan-file-only (the peer touches nothing but the plan file); the headless variant WRITES its plan findings as a normal Findings Log round per path (b) — the interactive-mode "Do NOT write plan findings" rule is explicitly scoped to interactive runs and does not apply under this token.
 5. **Set the correct mode-distinct `Source:` attribution** for the tool this peer actually ran in, per path (b) — never hardcode Cursor. Code mode: `Cursor peer-review` / `Claude Code peer-review` / `Codex peer-review`. Plan-review mode (`PEER_LOOP_PLAN_REVIEW`): `Cursor plan peer-review` / `Claude Code plan peer-review` / `Codex plan peer-review` — the mode-distinct value marks the round plan-scoped for every downstream consumer (`/fix` excludes it; the owning planning session applies it).
 
-Severity labels are non-deterministic across headless peer runs, so the composer converges on finding **presence/verification**, not exact severity counts.
+Severity labels are non-deterministic across headless peer runs, so the composer converges on finding **presence/verification**, not exact severity counts (plan-review rounds refine WHICH verified presence blocks termination — the materiality-based rule in `/peer-loop`'s step 4 — severity counts never decide in either mode).
 
 ## Model-diversity expectation (v22)
 
 `/peer-review` is meant to catch issues the original `/review` missed because the original review was tunnel-visioned, anchored on its own findings, or shared the executor's blind-spot profile. To deliver on that, this command should run on a **different model family** from the one that ran the original `/review` — not just a different tool.
 
-Recommended pairings:
-- Original `/review` ran on Claude Opus (in Claude Code or via Cursor) → run this `/peer-review` on Cursor with **GPT 5.4 high/xhigh**, or as `$peer-review` in Codex on GPT-5.x. Either is cross-family from Opus.
-- Original `/review` ran on Cursor with GPT 5.4 → run this `/peer-review` in Claude Code on **Opus 4.7**.
-- Original `$review` ran in Codex on GPT-5.x → run this `/peer-review` in Claude Code on **Opus 4.7** for cross-family catch-rate. (Codex defaults to GPT-5.x, same family as Cursor; cross-family path is Claude Code.)
+Recommended pairings (family-level — in every case run the peer on the strongest cross-family premium model currently available; probe the tool or ask the user which model is loaded, don't assume):
+- Original `/review` ran on a Claude-family model (in Claude Code or via Cursor) → run this `/peer-review` in Cursor or as `$peer-review` in Codex on a GPT-family premium model. Either is cross-family from Claude.
+- Original `/review` ran on a GPT-family model (in Cursor or Codex) → run this `/peer-review` in Claude Code on a Claude-family premium model for the cross-family catch-rate.
 
-Same-model-family fallback (e.g. /review on Opus → /peer-review on Opus in a different tool) is acceptable only when the cross-family option is unavailable. Tool-only diversity does NOT deliver the catch-rate gain peer-review is designed for — the same model in a different tool keeps the same blind spots.
+Same-model-family fallback (e.g. `/review` and `/peer-review` both on the same Claude-family model in different tools) is acceptable only when the cross-family option is unavailable. Tool-only diversity does NOT deliver the catch-rate gain peer-review is designed for — the same model in a different tool keeps the same blind spots.
 
-If the user does not state which model produced the original /review, ask. Mismatched diversity (e.g. both Opus) is not a blocker, but the user should know peer-review's value is reduced in that case.
+If the user does not state which model produced the original /review, ask. Mismatched diversity (e.g. both runs on the same model family) is not a blocker, but the user should know peer-review's value is reduced in that case.
 
 ## Mode — plan review vs code review
 
@@ -126,6 +125,41 @@ above; each plan finding names the plan section it challenges and a
 concrete suggested change. Run the same Finding Verification filter
 (Step 5): a plan finding must cite the plan section or the `file:line`
 that grounds it, or it is dropped / downgraded.
+
+**Materiality — the plan-mode enum (canonical definition).** Every
+plan finding additionally carries a `Materiality:` label with exactly
+one of the three plan-mode values
+`build-affecting | record-only | invalid`:
+
+- **`build-affecting`** — acting on the finding changes what will be
+  built or how it will be verified: scope, task content or ordering,
+  contracts, constraints, gates, or validation.
+- **`record-only`** — the finding improves the plan's record —
+  wording, provenance, bookkeeping, historical accuracy — without
+  changing what will be built or how it will be verified.
+- **`invalid`** — verification against the plan and the code it names
+  shows the finding is wrong, moot, or already handled.
+
+The peer's label is advisory, never final: the owning planning
+session verifies every finding and may reclassify its materiality
+with a one-line evidence note, always preserving the peer's original
+label beside the reclassification (e.g. `Materiality: record-only
+(peer: build-affecting) — <one-line evidence>`). Correspondence note:
+this three-term enum is the plan-round analogue of the v31 code-round
+triage vocabulary (`docs-only|behavioral|regression|invalid`); the
+two vocabularies never mix on one round — a plan-scoped round uses
+only the plan-mode enum, a code round uses only the code-round
+vocabulary. This is the canonical definition of the plan-mode enum:
+other workflows and the template point here, never restate it.
+
+When the round is consumed by `/peer-loop`'s token-gated plan-review
+mode, the verified labels drive termination: the loop converges on
+zero NEW `build-affecting` findings — never on round 1; `record-only`
+findings are still applied (batched into the round's amendment pass),
+never dropped; and a per-invocation strict-convergence override
+restores zero-findings convergence. `/peer-loop`'s step 4 termination
+check owns the loop mechanics; this skill only labels and logs — the
+composer decides termination.
 
 In this INTERACTIVE plan-review mode, do NOT write plan findings to
 the `Review Findings Log` (`/fix` must never ingest plan critique; the
@@ -324,12 +358,12 @@ Copy the PR-* and PR-REG-* blocks above into the executor's chat session for in-
 
 ### (b) Write PR- findings to the Findings Log [recommended when executor session is gone]
 
-On explicit user opt-in (e.g. the user says "write to log"), append a new Round N+1 block to the plan's `Review Findings Log` with:
+On explicit user opt-in (e.g. the user says "write to log"), FIRST probe both pair signals and validate the plan+sidecar pair per `/document` Step 6.7's pre-check (the canonical definition — the same dual-signal gate `/review` applies before its own append; an invalid pair FAILS CLOSED, writing nothing — this binds the headless forced path (b) too, including zero-finding rounds), then append a new Round block to the plan's `Review Findings Log` — numbered per `/review`'s round-allocation rule (the canonical definition in its **Detect review round** section; do not restate it) — with:
 - `Source:` set to where this `/peer-review` ran, in the mode-distinct form — code-review mode: `Cursor peer-review`, `Claude Code peer-review`, or `Codex peer-review`; token-gated headless plan-review mode (`PEER_LOOP_PLAN_REVIEW`): `Cursor plan peer-review`, `Claude Code plan peer-review`, or `Codex plan peer-review` (mirroring `/review`'s "set the Source line to where it ran"; do not hardcode Cursor). Step 0 sub-step 2's peer-round detection reads exactly these six values, and the plan-review value deliberately ends in `peer-review` so suffix-rule consumers exclude plan rounds even without knowing the specific value.
-- `Round status:` — when X ≥ 1 (at least one PR-* / PR-REG- finding), `Open (X pending)` where X = the count of findings emitted above; when **X = 0** (a converged round with nothing to log — expected for a headless `PEER_LOOP_NONINTERACTIVE` run, where path (b) is forced even with zero findings), write `Round status: Closed` with a one-line `No new findings — converged` note instead of `Open (0 pending)`, so `/peer-loop` and `/fix` read the round as converged rather than open-with-nothing-pending
+- `Round status:` — when X ≥ 1 (at least one PR-* / PR-REG- finding), `Open (X pending)` where X = the count of findings emitted above; when **X = 0** (a round with nothing to log — expected for a headless `PEER_LOOP_NONINTERACTIVE` run, where path (b) is forced even with zero findings), write `Round status: Closed` instead of `Open (0 pending)` so the round is never read as open-with-nothing-pending, with a mode-distinct one-line note: a code round writes `No new findings — converged`; a plan-review round writes `No new findings this round` WITHOUT asserting loop convergence — whether the plan loop terminates is owned by `/peer-loop`'s step 4 (the round-1 floor, the materiality rule, and the strict override), never by this note
 - One full per-finding block per PR-* and PR-REG-* finding, using the same schema as `/review` rounds (per-finding fields documented in `.cursor/templates/implementation-plan-template.md`), preserving the PR- / PR-REG- stable IDs from the review output above and setting `/fix decision: Pending` on each entry
 
-After the write, routing branches on the round's mode-distinct `Source:`. For a code-review round, `/fix` on any of the three tools (Cursor, Claude Code, or `$fix` in Codex) picks up the new round via its existing Step 0 Findings Log path — no paste required. Recommended when the executor session is gone (a new chat, a different day, a different machine) and the in-chat triage benefit is unavailable. A token-gated plan-review round (`… plan peer-review`) is never picked up by `/fix` — its Step 0 selection excludes those rounds; the owning planning session applies the accepted findings as `/review-plan`-style amendments (or via a scoped `/review-plan`), marking per-finding dispositions on the round.
+After the write, routing branches on the round's mode-distinct `Source:`. For a code-review round, `/fix` on any of the three tools (Cursor, Claude Code, or `$fix` in Codex) picks up the new round via its existing Step 0 Findings Log path — no paste required. Recommended when the executor session is gone (a new chat, a different day, a different machine) and the in-chat triage benefit is unavailable. A token-gated plan-review round (`… plan peer-review`) is never picked up by `/fix` — its Step 0 selection excludes those rounds; the owning planning session applies the accepted findings as `/review-plan`-style amendments (or via a scoped `/review-plan`), marking per-finding dispositions on the round (including materiality verification/reclassification per the plan-mode enum — canonical definition in the plan-review output section above).
 
 On code rounds, `/fix` enforces per-finding scope-locking, pattern-sibling propagation, invariant checks, and stop-on-failure verification — do not paste findings back with "fix these issues".
 

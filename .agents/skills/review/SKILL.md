@@ -32,22 +32,37 @@ If a plan is identified:
 - use these as the reference point for the review, not just general code-quality standards
 - flag deviations from the plan's stated decisions or constraints as review findings, not as independent style judgments
 - do not flag patterns that the plan explicitly chose, even if they are unusual — flag them only if the implementation does not match what the plan described
+- if the `Review Findings Log` carries compacted digests (a `Compacted … → findings-[feature].md` marker line under a round header), the full prior-round blocks live in that sidecar — read it when prior-round detail informs this review (🔁 classification, pattern-sibling history). Whenever a marker is present — or an unmarked exact-name `findings-[feature].md` companion exists beside the plan — validate the pair per `/document` Step 6.7's pre-check (the canonical definition — a sidecar that is missing, lacks a referenced round, is structurally partial, or carries a sidecar-only round with no in-plan counterpart all fail it; an unmarked companion routes through Step 6.7 recovery first; a retained round header alone never passes) BEFORE appending this review's round: a failing pair is an ERROR to surface — fail closed, append nothing, never read compacted history as "no findings"
 
 ### Detect review round
 
-Before reviewing, read the plan's `Review History` section.
+Before reviewing, read the plan's `Review Findings Log` and `Review
+History` sections.
 
-Round-counting rules:
-- ignore any placeholder line such as `- (no reviews yet)` when
-  counting entries
+Round allocation (the canonical rule — every findings writer points
+here): the next round number = the highest `### Round N — …` header
+present in the `Review Findings Log` — full rounds and compacted
+digests alike — plus 1. NEVER the `Review History` entry count: the
+two sections legitimately diverge (e.g. plan peer-review rounds log
+findings without a History line), so entry-counting mints duplicate
+round numbers. Rules:
+- if the `Review Findings Log` is absent or has no round headers,
+  fall back to the highest round number named in `Review History`
+  plus 1 (legacy plans logged one-liners before the Findings Log
+  existed); with neither, this is round 1 (ignore placeholder lines
+  such as `- (no reviews yet)` and `- (no findings logged yet)`)
+- if two existing rounds already share a number, surface the
+  duplication and stop — fail closed rather than appending another
+  round over it (`/document`'s compaction pre-check owns
+  normalization)
+- the allocated number is the round's durable IDENTITY; the round-2+
+  behaviours below (Round Classification, the round-2+ baseline rule)
+  key on whether a prior `/review`-class CODE round exists for this
+  work, not on the numeric value
 - if `Review History` does not exist in the plan file, create it
-  before `## Tasks` (with the `(no reviews yet)` placeholder) and
-  treat this as round 1
+  before `## Tasks` (with the `(no reviews yet)` placeholder)
 - only append to `Review History` after the review output is
   complete; never append for an aborted review
-
-If `Review History` contains N real entries (excluding placeholder),
-this review is round N+1.
 
 After producing the review output below, append a one-line entry to
 `Review History` in the plan file using this format:
@@ -445,7 +460,7 @@ each finding below as one of:
 - 🔁 Same family — same root cause as a prior finding, recurring at a
   different site (indicates the prior review missed a Pattern Sibling)
 
-Use the round number detected from `Review History` above.
+Use the round number allocated by the Detect review round rule above.
 
 If most findings are ⚡, the executor is the problem — recommend
 escalating the model. If most are 🔁, the prior review's Pattern
@@ -686,7 +701,11 @@ For each finding, use this structure (omit fields that don't apply):
     call inside the transaction body. Any tx.query.* read of
     membership state must come AFTER this lock returns."
     Optional otherwise.
-  - Verification: how to confirm the fix worked
+  - Verification: how to confirm the fix worked. For Invariant-carrying
+    findings, specify a mechanical check — for ordering/concurrency
+    invariants a deterministic rendezvous/barrier or forced
+    interleaving, never scheduler sleeps — and name the changed exit
+    paths the fix must exercise, so `/fix` Step 2 can run it as written
   - Regression risk: which files, functions, or callers depend on this
     code and could break if it changes
   - Scope-expansion disposition (if applicable): Amend plan now /
@@ -699,8 +718,11 @@ For each finding, use this structure (omit fields that don't apply):
     append)*
 
 LOW entries may be emitted as one-line shorthand carrying the inline
-`Triage:` value plus `/fix decision` (e.g. `- **[LOW]** file:line —
-title — Triage: Fix-now; Decision: Applied`). There is NO standalone
+`Triage:` value plus `/fix decision` — every one-line entry still
+carries its stable `LOW-NNN` ID (e.g. `- **[LOW]** LOW-001:
+file:line — title — Triage: Fix-now; Decision: Applied`); an ID-less
+shorthand is the pre-v30.3 legacy shape, normalized at compaction by
+`/document` Step 6.7, never emitted fresh. There is NO standalone
 `## LOW Triage` section in v22 — the inline `Triage:` field on each
 finding replaces it (per master Critical Constraint #12: no net
 command-file bloat). `/fix` allowed decision values:
@@ -746,7 +768,7 @@ issues themselves are documented above.
 - warnings:
 - executor judgment items:
 - structural quality items:
-- round (from Review History): N
+- round (allocated per Detect review round): N
 - round classification (round 2+): N 🆕 / N ⚡ / N 🔁
 - finding verification: N candidates; M dropped (no matching file:line evidence); K downgraded
 - missed-issue pass: re-read <files/regions>; result: <none | finding IDs>
@@ -796,12 +818,14 @@ runs the matching peer-review workflow next (`/peer-review` in Cursor
 or `$peer-review` in Codex), AND recommend a cross-MODEL-family tool
 for the peer review:
 
-- If this review ran in Cursor on GPT 5.x, recommend `/peer-review` in
-  Claude Code on Opus 4.7 for the strongest cross-family catch-rate.
-- If this review ran in Codex on GPT 5.x, recommend `/peer-review` in
-  Claude Code on Opus 4.7 for the strongest cross-family catch-rate.
-- If this review ran on Claude Opus, recommend `/peer-review` in Cursor
-  on GPT 5.4 high/xhigh or `$peer-review` in Codex on GPT 5.x.
+- If this review ran on a GPT-family model (in Cursor or Codex),
+  recommend `/peer-review` in Claude Code on the strongest Claude-family
+  premium model currently available (probe the tool or ask the user
+  which model is loaded — don't assume) for the strongest cross-family
+  catch-rate.
+- If this review ran on a Claude-family model, recommend `/peer-review`
+  in Cursor or `$peer-review` in Codex on the strongest GPT-family
+  premium model currently available (probe/ask, don't assume).
 - Same-MODEL-family fallback is acceptable only if the cross-family tool
   is unavailable.
 
@@ -809,14 +833,15 @@ Reasoning: same-model reviewers in different tools share the
 executor's blind-spot profile, which defeats the purpose of
 peer-review. Different model families have different blind-spot
 profiles; that's the catch-rate gain peer-review is designed to
-exploit. Tool-only diversity (e.g. Cursor on Opus → Claude Code on
-Opus, or Cursor GPT-family → Codex GPT-family) is weaker than a true
-cross-family peer review.
+exploit. Tool-only diversity (e.g. Cursor and Claude Code both on the
+same Claude-family model, or Cursor GPT-family → Codex GPT-family) is
+weaker than a true cross-family peer review.
 
 Wording: "Findings are non-trivial (≥1 CRIT / ≥2 HIGH / round 2+
 escalating). Recommend running peer review next in the strongest
-cross-model-family tool available, preferably Claude Code on Opus 4.7
-if this review ran on GPT-family. The plan file's Findings Log is
+cross-model-family tool available — e.g. Claude Code on its strongest
+current premium model if this review ran on GPT-family (probe/ask
+which model is loaded, don't assume). The plan file's Findings Log is
 shared between tools so no copy-paste is needed."
 
 If findings are trivial (no CRIT, ≤1 HIGH, no escalation), do not

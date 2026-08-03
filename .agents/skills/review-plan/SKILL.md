@@ -120,6 +120,13 @@ Apply the same **scratch-consumption rule** that `/create-plan` uses:
 - absorb the chosen scratch as an ADDITIONAL planning source only after the user confirms — never silently recognize a scratch, and never mix an unrelated exploration into a native-plan hardening pass
 - remember whether a scratch was consumed, and which file — Step 7 offers to delete only that file after the plan is saved
 
+Before proposing changes, also run `/create-plan` Step 0.3's
+**World-state freshness re-probe + read-only gate dry-run** (the
+canonical definition; do not restate it) against the plan being
+hardened, so the hardened plan's claims and pinned checks are verified
+against the current world state rather than an exploration-time
+snapshot.
+
 Do not write code yet.
 
 ## Parallel critique (where supported)
@@ -233,6 +240,36 @@ Scoped mode does not nest:
    sub-invocation. The scoped hook exists for dispositions recorded by
    OTHER commands against an already-hardened plan, not for a full pass
    amending itself.
+
+## Amendment-application discipline (canonical)
+
+This section is the single source of truth for HOW a plan amendment is
+applied. It governs this workflow's own amendment writes (the full-pass
+and scoped in-place edits of Step 6) and any plan-scoped review round
+applied in the `/review-plan` style — e.g. a `… plan peer-review` round
+from `/peer-loop`. Other workflows point here rather than restating it.
+
+After EACH amendment:
+1. **Confirm the edit landed.** Re-read the amended plan section fresh
+   from disk and confirm a non-empty, intent-matching diff: the change
+   is present and says what the amendment intended. This catches the
+   no-op-replace failure class — an edit whose old and new text
+   silently matched, or whose target text was not found, leaving the
+   plan unchanged while the session believes it amended. After a failed
+   or uncertain edit-tool call, re-verify the on-disk state before
+   re-applying — never assume the retry starts from the text last seen.
+2. **Sweep for contradicted siblings.** Before closing the round (or
+   finalising the pass), search the plan for statements the amendment
+   just contradicted — the same claim restated in another section
+   (Goal, Agreed Scope, Design Decisions, Critical Constraints,
+   Validation, task text, the handoff note) — and reconcile each one:
+   update it, or record why it stands. An amendment that fixes one
+   statement while a sibling still asserts the old contract is how
+   hardened plans ship self-contradictions.
+
+Record the outcome per amendment — landed + siblings reconciled — in
+the round's `/fix notes` (plan-peer rounds) or the Step 7 save
+summary (this workflow's own passes).
 
 ## Step 1 — Reconciliation pass
 Compare the approved plan against:
@@ -474,6 +511,7 @@ Requirements:
 - include enough durable context that a fresh session, review session, or testing session can continue without rediscovering the core reasoning
 - include only code-verified findings; do not paste raw exploration notes or speculative ideas
 - document design decisions with reasoning and rejected alternatives
+- follow the plan template's footer **State-once convention** when placing contracts across plan sections — that footer line is the canonical definition (predicate, scope guard, exceptions, new-plans-only rule); do not restate it here
 - keep the `Current State / Handoff Note` short and operational
 - modular steps with clear task order
 - include progress tracking using:
@@ -513,14 +551,16 @@ now when you can, and use a `Defer` for work that belongs to a later
 plan. A decision point is IN-SCOPE work resolved during THIS execution,
 distinct from a `Defer`, which pushes work to a later plan.
 
-Hardening stage (optional, for large plans): when hardening a large
-executable plan, consider adding a Hardening stage near the end of the
-task list — `/review-loop` → `/simplify` → `/security-review` → route
-findings (trivial → `/fix`; substantial → scoped `/review-plan`) →
-final re-review — as documented in the plan template's `## Tasks`
-section. It belongs on the executable stage / feature plan, not a master
-coordination plan (use a child hardening-stage plan for a master). Keep
-it optional and proportional.
+Hardening stage (standard for multi-phase plans): when hardening a
+multi-phase executable plan, include a Hardening stage near the end of
+the task list by default — `/review-loop` → `/simplify` →
+`/security-review` → route findings (trivial → `/fix`; substantial →
+scoped `/review-plan`) → final re-review — as documented in the plan
+template's `## Tasks` section; its whole-stage fresh-eyes sweep
+catches the cross-phase issues per-phase reviews miss. For a small
+single-phase plan it stays optional and proportional. It belongs on
+the executable stage / feature plan, not a master coordination plan
+(use a child hardening-stage plan for a master).
 
 Make sure the saved plan's `Planning Extraction Summary` is complete and reconciled against:
 - the approved native plan

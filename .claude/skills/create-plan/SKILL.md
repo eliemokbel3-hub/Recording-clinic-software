@@ -190,6 +190,25 @@ If anything significant is missing, unclear, or under-explored (or if /explore w
 When asking clarifying questions, ask them one at a time and provide your recommended answer for each. Wait for my response before asking the next. Walk down the design tree, resolving dependencies one decision at a time.
 
 If you see a simpler, cleaner, or safer approach, flag it before we lock in the plan.
+
+**World-state freshness re-probe + read-only gate dry-run (canonical).**
+Exploration findings age, even within one session. At plan-write time,
+re-verify the world-state claims the plan will rely on: file-level
+claims (each cited file / symbol still exists where the plan says it
+does), cited-file tracked status (tracked vs untracked in git matches
+what the plan assumes), and branch divergence (re-run any cross-branch
+comparison the plan's reasoning depends on rather than trusting an
+earlier probe). Then dry-run the gates: execute each verification
+check the plan will pin ONCE, and record its expected pass/fail
+baseline in the plan's `Validation / Verification` section. This
+dry-run executes READ-ONLY checks only — greps, counts, `--verify`
+modes; a side-effecting pinned command (anything that writes, syncs,
+regenerates, migrates, or deploys) is inspected instead — confirm its
+exact spelling, interpreter, paths, and flags resolve on this host —
+and is NEVER executed during planning. This is the canonical
+definition; `/review-plan` Step 0.5 points here rather than restating
+it.
+
 Only proceed once you are confident the scope is clear and complete.
 
 ## Step 0.5 — Critique Gate (required)
@@ -305,6 +324,9 @@ If it DOES exist:
 
 If the user chooses Rename, go back to Step 1.
 If the user chooses Cancel, stop and confirm nothing was changed.
+
+If the user chooses Overwrite, inspect the existing plan for compaction marker lines (`Compacted … → findings-[chosen-name].md`) BEFORE replacing anything: a marker that names a missing, partial, or otherwise pair-invalid sidecar (e.g. one carrying sidecar-only rounds with no in-plan counterpart) FAILS CLOSED — surface the pair-integrity error (per `/document` Step 6.7's pre-check) and do not archive, delete, or write the replacement until it is resolved — never proceed silently. When the pair is complete, disposition it in the same confirmation: archive the old plan+sidecar pair together (e.g. into `.cursor/plans/completed/`) or delete both — user-confirmed, never silent. An unmarked `findings-[chosen-name].md` companion beside the plan is validated FIRST through the same dual-signal Step 6.7 pre-check: a valid interrupted pair is routed through recovery, then dispositioned as a complete pair; a stray, no-shared-round, or orphan-carrying companion is REFUSED — surface it, never archive it as this plan's pair and never delete it unexamined. A fresh plan NEVER inherits the old sidecar or its rounds; stale findings must not enter the replacement plan.
+
 Only proceed to Step 3 if the user chooses Overwrite or no conflict was found.
 
 ## Step 3 — Write the plan
@@ -315,6 +337,7 @@ Requirements:
 - include enough durable context that a fresh session, review session, or testing session can continue without rediscovering the core reasoning
 - include only code-verified findings; do not paste raw exploration notes or speculative ideas
 - document design decisions with reasoning and rejected alternatives
+- follow the plan template's footer **State-once convention** when placing contracts across plan sections — that footer line is the canonical definition (predicate, scope guard, exceptions, new-plans-only rule); do not restate it here
 - keep the `Current State / Handoff Note` short and operational — it is a status checkpoint, not a narrative summary
 - modular steps
 - clear task order
@@ -355,14 +378,16 @@ now when you can, and use a `Defer` for work that belongs to a later
 plan. A decision point is IN-SCOPE work resolved during THIS execution,
 distinct from a `Defer`, which pushes work to a later plan.
 
-Hardening stage (optional, for large plans): for a large executable
-plan, consider adding a Hardening stage near the end of the task list —
-`/review-loop` → `/simplify` → `/security-review` → route findings
-(trivial → `/fix`; substantial → scoped `/review-plan`) → final
-re-review — as documented in the plan template's `## Tasks` section. Put
-it on the executable stage / feature plan, never on a master
-coordination plan (use a child hardening-stage plan for a master). Keep
-it optional and proportional.
+Hardening stage (standard for multi-phase plans): for a multi-phase
+executable plan, include a Hardening stage near the end of the task
+list by default — `/review-loop` → `/simplify` → `/security-review` →
+route findings (trivial → `/fix`; substantial → scoped `/review-plan`)
+→ final re-review — as documented in the plan template's `## Tasks`
+section; its whole-stage fresh-eyes sweep catches the cross-phase
+issues per-phase reviews miss. For a small single-phase plan it stays
+optional and proportional. Put it on the executable stage / feature
+plan, never on a master coordination plan (use a child hardening-stage
+plan for a master).
 
 The final saved plan must populate the `Planning Extraction Summary` section from the confirmed discussion extraction step.
 

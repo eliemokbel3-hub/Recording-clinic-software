@@ -957,11 +957,15 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
     """Per-account /usage probe: unchanged status/headline behaviour plus
     the structured session/week fields (see the docstring mapping -- exact
     line anchors only; parse failure leaves the fields null alongside the
-    unchanged headline)."""
+    unchanged headline). A timeout/failed first attempt is retried ONCE
+    before degrading: a cold store's first call can pay an OAuth token
+    refresh that overruns the budget, while the retry typically returns
+    in ~2s (observed live 2026-07-23); 'absent' never retries."""
     env = claude_env(pinned, is_wsl, config_dir)
-    status, out, err, _rc = run_cli(
-        [pinned, "-p", "/usage", "--output-format", "text"],
-        max(timeout, 30.0), env, cwd=cwd)
+    cmd = [pinned, "-p", "/usage", "--output-format", "text"]
+    status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
+    if status in ("timeout", "failed"):
+        status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
     result = usage_skipped()
     if status == "timeout":
         result.update(status="timeout", headline=None)

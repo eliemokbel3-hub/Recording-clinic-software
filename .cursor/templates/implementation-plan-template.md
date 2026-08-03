@@ -121,9 +121,13 @@ For each item, state:
 - Last plan sync: [date]
 
 ## Review History
-Each /review invocation appends a one-line entry here. /review uses
-this section to detect which round it is. Ignore the placeholder line
-when counting rounds.
+Each /review invocation appends a one-line entry here. Round NUMBERS
+are never allocated by counting this section's entries — allocation
+follows /review's **Detect review round** rule (the canonical
+definition: the `Review Findings Log`'s round headers, with a legacy
+highest-History-round fallback when the Log has no headers; every
+findings writer follows it). Ignore the placeholder line when reading
+this section.
 
 - (no reviews yet)
 
@@ -156,6 +160,41 @@ round. Code-review rounds (any other `Source:`) keep the normal /fix
 route. The value deliberately ends in `peer-review` so consumers using
 the `… peer-review` suffix rule (e.g. `/peer-review`'s skip-back set)
 exclude plan rounds even when they do not know the specific value.
+
+Plan peer-review rounds also carry materiality: each plan finding
+records a `Materiality:` field with exactly one of
+`build-affecting | record-only | invalid`, and the round header
+carries a one-line summary of the round's verified counts —
+`Materiality: X build-affecting / Y record-only / Z invalid` —
+written or updated by the owning planning session as it verifies the
+round's labels, so `/retro` can trend label inflation across rounds. The enum is defined
+canonically in `/peer-review`'s plan-review mode (**Materiality — the
+plan-mode enum**); this template points there and never restates the
+term definitions.
+
+Closed-round compaction (marker-based, v22 — no schema change; the
+digest grammar below is the canonical definition): `/document` owns
+the compaction move (its Step 6.7 is the canonical procedure — point
+there, never restate it). A compacted round stays in this log as a
+digest keeping its `### Round N — YYYY-MM-DD` header, `Round status:`
+(always `Closed` or `Superseded`), `Source:`, any `Materiality:`
+summary line, and any `Normalized:` mapping line (legacy ID
+assignment — see `/document` Step 6.7) verbatim, then exactly one
+self-describing marker line:
+
+`Compacted YYYY-MM-DD → findings-[feature].md — full per-finding blocks live in that sidecar; treat a missing or partial sidecar as an error, never as "no findings".`
+
+followed by one digest line per finding, of the form
+`- <ID>: file:line — <short title> — <final decision>`. The sidecar
+`findings-[feature].md` sits beside the plan (the name deliberately
+matches neither `plan-*.md` nor `explore-*.md` globs) and the pair is
+ONE lifecycle unit — moved, archived, or deleted together (`/push`
+Step 8 and `merge-to-main` Step 7 enforce this). Open rounds and
+`Review History` never move; a plan with no marker line AND no
+exact-name companion sidecar beside it has no sidecar, and every
+consumer behaves exactly as before (an unmarked companion that does
+exist is the first-compaction interrupted state — `/document`
+Step 6.7 recovers it or fails closed; consumers never ignore it).
 
 - (no findings logged yet)
 
@@ -195,8 +234,8 @@ inline `Triage:` field
 on each entry replaces it (per master Critical Constraint #12: no net
 command-file bloat).
 
-#### LOW-001: `file:line` — short title — Triage: Fix-now; Decision: Applied; applied by: Cursor
-#### LOW-002: `file:line` — short title — Triage: Accept; Decision: Accepted (no benefit to fixing — changing it would diverge from the surrounding file convention); applied by: Claude Code
+- **[LOW]** LOW-001: `file:line` — short title — Triage: Fix-now; Decision: Applied; applied by: Cursor
+- **[LOW]** LOW-002: `file:line` — short title — Triage: Accept; Decision: Accepted (no benefit to fixing — changing it would diverge from the surrounding file convention); applied by: Claude Code
 
 The Round status line is derived/computed:
 - "Open (N pending)" — at least one finding has Decision: Pending
@@ -217,7 +256,16 @@ If this plan may be built with `/execute-loop`, group tasks into
 **phases** intentionally: the loop runs `/review-loop` + a cross-family
 peer pass at each phase boundary, so isolate foundational, security,
 schema, or shared-invariant tasks into their own early phase and batch
-contiguous low-risk tasks together.
+contiguous low-risk tasks together. While grouping, accumulate a
+shared-helpers inventory in `Key Findings` — the helpers, utilities,
+and cross-phase touch points more than one phase will use — so later
+phases reuse them instead of re-inventing them. A phase heading may
+additionally carry the reviewed policy label `[gates: high-auto-ok —
+evidence: <one sentence>]` — written ONLY at planning/hardening time,
+never by an executor mid-run — which under `/execute-loop`'s
+`gates=fix-biased` authorizes composer-seat auto-routing of verified
+in-scope HIGH Fix-now findings for that phase; absent or malformed,
+HIGH pauses (fail-closed).
 
 A task may also be a **decision-point task (optional)**. A
 decision-point task carries a `[decision]` label and its deliverable is
@@ -251,9 +299,13 @@ made, record the outcome inline on the task and mark it 🟩:
   - Decide after: Step 2 load test shows the hit-rate profile
   - Blocks: Step N cache-layer implementation
 
-### Hardening stage (optional, for large plans)
-For a large plan, add a **Hardening stage** near the end of the
-executable task list — a reusable sequence that raises quality before
+### Hardening stage (standard for multi-phase plans)
+For a multi-phase plan, include a **Hardening stage** near the end of
+the executable task list by default. Per-phase reviews see each phase
+in isolation; the stage's whole-stage fresh-eyes sweep over the
+assembled work catches the cross-phase drift and integration issues
+that per-phase convergence misses — that sweep is why the stage is
+default-include. It is a reusable sequence that raises quality before
 the work ships:
 1. run `/review-loop` (or `/review` → `/fix`) to convergence
 2. run `/simplify` (propose-only) — log findings to the Review Findings Log
@@ -264,8 +316,9 @@ the work ships:
    **Scoped mode**)
 5. finish with a final `/review` (or cross-family `/peer-review`) re-check
 
-Keep it optional and proportional — a small plan does not need a formal
-hardening stage. Put the Hardening stage on the executable **stage /
+For a small single-phase plan the stage stays optional and
+proportional — do not add a formal hardening stage where a single
+review pass covers the work. Put the Hardening stage on the executable **stage /
 feature** plan, never on a master coordination plan: a master's tasks
 are stages and it must not be `/execute`d directly, so when a master
 needs hardening, create or use a child hardening-stage plan instead.
@@ -331,3 +384,4 @@ When follow-up work is resumed later:
 *To resume in a new session: open a fresh Agent (Ctrl+I), run /start-session, then run /load-plan*
 *Sections marked (Only if relevant) can be omitted when genuinely not applicable, but never omit decisions, constraints, verification steps, or integration knowledge that a fresh session would otherwise have to rediscover.*
 *For lightweight plans, plans with fewer than 5 tasks, or plans created without a preceding `/explore` discussion, sections with no real content should be marked `N/A — simple feature` rather than padded with placeholder structure.*
+*State-once convention (new plans): state each cross-section contract — a critical constraint, design decision, invariant, or other normative rule — once in its canonical section, and have every other section point to it rather than restate it. Scope guard: this governs cross-section normative duplication only — the Task Specification Standard (in `/create-plan` and `/review-plan`) and task-local detail are untouched, and a plan recording `fast/medium involved` in its Executor tier may keep extra restatement where it helps the fast executor. It applies to new plans as they are written; never retroactively rewrite an existing plan to conform.*
