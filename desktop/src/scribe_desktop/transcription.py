@@ -45,7 +45,6 @@ Constraints honoured (plan Critical Constraints / executor facts):
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -65,9 +64,11 @@ from scribe_desktop.benchmark import (
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
+    SESSION_ID_PATTERN,
     TRANSCRIPT_FILENAME,
     StoreCorruptError,
     StoreWriteError,
+    atomic_write_bytes,
     iter_chunks,
     read_store_header,
     store_has_footer,
@@ -277,7 +278,7 @@ class TranscriptDocument(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: int = 1
-    session_id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    session_id: str = Field(pattern=SESSION_ID_PATTERN)
     created_at: datetime
     model_name: str
     sample_rate: int = Field(gt=0)
@@ -591,6 +592,14 @@ def label_speakers(segment_pcms: list[bytes], *, sample_rate: int = SAMPLE_RATE)
     Fewer than two non-empty segments, or degenerate (identical) features,
     yield a single speaker. Labels are stable: the first segment is always
     ``speaker_1``.
+
+    PAIRED with the inline windowed path in ``transcribe_session`` (round
+    42 LOW-011): the pipeline computes embeddings incrementally per window
+    to bound plaintext, so it cannot call this whole-list wrapper — both
+    sites encode the SAME degenerate-case policy (all ``speaker_1`` when
+    fewer than two non-empty segments / any empty PCM); change them
+    together. Tests exercise this wrapper; the pipeline path is pinned by
+    the windowed-batching tests.
     """
     if not segment_pcms:
         return []
@@ -770,17 +779,9 @@ def write_transcript(
     """
     blob = crypto.encrypt(document.to_bytes())
     transcript_path = session_dir / TRANSCRIPT_FILENAME
-    tmp_path = session_dir / (TRANSCRIPT_FILENAME + ".tmp")
-    try:
-        with tmp_path.open("wb") as stream:
-            stream.write(blob)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(tmp_path, transcript_path)
-    except OSError as exc:
-        raise StoreWriteError(f"failed writing transcript artifact: {exc}") from exc
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    # Round 42 MED-008: the binding temp+fsync+replace idiom is implemented
+    # ONCE (session_store.atomic_write_bytes) for key.dpapi and this file.
+    atomic_write_bytes(transcript_path, blob, error_label="transcript artifact")
     return transcript_path
 
 
@@ -903,6 +904,8 @@ def transcribe_session(
                     # frame): same degradation as the old per-segment path.
                     saw_empty_segment = True
 
+    # Degenerate-case policy mirrors label_speakers — change together
+    # (round 42 LOW-011).
     if np is None or saw_empty_segment or len(embeddings) < 2:
         speakers = [SPEAKER_1] * len(segments)
     else:

@@ -71,6 +71,13 @@ BENCHMARK_TEXT = (
 # arbitrary audio (the benchmark path never touches clinical recordings).
 _WORKER_ENV = "SCRIBE_BENCHMARK_WORKER"
 
+# Round 45 SEC-001 (availability): a hung model subprocess must never pin
+# the benchmark TaskThread forever (the close guard would then refuse
+# window close indefinitely). 10 min per model is ~15x the slowest
+# measured candidate on the dev machine (load + transcribe of the ~45 s
+# sample); a timeout surfaces as a normal benchmark failure.
+_SINGLE_BENCHMARK_TIMEOUT_S: Final = 600.0
+
 
 class OfflineEnvError(RuntimeError):
     """The offline kill-switches are not active where they are required."""
@@ -268,25 +275,32 @@ def run_all(models_root: Path, names: list[str] | None = None) -> list[Benchmark
         results: list[BenchmarkResult] = []
         for name in candidates:
             env = dict(os.environ) | OFFLINE_ENV | {_WORKER_ENV: "1"}
-            proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
-                [
-                    sys.executable,
-                    "-m",
-                    "scribe_desktop.benchmark",
-                    "--single",
-                    name,
-                    "--models-root",
-                    str(models_root),
-                    "--audio",
-                    str(audio_path),
-                    "--audio-seconds",
-                    f"{audio_seconds}",
-                ],
-                env=env,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
+                    [
+                        sys.executable,
+                        "-m",
+                        "scribe_desktop.benchmark",
+                        "--single",
+                        name,
+                        "--models-root",
+                        str(models_root),
+                        "--audio",
+                        str(audio_path),
+                        "--audio-seconds",
+                        f"{audio_seconds}",
+                    ],
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=_SINGLE_BENCHMARK_TIMEOUT_S,
+                )
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError(
+                    f"benchmark subprocess for {name} timed out after "
+                    f"{int(_SINGLE_BENCHMARK_TIMEOUT_S)}s"
+                ) from exc
             if proc.returncode != 0:
                 raise RuntimeError(
                     f"benchmark subprocess for {name} failed: {proc.stderr.strip()}"

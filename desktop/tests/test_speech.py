@@ -325,6 +325,20 @@ class TestSileroVadOffline:
         with pytest.raises(VadModelError, match="UNC"):
             SileroVad(model_path=Path(r"\\evil-host\share\model.onnx"))
 
+    def test_unc_availability_probe_refuses_without_io(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 42 MED-004 (peer-36 pattern sibling): the availability
+        # probe must refuse UNC BEFORE any stat — a UNC-redirected
+        # LOCALAPPDATA must cause zero SMB I/O from the report path.
+        def _boom(self: Path) -> bool:
+            raise AssertionError("stat/is_file reached on a UNC path")
+
+        monkeypatch.setattr(Path, "is_file", _boom)
+        assert vad_model_available(Path(r"\\evil-host\share\model.onnx")) is False
+        monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
+        assert vad_model_available() is False
+
     def test_corrupt_model_raises_vad_model_error(self, tmp_path: Path) -> None:
         # offline env BEFORE any ML import (PR-MED-009/-014 pattern)
         apply_offline_env()

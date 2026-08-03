@@ -729,7 +729,12 @@ class TestTranscriptScreen:
         )
         screen.on_complete()
         assert "Complete failed" in screen.message_label.text()
-        assert "key was kept" in screen.message_label.text()
+        # Round 42 LOW-001: the message states only what THIS action
+        # verified — the sweep may have destroyed the key independently, so
+        # the old unconditional "key was kept" claim was rewritten.
+        assert "No key deletion was performed by this action" in (
+            screen.message_label.text()
+        )
         assert screen.complete_button.isEnabled()  # still actionable
         assert screen.transcript_view.toPlainText() != ""
         screen.deleteLater()
@@ -814,6 +819,95 @@ class TestMainWindow:
         event2 = QCloseEvent()
         window.closeEvent(event2)
         assert event2.isAccepted()
+
+    def test_close_refused_while_recording(self, qapp: Any, tmp_path: Path) -> None:
+        """Round 42 MED-002 (guard-only, pending user ratification): closing
+        mid-recording would kill the daemon capture worker and silently drop
+        the buffered tail of a live consultation — refuse, like the PR6
+        thread guard refuses for a running benchmark."""
+        from PySide6.QtGui import QCloseEvent
+
+        from scribe_desktop.ui.main_window import MainWindow
+
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        for blocked_state in (SessionState.RECORDING, SessionState.PAUSED):
+            controller.state_value = blocked_state
+            event = QCloseEvent()
+            window.closeEvent(event)
+            assert not event.isAccepted(), blocked_state
+        controller.state_value = SessionState.IDLE
+        event2 = QCloseEvent()
+        window.closeEvent(event2)
+        assert event2.isAccepted()
+
+    def test_benchmark_refused_while_session_active(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 42 LOW-002 (guard-only, pending user ratification): the
+        benchmark saturates the CPU for minutes and can starve live capture
+        into a queue-overflow failure — never startable during an active
+        session."""
+        from scribe_desktop.ui.microphone import MicrophoneScreen
+
+        controller = FakeController()
+        screen = MicrophoneScreen(
+            controller,
+            FakeBackend(),
+            benchmark_runner=lambda: pytest.fail("benchmark must not start"),
+        )
+        for active_state in (
+            SessionState.RECORDING,
+            SessionState.PAUSED,
+            SessionState.PROCESSING,
+        ):
+            controller.state_value = active_state
+            screen.on_run_benchmark()
+            assert not screen.is_busy, active_state
+            assert "unavailable while a session is active" in (
+                screen.benchmark_output.toPlainText()
+            )
+        screen.stop_monitor()
+
+    def test_recovered_checkout_crypto_destroyed_on_live_overwrite(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 42 LOW-006: when a live transcript overwrites an open
+        recovered checkout, the checkout's unwrapped in-memory key must be
+        zeroized (its custody callbacks are unreachable; disk custody stays
+        for a post-restart recovery)."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        crypto = SessionCrypto()
+        directory = tmp_path / uuid.uuid4().hex
+        directory.mkdir()
+        outcome = RecoveryOutcome(
+            document=_document(), crypto=crypto, store_finished=True
+        )
+        window._on_recovered((directory, outcome))
+        assert not crypto.destroyed  # checkout open: key usable for custody
+        controller.state_value = SessionState.QUEUED
+        window.session_screen.transcript_ready.emit(_document())
+        qapp.processEvents()
+        assert crypto.destroyed  # overwritten checkout's key copy zeroized
+        # disk custody untouched by the in-memory destroy (no key file was
+        # ever created here — the destroy must not try to touch disk)
+        assert not (directory / KEY_FILENAME).exists()
+        window.close()
 
     def test_live_controller_session_excluded_from_recovery_list(
         self, qapp: Any, tmp_path: Path

@@ -775,6 +775,62 @@ class TestWindowedPipeline:
         # the oversized segment occupied a window by itself
         assert provider.call_pcm_lengths[0] >= int(30.0 * SAMPLE_RATE) * BYTES_PER_SAMPLE
 
+    def test_capitalized_opener_exemption_is_per_segment_not_per_window(
+        self, tmp_path: Path
+    ) -> None:
+        """Round 42 LOW-017 (lens C): `first_in_segment` (the name
+        heuristic's capitalized-opener exemption) must apply to the first
+        word ATTRIBUTED to each segment. A bug applying it only to the
+        window's first word would mark the second segment's opening
+        starter word ("Okay") — and every prior windowed test used
+        lowercase digit-bearing mock words, so it would have passed."""
+        session_dir = tmp_path / ("a7" * 16)
+        pcm = (
+            silence_pcm(1.0)
+            + tone_pcm(1.5)
+            + silence_pcm(1.0)
+            + tone_pcm(1.5)
+            + silence_pcm(0.5)
+        )
+        crypto = _make_store(session_dir, pcm)
+
+        class _ScriptedProvider:
+            """Fixed window-relative words: one for segment 1, two for
+            segment 2 (positions chosen well inside each tone span)."""
+
+            def transcribe_segment(
+                self, pcm: bytes, sample_rate: int
+            ) -> list[TranscribedWord]:
+                def word(text: str, start: float, end: float) -> TranscribedWord:
+                    return TranscribedWord(
+                        text=text,
+                        start_seconds=start,
+                        end_seconds=end,
+                        probability=0.99,
+                    )
+
+                return [
+                    word("hello", 0.5, 0.7),  # segment 1 (lowercase)
+                    word("Okay", 2.8, 3.0),  # segment 2 OPENER: starter word
+                    word("Margaret", 3.1, 3.3),  # segment 2, mid-segment name
+                ]
+
+        document = transcribe_session(
+            session_dir, crypto, _ScriptedProvider(), amplitude_vad
+        )
+        assert len(document.transcript_segments) == 2
+        assert len(document.transcript_segments[0].transcript_words) == 1
+        second = document.transcript_segments[1]
+        texts = [w.word_text for w in second.transcript_words]
+        assert texts == ["Okay", "Margaret"]
+        by_text = {w.word_text: w for w in second.transcript_words}
+        # Segment-2's OPENER is a common starter: exempt from the
+        # capitalized-name mark (would be marked if the exemption were
+        # window-global, since window-globally it is word index 1).
+        assert by_text["Okay"].uncertain is False
+        # A mid-segment capitalized non-starter is name-like: marked.
+        assert by_text["Margaret"].uncertain is True
+
 
 # ---------------------------------------------------------------------------
 # WhisperSpeechProvider guards (no ML stack needed — guards fire first)
@@ -1140,6 +1196,33 @@ class TestControllerTranscription:
             release.set()
             worker.join(timeout=10.0)
         assert controller.state is SessionState.QUEUED  # first run completed
+
+    def test_discard_refused_while_transcribing(self, tmp_path: Path) -> None:
+        # Round 42 MED-003: discard() must honour the same in-flight guard
+        # as transcribe()/mark_queued() — a discard mid-run would destroy
+        # the key under the live transcriber (PR-HIGH-006 family).
+        import threading
+
+        controller, _session_id = self._finished_controller(tmp_path)
+        started = threading.Event()
+        release = threading.Event()
+
+        def slow_transcriber(directory: Path, crypto: SessionCrypto) -> None:
+            started.set()
+            assert release.wait(timeout=10.0)
+
+        worker = threading.Thread(
+            target=lambda: controller.transcribe(slow_transcriber)
+        )
+        worker.start()
+        try:
+            assert started.wait(timeout=10.0)
+            with pytest.raises(SessionActivityError, match="in progress"):
+                controller.discard()
+        finally:
+            release.set()
+            worker.join(timeout=10.0)
+        assert controller.state is SessionState.QUEUED  # run completed intact
 
     def test_mark_queued_refused_while_transcribing(self, tmp_path: Path) -> None:
         # PR-HIGH-008 regression: mark_queued must not bypass the in-flight

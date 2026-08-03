@@ -198,12 +198,12 @@ class RecoveryScreen(QWidget):
 
     def _join_task(self) -> None:
         if self._task is not None:
-            self._task.wait(2000)
+            self._task.finish()
             self._task = None
 
     def _on_recovered(self, payload: object) -> None:
         self._busy = False
-        self._resuming_id = None  # stays in _protected until release_checkouts
+        self._resuming_id = None  # stays in _protected until release_checkout(id)
         self._join_task()
         self.progress_bar.hide()
         self.message_label.setText("Recovered - review the transcript.")

@@ -66,13 +66,12 @@ from scribe_desktop.session_store import (
     store_has_footer,
     sweep_sessions,
 )
-from scribe_desktop.speech import MockSpeechProvider, vad_model_available
+from scribe_desktop.speech import MockSpeechProvider
 from scribe_desktop.transcription import (
     read_transcript,
     recover_session_transcription,
-    resolve_whisper_model,
-    whisper_model_available,
 )
+from scribe_desktop.ui.models import models_ready
 
 REPO = Path(__file__).resolve().parents[2]
 LAUNCHER = Path(sys.executable).parent / "scribe-host.exe"
@@ -89,10 +88,11 @@ pytestmark = [
 
 # Real-ML legs are skip-if-absent for CI (plan: model files never live on
 # runners); everything else in this module runs everywhere on Windows.
-# The gate mirrors production model resolution (Step 13: medium default,
-# small fallback) so a fallback-only machine still runs the proof.
+# The gate IS production readiness (round 42 LOW-013: `models_ready` is
+# the same VAD+resolved-whisper check the app's report uses — the gate
+# can no longer drift from production model resolution).
 requires_ml_models = pytest.mark.skipif(
-    not vad_model_available() or not whisper_model_available(resolve_whisper_model()),
+    not models_ready(),
     reason="local silero + whisper models required (run scripts/setup-models.py)",
 )
 

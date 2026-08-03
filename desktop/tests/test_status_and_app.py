@@ -74,6 +74,35 @@ def test_window_offscreen_smoke(tmp_path) -> None:
     del app
 
 
+def test_sweep_protected_ids_covers_nonterminal_controller_session(tmp_path) -> None:
+    """Round 42 MED-001 (guard-only, pending user ratification): the sweep
+    exemption must include the controller's own session in ANY non-terminal
+    state — a QUEUED transcript open for review must not lose its key at
+    the 24 h boundary mid-review (PR-round-18 PR2 gave recovered checkouts
+    this protection; the live path gets the same)."""
+    from scribe_desktop.app import sweep_protected_ids
+    from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.session import SessionController, SessionState
+
+    controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
+    assert sweep_protected_ids(controller) == frozenset()
+
+    session = controller.start(0)
+    assert session.session_id in sweep_protected_ids(controller)  # state-active
+
+    controller.finish()
+    controller.mark_queued()
+    assert controller.state is SessionState.QUEUED
+    # QUEUED is NOT state-active — the MED-001 widening must still cover it,
+    # and extra ids (recovery checkouts) must pass through untouched.
+    protected = sweep_protected_ids(controller, frozenset({"extra-checkout"}))
+    assert session.session_id in protected
+    assert "extra-checkout" in protected
+
+    controller.discard()  # terminal: protection correctly lapses
+    assert sweep_protected_ids(controller) == frozenset()
+
+
 # ---------------------------------------------------------------------------
 # Step 12: single-instance guard (named mutex; peer round 18 PR4)
 # ---------------------------------------------------------------------------

@@ -313,16 +313,17 @@ class CaptureWorker:
         sink: Callable[[bytes], int],
         *,
         on_failure: Callable[[Exception], None],
-        on_level: Callable[[float], None] | None = None,
         chunk_bytes: int = CHUNK_BYTES,
     ) -> None:
+        # Round 42 MED-007: the never-invoked `on_level` callback parameter
+        # was removed — level metering is poll-based via the `level`
+        # property (the SessionController reads it).
         if chunk_bytes <= 0 or chunk_bytes % SAMPLE_WIDTH != 0:
             raise ValueError("chunk_bytes must be a positive multiple of the sample width")
         self._backend = backend
         self._device_id = device_id
         self._sink = sink
         self._on_failure = on_failure
-        self._on_level = on_level
         self._chunk_bytes = chunk_bytes
         self._queue: queue.Queue[bytes | _SetPaused | _Stop | _Fail] = queue.Queue(
             maxsize=_QUEUE_MAX_BLOCKS

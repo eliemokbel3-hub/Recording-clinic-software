@@ -9,8 +9,13 @@ NEVER logged from here.
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Final
 
 from PySide6.QtCore import QObject, QThread, Signal
+
+# Bounded join used by every screen when dropping a finished task
+# (round 42 LOW-015: single-sourced, was a magic 2000 at three sites).
+_JOIN_TIMEOUT_MS: Final = 2000
 
 
 class TaskThread(QThread):
@@ -22,6 +27,11 @@ class TaskThread(QThread):
     def __init__(self, fn: Callable[[], object], parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._fn = fn
+
+    def finish(self, timeout_ms: int = _JOIN_TIMEOUT_MS) -> None:
+        """Bounded join of a finished/finishing task before dropping the
+        reference (never blocks the GUI thread indefinitely)."""
+        self.wait(timeout_ms)
 
     def run(self) -> None:  # QThread entry point (worker thread)
         try:

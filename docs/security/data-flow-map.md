@@ -66,11 +66,18 @@ the explicit model-setup script (flow 9).
    never on disk, never in logs. Deleting `key.dpapi` is the cryptographic
    deletion of the session (same-user boundary; NTFS unlink residual — see
    the threat model). The microphone screen's idle level monitor feeds the
-   meter only; monitor audio is never stored.
+   meter only; monitor audio is never stored. Accepted same-user
+   deployment residual: a folder-redirected/UNC `%LOCALAPPDATA%` would
+   place `sessions\` (and the model cache) on SMB storage — runtime
+   assumes the local profile; refusing here would block recording
+   entirely, unlike the model paths, which DO refuse UNC before any stat
+   (cheap, report-only).
 
 7. **Local transcription (Phase 2, in-process, zero network).** On Finish,
    chunks are decrypted streamwise → silero-VAD segmentation → faster-whisper
-   (CTranslate2, model `small` per decision D6) with word timestamps →
+   (CTranslate2, model `medium` per D6 as REVISED at the Step 13 gate;
+   `small` stays the visible fallback when the medium snapshot is absent)
+   with word timestamps, transcribed in packed ≤30 s windows →
    uncertainty marks (low-confidence words, numbers, names) → 2-speaker
    labels → `sessions\<id>\transcript.enc`, written atomically under the
    SAME session key. The transcript renders in a display-only view; the
@@ -79,17 +86,22 @@ the explicit model-setup script (flow 9).
    `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
    ML import; models load from explicit local paths with
    `local_files_only=True`; the real-model tests run entirely under the
-   enforced-offline env. The Phase-2 completion gate (plan Step 13) adds
-   the network-stubbed-to-fail transcription test and socket polling
-   during capture and transcription. Env enforcement is the primary
-   proof — socket polling alone can miss short-lived telemetry.
+   enforced-offline env. The Phase-2 Step 13 proof suite added the
+   network-stubbed-to-fail transcription test and socket polling during
+   capture and transcription (landed; the manual completion gate passed
+   2026-08-02). Env enforcement is the primary proof — socket polling
+   alone can miss short-lived telemetry.
 
 8. **Model cache (read-only at runtime).**
    `%LOCALAPPDATA%\ClinikoScribe\models\` — `silero-vad\silero_vad.onnx`
-   (~2 MiB) plus CTranslate2 whisper snapshots (runtime uses
-   `whisper\small`, ~465 MiB; with all four benchmark candidates the cache
-   is ~3.0 GiB). Static program data, no clinical content. Written ONLY by
-   flow 9; runtime processes never write here.
+   (~2 MiB) plus CTranslate2 whisper snapshots (runtime default
+   `whisper\medium`, ~1.43 GiB, with `whisper\small` ~465 MiB as the
+   visible fallback; with all four benchmark candidates the cache is
+   ~3.0 GiB). Static program data, no clinical content. Written ONLY by
+   flow 9; runtime processes never write here. The hardware benchmark
+   additionally synthesizes its fixed NON-CLINICAL sample script to a
+   transient plaintext WAV (Windows SAPI) inside an auto-deleted temp
+   directory — no clinical content ever takes that path.
 
 9. **The ONE sanctioned network flow: `scripts/setup-models.py`
    (setup-time, separate process).** Explicit one-time HTTPS downloads into
@@ -107,8 +119,9 @@ the explicit model-setup script (flow 9).
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the
-  network-stubbed transcription test land with the Step 13 completion
-  gate). Model downloads happen only in the separate setup script.
+  network-stubbed transcription test landed with Step 13, and the manual
+  completion gate's independent monitor run passed 2026-08-02). Model
+  downloads happen only in the separate setup script.
 - No cloud AI services; no telemetry (HF telemetry disabled; onnxruntime
   telemetry off).
 - No clinical content in logs — the whitelist + tripwire now also drops
