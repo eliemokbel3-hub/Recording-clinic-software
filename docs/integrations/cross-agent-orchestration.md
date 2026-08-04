@@ -136,6 +136,41 @@ watcher-exhaustion warning. One-time host setup before running long loops on WSL
   bridge is the fragile piece, not the model. The bridge remains fine for
   interactive work once the mitigations above are applied.
 
+## Host setup — native Windows + Git Bash (2026-08-04)
+
+Verified across a full 9-leg `/execute-loop` phase on native Windows 11 (no WSL), composer =
+Claude Code, executor = `claude -p` through `scripts/loop-spawn-wrapper.sh` in Git Bash,
+peer = `codex exec`. Four host facts that each cost real time to discover:
+
+- **Pin `claude.exe`, never `claude.cmd`.** Both pass the bogus-dir isolation probe and both are
+  `environment_native`, so `probe-models.py` pins whichever comes first on `PATH` — often
+  `…\npm\claude.cmd`. But `.cmd` is **not** executable (`test -x`) under Git Bash, so the spawn
+  wrapper's absolute-and-executable binary validation refuses it and the spawn dies before the
+  child exists. `~\.local\bin\claude.exe` is `-x` and works. Re-verify the pinned binary's
+  `auth status` identity after re-pinning — the default account is per-binary (here it matched).
+- **`flock` does not exist in Git Bash.** The wrapper skips its spawn-lock block entirely when
+  `LOOP_SPAWN_LOCK` is unset, which is the usable configuration; passing the variable makes
+  `flock -n 9` fail and the wrapper refuses with `SPAWN_LOCK_HELD`. Without the lock, the
+  one-live-executor-per-phase invariant rests on the confirmed-dead + probe-for-effects rule
+  (recorded identity dead, role log not growing) before any respawn.
+- **The wrapper exits 4 on every leg, success included.** Its post-`wait` process-group survivor
+  census is a POSIX `ps` pipeline that cannot run here, so each leg ends with
+  `OWNERSHIP: exit-census … refused=capture-failure` and `EXIT:4`. **Exit 4 is not a failure
+  signal on this host.** Classify from the child's own result event (`subtype`, `is_error`), its
+  `VERIFY_OK children=<n>` record, and the `ROLE: handoff` sentinel. Treating exit 4 as failure
+  would have aborted all nine legs of a clean phase.
+- **Desktop gate notices need the `LOOP_JOURNAL_NOTICE_CMD` override.** `loop-journal.py`'s
+  `win32` branch invokes `New-BurntToastNotification`, and BurntToast is a third-party PSGallery
+  module that is not installed — so every MUST-PAUSE notice records `NOTIFY: failed` and the
+  operator learns nothing. The documented override takes an executable receiving title and body
+  as **argv data**, so a small `.cmd` + `.ps1` shim using the native
+  `Windows.UI.Notifications` toast API (AUMID
+  `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`, with a
+  `NotifyIcon` balloon fallback) restores delivery with no third-party install. Bind the
+  parameters with `param([string]$Title,[string]$Body)` so journal values stay data and never
+  enter program text — that preserves the helper's PR-HIGH-003 injection property. Note the
+  variable must be set on each invocation: shell state does not persist between composer calls.
+
 ## Per-CLI headless invocation (verified from live runs)
 
 | CLI | Family | Headless invocation | Auth | Notes / gotchas |

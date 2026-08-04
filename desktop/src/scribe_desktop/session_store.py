@@ -16,13 +16,17 @@ On-disk layout (plan Schema / Data Changes), all under
   is written at Finish so post-Finish truncation is detectable.
 - ``transcript.enc`` — written by the Phase-2 transcription step; this
   module only provides the Complete-ordering primitive that consumes it.
+- ``note.enc`` — written by the Phase-3A note pipeline under the SAME key;
+  likewise only consumed here, by the same Complete-ordering primitive.
 
 Durability ordering (BINDING, plan key-custody decision):
 - ``key.dpapi`` is written atomically (temp + fsync + ``os.replace``)
   BEFORE the first chunk — ``SessionChunkStore.create`` refuses to create
   ``audio.enc`` unless the key blob already exists beside it.
 - Complete: fsync ``transcript.enc`` → verify a decrypt round-trip →
-  THEN delete the key.
+  verify ``note.enc`` when one exists (decrypt, parse, session binding,
+  transcript-digest match) → THEN delete the key. Every failure retains
+  the key, which is what keeps regeneration possible.
 - Discard: delete the key FIRST, then best-effort remove the rest.
 - The 24 h expiry sweep skips sessions the caller reports as live
   (recording/paused/processing — keyed off state, not mtime), destroys
@@ -59,6 +63,7 @@ from pathlib import Path
 from typing import BinaryIO, Final
 
 from cryptography.exceptions import InvalidTag
+from pydantic import ValidationError
 
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
@@ -66,6 +71,9 @@ from scribe_desktop.secure_storage import SessionCrypto
 KEY_FILENAME: Final = "key.dpapi"
 AUDIO_FILENAME: Final = "audio.enc"
 TRANSCRIPT_FILENAME: Final = "transcript.enc"
+# Phase 3A: the generated note artifact, under the SAME session key as audio
+# and transcript, so cryptographic deletion still destroys everything.
+NOTE_FILENAME: Final = "note.enc"
 
 _MAGIC: Final = b"CSS2"
 _FORMAT_VERSION: Final = 1
@@ -560,9 +568,86 @@ def delete_session_key(session_dir: Path) -> None:
     (session_dir / KEY_FILENAME).unlink(missing_ok=True)
 
 
-def complete_session(session_dir: Path, crypto: SessionCrypto) -> None:
+def _resolve_session_identity(session_dir: Path) -> str:
+    """The session id this directory IS, for artifact-binding checks.
+
+    The audio store header is authoritative (written at create time and
+    bound into every chunk's AAD); the directory name is the fallback, since
+    the store layout names every session directory after its id. Fails
+    CLOSED when neither yields a well-formed id — an artifact whose binding
+    cannot be checked must not clear Complete.
+    """
+    audio_path = session_dir / AUDIO_FILENAME
+    if audio_path.exists():
+        try:
+            return read_store_header(audio_path).session_id
+        except (SessionStoreError, OSError):
+            pass  # fall through to the directory name
+    name = session_dir.name
+    if _SESSION_ID_RE.match(name):
+        return name
+    raise StoreCorruptError("session identity is unresolvable; key retained")
+
+
+def _verify_note_for_completion(
+    session_dir: Path, crypto: SessionCrypto, transcript_plain: bytes
+) -> None:
+    """Verify `note.enc` before custody deletion, FAIL-CLOSED and symmetric
+    with the transcript: fsync -> decrypt -> parse -> session binding ->
+    transcript-digest match. Any failure raises, so the caller never reaches
+    `delete_session_key` and regeneration stays possible. A missing note is
+    the normal pre-Phase-3A case and verifies vacuously."""
+    note_path = session_dir / NOTE_FILENAME
+    try:
+        with note_path.open("r+b") as stream:
+            os.fsync(stream.fileno())
+            blob = stream.read()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise StoreWriteError(f"note not durably readable; key retained: {exc}") from exc
+    try:
+        plain = crypto.decrypt(blob)
+    except InvalidTag as exc:
+        raise StoreCorruptError("note failed decrypt verification; key retained") from exc
+    # Deferred import (not a cycle): note.py imports THIS module at import
+    # time for SESSION_ID_PATTERN and atomic_write_bytes, so the note model
+    # and the single digest definition are resolved here, at call time.
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    try:
+        note = GeneratedNote.from_bytes(plain)
+    except ValidationError as exc:
+        raise StoreCorruptError("note artifact is malformed; key retained") from exc
+    if note.session_id != _resolve_session_identity(session_dir):
+        raise StoreCorruptError("note is bound to another session; key retained")
+    if note.transcript_digest != digest_bytes(transcript_plain):
+        raise StoreCorruptError("note does not describe this transcript; key retained")
+
+
+def complete_session(
+    session_dir: Path, crypto: SessionCrypto, *, delete_note: bool = False
+) -> None:
     """Complete ordering (binding): fsync `transcript.enc` -> verify a
-    decrypt round-trip -> THEN delete the key. Any failure keeps the key."""
+    decrypt round-trip -> verify `note.enc` when one exists -> THEN delete
+    the key. Any failure keeps the key.
+
+    The note joins the ordering and fails closed exactly like the
+    transcript. Retaining custody on a bad note is the POINT: the key is
+    what keeps regeneration possible, so completing over an unverifiable
+    note would delete the key, make the transcript unreadable, and destroy
+    the only route to a correct note.
+
+    `delete_note=True` is the clinician's explicit, confirmed
+    "complete without a note" exit — never a silent deletion. The note is
+    unlinked FIRST, and a failed unlink aborts with the key retained rather
+    than completing over a note that is still on disk.
+    """
+    if delete_note:
+        try:
+            (session_dir / NOTE_FILENAME).unlink(missing_ok=True)
+        except OSError as exc:
+            raise StoreWriteError(f"note not removable; key retained: {exc}") from exc
     transcript_path = session_dir / TRANSCRIPT_FILENAME
     try:
         with transcript_path.open("r+b") as stream:
@@ -571,9 +656,10 @@ def complete_session(session_dir: Path, crypto: SessionCrypto) -> None:
     except OSError as exc:
         raise StoreWriteError(f"transcript not durably readable: {exc}") from exc
     try:
-        crypto.decrypt(blob)
+        transcript_plain = crypto.decrypt(blob)
     except InvalidTag as exc:
         raise StoreCorruptError("transcript failed decrypt verification; key retained") from exc
+    _verify_note_for_completion(session_dir, crypto, transcript_plain)
     delete_session_key(session_dir)
     # PR-HIGH-001 (downgraded MED): after successful custody deletion no
     # application-owned object may decrypt the session — destroy the

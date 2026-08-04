@@ -8,7 +8,7 @@ import os
 import struct
 import sys
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -19,6 +19,7 @@ from scribe_desktop.session_store import (
     CLOCK_SKEW_TOLERANCE,
     KEY_FILENAME,
     MAX_RECORD_BYTES,
+    NOTE_FILENAME,
     RECOVERY_WINDOW,
     KeyCustodyError,
     SessionChunkStore,
@@ -400,6 +401,156 @@ class TestDeletionOrdering:
         session_dir, _sid_ = _make_session_dir(tmp_path)
         discard_session(session_dir)  # recovery-screen discard: no unwrapped key
         assert not session_dir.exists()
+
+
+# ------------------------------------------------- note custody at Complete
+
+
+TRANSCRIPT_BODY = b"transcript body"
+
+
+def _completable_session(tmp_path: Path) -> tuple[Path, SessionCrypto]:
+    """A session dir with a transcript that would Complete cleanly on its own."""
+    session_dir, _sid_ = _make_session_dir(tmp_path)
+    crypto = SessionCrypto()
+    (session_dir / "transcript.enc").write_bytes(crypto.encrypt(TRANSCRIPT_BODY))
+    return session_dir, crypto
+
+
+def _write_note(
+    session_dir: Path,
+    crypto: SessionCrypto,
+    *,
+    session_id: str | None = None,
+    transcript_digest: str | None = None,
+) -> None:
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    note = GeneratedNote(
+        session_id=session_id if session_id is not None else session_dir.name,
+        created_at=datetime.now(UTC),
+        template_profile_id="clinic-a",
+        provider_name="extractive-v1",
+        transcript_digest=(
+            transcript_digest
+            if transcript_digest is not None
+            else digest_bytes(TRANSCRIPT_BODY)
+        ),
+        config_digest=digest_bytes(b"config"),
+    )
+    (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(note.to_bytes()))
+
+
+def _digest_of_another_transcript() -> str:
+    from scribe_desktop.note import digest_bytes
+
+    return digest_bytes(b"a superseded transcript")
+
+
+class TestNoteCustodyOnComplete:
+    """Task 1.5: the note joins the Complete ordering and FAILS CLOSED
+    exactly like the transcript. Every failure below must retain the key —
+    custody is what keeps regeneration possible, so completing over an
+    unverifiable note would destroy the only route to a correct one."""
+
+    def test_note_absent_completes(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        complete_session(session_dir, crypto)
+        assert not (session_dir / KEY_FILENAME).exists()
+
+    def test_valid_note_completes_and_survives_on_disk(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto)
+        complete_session(session_dir, crypto)
+        assert not (session_dir / KEY_FILENAME).exists()
+        assert (session_dir / NOTE_FILENAME).is_file()
+        assert crypto.destroyed
+
+    def test_corrupt_ciphertext_retains_the_key(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        (session_dir / NOTE_FILENAME).write_bytes(b"\0" * 64)
+        with pytest.raises(StoreCorruptError, match="note failed decrypt"):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert not crypto.destroyed
+
+    def test_authenticated_but_malformed_note_retains_the_key(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(b'{"nope": 1}'))
+        with pytest.raises(StoreCorruptError, match="malformed"):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert not crypto.destroyed
+
+    def test_note_bound_to_another_session_retains_the_key(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto, session_id=_sid())
+        with pytest.raises(StoreCorruptError, match="another session"):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert not crypto.destroyed
+
+    def test_note_describing_another_transcript_retains_the_key(self, tmp_path: Path) -> None:
+        from scribe_desktop.note import digest_bytes
+
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto, transcript_digest=digest_bytes(b"an older transcript"))
+        with pytest.raises(StoreCorruptError, match="does not describe this transcript"):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert not crypto.destroyed
+
+    def test_note_binding_uses_the_audio_header_when_present(self, tmp_path: Path) -> None:
+        """The header is authoritative: a note carrying the DIRECTORY name
+        while the store says otherwise must not clear Complete."""
+        chunk_path, crypto, sid = _build_store(tmp_path, [b"audio"])
+        session_dir = chunk_path.parent
+        renamed = session_dir.parent / _sid()
+        session_dir.rename(renamed)
+        (renamed / "transcript.enc").write_bytes(crypto.encrypt(TRANSCRIPT_BODY))
+        _write_note(renamed, crypto)  # binds to the NEW directory name
+        with pytest.raises(StoreCorruptError, match="another session"):
+            complete_session(renamed, crypto)
+        assert (renamed / KEY_FILENAME).exists()
+        _write_note(renamed, crypto, session_id=sid)  # binds to the header id
+        complete_session(renamed, crypto)
+        assert not (renamed / KEY_FILENAME).exists()
+
+    def test_unresolvable_session_identity_retains_the_key(self, tmp_path: Path) -> None:
+        session_dir = tmp_path / "not-a-session-id"
+        session_dir.mkdir()
+        (session_dir / KEY_FILENAME).write_bytes(b"\0" * 64)
+        crypto = SessionCrypto()
+        (session_dir / "transcript.enc").write_bytes(crypto.encrypt(TRANSCRIPT_BODY))
+        _write_note(session_dir, crypto, session_id=_sid())
+        with pytest.raises(StoreCorruptError, match="unresolvable"):
+            complete_session(session_dir, crypto)
+        assert (session_dir / KEY_FILENAME).exists()
+
+    def test_explicit_delete_note_then_complete(self, tmp_path: Path) -> None:
+        """The clinician's confirmed 'complete without a note' exit — the note
+        is removed explicitly, never silently dropped by the ordering."""
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto, transcript_digest=_digest_of_another_transcript())
+        complete_session(session_dir, crypto, delete_note=True)
+        assert not (session_dir / NOTE_FILENAME).exists()
+        assert not (session_dir / KEY_FILENAME).exists()
+
+    def test_unlink_failure_retains_the_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto)
+
+        def refuse(self: Path, missing_ok: bool = False) -> None:
+            raise OSError(errno.EACCES, "locked by another process")
+
+        monkeypatch.setattr(Path, "unlink", refuse)
+        with pytest.raises(StoreWriteError, match="not removable"):
+            complete_session(session_dir, crypto, delete_note=True)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert (session_dir / NOTE_FILENAME).exists()
+        assert not crypto.destroyed
 
 
 # ----------------------------------------------------------------- the sweep
