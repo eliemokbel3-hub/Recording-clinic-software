@@ -62,6 +62,9 @@ from scribe_desktop.transcription import (
     TranscriptSegment,
     TranscriptWord,
     WhisperSpeechProvider,
+    # The gain tests pin Task 2.1 at the feature level, not only through
+    # clustering — imported package-private on purpose.
+    _segment_embedding,
     assign_words_to_segments,
     extract_segment_pcm,
     is_name_like_token,
@@ -103,6 +106,50 @@ def tone_pcm(seconds: float, frequency: float = 440.0, amplitude: float = 0.5) -
 
 def silence_pcm(seconds: float) -> bytes:
     return b"\0" * (int(seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE)
+
+
+def comb_pcm(
+    seconds: float,
+    *,
+    amplitude: float = 0.5,
+    rolloff: float = 1.0,
+    fundamental: float = 125.0,
+) -> bytes:
+    """A crude voiced-speech surrogate: a harmonic comb with ``1/k**rolloff``.
+
+    The Task 2.1 gain tests need a signal with real energy in EVERY mel band,
+    so that a level change shifts every band by the SAME constant — which is
+    the nuisance cepstral mean normalisation removes — while ``rolloff``
+    varies spectral tilt the way two speakers differ. Pure tones cannot do
+    this: their band energies are knife-edge functions of where the tone lands
+    in the triangular filterbank, so any frequency change swamps any level
+    change and the fixture stops testing gain at all.
+
+    ``fundamental`` must divide ``SAMPLE_RATE`` evenly so one period can be
+    tiled — that keeps the helper exact and fast enough for the suite.
+    """
+    period_samples = SAMPLE_RATE / fundamental
+    if period_samples != int(period_samples):
+        raise ValueError("fundamental must divide the sample rate evenly")
+    period = int(period_samples)
+    # period // 2 IS the Nyquist harmonic index (SAMPLE_RATE / 2 / fundamental),
+    # so this range already stops below Nyquist for any valid fundamental.
+    harmonics = range(1, period // 2)
+    weights = [k**-rolloff for k in harmonics]
+    scale = amplitude * 32767 / sum(weights)
+    one_period = [
+        int(
+            scale
+            * sum(
+                weight * math.sin(2 * math.pi * k * i / period)
+                for k, weight in zip(harmonics, weights, strict=True)
+            )
+        )
+        for i in range(period)
+    ]
+    count = int(seconds * SAMPLE_RATE)
+    samples = (one_period * (count // period + 1))[:count]
+    return struct.pack(f"<{count}h", *samples)
 
 
 def amplitude_vad(frame: bytes) -> float:
@@ -427,6 +474,56 @@ class TestLabelSpeakers:
 
     def test_empty_segment_pcm_degrades_to_single_speaker(self) -> None:
         assert label_speakers([tone_pcm(1.0), b""]) == [SPEAKER_1, SPEAKER_1]
+
+    def test_gain_shift_leaves_the_embedding_unchanged(self) -> None:
+        """Task 2.1's mechanism, pinned at the feature level.
+
+        A gain ``g`` on the samples scales every power by ``g**2``, so it adds
+        the same constant ``2*ln(g)`` to all 24 log-mel bands. Per-segment
+        cepstral mean normalisation subtracts exactly that constant back out.
+        Without it these two vectors differ by ~4.6 in every band (20 dB).
+        """
+        np = pytest.importorskip("numpy")
+        loud = _segment_embedding(comb_pcm(0.4, amplitude=0.5), np)
+        quiet = _segment_embedding(comb_pcm(0.4, amplitude=0.05), np)
+        assert float(np.abs(loud - quiet).max()) < 0.05
+
+    def test_a_gain_shifted_copy_clusters_with_its_original(self) -> None:
+        """Task 2.1's Done-when: loudness is a nuisance, not an identity.
+
+        The quiet segment is the SAME voice as the loud one, 20 dB down — a
+        speaker who turned away from the microphone. Before normalisation the
+        level offset dominates the tilt difference that actually separates the
+        two voices, and 2-means splits on volume instead.
+        """
+        pytest.importorskip("numpy")
+        loud = comb_pcm(0.4, amplitude=0.5, rolloff=1.0)
+        other = comb_pcm(0.4, amplitude=0.5, rolloff=1.35)
+        quiet = comb_pcm(0.4, amplitude=0.05, rolloff=1.0)
+        assert label_speakers([loud, other, quiet]) == [
+            SPEAKER_1,
+            SPEAKER_2,
+            SPEAKER_1,
+        ]
+
+    def test_two_voices_stay_separable_across_a_level_difference(self) -> None:
+        """The other half of Task 2.1: removing the gain nuisance must not
+        remove the spectral SHAPE difference that distinguishes two voices.
+
+        Each voice appears once loud and once quiet, so clustering on level
+        and clustering on voice give different answers and the test can tell
+        them apart.
+        """
+        pytest.importorskip("numpy")
+        labels = label_speakers(
+            [
+                comb_pcm(0.4, amplitude=0.05, rolloff=1.0),
+                comb_pcm(0.4, amplitude=0.5, rolloff=1.35),
+                comb_pcm(0.4, amplitude=0.5, rolloff=1.0),
+                comb_pcm(0.4, amplitude=0.05, rolloff=1.35),
+            ]
+        )
+        assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_1, SPEAKER_2]
 
 
 # ---------------------------------------------------------------------------

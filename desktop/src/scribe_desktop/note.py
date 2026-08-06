@@ -812,6 +812,166 @@ def is_interrogative(text: str) -> bool:
     return tokens[0] in _AUX_OPENERS and len(tokens) > 1 and tokens[1] in _SUBJECT_TOKENS
 
 
+# ---------------------------------------------------------------------------
+# Role PRESELECTION (plan Task 2.2) — a DEFAULT for the mandatory confirmation
+# in Task 7.5, never an authority.
+#
+# The Critical Constraint this sits next to is that the clinician-owned
+# sections (`assessment`, `diagnosis`, `advice_home_exercise`,
+# `management_plan`) populate ONLY from confirmed-clinician utterances, and
+# that an unresolved or merged clustering leaves them blank rather than
+# guessing. Nothing here can weaken that: it is enforced one layer down by
+# ``ExtractiveNoteProvider._route``, which refuses those sections outright
+# whenever ``NoteRequest.clinician_speaker`` is None.
+#
+# What keeps this a preselection rather than an authority is the RETURN TYPE.
+# ``speaker_role`` hands back a ``SpeakerRolePreselection``, not the ``str``
+# that ``clinician_speaker`` accepts, so reaching the label costs an explicit
+# ``.preselected_clinician_speaker`` — visible at the call site, and not
+# something mypy strict lets a caller skip past. Task 7.5 owns the control
+# that turns a preselection into a confirmed role; no pipeline code may feed
+# this result straight into ``build_note_request``.
+# ---------------------------------------------------------------------------
+
+# Descending order of trust. The weights are a first cut authored against
+# consultation structure, NOT against measured data — Task 2.3 measures role
+# accuracy on labelled human recordings and is what confirms or reverses them.
+_ROLE_QUESTION_WEIGHT: Final = 0.60
+_ROLE_FIRST_SPEAKER_WEIGHT: Final = 0.25
+_ROLE_TALK_TIME_WEIGHT: Final = 0.15
+# Additive smoothing on the question rate: one interrogative utterance is a
+# 100% rate, and without damping a speaker who said a single sentence would
+# outrank a clinician who asked eight questions in twelve turns.
+_ROLE_QUESTION_SMOOTHING: Final = 1.0
+# Float-noise tolerance on the winning margin, NOT a confidence threshold.
+# Two clusters that are genuinely tied can miss exact equality by an ulp or
+# two once the weights are summed, and a preselection decided by float dust
+# is a coin flip wearing a number. There is deliberately no "too close to
+# call" threshold above this: what a real one should be is a question about
+# measured accuracy, which is Task 2.3's to answer.
+_ROLE_TIE_EPSILON: Final = 1e-9
+
+
+class SpeakerEvidence(NamedTuple):
+    """Per-speaker signals behind a preselection — COUNTS AND SECONDS ONLY.
+
+    Deliberately carries no transcript text. A role preselection is exactly
+    the kind of value a UI renders and a diagnostic logs, and the Critical
+    Constraint keeps clinical content out of logs. Candidate QUOTATIONS for
+    the Task 7.5 confirmation control are absent for the same reason — that
+    screen already holds the transcript and can quote from it directly.
+
+    ``question_rate`` is the RAW rate a human would check (``question_count``
+    over ``utterance_count``). Scoring uses a smoothed rate instead; see
+    ``speaker_role``.
+    """
+
+    speaker: str
+    speech_seconds: float
+    talk_time_share: float
+    utterance_count: int
+    question_count: int
+    question_rate: float
+    spoke_first: bool
+    score: float
+
+
+class SpeakerRolePreselection(NamedTuple):
+    """A proposed clinician cluster plus the evidence for it.
+
+    ``preselected_clinician_speaker`` is None when no preselection is
+    possible: an empty transcript, a MERGED clustering with a single speaker
+    label (there is no second cluster to choose against), or a tie between
+    the top two — a tie meaning within ``_ROLE_TIE_EPSILON``, not exact
+    equality.
+    ``margin`` is the winner's score less the runner-up's — Task 7.5 decides
+    how to present a weak one; it is NOT a threshold this function applies.
+    """
+
+    preselected_clinician_speaker: str | None
+    margin: float
+    speaker_evidence: tuple[SpeakerEvidence, ...]
+
+
+def speaker_role(document: TranscriptDocument) -> SpeakerRolePreselection:
+    """Preselect which diarization cluster is the clinician. Pure function.
+
+    Three signals, in descending order of how far they are trusted:
+
+    - **Question-asking rate** (0.60). Clinicians ask, patients answer. This
+      is the signal most specific to the role, so it carries the most weight.
+      Smoothed as ``questions / (utterances + 1)`` for the reason recorded on
+      ``_ROLE_QUESTION_SMOOTHING``.
+    - **First speaker** (0.25). The practitioner starts the recording and
+      usually opens the consultation.
+    - **Talk-time share** (0.15). The weakest, and the only one whose
+      DIRECTION is an assumption rather than an observation: history-taking
+      means the patient talks more, while explanation and exercise
+      instruction mean the clinician does. Weighted to break near-ties, not
+      to decide, and flagged for Task 2.3 to confirm or reverse.
+
+    Segments that transcribed to no text are excluded from both signals, so
+    the two rates are measured over the same population of utterances rather
+    than one counting turns the other cannot see.
+    """
+    speech_seconds: dict[str, float] = {}
+    utterance_count: dict[str, int] = {}
+    question_count: dict[str, int] = {}
+    first_speaker: str | None = None
+    first_start: float | None = None
+
+    for segment in document.transcript_segments:
+        text = reconstruct_span_text(segment.transcript_words)
+        if not text:
+            continue
+        speaker = segment.speaker
+        speech_seconds[speaker] = speech_seconds.get(speaker, 0.0) + max(
+            segment.end_seconds - segment.start_seconds, 0.0
+        )
+        utterance_count[speaker] = utterance_count.get(speaker, 0) + 1
+        question_count[speaker] = question_count.get(speaker, 0) + int(
+            is_interrogative(text)
+        )
+        if first_start is None or segment.start_seconds < first_start:
+            first_start = segment.start_seconds
+            first_speaker = speaker
+
+    total_seconds = sum(speech_seconds.values())
+    evidence: list[SpeakerEvidence] = []
+    for speaker in sorted(utterance_count):
+        utterances = utterance_count[speaker]
+        questions = question_count[speaker]
+        share = speech_seconds[speaker] / total_seconds if total_seconds > 0 else 0.0
+        spoke_first = speaker == first_speaker
+        score = (
+            _ROLE_QUESTION_WEIGHT * (questions / (utterances + _ROLE_QUESTION_SMOOTHING))
+            + _ROLE_FIRST_SPEAKER_WEIGHT * float(spoke_first)
+            + _ROLE_TALK_TIME_WEIGHT * share
+        )
+        evidence.append(
+            SpeakerEvidence(
+                speaker=speaker,
+                speech_seconds=speech_seconds[speaker],
+                talk_time_share=share,
+                utterance_count=utterances,
+                question_count=questions,
+                question_rate=questions / utterances,
+                spoke_first=spoke_first,
+                score=score,
+            )
+        )
+
+    if len(evidence) < 2:
+        # No transcript, or a merged cluster: there is no second cluster to
+        # choose against, so there is nothing to preselect.
+        return SpeakerRolePreselection(None, 0.0, tuple(evidence))
+    ranked = sorted(evidence, key=lambda candidate: candidate.score, reverse=True)
+    margin = ranked[0].score - ranked[1].score
+    if margin <= _ROLE_TIE_EPSILON:
+        return SpeakerRolePreselection(None, margin, tuple(evidence))
+    return SpeakerRolePreselection(ranked[0].speaker, margin, tuple(evidence))
+
+
 class ExtractiveNoteProvider:
     """Cue-matched VERBATIM transcript spans — no generation, no paraphrase.
 
@@ -1281,12 +1441,15 @@ __all__ = [
     "NoteWarningSeverity",
     "SectionOwner",
     "SourceCoords",
+    "SpeakerEvidence",
+    "SpeakerRolePreselection",
     "build_note_request",
     "content_tokens",
     "digest_bytes",
     "is_interrogative",
     "normalise_token",
     "reconstruct_span_text",
+    "speaker_role",
     "text_digest",
     "transcript_digest",
 ]

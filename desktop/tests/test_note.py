@@ -22,6 +22,10 @@ from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
     _FABRICATED_TEXT,
+    # The first-speaker margin test asserts against the WEIGHT, not a copy of
+    # its literal value, so retuning the weight cannot leave the test passing
+    # against a number nothing uses any more.
+    _ROLE_FIRST_SPEAKER_WEIGHT,
     CANONICAL_SECTION_KEYS,
     CANONICAL_SECTIONS,
     CLINICIAN_OWNED_SECTIONS,
@@ -45,12 +49,14 @@ from scribe_desktop.note import (
     NoteUtterance,
     NoteWarning,
     SourceCoords,
+    SpeakerRolePreselection,
     build_note_request,
     content_tokens,
     digest_bytes,
     is_interrogative,
     normalise_token,
     reconstruct_span_text,
+    speaker_role,
     text_digest,
 )
 from scribe_desktop.speech import SAMPLE_RATE
@@ -713,6 +719,245 @@ class TestExtractiveProvider:
     def test_uncued_speech_is_dropped_not_invented(self) -> None:
         chat = _document(texts=(("Terrible traffic on the way in today", SPEAKER_1),))
         assert ExtractiveNoteProvider().generate_sections(_request(document=chat)) == ()
+
+
+SPEAKER_3 = "speaker_3"
+
+
+def _timed_document(turns: tuple[tuple[str, str, float], ...]) -> TranscriptDocument:
+    """A transcript with explicit per-turn DURATIONS and a 1 s gap between
+    turns. `_document`'s turns are all 5 s, which cannot exercise talk-time
+    share; this one can, and it keeps turns in chronological order."""
+    segments: list[TranscriptSegment] = []
+    start = 0.0
+    for text, speaker, seconds in turns:
+        segments.append(
+            TranscriptSegment(
+                start_seconds=start,
+                end_seconds=start + seconds,
+                speaker=speaker,
+                transcript_words=_words(text),  # "" yields no words
+            )
+        )
+        start += seconds + 1.0
+    return TranscriptDocument(
+        session_id=SESSION_ID,
+        created_at=datetime(2026, 8, 4, 9, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(segments),
+    )
+
+
+class TestSpeakerRole:
+    """Task 2.2 — role PRESELECTION. Every assertion here is about a DEFAULT
+    offered to the Task 7.5 confirmation control, never about an authority:
+    the constraint that clinician-owned sections need a CONFIRMED role is
+    enforced by `ExtractiveNoteProvider._route`, and is pinned separately by
+    `test_clinician_owned_sections_stay_blank_without_a_confirmed_role`.
+    """
+
+    def test_preselects_the_question_asking_speaker(self) -> None:
+        document = _timed_document(
+            (
+                ("My left knee has been sore since the weekend", SPEAKER_1, 20.0),
+                ("How far can you walk before it aches?", SPEAKER_2, 5.0),
+                ("Only about ten minutes, then I have to stop", SPEAKER_1, 20.0),
+                ("Does it wake you at night?", SPEAKER_2, 5.0),
+            )
+        )
+        assert speaker_role(document).preselected_clinician_speaker == SPEAKER_2
+
+    def test_question_rate_outranks_both_talk_time_and_speaking_first(self) -> None:
+        """Talk-time share is the weakest signal and the only one whose
+        direction is an assumption — it must not be able to overturn a clear
+        question-asking pattern, even combined with the first-speaker bonus."""
+        document = _timed_document(
+            (
+                ("Margaret says her left knee is not sore", SPEAKER_1, 30.0),
+                ("It started after the gardening on Sunday", SPEAKER_1, 30.0),
+                ("The stairs are the worst part of it", SPEAKER_1, 30.0),
+                ("Where exactly does it hurt?", SPEAKER_2, 3.0),
+                ("Can you point to it for me?", SPEAKER_2, 3.0),
+                ("Is it worse going up or going down?", SPEAKER_2, 4.0),
+            )
+        )
+        result = speaker_role(document)
+        assert result.preselected_clinician_speaker == SPEAKER_2
+        talker = next(e for e in result.speaker_evidence if e.speaker == SPEAKER_1)
+        assert talker.spoke_first
+        assert talker.talk_time_share > 0.8
+
+    def test_first_speaker_decides_an_otherwise_symmetric_transcript(self) -> None:
+        """With no questions and equal talk time, opening the consultation is
+        the only signal left — and it is still only a default."""
+        document = _timed_document(
+            (
+                ("The knee has settled a lot this week", SPEAKER_2, 10.0),
+                ("That matches what the range of motion shows", SPEAKER_1, 10.0),
+            )
+        )
+        result = speaker_role(document)
+        assert result.preselected_clinician_speaker == SPEAKER_2
+        assert result.margin == pytest.approx(_ROLE_FIRST_SPEAKER_WEIGHT)
+
+    def test_a_lone_question_does_not_outrank_a_sustained_asker(self) -> None:
+        """Additive smoothing, pinned. On the RAW rate `speaker_3` scores 1.0
+        against `speaker_2`'s 0.75 and would win; smoothed it is 1/2 against
+        6/9 and loses. A third label also shows the function does not assume
+        exactly two clusters."""
+        turns: list[tuple[str, str, float]] = [
+            ("My shoulder has been aching for a fortnight", SPEAKER_1, 10.0)
+        ]
+        turns += [("The pain is worse at night", SPEAKER_1, 10.0)] * 3
+        turns += [("Where does it catch?", SPEAKER_2, 5.0)] * 6
+        turns += [("On examination the range of motion is limited", SPEAKER_2, 5.0)] * 2
+        turns += [("Shall I book the follow up?", SPEAKER_3, 5.0)]
+        result = speaker_role(_timed_document(tuple(turns)))
+        assert result.preselected_clinician_speaker == SPEAKER_2
+        lone = next(e for e in result.speaker_evidence if e.speaker == SPEAKER_3)
+        assert lone.question_rate == 1.0  # the raw rate really is the highest
+
+    def test_a_merged_single_cluster_preselects_nothing(self) -> None:
+        """The plan's merged-clustering case: one label means there is no
+        second cluster to choose against, so there is nothing to preselect —
+        and it must not fall back to 'the only speaker'."""
+        document = _timed_document(
+            (
+                ("Where does it hurt the most?", SPEAKER_1, 5.0),
+                ("Just here along the joint line", SPEAKER_1, 5.0),
+            )
+        )
+        result = speaker_role(document)
+        assert result.preselected_clinician_speaker is None
+        assert result.margin == 0.0
+        assert [e.speaker for e in result.speaker_evidence] == [SPEAKER_1]
+
+    def test_an_empty_transcript_preselects_nothing(self) -> None:
+        result = speaker_role(_timed_document(()))
+        assert result == SpeakerRolePreselection(None, 0.0, ())
+
+    def test_a_tie_between_the_top_two_preselects_nothing(self) -> None:
+        """A tie is not broken by a coin flip. Two of the three clusters are
+        identical on all three signals — the first-speaker bonus goes to a
+        third, so neither of the tied pair can be separated by it — and the
+        two tied clusters are the top two, so there is no winner to offer."""
+        document = _timed_document(
+            (
+                ("Thanks for coming in today", SPEAKER_3, 2.0),
+                ("Where is the pain worst?", SPEAKER_1, 10.0),
+                ("The knee is stiff first thing", SPEAKER_1, 10.0),
+                ("Where is the pain worst?", SPEAKER_2, 10.0),
+                ("The knee is stiff first thing", SPEAKER_2, 10.0),
+            )
+        )
+        result = speaker_role(document)
+        by_speaker = {e.speaker: e for e in result.speaker_evidence}
+        top_two = sorted((e.score for e in result.speaker_evidence), reverse=True)[:2]
+        assert by_speaker[SPEAKER_1].score == by_speaker[SPEAKER_2].score
+        assert top_two == [by_speaker[SPEAKER_1].score, by_speaker[SPEAKER_2].score]
+        assert result.preselected_clinician_speaker is None
+
+    def test_evidence_reports_per_speaker_counts_and_shares(self) -> None:
+        document = _timed_document(
+            (
+                ("My left knee is sore", SPEAKER_1, 30.0),
+                ("How long has that been going on?", SPEAKER_2, 5.0),
+                ("Since the weekend", SPEAKER_1, 5.0),
+                ("On examination the joint line is tender", SPEAKER_2, 10.0),
+            )
+        )
+        by_speaker = {e.speaker: e for e in speaker_role(document).speaker_evidence}
+        assert by_speaker[SPEAKER_1].utterance_count == 2
+        assert by_speaker[SPEAKER_1].question_count == 0
+        assert by_speaker[SPEAKER_1].speech_seconds == pytest.approx(35.0)
+        assert by_speaker[SPEAKER_1].talk_time_share == pytest.approx(35.0 / 50.0)
+        assert by_speaker[SPEAKER_1].spoke_first
+        assert by_speaker[SPEAKER_2].utterance_count == 2
+        assert by_speaker[SPEAKER_2].question_count == 1
+        assert by_speaker[SPEAKER_2].question_rate == pytest.approx(0.5)
+        assert not by_speaker[SPEAKER_2].spoke_first
+
+    def test_a_segment_that_transcribed_to_nothing_is_excluded(self) -> None:
+        """A word-empty segment carries evidence for neither signal, so it is
+        excluded from BOTH — otherwise it would inflate the turn count and
+        silently depress that speaker's question rate."""
+        spoken = ("Does the stiffness ease with movement?", SPEAKER_2, 5.0)
+        without = _timed_document((("My knee is sore", SPEAKER_1, 5.0), spoken))
+        with_empty = _timed_document(
+            (("My knee is sore", SPEAKER_1, 5.0), spoken, ("", SPEAKER_2, 8.0))
+        )
+        quiet = next(
+            e for e in speaker_role(with_empty).speaker_evidence if e.speaker == SPEAKER_2
+        )
+        assert quiet.utterance_count == 1
+        assert quiet.speech_seconds == pytest.approx(5.0)
+        assert speaker_role(without) == speaker_role(with_empty)
+
+    def test_carries_no_transcript_text(self) -> None:
+        """The evidence is counts and seconds only. A role preselection is
+        exactly what a UI renders and a diagnostic logs, and the Critical
+        Constraint keeps clinical content out of logs — so nothing a speaker
+        said may survive into this value, not even through its repr."""
+        document = _timed_document(
+            (
+                ("Margaret reports tenderness along the joint line", SPEAKER_1, 20.0),
+                ("Where does the tenderness feel worst?", SPEAKER_2, 5.0),
+            )
+        )
+        rendered = repr(speaker_role(document)).lower()
+        # Alphabetic tokens of 4+ characters only: the evidence is full of
+        # floats, so a numeric token like "3" would collide with a score
+        # digit and a short one like "is" with a field name, and neither
+        # collision would mean clinical content had leaked.
+        spoken_tokens = {
+            token
+            for segment in document.transcript_segments
+            for token in content_tokens(reconstruct_span_text(segment.transcript_words))
+            if token.isalpha() and len(token) >= 4
+        }
+        assert "tenderness" in spoken_tokens  # the fixture really is clinical
+        assert not [token for token in spoken_tokens if token in rendered]
+
+    def test_is_a_pure_function(self) -> None:
+        document = _document()
+        before = document.model_dump()
+        assert speaker_role(document) == speaker_role(document)
+        assert document.model_dump() == before
+
+    def test_the_result_is_not_itself_a_speaker_label(self) -> None:
+        """What keeps this a preselection and not an authority: the return
+        type is not the `str` that `clinician_speaker` accepts, so reaching
+        the label costs a visible `.preselected_clinician_speaker` at the call
+        site rather than being passed through by accident."""
+        result = speaker_role(_document())
+        assert not isinstance(result, str)
+        assert isinstance(result.preselected_clinician_speaker, str)
+
+    def test_an_unresolved_preselection_leaves_clinician_owned_sections_blank(
+        self,
+    ) -> None:
+        """The end-to-end consequence: a merged cluster preselects nothing,
+        and feeding that nothing forward keeps every clinician-owned section
+        empty rather than attributing the clinician's sections to the one
+        merged voice."""
+        merged = _timed_document(
+            (
+                (CLINICIAN_DIAGNOSIS, SPEAKER_1, 5.0),
+                ("On examination the range of motion is limited", SPEAKER_1, 5.0),
+            )
+        )
+        result = speaker_role(merged)
+        assert result.preselected_clinician_speaker is None
+        sections = ExtractiveNoteProvider().generate_sections(
+            build_note_request(
+                merged,
+                template_profile_id="clinic-a",
+                config_digest=CONFIG_DIGEST,
+                clinician_speaker=result.preselected_clinician_speaker,
+            )
+        )
+        assert not ({s.section_key for s in sections} & CLINICIAN_OWNED_SECTIONS)
 
 
 class TestMockNoteModelProvider:

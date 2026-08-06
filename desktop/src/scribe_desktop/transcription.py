@@ -506,7 +506,9 @@ def _numpy() -> Any:
 
 def _segment_embedding(pcm: bytes, np: Any, *, sample_rate: int = SAMPLE_RATE) -> Any:
     """24 mel-band log powers + low-band spectral centroid, averaged over
-    non-overlapping 25 ms windows (the D8 decision's feature recipe)."""
+    non-overlapping 25 ms windows (the D8 decision's feature recipe), with
+    the mel part CEPSTRAL-MEAN-NORMALISED per segment so the feature carries
+    spectral shape and not loudness (Phase 3A Task 2.1)."""
     window = int(_EMBED_WINDOW_SECONDS * sample_rate)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     if len(samples) < window:
@@ -536,6 +538,31 @@ def _segment_embedding(pcm: bytes, np: Any, *, sample_rate: int = SAMPLE_RATE) -
 
     mel_power = spectrum @ filterbank.T  # (n, bands)
     log_mel = np.log(mel_power + 1e-10).mean(axis=0)  # (bands,)
+
+    # Per-segment cepstral mean normalisation (Task 2.1). A gain ``g`` on the
+    # samples scales every power by ``g**2``, so it adds the SAME constant
+    # ``2*ln(g)`` to every log-mel band. Subtracting this segment's mean
+    # across bands removes that constant, leaving spectral SHAPE — what
+    # actually distinguishes two voices — and dropping the loudness nuisance
+    # that otherwise lets one loud and one quiet speaker separate as two
+    # clusters (a speaker who turns away from the microphone is the everyday
+    # case). Equivalent to removing the mean per frame and then averaging
+    # over frames, because the two means commute; done on the already-averaged
+    # vector because that is cheaper and identical.
+    #
+    # The removal is exact only while every band sits above the ``1e-10``
+    # floor added above — a band pinned AT the floor does not move with gain,
+    # so its share of the offset survives. That bound is not binding for real
+    # audio: int16 quantisation noise alone puts a mel band around ``1e-8``,
+    # two orders up, and digital silence never reaches here (VAD emits
+    # speech, and both callers refuse empty PCM).
+    #
+    # Only the mel block is normalised. The centroid below is a power RATIO,
+    # so gain cancels there to within its own ``1e-10`` stabiliser — measured
+    # at 1.7e-4 over 20 dB, against 4.61 per un-normalised mel band — and
+    # folding it into this mean would mix two units and reintroduce a level
+    # dependence.
+    log_mel = log_mel - log_mel.mean()
 
     low = freqs <= _EMBED_LOW_BAND_HZ
     low_power = spectrum[:, low].mean(axis=0)
