@@ -29,6 +29,8 @@ from typing import Any, Final
 import pytest
 from pydantic import ValidationError
 
+import scribe_desktop.note_config as note_config_module
+import scribe_desktop.note_fill as note_fill_module
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     DIGEST_PATTERN,
@@ -39,6 +41,7 @@ from scribe_desktop.note import (
     SourceCoords,
 )
 from scribe_desktop.note_config import (
+    _ALLOWED_IN_CLAIM_PUNCT,
     AUTOFILL_RULES_FILENAME,
     CONFIG_FILENAMES,
     MAX_CONFIG_LABEL_CHARS,
@@ -862,11 +865,59 @@ class TestSchemaValidation:
         with pytest.raises(ValidationError, match="could never fire"):
             AutofillRule.model_validate(_rule_data("r1", "?!"))
 
-    def test_expansion_must_be_a_list_not_a_string(self) -> None:
+    # Task 4.0 Done-when: a multi-claim expansion declared as a SINGLE STRING
+    # fails validation with a message NAMING THE FIX. The reader is a
+    # clinician editing JSON, so the message must say "one entry per claim"
+    # and show the list shape — not just refuse the type.
+    def test_expansion_as_a_single_string_fails_naming_the_fix(self) -> None:
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = "Advice given to rest. Ice pack use explained."
+        with pytest.raises(ValidationError, match="one entry per claim") as excinfo:
+            AutofillRule.model_validate(data)
+        message = str(excinfo.value)
+        assert "single string" in message
+        assert "JSON list" in message
+        # The forbidden alternative is named: the app never splits prose.
+        assert "never splits prose" in message
+
+    def test_seed_assertions_as_a_single_string_fails_naming_the_fix(self) -> None:
+        with pytest.raises(ValidationError, match="one entry per claim"):
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["knee"],
+                    "seed_assertions": "Knee inspected. ROM assessed.",
+                }
+            )
+
+    def test_string_expansion_reaches_the_clinician_through_the_loader(
+        self, tmp_path: Path
+    ) -> None:
+        # End-to-end: the fix-naming message survives into the typed loader
+        # error the app surfaces, tagged with the file that needs editing.
+        root = tmp_path / "config"
         data = _rule_data("r1", "home exercise")
         data["expansion"] = "One claim. Another claim."
-        with pytest.raises(ValidationError):
-            AutofillRule.model_validate(data)
+        _write_user_file(
+            root, AUTOFILL_RULES_FILENAME, {"schema_version": 1, "autofill_rules": [data]}
+        )
+        with pytest.raises(NoteConfigInvalidError, match="one entry per claim") as excinfo:
+            load_note_config(root)
+        assert AUTOFILL_RULES_FILENAME in str(excinfo.value)
+
+    def test_region_keyword_with_no_content_tokens_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="could never fire"):
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["?!"],
+                    "seed_assertions": [
+                        {"section_key": "objective_examination", "seed_text": "ROM"}
+                    ],
+                }
+            )
 
     def test_empty_expansion_is_rejected(self) -> None:
         data = _rule_data("r1", "home exercise")
@@ -905,6 +956,374 @@ class TestSchemaValidation:
     def test_unknown_schema_version_is_rejected(self) -> None:
         with pytest.raises(ValidationError):
             AutofillRulesFile.model_validate({"schema_version": 2, "autofill_rules": []})
+
+
+# ---------------------------------------------------------------------------
+# Round 15 PR-HIGH-001 — entry-level atomicity: list shape is not proof of
+# atomicity. One entry carrying two claims, or one claim authored twice,
+# breaks the confirmation-unit = assertion-unit contract at the AUTHORING
+# boundary. All checks are lexical/mechanical — never semantic parsing, and
+# never runtime splitting.
+# ---------------------------------------------------------------------------
+
+
+class TestEntryAtomicity:
+    def test_two_claim_expansion_entry_is_rejected_naming_the_fix(self) -> None:
+        # The peer's exact reproduction: one entry, two claims, one click.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised. Ice pack use explained."]
+        with pytest.raises(ValidationError, match="more than one claim") as excinfo:
+            AutofillRule.model_validate(data)
+        message = str(excinfo.value)
+        assert "one list entry per claim" in message
+        assert "single_claim" in message  # the override is named, not hidden
+
+    def test_exact_duplicate_expansion_entries_are_rejected(self) -> None:
+        data = _rule_data("r1", "ice pack")
+        data["expansion"] = ["Ice pack use explained.", "Ice pack use explained."]
+        with pytest.raises(ValidationError, match="same assertion"):
+            AutofillRule.model_validate(data)
+
+    def test_normalised_duplicate_expansion_entries_are_rejected(self) -> None:
+        # Duplicates under the SINGLE tokenisation source, mirroring the
+        # duplicate-trigger validator: case/punctuation variants are one
+        # assertion.
+        data = _rule_data("r1", "ice pack")
+        data["expansion"] = ["Ice pack use explained.", "ice pack use EXPLAINED"]
+        with pytest.raises(ValidationError, match="same assertion"):
+            AutofillRule.model_validate(data)
+
+    def test_two_claim_seed_text_is_rejected_naming_the_fix(self) -> None:
+        with pytest.raises(ValidationError, match="more than one claim") as excinfo:
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["knee"],
+                    "seed_assertions": [
+                        {
+                            "section_key": "objective_examination",
+                            "seed_text": "Knee inspected. ROM assessed.",
+                        }
+                    ],
+                }
+            )
+        assert "single_claim" in str(excinfo.value)
+
+    def test_duplicate_seed_assertions_are_rejected(self) -> None:
+        seed = {"section_key": "objective_examination", "seed_text": "Knee inspected."}
+        with pytest.raises(ValidationError, match="same assertion"):
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["knee"],
+                    "seed_assertions": [seed, dict(seed)],
+                }
+            )
+
+    def test_two_claim_entry_is_rejected_through_the_loader(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised. Ice pack use explained."]
+        _write_user_file(
+            root, AUTOFILL_RULES_FILENAME, {"schema_version": 1, "autofill_rules": [data]}
+        )
+        with pytest.raises(NoteConfigInvalidError, match="more than one claim"):
+            load_note_config(root)
+
+    # Round 16 PR-MED-001 → the allow-list reframe: separator forms that
+    # leaked through the round-15 deny-list, PLUS novel separators never
+    # tested before. The novel forms are the proof the allow-list closes the
+    # CLASS — they refuse because they do not match "atomic", not because
+    # anyone put them on a list.
+    def test_compact_semicolon_compound_is_rejected(self) -> None:
+        # Round 16's exact reproduction: no space after the semicolon.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised;ice pack use explained."]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_compact_semicolon_seed_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="more than one claim"):
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["knee"],
+                    "seed_assertions": [
+                        {
+                            "section_key": "objective_examination",
+                            "seed_text": "Knee inspected;ROM assessed.",
+                        }
+                    ],
+                }
+            )
+
+    def test_no_space_period_capital_compound_is_rejected(self) -> None:
+        # The round-16 leg-1 adjacent form: "advised.Ice".
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised.Ice pack use explained."]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_novel_colon_joined_compound_is_rejected(self) -> None:
+        # NOVEL separator (never tested before this round): colon join.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised: ice pack use explained"]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_novel_spaced_dash_joined_compound_is_rejected(self) -> None:
+        # NOVEL separator: spaced em-dash clause join.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised — ice pack use explained"]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    # The compound signal must stay NARROW: ordinary atomic assertions —
+    # including a trailing terminator and an internal decimal — are accepted.
+    @pytest.mark.parametrize(
+        "atomic",
+        [
+            "Rest advised.",
+            "Home exercise programme reviewed!",
+            "Take 1.5 mg as prescribed.",
+            "Pain rated 7/10 today.",
+            "Continue exercises; ",  # trailing terminator + whitespace, no further text
+            # Allow-list positions the shape must keep accepting WITHOUT the
+            # override: hyphen compounds/ranges, typographic digit ranges,
+            # digit colons, TERMINAL letter-dot abbreviation chains,
+            # ordinary commas and measurements. (Round 17 removed the
+            # running-on chain: "Take q.i.d. as directed" is now an
+            # override case, tested below.)
+            "ROM 90-110 degrees in the mid-back region.",
+            "10–15 reps each session",
+            "Review at 14:30",
+            "Take paracetamol q.i.d.",
+            "Ice (10 minutes), then reassess",
+            "Grip strength >20 kg, pain <3/10",
+        ],
+    )
+    def test_ordinary_atomic_entries_are_accepted(self, atomic: str) -> None:
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [atomic]
+        rule = AutofillRule.model_validate(data)
+        assert rule.expansion_texts() == (atomic,)
+        PrefillTemplate.model_validate(
+            {
+                "prefill_id": "pf1",
+                "display_name": "Knee",
+                "region_keywords": ["knee"],
+                "seed_assertions": [
+                    {"section_key": "objective_examination", "seed_text": atomic}
+                ],
+            }
+        )
+
+    # The chain allowance must not become a smuggling route: a letter-dot
+    # chain (or any dot) followed by a Capitalised word reads as a sentence
+    # boundary and refuses; so does a single letter-dot pair continuing in
+    # lowercase (it is not a >=2-pair chain).
+    @pytest.mark.parametrize(
+        "smuggle",
+        [
+            "Take q.d. Rest advised",
+            "Vitamin D. rest advised",
+            "Vitamin D. Rest advised",
+        ],
+    )
+    def test_chain_allowance_does_not_smuggle_a_second_claim(self, smuggle: str) -> None:
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [smuggle]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    # Round 17 PR-MED-001 (fix-induced): a letter-dot chain is accepted only
+    # when TERMINAL. Any continuation after the chain-final dot — lowercase,
+    # digit, or capital — is mechanically indistinguishable from a new terse
+    # claim and refuses into the override.
+    def test_chain_lowercase_continuation_is_rejected(self) -> None:
+        # The peer's exact reproduction: frequency claim + treatment claim.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Paracetamol q.i.d. ice applied."]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_chain_digit_continuation_is_rejected(self) -> None:
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Take q.i.d. 3 times daily"]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_chain_continuation_seed_is_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="more than one claim"):
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Wound",
+                    "region_keywords": ["wound"],
+                    "seed_assertions": [
+                        {
+                            "section_key": "treatment_performed",
+                            "seed_text": "Dressing b.i.d. wound reviewed.",
+                        }
+                    ],
+                }
+            )
+
+    def test_unknown_character_fails_closed(self) -> None:
+        # The allow-list's whole point: a separator nobody anticipated (here
+        # a pipe) refuses because it does not match "atomic" — not because
+        # someone added it to a list.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised | ice pack use explained"]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_title_abbreviation_refuses_into_the_override(self) -> None:
+        # "Dr. Smith" is mechanically indistinguishable from a sentence end
+        # (multi-letter word + '.' + space + Capital) — by design it refuses
+        # WITHOUT the override and passes WITH it (the override tests below).
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Advised to see Dr. Smith for review."]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_semicolon_with_space_compound_still_rejected(self) -> None:
+        # Round-15 behaviour retained through the reframe.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = ["Rest advised; ice pack use explained."]
+        with pytest.raises(ValidationError, match="more than one claim"):
+            AutofillRule.model_validate(data)
+
+    def test_running_chain_is_a_single_claim_only_via_the_override(self) -> None:
+        # Round 17: this exact wording was previously in the accepted matrix
+        # — it was pinning the very continuation hole the round closed.
+        # Whether "as directed" continues the claim or starts a new one is
+        # semantic, so the author states it.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [
+            {"assertion_text": "Take q.i.d. as directed", "single_claim": True}
+        ]
+        rule = AutofillRule.model_validate(data)
+        assert rule.expansion_texts() == ("Take q.i.d. as directed",)
+
+    def test_explicit_single_claim_override_is_accepted(self) -> None:
+        # The documented false-refusal case, resolved by the author, not a
+        # parser: an abbreviation inside ONE assertion.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [
+            {"assertion_text": "Advised to see Dr. Smith for review.", "single_claim": True}
+        ]
+        rule = AutofillRule.model_validate(data)
+        assert rule.expansion_texts() == ("Advised to see Dr. Smith for review.",)
+        prefill = PrefillTemplate.model_validate(
+            {
+                "prefill_id": "pf1",
+                "display_name": "Knee",
+                "region_keywords": ["knee"],
+                "seed_assertions": [
+                    {
+                        "section_key": "objective_examination",
+                        "seed_text": "Referred by Dr. Smith. ",
+                        "single_claim": True,
+                    }
+                ],
+            }
+        )
+        assert prefill.seed_assertions[0].single_claim is True
+
+    def test_override_must_be_explicitly_true(self) -> None:
+        # Literal[True]: the author states it; "single_claim": false is not
+        # a valid spelling of an entry object.
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [{"assertion_text": "Rest advised.", "single_claim": False}]
+        with pytest.raises(ValidationError):
+            AutofillRule.model_validate(data)
+
+    def test_override_does_not_bypass_the_duplicate_check(self) -> None:
+        data = _rule_data("r1", "home exercise")
+        data["expansion"] = [
+            "Rest advised",
+            {"assertion_text": "Rest advised.", "single_claim": True},
+        ]
+        with pytest.raises(ValidationError, match="same assertion"):
+            AutofillRule.model_validate(data)
+
+    def test_same_seed_text_in_different_sections_is_accepted(self) -> None:
+        # The duplicate key is (section, normalised text): identical wording
+        # in two sections is two distinct assertions, not a duplicate.
+        prefill = PrefillTemplate.model_validate(
+            {
+                "prefill_id": "pf1",
+                "display_name": "Knee",
+                "region_keywords": ["knee"],
+                "seed_assertions": [
+                    {"section_key": "objective_examination", "seed_text": "Nil noted"},
+                    {"section_key": "outcome_measures", "seed_text": "Nil noted"},
+                ],
+            }
+        )
+        assert len(prefill.seed_assertions) == 2
+
+    # Round 18 PR-MED-001: the residue documentation is BY REFERENCE to the
+    # permissive set, and both sides of that reference are pinned here so it
+    # cannot silently drift — four hand-written residue lists in a row were
+    # falsified by omission.
+    def test_every_in_claim_punctuation_member_is_accepted_mid_claim(self) -> None:
+        # Each member of the set is accepted at an arbitrary mid-claim
+        # position in BOTH authoring models. This is the mechanical fact the
+        # residue text points at: any of these characters can sit between
+        # two claims, by design, because legitimate clinical wording needs
+        # them. Narrowing the set without revisiting the residue text (or
+        # vice versa) fails here.
+        for member in sorted(_ALLOWED_IN_CLAIM_PUNCT):
+            entry = f"Rest advised {member} ice applied"
+            data = _rule_data("r1", "home exercise")
+            data["expansion"] = [entry]
+            rule = AutofillRule.model_validate(data)
+            assert rule.expansion_texts() == (entry,), member
+            PrefillTemplate.model_validate(
+                {
+                    "prefill_id": "pf1",
+                    "display_name": "Knee",
+                    "region_keywords": ["knee"],
+                    "seed_assertions": [
+                        {"section_key": "objective_examination", "seed_text": entry}
+                    ],
+                }
+            )
+
+    def test_residue_documentation_is_by_reference_not_enumeration(self) -> None:
+        # Both modules must carry the by-reference residue form: naming the
+        # SET as the source of truth (not a prose list of familiar
+        # separators) and the complete-by-construction marker. A future
+        # edit that reverts to a hand enumeration loses the reference and
+        # fails here.
+        config_src = Path(note_config_module.__file__).read_text(encoding="utf-8")
+        fill_src = Path(note_fill_module.__file__).read_text(encoding="utf-8")
+        assert "COMPLETE-BY-CONSTRUCTION" in config_src
+        assert "COMPLETE-BY-CONSTRUCTION" in fill_src
+        # note_fill never imports the set, so any occurrence there is the
+        # documentation reference itself.
+        assert "_ALLOWED_IN_CLAIM_PUNCT" in fill_src
+        # note_config: definition + code use + at least one doc reference.
+        assert config_src.count("_ALLOWED_IN_CLAIM_PUNCT") >= 3
+
+    def test_override_entries_survive_canonical_round_trip(self) -> None:
+        # `_canonical_config` re-validates from serialized field data; the
+        # override must round-trip byte-stably or the generation boundary
+        # would refuse a config the loader accepted.
+        rule_data = _rule_data("r1", "home exercise")
+        rule_data["expansion"] = [
+            "Ice pack use explained.",
+            {"assertion_text": "Advised to see Dr. Smith.", "single_claim": True},
+        ]
+        config = NoteConfig(autofill_rules=(AutofillRule.model_validate(rule_data),))
+        rebuilt = NoteConfig.model_validate_json(config.to_bytes())
+        assert rebuilt == config
+        assert rebuilt.config_digest() == config.config_digest()
 
 
 # ---------------------------------------------------------------------------

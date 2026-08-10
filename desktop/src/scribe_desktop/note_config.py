@@ -89,6 +89,7 @@ from pydantic import (
     Field,
     StringConstraints,
     ValidationError,
+    field_validator,
     model_validator,
 )
 from pydantic_core import PydanticSerializationError
@@ -317,23 +318,222 @@ class TemplateProfile(BaseModel):
 # Expansions and seeds are authored as explicit LISTS of atomic assertions
 # (Task 4.0's principle, honoured from the first schema version): runtime
 # decomposition of clinical prose would itself be an unverified inference.
-# The tuple type refuses a bare string outright; Task 4.0 adds the
-# fix-naming message on top.
+# The tuple type refuses a bare string outright; the ``mode="before"``
+# validators below (Task 4.0) turn that refusal into a message that NAMES
+# THE FIX, because the person reading it is a clinician editing JSON, not a
+# developer reading a pydantic type error.
 # ---------------------------------------------------------------------------
+
+
+def _refuse_prose_blob(value: object, field_name: str, example: str) -> object:
+    """Task 4.0's fix-naming refusal of a single-string authoring mistake.
+
+    This catches the OUTER-shape mistake only — a whole field authored as one
+    string instead of a list. Entry-LEVEL atomicity (one entry carrying two
+    claims, or one claim authored twice) is enforced separately by the
+    rounds-15/16 guards: the ``_is_atomic_shape`` allow-list plus the
+    duplicate checks in ``AutofillRule`` / ``PrefillSeedAssertion`` /
+    ``PrefillTemplate``.
+    Runtime decomposition of clinical prose is forbidden either way, so the
+    only correct response is to send the author back to the file with
+    instructions. Everything that is not a bare string falls through to the
+    normal tuple validation.
+    """
+    if isinstance(value, str | bytes):
+        raise ValueError(
+            f"{field_name} is a single string; it must be a JSON list of atomic "
+            f"assertions, one entry per claim — for example {example}. This app "
+            "never splits prose into claims at runtime (splitting would itself "
+            "be an unverified inference), so each claim must be authored as its "
+            "own list entry."
+        )
+    return value
+
+
+# Rounds 15-16 (PR-HIGH-001, PR-MED-001): list shape is not proof of
+# atomicity — and two review rounds proved a DENY-list of separator forms is
+# not either: each round found a separator the previous list missed (". " in
+# round 15; ";" without a space in round 16; ".Capital" in round 16's
+# verification). This is the semantic-surface lesson (docs/lessons.md,
+# 2026-08-10: confine the whole surface with an allow-list minus explicit
+# exceptions; never enumerate specific forms) applied to authoring: an entry
+# is accepted as ONE claim only if EVERY character matches the conservative
+# single-claim shape below, so any separator this code has never heard of —
+# a colon, a dash, an interpunct, a fullwidth stop, anything — fails CLOSED
+# into the fix-naming message and the explicit per-entry ``single_claim``
+# override. The shape is purely LEXICAL and positional: no sentence-meaning
+# inference and no word-list of known abbreviations (a shape rule may permit
+# an internal '.' in specific mechanical positions; it may never name words).
+#
+# The shape, exactly (what a human author may rely on):
+# - letters (any script), decimal digits, plain spaces;
+# - in-claim punctuation  , ( ) / % ' " + & ° = < > ~  and curly quotes;
+# - ASCII hyphen with a letter/digit on BOTH sides (mid-back, X-ray, 90-110);
+#   any other dash only BETWEEN digits (10–15) — a spaced or word-joining
+#   dash is a clause joiner and refuses;
+# - '.' between digits (1.5), or inside a letter-dot abbreviation chain of
+#   at least two single-letter pairs (q.i.d., e.g.) — and the chain must END
+#   the entry (its final dot is the trailing terminator). ANY text after the
+#   chain-final dot — lowercase, digit, or Capital — refuses (round 17: the
+#   continuation-vs-new-claim distinction is semantic, so "q.i.d. as
+#   directed" needs the override and "Dr. Smith" refuses, both by design);
+# - ':' between digits (14:30);
+# - a trailing run of  . ! ? ; : …  (and their fullwidth forms) ends the
+#   entry and joins nothing.
+#
+# Residue, COMPLETE-BY-CONSTRUCTION rather than enumerated. A hand-written
+# residue list has now been falsified FOUR times (rounds 15-18: each prose
+# enumeration omitted a reachable class), which is the semantic-surface
+# lesson (docs/lessons.md, 2026-08-10) applied to the DOCUMENTATION itself:
+# the residue is defined by REFERENCE to the shape's own permissive
+# branches, so it cannot be under-stated by omission again. The residue is:
+#
+#   two independently-confirmable claims joined ONLY by material the shape
+#   accepts — that is, joined through ANY permissive branch above with no
+#   caught separator present: EVERY member of ``_ALLOWED_IN_CLAIM_PUNCT``
+#   at any position (slash, plus, ampersand, parentheses, quotes, comma,
+#   operators, ... — the SET is the source of truth, not this sentence),
+#   plain words/conjunctions and spaces, hyphen-between-alphanumerics, and
+#   digit-boundary adjacency — plus an author mis-marking a genuine
+#   compound ``single_claim``.
+#
+# Every one of those characters and positions is accepted BY DESIGN:
+# legitimate clinical wording needs them (mmol/L, 3/10, drug + drug, A&E,
+# (2x), 50%, <3/10, 90°, ~10 reps, quoted patient speech), and telling a
+# join apart from that wording would require the semantic parsing this
+# project forbids. The compensating controls for the WHOLE residue are
+# Phase 7's per-assertion confirmation UI (the clinician sees and confirms
+# the exact wording) and Phase 5's checking stage — which must not be
+# assumed to semantically decompose entries either; it checks, it does not
+# split. ``test_note_config`` pins BOTH sides mechanically: every member of
+# ``_ALLOWED_IN_CLAIM_PUNCT`` is accepted mid-claim (so narrowing the set
+# without revisiting this text fails a test), and this comment's
+# by-reference form is itself asserted. The emitters never split, join, or
+# deduplicate either way.
+_ALLOWED_IN_CLAIM_PUNCT: Final[frozenset[str]] = frozenset(",()/'\"%&+°=<>~‘’“”")
+_TERMINAL_PUNCT: Final[frozenset[str]] = frozenset(".!?;:…。！？；：")
+
+
+def _abbreviation_chain_dot(entry: str, index: int) -> bool:
+    """True when the ``'.'`` at ``index`` is an INTERIOR dot of a letter-dot
+    abbreviation chain (>= 2 single-letter pairs: q.i.d., e.g.).
+
+    Single-letter pairs only — a multi-letter word before the dot ("Dr.",
+    "advised.") always reads as a sentence end. Interior means the dot binds
+    a following single letter that is itself dotted; the chain's FINAL dot
+    is not this function's to allow — it passes only through
+    ``_is_atomic_shape``'s trailing-terminator branch, i.e. the chain must
+    END the entry. Round 17 (fix-induced) removed the continuation
+    allowance that used to sit here: whether text after "q.i.d. " is the
+    same claim running on or a second terse claim is a SEMANTIC question,
+    so any continuation — lowercase, digit, or Capital — now fails closed
+    into the explicit per-entry override.
+    """
+    if index == 0 or not entry[index - 1].isalpha():
+        return False
+    if index >= 2 and entry[index - 2].isalnum():
+        return False
+    after = entry[index + 1 : index + 2]
+    return after.isalpha() and entry[index + 2 : index + 3] == "."
+
+
+def _is_atomic_shape(text: str) -> bool:
+    """True when every character of ``text`` matches the single-claim shape
+    documented above. Anything else — known or unforeseen — is not atomic
+    and fails closed at the caller."""
+    entry = text.strip()
+    last = len(entry) - 1
+    for index, ch in enumerate(entry):
+        if ch.isalpha() or ch.isdecimal() or ch == " " or ch in _ALLOWED_IN_CLAIM_PUNCT:
+            continue
+        if ch == "-":
+            if 0 < index < last and entry[index - 1].isalnum() and entry[index + 1].isalnum():
+                continue
+            return False
+        if ch in _TERMINAL_PUNCT:
+            if all(c in _TERMINAL_PUNCT or c == " " for c in entry[index:]):
+                continue  # trailing terminator run — ends the entry
+            if (
+                ch in {".", ":"}
+                and 0 < index < last
+                and entry[index - 1].isdecimal()
+                and entry[index + 1].isdecimal()
+            ):
+                continue  # decimal / time / ratio
+            if ch == "." and _abbreviation_chain_dot(entry, index):
+                continue
+            return False
+        if unicodedata.category(ch) == "Pd":
+            if 0 < index < last and entry[index - 1].isdecimal() and entry[index + 1].isdecimal():
+                continue  # digit range with a typographic dash (10–15)
+            return False
+        return False  # any character outside the allowed surface
+    return True
+
+
+def _atomicity_message(owner: str, entry_label: str, override_hint: str) -> str:
+    return (
+        f"{owner}: {entry_label} does not match the conservative single-claim "
+        "shape, so it may contain more than one claim (extra sentences, an "
+        "internal ';' or ':', a dash between words, or unusual punctuation). "
+        "Author one list entry per claim, in plain wording with a single "
+        f"trailing terminator. If this really is ONE assertion, {override_hint} "
+        "— the app never splits prose into claims at runtime, so the split (or "
+        "the explicit override) must be authored."
+    )
+
+
+class SingleClaimEntry(BaseModel):
+    """An expansion entry the author EXPLICITLY marks as one assertion
+    despite not matching the atomic shape (rounds 15-16's authoring-time
+    control). ``single_claim`` is ``Literal[True]`` with no default: the
+    author must write ``"single_claim": true`` in the file — the override is
+    a per-entry human statement, never ambient. It exempts the entry from
+    the ``_is_atomic_shape`` check ONLY; text bounds and the duplicate check
+    still apply."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    assertion_text: _AssertionText
+    single_claim: Literal[True]
 
 
 class AutofillRule(BaseModel):
     """One trigger phrase -> a list of atomic assertion texts, all landing in
     one canonical section. Phase 4's matcher is bound by the Critical
     Constraint: a matched trigger may only ever turn each expansion entry
-    into a proposal, never an insertion."""
+    into a proposal, never an insertion.
+
+    Entry atomicity (rounds 15-16): a bare-string entry is accepted only
+    when it MATCHES the conservative single-claim shape
+    (``_is_atomic_shape`` — an allow-list, so unforeseen separators fail
+    closed; override via ``SingleClaimEntry``), and two entries that are
+    the same assertion under the single shared normalisation are refused —
+    a repeated entry would become two separately-confirmable proposals of
+    one claim.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     rule_id: str = Field(pattern=_ID_PATTERN)
     section_key: NoteSectionKey
     trigger_phrase: _TriggerText
-    expansion: tuple[_AssertionText, ...] = Field(min_length=1)
+    expansion: tuple[_AssertionText | SingleClaimEntry, ...] = Field(min_length=1)
+
+    @field_validator("expansion", mode="before")
+    @classmethod
+    def _expansion_is_authored_list(cls, value: object) -> object:
+        return _refuse_prose_blob(
+            value, "expansion", '["Advice given to rest.", "Ice pack use explained."]'
+        )
+
+    def expansion_texts(self) -> tuple[str, ...]:
+        """Entry texts in authored order, override entries unwrapped — what
+        the emitter maps one-to-one onto proposals."""
+        return tuple(
+            entry if isinstance(entry, str) else entry.assertion_text
+            for entry in self.expansion
+        )
 
     @model_validator(mode="after")
     def _check_trigger(self) -> Self:
@@ -343,14 +543,62 @@ class AutofillRule(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_expansion_atomicity(self) -> Self:
+        seen: dict[tuple[str, ...], int] = {}
+        for position, entry in enumerate(self.expansion, start=1):
+            if isinstance(entry, str):
+                if not _is_atomic_shape(entry):
+                    raise ValueError(
+                        _atomicity_message(
+                            f"rule {self.rule_id}",
+                            f"expansion entry {position}",
+                            'replace the entry with {"assertion_text": "...", '
+                            '"single_claim": true}',
+                        )
+                    )
+                text = entry
+            else:
+                text = entry.assertion_text
+            key = content_tokens(text)
+            earlier = seen.get(key)
+            if earlier is not None:
+                raise ValueError(
+                    f"rule {self.rule_id}: expansion entries {earlier} and {position} "
+                    "are the same assertion once normalised — a repeated entry would "
+                    "become two separately-confirmable proposals of one claim; remove "
+                    "the duplicate"
+                )
+            seen[key] = position
+        return self
+
 
 class PrefillSeedAssertion(BaseModel):
-    """One atomic assertion of a prefill seed, bound to its section."""
+    """One atomic assertion of a prefill seed, bound to its section.
+
+    ``single_claim`` (rounds 15-16) is the seed-side per-entry override: it
+    exempts a legitimately-shaped single assertion from the
+    ``_is_atomic_shape`` allow-list only — a human statement in the file,
+    defaulting off.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     section_key: NoteSectionKey
     seed_text: _AssertionText
+    single_claim: bool = False
+
+    @model_validator(mode="after")
+    def _check_atomicity(self) -> Self:
+        if not self.single_claim and not _is_atomic_shape(self.seed_text):
+            raise ValueError(
+                _atomicity_message(
+                    f"seed for section {self.section_key}",
+                    "seed_text",
+                    'set "single_claim": true on this seed',
+                )
+            )
+        return self
 
 
 class PrefillTemplate(BaseModel):
@@ -364,6 +612,48 @@ class PrefillTemplate(BaseModel):
     display_name: _LabelText
     region_keywords: tuple[_TriggerText, ...] = Field(min_length=1)
     seed_assertions: tuple[PrefillSeedAssertion, ...] = Field(min_length=1)
+
+    @field_validator("seed_assertions", mode="before")
+    @classmethod
+    def _seeds_are_an_authored_list(cls, value: object) -> object:
+        return _refuse_prose_blob(
+            value,
+            "seed_assertions",
+            '[{"section_key": "objective_examination", "seed_text": "Knee inspected."}]',
+        )
+
+    @model_validator(mode="after")
+    def _check_keywords(self) -> Self:
+        # The AutofillRule trigger rule, applied to detection keywords: a
+        # keyword with no content tokens under the module's one shared
+        # normalisation could never match a transcript and would silently
+        # disable the region it was meant to detect.
+        for keyword in self.region_keywords:
+            if not content_tokens(keyword):
+                raise ValueError(
+                    f"prefill {self.prefill_id}: region keyword {keyword!r} has no "
+                    "content tokens and could never fire"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _check_seed_duplicates(self) -> Self:
+        # Round 15: the same assertion authored twice IN ONE SECTION would
+        # become two separately-confirmable proposals of one claim. The key
+        # is (section, normalised text) — the same wording in two DIFFERENT
+        # sections is legitimately two distinct assertions.
+        seen: dict[tuple[NoteSectionKey, tuple[str, ...]], int] = {}
+        for position, seed in enumerate(self.seed_assertions, start=1):
+            key = (seed.section_key, content_tokens(seed.seed_text))
+            earlier = seen.get(key)
+            if earlier is not None:
+                raise ValueError(
+                    f"prefill {self.prefill_id}: seed_assertions {earlier} and "
+                    f"{position} carry the same assertion for section "
+                    f"{seed.section_key} once normalised — remove the duplicate"
+                )
+            seen[key] = position
+        return self
 
 
 # ---------------------------------------------------------------------------
