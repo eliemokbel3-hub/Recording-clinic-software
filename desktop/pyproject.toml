@@ -44,6 +44,11 @@ scribe-host = "scribe_desktop.native_host:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Phase 3A Task 3.3: shipped default note config travels inside the wheel so
+# a NON-EDITABLE install resolves it via importlib.resources — never __file__.
+scribe_desktop = ["config_defaults/*.json"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100

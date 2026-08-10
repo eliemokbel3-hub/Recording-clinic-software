@@ -51,7 +51,7 @@ import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self
+from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -539,8 +539,28 @@ class NoteUtterance(BaseModel):
         return reconstruct_span_text(self.transcript_words)
 
 
+@final
 class NoteRequest(BaseModel):
-    """Everything a provider is given — transcript in a data position only."""
+    """Everything a provider is given — transcript in a data position only.
+
+    The TYPE stays importable for annotations (providers and Phase 6 name
+    it), but CONSTRUCTION is not a public shipping API (rounds 11–13
+    PR-MED-001): shipping source constructs only through
+    ``note_config.build_note_request``, which re-establishes the
+    profile/config relation at the boundary; raw assembly is
+    ``_assemble_note_request`` below, whose only caller is that boundary.
+    Enforcement is an AST guard test rather than the type — a pydantic
+    model cannot refuse its own constructor or classmethods — and after
+    round 13 the guard confines the REFERENCE, not a spelling list: any
+    runtime use of this class as a value in any package module (including
+    this one) is refused except the single pinned assembly call;
+    annotation-only references stay legal, and ``@final`` additionally
+    makes shipping subclasses a mypy-strict error
+    (``test_note_config.TestConstructionGuard``). Escape hatches reached
+    through a value variable, ``getattr``-by-string, or monkey-patching are
+    statically invisible and sit outside the threat model. Test fixtures
+    construct directly on purpose; the fixture matrix needs raw requests.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -587,7 +607,7 @@ class NoteRequest(BaseModel):
         return None
 
 
-def build_note_request(
+def _assemble_note_request(
     document: TranscriptDocument,
     *,
     template_profile_id: str,
@@ -595,7 +615,16 @@ def build_note_request(
     clinician_speaker: str | None = None,
     section_keys: tuple[NoteSectionKey, ...] = CANONICAL_SECTION_KEYS,
 ) -> NoteRequest:
-    """Assemble the provider request from a transcript artifact.
+    """RAW assembly of the provider request from a transcript artifact.
+
+    Package-private on purpose (rounds 10–13 PR-MED-001): the id/digest
+    strings here are unresolved, so this is not a generation-facing API.
+    Generation constructs through ``note_config.build_note_request``, which
+    accepts the source ``NoteConfig`` plus the selected id and re-establishes
+    the binding itself — canonicalise, bind, derive — before delegating
+    here. (``note_config`` imports this function; the boundary lives there
+    because the reverse import would be a cycle. The AST guard confines
+    every other runtime reference to this symbol.)
 
     Transcript content lands ONLY in ``transcript_utterances``. Nothing a
     speaker said can reach an instruction position, because the request
@@ -830,7 +859,7 @@ def is_interrogative(text: str) -> bool:
 # ``.preselected_clinician_speaker`` — visible at the call site, and not
 # something mypy strict lets a caller skip past. Task 7.5 owns the control
 # that turns a preselection into a confirmed role; no pipeline code may feed
-# this result straight into ``build_note_request``.
+# this result straight into ``note_config.build_note_request``.
 # ---------------------------------------------------------------------------
 
 # Descending order of trust. The weights are a first cut authored against
@@ -1433,7 +1462,6 @@ __all__ = [
     "NoteModelProvider",
     "NoteProposal",
     "NoteProviderError",
-    "NoteRequest",
     "NoteSectionKey",
     "NoteSpan",
     "NoteUtterance",
@@ -1443,7 +1471,6 @@ __all__ = [
     "SourceCoords",
     "SpeakerEvidence",
     "SpeakerRolePreselection",
-    "build_note_request",
     "content_tokens",
     "digest_bytes",
     "is_interrogative",

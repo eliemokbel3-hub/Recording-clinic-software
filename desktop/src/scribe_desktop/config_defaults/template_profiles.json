@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "template_profiles": [
+    {
+      "template_profile_id": "template-a",
+      "display_name": "Treatment note (Template A, both clinics)",
+      "template_targets": [
+        {
+          "target_id": "presenting-progress",
+          "group": "History",
+          "field_label": "Presenting complaint/patient progress",
+          "target_type": "rich_text"
+        },
+        {
+          "target_id": "assessment",
+          "group": "Examination",
+          "field_label": "Assessment",
+          "target_type": "plain_text"
+        },
+        {
+          "target_id": "informed-consent",
+          "group": "Examination",
+          "field_label": "Informed Consent",
+          "target_type": "attestation_checkbox"
+        },
+        {
+          "target_id": "diagnosis",
+          "group": "Examination",
+          "field_label": "Diagnosis",
+          "target_type": "plain_text"
+        },
+        {
+          "target_id": "treatment",
+          "group": "Treatment/Management",
+          "field_label": "Treatment",
+          "target_type": "plain_text"
+        },
+        {
+          "target_id": "response-to-treatment",
+          "group": "Treatment/Management",
+          "field_label": "Response to treatment",
+          "target_type": "plain_text"
+        },
+        {
+          "target_id": "management-advice",
+          "group": "Treatment/Management",
+          "field_label": "Management/Advice",
+          "target_type": "plain_text"
+        }
+      ],
+      "section_mappings": [
+        { "section_key": "presenting_complaint", "target_id": "presenting-progress" },
+        { "section_key": "history_presenting_complaint", "target_id": "presenting-progress" },
+        { "section_key": "progress_since_last_visit", "target_id": "presenting-progress" },
+        { "section_key": "past_medical_history", "target_id": "presenting-progress" },
+        { "section_key": "red_flags_screening", "target_id": "assessment" },
+        { "section_key": "objective_examination", "target_id": "assessment" },
+        { "section_key": "outcome_measures", "target_id": "assessment" },
+        { "section_key": "assessment", "target_id": "assessment" },
+        { "section_key": "diagnosis", "target_id": "diagnosis" },
+        { "section_key": "treatment_performed", "target_id": "treatment" },
+        { "section_key": "response_to_treatment", "target_id": "response-to-treatment" },
+        { "section_key": "advice_home_exercise", "target_id": "management-advice" },
+        { "section_key": "management_plan", "target_id": "management-advice" },
+        { "section_key": "referrals_investigations", "target_id": "management-advice" },
+        { "section_key": "precautions_contraindications", "target_id": "assessment" },
+        { "section_key": "follow_up_review", "target_id": "management-advice" }
+      ],
+      "intentionally_unmapped": ["consent"]
+    }
+  ]
+}

@@ -2,6 +2,12 @@
 
 Recurring gotchas that bind from the first task of every session. Keep entries short, factual, and actionable.
 
+## "No-content-escapes" guards: confine the semantic surface, don't enumerate spellings (2026-08-10)
+Two invariants in Phase 3A took 4–5 review rounds each because every fix closed the named instance and left the class. The log tripwire (Phase 1, rounds 3–6) hand-listed which record fields to scan; each round a peer found one more field. The config trust-boundary guard (Phase 3, rounds 10–13) hand-listed which `NoteRequest` constructor spellings to reject; each round a peer found another (`model_validate_strings`, `TypeAdapter`, `__pydantic_validator__`…). Both only converged when the fix stopped enumerating and started deriving/confining the whole surface: the tripwire derived its scanned-field set from `LOG_FORMAT`; the guard rejected every runtime reference to the class except an exact allow-list of call nodes with pinned counts. **When a control claims "no X can escape", any allow-list of specific forms is a bug generator — guard the semantic surface (all references, minus a pinned allow-list) so a new form fails toward safety by default.** A docstring may claim only what the structure enforces; name any out-of-scope residue explicitly.
+
+## Corrupt pywin32 `gen_py` cache breaks the SAPI test fixture (2026-08-10)
+Symptom: `tests/test_sapi_fixture.py` fails with `AttributeError` in `win32com/client/gencache.py` (e.g. 7 failures) on an otherwise-green tree. Cause: a stale/corrupt generated typelib cache at `%LOCALAPPDATA%\Temp\gen_py`. Fix (works from an agent shell too — this one is NOT MSIX-hidden): `rm -rf "$LOCALAPPDATA/Temp/gen_py"`, then re-run pytest; the cache regenerates. Verify a pre-existing baseline failure is env, not code, by deleting the cache before blaming the diff.
+
 ## Agent shells are MSIX-virtualized on this host (2026-07-28)
 All agent/composer shells on this machine run inside the Claude desktop app package (`Claude_pzs8sxrjxfjjc`). Writes to `%LOCALAPPDATA%` (and similar known folders) are silently redirected into the package's `LocalCache`, leaving links at the real path that user-launched processes cannot traverse. Consequences:
 - Anything meant for the user-visible `%LOCALAPPDATA%\ClinikoScribe\` (model downloads via `scripts/setup-models.py`, host registration artifacts) must be run by the user from a normal terminal or Explorer, never from an agent shell.

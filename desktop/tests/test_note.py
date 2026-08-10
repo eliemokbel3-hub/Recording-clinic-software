@@ -50,7 +50,6 @@ from scribe_desktop.note import (
     NoteWarning,
     SourceCoords,
     SpeakerRolePreselection,
-    build_note_request,
     content_tokens,
     digest_bytes,
     is_interrogative,
@@ -58,6 +57,12 @@ from scribe_desktop.note import (
     reconstruct_span_text,
     speaker_role,
     text_digest,
+)
+from scribe_desktop.note_config import (
+    NoteConfig,
+    TemplateProfile,
+    TemplateTarget,
+    build_note_request,
 )
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
@@ -70,6 +75,28 @@ from scribe_desktop.transcription import (
 
 SESSION_ID = "b" * 32
 CONFIG_DIGEST = digest_bytes(b"config-fixture")
+
+# Rounds 10-12 PR-MED-001: generation-facing requests are constructed through
+# the config-owned boundary (`build_note_request(document, config, ...)`),
+# never from a fabricated profile string. Direct NoteRequest construction
+# below remains legal for fixture cells — the boundary is the builder, not
+# the type, and the AST guard scans shipping source only.
+_TEST_CONFIG = NoteConfig(
+    template_profiles=(
+        TemplateProfile(
+            template_profile_id="clinic-a",
+            display_name="Clinic A",
+            template_targets=(
+                TemplateTarget(
+                    target_id="field-1",
+                    group="Group",
+                    field_label="Field",
+                    target_type="plain_text",
+                ),
+            ),
+        ),
+    )
+)
 
 # The first utterance deliberately carries a name-like token, a laterality
 # token, a negation and a number, because every Axis B mutation is applied to
@@ -127,8 +154,7 @@ def _request(
 ) -> NoteRequest:
     return build_note_request(
         document if document is not None else _document(),
-        template_profile_id="clinic-a",
-        config_digest=CONFIG_DIGEST,
+        _TEST_CONFIG,
         clinician_speaker=clinician_speaker,
     )
 
@@ -952,8 +978,7 @@ class TestSpeakerRole:
         sections = ExtractiveNoteProvider().generate_sections(
             build_note_request(
                 merged,
-                template_profile_id="clinic-a",
-                config_digest=CONFIG_DIGEST,
+                _TEST_CONFIG,
                 clinician_speaker=result.preselected_clinician_speaker,
             )
         )
