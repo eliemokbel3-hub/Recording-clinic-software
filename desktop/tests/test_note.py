@@ -43,6 +43,7 @@ from scribe_desktop.note import (
     MockBehaviour,
     MockNoteModelProvider,
     NoteAssertion,
+    NoteDraft,
     NoteModelProvider,
     NoteProposal,
     NoteProviderError,
@@ -51,6 +52,7 @@ from scribe_desktop.note import (
     NoteSpan,
     NoteUtterance,
     NoteWarning,
+    ProposalResolution,
     SourceCoords,
     SpeakerRolePreselection,
     content_tokens,
@@ -1747,6 +1749,22 @@ def _every_note_model() -> list[object]:
         # An EMPTY section and note must be dropped too: the tripwire keys on
         # field names, so coverage cannot depend on there being content.
         GeneratedSection(section_key="consent"),
+        # Task 6.1: the pipeline hand-off models join the coverage — a draft
+        # carries the whole base note plus proposals (`note_sections` /
+        # `note_excerpt` signatures), and a resolution's repr renders its
+        # nested decision (`note_confirmation` signature).
+        NoteDraft(
+            session_id=SESSION_ID,
+            template_profile_id="clinic-a",
+            provider_name="extractive-v1",
+            transcript_digest=digest_bytes(b"transcript"),
+            config_digest=CONFIG_DIGEST,
+            note_proposals=(_proposal(),),
+        ),
+        ProposalResolution(
+            shown_text_digest=text_digest("Home exercise programme reviewed"),
+            confirmation=_confirmed_assertion().confirmation,
+        ),
     ]
 
 

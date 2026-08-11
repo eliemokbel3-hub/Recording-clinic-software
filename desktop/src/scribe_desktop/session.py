@@ -57,6 +57,11 @@ from scribe_desktop.session_store import (
     SESSION_ID_PATTERN,
     SessionChunkStore,
     StoreWriteError,
+    # Package-private by name, shared deliberately (the note.py convention):
+    # the round-30 reserved-target guard must resolve session identity with
+    # THE single definition custody verification uses, or the two could
+    # disagree about which session a directory is.
+    _resolve_session_identity,
     complete_session,
     default_sessions_root,
     discard_session,
@@ -204,6 +209,28 @@ class SessionActivityError(SessionControllerError):
     there is no session in the state the operation requires."""
 
 
+class GenerationInProgressError(SessionControllerError):
+    """The operation would destroy or retire custody state a live note
+    generation depends on (Task 6.3). Refused while the generation lease is
+    held; the caller retries after ``end_generation``."""
+
+
+class GenerationLease:
+    """Opaque token for ONE in-flight note-generation operation (Task 6.3).
+
+    The lease is a TOKEN spanning the WHOLE operation, not the worker:
+    acquired (``SessionController.begin_generation``) BEFORE the generation
+    ``TaskThread`` starts, released (``end_generation``) only after the
+    GUI-thread ``write_note`` succeeds or the failure cleanup completes. A
+    worker-scoped lease released on callable return would reopen the
+    custody-critical gap exactly where ``write_note`` runs — the round-2 peer
+    finding this type exists to close. Compared by IDENTITY; carries no
+    state, so it cannot be forged by construction of an equal value.
+    """
+
+    __slots__ = ()
+
+
 @dataclass
 class _LiveSession:
     """Controller-private mutable record of the one tracked session."""
@@ -222,8 +249,27 @@ class _LiveSession:
 
 class SessionController:
     """The Step 4 session state machine (see module docstring for the
-    concurrency contract). One controller instance owns the invariant; all
-    control methods are safe to call from any thread."""
+    concurrency contract). One controller instance owns the invariant.
+
+    CONCURRENCY CONTRACT, stated accurately after peer rounds 27-32 (the
+    earlier blanket "safe from any thread" claim is deliberately NOT
+    re-inflated): custody-mutating and custody-using operations — start,
+    complete, discard, transcribe, generation begin/end, the recovered-path
+    coordinator ops, and the sweep/recovery-list protection snapshot — are
+    serialized through the controller lock PLUS the per-session custody
+    reservation (``_custody_reservations``), whose consumers cover
+    discard's unlocked worker-join window in BOTH orders. That is
+    sufficient for the SHIPPED usage: every custody caller runs on the
+    single GUI thread, with worker results returning via queued signals.
+
+    DOCUMENTED RESIDUE (practitioner-accepted at round 32): full
+    ARBITRARY-thread custody safety is deferred to a future dedicated
+    holistic serialization hardening. The six MED custody races found and
+    fixed across peer rounds 27-32 each required a non-GUI-thread custody
+    caller that does not exist in shipped wiring, and further such
+    compositions may remain undiscovered. Do NOT introduce a
+    non-GUI-thread custody caller without doing that hardening first
+    (candidate Phase-8 threat-model item)."""
 
     def __init__(
         self,
@@ -237,6 +283,32 @@ class SessionController:
         self._logger = logger
         self._lock = threading.RLock()
         self._live: _LiveSession | None = None
+        # Task 6.3: the ONE in-flight note-generation lease. While held,
+        # every custody-destructive or handle-retiring operation — start()
+        # (which retires the queued session a generation depends on),
+        # complete(), discard(), and the recovered-path coordinator ops —
+        # is refused with GenerationInProgressError. Deliberately COARSE
+        # (one lease, not per-session): at most one generation runs at a
+        # time in this app, and over-blocking fails toward safety.
+        self._generation: GenerationLease | None = None
+        # Rounds 27 + 30 PR-MED-001: TARGET-AWARE custody-transition
+        # reservations, session_id -> in-flight discard count. discard()
+        # is a TWO-lock operation (the worker join must stay outside the
+        # lock), so its entry-time checks alone leave an unlocked window;
+        # a discard reserves ITS TARGET's id here (under the lock, after
+        # every refusal path) before releasing the lock, and releases it
+        # in its finally. Consumers: begin_generation() and complete()
+        # refuse while ANY reservation is held (coarse, safe);
+        # the recovered-coordinator ops refuse a RESERVED TARGET by
+        # resolved identity; and `reserved_session_ids()` feeds the
+        # recovery listing exclusion and the 24 h sweep protection —
+        # round 30's lesson being that the admitted concurrent start()
+        # swaps `_live` mid-window, so protection must be sourced from
+        # the RESERVATION SET, never the mutable live pointer. PER-ID
+        # COUNTS with independent lifetime, not a global flag/count:
+        # overlapping discards are legal, and one finishing must not
+        # strip another target's protection.
+        self._custody_reservations: dict[str, int] = {}
 
     # --- observers ---------------------------------------------------------
 
@@ -277,6 +349,10 @@ class SessionController:
         THEN create ``audio.enc`` -> start the capture worker (the single
         writer) -> state=recording."""
         with self._lock:
+            # Task 6.3: start() on a queued session RETIRES it — dropping the
+            # in-memory handle (directory, crypto) a generation worker
+            # depends on — so it is refused outright while the lease is held.
+            self._refuse_while_generating("start")
             live = self._live
             if live is not None and live.session.state in ACTIVE_STATES:
                 raise SessionActivityError(
@@ -406,6 +482,22 @@ class SessionController:
         """
         with self._lock:
             live = self._require_state(SessionState.PROCESSING)
+            # Round 32 PR-MED-001: the INVERSE order of the round-42 MED-003
+            # guard below in discard(). Transcribe-first makes Discard refuse
+            # (the `transcribing` flag); discard-first must make transcription
+            # refuse — a Discard that has reserved this session's custody
+            # transition is between its two locked sections, and its second
+            # section will destroy the crypto this transcriber would be
+            # using. IDENTITY-SCOPED, with the live snapshot and the
+            # reservation map read in this same critical section, so a
+            # different session Y installed by an admitted Start is never
+            # transiently blocked by X's reservation. Refused BEFORE the
+            # `transcribing` flag is installed and before any crypto/store
+            # use; the long transcriber call stays outside the lock.
+            if live.session.session_id in self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard of this session is in flight; transcription refused"
+                )
             # PR-HIGH-006 (locking/ordering only; user-ratified 2026-07-27):
             # exactly ONE transcription run per session may be in flight.
             # Without this guard two callers could both pass the PROCESSING
@@ -465,6 +557,23 @@ class SessionController:
         cryptographic deletion). Any verification failure keeps the key
         and leaves the session queued."""
         with self._lock:
+            # Task 6.3: Complete deletes the session key — the generation
+            # worker's transcript would become unreadable and its note
+            # unwritable mid-flight. Refused while the lease is held.
+            self._refuse_while_generating("complete")
+            # Round 29 PR-MED-001: an in-flight discard() owns the custody
+            # transition across its unlocked worker-join window (the round-27
+            # reservation). A Complete slotting into that window would let
+            # BOTH terminal actions mutate one session — Complete reporting
+            # WRITTEN while the resuming discard removes the artifacts —
+            # and exactly one terminal action may win before either reports
+            # success. Same consumer shape as begin_generation's; refuses
+            # nothing else (second discards and concurrent start() stay
+            # admitted, pinned by their tests).
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard is completing; the session cannot be completed"
+                )
             live = self._require_state(SessionState.QUEUED)
             complete_session(live.directory, live.crypto)  # raises -> stays queued
             self._transition_locked(live, SessionState.WRITTEN)
@@ -476,6 +585,9 @@ class SessionController:
         """Discard the session: key deleted FIRST (cryptographic deletion),
         then best-effort removal of the artifacts."""
         with self._lock:
+            # Task 6.3: Discard is key-first cryptographic deletion — refused
+            # while the generation lease is held, same rationale as complete().
+            self._refuse_while_generating("discard")
             live = self._require_live()
             if SessionState.DISCARDED not in LEGAL_TRANSITIONS[live.session.state]:
                 raise IllegalTransitionError(
@@ -485,36 +597,239 @@ class SessionController:
             # transcribe()/mark_queued() (PR-HIGH-006/008, user-ratified
             # 2026-07-27): discarding here would destroy the key under a
             # live transcriber. The UI already disables Discard while
-            # PROCESSING; this makes the controller honour its own
-            # any-thread safety contract (a destroyed key would only make
-            # the transcriber fail — benign but wrong-by-contract).
+            # PROCESSING; this guard enforces it at the controller under
+            # the class docstring's stated contract. This covers the
+            # transcribe-FIRST order; the inverse (discard reserves, then
+            # transcription tries to begin) is covered by transcribe()'s
+            # reservation consumer (round 32) — mutual exclusion holds in
+            # both orders.
             if live.transcribing:
                 raise SessionActivityError(
                     "transcription in progress; wait for it to finish or fail"
                 )
             worker = live.worker
-        if worker is not None:
-            worker.stop(flush=False)  # OUTSIDE the lock; buffered audio dropped
+            session_id = live.session.session_id
+            # Round 27 PR-MED-001 (target-aware since round 30): RESERVE the
+            # custody transition BEFORE the lock is released. The entry-time
+            # checks above cannot cover the unlocked interval between this
+            # section and the next — an interval that exists on EVERY
+            # discard, worker or not, and spans the whole worker join when
+            # there is one — during which begin_generation()/complete()
+            # could otherwise act, and (round 30) the admitted concurrent
+            # start() retires this session from `_live`, exposing its still-
+            # recoverable on-disk custody to the recovery flow and the sweep
+            # unless the reservation itself is what protects it. Set LAST,
+            # after every refusal path above, so no failure can leak a
+            # reservation; released in the finally on every exit (early
+            # return, success, or a discard_session failure). A bare
+            # post-stop recheck was rejected: refusing at that point would
+            # strand a half-stopped session claiming RECORDING/PAUSED with
+            # its worker gone.
+            self._reserve_custody_locked(session_id)
+        try:
+            if worker is not None:
+                worker.stop(flush=False)  # OUTSIDE the lock; buffered audio dropped
+            with self._lock:
+                # PR-HIGH-001: operate on the SNAPSHOT taken under the first
+                # lock. Re-fetching self._live here allowed a concurrent start()
+                # (legal for a queued/failed session) to install a NEW recording
+                # whose key this method would then cryptographically delete —
+                # wrong-session data loss. The snapshot is the session the
+                # caller asked to discard; the on-disk artifacts deleted below
+                # are resolved from ITS directory and crypto only.
+                live.worker = None
+                if live.session.state == SessionState.DISCARDED:
+                    return live.session  # concurrent discard already completed
+                if live.store is not None:
+                    live.store.close()
+                    live.store = None
+                discard_session(live.directory, live.crypto)  # key-first, destroys crypto
+                self._transition_locked(live, SessionState.DISCARDED)
+                session = live.session
+                if self._live is live:
+                    self._live = None
+                return session
+        finally:
+            with self._lock:
+                self._release_custody_locked(session_id)
+
+    # --- note-generation lease + custody coordination (Task 6.3) -----------
+    #
+    # SessionController is the ONE lease-aware custody coordinator for BOTH
+    # session kinds: the live session it already owns, and recovered sessions
+    # — which otherwise bypass it entirely (the recovery flow hands the UI a
+    # directory + unwrapped key, and UI button state is not a guard on an
+    # any-thread-safe controller). The recovered-path operations below
+    # perform the SCOPED custody action themselves rather than exposing raw
+    # directory/crypto accessors, so every custody-destructive path crosses
+    # the same lease check under the same lock.
+    #
+    # Deliberately NOT lease-protected: the 24 h expiry sweep. The shipped
+    # wiring already keeps the sweep away from every session a generation
+    # could target — `app.sweep_protected_ids` protects the controller's
+    # non-terminal session (QUEUED included; round 42 MED-001) and the
+    # recovery screen's checkouts (PR round 18) — so a lease check here
+    # would only re-cover the same ground while muddying which mechanism
+    # owns the cap. And if that wiring ever changed, the failure direction
+    # is still CLOSED: a swept session's key is destroyed, so write_note
+    # and Complete refuse; the retention bound wins, nothing is written
+    # wrong. Likewise the recovery screen's list-discard needs no lease: a
+    # checked-out (generating) recovered session is excluded from the list
+    # and all list actions are disabled while a checkout exists.
+
+    def begin_generation(self) -> GenerationLease:
+        """Acquire THE generation lease — call BEFORE the worker starts.
+
+        At most one generation is in flight at a time; a second acquisition
+        raises. State-agnostic on purpose: a recovered-session generation
+        runs with no live controller session at all. Refused while a
+        custody-destructive operation holds a transition reservation (round
+        27 PR-MED-001) — either the discard entered first and this
+        acquisition must not slip into its unlocked window, or the lease was
+        first and the discard was already refused at its own entry; the lock
+        serializes the two checks, so no interleaving leaves a lease held
+        while ``discard_session`` deletes a key."""
         with self._lock:
-            # PR-HIGH-001: operate on the SNAPSHOT taken under the first
-            # lock. Re-fetching self._live here allowed a concurrent start()
-            # (legal for a queued/failed session) to install a NEW recording
-            # whose key this method would then cryptographically delete —
-            # wrong-session data loss. The snapshot is the session the
-            # caller asked to discard; the on-disk artifacts deleted below
-            # are resolved from ITS directory and crypto only.
-            live.worker = None
-            if live.session.state == SessionState.DISCARDED:
-                return live.session  # concurrent discard already completed
-            if live.store is not None:
-                live.store.close()
-                live.store = None
-            discard_session(live.directory, live.crypto)  # key-first, destroys crypto
-            self._transition_locked(live, SessionState.DISCARDED)
-            session = live.session
-            if self._live is live:
-                self._live = None
-            return session
+            if self._generation is not None:
+                raise GenerationInProgressError(
+                    "a note generation is already in progress"
+                )
+            if self._custody_reservations:
+                # SessionActivityError, not GenerationInProgressError: no
+                # generation is in progress — the conflict is an in-flight
+                # discard completing its custody transition.
+                raise SessionActivityError(
+                    "a discard is completing; retry generation after it finishes"
+                )
+            lease = GenerationLease()
+            self._generation = lease
+            return lease
+
+    def end_generation(self, lease: GenerationLease) -> None:
+        """Release the lease — call only after the GUI-thread ``write_note``
+        succeeded or the failure cleanup completed.
+
+        Idempotent for the released token (cleanup paths may run twice), but
+        a token that is NOT the held one raises: silently accepting a foreign
+        token would let a stale handler release someone else's lease."""
+        with self._lock:
+            if self._generation is None:
+                return
+            if self._generation is not lease:
+                raise SessionControllerError(
+                    "end_generation called with a lease that is not held"
+                )
+            self._generation = None
+
+    @property
+    def generating(self) -> bool:
+        with self._lock:
+            return self._generation is not None
+
+    def reserved_session_ids(self) -> frozenset[str]:
+        """Session ids an in-flight Discard has reserved (round 30) — the
+        reservation-only view, for tests and diagnostics.
+
+        External protection consumers (the recovery-list exclusion, the
+        24 h sweep) must NOT compose this with separate live-session reads:
+        they consume ``custody_protected_ids()``, the single-lock snapshot
+        (round 31 — the split-read composition was itself a race)."""
+        with self._lock:
+            return frozenset(self._custody_reservations)
+
+    def custody_protected_ids(self) -> frozenset[str]:
+        """ONE atomic snapshot of every custody-protected session id: all
+        in-flight Discard reservation targets (round 30) PLUS the current
+        live session in ANY non-terminal state (active states included —
+        this is a superset of ``active_session_ids()``).
+
+        Read under a SINGLE ``_lock`` acquisition (round 31 PR-MED-001):
+        the sweep exemption and the recovery-list exclusion consume THIS
+        method, never a composition of separate public reads — a
+        Discard(X)-reserve plus admitted Start(Y) interleaved BETWEEN two
+        reads yields a set naming Y but omitting still-reserved X, exactly
+        the exposure round 30 closed. Ids only under the lock; callers do
+        their filesystem listing/sweeping AFTER this returns — the lock is
+        never held across I/O."""
+        with self._lock:
+            ids = set(self._custody_reservations)
+            live = self._live
+            if live is not None and not live.session.is_terminal:
+                ids.add(live.session.session_id)
+            return frozenset(ids)
+
+    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None:
+        """Complete a RECOVERED session (Flow 2 ordering via
+        ``complete_session``: fsync -> verify -> delete key), through the
+        lease-aware coordinator instead of a raw store-primitive call."""
+        with self._lock:
+            self._refuse_while_generating("complete")
+            self._refuse_reserved_target_locked(directory, "complete")
+            complete_session(directory, crypto)
+
+    def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
+        """Discard a RECOVERED session (key-first cryptographic deletion),
+        through the lease-aware coordinator."""
+        with self._lock:
+            self._refuse_while_generating("discard")
+            self._refuse_reserved_target_locked(directory, "discard")
+            discard_session(directory, crypto)
+
+    def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None:
+        """Zeroize a recovered checkout's in-memory key copy (disk custody
+        untouched), through the lease-aware coordinator: while a generation
+        is in flight the key it depends on must not be destroyed under it.
+
+        Refused COARSELY while any discard reservation is held (round 30):
+        this operation carries no directory, so there is no identity to
+        resolve a scoped check against — and the coarse refusal is a strict
+        superset of the scoped one, failing toward safety at the cost of a
+        transient retry."""
+        with self._lock:
+            self._refuse_while_generating("recovered-key destruction")
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "recovered-key destruction refused: a discard is in flight"
+                )
+            crypto.destroy()
+
+    def _reserve_custody_locked(self, session_id: str) -> None:
+        """Call under ``self._lock``."""
+        self._custody_reservations[session_id] = (
+            self._custody_reservations.get(session_id, 0) + 1
+        )
+
+    def _release_custody_locked(self, session_id: str) -> None:
+        """Call under ``self._lock``. Per-id lifetime: releasing one
+        discard's reservation never unprotects another target's."""
+        count = self._custody_reservations.get(session_id, 0) - 1
+        if count > 0:
+            self._custody_reservations[session_id] = count
+        else:
+            self._custody_reservations.pop(session_id, None)
+
+    def _refuse_reserved_target_locked(self, directory: Path, operation: str) -> None:
+        """Call under ``self._lock``. Round 30: a recovered-path custody op
+        must not touch a session whose id an in-flight Discard has reserved.
+
+        Identity is RESOLVED from the directory (the store header is
+        authoritative, directory name the fallback — the single
+        ``_resolve_session_identity`` definition), never taken from a caller
+        claim; resolution runs only while a reservation exists, and a
+        resolution failure propagates typed — fail closed, never a guess."""
+        if not self._custody_reservations:
+            return
+        if _resolve_session_identity(directory) in self._custody_reservations:
+            raise SessionActivityError(
+                f"{operation} refused: a discard of this session is in flight"
+            )
+
+    def _refuse_while_generating(self, operation: str) -> None:
+        """Call under ``self._lock``."""
+        if self._generation is not None:
+            raise GenerationInProgressError(
+                f"{operation} refused: a note generation is in progress"
+            )
 
     # --- internals ---------------------------------------------------------
 
@@ -555,6 +870,11 @@ class SessionController:
         """Drop the in-memory handle to a non-active session. On-disk state
         is untouched: a queued/failed session stays recoverable through its
         DPAPI custody blob; terminal sessions have none."""
+        # Task 6.3, defense in depth: today the only caller is start(),
+        # which already refused — but retirement destroys the in-memory
+        # crypto a generation worker may hold, so the guard lives HERE too
+        # rather than only on the callers that exist today.
+        self._refuse_while_generating("session retirement")
         if live.worker is not None:
             live.worker.stop(flush=False)
             live.worker = None

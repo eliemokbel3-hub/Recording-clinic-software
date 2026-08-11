@@ -60,13 +60,21 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import BinaryIO, Final
+from typing import TYPE_CHECKING, BinaryIO, Final
 
 from cryptography.exceptions import InvalidTag
 from pydantic import ValidationError
+from pydantic_core import PydanticSerializationError
 
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
+
+if TYPE_CHECKING:
+    # Annotation-only: note.py imports THIS module at import time (for
+    # SESSION_ID_PATTERN and atomic_write_bytes), so the note and config
+    # types are imported at call time in the functions below.
+    from scribe_desktop.note import GeneratedNote
+    from scribe_desktop.note_config import NoteConfig
 
 KEY_FILENAME: Final = "key.dpapi"
 AUDIO_FILENAME: Final = "audio.enc"
@@ -167,6 +175,12 @@ class StoreWriteError(SessionStoreError):
 class KeyCustodyError(SessionStoreError):
     """Key custody blob is missing, truncated, or cannot be unwrapped —
     the session's data is cryptographically unrecoverable."""
+
+
+class NoteWriteRefusedError(SessionStoreError):
+    """``write_note`` refused the artifact — an unresolved ``error`` warning,
+    an unbacked clinician-authored assertion, or a digest/binding mismatch.
+    Nothing was written; the on-disk state is unchanged."""
 
 
 def default_sessions_root() -> Path:
@@ -589,25 +603,17 @@ def _resolve_session_identity(session_dir: Path) -> str:
     raise StoreCorruptError("session identity is unresolvable; key retained")
 
 
-def _verify_note_for_completion(
-    session_dir: Path, crypto: SessionCrypto, transcript_plain: bytes
-) -> None:
-    """Verify `note.enc` before custody deletion, FAIL-CLOSED and symmetric
-    with the transcript: fsync -> decrypt -> parse -> session binding ->
-    transcript-digest match. Any failure raises, so the caller never reaches
-    `delete_session_key` and regeneration stays possible. A missing note is
-    the normal pre-Phase-3A case and verifies vacuously."""
-    note_path = session_dir / NOTE_FILENAME
+def _verified_note(
+    session_dir: Path, crypto: SessionCrypto, note_blob: bytes, transcript_plain: bytes
+) -> GeneratedNote:
+    """THE single note-verification core (Tasks 1.5 / 6.2): decrypt ->
+    parse -> session binding -> transcript-digest match, using the single
+    Task-1.1 digest definition. ``read_note`` and the Complete ordering both
+    verify through this exact code path, so the two can never disagree about
+    what a valid note is. Every failure is typed and the caller's custody is
+    untouched (the "key retained" wording states that custody fact)."""
     try:
-        with note_path.open("r+b") as stream:
-            os.fsync(stream.fileno())
-            blob = stream.read()
-    except FileNotFoundError:
-        return
-    except OSError as exc:
-        raise StoreWriteError(f"note not durably readable; key retained: {exc}") from exc
-    try:
-        plain = crypto.decrypt(blob)
+        plain = crypto.decrypt(note_blob)
     except InvalidTag as exc:
         raise StoreCorruptError("note failed decrypt verification; key retained") from exc
     # Deferred import (not a cycle): note.py imports THIS module at import
@@ -623,6 +629,28 @@ def _verify_note_for_completion(
         raise StoreCorruptError("note is bound to another session; key retained")
     if note.transcript_digest != digest_bytes(transcript_plain):
         raise StoreCorruptError("note does not describe this transcript; key retained")
+    return note
+
+
+def _verify_note_for_completion(
+    session_dir: Path, crypto: SessionCrypto, transcript_plain: bytes
+) -> None:
+    """Verify `note.enc` before custody deletion, FAIL-CLOSED and symmetric
+    with the transcript: fsync -> decrypt -> parse -> session binding ->
+    transcript-digest match (the shared ``_verified_note`` core). Any failure
+    raises, so the caller never reaches `delete_session_key` and regeneration
+    stays possible. A missing note is the normal pre-Phase-3A case and
+    verifies vacuously."""
+    note_path = session_dir / NOTE_FILENAME
+    try:
+        with note_path.open("r+b") as stream:
+            os.fsync(stream.fileno())
+            blob = stream.read()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise StoreWriteError(f"note not durably readable; key retained: {exc}") from exc
+    _verified_note(session_dir, crypto, blob, transcript_plain)
 
 
 def complete_session(
@@ -676,6 +704,138 @@ def discard_session(session_dir: Path, crypto: SessionCrypto | None = None) -> N
     if crypto is not None:
         crypto.destroy()
     shutil.rmtree(session_dir, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# Note artifact I/O (Task 6.2) — mirrors write_transcript/read_transcript.
+# --------------------------------------------------------------------------
+
+
+def _read_transcript_plain(session_dir: Path, crypto: SessionCrypto) -> bytes:
+    """The decrypted canonical transcript bytes — the byte domain the
+    Task-1.1 ``transcript_digest`` definition is verified against."""
+    transcript_path = session_dir / TRANSCRIPT_FILENAME
+    try:
+        blob = transcript_path.read_bytes()
+    except OSError as exc:
+        raise StoreWriteError(f"transcript artifact unreadable: {exc}") from exc
+    try:
+        return crypto.decrypt(blob)
+    except InvalidTag as exc:
+        raise StoreCorruptError("transcript failed authentication") from exc
+
+
+def _canonical_note(note: GeneratedNote) -> GeneratedNote:
+    """Round-trip ``note`` through ``GeneratedNote``'s OWN schema serializer
+    and full re-validation (the ``note_config._canonical_config`` boundary
+    lesson, round 12): the base-class serializer reads validated field data —
+    never a subclass method or property — and re-validation re-runs every
+    validator, so a validator-skipping construction or a lying subclass dies
+    typed here instead of reaching disk. For an honestly validated note the
+    round-trip is a byte-stable identity."""
+    from scribe_desktop.note import GeneratedNote
+
+    try:
+        blob = GeneratedNote.__pydantic_serializer__.to_json(note)
+        return GeneratedNote.model_validate_json(blob)
+    except (ValidationError, PydanticSerializationError) as exc:
+        # Terse ON PURPOSE — the clinical-artifact message convention
+        # (`_verified_note`, `read_transcript`; contrast `_parse_config_blob`,
+        # whose detail is included BECAUSE config is not clinical content): a
+        # pydantic error's rendered detail carries input values, i.e. note
+        # text, and this string must stay safe to display or log anywhere.
+        raise NoteWriteRefusedError("note artifact failed canonical re-validation") from exc
+
+
+def write_note(
+    session_dir: Path, crypto: SessionCrypto, note: GeneratedNote, config: NoteConfig
+) -> Path:
+    """Encrypt and write ``note.enc`` ATOMICALLY under the session key,
+    mirroring ``write_transcript``: ``atomic_write_bytes``, and NO AAD —
+    ``complete_session`` verifies with a plain decrypt and the two must stay
+    in agreement (the ``write_transcript`` docstring's recorded reason).
+
+    ``write_note`` ENFORCES the artifact invariants ITSELF — defense in
+    depth, trusting neither the UI nor construction-time validation (plan
+    Task 6.2; every refusal is typed ``NoteWriteRefusedError`` and leaves the
+    disk unchanged):
+
+    - the note is CANONICALISED first (``_canonical_note``), which re-runs
+      every construction validator — so the whole class of unbacked
+      clinician-authored assertions (missing/declined/mismatched
+      ``ConfirmationDecision``, absent evidence fields) is refused at once
+      rather than by an enumerated field list (the no-content-escapes
+      lesson: confine the class, never enumerate spellings);
+    - any unresolved ``error`` warning refuses the write —
+      ``blocking_warnings()`` is the state (global property 4);
+    - the TWO relations construction deliberately does NOT verify (the
+      note.py docstring records why) are verified here: every
+      non-``transcript`` assertion's ``shown_text_digest`` must be the
+      digest of its exact text, and its ``config_digest`` must be the
+      note's own — confirmation evidence under a different config backs a
+      different proposal;
+    - ``transcript_digest`` is re-verified against the decrypted ON-DISK
+      transcript and ``session_id`` against the store identity, so a note
+      describing a superseded transcript or another session never lands;
+    - ``config_digest`` is re-verified against the presented (canonicalised)
+      config — the digest the confirmation evidence was collected under.
+    """
+    from scribe_desktop.note import digest_bytes, text_digest
+    from scribe_desktop.note_config import _canonical_config
+
+    note = _canonical_note(note)
+    if note.blocking_warnings():
+        raise NoteWriteRefusedError(
+            "the note carries unresolved error warnings; resolve them and refinalise"
+        )
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.note_span.provenance == "transcript":
+                continue
+            if (
+                assertion.shown_text_digest is None
+                or text_digest(assertion.note_span.span_text) != assertion.shown_text_digest
+            ):
+                raise NoteWriteRefusedError(
+                    f"assertion {assertion.assertion_id}: shown_text_digest is not the "
+                    "digest of the assertion's text — the confirmed wording is not the "
+                    "wording this note carries"
+                )
+            if assertion.config_digest != note.config_digest:
+                raise NoteWriteRefusedError(
+                    f"assertion {assertion.assertion_id} was confirmed under a different "
+                    "config than the note records"
+                )
+    if _canonical_config(config).config_digest() != note.config_digest:
+        raise NoteWriteRefusedError(
+            "the note's config_digest does not match the presented config"
+        )
+    if note.session_id != _resolve_session_identity(session_dir):
+        raise NoteWriteRefusedError("the note is bound to another session")
+    transcript_plain = _read_transcript_plain(session_dir, crypto)
+    if note.transcript_digest != digest_bytes(transcript_plain):
+        raise NoteWriteRefusedError(
+            "the note does not describe this session's transcript"
+        )
+    note_path = session_dir / NOTE_FILENAME
+    atomic_write_bytes(note_path, crypto.encrypt(note.to_bytes()), error_label="note artifact")
+    return note_path
+
+
+def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:
+    """Decrypt, parse and VERIFY ``note.enc`` (the review view's read path).
+
+    Verification — session binding and transcript-digest match against the
+    decrypted on-disk transcript — runs through ``_verified_note``, the SAME
+    code path ``complete_session`` uses, with the single Task-1.1 digest
+    definition (plan Task 6.2 Done-when: the two can never disagree)."""
+    note_path = session_dir / NOTE_FILENAME
+    try:
+        note_blob = note_path.read_bytes()
+    except OSError as exc:
+        raise StoreWriteError(f"note artifact unreadable: {exc}") from exc
+    transcript_plain = _read_transcript_plain(session_dir, crypto)
+    return _verified_note(session_dir, crypto, note_blob, transcript_plain)
 
 
 # --------------------------------------------------------------------------

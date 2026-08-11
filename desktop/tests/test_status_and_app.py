@@ -103,6 +103,101 @@ def test_sweep_protected_ids_covers_nonterminal_controller_session(tmp_path) -> 
     assert sweep_protected_ids(controller) == frozenset()
 
 
+def test_sweep_protected_ids_covers_reserved_discard_targets(tmp_path) -> None:
+    """Round 30 PR-MED-001: an in-flight Discard's reserved target must be
+    sweep-protected FROM THE RESERVATION SET — the admitted concurrent
+    start() can swap the live pointer mid-window, so the non-terminal-
+    session rule alone stops naming the discarding session."""
+    from scribe_desktop.app import sweep_protected_ids
+    from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.session import SessionController
+
+    controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
+    reserved_id = "f" * 32
+    # Simulate a held reservation exactly as discard() holds one (the
+    # controller-private helper is the single producer; deliberate injection).
+    with controller._lock:  # noqa: SLF001
+        controller._reserve_custody_locked(reserved_id)  # noqa: SLF001
+    try:
+        assert reserved_id in sweep_protected_ids(controller)
+        assert reserved_id in controller.reserved_session_ids()
+    finally:
+        with controller._lock:  # noqa: SLF001
+            controller._release_custody_locked(reserved_id)  # noqa: SLF001
+    assert reserved_id not in sweep_protected_ids(controller)
+
+
+def test_sweep_protected_ids_is_one_atomic_snapshot() -> None:
+    """Round 31 PR-MED-001: sweep protection is ONE controller snapshot plus
+    the extra checkouts — composing separate reserved/active/session reads
+    was itself a race (a Discard-reserve + admitted Start between two reads
+    yielded a set omitting the still-reserved target)."""
+    from scribe_desktop.app import sweep_protected_ids
+
+    class _Probe:
+        def __init__(self) -> None:
+            self.snapshot_calls = 0
+
+        def custody_protected_ids(self) -> frozenset[str]:
+            self.snapshot_calls += 1
+            return frozenset({"a" * 32})
+
+        def reserved_session_ids(self) -> frozenset[str]:
+            raise AssertionError("split read: reserved_session_ids composed")
+
+        def active_session_ids(self) -> frozenset[str]:
+            raise AssertionError("split read: active_session_ids composed")
+
+        @property
+        def session(self) -> object:
+            raise AssertionError("split read: session composed")
+
+    probe = _Probe()
+    protected = sweep_protected_ids(probe, frozenset({"extra-checkout"}))  # type: ignore[arg-type]
+    assert protected == frozenset({"a" * 32, "extra-checkout"})
+    assert probe.snapshot_calls == 1
+
+
+def test_expiry_sweep_skips_reserved_discard_target(tmp_path) -> None:
+    """Round 31 Verification: an ACTUAL expiry sweep driven by the atomic
+    snapshot leaves a reserved directory intact; on release, the 24 h cap
+    reclaims it — protection is transient by construction."""
+    from datetime import timedelta
+
+    from scribe_desktop.app import sweep_protected_ids
+    from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.session import SessionController
+    from scribe_desktop.session_store import sweep_sessions
+
+    controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
+    reserved_id = "e" * 32
+    directory = tmp_path / reserved_id
+    directory.mkdir()
+    (directory / "key.dpapi").write_bytes(b"\0" * 64)
+    with controller._lock:  # noqa: SLF001 - discard() is the single producer; deliberate injection
+        controller._reserve_custody_locked(reserved_id)  # noqa: SLF001
+    try:
+        results = sweep_sessions(
+            tmp_path,
+            active_session_ids=sweep_protected_ids(controller),
+            max_age=timedelta(0),
+        )
+        assert [(r.session_id, r.action) for r in results] == [
+            (reserved_id, "skipped_active")
+        ]
+        assert (directory / "key.dpapi").is_file()
+    finally:
+        with controller._lock:  # noqa: SLF001
+            controller._release_custody_locked(reserved_id)  # noqa: SLF001
+    results = sweep_sessions(
+        tmp_path,
+        active_session_ids=sweep_protected_ids(controller),
+        max_age=timedelta(0),
+    )
+    assert [(r.session_id, r.action) for r in results] == [(reserved_id, "expired")]
+    assert not directory.exists()
+
+
 # ---------------------------------------------------------------------------
 # Step 12: single-instance guard (named mutex; peer round 18 PR4)
 # ---------------------------------------------------------------------------

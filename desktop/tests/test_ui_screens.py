@@ -19,7 +19,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from scribe_desktop.audio_capture import AudioDevice  # noqa: E402
 from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
 from scribe_desktop.secure_storage import SessionCrypto  # noqa: E402
-from scribe_desktop.session import RecordingSession, SessionState  # noqa: E402
+from scribe_desktop.session import (  # noqa: E402
+    GenerationInProgressError,
+    GenerationLease,
+    RecordingSession,
+    SessionActivityError,
+    SessionState,
+)
 from scribe_desktop.session_store import (  # noqa: E402
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -109,6 +115,14 @@ class FakeController:
         self.calls: list[tuple[Any, ...]] = []
         self.transcribe_error: Exception | None = None
         self.session_value: RecordingSession | None = None
+        # Task 6.3: when set, every lease-guarded custody op refuses with it
+        # (simulates a held generation lease — or, round 30, a held discard
+        # reservation — in the real controller).
+        self.generation_error: Exception | None = None
+        self.lease: GenerationLease | None = None
+        # Round 30: ids an in-flight discard has reserved (the real
+        # controller's reserved_session_ids source).
+        self.reserved_ids: frozenset[str] = frozenset()
 
     @property
     def state(self) -> SessionState:
@@ -170,6 +184,51 @@ class FakeController:
 
     def active_session_ids(self) -> frozenset[str]:
         return frozenset()
+
+    # Task 6.3: the lease + the lease-aware recovered-custody coordinator.
+
+    def begin_generation(self) -> GenerationLease:
+        self.calls.append(("begin_generation",))
+        if self.generation_error is not None:
+            raise self.generation_error
+        lease = GenerationLease()
+        self.lease = lease
+        return lease
+
+    def end_generation(self, lease: GenerationLease) -> None:
+        self.calls.append(("end_generation",))
+        if self.lease is lease:
+            self.lease = None
+
+    def reserved_session_ids(self) -> frozenset[str]:
+        return self.reserved_ids
+
+    def custody_protected_ids(self) -> frozenset[str]:
+        # Mirrors the real controller's atomic snapshot semantics (round 31):
+        # reservations plus the non-terminal live session.
+        ids = self.reserved_ids
+        if self.session_value is not None and not self.session_value.is_terminal:
+            ids = ids | {self.session_value.session_id}
+        return ids
+
+    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None:
+        self.calls.append(("complete_recovered", directory))
+        if self.generation_error is not None:
+            raise self.generation_error
+        crypto.destroy()
+
+    def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
+        self.calls.append(("discard_recovered", directory))
+        if self.generation_error is not None:
+            raise self.generation_error
+        if crypto is not None:
+            crypto.destroy()
+
+    def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None:
+        self.calls.append(("destroy_recovered_crypto",))
+        if self.generation_error is not None:
+            raise self.generation_error
+        crypto.destroy()
 
 
 # ---------------------------------------------------------------------------
@@ -907,6 +966,202 @@ class TestMainWindow:
         # disk custody untouched by the in-memory destroy (no key file was
         # ever created here — the destroy must not try to touch disk)
         assert not (directory / KEY_FILENAME).exists()
+        window.close()
+
+    def _recovered_window(
+        self, tmp_path: Path
+    ) -> tuple[Any, FakeController, Path, SessionCrypto]:
+        from scribe_desktop.ui.main_window import MainWindow
+
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        crypto = SessionCrypto()
+        directory = tmp_path / uuid.uuid4().hex
+        directory.mkdir()
+        outcome = RecoveryOutcome(document=_document(), crypto=crypto, store_finished=True)
+        window._on_recovered((directory, outcome))
+        return window, controller, directory, crypto
+
+    def test_recovered_custody_routes_through_the_coordinator(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 6.3: the recovered transcript view's Complete/Discard run
+        through the controller's lease-aware coordinator, never through raw
+        store primitives."""
+        window, controller, directory, crypto = self._recovered_window(tmp_path)
+        window.transcript_screen.on_complete()
+        assert ("complete_recovered", directory) in controller.calls
+        assert crypto.destroyed
+        window.close()
+
+    def test_recovered_discard_routes_through_the_coordinator(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, directory, crypto = self._recovered_window(tmp_path)
+        window.transcript_screen.on_discard()
+        assert ("discard_recovered", directory) in controller.calls
+        assert crypto.destroyed
+        window.close()
+
+    def test_recovered_complete_refused_while_generating(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """A held generation lease blocks recovered Complete: the refusal
+        surfaces in the view, custody survives, the view stays open."""
+        window, controller, directory, crypto = self._recovered_window(tmp_path)
+        controller.generation_error = GenerationInProgressError(
+            "complete refused: a note generation is in progress"
+        )
+        window.transcript_screen.on_complete()
+        assert ("complete_recovered", directory) in controller.calls
+        assert not crypto.destroyed
+        assert "Complete failed" in window.transcript_screen.message_label.text()
+        # The view did not close: its custody callbacks are still armed.
+        assert window.transcript_screen.complete_button.isEnabled()
+        window.close()
+
+    def test_destroy_recovered_crypto_retained_while_generating(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 6.3 Done-when: `_destroy_recovered_crypto`-during-generation.
+        The coordinator refuses, the in-memory key survives for the worker,
+        and the retained reference is cleaned up on the next (post-release)
+        pass."""
+        window, controller, _directory, crypto = self._recovered_window(tmp_path)
+        controller.generation_error = GenerationInProgressError(
+            "recovered-key destruction refused: a note generation is in progress"
+        )
+        window._destroy_recovered_crypto()
+        assert not crypto.destroyed
+        assert window._recovered_crypto is crypto  # reference retained for cleanup
+        controller.generation_error = None  # generation released
+        window._destroy_recovered_crypto()
+        assert crypto.destroyed
+        assert window._recovered_crypto is None
+        window.close()
+
+    def test_destroy_recovered_crypto_retained_while_discard_reserved(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 30: the coordinator's coarse reservation refusal
+        (SessionActivityError) is caught the same way as the generation
+        refusal — key retained, cleaned up after release."""
+        window, controller, _directory, crypto = self._recovered_window(tmp_path)
+        controller.generation_error = SessionActivityError(
+            "recovered-key destruction refused: a discard is in flight"
+        )
+        window._destroy_recovered_crypto()
+        assert not crypto.destroyed
+        assert window._recovered_crypto is crypto
+        controller.generation_error = None
+        window._destroy_recovered_crypto()
+        assert crypto.destroyed
+        window.close()
+
+    def test_live_session_ids_include_reserved_discard_targets(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 30: the recovery-list exclusion is sourced from the
+        controller's RESERVATION SET, not only the mutable live session."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        reserved_id = uuid.uuid4().hex
+        controller = FakeController()
+        controller.reserved_ids = frozenset({reserved_id})
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        assert reserved_id in window._live_session_ids()
+        window.close()
+
+    def test_stale_recovery_resume_refused_at_click_time(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 30: the rendered list can be stale — a session reserved by
+        an in-flight discard AFTER listing must be refused at resume time,
+        BEFORE any key unwrap."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        recovered_id = _make_recoverable(tmp_path, finished=True)
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("must never unwrap"),
+        )
+        assert window.recovery_screen.session_list.count() == 1
+        window.recovery_screen.session_list.setCurrentRow(0)
+        controller.reserved_ids = frozenset({recovered_id})  # discard begins now
+        window.recovery_screen.on_resume_processing()
+        assert not window.recovery_screen.is_busy  # refused before any unwrap
+        assert "busy elsewhere" in window.recovery_screen.message_label.text()
+        window.close()
+
+    def test_live_session_ids_is_one_atomic_snapshot(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 31: the exclusion set is ONE controller snapshot — the
+        window must not compose split reserved/live reads, because a
+        Discard-reserve + admitted Start between two reads yields a set
+        omitting the still-reserved session."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        snap_id = uuid.uuid4().hex
+        calls: list[str] = []
+
+        def atomic() -> frozenset[str]:
+            calls.append("snapshot")
+            return frozenset({snap_id})
+
+        def split_read() -> frozenset[str]:
+            pytest.fail("split read: a consumer composed reserved_session_ids")
+
+        controller.custody_protected_ids = atomic  # type: ignore[method-assign]
+        controller.reserved_session_ids = split_read  # type: ignore[method-assign]
+        assert window._live_session_ids() == frozenset({snap_id})
+        assert calls == ["snapshot"]
+        window.close()
+
+    def test_stale_recovery_discard_refused_at_click_time(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui.main_window import MainWindow
+
+        recovered_id = _make_recoverable(tmp_path, finished=True)
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        assert window.recovery_screen.session_list.count() == 1
+        window.recovery_screen.session_list.setCurrentRow(0)
+        controller.reserved_ids = frozenset({recovered_id})
+        window.recovery_screen.on_discard()
+        assert (tmp_path / recovered_id).exists()  # custody untouched
+        assert "busy elsewhere" in window.recovery_screen.message_label.text()
         window.close()
 
     def test_live_controller_session_excluded_from_recovery_list(

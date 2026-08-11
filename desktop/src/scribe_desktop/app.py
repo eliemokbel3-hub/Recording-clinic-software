@@ -107,21 +107,23 @@ def sweep_protected_ids(
 ) -> frozenset[str]:
     """Session ids the expiry sweep must skip.
 
-    State-active sessions (recording/paused/processing — the binding
-    Critical Constraint) PLUS the controller's own session in ANY
-    non-terminal state (round 42 MED-001, guard-only, pending user
-    ratification): PR-round-18 PR2 protects a RECOVERED session awaiting
-    Complete/Discard from the sweep; the controller-owned live path gets
-    the same custody courtesy, so a queued transcript open for review
-    cannot lose its key at the 24 h boundary mid-review. The 24 h cap
-    still applies from the first sweep after the session is retired or
-    the app restarts — this widens protection, never deletion.
+    ONE atomic controller snapshot (round 31 PR-MED-001) of every
+    custody-protected id — state-active sessions (the binding Critical
+    Constraint), the controller's own session in ANY non-terminal state
+    (round 42 MED-001: a queued transcript open for review must not lose
+    its key at the 24 h boundary mid-review; PR-round-18 PR2 gave
+    recovered checkouts the same courtesy via ``extra``), and every
+    in-flight Discard reservation target (round 30: the admitted
+    concurrent start() can retire the discarding session from the live
+    pointer mid-window) — taken under a SINGLE controller-lock
+    acquisition. Round 31's lesson: composing those ids from SEPARATE
+    controller reads was itself a race — a Discard-reserve plus admitted
+    Start between the reads yielded a set omitting the still-reserved
+    target, re-opening exactly the exposure round 30 closed. Ids come
+    from the snapshot; the filesystem sweep runs after, with no
+    controller lock held.
     """
-    protected = controller.active_session_ids() | extra
-    session = controller.session
-    if session is not None and not session.is_terminal:
-        protected = protected | {session.session_id}
-    return protected
+    return controller.custody_protected_ids() | extra
 
 
 def main() -> int:

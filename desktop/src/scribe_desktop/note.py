@@ -50,7 +50,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -66,6 +66,13 @@ from scribe_desktop.transcription import (
     TranscriptWord,
     is_name_like_token,
 )
+
+if TYPE_CHECKING:
+    # Annotation-only: importing note_config at runtime would be a cycle
+    # (note_config imports this module). The pipeline functions below import
+    # it at CALL time instead — the same deferred-import convention
+    # session_store uses for this module.
+    from scribe_desktop.note_config import NoteConfig
 
 # ---------------------------------------------------------------------------
 # The canonical section set (17, stable keys) — plan Schema / Data Changes.
@@ -1606,6 +1613,327 @@ class MockNoteModelProvider:
         )
 
 
+# ---------------------------------------------------------------------------
+# The two-stage pipeline (Task 6.1) — Flow 1's ordering, made structural:
+#
+#   compose_draft()  -> base note PLUS proposals; runs NO checks
+#   (clinician confirms/declines each proposal — Phase 7's Note tab)
+#   finalise_note()  -> composes CONFIRMED proposals into assertions, runs
+#                       EVERY check, assembles the GeneratedNote
+#
+# Checks never run before confirmation, and confirmation evidence rides the
+# ARTIFACT (proposal_id + shown_text_digest + ConfirmationDecision on every
+# composed assertion), never the call. An emitted-but-unresolved proposal is
+# not an exception here: it flows into ``check_note(pending_proposals=...)``
+# and comes back as an ``unconfirmed_proposal`` ERROR riding the note, so
+# the refusal is an ACTION STATE (``blocking_warnings()`` non-empty;
+# ``write_note`` refuses) exactly as global property 4 words it.
+# ---------------------------------------------------------------------------
+
+
+class NotePipelineError(Exception):
+    """A pipeline-stage precondition failed (compose/finalise misuse)."""
+
+
+class ProposalEvidenceError(NotePipelineError):
+    """Confirmation evidence does not correspond to the draft's proposals —
+    a resolution for a proposal the draft never emitted, two resolutions for
+    one proposal, or a confirmed text digest that is not the digest of the
+    text the proposal would insert."""
+
+
+class NoteDraft(BaseModel):
+    """Stage-one output: the base note plus its proposals, UNCHECKED.
+
+    In-memory hand-off between ``compose_draft`` and ``finalise_note`` only —
+    never persisted, never rendered as prose.
+
+    The confinement this type ENFORCES (round 28 PR-MED-001): base sections
+    hold TRANSCRIPT-provenance assertions ONLY. A provider-returned
+    ``autofill``/``prefill`` assertion is refused by the validator however
+    complete its evidence fields look — confirmation evidence is a record of
+    a CLINICIAN decision, and provider output must never bypass the
+    proposal-resolution loop that creates one. ``finalise_note``
+    re-establishes the same confinement, so a validator-skipping
+    (``model_construct``) draft cannot bypass it either. Every
+    non-``transcript`` assertion in a final note therefore originates in
+    ``finalise_note``'s resolution loop: one emitted proposal, one confirmed
+    resolution, digest-verified.
+
+    Residue, named rather than implied: ``GeneratedSection`` itself stays
+    BROAD — final notes legitimately hold composed clinician-authored
+    assertions — so a hand-built ``GeneratedNote`` handed straight to
+    ``write_note`` is outside this confinement (``write_note`` verifies
+    evidence self-consistency, not proposal membership: the artifact carries
+    no proposal set). Same-user hand-crafting sits outside the threat model
+    (the rounds 12-13 convention), and per-assertion confirmation in Phase
+    7's UI plus Check 3 remain the compensating controls. Phase 3B's
+    model-authored provenance gets its OWN explicit contract when it
+    arrives; it does not widen this path.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session_id: str = Field(pattern=SESSION_ID_PATTERN)
+    template_profile_id: str = Field(pattern=_PROFILE_ID_PATTERN)
+    provider_name: str = Field(min_length=1, max_length=64)
+    clinician_speaker: str | None = None
+    transcript_digest: str
+    config_digest: str
+    note_sections: tuple[GeneratedSection, ...] = ()
+    note_proposals: tuple[NoteProposal, ...] = ()
+
+    @model_validator(mode="after")
+    def _check_draft(self) -> Self:
+        for label, value in (
+            ("transcript_digest", self.transcript_digest),
+            ("config_digest", self.config_digest),
+        ):
+            if not _DIGEST_RE.match(value):
+                raise ValueError(f"{label} must match {DIGEST_PATTERN}")
+        seen_keys: list[int] = []
+        assertion_ids: set[str] = set()
+        for section in self.note_sections:
+            index = SECTION_INDEX[section.section_key]
+            if seen_keys and index <= seen_keys[-1]:
+                raise ValueError("note_sections must be unique and in canonical order")
+            seen_keys.append(index)
+            for assertion in section.note_assertions:
+                # Round 28 PR-MED-001: the provider-boundary confinement.
+                if assertion.note_span.provenance != "transcript":
+                    raise ValueError(
+                        "a draft base section may hold transcript-provenance "
+                        "assertions only; clinician-authored content enters "
+                        f"solely as proposals (assertion {assertion.assertion_id})"
+                    )
+                if assertion.assertion_id in assertion_ids:
+                    raise ValueError(f"duplicate assertion_id: {assertion.assertion_id}")
+                assertion_ids.add(assertion.assertion_id)
+        proposal_ids: set[str] = set()
+        for proposal in self.note_proposals:
+            if proposal.proposal_id in proposal_ids:
+                raise ValueError(f"duplicate proposal_id: {proposal.proposal_id}")
+            proposal_ids.add(proposal.proposal_id)
+        return self
+
+
+class ProposalResolution(BaseModel):
+    """The clinician's recorded resolution of ONE proposal.
+
+    Flow 1's confirmation evidence, exactly as the plan words it: the
+    ``proposal_id`` (inside the decision), the exact-text digest of what was
+    DISPLAYED, and the ``ConfirmationDecision``. ``shown_text_digest`` is
+    supplied by the review surface from the text it actually rendered —
+    deliberately NOT copied from the proposal — so a UI that displayed
+    something other than the proposal's exact text produces evidence that
+    ``finalise_note`` refuses instead of evidence that lies.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    shown_text_digest: str
+    confirmation: ConfirmationDecision
+
+    @property
+    def proposal_id(self) -> str:
+        return self.confirmation.proposal_id
+
+    @model_validator(mode="after")
+    def _check_resolution(self) -> Self:
+        if not _DIGEST_RE.match(self.shown_text_digest):
+            raise ValueError(f"shown_text_digest must match {DIGEST_PATTERN}")
+        return self
+
+
+def compose_draft(
+    document: TranscriptDocument,
+    config: NoteConfig,
+    provider: NoteModelProvider,
+    template_profile_id: str | None = None,
+    *,
+    clinician_speaker: str | None = None,
+    prefill_id: str | None = None,
+) -> NoteDraft:
+    """Stage one of Flow 1: compose the base note and its proposals.
+
+    Runs NO checks — checking before the clinician has confirmed each
+    proposal was the original pipeline-ordering defect (compose -> confirm ->
+    CHECK -> write; plan Flow 1). Both confirmed inputs are consumed here:
+    the request is constructed ONLY through ``note_config.build_note_request``
+    (canonicalise + bind + derive, rounds 10-13), and ``clinician_speaker``
+    must be the CONFIRMED role — Task 7.5 owns the control; passing a raw
+    ``speaker_role()`` preselection through requires writing
+    ``.preselected_clinician_speaker`` in plain sight, which is the guard.
+
+    ``prefill_id`` is the clinician's explicit region choice;
+    ``PrefillSelectionAmbiguousError`` propagates as the chooser case and
+    ``UnknownPrefillError`` as a caller bug (``note_fill`` semantics).
+
+    Provider output is CONFINED at ingestion (round 28 PR-MED-001): the
+    returned sections become ``NoteDraft.note_sections``, whose validator
+    refuses any non-``transcript`` assertion — a provider cannot smuggle
+    clinician-authored content past the proposal-resolution loop, however
+    complete the fabricated evidence looks. The refusal is the type's own
+    ``ValidationError``, consistent with this module's structural refusals.
+    """
+    from scribe_desktop.note_config import build_note_request
+    from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
+
+    request = build_note_request(
+        document, config, template_profile_id, clinician_speaker=clinician_speaker
+    )
+    sections = provider.generate_sections(request)
+    proposals = (
+        *autofill_proposals(document, config),
+        *prefill_proposals(document, config, prefill_id),
+    )
+    return NoteDraft(
+        session_id=request.session_id,
+        template_profile_id=request.template_profile_id,
+        provider_name=provider.provider_name,
+        clinician_speaker=request.clinician_speaker,
+        transcript_digest=request.transcript_digest,
+        config_digest=request.config_digest,
+        note_sections=sections,
+        note_proposals=proposals,
+    )
+
+
+def _merge_confirmed(
+    base_sections: tuple[GeneratedSection, ...],
+    confirmed: Sequence[NoteAssertion],
+) -> tuple[GeneratedSection, ...]:
+    """Base sections plus confirmed assertions, in canonical section order.
+
+    Within a section the provider's assertions keep their order and confirmed
+    proposals append after them in draft order — deterministic, so the same
+    inputs always assemble the same artifact.
+    """
+    grouped: dict[NoteSectionKey, list[NoteAssertion]] = {
+        section.section_key: list(section.note_assertions) for section in base_sections
+    }
+    for assertion in confirmed:
+        grouped.setdefault(assertion.section_key, []).append(assertion)
+    return tuple(
+        GeneratedSection(section_key=key, note_assertions=tuple(grouped[key]))
+        for key in CANONICAL_SECTION_KEYS
+        if key in grouped
+    )
+
+
+def finalise_note(
+    draft: NoteDraft,
+    resolutions: Sequence[ProposalResolution],
+    document: TranscriptDocument,
+    config: NoteConfig,
+    *,
+    created_at: datetime | None = None,
+) -> GeneratedNote:
+    """Stage two of Flow 1: compose confirmed proposals, run EVERY check,
+    assemble the ``GeneratedNote`` with its warnings attached.
+
+    Evidence discipline (each refusal typed ``ProposalEvidenceError``):
+    - a resolution naming a proposal the draft never emitted is refused —
+      confirmation evidence about nothing must not exist;
+    - two resolutions for one proposal are refused — which one the clinician
+      meant would be an implementation accident;
+    - a resolution — confirmed OR declined — whose ``shown_text_digest`` is
+      not the digest of the proposal's exact insertable text is refused
+      (Task 6.1 Done-when, widened decision-agnostic in round 25): the
+      clinician decided about words that are not the words this proposal
+      inserts, so the evidence backs nothing — and a mis-rendered decline
+      must not silently resolve a proposal the clinician never saw.
+
+    A DECLINED proposal is resolved and composes nothing (the type also pins
+    this: a declined decision cannot construct an assertion). A proposal with
+    NO resolution is pending: it is passed to ``check_note`` as
+    ``pending_proposals`` and comes back as an ``unconfirmed_proposal`` error
+    riding the artifact — the plan's action-state refusal (property 4), which
+    ``write_note`` then enforces. A stale ``document`` or ``config`` dies in
+    ``check_note``'s digest gate (``CheckTargetMismatchError``), deliberately
+    not re-verified here — one gate, one owner.
+
+    The provider-boundary confinement is RE-ESTABLISHED here (round 28
+    PR-MED-001): a draft base assertion that is not transcript-provenance is
+    refused even when the draft skipped validation
+    (``NoteDraft.model_construct``), so the only route by which a
+    non-``transcript`` assertion reaches the assembled note is the
+    resolution loop below — one emitted proposal, one confirmed resolution.
+    """
+    from scribe_desktop.note_check import check_note
+
+    for section in draft.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.note_span.provenance != "transcript":
+                raise ProposalEvidenceError(
+                    f"draft base assertion {assertion.assertion_id} is not "
+                    "transcript-provenance; clinician-authored content enters a "
+                    "note only through the proposal-resolution loop"
+                )
+    by_id: dict[str, ProposalResolution] = {}
+    for supplied in resolutions:
+        proposal_id = supplied.confirmation.proposal_id
+        if proposal_id in by_id:
+            raise ProposalEvidenceError(f"duplicate resolution for proposal {proposal_id}")
+        by_id[proposal_id] = supplied
+    draft_ids = {proposal.proposal_id for proposal in draft.note_proposals}
+    for proposal_id in by_id:
+        if proposal_id not in draft_ids:
+            raise ProposalEvidenceError(
+                f"resolution names a proposal the draft never emitted: {proposal_id}"
+            )
+    pending: list[NoteProposal] = []
+    confirmed: list[NoteAssertion] = []
+    for proposal in draft.note_proposals:
+        resolution = by_id.get(proposal.proposal_id)
+        if resolution is None:
+            pending.append(proposal)
+            continue
+        # Decision-AGNOSTIC (round 25 LOW-001): a decline recorded against
+        # text the UI never displayed is not a resolution either — treating
+        # it as one would let a rendering bug silently drop a proposal the
+        # clinician never actually saw. Verified before the declined branch.
+        if resolution.shown_text_digest != proposal.shown_text_digest:
+            raise ProposalEvidenceError(
+                f"the shown-text digest recorded for proposal {proposal.proposal_id} is "
+                "not the digest of the text this proposal inserts"
+            )
+        if resolution.confirmation.note_confirmation == "declined":
+            continue
+        confirmed.append(
+            NoteAssertion(
+                assertion_id=proposal.proposal_id,
+                section_key=proposal.section_key,
+                note_span=NoteSpan(
+                    span_text=proposal.note_excerpt, provenance=proposal.provenance
+                ),
+                proposal_id=proposal.proposal_id,
+                shown_text_digest=proposal.shown_text_digest,
+                config_digest=proposal.config_digest,
+                confirmation=resolution.confirmation,
+            )
+        )
+    sections = _merge_confirmed(draft.note_sections, confirmed)
+    stamp = created_at if created_at is not None else datetime.now(UTC)
+
+    def _assemble(warnings: tuple[NoteWarning, ...]) -> GeneratedNote:
+        return GeneratedNote(
+            session_id=draft.session_id,
+            created_at=stamp,
+            template_profile_id=draft.template_profile_id,
+            provider_name=draft.provider_name,
+            clinician_speaker=draft.clinician_speaker,
+            transcript_digest=draft.transcript_digest,
+            config_digest=draft.config_digest,
+            note_sections=sections,
+            note_warnings=warnings,
+        )
+
+    unchecked = _assemble(())
+    warnings = check_note(unchecked, document, config, pending_proposals=pending)
+    return _assemble(warnings)
+
+
 if TYPE_CHECKING:
     # Static conformance proof, checked by mypy and free at runtime: mypy is
     # configured over ``src`` only, so a test-side annotation would not
@@ -1633,7 +1961,9 @@ __all__ = [
     "MockBehaviour",
     "MockNoteModelProvider",
     "NoteAssertion",
+    "NoteDraft",
     "NoteModelProvider",
+    "NotePipelineError",
     "NoteProposal",
     "NoteProviderError",
     "NoteSectionKey",
@@ -1641,12 +1971,16 @@ __all__ = [
     "NoteUtterance",
     "NoteWarning",
     "NoteWarningSeverity",
+    "ProposalEvidenceError",
+    "ProposalResolution",
     "SectionOwner",
     "SourceCoords",
     "SpeakerEvidence",
     "SpeakerRolePreselection",
+    "compose_draft",
     "content_tokens",
     "digest_bytes",
+    "finalise_note",
     "is_interrogative",
     "normalise_token",
     "reconstruct_span_text",

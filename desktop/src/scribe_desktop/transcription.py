@@ -64,6 +64,7 @@ from scribe_desktop.benchmark import (
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
+    NOTE_FILENAME,
     SESSION_ID_PATTERN,
     TRANSCRIPT_FILENAME,
     StoreCorruptError,
@@ -803,7 +804,19 @@ def write_transcript(
 
     No AAD: the Complete ordering primitive (``complete_session``) verifies
     the round-trip with a plain decrypt — the two must stay in agreement.
+
+    A stale ``note.enc`` is unlinked FIRST (Task 6.2): a re-transcription
+    must not leave a note describing a superseded transcript beside the new
+    one. Fail-closed ordering — if the stale note cannot be removed, the new
+    transcript is NOT written (the hazard is exactly the pairing; Complete
+    would refuse the mismatched pair anyway, and the note stays regenerable
+    while the key lives). The unlink-then-write pair is not atomic: a crash
+    between the two loses only a note that was already superseded.
     """
+    try:
+        (session_dir / NOTE_FILENAME).unlink(missing_ok=True)
+    except OSError as exc:
+        raise StoreWriteError(f"stale note not removable: {exc}") from exc
     blob = crypto.encrypt(document.to_bytes())
     transcript_path = session_dir / TRANSCRIPT_FILENAME
     # Round 42 MED-008: the binding temp+fsync+replace idiom is implemented

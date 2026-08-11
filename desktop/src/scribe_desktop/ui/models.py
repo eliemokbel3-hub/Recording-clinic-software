@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Protocol
 
 from scribe_desktop.secure_storage import SessionCrypto
-from scribe_desktop.session import RecordingSession, SessionState
+from scribe_desktop.session import GenerationLease, RecordingSession, SessionState
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -80,6 +80,24 @@ class SessionControllerLike(Protocol):
     def discard(self) -> RecordingSession: ...
 
     def active_session_ids(self) -> frozenset[str]: ...
+
+    # Task 6.3: the note-generation lease plus the lease-aware custody
+    # coordinator the recovered path routes through (never raw
+    # complete_session/discard_session/crypto.destroy calls from the UI).
+
+    def begin_generation(self) -> GenerationLease: ...
+
+    def end_generation(self, lease: GenerationLease) -> None: ...
+
+    def reserved_session_ids(self) -> frozenset[str]: ...
+
+    def custody_protected_ids(self) -> frozenset[str]: ...
+
+    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None: ...
+
+    def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None: ...
+
+    def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None: ...
 
 
 # ---------------------------------------------------------------------------

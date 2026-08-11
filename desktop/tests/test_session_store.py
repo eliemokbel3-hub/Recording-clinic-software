@@ -10,6 +10,7 @@ import sys
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -22,6 +23,7 @@ from scribe_desktop.session_store import (
     NOTE_FILENAME,
     RECOVERY_WINDOW,
     KeyCustodyError,
+    NoteWriteRefusedError,
     SessionChunkStore,
     StoreCorruptError,
     StoreLimitError,
@@ -31,12 +33,18 @@ from scribe_desktop.session_store import (
     discard_session,
     earliest_trusted_timestamp,
     iter_chunks,
+    read_note,
     read_store_header,
     resolve_key_path,
     sweep_sessions,
     unwrap_key_from_file,
     wrap_key_to_file,
+    write_note,
 )
+
+if TYPE_CHECKING:
+    from scribe_desktop.note import GeneratedNote, GeneratedSection, NoteWarning
+    from scribe_desktop.note_config import NoteConfig
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
 
@@ -551,6 +559,270 @@ class TestNoteCustodyOnComplete:
         assert (session_dir / KEY_FILENAME).exists()
         assert (session_dir / NOTE_FILENAME).exists()
         assert not crypto.destroyed
+
+
+# ------------------------------------------------- note artifact I/O (6.2)
+
+
+def _note_config() -> NoteConfig:
+    from scribe_desktop.note_config import NoteConfig
+
+    return NoteConfig()
+
+
+def _writable_note(
+    session_dir: Path,
+    config: NoteConfig,
+    *,
+    note_sections: tuple[GeneratedSection, ...] = (),
+    note_warnings: tuple[NoteWarning, ...] = (),
+    session_id: str | None = None,
+    transcript_dig: str | None = None,
+    config_dig: str | None = None,
+) -> GeneratedNote:
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    return GeneratedNote(
+        session_id=session_id if session_id is not None else session_dir.name,
+        created_at=datetime.now(UTC),
+        template_profile_id="clinic-a",
+        provider_name="extractive-v1",
+        transcript_digest=(
+            transcript_dig if transcript_dig is not None else digest_bytes(TRANSCRIPT_BODY)
+        ),
+        config_digest=config_dig if config_dig is not None else config.config_digest(),
+        note_sections=note_sections,
+        note_warnings=note_warnings,
+    )
+
+
+def _confirmed_assertion(
+    config_digest: str, *, shown_text_digest: str | None = None
+) -> tuple[GeneratedSection, ...]:
+    """ONE section holding a legally-constructed confirmed autofill assertion.
+    Construction checks evidence PRESENCE only (on purpose — note.py records
+    why), so a mismatched ``shown_text_digest`` is constructable and it is
+    ``write_note``'s job to refuse it."""
+    from scribe_desktop.note import (
+        ConfirmationDecision,
+        GeneratedSection,
+        NoteAssertion,
+        NoteSpan,
+        text_digest,
+    )
+
+    text = "Ice pack use explained."
+    assertion = NoteAssertion(
+        assertion_id="autofill-aaaaaaaaaaaaaaaaaaaaaaaa",
+        section_key="advice_home_exercise",
+        note_span=NoteSpan(span_text=text, provenance="autofill"),
+        proposal_id="autofill-aaaaaaaaaaaaaaaaaaaaaaaa",
+        shown_text_digest=(
+            shown_text_digest if shown_text_digest is not None else text_digest(text)
+        ),
+        config_digest=config_digest,
+        confirmation=ConfirmationDecision(
+            proposal_id="autofill-aaaaaaaaaaaaaaaaaaaaaaaa",
+            note_confirmation="confirmed",
+            decided_at=datetime.now(UTC),
+        ),
+    )
+    return (
+        GeneratedSection(section_key="advice_home_exercise", note_assertions=(assertion,)),
+    )
+
+
+class TestNoteArtifactIO:
+    """Task 6.2: `write_note`/`read_note` mirror the transcript artifact I/O
+    (atomic_write_bytes, no AAD), and `write_note` enforces the artifact
+    invariants ITSELF — defense in depth rather than trust in the UI or in
+    construction-time validation. Every refusal leaves the disk unchanged."""
+
+    def test_write_and_read_round_trip(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(session_dir, config)
+        path = write_note(session_dir, crypto, note, config)
+        assert path == session_dir / NOTE_FILENAME
+        assert not (session_dir / (NOTE_FILENAME + ".tmp")).exists()
+        assert read_note(session_dir, crypto) == note
+
+    def test_written_note_clears_the_complete_ordering(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        write_note(session_dir, crypto, _writable_note(session_dir, config), config)
+        complete_session(session_dir, crypto)
+        assert not (session_dir / KEY_FILENAME).exists()
+        assert (session_dir / NOTE_FILENAME).is_file()
+
+    def test_refuses_unresolved_error_warning(self, tmp_path: Path) -> None:
+        from scribe_desktop.note import NoteWarning
+
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(
+            session_dir,
+            config,
+            note_warnings=(
+                NoteWarning(note_warning_code="contradiction", severity="error"),
+            ),
+        )
+        with pytest.raises(NoteWriteRefusedError, match="unresolved error"):
+            write_note(session_dir, crypto, note, config)
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+    def test_refuses_shown_text_digest_mismatch(self, tmp_path: Path) -> None:
+        """The relation construction deliberately does NOT verify: the digest
+        must be the digest of the assertion's OWN text."""
+        from scribe_desktop.note import text_digest
+
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        sections = _confirmed_assertion(
+            config.config_digest(), shown_text_digest=text_digest("different words")
+        )
+        note = _writable_note(session_dir, config, note_sections=sections)
+        with pytest.raises(NoteWriteRefusedError, match="shown_text_digest"):
+            write_note(session_dir, crypto, note, config)
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+    def test_refuses_assertion_confirmed_under_a_different_config(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.note import digest_bytes
+
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        sections = _confirmed_assertion(digest_bytes(b"a different config"))
+        note = _writable_note(session_dir, config, note_sections=sections)
+        with pytest.raises(NoteWriteRefusedError, match="different config"):
+            write_note(session_dir, crypto, note, config)
+
+    def test_refuses_forged_validator_skipping_note(self, tmp_path: Path) -> None:
+        """The unbacked-assertion CLASS guard: canonical re-validation, not an
+        enumerated field list. A `model_construct` note whose autofill
+        assertion carries no ConfirmationDecision dies typed."""
+        from scribe_desktop.note import (
+            GeneratedNote,
+            GeneratedSection,
+            NoteAssertion,
+            NoteSpan,
+            digest_bytes,
+            text_digest,
+        )
+
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        text = "Ice pack use explained."
+        forged_assertion = NoteAssertion.model_construct(
+            assertion_id="autofill-bbbbbbbbbbbbbbbbbbbbbbbb",
+            section_key="advice_home_exercise",
+            note_span=NoteSpan(span_text=text, provenance="autofill"),
+            speaker=None,
+            proposal_id="autofill-bbbbbbbbbbbbbbbbbbbbbbbb",
+            shown_text_digest=text_digest(text),
+            config_digest=config.config_digest(),
+            confirmation=None,  # the forgery: unconfirmed content wearing evidence fields
+        )
+        forged_section = GeneratedSection.model_construct(
+            section_key="advice_home_exercise", note_assertions=(forged_assertion,)
+        )
+        forged = GeneratedNote.model_construct(
+            schema_version=1,
+            session_id=session_dir.name,
+            created_at=datetime.now(UTC),
+            template_profile_id="clinic-a",
+            provider_name="extractive-v1",
+            clinician_speaker=None,
+            transcript_digest=digest_bytes(TRANSCRIPT_BODY),
+            config_digest=config.config_digest(),
+            note_sections=(forged_section,),
+            note_warnings=(),
+        )
+        with pytest.raises(NoteWriteRefusedError, match="canonical re-validation"):
+            write_note(session_dir, crypto, forged, config)
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+    def test_refuses_config_digest_mismatch_with_presented_config(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.note import digest_bytes
+
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(
+            session_dir, config, config_dig=digest_bytes(b"some other config")
+        )
+        with pytest.raises(NoteWriteRefusedError, match="presented config"):
+            write_note(session_dir, crypto, note, config)
+
+    def test_refuses_foreign_session_binding(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(session_dir, config, session_id=_sid())
+        with pytest.raises(NoteWriteRefusedError, match="another session"):
+            write_note(session_dir, crypto, note, config)
+
+    def test_refuses_stale_transcript_digest(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(
+            session_dir, config, transcript_dig=_digest_of_another_transcript()
+        )
+        with pytest.raises(NoteWriteRefusedError, match="transcript"):
+            write_note(session_dir, crypto, note, config)
+
+    def test_missing_transcript_fails_closed(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        config = _note_config()
+        note = _writable_note(session_dir, config)
+        with pytest.raises(StoreWriteError, match="transcript artifact unreadable"):
+            write_note(session_dir, crypto, note, config)
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+    def test_read_missing_note(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        with pytest.raises(StoreWriteError, match="note artifact unreadable"):
+            read_note(session_dir, crypto)
+
+    def test_read_corrupt_ciphertext(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        (session_dir / NOTE_FILENAME).write_bytes(b"\0" * 64)
+        with pytest.raises(StoreCorruptError, match="note failed decrypt"):
+            read_note(session_dir, crypto)
+
+    def test_read_refuses_note_bound_to_another_session(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto, session_id=_sid())
+        with pytest.raises(StoreCorruptError, match="another session"):
+            read_note(session_dir, crypto)
+
+    def test_read_refuses_note_describing_another_transcript(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto, transcript_digest=_digest_of_another_transcript())
+        with pytest.raises(StoreCorruptError, match="does not describe this transcript"):
+            read_note(session_dir, crypto)
+
+    def test_read_and_complete_share_the_verification_core(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 6.2 Done-when: `read_note` verifies through the SAME code path
+        `complete_session` uses — pinned structurally, not by prose."""
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto)
+        calls: list[str] = []
+        original = session_store._verified_note
+
+        def spy(*args: object, **kwargs: object) -> object:
+            calls.append("verified")
+            return original(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(session_store, "_verified_note", spy)
+        read_note(session_dir, crypto)
+        assert calls == ["verified"]
+        complete_session(session_dir, crypto)
+        assert calls == ["verified", "verified"]
 
 
 # ----------------------------------------------------------------- the sweep

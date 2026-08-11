@@ -172,9 +172,32 @@ class RecoveryScreen(QWidget):
 
     # --- actions -----------------------------------------------------------
 
+    def _selection_blocked(self, info: models.RecoverableSessionInfo) -> bool:
+        """Click-time re-check of the exclusion set (round 30 PR-MED-001):
+        the rendered list can be STALE, and a session that has since been
+        reserved by an in-flight Discard (or become live) must be refused
+        BEFORE any key unwrap or custody mutation. Fail CLOSED, unlike
+        ``refresh()``'s fail-open — a provider error here refuses a custody
+        action (retry after refresh), it does not hide a listing."""
+        try:
+            excluded = self._active_ids_provider()
+        except Exception:  # noqa: BLE001 - refuse the action, never guess
+            return True
+        return info.session_id in excluded
+
+    def _refuse_stale_selection(self) -> None:
+        self.message_label.setText(
+            "Session is busy elsewhere (completing or discarding) - "
+            "refreshing the list."
+        )
+        self.refresh()
+
     def on_resume_processing(self) -> None:
         info = self._selected_info()
         if info is None or self._busy:
+            return
+        if self._selection_blocked(info):
+            self._refuse_stale_selection()
             return
         if self._protected:
             self.message_label.setText(
@@ -226,6 +249,9 @@ class RecoveryScreen(QWidget):
     def on_discard(self) -> None:
         info = self._selected_info()
         if info is None or self._busy:
+            return
+        if self._selection_blocked(info):
+            self._refuse_stale_selection()
             return
         try:
             # Key-first cryptographic deletion; no unwrapped key exists here.

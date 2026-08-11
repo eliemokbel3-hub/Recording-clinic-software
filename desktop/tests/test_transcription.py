@@ -37,9 +37,11 @@ from scribe_desktop.session import (
 )
 from scribe_desktop.session_store import (
     KEY_FILENAME,
+    NOTE_FILENAME,
     TRANSCRIPT_FILENAME,
     SessionChunkStore,
     StoreCorruptError,
+    StoreWriteError,
     complete_session,
     store_has_footer,
 )
@@ -588,6 +590,31 @@ class TestTranscriptArtifact:
         (tmp_path / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b'{"nope": 1}'))
         with pytest.raises(StoreCorruptError, match="malformed"):
             read_transcript(tmp_path, crypto)
+
+    def test_write_unlinks_stale_note_first(self, tmp_path: Path) -> None:
+        """Task 6.2: re-transcription must not leave a `note.enc` describing
+        a superseded transcript beside the new `transcript.enc`."""
+        crypto = SessionCrypto()
+        (tmp_path / NOTE_FILENAME).write_bytes(b"stale note ciphertext")
+        write_transcript(tmp_path, crypto, _document())
+        assert not (tmp_path / NOTE_FILENAME).exists()
+        assert (tmp_path / TRANSCRIPT_FILENAME).is_file()
+
+    def test_unremovable_stale_note_fails_closed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the stale note cannot be removed, the new transcript is NOT
+        written — the hazard is exactly the stale (note, transcript) pairing."""
+        crypto = SessionCrypto()
+        (tmp_path / NOTE_FILENAME).write_bytes(b"stale note ciphertext")
+
+        def refuse(self: Path, missing_ok: bool = False) -> None:
+            raise OSError(13, "locked by another process")
+
+        monkeypatch.setattr(Path, "unlink", refuse)
+        with pytest.raises(StoreWriteError, match="stale note not removable"):
+            write_transcript(tmp_path, crypto, _document())
+        assert not (tmp_path / TRANSCRIPT_FILENAME).exists()
 
     def test_tripwire_drops_transcript_representations(self) -> None:
         logger = logging.getLogger("test-transcript-tripwire")

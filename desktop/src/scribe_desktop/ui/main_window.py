@@ -21,8 +21,11 @@ from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
-from scribe_desktop.session import SessionState
-from scribe_desktop.session_store import complete_session, discard_session
+from scribe_desktop.session import (
+    GenerationInProgressError,
+    SessionActivityError,
+    SessionState,
+)
 from scribe_desktop.status import read_registration_status, run_self_test
 from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
 from scribe_desktop.ui import models
@@ -125,14 +128,19 @@ class MainWindow(QMainWindow):
     # --- routing -----------------------------------------------------------
 
     def _live_session_ids(self) -> frozenset[str]:
-        """Exclude the controller's live session from the recovery list in
-        ANY non-terminal state (PR round 18, PR1): a queued/failed session
-        the controller still owns must not be recoverable/discardable
-        through a second custody path while this process is alive."""
-        session = self._controller.session
-        if session is not None and not session.is_terminal:
-            return frozenset({session.session_id})
-        return frozenset()
+        """Exclude every custody-protected session from the recovery list:
+        the controller's live session in ANY non-terminal state (PR round
+        18, PR1 — a queued/failed session the controller still owns must
+        not be recoverable through a second custody path) and every id an
+        in-flight Discard has reserved (round 30 PR-MED-001 — the admitted
+        concurrent start() swaps the live pointer mid-discard).
+
+        Taken as ONE atomic controller snapshot (round 31 PR-MED-001):
+        composing separate reserved/live reads was itself a race — a
+        Discard-reserve plus admitted Start between the reads yielded a
+        set omitting the still-reserved session for the length of its
+        window."""
+        return self._controller.custody_protected_ids()
 
     def closeEvent(self, event: QCloseEvent) -> None:
         """Refuse to close while a worker thread runs (PR round 18, PR6):
@@ -191,16 +199,19 @@ class MainWindow(QMainWindow):
         directory, outcome = payload
         assert isinstance(directory, Path)
         assert isinstance(outcome, RecoveryOutcome)
-        # Recovered path: custody primitives run directly on the store dir
-        # (Flow 2 ordering inside complete_session; key-first in discard).
+        # Recovered path: custody actions route through the controller's
+        # lease-aware coordinator (Task 6.3) — never raw store primitives
+        # from the UI, so a live note generation blocks recovered Complete/
+        # Discard exactly as it blocks the live-session ones (the Flow 2
+        # ordering itself is unchanged, performed inside the coordinator).
         # PR round 18 (PR7): the callbacks close over the crypto ONLY —
         # never over the outcome, so no plaintext document reference
         # outlives the inspection view.
         crypto = outcome.crypto
         self.transcript_screen.show_document(
             outcome.document,
-            on_complete=lambda: complete_session(directory, crypto),
-            on_discard=lambda: discard_session(directory, crypto),
+            on_complete=lambda: self._controller.complete_recovered(directory, crypto),
+            on_discard=lambda: self._controller.discard_recovered(directory, crypto),
             store_finished=outcome.store_finished,
         )
         # Round 42 LOW-006: retain for destroy-on-overwrite/close (a prior
@@ -214,10 +225,22 @@ class MainWindow(QMainWindow):
     def _destroy_recovered_crypto(self) -> None:
         """Zeroize the retained recovered-checkout key copy (round 42
         LOW-006). Idempotent; a no-op after Complete/Discard already
-        destroyed it. In-memory copy only — key.dpapi is never touched."""
-        if self._recovered_crypto is not None:
-            self._recovered_crypto.destroy()
-            self._recovered_crypto = None
+        destroyed it. In-memory copy only — key.dpapi is never touched.
+
+        Routed through the lease-aware coordinator (Task 6.3): while a note
+        generation is in flight (GenerationInProgressError) or a discard's
+        custody reservation is held (round 30: SessionActivityError, the
+        coarse identity-less refusal), the coordinator refuses and the
+        REFERENCE IS RETAINED — the release path re-runs this cleanup.
+        Phase 7's busy guards own keeping view swaps unreachable during
+        generation; this catch is the custody backstop, not the UX."""
+        if self._recovered_crypto is None:
+            return
+        try:
+            self._controller.destroy_recovered_crypto(self._recovered_crypto)
+        except (GenerationInProgressError, SessionActivityError):
+            return
+        self._recovered_crypto = None
 
     def _on_transcript_closed(self, _outcome: str) -> None:
         self.session_screen.refresh()
