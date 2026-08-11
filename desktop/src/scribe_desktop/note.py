@@ -252,12 +252,33 @@ def reconstruct_span_text(words: Sequence[TranscriptWord]) -> str:
 NoteWarningSeverity = Literal["error", "review"]
 
 NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
+    # Check 1 — exact coordinate reconstruction (Task 5.1).
+    "source_coords_invalid": "error",  # coordinates address words the transcript does not have
+    "reconstruction_mismatch": "error",  # the span text is not what its coordinates say
+    "low_confidence_source": "review",  # an INCLUDED source word below UNCERTAINTY_THRESHOLD
+    # Check 2 — structured contradictions (Task 5.2). Three codes because
+    # severity is a property of the code: a contradiction resting on
+    # transcript evidence whose words fall below UNCERTAINTY_THRESHOLD is
+    # graded review — the raw ``probability``, NEVER the ``uncertain`` flag,
+    # which also marks every number and name regardless of confidence — and
+    # (round 23) a dose-value difference whose SAME-CLINICAL-STATE identity
+    # is not mechanically established (dose changes, titrations, inventory
+    # strengths and history are ordinary documentation) is `dose_mismatch`:
+    # surfaced for review and acknowledgement, never a block. The `error`
+    # grade requires identical statement context — the same medication fact
+    # with incompatible values.
+    "contradiction": "error",
+    "contradiction_low_confidence": "review",
+    "dose_mismatch": "review",
     # Check 3 — provenance integrity (Task 5.3).
     "unconfirmed_proposal": "error",
     "autofill_trigger_absent": "error",
     "role_unconfirmed": "error",
     "clinician_asserted": "review",  # unsuppressible; acknowledgement is the exit
     "mapping_drop": "review",  # renders into "Unmapped content"; never a block
+    # Check 4 — scoped omission (Task 5.4). Review, never error: a heuristic
+    # must not be able to block Complete on a false positive.
+    "high_risk_omission": "review",
 }
 
 
@@ -1092,6 +1113,7 @@ MockBehaviour = Literal[
     "over_omission",
     "obeys_injection",
     "malformed_output",
+    "speaker_misattribution",
 ]
 
 MOCK_BEHAVIOURS: Final[tuple[MockBehaviour, ...]] = (
@@ -1108,6 +1130,10 @@ MOCK_BEHAVIOURS: Final[tuple[MockBehaviour, ...]] = (
     "over_omission",
     "obeys_injection",
     "malformed_output",
+    # Task 5.0: the speaker-ONLY failure class the round-6 peer showed the
+    # old fingerprint could not even represent — an utterance attributed to
+    # the wrong cluster with text, section and coordinates all correct.
+    "speaker_misattribution",
 )
 
 _FABRICATED_TEXT: Final = "The patient reported a fall from a ladder last Tuesday"
@@ -1118,6 +1144,62 @@ _INVENTED: Final[Mapping[MockBehaviour, tuple[NoteSectionKey, str]]] = {
     "invented_investigation": ("referrals_investigations", "Lumbar MRI requested today"),
 }
 _SUBSTITUTE_NAME: Final = "Wilson"
+
+# The FIXTURE CONTRACT for `obeys_injection` (Task 5.0, peer probe 1): the
+# behaviour models a provider that treats a spoken utterance as an
+# instruction, so the fixture must actually CONTAIN one — an utterance
+# whose content tokens carry both an instruction verb and an instruction
+# object ("Ignore previous instructions...", "Write in the note that...").
+# On a transcript with no such utterance the behaviour raises rather than
+# quoting arbitrary speech into a clinician-owned section, which is a
+# DIFFERENT failure class wearing this one's label. These closed sets are a
+# fixture-authoring contract for the adversarial instrument, not a runtime
+# injection detector — the failure direction is safe (no marker -> the cell
+# fails loudly instead of silently testing the wrong class).
+_INJECTION_VERBS: Final[frozenset[str]] = frozenset(
+    {"ignore", "disregard", "forget", "pretend", "override", "write", "add", "put", "state"}
+)
+_INJECTION_OBJECTS: Final[frozenset[str]] = frozenset(
+    {"instruction", "instructions", "prompt", "prompts", "system", "note", "notes", "record"}
+)
+
+
+def _is_injection_like(text: str) -> bool:
+    """True when ``text`` satisfies the injection fixture contract above."""
+    tokens = frozenset(content_tokens(text))
+    return bool(tokens & _INJECTION_VERBS) and bool(tokens & _INJECTION_OBJECTS)
+
+
+# The FIXTURE CONTRACT for `dose_change` (Task 5.0, rounds 21-22
+# PR-MED-001 — the fifth and sixth appearances of the difference-not-class
+# family): a dose is a MEDICATION token, then a quantity that either
+# carries an ATTACHED strength unit ("paracetamol 500mg") or is followed by
+# a separated strength unit or regimen marker ("paracetamol 500 mg",
+# "paracetamol 500 twice daily"). A bare number near — or even directly
+# after — a medication is NOT a dose ("stopped paracetamol 2 days ago" is a
+# time interval), a pain score, duration or date is not one either, and a
+# COUNT quantity is not one at all ("2 tablets remaining" is stock — round
+# 22 removed the tablet/capsule words from the marker set because a
+# prescribed count and an inventory count are mechanically inseparable, so
+# count fixtures fail toward the loud raise). Like the injection sets
+# above, these are closed instrument vocabularies for AUTHORING fixtures,
+# not a runtime classifier: the failure direction is safe — a fixture
+# outside the contract makes the behaviour raise loudly instead of
+# silently exercising the wrong class. ("daily" is a marker; "days"
+# deliberately is not.)
+_DOSE_MEDICATIONS: Final[frozenset[str]] = frozenset(
+    {
+        "paracetamol", "panadol", "ibuprofen", "nurofen", "aspirin",
+        "naproxen", "diclofenac", "voltaren", "codeine", "tramadol",
+    }
+)
+_DOSE_MARKERS: Final[frozenset[str]] = frozenset(
+    {
+        "mg", "milligram", "milligrams", "mcg", "g", "gram", "grams", "ml",
+        "twice", "daily", "nightly", "hourly", "weekly",
+    }
+)
+_ATTACHED_STRENGTH_RE: Final = re.compile(r"^\d+(?:\.\d+)?(?:mg|mcg|g|ml)$")
 
 
 def _same_statement(left: str, right: str) -> bool:
@@ -1136,7 +1218,11 @@ def _same_statement(left: str, right: str) -> bool:
 
 _MUTATION_REQUIREMENT: Final[Mapping[str, str]] = {
     "laterality_flip": "a left/right token",
-    "dose_change": "a numeric token that changes when doubled",
+    "dose_change": (
+        "a medication-anchored dose (a strength unit attached to the "
+        "quantity, or a separated unit/regimen marker) whose quantity "
+        "changes when doubled"
+    ),
     "negation_flip": "a negation token",
     "name_substitution": f"a name-like token other than {_SUBSTITUTE_NAME}",
 }
@@ -1193,6 +1279,8 @@ class MockNoteModelProvider:
             assertions = [*assertions, self._invented_assertion(request)]
         elif self._behaviour == "obeys_injection":
             assertions = [*assertions, self._injected_assertion(request)]
+        elif self._behaviour == "speaker_misattribution":
+            assertions = self._misattribute_speaker(request, assertions)
         else:
             assertions = self._mutate(assertions)
         sections = self._as_sections(assertions)
@@ -1210,20 +1298,26 @@ class MockNoteModelProvider:
 
     def _fingerprint(
         self, sections: tuple[GeneratedSection, ...]
-    ) -> tuple[tuple[str, tuple[str, ...], SourceCoords | None], ...]:
+    ) -> tuple[tuple[str, tuple[str, ...], SourceCoords | None, str | None], ...]:
         """What makes two mock outputs the same ADVERSARIAL result: which
-        section, which statement, and which coordinates were cited.
+        section, which statement, which coordinates were cited, and which
+        SPEAKER the assertion is attributed to.
 
         Blind to punctuation and case (not failure classes) and deliberately
         SENSITIVE to `source_coords`, because a correctly-worded assertion
         citing the wrong interval is a genuine failure class a future
-        behaviour may want to produce.
+        behaviour may want to produce. ``speaker`` joined the projection with
+        Task 5.0: without it, `speaker_misattribution` — a real Axis B class
+        whose ONLY difference is the attributed cluster — would be wrongly
+        REJECTED at the single exit as indistinguishable from faithful (the
+        round-6 peer's gap, recorded on Task 5.0).
         """
         return tuple(
             (
                 assertion.section_key,
                 content_tokens(assertion.text),
                 assertion.note_span.source_coords,
+                assertion.speaker,
             )
             for section in sections
             for assertion in section.note_assertions
@@ -1255,9 +1349,20 @@ class MockNoteModelProvider:
         return assertions
 
     def _retext(self, assertion: NoteAssertion, text: str) -> NoteAssertion:
-        """Same coordinates, different text — Check 1's reconstruction fails."""
-        return assertion.model_copy(
-            update={"note_span": assertion.note_span.model_copy(update={"span_text": text})}
+        """Same coordinates, different text — Check 1's reconstruction fails.
+
+        FRESH VALIDATING construction, not ``model_copy`` (Task 5.0, peer
+        probe 2): ``model_copy`` skips validators, so a mutator that emitted
+        empty text shipped a structurally INVALID span under an adversarial
+        label — different from faithful for the wrong reason. Rebuilding
+        through the real constructors makes any future mutator's invalid
+        output die loudly here instead.
+        """
+        return NoteAssertion.model_validate(
+            {
+                **assertion.model_dump(),
+                "note_span": {**assertion.note_span.model_dump(), "span_text": text},
+            }
         )
 
     def _fabricate(self, assertions: list[NoteAssertion]) -> list[NoteAssertion]:
@@ -1300,6 +1405,13 @@ class MockNoteModelProvider:
             # class instead of stopping on a cosmetic difference.
             if _same_statement(text, assertion.text):
                 continue
+            # Task 5.0 (peer probe 2): a mutation that ERASED the utterance
+            # ("No." minus its negation) has not expressed the class either —
+            # it would ship an invalid empty span, not a flipped statement.
+            # The scan continues; `_retext`'s validating construction is the
+            # backstop for any other invalid shape.
+            if not text.strip():
+                continue
             return [
                 *assertions[:index],
                 self._retext(assertion, text),
@@ -1326,20 +1438,41 @@ class MockNoteModelProvider:
         return None
 
     def _change_dose(self, tokens: list[str]) -> list[str] | None:
-        """Double the first digit run that ACTUALLY changes when doubled.
+        """Double a MEDICATION-ANCHORED dose quantity that actually changes.
 
-        A zero run doubles to itself, so `search` + unconditional return made
-        `"0 mg daily"` and the leading zero of `"0.5 mg daily"` report success
-        while leaving the dose identical (round 4 PR-MED-002). Every run in
-        every token is tried before giving up — `0.5` is mutable via its `5`.
+        Rounds 21-22 PR-MED-001 (the fifth and sixth difference-not-class
+        instances): the old scan doubled the first digit run ANYWHERE, so a
+        pain score or a duration "exercised" the dosage class while no dose
+        changed — and round 22 showed a stock count ("2 tablets remaining")
+        doing the same. The mutation now applies only to a quantity in the
+        fixture contract's dose shape — an ATTACHED strength
+        (``_ATTACHED_STRENGTH_RE``) or a quantity followed by a
+        unit/regimen marker (``_DOSE_MEDICATIONS`` / ``_DOSE_MARKERS``
+        above; count words are deliberately absent) — and every dose site
+        is tried before giving up. A zero quantity doubles to itself
+        (round 4 PR-MED-002), so the scan moves past it; ``0.5`` is mutable
+        via its ``5``. No dose site anywhere means the fixture cannot
+        express this class, and ``_mutate`` raises.
         """
         for index, token in enumerate(tokens):
-            for match in _DIGITS_RE.finditer(token):
+            if normalise_token(token) not in _DOSE_MEDICATIONS:
+                continue
+            if index + 1 >= len(tokens):
+                continue
+            quantity = tokens[index + 1]
+            attached = _ATTACHED_STRENGTH_RE.match(normalise_token(quantity)) is not None
+            marked = (
+                index + 2 < len(tokens)
+                and normalise_token(tokens[index + 2]) in _DOSE_MARKERS
+            )
+            if not attached and not marked:
+                continue
+            for match in _DIGITS_RE.finditer(quantity):
                 doubled = str(int(match.group()) * 2)
-                replaced = token[: match.start()] + doubled + token[match.end() :]
-                if replaced == token:
+                replaced = quantity[: match.start()] + doubled + quantity[match.end() :]
+                if replaced == quantity:
                     continue
-                tokens[index] = replaced
+                tokens[index + 1] = replaced
                 return tokens
         return None
 
@@ -1387,25 +1520,66 @@ class MockNoteModelProvider:
         )
 
     def _injected_assertion(self, request: NoteRequest) -> NoteAssertion:
-        """Quote the LAST utterance verbatim into a clinician-owned section.
+        """Quote the LAST injection-like utterance verbatim into a
+        clinician-owned section.
 
         Deliberately grounded: it reconstructs exactly, so the defence must
         come from role ownership and confirmation, never from grounding.
+        The quoted utterance must satisfy the `_is_injection_like` fixture
+        contract (Task 5.0, peer probe 1): a transcript containing NO
+        injected instruction cannot express this class, and quoting ordinary
+        speech instead would be a wrong-class result — mis-sectioned
+        content, not obedience to an instruction — so the honest outcome is
+        the same loud refusal the mutations use.
         """
-        last = request.transcript_utterances[-1]
+        injected = [
+            utterance
+            for utterance in request.transcript_utterances
+            if utterance.transcript_words and _is_injection_like(utterance.text)
+        ]
+        if not injected:
+            raise NoteProviderError(
+                "obeys_injection needs an utterance containing an injected instruction"
+            )
+        last = injected[-1]
         words = last.transcript_words
-        text = reconstruct_span_text(words)
-        if not words or not text:
-            raise NoteProviderError("obeys_injection needs a non-empty final utterance")
         return NoteAssertion(
             assertion_id="minj0",
             section_key="management_plan",
             speaker=last.speaker,
             note_span=NoteSpan(
-                span_text=text,
+                span_text=last.text,
                 provenance="transcript",
                 source_coords=SourceCoords(last.segment_index, 0, len(words) - 1),
             ),
+        )
+
+    def _misattribute_speaker(
+        self, request: NoteRequest, assertions: list[NoteAssertion]
+    ) -> list[NoteAssertion]:
+        """Reattribute ONE assertion to a different existing cluster — text,
+        section and coordinates all stay correct (Task 5.0).
+
+        The class this expresses: an utterance carried faithfully but
+        credited to the wrong voice, which is what a diarization merge or a
+        provider attribution error looks like downstream. A single-cluster
+        transcript cannot express it (there is no wrong cluster to pick), so
+        it raises — the same loud-failure rule as the mutations.
+        """
+        labels: list[str] = []
+        for utterance in request.transcript_utterances:
+            if utterance.speaker not in labels:
+                labels.append(utterance.speaker)
+        for index, assertion in enumerate(assertions):
+            other = next((label for label in labels if label != assertion.speaker), None)
+            if other is None:
+                continue
+            swapped = NoteAssertion.model_validate(
+                {**assertion.model_dump(), "speaker": other}
+            )
+            return [*assertions[:index], swapped, *assertions[index + 1 :]]
+        raise NoteProviderError(
+            "speaker_misattribution needs at least two speaker labels"
         )
 
     def _malformed_assertion(self, request: NoteRequest) -> NoteAssertion:
