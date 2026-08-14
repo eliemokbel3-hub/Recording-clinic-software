@@ -10,11 +10,23 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Final, Protocol
 
+from scribe_desktop.note import (
+    CANONICAL_SECTIONS,
+    ExtractiveNoteProvider,
+    GeneratedNote,
+    NoteDraft,
+    NoteModelProvider,
+    NoteProposal,
+    NoteSectionKey,
+    NoteWarning,
+    compose_draft,
+)
+from scribe_desktop.note_config import NoteConfig, load_note_config
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import GenerationLease, RecordingSession, SessionState
 from scribe_desktop.session_store import (
@@ -35,6 +47,7 @@ from scribe_desktop.transcription import (
     RecoveryOutcome,
     TranscriptDocument,
     WhisperSpeechProvider,
+    read_transcript,
     recover_session_transcription,
     resolve_whisper_model,
     transcribe_session,
@@ -77,6 +90,10 @@ class SessionControllerLike(Protocol):
 
     def complete(self) -> RecordingSession: ...
 
+    def complete_without_note(self, lease: GenerationLease) -> RecordingSession: ...
+
+    def complete_deleting_saved_note(self) -> RecordingSession: ...
+
     def discard(self) -> RecordingSession: ...
 
     def active_session_ids(self) -> frozenset[str]: ...
@@ -98,6 +115,13 @@ class SessionControllerLike(Protocol):
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None: ...
 
     def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None: ...
+
+    # Task 7.2: the scoped, lease-aware custody access the live-path note
+    # generation worker (compose) and the GUI-thread write both run through —
+    # no raw directory/crypto accessors (round 25 LOW-002).
+    def with_generation_custody[T](
+        self, lease: GenerationLease, action: Callable[[Path, SessionCrypto], T]
+    ) -> T: ...
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +276,437 @@ def format_transcript_text(document: TranscriptDocument) -> str:
     return "\n".join(lines)
 
 
+def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> dict[str, str]:
+    """A representative truncated quote per speaker cluster, for the Task 7.5
+    role-confirmation control — so the clinician's choice is informed.
+
+    Each speaker's FIRST non-empty utterance, in appearance order. Quoting
+    here is deliberate: ``SpeakerEvidence`` carries no text (a role
+    preselection is logged/rendered and clinical text must stay out of logs),
+    but this screen already holds and displays the transcript, so it quotes
+    directly (the plan records exactly this split). Display only."""
+    quotes: dict[str, str] = {}
+    for segment in document.transcript_segments:
+        if segment.speaker in quotes:
+            continue
+        text = " ".join(word.word_text for word in segment.transcript_words).strip()
+        if not text:
+            continue
+        if len(text) > max_chars:
+            text = text[:max_chars].rstrip() + "..."
+        quotes[segment.speaker] = text
+    return quotes
+
+
+# ---------------------------------------------------------------------------
+# Note review view logic (Tasks 7.1 / 7.4) — pure, offscreen-testable. The
+# Note tab widget stays thin: rendering, warning grouping, and Complete
+# gating all live here. Nothing below logs or persists clinical text.
+# ---------------------------------------------------------------------------
+
+# Task 7.1 / 9.1: the note is the RATIFIED copyable surface, but ONLY once
+# the Task 9.1 shipping gate passes (the practitioner judging the extractive
+# output acceptable over a real-transcript set — plan Shipping Gate). That
+# gate has NOT passed, so copy ships DISABLED: the Note tab binds its copy
+# affordance to THIS recorded decision, never unconditionally. The transcript
+# stays display-only ALWAYS, regardless of this flag (Critical Constraint).
+COPY_TO_CLINIKO_ENABLED: Final[bool] = False
+
+_SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = {
+    section.key: section.title for section in CANONICAL_SECTIONS
+}
+
+_PROVENANCE_LABELS: Final[Mapping[str, str]] = {
+    "transcript": "from transcript",
+    "autofill": "autofill (clinician-authored)",
+    "prefill": "prefill (clinician-authored)",
+}
+
+
+def provenance_label(provenance: str) -> str:
+    """Human label distinguishing a line's provenance (Task 7.1: provenance
+    visibly distinguished). Autofill and prefill are clinician-authored
+    boilerplate; transcript lines are quoted speech verified by reconstruction.
+    """
+    return _PROVENANCE_LABELS.get(provenance, provenance)
+
+
+@dataclass(frozen=True)
+class RenderedAssertion:
+    """One assertion rendered as ONE bullet — never assembled prose (plan
+    Critical Constraint: assertions render on hard boundaries)."""
+
+    assertion_id: str
+    provenance: str
+    provenance_label: str
+    text: str
+
+
+@dataclass(frozen=True)
+class RenderedSection:
+    section_key: NoteSectionKey
+    title: str
+    assertions: tuple[RenderedAssertion, ...]
+
+
+def format_note_body(note: GeneratedNote) -> str:
+    """The composed note as display text — canonical sections, each assertion
+    ONE bullet with a provenance tag. This is the copyable surface (gated on
+    the 9.1 shipping decision); it is display text only, never persisted or
+    logged here."""
+    blocks: list[str] = []
+    for section in render_note_sections(note):
+        lines = [f"{section.title}:"]
+        for assertion in section.assertions:
+            lines.append(f"  - {assertion.text}  [{assertion.provenance_label}]")
+        blocks.append("\n".join(lines))
+    if not blocks:
+        return "(no note content)"
+    return "\n\n".join(blocks)
+
+
+def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
+    """The note's populated sections in canonical order, each assertion one
+    bullet with its provenance. ``note.note_sections`` is already unique and
+    canonically ordered (GeneratedNote validator), so this is presentation
+    only — no reordering, no joining."""
+    rendered: list[RenderedSection] = []
+    for section in note.note_sections:
+        rendered.append(
+            RenderedSection(
+                section_key=section.section_key,
+                title=_SECTION_TITLES[section.section_key],
+                assertions=tuple(
+                    RenderedAssertion(
+                        assertion_id=assertion.assertion_id,
+                        provenance=assertion.provenance,
+                        provenance_label=provenance_label(assertion.provenance),
+                        text=assertion.text,
+                    )
+                    for assertion in section.note_assertions
+                ),
+            )
+        )
+    return tuple(rendered)
+
+
+@dataclass(frozen=True)
+class RenderedProposal:
+    """A proposal as its confirm/decline row shows it: the EXACT insertable
+    text (never a summary — the digest is computed from what is rendered),
+    plus provenance and a plain-English attribution."""
+
+    proposal_id: str
+    section_key: NoteSectionKey
+    section_title: str
+    provenance: str
+    provenance_label: str
+    excerpt: str
+    attribution: str
+
+
+def render_proposal(proposal: NoteProposal) -> RenderedProposal:
+    """Render one proposal's confirm/decline row. Autofill attribution reuses
+    ``format_timestamp`` for the trigger time (plan Task 7.4)."""
+    if proposal.provenance == "autofill" and proposal.trigger_start_seconds is not None:
+        attribution = f"Autofill triggered at {format_timestamp(proposal.trigger_start_seconds)}"
+    elif proposal.provenance == "prefill":
+        if proposal.trigger_start_seconds is not None:
+            attribution = (
+                f"Prefill region detected at "
+                f"{format_timestamp(proposal.trigger_start_seconds)}"
+            )
+        else:
+            attribution = "Prefill seed (region chosen manually)"
+    else:
+        attribution = provenance_label(proposal.provenance)
+    return RenderedProposal(
+        proposal_id=proposal.proposal_id,
+        section_key=proposal.section_key,
+        section_title=_SECTION_TITLES[proposal.section_key],
+        provenance=proposal.provenance,
+        provenance_label=provenance_label(proposal.provenance),
+        excerpt=proposal.note_excerpt,
+        attribution=attribution,
+    )
+
+
+# --- warning grouping (fatigue is this phase's top risk) --------------------
+
+
+@dataclass(frozen=True)
+class WarningCopy:
+    """Plain-clinical-English copy for one warning code: what it means,
+    whether it blocks (and which action), and how to clear it."""
+
+    title: str
+    blocks: str | None  # the action this error blocks; None for review codes
+    clear_hint: str
+
+
+# One entry per registered note.NOTE_WARNING_SEVERITY code. Blocking `error`
+# codes NAME the action they block and the way to clear it (plan Task 7.1);
+# `review` codes carry blocks=None and an acknowledge-after-checking hint.
+WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
+    # Round 35 PR-MED-003: base-assertion errors (source_coords_invalid /
+    # reconstruction_mismatch) attach to provider transcript lines that have
+    # NO proposal row and cannot be retracted — their only clear-path is the
+    # non-destructive "Cancel review and regenerate" control.
+    "source_coords_invalid": WarningCopy(
+        "A quoted line does not line up with the recording",
+        "saving the note",
+        "Use Cancel review and regenerate to rebuild the note.",
+    ),
+    "reconstruction_mismatch": WarningCopy(
+        "A quoted line does not match the transcript exactly",
+        "saving the note",
+        "Use Cancel review and regenerate to rebuild the note.",
+    ),
+    "contradiction": WarningCopy(
+        "A confirmed line contradicts the transcript",
+        "saving the note",
+        "Decline the contradicting proposed line, or Cancel review and regenerate.",
+    ),
+    "unconfirmed_proposal": WarningCopy(
+        "A proposed line has not been confirmed or declined",
+        "saving the note and completing",
+        "Confirm or decline every proposed line below.",
+    ),
+    "autofill_trigger_absent": WarningCopy(
+        "A confirmed autofill line no longer matches its trigger",
+        "saving the note",
+        "Decline the affected proposed line, or Cancel review and regenerate.",
+    ),
+    "role_unconfirmed": WarningCopy(
+        "The clinician speaker is not confirmed for a clinician-owned section",
+        "saving the note",
+        "Cancel review, confirm the clinician on the Transcript screen, then regenerate.",
+    ),
+    "low_confidence_source": WarningCopy(
+        "A quoted line includes a word the transcription was unsure about",
+        None,
+        "Check it against the transcript beside the note, then acknowledge.",
+    ),
+    "contradiction_low_confidence": WarningCopy(
+        "A possible contradiction rests on an uncertain transcript word",
+        None,
+        "Check it against the transcript, then acknowledge.",
+    ),
+    "dose_mismatch": WarningCopy(
+        "Two dose mentions differ and could not be confirmed as the same",
+        None,
+        "Check the doses against the transcript, then acknowledge.",
+    ),
+    "clinician_asserted": WarningCopy(
+        "A clinician-authored line was added (autofill or prefill)",
+        None,
+        "Confirm the wording is right for this patient, then acknowledge.",
+    ),
+    "mapping_drop": WarningCopy(
+        "A populated section has no place in the chosen template",
+        None,
+        "It shows under Unmapped content; acknowledge if that is expected.",
+    ),
+    "high_risk_omission": WarningCopy(
+        "A number, name or medication the clinician said is not in the note",
+        None,
+        "Check the transcript beside the note, then acknowledge.",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class WarningGroup:
+    """One code's warnings, counted and summarised (never one row per
+    finding — that is the fatigue the plan warns about)."""
+
+    code: str
+    severity: str
+    count: int
+    title: str
+    blocks: str | None
+    clear_hint: str
+    section_keys: tuple[NoteSectionKey, ...]
+
+
+@dataclass(frozen=True)
+class WarningSummary:
+    """Blocking errors and review warnings, grouped and kept DISTINCT (plan
+    Task 7.1: blocking errors presented distinctly from review warnings)."""
+
+    blocking: tuple[WarningGroup, ...] = ()
+    review: tuple[WarningGroup, ...] = ()
+
+    @property
+    def blocking_count(self) -> int:
+        return sum(group.count for group in self.blocking)
+
+    @property
+    def review_count(self) -> int:
+        return sum(group.count for group in self.review)
+
+
+def _fallback_copy(code: str) -> WarningCopy:
+    return WarningCopy(code.replace("_", " "), None, "Review this finding.")
+
+
+def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
+    """Group warnings by code — blocking `error` codes apart from `review`
+    codes — with counts and the touched sections, so the Note tab summarises
+    rather than lists a flat wall of findings (plan Task 7.1)."""
+    order: list[str] = []
+    by_code: dict[str, list[NoteWarning]] = {}
+    for warning in warnings:
+        if warning.note_warning_code not in by_code:
+            order.append(warning.note_warning_code)
+            by_code[warning.note_warning_code] = []
+        by_code[warning.note_warning_code].append(warning)
+    blocking: list[WarningGroup] = []
+    review: list[WarningGroup] = []
+    for code in order:
+        found = by_code[code]
+        copy = WARNING_COPY.get(code) or _fallback_copy(code)
+        sections = tuple(
+            dict.fromkeys(key for w in found if (key := w.section_key) is not None)
+        )
+        group = WarningGroup(
+            code=code,
+            severity=found[0].severity,
+            count=len(found),
+            title=copy.title,
+            blocks=copy.blocks,
+            clear_hint=copy.clear_hint,
+            section_keys=sections,
+        )
+        (blocking if found[0].severity == "error" else review).append(group)
+    return WarningSummary(blocking=tuple(blocking), review=tuple(review))
+
+
+# --- Complete gating (Flow 2) ----------------------------------------------
+
+
+@dataclass(frozen=True)
+class NoteReviewState:
+    """What the Transcript screen needs to gate Complete (Flow 2). Complete
+    is refused while generating, while any proposal is unconfirmed, while an
+    `error` is unresolved, or while a `review` warning is unacknowledged.
+
+    ``has_note`` is False when the clinician generated no note at all —
+    transcript-only Complete stays available, unchanged from Phase 2."""
+
+    generating: bool = False
+    has_note: bool = False
+    unconfirmed_proposals: int = 0
+    blocking_errors: int = 0
+    unacknowledged_reviews: int = 0
+    note_saved: bool = False
+
+
+def complete_block_reason(state: NoteReviewState) -> str | None:
+    """The reason Complete is blocked in ``state``, or None when it may
+    proceed. Drives the Transcript screen's Complete enablement AND its
+    message — a blocked Complete says why and how to clear it."""
+    if state.generating:
+        return "A note is being reviewed - save it or delete it before completing."
+    if not state.has_note:
+        return None
+    if state.unconfirmed_proposals > 0:
+        return "Confirm or decline every proposed line before completing."
+    if state.blocking_errors > 0:
+        return "Resolve the blocking note warnings before completing."
+    if not state.note_saved:
+        return "Save the note (or delete it) before completing."
+    if state.unacknowledged_reviews > 0:
+        return "Acknowledge the note review warnings before completing."
+    return None
+
+
+# --- read-only config viewer report (Task 7.4) -----------------------------
+
+
+def config_report_lines(
+    config: NoteConfig, template_profile_id: str | None = None
+) -> list[str]:
+    """A read-only summary of the config that drove (or would drive) a note:
+    which template profile is in use, how many autofill rules and prefill
+    regions are configured, and which populated-capable canonical sections
+    the selected profile would drop. Non-clinical config metadata only —
+    safe to display (the config editor UI itself is deferred post-3B)."""
+    lines = [
+        f"Template profiles configured: {len(config.template_profiles)}",
+        f"Autofill rules: {len(config.autofill_rules)}",
+        f"Prefill regions: {len(config.prefill_templates)}",
+    ]
+    selected = None
+    if template_profile_id is not None:
+        for profile in config.template_profiles:
+            if profile.template_profile_id == template_profile_id:
+                selected = profile
+                break
+    elif len(config.template_profiles) == 1:
+        selected = config.template_profiles[0]
+    if selected is not None:
+        lines.append(f"Active template: {selected.display_name}")
+        dropped = selected.unmapped_section_keys()
+        if dropped:
+            titles = ", ".join(_SECTION_TITLES[key] for key in dropped)
+            lines.append(f"Sections with no template mapping: {titles}")
+    return lines
+
+
+# --- generation worker factory (Task 7.4) ----------------------------------
+
+
+@dataclass(frozen=True)
+class NoteGenerationResult:
+    """The compose worker's output: the unchecked draft, the resolved config
+    it was composed under, and the on-disk transcript it was composed from.
+
+    Carrying all three keeps the review DIGEST-CONSISTENT: ``finalise_note``
+    re-checks the note against this exact document and config (never a
+    separately-loaded copy that could round-trip to a different digest), and
+    the GUI-thread write reuses the same config. The document is also the
+    Task 7.6 transcript shown beside the note."""
+
+    draft: NoteDraft
+    config: NoteConfig
+    document: TranscriptDocument
+
+
+def build_note_generator(
+    *,
+    clinician_speaker: str,
+    template_profile_id: str | None,
+    prefill_id: str | None = None,
+    config_root: Path | None = None,
+    provider_factory: Callable[[], NoteModelProvider] = ExtractiveNoteProvider,
+) -> Callable[[Path, SessionCrypto], NoteGenerationResult]:
+    """A generation worker for ``SessionController.with_generation_custody``.
+
+    Reads the transcript FROM DISK (the exact on-disk artifact ``write_note``
+    re-verifies against), loads the note config, and composes the draft with
+    the CONFIRMED role and template profile (Task 7.5 — ``clinician_speaker``
+    is required and typed ``str``, so a generator cannot be built without a
+    confirmed role). Config load and provider construction happen at call
+    time, inside the worker thread, off the GUI thread — mirroring
+    ``build_transcriber``. Returns the draft plus the resolved config."""
+
+    def generator(session_dir: Path, crypto: SessionCrypto) -> NoteGenerationResult:
+        document = read_transcript(session_dir, crypto)
+        config = load_note_config(config_root)
+        draft = compose_draft(
+            document,
+            config,
+            provider_factory(),
+            template_profile_id=template_profile_id,
+            clinician_speaker=clinician_speaker,
+            prefill_id=prefill_id,
+        )
+        return NoteGenerationResult(draft=draft, config=config, document=document)
+
+    return generator
+
+
 # ---------------------------------------------------------------------------
 # Benchmark / model report panel content.
 # ---------------------------------------------------------------------------
@@ -343,17 +798,36 @@ def build_recovery_runner(
 
 
 __all__ = [
+    "COPY_TO_CLINIKO_ENABLED",
     "UNFINISHED_STORE_WARNING",
+    "WARNING_COPY",
     "ControlSet",
+    "NoteGenerationResult",
+    "NoteReviewState",
     "RecoverableSessionInfo",
+    "RenderedAssertion",
+    "RenderedProposal",
+    "RenderedSection",
     "SessionControllerLike",
+    "WarningCopy",
+    "WarningGroup",
+    "WarningSummary",
+    "build_note_generator",
     "build_recovery_runner",
     "build_transcriber",
+    "complete_block_reason",
+    "config_report_lines",
     "controls_for_state",
     "default_sessions_root",
+    "format_note_body",
     "format_timestamp",
     "format_transcript_text",
     "list_recoverable_sessions",
     "model_report_lines",
     "models_ready",
+    "provenance_label",
+    "render_note_sections",
+    "render_proposal",
+    "speaker_quotations",
+    "summarise_warnings",
 ]

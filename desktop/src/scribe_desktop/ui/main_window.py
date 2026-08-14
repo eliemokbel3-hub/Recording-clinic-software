@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
+from scribe_desktop.note import GeneratedNote
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -30,6 +31,7 @@ from scribe_desktop.status import read_registration_status, run_self_test
 from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.microphone import MicrophoneScreen
+from scribe_desktop.ui.note import NoteScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.transcript import TranscriptScreen
@@ -110,7 +112,10 @@ class MainWindow(QMainWindow):
             active_ids_provider=self._live_session_ids,
             recovery_runner=recovery_runner,
         )
-        self.transcript_screen = TranscriptScreen()
+        self.transcript_screen = TranscriptScreen(
+            controller, recovery_busy_provider=self._recovery_in_flight
+        )
+        self.note_screen = NoteScreen()
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -118,14 +123,31 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.session_screen, "Session")
         self.tabs.addTab(self.recovery_screen, "Recovery")
         self.tabs.addTab(self.transcript_screen, "Transcript")
+        self.tabs.addTab(self.note_screen, "Note")
         self.tabs.addTab(self.status_panel, "Status")
         self.setCentralWidget(self.tabs)
 
         self.session_screen.transcript_ready.connect(self._on_live_transcript)
         self.recovery_screen.recovered.connect(self._on_recovered)
         self.transcript_screen.closed.connect(self._on_transcript_closed)
+        # Phase 7: generation orchestration. The Transcript screen composes a
+        # draft (holding the lease); the Note tab reviews it; save/abandon
+        # relay back to the Transcript screen (which owns the lease + scoped
+        # write). While the lease is held, the Recovery screen is blocked so
+        # no view swap can overwrite the retained recovered key (the residue).
+        self.transcript_screen.draft_ready.connect(self._on_draft_ready)
+        self.transcript_screen.generation_active_changed.connect(
+            self._on_generation_active
+        )
 
     # --- routing -----------------------------------------------------------
+
+    def _recovery_in_flight(self) -> bool:
+        """Round 33 MED-001: a recovery resume is running, so a note
+        generation must not start (they must stay mutually exclusive — see
+        the Transcript screen's guard). Paired with `set_generation_blocked`,
+        which blocks a resume starting during a generation."""
+        return self.recovery_screen.is_busy
 
     def _live_session_ids(self) -> frozenset[str]:
         """Exclude every custody-protected session from the recovery list:
@@ -163,10 +185,12 @@ class MainWindow(QMainWindow):
             self.session_screen.is_busy
             or self.recovery_screen.is_busy
             or self.microphone_screen.is_busy
+            or self.transcript_screen.is_busy
+            or self.note_screen.is_busy
         ):
             self.statusBar().showMessage(
-                "Work in progress - wait for transcription/benchmark to "
-                "finish before closing."
+                "Work in progress - wait for transcription, note generation, "
+                "or benchmark to finish before closing."
             )
             event.ignore()
             return
@@ -177,12 +201,17 @@ class MainWindow(QMainWindow):
 
     def _on_live_transcript(self, document: object) -> None:
         assert isinstance(document, TranscriptDocument)
-        # Live path: the controller owns custody (queued -> Complete/Discard).
+        # A different transcript replaces any stale note plaintext (Task 7.3).
+        self.note_screen.clear()
+        # Live path: the controller owns custody (queued -> Complete/Discard),
+        # and note generation is available (a QUEUED controller session exists
+        # for the scoped generation op).
         self.transcript_screen.show_document(
             document,
             on_complete=self._controller.complete,
             on_discard=self._controller.discard,
             store_finished=True,
+            can_generate=True,
         )
         # If a recovered transcript was open it stays CHECKED OUT (protected
         # from sweep/relist) until app restart — availability residual only,
@@ -208,6 +237,11 @@ class MainWindow(QMainWindow):
         # never over the outcome, so no plaintext document reference
         # outlives the inspection view.
         crypto = outcome.crypto
+        # A different transcript replaces any stale note plaintext (Task 7.3).
+        self.note_screen.clear()
+        # Recovered path: no QUEUED controller session exists, so note
+        # generation is unavailable here — the view shows Complete/Discard
+        # only (can_generate defaults False).
         self.transcript_screen.show_document(
             outcome.document,
             on_complete=lambda: self._controller.complete_recovered(directory, crypto),
@@ -242,7 +276,58 @@ class MainWindow(QMainWindow):
             return
         self._recovered_crypto = None
 
+    # --- note generation orchestration (Phase 7) --------------------------
+
+    def _on_draft_ready(self, result: object) -> None:
+        assert isinstance(result, models.NoteGenerationResult)
+        self.note_screen.begin_review(
+            result,
+            copy_enabled=models.COPY_TO_CLINIKO_ENABLED,
+            on_save=self._on_note_save,
+            on_abandon=self._on_note_abandon,
+            on_cancel=self._on_note_cancel,
+            on_state_changed=self.transcript_screen.set_note_review_state,
+            template_profile_id=self.transcript_screen.selected_profile_id(),
+        )
+        self.tabs.setCurrentWidget(self.note_screen)
+
+    def _on_note_save(self, note: object) -> None:
+        # write_note runs on THIS (GUI) thread via the scoped op; raises on
+        # refusal so the Note tab surfaces it and the lease stays held.
+        assert isinstance(note, GeneratedNote)
+        self.transcript_screen.save_note(note)
+
+    def _on_note_abandon(self) -> None:
+        # Delete-note-and-complete-without-one: completes (deleting any
+        # note.enc) UNDER the held lease, releasing it only on success (round
+        # 35 PR-MED-001). Raises on failure -> the Note tab surfaces it with
+        # the lease + review still held. On success the transcript screen
+        # emits closed("completed").
+        self.transcript_screen.abandon_note_and_complete()
+
+    def _on_note_cancel(self) -> None:
+        # Non-destructive cancel/regenerate (round 35 PR-MED-003): drop the
+        # in-memory draft, release the lease, keep transcript + key, and
+        # return to the Transcript screen with Generate available again.
+        self.transcript_screen.cancel_note_review()
+        self.tabs.setCurrentWidget(self.transcript_screen)
+
+    def _on_generation_active(self, active: object) -> None:
+        active_bool = bool(active)
+        # While a live generation lease is held, block recovery view swaps so
+        # the retained recovered key cannot be overwritten (residue guard).
+        self.recovery_screen.set_generation_blocked(active_bool)
+        # Round 36 PR-MED-001: when a NEW generation starts, synchronously
+        # invalidate any stale (post-Save) Note tab, so its still-enabled
+        # delete-and-complete action can never route through the NEW lease.
+        # The new generation's own Note tab appears only after draft_ready
+        # (its compose worker has returned), so no terminal action can fire
+        # while a compose worker runs.
+        if active_bool:
+            self.note_screen.clear()
+
     def _on_transcript_closed(self, _outcome: str) -> None:
+        self.note_screen.clear()
         self.session_screen.refresh()
         # PR round 20 (PR-HIGH-009): release ONLY the checkout owned by the
         # transcript that just closed — never an unscoped clear.

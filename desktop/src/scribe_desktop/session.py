@@ -581,6 +581,68 @@ class SessionController:
             self._live = None
             return session
 
+    def complete_without_note(self, lease: GenerationLease) -> RecordingSession:
+        """The clinician's explicit 'complete without a note' exit (Flow 2,
+        Task 7.1): complete the queued session but DELETE any ``note.enc``
+        first (``delete_note=True``), then the same binding transcript
+        ordering as ``complete()`` (fsync -> verify -> delete key). Never a
+        silent deletion — the Note tab's delete-note control confirms it.
+
+        Runs UNDER the HELD generation lease and CONSUMES it only on success
+        (round 35 PR-MED-001). The Note tab's abandon path holds the lease for
+        the whole review; releasing it BEFORE completing was the defect — a
+        completion failure then left an unleased QUEUED session mid-review. So
+        this requires the exact held lease (identity, like
+        ``with_generation_custody``), keeps the ``_custody_reservations``
+        exclusion, runs ``complete_session`` under the lock (the same
+        no-unlocked-window shape as ``complete()``), and clears
+        ``self._generation`` ONLY after the WRITTEN transition. A failure
+        raises with the lease still held, the session still QUEUED, and the
+        key retained (note-unlink-first is fail-closed inside
+        ``complete_session``)."""
+        with self._lock:
+            if self._generation is None or self._generation is not lease:
+                raise GenerationInProgressError(
+                    "complete-without-note requires the held generation lease"
+                )
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard is completing; the session cannot be completed"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            complete_session(live.directory, live.crypto, delete_note=True)  # raises -> lease kept
+            self._transition_locked(live, SessionState.WRITTEN)
+            session = live.session
+            self._live = None
+            self._generation = None  # consume the lease only on success
+            return session
+
+    def complete_deleting_saved_note(self) -> RecordingSession:
+        """The POST-Save 'delete note and complete without one' exit (round 36
+        PR-MED-001): the note is already committed and NO lease is held, so
+        this deletes ``note.enc`` and completes the queued session with the
+        same binding ordering as ``complete()``.
+
+        Guarded like ``complete()``: refused while a generation lease is held
+        (a regeneration is in flight — the pre-Save leased path
+        ``complete_without_note(lease)`` owns that state) or while a discard is
+        completing. A failure keeps the key and leaves the session queued
+        (note-unlink-first is fail-closed inside ``complete_session``). This
+        is the pre-round-35 no-lease shape, restored as the SEPARATE guarded
+        delete-saved-note path the round-35 leased change left without one."""
+        with self._lock:
+            self._refuse_while_generating("complete")
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard is completing; the session cannot be completed"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            complete_session(live.directory, live.crypto, delete_note=True)
+            self._transition_locked(live, SessionState.WRITTEN)
+            session = live.session
+            self._live = None
+            return session
+
     def discard(self) -> RecordingSession:
         """Discard the session: key deleted FIRST (cryptographic deletion),
         then best-effort removal of the artifacts."""
@@ -792,6 +854,35 @@ class SessionController:
                     "recovered-key destruction refused: a discard is in flight"
                 )
             crypto.destroy()
+
+    def with_generation_custody[T](
+        self, lease: GenerationLease, action: Callable[[Path, SessionCrypto], T]
+    ) -> T:
+        """Run ``action(directory, crypto)`` for the QUEUED live session under
+        the HELD generation lease — the scoped custody access the live-path
+        note-generation worker (compose) and the GUI-thread ``write_note``
+        both need, WITHOUT exposing raw directory/crypto accessors (Task 7.2,
+        round 25 LOW-002; the plan disprefers raw accessors).
+
+        ``transcribe()``-style: snapshot ``(directory, crypto)`` under the
+        lock with a lease-IDENTITY and QUEUED-state check, then run ``action``
+        OUTSIDE the lock — compose (and, for 3B, a model provider) and the
+        note write are not trivial and must never block observers or the
+        failure callback. The lease — acquired via ``begin_generation()``
+        before the worker started — is what keeps ``start()`` / ``complete()``
+        / ``discard()`` / retirement from destroying this custody state for
+        the WHOLE operation, so the snapshot stays valid across the unlocked
+        call. A lease that is not the held one raises, so a stale caller can
+        never reach another session's crypto through here."""
+        with self._lock:
+            if self._generation is None or self._generation is not lease:
+                raise GenerationInProgressError(
+                    "scoped generation access requires the held generation lease"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            directory = live.directory
+            crypto = live.crypto
+        return action(directory, crypto)
 
     def _reserve_custody_locked(self, session_id: str) -> None:
         """Call under ``self._lock``."""

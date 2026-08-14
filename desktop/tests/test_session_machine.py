@@ -25,6 +25,7 @@ from scribe_desktop.session import (
     RECOVERABLE_STATES,
     TERMINAL_STATES,
     GenerationInProgressError,
+    GenerationLease,
     SessionActivityError,
     SessionController,
     SessionControllerError,
@@ -32,8 +33,10 @@ from scribe_desktop.session import (
 )
 from scribe_desktop.session_store import (
     KEY_FILENAME,
+    NOTE_FILENAME,
     TRANSCRIPT_FILENAME,
     SessionChunkStore,
+    StoreCorruptError,
     StoreWriteError,
     iter_chunks,
     sweep_sessions,
@@ -913,3 +916,168 @@ class TestGenerationLeaseLivePath:
             controller.discard()
         controller.end_generation(lease)  # the failure-cleanup release
         assert controller.discard().state is SessionState.DISCARDED
+
+
+@windows_only
+class TestGenerationCustodyOp:
+    """Task 7.2: the scoped, lease-aware `with_generation_custody` op — the
+    live-path generation worker's and the GUI-thread write's ONE route to the
+    QUEUED session's (directory, crypto), no raw accessors."""
+
+    def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
+        controller, _backend = _controller(tmp_path)
+        session = controller.start(0)
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        return controller, session_dir
+
+    def test_runs_action_with_queued_custody_under_the_lease(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        lease = controller.begin_generation()
+        seen: list[Path] = []
+
+        def action(directory: Path, crypto: SessionCrypto) -> str:
+            seen.append(directory)
+            # The custody is live: the crypto decrypts the on-disk transcript.
+            assert crypto.decrypt((directory / TRANSCRIPT_FILENAME).read_bytes()) == b"transcript"
+            return "ran"
+
+        assert controller.with_generation_custody(lease, action) == "ran"
+        assert seen == [session_dir]
+        controller.end_generation(lease)
+
+    def test_refused_without_a_lease(self, tmp_path: Path) -> None:
+        controller, _session_dir = self._queued_session(tmp_path)
+        with pytest.raises(GenerationInProgressError):
+            controller.with_generation_custody(GenerationLease(), lambda d, c: None)
+
+    def test_refused_with_a_foreign_lease(self, tmp_path: Path) -> None:
+        controller, _session_dir = self._queued_session(tmp_path)
+        held = controller.begin_generation()
+        with pytest.raises(GenerationInProgressError):
+            controller.with_generation_custody(GenerationLease(), lambda d, c: None)
+        controller.end_generation(held)
+
+    def test_refused_when_session_not_queued(self, tmp_path: Path) -> None:
+        controller, _backend = _controller(tmp_path)
+        controller.start(0)  # RECORDING, not QUEUED
+        lease = controller.begin_generation()
+        with pytest.raises(SessionActivityError):
+            controller.with_generation_custody(lease, lambda d, c: None)
+        controller.end_generation(lease)
+        controller.discard()
+
+
+@windows_only
+class TestCompleteWithoutNote:
+    """Task 7.1 delete-note-and-complete-without-one, at the controller —
+    round 35 PR-MED-001: runs UNDER the held lease and consumes it only on
+    success, so a completion FAILURE leaves the lease held and the session
+    QUEUED (never unleased mid-review)."""
+
+    def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
+        controller, _backend = _controller(tmp_path)
+        session = controller.start(0)
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(b"note"))
+        return controller, session_dir
+
+    def test_deletes_note_and_completes_and_consumes_lease(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        lease = controller.begin_generation()
+        assert (session_dir / NOTE_FILENAME).is_file()
+        session = controller.complete_without_note(lease)
+        assert session.state is SessionState.WRITTEN
+        assert not (session_dir / NOTE_FILENAME).exists()  # note deleted first
+        assert not (session_dir / KEY_FILENAME).exists()  # key destroyed
+        assert controller.session is None
+        assert not controller.generating  # lease consumed on success
+
+    def test_completes_without_a_note_present(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        (session_dir / NOTE_FILENAME).unlink()  # no note.enc: delete_note is a no-op
+        lease = controller.begin_generation()
+        assert controller.complete_without_note(lease).state is SessionState.WRITTEN
+        assert not (session_dir / KEY_FILENAME).exists()
+        assert not controller.generating
+
+    def test_refused_with_a_foreign_lease(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        controller.begin_generation()  # the held lease
+        with pytest.raises(GenerationInProgressError):
+            controller.complete_without_note(GenerationLease())  # not the held one
+        assert (session_dir / KEY_FILENAME).is_file()  # nothing deleted
+        assert (session_dir / NOTE_FILENAME).is_file()
+        assert controller.generating  # the real lease survives
+
+    def test_completion_failure_keeps_the_lease(self, tmp_path: Path) -> None:
+        """Round 35 PR-MED-001 invariant: a failed complete-without-note must
+        leave the lease held and the session QUEUED — never unleased."""
+        controller, session_dir = self._queued_session(tmp_path)
+        lease = controller.begin_generation()
+        # Corrupt the transcript so complete_session's verify-decrypt fails
+        # (InvalidTag) AFTER the note unlink -> completion raises, key retained.
+        transcript_path = session_dir / TRANSCRIPT_FILENAME
+        blob = bytearray(transcript_path.read_bytes())
+        blob[-1] ^= 0xFF  # flip a GCM tag byte
+        transcript_path.write_bytes(bytes(blob))
+        with pytest.raises(StoreCorruptError):
+            controller.complete_without_note(lease)
+        assert controller.generating  # lease STILL held
+        assert (session_dir / KEY_FILENAME).is_file()  # key retained
+        assert controller.state is SessionState.QUEUED
+        controller.end_generation(lease)  # cleanup
+
+
+@windows_only
+class TestCompleteDeletingSavedNote:
+    """Round 36 PR-MED-001: the POST-Save (no-lease) delete-note-and-complete
+    path — the note is already committed and no lease is held. Guarded like
+    ``complete()`` (refused while generating / while a discard completes)."""
+
+    def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
+        controller, _backend = _controller(tmp_path)
+        session = controller.start(0)
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(b"note"))
+        return controller, session_dir
+
+    def test_deletes_note_and_completes(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        session = controller.complete_deleting_saved_note()
+        assert session.state is SessionState.WRITTEN
+        assert not (session_dir / NOTE_FILENAME).exists()  # note deleted first
+        assert not (session_dir / KEY_FILENAME).exists()  # key destroyed
+        assert controller.session is None
+
+    def test_refused_while_generating(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        lease = controller.begin_generation()
+        with pytest.raises(GenerationInProgressError):
+            controller.complete_deleting_saved_note()
+        assert (session_dir / KEY_FILENAME).is_file()  # nothing deleted
+        assert (session_dir / NOTE_FILENAME).is_file()
+        controller.end_generation(lease)
+        assert controller.complete_deleting_saved_note().state is SessionState.WRITTEN
+
+    def test_failure_keeps_the_key(self, tmp_path: Path) -> None:
+        controller, session_dir = self._queued_session(tmp_path)
+        transcript_path = session_dir / TRANSCRIPT_FILENAME
+        blob = bytearray(transcript_path.read_bytes())
+        blob[-1] ^= 0xFF  # flip a GCM tag byte -> InvalidTag on decrypt
+        transcript_path.write_bytes(bytes(blob))
+        with pytest.raises(StoreCorruptError):
+            controller.complete_deleting_saved_note()
+        assert (session_dir / KEY_FILENAME).is_file()  # key retained
+        assert controller.state is SessionState.QUEUED

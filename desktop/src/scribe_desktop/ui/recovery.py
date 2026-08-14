@@ -60,6 +60,12 @@ class RecoveryScreen(QWidget):
         )
         self._task: TaskThread | None = None
         self._busy = False
+        # Task 7.2 residue guard: while a LIVE note generation lease is held,
+        # a resume-processing run must be unreachable — its `recovered` signal
+        # would swap the transcript view and overwrite the retained recovered
+        # key reference unzeroized (the Task 6.3 recorded residue). The main
+        # window sets this from the transcript screen's generation state.
+        self._generation_blocked = False
         # PR round 18 (PR1/PR2, guard-only): sessions this screen has handed
         # off — an in-flight resume-processing run or a recovered session
         # whose transcript view still holds custody callbacks. They are
@@ -127,16 +133,25 @@ class RecoveryScreen(QWidget):
         info = item.data(Qt.ItemDataRole.UserRole)
         return info if isinstance(info, models.RecoverableSessionInfo) else None
 
+    def set_generation_blocked(self, blocked: bool) -> None:
+        """Block/unblock recovery actions while a live note generation lease
+        is held (Task 7.2 residue guard). Disabling the actions keeps a view
+        swap unreachable during generation."""
+        self._generation_blocked = blocked
+        self._update_controls()
+
     def _update_controls(self) -> None:
         info = self._selected_info()
         # PR round 19 (MED): while a recovered session's transcript is still
         # open (checked out), a second resume would overwrite its custody
         # callbacks — resume stays disabled until Complete/Discard releases.
-        blocked = self._busy or bool(self._protected)
+        # Task 7.2: while a live note generation lease is held, ALL actions
+        # are blocked so no view swap can overwrite the retained recovered key.
+        blocked = self._busy or bool(self._protected) or self._generation_blocked
         has_selection = info is not None and not blocked
         self.resume_button.setEnabled(bool(has_selection and info is not None and info.has_audio))
         self.discard_button.setEnabled(bool(has_selection))
-        self.refresh_button.setEnabled(not self._busy)
+        self.refresh_button.setEnabled(not self._busy and not self._generation_blocked)
         if info is not None and not info.store_finished:
             # Binding Step-10 note: warn whenever store_finished is False.
             self.warning_label.setText(models.UNFINISHED_STORE_WARNING)
@@ -194,7 +209,7 @@ class RecoveryScreen(QWidget):
 
     def on_resume_processing(self) -> None:
         info = self._selected_info()
-        if info is None or self._busy:
+        if info is None or self._busy or self._generation_blocked:
             return
         if self._selection_blocked(info):
             self._refuse_stale_selection()
@@ -248,7 +263,7 @@ class RecoveryScreen(QWidget):
 
     def on_discard(self) -> None:
         info = self._selected_info()
-        if info is None or self._busy:
+        if info is None or self._busy or self._generation_blocked:
             return
         if self._selection_blocked(info):
             self._refuse_stale_selection()
