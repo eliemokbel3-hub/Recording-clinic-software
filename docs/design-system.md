@@ -1,8 +1,9 @@
 # Design system — desktop app
 
-The desktop companion's UI conventions, as built in Phase 2. Each cue points at the
-code that owns it; the code wins on any disagreement. Chrome-side UI (Phase 5) should
-follow the same interaction posture even though the toolkit differs.
+The desktop companion's UI conventions, as built in Phase 2 and extended by the Phase-3A
+note review UI. Each cue points at the code that owns it; the code wins on any
+disagreement. Chrome-side UI (Phase 5) should follow the same interaction posture even
+though the toolkit differs.
 
 Suggested sections as this grows: surfaces & layout · dialogs · menus · forms & inputs ·
 view patterns · tokens · microcopy.
@@ -14,8 +15,10 @@ view patterns · tokens · microcopy.
 - The **Note review tab** shows the generated note and the full uncertainty-marked
   transcript SIDE BY SIDE through the whole review, until copy or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
-  clinician can always see a low-confidence phrase the note omitted, which no automated
-  check reaches.
+  clinician can always see a low-confidence phrase the note omitted; no automated
+  check detects low-confidence or materiality omission (Check 4 `omission_warnings`
+  separately flags omitted high-risk TOKENS — numbers, names, medications — in
+  clinician-attributed segments, a different scoped heuristic).
 - GUI-free view logic lives in `ui/models.py` (state→controls maps, list rendering,
   transcript rendering, readiness reports). Widgets stay thin so the logic is testable
   offscreen — every screen has offscreen tests, no real audio or ML in CI.
@@ -60,6 +63,13 @@ view patterns · tokens · microcopy.
   key) alongside any destructive one (Delete note and complete without one).
 
 ## Clinical-content rules (non-negotiable)
+The two clinical surfaces are deliberately ASYMMETRIC, and the rationale drives every
+rule below. The **transcript is raw evidence** — the model's best-effort record of what
+was said, uncertainty marks and all — so it is DISPLAY-ONLY and never leaves the app: it
+is not the artefact the clinician signs. The **note is ratified content** — every
+non-transcript line confirmed by the clinician against the exact shown wording and passed
+through the checking stage (`note_check.py`) — so it, and only it, may become copyable to
+Cliniko, and only once the shipping gate allows.
 - Transcript text is display-only (`NoTextInteraction`) and cleared on close —
   `ui/transcript.py`. It is never logged, never written outside the encrypted store.
 - The generated NOTE is the copyable surface — but ONLY after the Task-9.1 shipping gate
@@ -76,8 +86,13 @@ view patterns · tokens · microcopy.
 - Uncertainty is visible, not hidden: low-confidence words, numbers, and names render as
   `[word?]` — `ui/models.py`. The clinician must be able to see what the model was unsure
   about at a glance.
-- Speaker labels render per segment alongside timestamps. Today two speakers only; see
-  the retained follow-up in `AGENTS.md`.
+- Speaker labels render per segment alongside timestamps. Today TWO speakers only — the
+  diarizer clusters VAD segments into exactly two voices, so a third person in the room
+  (parent, carer, interpreter, student) is silently merged into one of the two labels and
+  the clinician fixes attribution at review. Decision D-S1 (estimate the speaker count
+  instead of assuming two) is UNRESOLVED — it is blocked on the practitioner-supplied
+  labelled recordings for Task 2.3 — so this stays two-speaker today; see the retained
+  follow-up in `AGENTS.md`.
 
 ## Microcopy
 - Plain clinical English, no jargon, no exclamation marks. Name the artefact the user

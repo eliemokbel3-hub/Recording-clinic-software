@@ -1,8 +1,13 @@
-# Retention Schedule (Phases 1–2)
+# Retention Schedule (Phases 1–3A)
 
 What the software keeps, where, for how long, and how it is destroyed.
-Since Phase 2 the desktop app stores clinical data (audio, transcripts) —
-always encrypted at rest, always bounded by the 24-hour rule below.
+Since Phase 2 the desktop app stores clinical data (audio, transcripts, and —
+since Phase 3A — the composed note) — always encrypted at rest under
+per-session keys; UNPROTECTED recovery stores are bounded by the 24-hour rule
+below, while a live or under-review session is sweep-exempt from it (see the
+rule). Phase 3A also adds
+clinician-authored config files (plaintext, INTENDED to hold non-patient
+boilerplate, deliberately outside the 24-hour rule).
 
 | Data | Location | Retention | Destruction |
 |---|---|---|---|
@@ -13,23 +18,45 @@ always encrypted at rest, always bounded by the 24-hour rule below.
 | Encrypted test payloads | Process memory only | Transient (never persisted in Phase 1) | Freed with the process; unrecoverable after key destruction |
 | Registration artifacts (host manifest + copied `scribe-host.exe` + HKCU key) | `%LOCALAPPDATA%\ClinikoScribe\` + `HKCU\Software\Google\Chrome\NativeMessagingHosts\` | Until unregistered | `scripts/register-native-host.py --unregister` removes all three |
 | Extension identity (`key.pem`) | `extension/key.pem` (gitignored) | Indefinite — losing it changes the extension ID and breaks registration | Manual; deliberate decision only |
-| Encrypted consultation audio (`audio.enc`) | `%LOCALAPPDATA%\ClinikoScribe\sessions\<id>\` | Session lifetime; recoverable after a crash for at most **24 h** from session creation | Unreadable the moment `key.dpapi` is deleted (cryptographic deletion); the store itself is removed on Discard and garbage-collected by the sweep once keyless |
-| DPAPI-wrapped session key (`key.dpapi`) | beside the store, `sessions\<id>\` | Until Complete, Discard, or 24 h expiry — whichever first | Complete: fsync transcript → verify decrypt round-trip → delete key. Discard: key deleted FIRST, then best-effort store removal. Expiry: sweep destroys custody then the store. Plain NTFS unlink — not anti-forensic; residual accepted at the same-user boundary (threat model) |
-| Encrypted transcript (`transcript.enc`) | `sessions\<id>\` | Same bound as the audio: the session sits `queued` after transcription until the explicit Complete/Discard, capped by the 24 h rule | Same key custody — undecryptable after key deletion; removed with the store |
-| In-memory plaintext (capture buffers, decrypted PCM, transcript objects) | Process memory only | Transient — dropped per chunk/segment during processing; task references released after Complete/Discard | Freed by the process; best-effort scrubbing residual documented in the threat model (LOW-009) |
+| Encrypted consultation audio (`audio.enc`) | `%LOCALAPPDATA%\ClinikoScribe\sessions\<id>\` | Session lifetime; as an UNPROTECTED recovery store, recoverable after a crash until expiry — EXPIRY-ELIGIBLE at **24 h** from session creation, then destroyed by the next successful sweep (see the 24-hour rule below) — and sweep-EXEMPT while the session is live or its `queued` transcript/note is under review | Unreadable the moment `key.dpapi` is deleted (cryptographic deletion); the store itself is removed on Discard and garbage-collected by the sweep once keyless |
+| DPAPI-wrapped session key (`key.dpapi`) | beside the store, `sessions\<id>\` | Until Complete, Discard, or — for an UNPROTECTED recovery store — expiry (eligible at 24 h, destroyed by the next successful sweep), whichever first (a protected live/under-review session is sweep-exempt, so its key is not destroyed at the 24 h mark) | Complete: fsync transcript → verify decrypt round-trip → delete key. Discard: key deleted FIRST, then best-effort store removal. Expiry: sweep destroys custody then the store. Plain NTFS unlink — not anti-forensic; residual accepted at the same-user boundary (threat model) |
+| Encrypted transcript (`transcript.enc`) | `sessions\<id>\` | Same bound as the audio: the session sits `queued` after transcription until the explicit Complete/Discard; sweep-EXEMPT while it is the controller's live/queued session under review, and subject to the 24 h expiry rule (eligible at 24 h, destroyed by the next successful sweep) only as an UNPROTECTED recovery store (see the 24-hour rule below) | Same key custody — undecryptable after key deletion; removed with the store |
+| Encrypted note artifact (`note.enc`, Phase 3A) | `sessions\<id>\` | Same bound as the audio/transcript — written under the SAME per-session key; sweep-EXEMPT while the session is live or its `queued` transcript/note is open for review, and subject to the 24 h expiry rule (eligible at 24 h, destroyed by the next successful sweep) only once it is an UNPROTECTED recovery store (see the 24-hour rule below) | Same key custody — undecryptable after key deletion; a stale `note.enc` is unlinked before a re-transcription writes; Complete verifies it (decrypt → parse → session binding → transcript-digest match) BEFORE key deletion; removed with the store |
+| In-memory plaintext (capture buffers, decrypted PCM, transcript objects; since Phase 3A also the Note-tab review objects — the draft, its transcript document, config, and the finalised note, held by `ui/note.py` `_draft` / `_document` / `_config` / `_note`) | Process memory only | Transient during capture/processing (dropped per chunk/segment). During Phase-3A note review the transcript AND note plaintext PERSIST beside each other for the WHOLE review window (8.1 surface 3) — released only on the tab's clear / cancel-and-regenerate, a replacement generation, Complete/Discard, or process exit | Freed by the process; best-effort scrubbing residual documented in the threat model (LOW-009) |
 | ML model cache (silero ~2 MiB; runtime default `whisper\medium` ~1.43 GiB; fallback `whisper\small` ~465 MiB; ~3.0 GiB with all four benchmark candidates) | `%LOCALAPPDATA%\ClinikoScribe\models\` | Indefinite — static program data, NO clinical content | Manual delete at any time; re-created by `scripts/setup-models.py` (run by the user, setup-time network only) |
+| Clinician-authored config (`template_profiles.json`, `autofill_rules.json`, `prefill_templates.json`, Phase 3A) | `%LOCALAPPDATA%\ClinikoScribe\config\` | Indefinite — INTENDED as non-patient boilerplate; deliberately OUTSIDE the encrypted session store and the 24 h rule so it survives session destruction | Manual delete/edit only; the loader is read-only and never creates or deletes config. Patient data and secrets are prohibited by policy, but the loader validates only STRUCTURE (shape, length, control/format characters, atomic-claim shape) — it cannot detect semantic misuse, so any content a clinician hand-edits in is retained VERBATIM in plaintext. Feeds the note pipeline only as proposals |
 
 ## The 24-hour rule (Phase 2, enforced by code)
 
-- Every session store is destroyed (key custody first) at **24 h** from
-  creation unless the session is live in `recording`/`paused`/`processing`.
+- Every session store becomes EXPIRY-ELIGIBLE at **24 h** from creation and is
+  then destroyed (key custody first) by the next SUCCESSFUL scheduled sweep —
+  UNLESS it is PROTECTED from the sweep. The protected set
+  (`app.sweep_protected_ids` → `SessionController.custody_protected_ids`) is:
+  a session live in `recording`/`paused`/`processing`; the controller's OWN
+  session in ANY non-terminal state, INCLUDING a `queued` transcript/note held
+  open for review (round 42 MED-001 — so review is never cut off by custody
+  loss at the 24 h boundary); and a recovered session checked out for
+  resume / Complete / Discard (PR round 18). A protected store SKIPS age
+  evaluation entirely, so while a session is active or under review its
+  retention is bounded by the review/session lifetime, NOT by 24 h — the 24 h
+  cap governs UNPROTECTED recovery stores (a crashed or abandoned session no
+  longer held by the controller or a recovery checkout). This is deliberate:
+  the alternative — deleting a note's key mid-review at the 24 h mark — would
+  destroy work in progress.
 - Enforcement: a sweep at every app start (before the recovery screen lists
   anything) + a 15-minute periodic sweep while the app runs + an age filter
-  on the recovery listing itself.
-- Accepted residual — sweep granularity: while the app is running, worst-case
-  retention overshoot is ≤ ~15 min past the 24 h cap; while the app is
-  closed, expiry executes at the next launch (nothing can decrypt the store
-  in the meantime without the user's DPAPI context).
+  on the recovery listing itself. All three consult the protected set above.
+- Accepted residual — expiry at the next SUCCESSFUL sweep, not a hard deadline
+  (UNPROTECTED stores only): an unprotected recovery store expires at the first
+  scheduled sweep that RUNS SUCCESSFULLY after its 24 h mark — normally within
+  about the 15-minute QTimer CADENCE while the app runs, and at next launch
+  while it is closed (nothing can decrypt the store in the meantime without the
+  user's DPAPI context). The 15 minutes is the intended INTERVAL, not a
+  guaranteed bound: GUI-thread blocking, OS process suspension (sleep/hibernate),
+  or a sweep that retains the store after a transient I/O error (it fails closed
+  toward RETENTION and retries next cycle — below) can push actual expiry past
+  one interval. A PROTECTED store is exempt from the cap for as long as it stays
+  protected — potentially unbounded while a session stays active or under review.
 - Timestamp handling is fail-safe: untrusted candidates (non-finite, or
   more than the clock-skew tolerance in the future) are discarded and can
   never extend retention — age is computed from the earliest TRUSTED
@@ -47,8 +74,8 @@ always encrypted at rest, always bounded by the 24-hour rule below.
   as "future = untrusted" made the sweep destroy sessions it had just
   created, so stamps within the tolerance are accepted and clamped to the
   present. A stamp beyond it is a genuine clock problem and still fails
-  closed. Cost: at most 5 s of extra retention in the worst case, on top of
-  the sweep-granularity overshoot below.
+  closed. Cost: at most 5 s of extra retention beyond the 24 h mark, on top of
+  the cadence delay described above.
 
 ## Pre-committed rules for later phases (from PLAN.md)
 

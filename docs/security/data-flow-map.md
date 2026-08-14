@@ -1,13 +1,19 @@
-# Data-Flow Map (Phases 1–2)
+# Data-Flow Map (Phases 1–3A)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
-desktop app carries **clinical data**: consultation audio and transcripts,
-encrypted at rest under per-session keys and bounded by a 24-hour recovery
-window. There is **no status file** (that design was cut in plan hardening)
-and **no network sockets** on either desktop process at runtime (enforced by
+desktop app carries **clinical data**: consultation audio, transcripts, and —
+since Phase 3A — the composed note artifact, all encrypted at rest under
+per-session keys; an unprotected recovery store expires at ~24 h (eligible at
+24 h, destroyed by the next successful sweep), while a live or under-review
+session is sweep-exempt (flow 10; retention schedule). Phase 3A also adds **clinician-authored config** (plaintext,
+INTENDED as non-patient boilerplate — an unenforced operational rule, flow 11).
+There is
+**no status file** (that design was cut in plan hardening) and **no network
+sockets** on either desktop process at runtime (enforced by
 `desktop/tests/test_integration_no_sockets.py`, ruff import bans, and the
-offline env kill-switches in flow 7) — the ONLY sanctioned network user is
-the explicit model-setup script (flow 9).
+offline env kill-switches in flow 7) — the ONLY sanctioned network user is the
+explicit model-setup script (flow 9). The note pipeline (flows 10–11) is
+in-process and adds no network surface and no new logging channel.
 
 ## Components
 
@@ -15,7 +21,7 @@ the explicit model-setup script (flow 9).
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / status); single instance per user enforced by a named mutex | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write) runs in-process here | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 
 ## Flows
@@ -112,10 +118,60 @@ the explicit model-setup script (flow 9).
    terminal — agent/MSIX-virtualized shells write to a package-private
    location invisible to user-launched processes (see `docs/lessons.md`).
 
+10. **Note pipeline (Phase 3A, in-process, zero network).** After transcription,
+    `scribe-app` composes a draft note from the immutable transcript
+    (`note.py` `compose_draft`: verbatim transcript spans under canonical
+    headings, plus autofill/prefill PROPOSALS from config, flow 11). The
+    clinician then confirms or declines each non-`transcript` line in the Note
+    review tab (`ui/note.py`), the exact rendered wording is digested from the
+    widget, and `note_check.py` runs four pure, digest-gated, LOG-FREE checks
+    over the confirmed note (reconstruction, contradiction, provenance,
+    omission — see the threat model for what each does and does NOT establish).
+    On save, `session_store.write_note` encrypts the note to
+    `%LOCALAPPDATA%\ClinikoScribe\sessions\<id>\note.enc` under the SAME
+    per-session key as the audio and transcript (via `atomic_write_bytes`, no
+    AAD), re-verifying every non-`transcript` assertion's confirmation evidence
+    and refusing any unresolved `error`. `write_transcript` unlinks a stale
+    `note.enc` FIRST (and fails closed if it cannot) so a note can never
+    describe a superseded transcript. Complete verifies `note.enc` when one
+    exists (decrypt → parse → session binding → transcript-digest match) BEFORE
+    key deletion, so deleting `key.dpapi` is the cryptographic deletion of the
+    note along with the audio and transcript (same custody and retention posture
+    as the audio and transcript — the 24 h cap governs unprotected recovery
+    stores; see the retention schedule).
+    Plaintext note and the full transcript coexist in memory only for the review
+    window (threat model, Phase 3A §3); the note is never logged and never
+    written outside the encrypted store. Copy-to-Cliniko is gated (Task 9.1) and
+    ships DISABLED — see the threat model.
+
+11. **Config load (Phase 3A, read-only, plaintext, intended non-patient boilerplate — unenforced).**
+    `note_config.load_note_config` reads clinician-authored config from
+    `%LOCALAPPDATA%\ClinikoScribe\config\` — `template_profiles.json`
+    (canonical-section → Cliniko-template-field mapping), `autofill_rules.json`,
+    and `prefill_templates.json` — falling back to shipped package defaults per
+    filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
+    the encrypted session store and the 24 h rule so it survives session
+    destruction. Patient data and secrets are prohibited by policy, but the
+    loader validates only STRUCTURE (schema, length, control/format characters,
+    atomic-claim shape) and cannot detect semantic misuse — so this is an
+    operational rule, not an enforced guarantee: whatever a clinician hand-edits
+    in is retained verbatim in plaintext. The load is all-or-nothing and fails
+    CLOSED (a malformed or unreadable user file raises a typed error and applies
+    nothing — never a silent partial apply of the shipped default). `config_digest` over
+    the resolved config binds a generation run to the exact config that drove
+    it. Config text feeds the note pipeline (flow 10) only as PROPOSALS; nothing
+    from it reaches `note.enc` without per-assertion clinician confirmation.
+
 ## Explicit non-flows
 
-- No plaintext clinical content at rest — audio and transcripts exist on
-  disk ONLY encrypted under per-session keys inside `sessions\<id>\`.
+- No application-generated plaintext clinical content at rest — the
+  clinical artifacts this app produces (audio, transcripts, and the composed
+  note `note.enc`, flow 10) exist on disk ONLY encrypted under per-session keys
+  inside `sessions\<id>\`. Config files (flow 11) are a SEPARATE,
+  operator-authored plaintext class: INTENDED as clinician-authored non-patient
+  boilerplate, but that is an operational rule the loader cannot enforce
+  semantically (it validates structure only), so it is NOT a content guarantee —
+  whatever a clinician hand-edits in is retained verbatim.
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the
@@ -126,7 +182,11 @@ the explicit model-setup script (flow 9).
   telemetry off).
 - No clinical content in logs — the whitelist + tripwire now also drops
   transcript-model markers (`transcript_segments`/`transcript_words`/
-  `word_text`) and `encounter_context`.
+  `word_text`) and `encounter_context`, and the Phase-3A note-model markers
+  (`note_sections`/`note_assertions`/`note_spans`/`span_text`/`note_excerpt`/
+  `note_warnings`/`note_warning_code`/`note_confirmation`), so a stray repr or
+  `model_dump` of a note model is dropped by the last-line filter. The note
+  pipeline itself opens no logging channel.
 - No data in Chrome extension storage (plan: credentials/models/audio never
   enter extension storage); no Chrome-side recording surface at all until
   Phase 5.
