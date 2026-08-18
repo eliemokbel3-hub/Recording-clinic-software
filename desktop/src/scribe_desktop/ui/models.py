@@ -220,13 +220,19 @@ def list_recoverable_sessions(
                 store_finished = store_has_footer(audio_path)
             except (SessionStoreError, OSError):
                 store_finished = False
-        # PR round 18: the 24 h cap applies to the LISTING too, not only the
-        # sweep — never offer recovery of a session past its window. The
-        # trust core is SHARED with the sweep (round 42 MED-009:
-        # earliest_trusted_timestamp), so the two can never disagree about
-        # what "trusted" means — including the clock-skew tolerance that
-        # keeps a just-created session visible here (round 48 HIGH-001).
-        # Readable-but-untrusted values fail closed (not listed).
+        # PR round 18: the 24 h rule applies to the LISTING too, not only the
+        # sweep — a session whose age can be ESTABLISHED past its window is
+        # not offered for recovery. The trust core is SHARED with the sweep
+        # (round 42 MED-009: earliest_trusted_timestamp), so the two can
+        # never disagree about what "trusted" means — including the
+        # clock-skew tolerance that keeps a just-created session visible here
+        # (round 48 HIGH-001). Readable-but-untrusted values fail closed (not
+        # listed). Round 47 PR-LOW-001 — the branch the old "never offer
+        # recovery past its window" absolute talked over: when NEITHER
+        # timestamp is readable, `readable` is empty, so both tests below are
+        # skipped and the session IS listed regardless of age. That is
+        # deliberate (the sweep, not the UI, owns orphan/expiry decisions),
+        # and it means the listing is conservative, not a window guarantee.
         readable = [t for t in (created_at, key_mtime) if t is not None]
         earliest = earliest_trusted_timestamp(readable, now)
         if earliest is not None:
@@ -311,6 +317,48 @@ def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> 
 # affordance to THIS recorded decision, never unconditionally. The transcript
 # stays display-only ALWAYS, regardless of this flag (Critical Constraint).
 COPY_TO_CLINIKO_ENABLED: Final[bool] = False
+
+# Task 7.7 (round 45 MED-001) — the third clause of the consent Critical
+# Constraint: "the note view renders it as a manual reminder only". The first
+# two clauses are structural (`TemplateProfile` refuses attestation-typed
+# targets; no proposal path reaches one), and they are exactly WHY this text
+# is needed: because the app deliberately never ticks Informed Consent, the
+# clinician has to be told to tick it themselves.
+#
+# Deliberately NOT a warning code: a `NoteWarning` would be acknowledgeable —
+# i.e. suppressible — and would need a per-note emitter, whereas this is a
+# standing statement about what the app never does. Deliberately
+# UNCONDITIONAL rather than shown only when the bound profile carries an
+# attestation target: a config-conditional reminder would silently vanish for
+# a template that has no such target, and the constraint is categorical.
+#
+# TWO PRECISION REQUIREMENTS, both from round 47 PR-MED-001 (the cross-family
+# peer's audit of the round-45 wording, which got both wrong):
+#
+# 1. Name the ATTESTATION CHECKBOX, not "Informed Consent" loosely. What is
+#    structurally unreachable is an `attestation_checkbox` TARGET
+#    (`TemplateProfile._check_profile`) — NOT all consent-related note text:
+#    `DEFAULT_SECTION_CUES["consent"]` routes consent speech into the
+#    canonical `consent` section, `format_note_body` renders it, and another
+#    practitioner's profile may legitimately map `consent` to a FREE-TEXT
+#    target. Saying the app "never writes Informed Consent" is therefore
+#    false in the direction that matters least but confusing in the direction
+#    that matters most.
+# 2. State the FULL predicate the clinician is about to attest to. The real
+#    checkbox asserts that the working diagnosis, benefits and risks were
+#    EXPLAINED *and* that consent was GAINED (plan Critical Constraint,
+#    practitioner-ratified 2026-08-04). The round-45 wording asked them to
+#    confirm consent alone and then invited a tick — i.e. invited a stronger
+#    claim than it asked them to verify, which is the precise failure this
+#    whole constraint exists to prevent.
+CONSENT_MANUAL_REMINDER: Final[str] = (
+    "This app never ticks, writes, or proposes Cliniko's Informed Consent "
+    "attestation checkbox - it is a claim about a conversation, not a "
+    "finding. Tick it yourself, and only once its full attestation holds: "
+    "that you explained the working diagnosis, the benefits and the risks, "
+    "AND that consent was gained. (A Consent section may still appear in the "
+    "note below, quoting what was said - that is not the attestation.)"
+)
 
 _SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = {
     section.key: section.title for section in CANONICAL_SECTIONS
@@ -502,10 +550,19 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Confirm the wording is right for this patient, then acknowledge.",
     ),
+    # Round 45 MED-002: the hint must name only affordances that EXIST. It
+    # previously sent the clinician to an "Unmapped content" surface — the
+    # round-2 mapped-OUTPUT target, which is Phase 4's and is not built in
+    # 3A, so there is no such heading anywhere in this app. The section is
+    # still rendered in the note body (`format_note_body` emits every
+    # populated canonical section); what the chosen template lacks is a
+    # FIELD to carry it.
     "mapping_drop": WarningCopy(
         "A populated section has no place in the chosen template",
         None,
-        "It shows under Unmapped content; acknowledge if that is expected.",
+        "The section is still shown in the note below, but the chosen "
+        "template has no field for it - carry it across by hand if it is "
+        "needed, then acknowledge.",
     ),
     "high_risk_omission": WarningCopy(
         "A number, name or medication the clinician said is not in the note",
@@ -630,8 +687,15 @@ def config_report_lines(
     """A read-only summary of the config that drove (or would drive) a note:
     which template profile is in use, how many autofill rules and prefill
     regions are configured, and which populated-capable canonical sections
-    the selected profile would drop. Non-clinical config metadata only —
-    safe to display (the config editor UI itself is deferred post-3B)."""
+    the selected profile would drop.
+
+    Counts and canonical section titles are non-clinical by construction. The
+    one USER-AUTHORED field here is the profile's ``display_name``, and round
+    47 PR-LOW-002 is why that is worth saying: config is only INTENDED to be
+    non-patient boilerplate, and ``note_config`` validates its structure, not
+    its meaning — so this is safe to DISPLAY on the local review surface, and
+    is not thereby log-safe. (The config editor UI itself is deferred
+    post-3B.)"""
     lines = [
         f"Template profiles configured: {len(config.template_profiles)}",
         f"Autofill rules: {len(config.autofill_rules)}",
@@ -798,6 +862,7 @@ def build_recovery_runner(
 
 
 __all__ = [
+    "CONSENT_MANUAL_REMINDER",
     "COPY_TO_CLINIKO_ENABLED",
     "UNFINISHED_STORE_WARNING",
     "WARNING_COPY",

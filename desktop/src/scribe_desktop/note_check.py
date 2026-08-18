@@ -12,6 +12,14 @@ tokens (medication names, dose numbers) in memory while Check 2 compares —
 they never cross the API and this module opens no logging channel, but
 their field values carry NO registered tripwire signature, so if a later
 phase ever logs one the tripwire will not catch it. Do not log them.
+Round 45 LOW-005 adds the SIBLINGS this residue note omitted, so the class
+is named rather than one instance: ``ui.models.RenderedAssertion.text`` and
+``ui.models.RenderedProposal.excerpt`` carry clinical text under field names
+(``text=``, ``excerpt=``) that are likewise absent from
+``logging_setup._PAYLOAD_SIGNATURES`` — a repr of either would pass the
+filter. Neither module opens a logging channel today. The rule for all of
+them is the same: these are view/compare structures, not note models; do
+not log them, and register a signature first if that ever changes.
 
 What each check claims — and, recorded with equal care, what it does NOT:
 
@@ -153,6 +161,11 @@ from scribe_desktop.note import (
     transcript_digest,
 )
 from scribe_desktop.note_config import (
+    # Package-private by name, shared deliberately (the note.py convention):
+    # ONE definition of what ends a clause. The config authoring guard and
+    # this parser must agree, or "one claim" would mean two different things
+    # on the two sides of the same pipeline.
+    _TERMINAL_PUNCT,
     AutofillRule,
     NoteConfig,
     _canonical_config,
@@ -307,6 +320,26 @@ _EXCLUSIVE_DOSE_CONTEXT: Final[frozenset[str]] = frozenset(
     }
 )
 
+# Round 48 PR-MED-002: the POSITIVE witness an error-grade dose pair needs, on
+# top of `_EXCLUSIVE_DOSE_CONTEXT`'s negative test. A strict subset of that
+# vocabulary: every token here either asserts ADMINISTRATION or pins a
+# SCHEDULE. Deliberately excluded as pure structure — `i`, `each`, `every`,
+# `in`, `the`, `at`, `a`, `per`, `dose`, `of` — because a context built only
+# from those (in the limit, none at all) states a strength and nothing about
+# whether it is a current regimen, a product label, or stock. Keep this a
+# subset: a token added here that is NOT in `_EXCLUSIVE_DOSE_CONTEXT` could
+# never fire, and `test_the_administration_witness_is_a_strict_subset` pins
+# that.
+_ADMINISTRATION_WITNESS: Final[frozenset[str]] = frozenset(
+    {
+        "take", "takes", "taking", "on",
+        "advised", "prescribed", "recommended", "continue", "continues",
+        "daily", "nightly", "once", "twice",
+        "morning", "evening", "night", "afternoon",
+        "breakfast", "lunch", "dinner", "bedtime", "mane", "nocte", "day",
+    }
+)
+
 
 def _words_for_coords(
     document: TranscriptDocument, coords: SourceCoords
@@ -422,10 +455,94 @@ class _Token(NamedTuple):
     token: str
     probability: float | None
     word_index: int | None
+    # Round 48 PR-MED-001: which CLAUSE this token sits in. ``content_tokens``
+    # strips punctuation, so without this the parser could not tell "No
+    # fever; pain persists" from "No fever pain persists" and bound the
+    # negation to a symptom in the NEXT clause — manufacturing an
+    # error-grade `contradiction` against a consistent note. Counted, never
+    # injected as a sentinel token, so the dose grammar below is untouched.
+    clause: int = 0
+
+
+# Round 49 PR-MED-001: mechanically-recognised CONTRAST boundaries. Round 48
+# scoped negation to the punctuation clause, which was too coarse in the
+# unsafe direction: "No fever but right knee pain." is one punctuation clause,
+# so `no` erased an explicit, unambiguous positive laterality pair and a real
+# laterality-flip stopped being caught. An adversative closes the negated
+# subclause, so the negation before it does not reach the assertion after it.
+#
+# Round 50 PR-MED-001 narrowed this list HARD, because a contrast boundary
+# only ever LIMITS a negation's scope — i.e. it can only ADD positive claims,
+# the unsafe direction — so a word earns a place here only if its contrastive
+# reading is unambiguous:
+#   - `yet` REMOVED: overwhelmingly temporal in clinical speech. "No evidence
+#     yet of left knee pain." split the clause, moved `left knee` out of the
+#     negation's reach, and emitted a positive left-knee claim that could
+#     hard-block a consistent right-knee note.
+#   - `though` / `although` / `whereas` / `except` REMOVED: subordinators that
+#     are routinely PREPOSED ("Although no fever, right knee pain persists."),
+#     where opening a new clause at the word puts the subordinate negation and
+#     the main clause's positive claim on the SAME side, achieving nothing —
+#     and `except` is a preposition as often as a conjunction.
+#
+# RESIDUE, named rather than implied: a preposed subordinate negation still
+# suppresses its main clause's laterality ("Although no fever, right knee pain
+# persists." yields no laterality claim). Recognising that needs preposed-
+# clause grammar this module does not have, so it fails toward SILENCE — a
+# missed true positive, never a false block — which is the direction the
+# module's contract requires.
+_CONTRAST_TOKENS: Final[frozenset[str]] = frozenset({"but", "however"})
+
+
+# Round 50 PR-MED-004: characters that may follow a terminator without
+# cancelling it — closing quotes and brackets. A closed set; anything else
+# after a terminator leaves the chunk mid-clause, the safe direction.
+_CLOSING_WRAPPERS: Final[frozenset[str]] = frozenset("\"'”’)]}»›")
+
+
+def _ends_clause(raw: str) -> bool:
+    """True when a raw (unstripped) chunk ends a clause.
+
+    Classifies the chunk's trailing SUFFIX SHAPE against the one shared
+    ``_TERMINAL_PUNCT`` definition — not merely its last character (round 50
+    PR-MED-004). ``content_tokens`` strips surrounding punctuation, so a
+    visually explicit sentence end wearing a closing quote (``fever."``) or
+    bracket became indistinguishable from no boundary at all, and a negation
+    then crossed it to negate the next sentence's symptom.
+
+    Only closing wrappers are skipped, and only after a real terminator, so
+    a decimal (``1.5``), a time (``14:30``) and an abbreviation chain's
+    interior dots still end in a digit or letter and start no clause. A
+    trailing terminator at the very end of the text increments past the last
+    token and changes nothing, so "…advised." stays ONE clause — which is
+    what keeps the pinned single-clause dose and laterality cases
+    error-grade.
+    """
+    stripped = raw.rstrip()
+    while stripped and stripped[-1] in _CLOSING_WRAPPERS:
+        stripped = stripped[:-1]
+    return bool(stripped) and stripped[-1] in _TERMINAL_PUNCT
 
 
 def _tokens_from_text(text: str) -> list[_Token]:
-    return [_Token(token, None, None) for token in content_tokens(text)]
+    out: list[_Token] = []
+    clause = 0
+    for chunk in text.split():
+        for token in content_tokens(chunk):
+            out.append(_Token(token, None, None, clause))
+            if token in _CONTRAST_TOKENS:
+                # Round 50 PR-MED-001: the adversative CLOSES the negated
+                # subclause; it does not open the new one. Round 49 put the
+                # boundary word in the NEW clause, where it joined the
+                # collapsed dose context and — being outside
+                # `_EXCLUSIVE_DOSE_CONTEXT` — demoted a genuine current-regimen
+                # conflict to review ("No ibuprofen, but I take paracetamol
+                # 250 mg daily."). The boundary marker must not be able to
+                # establish or disqualify a clinical state.
+                clause += 1
+        if _ends_clause(chunk):
+            clause += 1
+    return out
 
 
 def _tokens_from_words(
@@ -435,9 +552,14 @@ def _tokens_from_words(
     ``note_fill._first_phrase_match`` indexes by, so the structure parser and
     the trigger matcher can never disagree about what a word says."""
     out: list[_Token] = []
+    clause = 0
     for offset, word in enumerate(words):
         for token in content_tokens(word.word_text):
-            out.append(_Token(token, word.probability, first_word_index + offset))
+            out.append(_Token(token, word.probability, first_word_index + offset, clause))
+            if token in _CONTRAST_TOKENS:
+                clause += 1  # closes the subclause; see `_tokens_from_text`
+        if _ends_clause(word.word_text):
+            clause += 1
     return out
 
 
@@ -502,7 +624,9 @@ def _strength_atoms(tokens: list[_Token]) -> list[_StrengthAtom]:
             continue
         if position + 1 < len(tokens):
             separated = _STRENGTH_UNITS.get(tokens[position + 1].token)
-            if separated is not None:
+            # Round 49 PR-MED-002: the unit must be in the SAME clause as its
+            # number — "…500. Mg…" is not a separated strength atom.
+            if separated is not None and tokens[position + 1].clause == tokens[position].clause:
                 atoms.append(_StrengthAtom(position, position + 1, value, separated))
                 position += 2
                 continue
@@ -521,21 +645,29 @@ class _DoseBinding(NamedTuple):
     evidence: tuple[int, ...]
 
 
-def _connector_walk(tokens: list[_Token], start: int) -> int | None:
+def _connector_walk(tokens: list[_Token], start: int, clause: int) -> int | None:
     """Walk backward from ``start`` through at most ``_DOSE_WINDOW - 1``
     closed-set connectors; the index of the medication the walk lands on,
     or None. The whole gap must be connectors — any other word breaks the
-    relation (round 24 PR-MED-001)."""
+    relation (round 24 PR-MED-001) — and every token walked, including the
+    medication itself, must sit in ``clause`` (round 49 PR-MED-002: a
+    relation spanning a sentence boundary is not established by the closed
+    LOCAL grammar this module claims to require)."""
     position = start
     steps = 0
     while (
         position >= 0
         and steps < _DOSE_WINDOW - 1
+        and tokens[position].clause == clause
         and tokens[position].token in _DOSE_CONNECTORS
     ):
         position -= 1
         steps += 1
-    if position >= 0 and tokens[position].token in _MEDICATION_LEXICON:
+    if (
+        position >= 0
+        and tokens[position].clause == clause
+        and tokens[position].token in _MEDICATION_LEXICON
+    ):
         return position
     return None
 
@@ -558,23 +690,32 @@ def _dose_binding(tokens: list[_Token], atom: _StrengthAtom) -> _DoseBinding | N
     relations naming DIFFERENT medications are ambiguous — silence, never
     a guessed anchor (round 24 PR-MED-001's invariant).
     """
+    # Round 49 PR-MED-002: every token a relation rests on must share the
+    # atom's clause. The parser gained clause identity in round 48 and used
+    # it only for laterality and symptom negation, so a medication in one
+    # sentence could still bind a strength in the next.
+    clause = tokens[atom.first].clause
     candidates: list[_DoseBinding] = []
     if (
         atom.last + 2 < len(tokens)
         and tokens[atom.last + 1].token == "of"
         and tokens[atom.last + 2].token in _MEDICATION_LEXICON
+        and tokens[atom.last + 1].clause == clause
+        and tokens[atom.last + 2].clause == clause
     ):
         candidates.append(_DoseBinding(atom.last + 2, (atom.last + 1,)))
     if (
         atom.first >= 2
         and tokens[atom.first - 2].token == "dose"
         and tokens[atom.first - 1].token == "of"
+        and tokens[atom.first - 2].clause == clause
+        and tokens[atom.first - 1].clause == clause
     ):
-        med = _connector_walk(tokens, atom.first - 3)
+        med = _connector_walk(tokens, atom.first - 3, clause)
         if med is not None:
             evidence = tuple(range(med + 1, atom.first))  # connectors + dose + of
             candidates.append(_DoseBinding(med, evidence))
-    med = _connector_walk(tokens, atom.first - 1)
+    med = _connector_walk(tokens, atom.first - 1, clause)
     if med is not None:
         candidates.append(_DoseBinding(med, tuple(range(med + 1, atom.first))))
     if not candidates:
@@ -599,16 +740,38 @@ def _dose_claims(
         if binding is None:
             continue
         med = binding.medication
+        clause = tokens[atom.first].clause
+        # Round 50 PR-MED-003: the ADMINISTRATION WITNESS is the token that
+        # decides whether this pair can hard-block at all (`_exclusive_context`
+        # searches the collapsed context for one), so it is evidence and must
+        # be graded like evidence. Without it, a witness word transcribed at
+        # low confidence still produced an unacknowledgeable `contradiction`
+        # instead of `contradiction_low_confidence` review, and the warning
+        # pointed at coordinates that omitted the very word the upgrade rested
+        # on. Drawn from the atom's own clause, matching the context scope.
+        witnesses = tuple(
+            entry
+            for entry in tokens
+            if entry.clause == clause and entry.token in _ADMINISTRATION_WITNESS
+        )
         involved = (
             tokens[med],
             *(tokens[position] for position in binding.evidence),
             *tokens[atom.first : atom.last + 1],
+            *witnesses,
         )
         min_probability, coords = _claim_evidence(segment_index, involved)
+        # Round 49 PR-MED-002: the collapsed context — the thing `_same_state`
+        # compares and `_exclusive_context` searches for its administration
+        # witness — is scoped to the bound atom's CLAUSE. Whole-assertion
+        # scope let a bare product-strength clause borrow "continue" or a
+        # schedule word from an unrelated sentence and hard-block on it.
+        # (`clause` is bound above, where the witness evidence is gathered
+        # from the same scope — the two must not drift apart.)
         context = (
-            *(entry.token for entry in tokens[: atom.first]),
+            *(entry.token for entry in tokens[: atom.first] if entry.clause == clause),
             "<dose>",
-            *(entry.token for entry in tokens[atom.last + 1 :]),
+            *(entry.token for entry in tokens[atom.last + 1 :] if entry.clause == clause),
         )
         claims.append(
             _StructuredClaim(
@@ -641,7 +804,20 @@ def _claims_from_tokens(
     all and is not a question. Text that fits none of these shapes produces
     no claim and is carried by confirmation alone.
     """
+    # Round 50 PR-MED-002: a recognised QUESTION asserts nothing, so it may
+    # contribute NO claim of any kind to the blocking comparison population.
+    # Round 48 applied this to laterality and to affirmed symptoms only, while
+    # `_dose_claims` ran unconditionally and the NEGATED-symptom branch never
+    # consulted `interrogative` — so "No numbness?" contradicted "Numbness
+    # persists." and "On paracetamol 250 mg?" hard-blocked against a 500 mg
+    # assertion. Gating once, here, is what makes the rule structural rather
+    # than three branches that must each remember it. (This does not touch the
+    # recorded `is_interrogative` recognition bound — it only ensures that
+    # what the heuristic DOES recognise is honoured everywhere.)
+    if interrogative:
+        return []
     claims: list[_StructuredClaim] = []
+    negated_clauses = {entry.clause for entry in tokens if entry.token in _NEGATIONS}
     for index, entry in enumerate(tokens):
         if (
             entry.token in _LATERALITY_TOKENS
@@ -649,6 +825,21 @@ def _claims_from_tokens(
             and tokens[index + 1].token in _ANATOMY_LEXICON
         ):
             anchor = tokens[index + 1]
+            # Round 48 PR-MED-001: a laterality claim is a POSITIVE, ASSERTED
+            # fact about a side. Three ways it is not, each of which used to
+            # produce one anyway and could hard-block a consistent note:
+            #   - the assertion is a QUESTION ("Is it the left knee?");
+            #   - the clause is NEGATED ("No pain in the left knee") — the
+            #     window that binds negation to a symptom is far too short to
+            #     reach the anatomy here, so this is clause-scoped;
+            #   - the pair straddles a clause boundary.
+            # Each check only ever DROPS a claim, so no new contradiction can
+            # appear from this change — the fail-toward-silence direction the
+            # module's contract requires.
+            if interrogative or anchor.clause != entry.clause:
+                continue
+            if entry.clause in negated_clauses:
+                continue
             min_probability, coords = _claim_evidence(segment_index, (entry, anchor))
             claims.append(
                 _StructuredClaim("laterality", anchor.token, entry.token, min_probability, coords)
@@ -664,7 +855,12 @@ def _claims_from_tokens(
             (
                 position
                 for position in negation_positions
+                # Round 48 PR-MED-001: the window is necessary but not
+                # sufficient — the negation must also be in the SAME clause.
+                # "No fever; pain persists" put `no` two flattened tokens
+                # before `pain` and negated it.
                 if 0 < index - position <= _NEGATION_WINDOW
+                and tokens[position].clause == entry.clause
             ),
             None,
         )
@@ -765,17 +961,41 @@ def _contradiction_warning(
 
 
 def _exclusive_context(context: tuple[str, ...]) -> bool:
-    """True when every context token belongs to the closed
-    exclusive-administration grammar (``_EXCLUSIVE_DOSE_CONTEXT``) — the
-    wording of a current regimen fact with ONE strength slot. Inventory,
-    product-strength, and any novel wording contain words outside the
-    grammar and are NOT exclusive (round 24 PR-MED-003)."""
-    return all(
+    """True when the context is the wording of a CURRENT REGIMEN FACT with one
+    exclusive strength slot. TWO conditions, because round 48 PR-MED-002
+    showed the first alone proves nothing:
+
+    1. NEGATIVE (round 24 PR-MED-003): every token belongs to the closed
+       exclusive-administration grammar — inventory, product-strength and
+       novel wording contain words outside it and are not exclusive.
+    2. POSITIVE (round 48 PR-MED-002): at least one token actually WITNESSES
+       administration or a schedule. Condition 1 only establishes that no
+       token disqualifies the context, so bare product-strength shorthand
+       ("Paracetamol 500 mg") collapsed to ``("paracetamol", "<dose>")`` —
+       every token allowed, nothing asserted — passed it and HARD-BLOCKED
+       against another strength. That contradicted this module's own stated
+       contract, which puts product strength in the review population
+       because two strengths can be held at once. Absence of disqualifying
+       words is not proof of an exclusive state.
+
+    The witness set is an ALLOW-list drawn from the same closed vocabulary,
+    minus the tokens that are pure structure — connectors (``in``, ``at``,
+    ``a``, ``the``, ``per``, ``of``), the quantifiers ``each``/``every``, the
+    pronoun ``i``, the relation word ``dose``, the medication names and the
+    ``<dose>`` placeholder. What remains either asserts administration
+    (``take``/``prescribed``/``advised``/``on``…) or pins a schedule
+    (``daily``, ``twice``, ``morning``, ``night``…) — and the pinned
+    error-grade cases are exactly those: "paracetamol 500 mg in the morning",
+    "paracetamol 1000mg at night", "Paracetamol 500 mg advised."
+    """
+    if not all(
         token == "<dose>"
         or token in _EXCLUSIVE_DOSE_CONTEXT
         or token in _MEDICATION_LEXICON
         for token in context
-    )
+    ):
+        return False
+    return any(token in _ADMINISTRATION_WITNESS for token in context)
 
 
 def _same_state(mine: _StructuredClaim, other: _StructuredClaim) -> bool:

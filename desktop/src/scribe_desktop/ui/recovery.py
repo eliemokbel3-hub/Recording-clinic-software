@@ -82,6 +82,12 @@ class RecoveryScreen(QWidget):
         self.warning_label.setWordWrap(True)
         self.warning_label.hide()
         self.message_label = QLabel()
+        # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
+        # exception detail (config validation errors, save/compose failures),
+        # which reproduces USER-AUTHORED input - config text a clinician
+        # edited, or note text. AutoText would interpret anything markup-like
+        # in it as rich text. Same discipline as the proposal excerpt label.
+        self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
 
         self.resume_button = QPushButton("Resume processing")
@@ -255,9 +261,26 @@ class RecoveryScreen(QWidget):
             self._resuming_id = None
         self._join_task()
         self.progress_bar.hide()
+        # Round 47 PR-LOW-001: state only what THIS failure establishes. The
+        # original copy promised "remains recoverable within its 24-hour
+        # window" for EVERY failure class — but the failure may itself be a
+        # corrupt store or an unusable key, in which case a retry cannot
+        # succeed, and a store past 24 h may already have been swept.
+        #
+        # Round 48 PR-LOW-001 then caught the replacement swinging too far the
+        # other way: "Nothing was deleted by this attempt" is ALSO an
+        # unconditional assurance, and a false one. Recovery reaches
+        # `write_transcript`, which deliberately unlinks a stale `note.enc`
+        # BEFORE the atomic transcript write — so a failure in that write
+        # arrives here with a saved draft already gone. What is true on every
+        # path: this attempt discarded no session KEY, i.e. no cryptographic
+        # deletion happened, and the note (never the transcript or the key) is
+        # the one artifact a failed rewrite can have removed.
         self.message_label.setText(
-            f"Recovery failed ({message}). The session remains recoverable "
-            "within its 24-hour window, or can be discarded."
+            f"Recovery failed ({message}). The session key was not discarded "
+            "by this attempt. If it failed while rewriting the transcript, a "
+            "previously saved note may need generating again. You can retry, "
+            "or discard the session."
         )
         self.refresh()
 

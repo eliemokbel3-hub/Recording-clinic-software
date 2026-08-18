@@ -740,10 +740,16 @@ def _canonical_note(note: GeneratedNote) -> GeneratedNote:
         return GeneratedNote.model_validate_json(blob)
     except (ValidationError, PydanticSerializationError) as exc:
         # Terse ON PURPOSE — the clinical-artifact message convention
-        # (`_verified_note`, `read_transcript`; contrast `_parse_config_blob`,
-        # whose detail is included BECAUSE config is not clinical content): a
-        # pydantic error's rendered detail carries input values, i.e. note
-        # text, and this string must stay safe to display or log anywhere.
+        # (`_verified_note`, `read_transcript`): a pydantic error's rendered
+        # detail carries input values, i.e. note text, and this string must
+        # stay safe to display or log anywhere.
+        #
+        # The contrast with `_parse_config_blob` (which DOES include detail)
+        # is one of DESTINATION, not of safety class — round 47 PR-LOW-002
+        # corrected the old wording here, which justified it "BECAUSE config
+        # is not clinical content". Config is only INTENDED non-patient and
+        # is validated for structure alone, so its detailed message is bounded
+        # to the local UI, not log-safe. This message is the log-safe one.
         raise NoteWriteRefusedError("note artifact failed canonical re-validation") from exc
 
 
@@ -839,7 +845,14 @@ def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:
 
 
 # --------------------------------------------------------------------------
-# Expiry sweep (24 h recovery cap — enforced by code, not convention).
+# Expiry sweep — the 24 h recovery rule, applied by code rather than by
+# convention. NOT a hard guarantee (round 47 PR-LOW-001): an UNPROTECTED
+# store becomes expiry-ELIGIBLE at 24 h and is destroyed by the next
+# SUCCESSFUL sweep. A protected store (live / queued-under-review / checked
+# out for recovery) is exempt while it stays protected, and a sweep that
+# hits an OSError records `action="error"` and RETAINS the store for a later
+# pass. What is enforced is the rule and its fail-safe direction, not a
+# deadline.
 # --------------------------------------------------------------------------
 
 

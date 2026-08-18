@@ -7,7 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -49,6 +49,12 @@ class SessionScreen(QWidget):
 
         self.state_label = QLabel()
         self.message_label = QLabel()
+        # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
+        # exception detail (config validation errors, save/compose failures),
+        # which reproduces USER-AUTHORED input - config text a clinician
+        # edited, or note text. AutoText would interpret anything markup-like
+        # in it as rich text. Same discipline as the proposal excerpt label.
+        self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
 
         self.start_button = QPushButton("Start")

@@ -171,6 +171,12 @@ class TranscriptScreen(QWidget):
         self.discard_button.clicked.connect(self.on_discard)
 
         self.message_label = QLabel()
+        # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
+        # exception detail (config validation errors, save/compose failures),
+        # which reproduces USER-AUTHORED input - config text a clinician
+        # edited, or note text. AutoText would interpret anything markup-like
+        # in it as rich text. Same discipline as the proposal excerpt label.
+        self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
 
         buttons = QHBoxLayout()
@@ -249,9 +255,17 @@ class TranscriptScreen(QWidget):
             config = self._config_loader()
         except NoteConfigError as exc:
             self._config = None
+            # Round 48 PR-LOW-002: surface the ACTIONABLE detail. The loader
+            # builds a message naming the file and the failing field precisely
+            # so a clinician editing plaintext config can repair it — and this
+            # was the one path that threw it away, showing only the exception
+            # CLASS at the moment it is most needed (Generate is about to be
+            # disabled). The detail is local-UI-only and rendered plain-text
+            # (see `message_label`); it must never be logged.
             self.message_label.setText(
-                f"Note config could not be loaded ({type(exc).__name__}); note "
-                "generation is unavailable. You can still Complete or Discard."
+                f"Note config could not be loaded, so note generation is "
+                f"unavailable. You can still Complete or Discard.\n\n"
+                f"{type(exc).__name__}: {exc}"
             )
             self._can_generate = False
             return

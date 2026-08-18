@@ -5,12 +5,26 @@ model (canonical section -> real Cliniko template field), the autofill-rule
 and prefill-template schemas, and the validating loader that resolves shipped
 defaults against clinician overrides into one immutable ``NoteConfig``.
 
-Config files are clinician-authored boilerplate, NOT patient data (plan
-Schema / Data Changes): they live in plaintext under
+Config files are INTENDED to be clinician-authored boilerplate rather than
+patient data (plan Schema / Data Changes): they live in plaintext under
 ``%LOCALAPPDATA%\\ClinikoScribe\\config\\``, deliberately outside the
 encrypted session store and the 24 h rule, so they survive session
-destruction. Nothing in this module touches a session key or a clinical
-artifact.
+destruction.
+
+Round 47 PR-LOW-002 narrows two claims this docstring used to make flatly,
+matching the rounds 40-41 correction already applied to the security docs:
+
+- "NOT patient data" is a POLICY, not an enforced property. Every validator
+  below constrains SHAPE and character content — length, control characters,
+  the single-claim form, duplicate detection — and none of them classifies
+  meaning. A clinician override can put patient data in any accepted string,
+  so nothing here may be treated as non-clinical BECAUSE it validated.
+- "Nothing in this module touches a session key or a clinical artifact" was
+  false in its second half: no session key, correct — but
+  ``build_note_request`` below takes a ``TranscriptDocument`` and assembles
+  the ``NoteRequest`` that carries the whole transcript across the provider
+  boundary. The generation boundary lives here deliberately (the reverse
+  import would be a cycle); it is a clinical path and is treated as one.
 
 Resolution precedence (Task 3.2 — the specification ``config_digest``
 depends on):
@@ -786,8 +800,16 @@ def _parse_config_blob[FileModelT: BaseModel](
         return model.model_validate_json(blob)
     except ValidationError as exc:
         # Unlike read_transcript's terse message, the validation detail is
-        # included: config is clinician-EDITED plaintext boilerplate, not
-        # clinical content, and "fails loudly" must name what to fix.
+        # included: config is clinician-EDITED plaintext the author has to be
+        # able to repair, and "fails loudly" must name what to fix.
+        #
+        # BOUNDED DESTINATION, not a safety class (round 47 PR-LOW-002): the
+        # rendered pydantic detail reproduces the REJECTED INPUT, and config
+        # is only intended-non-patient — structure is all that is validated
+        # (module docstring). So this string is safe for the LOCAL UI surface
+        # it is shown on; it is NOT log-safe, it carries no registered
+        # tripwire signature, and no future call site may log it on the
+        # strength of "config is not clinical content".
         raise NoteConfigInvalidError(f"{source} config {filename} is malformed: {exc}") from exc
 
 
@@ -1000,8 +1022,15 @@ def mapping_drop_warnings(
     Fires only for sections that are POPULATED and unmapped by OVERSIGHT:
     empty sections drop nothing, and ``intentionally_unmapped`` sections are
     silent by design. The registered severity is ``review``, which never
-    blocks — round 2 recorded why an error grade would deadlock Complete —
-    and Phase 7 owns rendering it under "Unmapped content".
+    blocks — round 2 recorded why an error grade would deadlock Complete.
+
+    Round 45 MED-002: this docstring used to say "Phase 7 owns rendering it
+    under 'Unmapped content'". It does not, and did not: the round-2
+    "Unmapped content" target belongs to the MAPPED OUTPUT, which is Phase
+    4's, and the shipped Template A drops nothing anyway. In 3A the dropped
+    section is still rendered in the note body like any other populated
+    canonical section — the warning says the chosen template has no FIELD to
+    carry it, not that the content is hidden.
     """
     dropped = frozenset(profile.unmapped_section_keys())
     return tuple(

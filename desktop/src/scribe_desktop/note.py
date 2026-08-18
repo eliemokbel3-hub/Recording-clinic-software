@@ -282,7 +282,12 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     "autofill_trigger_absent": "error",
     "role_unconfirmed": "error",
     "clinician_asserted": "review",  # unsuppressible; acknowledgement is the exit
-    "mapping_drop": "review",  # renders into "Unmapped content"; never a block
+    # Never a block (round 2: an error grade would be unclearable and
+    # deadlock Complete). Round 45 MED-002: this comment used to say the
+    # warning "renders into 'Unmapped content'" — that mapped-output target
+    # is Phase 4's and does not exist in 3A. The section itself is still
+    # rendered in the note body; only a template FIELD for it is missing.
+    "mapping_drop": "review",
     # Check 4 — scoped omission (Task 5.4). Review, never error: a heuristic
     # must not be able to block Complete on a false positive.
     "high_risk_omission": "review",
@@ -448,6 +453,15 @@ class NoteWarning(BaseModel):
     section_key: NoteSectionKey | None = None
     assertion_id: str | None = None
     source_coords: SourceCoords | None = None
+    # RESERVED AND NEVER SET (round 45 LOW-002). Acknowledgement is per-code
+    # IN-MEMORY review state owned by the Note tab: it gates Complete, it is
+    # deliberately not persisted, and `write_note` deliberately does not
+    # require it (plan Task 7 design decision (d)) — so nothing in shipping
+    # source or tests ever writes True here. Kept rather than removed
+    # because `extra="forbid"` would make every already-written `note.enc`
+    # fail `from_bytes` after a removal, blocking Complete on an in-flight
+    # session with its key retained. Wire it only alongside a `write_note`
+    # check that gives it meaning.
     acknowledged: bool = False
 
     @model_validator(mode="after")

@@ -434,6 +434,223 @@ class TestCheck2Contradictions:
         # The transcript evidence is pointed at: value + anchor words.
         assert warnings[0].source_coords == SourceCoords(0, 1, 2)
 
+    def test_a_negated_clause_yields_no_positive_laterality(self) -> None:
+        """Round 48 PR-MED-001. "No pain in the left knee" is not a claim that
+        the left knee is the affected side, but the parser emitted
+        `laterality:knee=left` anyway — enough to hard-block a consistent
+        right-knee assertion. The negation window that guards symptoms is far
+        too short to reach the anatomy, so the guard is clause-scoped."""
+        document = _document(("the right knee is the sore one", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("No pain in the left knee.", "objective_examination", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_an_interrogative_yields_no_positive_laterality(self) -> None:
+        """Round 48 PR-MED-001. A clinician's QUESTION is not an assertion
+        about a side — the same principle Task 2.2 applies to routing, which
+        Check 2 was not applying to laterality.
+
+        HONEST BOUND, found while writing this test: the suppression is only
+        as good as `is_interrogative`, which keys on a trailing '?', a
+        WH-opener, or an auxiliary followed by a PRONOUN subject. "Is the
+        pain in your left knee" (no '?', subject "the") is not recognised as
+        a question and still yields a laterality claim. Widening
+        `is_interrogative` is deliberately NOT done here: round 1 MED-001
+        narrowed `_SUBJECT_TOKENS` on purpose, and the function also drives
+        provider routing, so a change there has a far wider blast radius than
+        this check. The residual failure direction stays bounded — such a
+        claim can only contradict an assertion about the OTHER side, and the
+        clinician's exit (decline the authored proposal, or cancel and
+        regenerate) is unchanged."""
+        document = _document(("is the pain in your left knee?", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("Right knee strapped.", "treatment_performed", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_positive_subclause_after_a_contrast_still_claims_its_side(self) -> None:
+        """Round 49 PR-MED-001 — the UNSAFE direction of round 48's repair.
+
+        Scoping negation to the punctuation clause was too coarse: "No fever
+        but right knee pain." is ONE punctuation clause, so `no` erased an
+        explicit, unambiguous positive laterality pair and a real
+        laterality-flip stopped being caught at all. An adversative opens a
+        new subclause, so the negation before it does not reach the assertion
+        after it."""
+        document = _document(("no fever but right knee pain.", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("Left knee strapped.", "treatment_performed", aid="a1"),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["contradiction"]
+        assert warnings[0].severity == "error"
+
+    def test_a_contrast_boundary_does_not_poison_the_dose_context(self) -> None:
+        """Round 50 PR-MED-001. Round 49 put the adversative in the NEW
+        clause, where it joined the collapsed dose context; being outside
+        `_EXCLUSIVE_DOSE_CONTEXT` it demoted a genuine current-regimen
+        conflict to review. The boundary marker must not be able to
+        establish OR disqualify a clinical state."""
+        document = _document(("we discussed her tablets", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _authored(
+                    "No ibuprofen, but I take paracetamol 250 mg daily.",
+                    "management_plan",
+                    aid="a1",
+                ),
+                _authored(
+                    "I take paracetamol 500 mg daily.", "management_plan", aid="a2"
+                ),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["contradiction"]
+        assert warnings[0].severity == "error"
+
+    def test_a_temporal_yet_is_not_a_contrast_boundary(self) -> None:
+        """Round 50 PR-MED-001. A contrast boundary only ever LIMITS a
+        negation's scope, so it can only ADD positive claims — the unsafe
+        direction. `yet` is overwhelmingly temporal in clinical speech, and
+        treating it as adversative let "No evidence yet of left knee pain."
+        emit a positive left-knee claim able to hard-block a consistent
+        right-knee note."""
+        document = _document(("the right knee is the sore one", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "No evidence yet of left knee pain.",
+                    "objective_examination",
+                    aid="a1",
+                ),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_recognised_question_contributes_no_claim_at_all(self) -> None:
+        """Round 50 PR-MED-002. Round 48 honoured `interrogative` for
+        laterality and affirmed symptoms only — `_dose_claims` ran
+        unconditionally and the NEGATED-symptom branch never consulted it. A
+        question asserts nothing, so it may contribute nothing to the
+        blocking population; gating once, at the top, makes that structural
+        rather than three branches that must each remember."""
+        document = _document(("numbness persists", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("No numbness?", "red_flags_screening", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_terminal_behind_a_closing_wrapper_still_ends_the_clause(self) -> None:
+        """Round 50 PR-MED-004. `content_tokens` strips surrounding
+        punctuation, so a visually explicit sentence end wearing a closing
+        quote (`fever."`) looked identical to no boundary, and the negation
+        crossed it to negate the NEXT sentence's symptom."""
+        document = _document(('"no fever." pain persists.', SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("Pain persists.", "presenting_complaint", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_low_confidence_administration_witness_demotes_to_review(self) -> None:
+        """Round 50 PR-MED-003. `_ADMINISTRATION_WITNESS` is the token that
+        decides whether a dose pair can hard-block at all, so it is evidence
+        and must be graded like evidence. With `advised` transcribed at low
+        confidence the pair used to stay an unacknowledgeable error, and the
+        coordinates omitted the very word the upgrade rested on."""
+        document = _document(("paracetamol 250 mg advised", SPEAKER_1, {3: 0.3}))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "past_medical_history", aid="t0"),
+                _authored("paracetamol 500 mg advised", "management_plan", aid="a1"),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["contradiction_low_confidence"]
+        assert warnings[0].severity == "review"
+        # The evidence now REACHES the witness word it depended on.
+        coords = warnings[0].source_coords
+        assert coords is not None and coords.last_word_index == 3
+
+    def test_a_dose_relation_never_spans_a_clause_boundary(self) -> None:
+        """Round 49 PR-MED-002. Round 48 gave the parser clause identity and
+        consumed it in only two of five places, so a medication in one
+        sentence still bound a strength in the next — an error-grade block on
+        a relation the closed LOCAL grammar never established."""
+        document = _document(("paracetamol. 500 mg advised.", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "past_medical_history", aid="t0"),
+                _authored("Paracetamol 250 mg advised.", "management_plan", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_an_administration_witness_is_not_borrowed_from_another_clause(self) -> None:
+        """Round 49 PR-MED-002. The collapsed context is what `_same_state`
+        compares and `_exclusive_context` searches, so whole-assertion scope
+        let a BARE product-strength clause inherit a witness from an
+        unrelated sentence and hard-block on it."""
+        document = _document(("we discussed the tablets", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _authored(
+                    "Paracetamol 500 mg. Continue as advised.",
+                    "management_plan",
+                    aid="a1",
+                ),
+                _authored(
+                    "Paracetamol 250 mg. Continue as advised.",
+                    "management_plan",
+                    aid="a2",
+                ),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["dose_mismatch"]
+        assert all(w.severity == "review" for w in warnings)
+
+    def test_negation_does_not_cross_a_clause_boundary(self) -> None:
+        """Round 48 PR-MED-001. `content_tokens` strips punctuation, so "No
+        fever; pain persists" flattened to `no, fever, pain, persists` and
+        `no` negated `pain` two tokens later — manufacturing an error against
+        an authored assertion that agrees with the transcript."""
+        document = _document(("no fever; pain persists", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("Pain persists.", "presenting_complaint", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
     def test_low_confidence_transcript_evidence_grades_to_review(self) -> None:
         """Severity grades on raw probability below UNCERTAINTY_THRESHOLD —
         never on the `uncertain` flag, which marks every number and name."""
@@ -679,7 +896,12 @@ class TestCheck2Contradictions:
         warnings = contradiction_warnings(note, document)
         assert _codes(warnings) == ["contradiction_low_confidence"]
         assert warnings[0].severity == "review"
-        assert warnings[0].source_coords == SourceCoords(0, 0, 2)
+        # Still spans THROUGH the separated unit at word 2 (this pin's point).
+        # The end index moved 2 -> 5 in round 50 PR-MED-003: `morning` and
+        # `advised` are the administration witnesses that decide whether this
+        # pair may hard-block at all, so they are evidence and now join the
+        # claim's confidence and coordinates.
+        assert warnings[0].source_coords == SourceCoords(0, 0, 5)
 
     def test_an_all_high_confidence_same_state_conflict_stays_error(self) -> None:
         """The counterpart: identical statement contexts with every claim
@@ -745,7 +967,10 @@ class TestCheck2Contradictions:
         )
         warnings = contradiction_warnings(note, low)
         assert _codes(warnings) == ["contradiction_low_confidence"]
-        assert warnings[0].source_coords == SourceCoords(0, 0, 3)
+        # Still spans THROUGH R2's `of` at word 2 (this pin's point). End index
+        # moved 3 -> 4 in round 50 PR-MED-003: `advised` is the administration
+        # witness the error grade depends on, so it joins the evidence.
+        assert warnings[0].source_coords == SourceCoords(0, 0, 4)
         high = _document(("250 mg of paracetamol advised", SPEAKER_1))
         note = _note(
             high,
@@ -846,6 +1071,38 @@ class TestCheck2Contradictions:
         warnings = contradiction_warnings(note, document)
         assert _codes(warnings) == ["contradiction"]
         assert warnings[0].severity == "error"
+
+    def test_bare_product_strength_never_hard_blocks(self) -> None:
+        """Round 48 PR-MED-002. `_exclusive_context` used to test only that no
+        token was OUTSIDE the closed vocabulary — which bare product-strength
+        shorthand passes vacuously, since medication + `<dose>` is all there
+        is. Two strengths of the same product can be held at once, so this
+        belongs in the acknowledgeable review population, exactly as the
+        module's own contract says. Absence of disqualifying words is not
+        proof of an exclusive state."""
+        document = _document(("we talked about the tablets", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _authored("Paracetamol 500 mg", "management_plan", aid="a1"),
+                _authored("Paracetamol 250 mg", "management_plan", aid="a2"),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["dose_mismatch"]
+        assert all(w.severity == "review" for w in warnings)
+
+    def test_the_administration_witness_is_a_strict_subset(self) -> None:
+        """The positive witness must be drawn from the same closed
+        vocabulary: a token outside `_EXCLUSIVE_DOSE_CONTEXT` could never
+        fire (condition 1 rejects the context first), so adding one there
+        would be dead vocabulary that reads as coverage."""
+        assert note_check_module._ADMINISTRATION_WITNESS <= (
+            note_check_module._EXCLUSIVE_DOSE_CONTEXT
+        )
+        # And it must exclude pure structure, or the guard is vacuous again.
+        for connector in ("i", "each", "every", "in", "the", "at", "a", "per", "dose", "of"):
+            assert connector not in note_check_module._ADMINISTRATION_WITNESS
 
     def test_a_stock_count_is_not_a_dose(self) -> None:
         """Round 22 PR-MED-001(a): an inventory/count quantity ("2 tablets

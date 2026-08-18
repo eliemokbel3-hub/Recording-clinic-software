@@ -9,6 +9,13 @@ with blocking errors kept DISTINCT from review warnings. Task 7.6 keeps the
 full uncertainty-marked transcript visible BESIDE the note through the whole
 review, so a low-confidence phrase the note omitted is still reachable.
 
+It also carries the consent Critical Constraint's third clause (Task 7.7):
+a standing, unconditional reminder that Informed Consent is never written,
+ticked, or proposed by this app and must be ticked by hand in Cliniko. It is
+not a warning — nothing acknowledges or suppresses it — and it survives
+``clear()``, because it states what the app never does rather than anything
+about a particular note.
+
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is
   cleared on close.
@@ -109,6 +116,15 @@ class NoteScreen(QWidget):
         self.info_label = QLabel()
         self.info_label.setWordWrap(True)
 
+        # Task 7.7 (round 45 MED-001): the consent Critical Constraint's third
+        # clause. Static and unconditional — never cleared, never
+        # acknowledgeable, never config-dependent (see the constant's comment
+        # in ui.models). It states what the app never does, so it must be
+        # readable on an empty tab as well as beside a note.
+        self.consent_reminder_label = QLabel(models.CONSENT_MANUAL_REMINDER)
+        self.consent_reminder_label.setWordWrap(True)
+        self.consent_reminder_label.setStyleSheet("font-weight: bold;")
+
         self.blocking_header = QLabel("Cannot save the note yet:")
         self.blocking_header.setStyleSheet("color: #b00020; font-weight: bold;")
         self.blocking_header.hide()
@@ -153,11 +169,18 @@ class NoteScreen(QWidget):
         self.copy_button.clicked.connect(self._copy_note)
 
         self.message_label = QLabel()
+        # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
+        # exception detail (config validation errors, save/compose failures),
+        # which reproduces USER-AUTHORED input - config text a clinician
+        # edited, or note text. AutoText would interpret anything markup-like
+        # in it as rich text. Same discipline as the proposal excerpt label.
+        self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
 
         note_side = QWidget()
         note_layout = QVBoxLayout(note_side)
         note_layout.addWidget(self.info_label)
+        note_layout.addWidget(self.consent_reminder_label)
         note_layout.addWidget(self.blocking_header)
         note_layout.addLayout(self._blocking_box)
         note_layout.addWidget(self.review_header)

@@ -6,8 +6,9 @@ Startup order (binding): offline kill-switches set AND asserted before
 any ML code can run; then the single-instance guard (a second instance
 must never run its own controller/sweep over the shared sessions root);
 then the 24-hour expiry sweep (Flow 3) before the recovery screen lists
-anything; a periodic sweep keeps the cap enforced while the app stays
-open.
+anything; a periodic sweep re-runs the expiry rule on a best-effort
+cadence while the app stays open (round 47 PR-LOW-001 — "keeps the cap
+enforced" overstated it: see ``_SWEEP_INTERVAL_MS``).
 """
 
 from __future__ import annotations
@@ -25,8 +26,17 @@ from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import default_sessions_root, sweep_sessions
 from scribe_desktop.ui.main_window import MainWindow
 
-# PR round 18 (PR8): 15-minute cadence bounds the worst-case overshoot of
-# the 24 h cap to minutes, not an hour. The startup sweep runs immediately.
+# PR round 18 (PR8): the sweep CADENCE, not a bound. Round 45 LOW-001 (the
+# code-side sibling of the rounds 42-43 docs sweep): this comment used to
+# claim 15 minutes "bounds the worst-case overshoot of the 24 h cap to
+# minutes". It does not. This is a best-effort GUI-thread ``QTimer`` tick —
+# a blocked GUI thread, a suspended/hibernated machine, or an I/O error
+# inside the sweep can each delay a successful expiry past the interval, and
+# a PROTECTED store (live, queued-under-review, or checked out for recovery)
+# is exempt entirely. What holds is: an unprotected store becomes
+# expiry-ELIGIBLE at 24 h and is destroyed by the next SUCCESSFUL sweep —
+# the wording `docs/security/retention-schedule.md` now carries. The startup
+# sweep runs immediately.
 _SWEEP_INTERVAL_MS = 15 * 60 * 1000
 
 # Single-instance guard (peer round 18 PR4, priority raised after the

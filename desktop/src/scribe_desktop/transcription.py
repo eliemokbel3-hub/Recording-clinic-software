@@ -810,8 +810,14 @@ def write_transcript(
     one. Fail-closed ordering — if the stale note cannot be removed, the new
     transcript is NOT written (the hazard is exactly the pairing; Complete
     would refuse the mismatched pair anyway, and the note stays regenerable
-    while the key lives). The unlink-then-write pair is not atomic: a crash
-    between the two loses only a note that was already superseded.
+    while the key lives). The unlink-then-write pair is not atomic, and round
+    45 LOW-003 corrects what that costs: if the unlink SUCCEEDS and the write
+    then fails (or the process dies between them), the transcript on disk is
+    the OLD one — not superseded at all — and its ratified note is gone. The
+    loss is bounded and the direction is still safe: the key is retained, the
+    transcript is intact, and the note is regenerable by generating again.
+    Reachable only on the resume-processing path, since a queued session
+    holding a saved note cannot transition back to processing.
     """
     try:
         (session_dir / NOTE_FILENAME).unlink(missing_ok=True)

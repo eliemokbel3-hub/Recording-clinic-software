@@ -265,9 +265,20 @@ class MainWindow(QMainWindow):
         generation is in flight (GenerationInProgressError) or a discard's
         custody reservation is held (round 30: SessionActivityError, the
         coarse identity-less refusal), the coordinator refuses and the
-        REFERENCE IS RETAINED — the release path re-runs this cleanup.
-        Phase 7's busy guards own keeping view swaps unreachable during
-        generation; this catch is the custody backstop, not the UX."""
+        REFERENCE IS RETAINED.
+
+        Round 45 LOW-004 corrects what happens next. Nothing re-runs this
+        cleanup on release — `_on_generation_active(False)` only unblocks the
+        recovery screen — so a retained reference waits for the NEXT call
+        site (a transcript opening or closing), which may be never before
+        exit. That is not a live gap: both refusal branches are unreachable
+        under the shipped wiring, because every caller of this method
+        (`_on_live_transcript`, `_on_recovered`, `_on_transcript_closed`) is
+        itself already blocked while a lease or a discard reservation is
+        held. Phase 7's busy guards own keeping view swaps unreachable during
+        generation; this catch is the custody backstop, not the UX. If a
+        future caller CAN reach it while blocked, give the release path an
+        explicit re-run rather than relying on the next view change."""
         if self._recovered_crypto is None:
             return
         try:

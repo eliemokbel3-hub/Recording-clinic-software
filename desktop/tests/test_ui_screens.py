@@ -21,6 +21,7 @@ from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
 from scribe_desktop.note import (  # noqa: E402
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
+    NOTE_WARNING_SEVERITY,
     ConfirmationDecision,
     ExtractiveNoteProvider,
     GeneratedNote,
@@ -1503,6 +1504,31 @@ class TestNoteViewModels:
         codes = [group.code for group in summary.blocking]
         assert len(codes) == len(set(codes))
 
+    def test_every_registered_warning_code_has_copy(self) -> None:
+        # No fallback copy may be reachable in shipping: `_fallback_copy`
+        # renders a raw code and no clear-path, which is exactly the
+        # fictitious/absent-clear-path class rounds 35 and 45 both hit.
+        assert set(models.WARNING_COPY) == set(NOTE_WARNING_SEVERITY)
+        for code, severity in NOTE_WARNING_SEVERITY.items():
+            copy = models.WARNING_COPY[code]
+            assert copy.clear_hint.strip()
+            # An `error` names the action it blocks; a `review` blocks nothing.
+            assert (copy.blocks is not None) is (severity == "error")
+
+    def test_clear_hints_name_no_unbuilt_surface(self) -> None:
+        """Round 45 MED-002 regression pin.
+
+        `mapping_drop`'s hint used to send the clinician to an "Unmapped
+        content" heading — the round-2 MAPPED-OUTPUT target, which is Phase
+        4's and exists nowhere in this app. The dropped section is rendered
+        in the note body like any other populated canonical section, so the
+        hint must describe the missing TEMPLATE FIELD, never a missing view.
+        """
+        for copy in models.WARNING_COPY.values():
+            assert "unmapped content" not in copy.clear_hint.lower()
+        hint = models.WARNING_COPY["mapping_drop"].clear_hint
+        assert "shown in the note" in hint
+
     def test_complete_block_reason(self) -> None:
         assert models.complete_block_reason(models.NoteReviewState()) is None
         assert models.complete_block_reason(
@@ -1581,6 +1607,46 @@ class TestNoteScreen:
     def _confirm_all(self, screen: Any) -> None:
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
+
+    def test_consent_manual_reminder_is_always_rendered(self, qapp: Any) -> None:
+        """Task 7.7 / round 45 MED-001 — the consent Critical Constraint's
+        third clause: "the note view renders it as a manual reminder only".
+
+        The reminder states what the app NEVER does, so it must survive
+        `clear()` and be readable on an empty tab — it cannot be conditional
+        on a loaded note, and it must never become an acknowledgeable
+        warning (that would make it suppressible).
+        """
+        from scribe_desktop.ui.note import NoteScreen
+
+        text = models.CONSENT_MANUAL_REMINDER
+        assert "Informed Consent" in text
+        # Round 47 PR-MED-001 semantic pin. The copy must name the ATTESTATION
+        # CHECKBOX (what is structurally unreachable is an
+        # `attestation_checkbox` target, not all consent-related note text —
+        # `DEFAULT_SECTION_CUES["consent"]` legitimately routes consent speech
+        # into the rendered `consent` section), and it must carry the FULL
+        # predicate the checkbox asserts. Reducing it to consent-alone invites
+        # the clinician to attest more than the reminder asked them to verify.
+        assert "attestation" in text.lower()
+        lowered = text.lower()
+        for clause in ("working diagnosis", "benefits", "risks", "consent was gained"):
+            assert clause in lowered, clause
+
+        empty = NoteScreen()  # no note ever loaded
+        assert empty.consent_reminder_label.text() == text
+
+        screen, _ = self._screen()
+        assert screen.consent_reminder_label.text() == text
+        screen.clear()
+        assert screen.consent_reminder_label.text() == text
+
+        # A standing statement, never a warning: no code, no acknowledgement.
+        assert "consent" not in NOTE_WARNING_SEVERITY
+        assert not any(
+            "informed consent" in copy.clear_hint.lower()
+            for copy in models.WARNING_COPY.values()
+        )
 
     def test_sections_render_in_canonical_order(self, qapp: Any) -> None:
         screen, _record = self._screen()
