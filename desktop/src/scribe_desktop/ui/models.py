@@ -545,8 +545,14 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Check the doses against the transcript, then acknowledge.",
     ),
+    # Round 59 PR-LOW-001: SOURCE-NEUTRAL on purpose. This code serves TWO
+    # emitter populations - an authored line against the transcript, and two
+    # authored lines against each other (no transcript evidence at all,
+    # `source_coords is None`). A title that says "from the transcript" claims
+    # a comparison the checker never made for the second population, and
+    # could misdirect the acknowledgement of a wrong-side line.
     "laterality_mismatch": WarningCopy(
-        "A confirmed line names a different side from the transcript",
+        "The note names different sides for the same body area",
         None,
         "Check the side against the transcript beside the note, then acknowledge.",
     ),

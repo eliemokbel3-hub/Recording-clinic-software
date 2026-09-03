@@ -1504,6 +1504,20 @@ class TestNoteViewModels:
         codes = [group.code for group in summary.blocking]
         assert len(codes) == len(set(codes))
 
+    def test_laterality_mismatch_copy_is_source_neutral(self) -> None:
+        """Round 59 PR-LOW-001. `laterality_mismatch` is emitted by TWO
+        populations: an authored line against the transcript, and two
+        authored lines against each other with no transcript evidence at all
+        (`test_authored_pair_conflict_fires_on_the_later_assertion` pins
+        `source_coords is None`). The title must be true of BOTH, so it may
+        not claim a transcript comparison; the clear-hint may still point the
+        clinician at the transcript, which is a real control and the right
+        thing to check either way."""
+        copy = models.WARNING_COPY["laterality_mismatch"]
+        assert "transcript" not in copy.title.lower()
+        assert copy.blocks is None  # review, never a block (Task H4.1)
+        assert "acknowledge" in copy.clear_hint.lower()
+
     def test_every_registered_warning_code_has_copy(self) -> None:
         # No fallback copy may be reachable in shipping: `_fallback_copy`
         # renders a raw code and no clear-path, which is exactly the
