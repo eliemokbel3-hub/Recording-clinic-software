@@ -17,9 +17,20 @@ is named rather than one instance: ``ui.models.RenderedAssertion.text`` and
 ``ui.models.RenderedProposal.excerpt`` carry clinical text under field names
 (``text=``, ``excerpt=``) that are likewise absent from
 ``logging_setup._PAYLOAD_SIGNATURES`` — a repr of either would pass the
-filter. Neither module opens a logging channel today. The rule for all of
-them is the same: these are view/compare structures, not note models; do
-not log them, and register a signature first if that ever changes.
+filter. Neither module opens a logging channel today.
+Round 53 SEC-002 adds the members that sweep missed — in this module's own
+hot path: ``_Token`` (its ``token`` field IS a clinical word) and
+``_Clause``, the list of them that every parsing stage receives. Verified
+rather than assumed: a ``repr`` of one renders ``token='knee'``, matches no
+registered signature, and the tripwire returns True for it — the record
+would be EMITTED. Registering ``token=`` as a signature is deliberately NOT
+the fix: it is far too generic and would drop unrelated operational records,
+defeating the filter's own no-false-drop posture.
+The rule for all of them is the same: these are view/compare structures, not
+note models; do not log them, and register a signature first if that ever
+changes. Swept alongside and NOT content-bearing, so needing no entry:
+``_StrengthAtom`` (indices plus a canonical value/unit), ``_DoseBinding``
+(indices only), and ``note_fill._PhraseMatch`` (coordinates only).
 
 What each check claims — and, recorded with equal care, what it does NOT:
 
@@ -138,9 +149,9 @@ false accusation.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from itertools import combinations
-from typing import Final, Literal, NamedTuple
+from typing import Final, Literal, NamedTuple, NewType
 
 from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
@@ -197,6 +208,13 @@ class CheckTargetMismatchError(NoteCheckError):
 # ---------------------------------------------------------------------------
 
 _LATERALITY_TOKENS: Final[frozenset[str]] = frozenset({"left", "right"})
+
+# Round 56 PR-MED-001: the closed coordination that shares ONE anatomy token
+# between two sides — "left and right knee". Laterality otherwise binds only a
+# side token DIRECTLY preceding anatomy, so `left` was ignored here and the
+# assertion emitted a one-sided `knee=right` that hard-blocked a consistent
+# left-knee note (and reversing the wording reversed which side survived).
+_LATERALITY_CONJUNCTIONS: Final[frozenset[str]] = frozenset({"and", "or"})
 
 _ANATOMY_LEXICON: Final[frozenset[str]] = frozenset(
     {
@@ -358,6 +376,34 @@ def _words_for_coords(
     return words[coords.first_word_index : coords.last_word_index + 1]
 
 
+def _laterality_sides(
+    tokens: _Clause, index: int
+) -> tuple[tuple[int, ...], int] | None:
+    """The POSITIONS of the side token(s) a laterality token at ``index``
+    contributes and the position of the anatomy token they bind to, or None
+    when it binds nothing.
+
+    Handles the closed shared-anchor coordination (round 56 PR-MED-001):
+    ``<side> (and|or <side>)* <anatomy>``. A bare ``<side> <anatomy>`` is the
+    one-element case, so the ordinary path is unchanged. Positions rather
+    than tokens because the caller ALLOCATES them (round 57 PR-MED-001): a
+    side token this grammar does not bind is not thereby harmless - it is
+    unallocated opposite-side evidence that can make a clause bilateral.
+    """
+    positions = [index]
+    position = index + 1
+    while (
+        position + 1 < len(tokens)
+        and tokens[position].token in _LATERALITY_CONJUNCTIONS
+        and tokens[position + 1].token in _LATERALITY_TOKENS
+    ):
+        positions.append(position + 1)
+        position += 2
+    if position < len(tokens) and tokens[position].token in _ANATOMY_LEXICON:
+        return tuple(positions), position
+    return None
+
+
 def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
     coords = assertion.note_span.source_coords
     if coords is None:  # pragma: no cover - NoteSpan validates this away
@@ -452,16 +498,40 @@ class _StructuredClaim(NamedTuple):
 
 
 class _Token(NamedTuple):
+    """One content token plus the transcript evidence it carries.
+
+    ``word_index`` is an ABSOLUTE index into the source segment, not a
+    position in any list built here, so slicing tokens into clauses below
+    never disturbs a warning's coordinates.
+
+    Task H2.1 removed a ``clause: int`` field. ``content_tokens`` strips
+    punctuation, so the parser cannot tell "No fever; pain persists" from
+    "No fever pain persists" without SOME boundary signal — but carrying
+    that signal per token made "these two tokens are in the same clause" a
+    property every consumer had to remember to test, and rounds 48/49/50
+    each shipped a consumer that forgot. Clause membership is now expressed
+    by CONTAINMENT — ``_clause_tokens`` returns one ``_Clause`` per clause and
+    is the only thing that mints one — so cross-clause leakage is
+    unrepresentable rather than checked, and mypy refuses a flat token list at
+    every consumer (round 52 LOW-002 closed the gap where that was true of the
+    shipped path but not of the module).
+    """
+
     token: str
     probability: float | None
     word_index: int | None
-    # Round 48 PR-MED-001: which CLAUSE this token sits in. ``content_tokens``
-    # strips punctuation, so without this the parser could not tell "No
-    # fever; pain persists" from "No fever pain persists" and bound the
-    # negation to a symptom in the NEXT clause — manufacturing an
-    # error-grade `contradiction` against a consistent note. Counted, never
-    # injected as a sentinel token, so the dose grammar below is untouched.
-    clause: int = 0
+
+
+# Round 52 LOW-002: ONE CLAUSE, as a type the checker enforces rather than a
+# convention each helper documents. Task H2.1 moved clause containment from a
+# per-token field to the SHAPE of the data, which made cross-clause leakage
+# unrepresentable through the parser — but every dose helper still accepted a
+# bare ``list[_Token]``, which a whole multi-clause assertion satisfies just
+# as well, so the guarantee rested on one call site rather than on the type.
+# A ``NewType`` closes that: only ``_clause_tokens`` mints a ``_Clause``, and
+# mypy refuses a flat list at every consumer. The claim "unrepresentable" is
+# now true of the module, not just of the shipped path.
+_Clause = NewType("_Clause", list[_Token])
 
 
 # Round 49 PR-MED-001: mechanically-recognised CONTRAST boundaries. Round 48
@@ -493,6 +563,31 @@ class _Token(NamedTuple):
 # module's contract requires.
 _CONTRAST_TOKENS: Final[frozenset[str]] = frozenset({"but", "however"})
 
+# The CORRELATIVE use of `not` — "not only X but Y", "not just X but Y" — where
+# `not` scopes the coordination rather than negating X. Round 54 introduced
+# this for laterality and round 55 found that scope BOTH too narrow and too
+# wide there (it missed "Not the left knee only but ...", and an unrelated
+# "Not just yet." silenced a later clause's valid claim), so laterality no
+# longer consults it at all — see `suppressed_anchors` below, which needs no
+# vocabulary. What survives here is the one place adjacency really is the
+# right test: this `not` must not act as a NEGATION SOURCE for a symptom.
+# "Not only pain but numbness persists." was emitting `pain = negated`, the
+# opposite of what it says, and hard-blocking a consistent "Pain persists."
+_CORRELATIVE_AFTER_NOT: Final[frozenset[str]] = frozenset(
+    {"only", "just", "merely", "simply"}
+)
+
+
+def _is_correlative_not(tokens: _Clause, position: int) -> bool:
+    """True when the token at ``position`` is a correlative ``not`` — i.e.
+    immediately followed by one of ``_CORRELATIVE_AFTER_NOT``. Local by
+    construction: it says nothing about any other clause."""
+    return (
+        tokens[position].token == "not"
+        and position + 1 < len(tokens)
+        and tokens[position + 1].token in _CORRELATIVE_AFTER_NOT
+    )
+
 
 # Round 50 PR-MED-004: characters that may follow a terminator without
 # cancelling it — closing quotes and brackets. A closed set; anything else
@@ -513,10 +608,13 @@ def _ends_clause(raw: str) -> bool:
     Only closing wrappers are skipped, and only after a real terminator, so
     a decimal (``1.5``), a time (``14:30``) and an abbreviation chain's
     interior dots still end in a digit or letter and start no clause. A
-    trailing terminator at the very end of the text increments past the last
-    token and changes nothing, so "…advised." stays ONE clause — which is
-    what keeps the pinned single-clause dose and laterality cases
-    error-grade.
+    trailing terminator at the very END of the text closes a clause that is
+    already complete, and the empty remainder is dropped by ``_clause_tokens``
+    — so "…advised." stays ONE clause, which is what keeps the pinned
+    single-clause dose and laterality cases error-grade. (Round 52 LOW-001:
+    this last sentence used to describe a counter "incrementing past the last
+    token"; Task H2.1 replaced that counter with containment, so the mechanism
+    it named no longer existed.)
     """
     stripped = raw.rstrip()
     while stripped and stripped[-1] in _CLOSING_WRAPPERS:
@@ -524,43 +622,64 @@ def _ends_clause(raw: str) -> bool:
     return bool(stripped) and stripped[-1] in _TERMINAL_PUNCT
 
 
-def _tokens_from_text(text: str) -> list[_Token]:
-    out: list[_Token] = []
-    clause = 0
-    for chunk in text.split():
-        for token in content_tokens(chunk):
-            out.append(_Token(token, None, None, clause))
+def _clause_tokens(
+    source: Iterable[tuple[str, float | None, int | None]],
+) -> list[_Clause]:
+    """THE clause walker — one implementation, parameterised over its source.
+
+    ``source`` yields ``(raw_text, probability, word_index)`` per chunk: the
+    text path supplies whitespace chunks with no transcript evidence, the
+    transcript path supplies words with their probability and absolute
+    index. Everything else — tokenisation, where a clause ends, and what a
+    contrast word does — is identical, and Task H2.1 made it literally one
+    body: rounds 48, 49 and 50 each had to patch two copies of this walk in
+    lockstep, and round 49's peer had to spell out "apply the correction to
+    both paths".
+
+    A clause closes on a contrast token (which stays in the clause it
+    closes, so the boundary marker can never join the next clause's
+    clinical context — round 50 PR-MED-001) or on a chunk that ends one
+    (``_ends_clause``). The two effects are INDEPENDENT, and round 54
+    PR-LOW-002 corrected this sentence for saying otherwise: boundary
+    recognition comes from the chunk's RAW punctuation, while what a clause
+    retains comes from the NORMALISED tokens. So a content-free chunk ending
+    in a terminator (a standalone ``"."``) still closes the populated clause
+    before it — deliberately, and identically to the pre-H2.1 behaviour, since
+    that is what stops a negation or dose relation crossing a visibly separate
+    sentence — while a content-free chunk with no terminator is inert. Only
+    empty clause OBJECTS are dropped at the end.
+    """
+    clauses: list[list[_Token]] = []
+    current: list[_Token] = []
+    for raw, probability, word_index in source:
+        for token in content_tokens(raw):
+            current.append(_Token(token, probability, word_index))
             if token in _CONTRAST_TOKENS:
-                # Round 50 PR-MED-001: the adversative CLOSES the negated
-                # subclause; it does not open the new one. Round 49 put the
-                # boundary word in the NEW clause, where it joined the
-                # collapsed dose context and — being outside
-                # `_EXCLUSIVE_DOSE_CONTEXT` — demoted a genuine current-regimen
-                # conflict to review ("No ibuprofen, but I take paracetamol
-                # 250 mg daily."). The boundary marker must not be able to
-                # establish or disqualify a clinical state.
-                clause += 1
-        if _ends_clause(chunk):
-            clause += 1
-    return out
+                clauses.append(current)
+                current = []
+        if _ends_clause(raw):
+            clauses.append(current)
+            current = []
+    clauses.append(current)
+    return [_Clause(clause) for clause in clauses if clause]
+
+
+def _tokens_from_text(text: str) -> list[_Clause]:
+    """Clauses of a clinician-authored assertion — no transcript evidence."""
+    return _clause_tokens((chunk, None, None) for chunk in text.split())
 
 
 def _tokens_from_words(
     words: Sequence[TranscriptWord], first_word_index: int
-) -> list[_Token]:
-    """Per-word tokenisation through ``content_tokens`` — the same rule
-    ``note_fill._first_phrase_match`` indexes by, so the structure parser and
-    the trigger matcher can never disagree about what a word says."""
-    out: list[_Token] = []
-    clause = 0
-    for offset, word in enumerate(words):
-        for token in content_tokens(word.word_text):
-            out.append(_Token(token, word.probability, first_word_index + offset, clause))
-            if token in _CONTRAST_TOKENS:
-                clause += 1  # closes the subclause; see `_tokens_from_text`
-        if _ends_clause(word.word_text):
-            clause += 1
-    return out
+) -> list[_Clause]:
+    """Clauses of a quoted transcript span, per word through
+    ``content_tokens`` — the same rule ``note_fill._first_phrase_match``
+    indexes by, so the structure parser and the trigger matcher can never
+    disagree about what a word says."""
+    return _clause_tokens(
+        (word.word_text, word.probability, first_word_index + offset)
+        for offset, word in enumerate(words)
+    )
 
 
 def _dose_quantity(token: str) -> tuple[str, str | None] | None:
@@ -609,7 +728,15 @@ class _StrengthAtom(NamedTuple):
     unit: str
 
 
-def _strength_atoms(tokens: list[_Token]) -> list[_StrengthAtom]:
+def _strength_atoms(tokens: _Clause) -> list[_StrengthAtom]:
+    """Every explicit strength atom in ONE CLAUSE — a number+unit attached in
+    a single token, or a number followed immediately by a strength-unit token.
+
+    Round 49 PR-MED-002 enforced the separated pair's same-clause requirement
+    with an explicit comparison here; Task H2.1 replaced that check with the
+    ``_Clause`` input, so "…500. Mg…" cannot form an atom because the two
+    tokens are never in the same list. Round 52 LOW-002 restored this note —
+    removing the check had removed the record of why the function is safe."""
     atoms: list[_StrengthAtom] = []
     position = 0
     while position < len(tokens):
@@ -624,9 +751,7 @@ def _strength_atoms(tokens: list[_Token]) -> list[_StrengthAtom]:
             continue
         if position + 1 < len(tokens):
             separated = _STRENGTH_UNITS.get(tokens[position + 1].token)
-            # Round 49 PR-MED-002: the unit must be in the SAME clause as its
-            # number — "…500. Mg…" is not a separated strength atom.
-            if separated is not None and tokens[position + 1].clause == tokens[position].clause:
+            if separated is not None:
                 atoms.append(_StrengthAtom(position, position + 1, value, separated))
                 position += 2
                 continue
@@ -645,34 +770,30 @@ class _DoseBinding(NamedTuple):
     evidence: tuple[int, ...]
 
 
-def _connector_walk(tokens: list[_Token], start: int, clause: int) -> int | None:
+def _connector_walk(tokens: _Clause, start: int) -> int | None:
     """Walk backward from ``start`` through at most ``_DOSE_WINDOW - 1``
     closed-set connectors; the index of the medication the walk lands on,
     or None. The whole gap must be connectors — any other word breaks the
-    relation (round 24 PR-MED-001) — and every token walked, including the
-    medication itself, must sit in ``clause`` (round 49 PR-MED-002: a
-    relation spanning a sentence boundary is not established by the closed
-    LOCAL grammar this module claims to require)."""
+    relation (round 24 PR-MED-001).
+
+    ``tokens`` is ONE clause (Task H2.1), so a relation spanning a sentence
+    boundary is not expressible here — round 49 PR-MED-002 had to forbid it
+    with an explicit clause comparison on every walked token."""
     position = start
     steps = 0
     while (
         position >= 0
         and steps < _DOSE_WINDOW - 1
-        and tokens[position].clause == clause
         and tokens[position].token in _DOSE_CONNECTORS
     ):
         position -= 1
         steps += 1
-    if (
-        position >= 0
-        and tokens[position].clause == clause
-        and tokens[position].token in _MEDICATION_LEXICON
-    ):
+    if position >= 0 and tokens[position].token in _MEDICATION_LEXICON:
         return position
     return None
 
 
-def _dose_binding(tokens: list[_Token], atom: _StrengthAtom) -> _DoseBinding | None:
+def _dose_binding(tokens: _Clause, atom: _StrengthAtom) -> _DoseBinding | None:
     """The unambiguous binding of ``atom`` through the CLOSED relation
     allow-list, or None — an unbound OR ambiguous atom yields no claim and
     falls into the bounded residue (rounds 23-24; never a window search):
@@ -690,32 +811,26 @@ def _dose_binding(tokens: list[_Token], atom: _StrengthAtom) -> _DoseBinding | N
     relations naming DIFFERENT medications are ambiguous — silence, never
     a guessed anchor (round 24 PR-MED-001's invariant).
     """
-    # Round 49 PR-MED-002: every token a relation rests on must share the
-    # atom's clause. The parser gained clause identity in round 48 and used
-    # it only for laterality and symptom negation, so a medication in one
-    # sentence could still bind a strength in the next.
-    clause = tokens[atom.first].clause
+    # ``tokens`` is ONE clause (Task H2.1), so every relation below is
+    # clause-local by construction — round 49 PR-MED-002 needed five explicit
+    # clause comparisons here to say the same thing.
     candidates: list[_DoseBinding] = []
     if (
         atom.last + 2 < len(tokens)
         and tokens[atom.last + 1].token == "of"
         and tokens[atom.last + 2].token in _MEDICATION_LEXICON
-        and tokens[atom.last + 1].clause == clause
-        and tokens[atom.last + 2].clause == clause
     ):
         candidates.append(_DoseBinding(atom.last + 2, (atom.last + 1,)))
     if (
         atom.first >= 2
         and tokens[atom.first - 2].token == "dose"
         and tokens[atom.first - 1].token == "of"
-        and tokens[atom.first - 2].clause == clause
-        and tokens[atom.first - 1].clause == clause
     ):
-        med = _connector_walk(tokens, atom.first - 3, clause)
+        med = _connector_walk(tokens, atom.first - 3)
         if med is not None:
             evidence = tuple(range(med + 1, atom.first))  # connectors + dose + of
             candidates.append(_DoseBinding(med, evidence))
-    med = _connector_walk(tokens, atom.first - 1, clause)
+    med = _connector_walk(tokens, atom.first - 1)
     if med is not None:
         candidates.append(_DoseBinding(med, tuple(range(med + 1, atom.first))))
     if not candidates:
@@ -726,9 +841,9 @@ def _dose_binding(tokens: list[_Token], atom: _StrengthAtom) -> _DoseBinding | N
 
 
 def _dose_claims(
-    tokens: list[_Token], segment_index: int | None
+    tokens: _Clause, segment_index: int | None
 ) -> list[_StructuredClaim]:
-    """Dose claims from explicit strength atoms bound through the closed
+    """Dose claims from ONE CLAUSE's explicit strength atoms, bound through the closed
     relations. Every token the claim's identity rests on — medication,
     quantity, a separated unit, and every relation word the binding needed
     (connectors, ``of``, ``dose``) — joins the evidence, so its probability
@@ -740,7 +855,6 @@ def _dose_claims(
         if binding is None:
             continue
         med = binding.medication
-        clause = tokens[atom.first].clause
         # Round 50 PR-MED-003: the ADMINISTRATION WITNESS is the token that
         # decides whether this pair can hard-block at all (`_exclusive_context`
         # searches the collapsed context for one), so it is evidence and must
@@ -748,11 +862,9 @@ def _dose_claims(
         # low confidence still produced an unacknowledgeable `contradiction`
         # instead of `contradiction_low_confidence` review, and the warning
         # pointed at coordinates that omitted the very word the upgrade rested
-        # on. Drawn from the atom's own clause, matching the context scope.
+        # on.
         witnesses = tuple(
-            entry
-            for entry in tokens
-            if entry.clause == clause and entry.token in _ADMINISTRATION_WITNESS
+            entry for entry in tokens if entry.token in _ADMINISTRATION_WITNESS
         )
         involved = (
             tokens[med],
@@ -763,15 +875,15 @@ def _dose_claims(
         min_probability, coords = _claim_evidence(segment_index, involved)
         # Round 49 PR-MED-002: the collapsed context — the thing `_same_state`
         # compares and `_exclusive_context` searches for its administration
-        # witness — is scoped to the bound atom's CLAUSE. Whole-assertion
+        # witness — is the bound atom's CLAUSE and nothing else. Whole-assertion
         # scope let a bare product-strength clause borrow "continue" or a
-        # schedule word from an unrelated sentence and hard-block on it.
-        # (`clause` is bound above, where the witness evidence is gathered
-        # from the same scope — the two must not drift apart.)
+        # schedule word from an unrelated sentence and hard-block on it; with
+        # ``tokens`` being one clause (Task H2.1) that borrowing is now
+        # unexpressible rather than filtered out.
         context = (
-            *(entry.token for entry in tokens[: atom.first] if entry.clause == clause),
+            *(entry.token for entry in tokens[: atom.first]),
             "<dose>",
-            *(entry.token for entry in tokens[atom.last + 1 :] if entry.clause == clause),
+            *(entry.token for entry in tokens[atom.last + 1 :]),
         )
         claims.append(
             _StructuredClaim(
@@ -789,94 +901,152 @@ def _dose_claims(
 
 
 def _claims_from_tokens(
-    tokens: list[_Token], *, segment_index: int | None, interrogative: bool
+    clauses: list[_Clause], *, segment_index: int | None, interrogative: bool
 ) -> list[_StructuredClaim]:
-    """Parse explicitly-structured claims out of one assertion's tokens.
+    """Parse explicitly-structured claims out of one assertion's CLAUSES.
 
     Everything here is deliberately narrow: a laterality value binds only to
     the anatomy token it directly precedes; a dose claim is built only from
-    an explicit strength ATOM bound to a medication through the three
-    closed relations of ``_bound_medication`` (the ``_DOSE_WINDOW`` comment
-    records the rounds-19-23 lessons, the same-state severity contract, and
-    the complete bounded residue); a negation binds only within
-    ``_NEGATION_WINDOW`` tokens BEFORE its symptom, and a symptom counts as
-    affirmed only when the whole assertion contains no negation token at
-    all and is not a question. Text that fits none of these shapes produces
+    an explicit strength ATOM bound to a medication through the three closed
+    relations of ``_dose_binding`` (the ``_DOSE_WINDOW`` comment records the
+    rounds-19-24 lessons, the same-state severity contract, and the complete
+    bounded residue); a negation binds only within ``_NEGATION_WINDOW``
+    tokens BEFORE its symptom. Text that fits none of these shapes produces
     no claim and is carried by confirmation alone.
+
+    Task H2.1: the per-clause parsers below each receive ONE clause, so
+    nothing they build can span a clause boundary. TWO facts are deliberately
+    WHOLE-ASSERTION and are computed across every clause — see
+    ``any_negation`` below, and ``_consolidated``, which its callers apply to
+    the combined claim list this function returns. Both were verified to
+    matter: narrowing either to clause scope produces a false-positive HARD
+    BLOCK, the defect class rounds 48-50 closed.
     """
     # Round 50 PR-MED-002: a recognised QUESTION asserts nothing, so it may
     # contribute NO claim of any kind to the blocking comparison population.
-    # Round 48 applied this to laterality and to affirmed symptoms only, while
-    # `_dose_claims` ran unconditionally and the NEGATED-symptom branch never
-    # consulted `interrogative` — so "No numbness?" contradicted "Numbness
-    # persists." and "On paracetamol 250 mg?" hard-blocked against a 500 mg
-    # assertion. Gating once, here, is what makes the rule structural rather
-    # than three branches that must each remember it. (This does not touch the
-    # recorded `is_interrogative` recognition bound — it only ensures that
-    # what the heuristic DOES recognise is honoured everywhere.)
+    # Gating once, here, is what makes the rule structural rather than three
+    # branches that must each remember it. (This does not touch the recorded
+    # `is_interrogative` recognition bound — it only ensures that what the
+    # heuristic DOES recognise is honoured everywhere.)
     if interrogative:
         return []
+    # WHOLE-ASSERTION FACT 1 (round 48, preserved deliberately by Task H2.1):
+    # a symptom is AFFIRMED only when the assertion carries no negation token
+    # ANYWHERE. Round 48 declined to narrow this to clause scope, because
+    # narrowing it ADDS affirmed claims and so adds possible contradictions.
+    any_negation = any(
+        entry.token in _NEGATIONS for clause in clauses for entry in clause
+    )
     claims: list[_StructuredClaim] = []
-    negated_clauses = {entry.clause for entry in tokens if entry.token in _NEGATIONS}
-    for index, entry in enumerate(tokens):
-        if (
-            entry.token in _LATERALITY_TOKENS
-            and index + 1 < len(tokens)
-            and tokens[index + 1].token in _ANATOMY_LEXICON
-        ):
-            anchor = tokens[index + 1]
+    # Every SIDE observed for an anatomy anchor anywhere in the assertion —
+    # asserted or discarded by clause negation. Round 55 tracked only the
+    # anchor NAME, which erased a valid claim whenever the same side appeared
+    # both negated and asserted ("No pain in the left knee. The left knee was
+    # strapped." lost its left claim — a missed true positive, round 56
+    # PR-MED-001). Recording the VALUE makes the decision exact: an anchor is
+    # dropped only when the assertion observed MORE THAN ONE side for it,
+    # which is precisely "this assertion carries both sides". No vocabulary,
+    # no word-order assumption.
+    observed_sides: dict[str, set[str]] = {}
+    for tokens in clauses:
+        negated_clause = any(entry.token in _NEGATIONS for entry in tokens)
+        # Round 57 PR-MED-001: side ALLOCATION, clause-local and anchor-aware.
+        # Every side token in the clause is either allocated to an anatomy
+        # anchor by a recognised binding, or it is UNALLOCATED opposite-side
+        # evidence - "the left and the right knee", "left & right knee",
+        # "left, right knee": wording the closed grammar does not parse but
+        # which plainly makes the clause bilateral. Unallocated evidence can
+        # only REMOVE a claim (by making every anchor bound in this clause
+        # two-sided); it can never leave the side adjacent to the anatomy as
+        # the lone survivor - which is precisely what rounds 54-57 kept
+        # finding, one connector spelling at a time. Explicit independent
+        # anchors ("left shoulder and right knee") allocate both sides and
+        # stay independently comparable.
+        allocated: set[int] = set()
+        clause_anchors: set[str] = set()
+        for index, entry in enumerate(tokens):
+            if entry.token not in _LATERALITY_TOKENS or index in allocated:
+                continue
+            bound = _laterality_sides(tokens, index)
+            if bound is None:
+                continue
+            side_positions, anchor_position = bound
+            anchor = tokens[anchor_position]
+            allocated.update(side_positions)
+            clause_anchors.add(anchor.token)
+            for position in side_positions:
+                observed_sides.setdefault(anchor.token, set()).add(tokens[position].token)
             # Round 48 PR-MED-001: a laterality claim is a POSITIVE, ASSERTED
-            # fact about a side. Three ways it is not, each of which used to
-            # produce one anyway and could hard-block a consistent note:
-            #   - the assertion is a QUESTION ("Is it the left knee?");
-            #   - the clause is NEGATED ("No pain in the left knee") — the
-            #     window that binds negation to a symptom is far too short to
-            #     reach the anatomy here, so this is clause-scoped;
-            #   - the pair straddles a clause boundary.
-            # Each check only ever DROPS a claim, so no new contradiction can
-            # appear from this change — the fail-toward-silence direction the
-            # module's contract requires.
-            if interrogative or anchor.clause != entry.clause:
+            # fact about a side, and a negated clause does not assert one
+            # ("No pain in the left knee") - the window that binds negation
+            # to a symptom is far too short to reach the anatomy, so the
+            # guard is clause-wide. Straddling a clause is no longer possible
+            # to express. MODALITY is handled once at the top of this
+            # function and must not be re-tested here. The sides are still
+            # RECORDED above before this `continue`, so the assertion's
+            # bilateral character is not lost with the claim.
+            if negated_clause:
                 continue
-            if entry.clause in negated_clauses:
+            for position in side_positions:
+                side = tokens[position]
+                min_probability, coords = _claim_evidence(segment_index, (side, anchor))
+                claims.append(
+                    _StructuredClaim(
+                        "laterality", anchor.token, side.token, min_probability, coords
+                    )
+                )
+        unallocated = {
+            entry.token
+            for index, entry in enumerate(tokens)
+            if entry.token in _LATERALITY_TOKENS and index not in allocated
+        }
+        for anchor_name in clause_anchors:
+            observed_sides[anchor_name].update(unallocated)
+        claims.extend(_dose_claims(tokens, segment_index))
+        negation_positions = [
+            index
+            for index, entry in enumerate(tokens)
+            if entry.token in _NEGATIONS and not _is_correlative_not(tokens, index)
+        ]
+        for index, entry in enumerate(tokens):
+            if entry.token not in _SYMPTOM_LEXICON:
                 continue
-            min_probability, coords = _claim_evidence(segment_index, (entry, anchor))
-            claims.append(
-                _StructuredClaim("laterality", anchor.token, entry.token, min_probability, coords)
+            negated_by = next(
+                (
+                    position
+                    for position in negation_positions
+                    if 0 < index - position <= _NEGATION_WINDOW
+                ),
+                None,
             )
-    claims.extend(_dose_claims(tokens, segment_index))
-    negation_positions = [
-        index for index, entry in enumerate(tokens) if entry.token in _NEGATIONS
-    ]
-    for index, entry in enumerate(tokens):
-        if entry.token not in _SYMPTOM_LEXICON:
-            continue
-        negated_by = next(
-            (
-                position
-                for position in negation_positions
-                # Round 48 PR-MED-001: the window is necessary but not
-                # sufficient — the negation must also be in the SAME clause.
-                # "No fever; pain persists" put `no` two flattened tokens
-                # before `pain` and negated it.
-                if 0 < index - position <= _NEGATION_WINDOW
-                and tokens[position].clause == entry.clause
-            ),
-            None,
+            if negated_by is not None:
+                min_probability, coords = _claim_evidence(
+                    segment_index, (tokens[negated_by], entry)
+                )
+                claims.append(
+                    _StructuredClaim(
+                        "negation", entry.token, "negated", min_probability, coords
+                    )
+                )
+            elif not any_negation:
+                # `any_negation` deliberately still counts a correlative `not`,
+                # so excluding it as a negation SOURCE above cannot make a
+                # symptom newly AFFIRMED — it falls to silence instead, which
+                # is the conservative direction (round 55 PR-MED-001).
+                min_probability, coords = _claim_evidence(segment_index, (entry,))
+                claims.append(
+                    _StructuredClaim(
+                        "negation", entry.token, "affirmed", min_probability, coords
+                    )
+                )
+    return [
+        claim
+        for claim in claims
+        if not (
+            claim.claim_type == "laterality"
+            and len(observed_sides.get(claim.claim_anchor, set())) > 1
         )
-        if negated_by is not None:
-            min_probability, coords = _claim_evidence(
-                segment_index, (tokens[negated_by], entry)
-            )
-            claims.append(
-                _StructuredClaim("negation", entry.token, "negated", min_probability, coords)
-            )
-        elif not negation_positions and not interrogative:
-            min_probability, coords = _claim_evidence(segment_index, (entry,))
-            claims.append(
-                _StructuredClaim("negation", entry.token, "affirmed", min_probability, coords)
-            )
-    return claims
+    ]
 
 
 def _consolidated(
@@ -1030,14 +1200,34 @@ def _dose_mismatch_warning(
     )
 
 
+def _laterality_mismatch_warning(
+    flagged: NoteAssertion, evidence: _StructuredClaim | None
+) -> NoteWarning:
+    """Task H4.1: a differing side is surfaced for acknowledgement, never
+    blocked on. Confidence grading does not apply - laterality is review in
+    every case - but the transcript evidence's coordinates still ride the
+    warning so the review points at the words."""
+    return NoteWarning(
+        note_warning_code="laterality_mismatch",
+        severity="review",
+        section_key=flagged.section_key,
+        assertion_id=flagged.assertion_id,
+        source_coords=evidence.source_coords if evidence is not None else None,
+    )
+
+
 def contradiction_warnings(
     note: GeneratedNote, document: TranscriptDocument
 ) -> tuple[NoteWarning, ...]:
     """Anchored contradictions against confirmed clinician-authored
-    assertions — pairwise among themselves (always ``contradiction``: both
-    sides are confirmed text with no acoustic evidence to doubt), and each
+    assertions — pairwise among themselves (no acoustic evidence to doubt, so
+    no confidence demotion), and each
     against the note's exactly-reconstructing transcript assertions, graded
-    by the transcript evidence's raw probability. The warning is attributed
+    by the transcript evidence's raw probability. SEVERITY IS PER CLASS (Task
+    H4.1): a laterality difference is always ``laterality_mismatch`` review;
+    a dose difference is ``contradiction`` only under exclusive same-state
+    identity and ``dose_mismatch`` review otherwise; a negation difference is
+    ``contradiction`` (or its low-confidence review twin). The warning is attributed
     to the clinician-authored assertion; for an authored-vs-authored pair it
     sits on the LATER assertion in note order, once per matched anchor."""
     authored = _structured_authored(note)
@@ -1048,7 +1238,9 @@ def contradiction_warnings(
             mine, other = later_claims[key], earlier_claims[key]
             if mine.claim_value == other.claim_value:
                 continue
-            if key[0] == "dose" and not _same_state(mine, other):
+            if key[0] == "laterality":
+                warnings.append(_laterality_mismatch_warning(later, None))
+            elif key[0] == "dose" and not _same_state(mine, other):
                 warnings.append(_dose_mismatch_warning(later, None))
             else:
                 warnings.append(_contradiction_warning(later, None))
@@ -1058,7 +1250,9 @@ def contradiction_warnings(
                 mine, other = claims[key], quoted_claims[key]
                 if mine.claim_value == other.claim_value:
                     continue
-                if key[0] == "dose" and not _same_state(mine, other):
+                if key[0] == "laterality":
+                    warnings.append(_laterality_mismatch_warning(assertion, other))
+                elif key[0] == "dose" and not _same_state(mine, other):
                     warnings.append(_dose_mismatch_warning(assertion, other))
                 else:
                     warnings.append(_contradiction_warning(assertion, other))

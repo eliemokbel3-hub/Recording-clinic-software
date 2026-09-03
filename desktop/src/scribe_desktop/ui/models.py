@@ -545,6 +545,11 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Check the doses against the transcript, then acknowledge.",
     ),
+    "laterality_mismatch": WarningCopy(
+        "A confirmed line names a different side from the transcript",
+        None,
+        "Check the side against the transcript beside the note, then acknowledge.",
+    ),
     "clinician_asserted": WarningCopy(
         "A clinician-authored line was added (autofill or prefill)",
         None,

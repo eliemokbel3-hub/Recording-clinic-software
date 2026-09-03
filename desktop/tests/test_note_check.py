@@ -418,7 +418,7 @@ class TestCheck2Contradictions:
         )
         assert contradiction_warnings(note, document) == ()
 
-    def test_matched_laterality_conflict_fires_an_error(self) -> None:
+    def test_matched_laterality_conflict_fires_a_review_warning(self) -> None:
         document = _document(("the right knee is the sore one", SPEAKER_1))
         note = _note(
             document,
@@ -428,8 +428,8 @@ class TestCheck2Contradictions:
             ),
         )
         warnings = contradiction_warnings(note, document)
-        assert _codes(warnings) == ["contradiction"]
-        assert warnings[0].severity == "error"
+        assert _codes(warnings) == ["laterality_mismatch"]
+        assert warnings[0].severity == "review"  # Task H4.1: laterality never blocks
         assert warnings[0].assertion_id == "a1"
         # The transcript evidence is pointed at: value + anchor words.
         assert warnings[0].source_coords == SourceCoords(0, 1, 2)
@@ -495,8 +495,46 @@ class TestCheck2Contradictions:
             ),
         )
         warnings = contradiction_warnings(note, document)
-        assert _codes(warnings) == ["contradiction"]
-        assert warnings[0].severity == "error"
+        assert _codes(warnings) == ["laterality_mismatch"]
+        assert warnings[0].severity == "review"
+
+    def test_affirmation_still_sees_a_negation_in_another_clause(self) -> None:
+        """Task H2.1 must-preserve 1. The affirmed-symptom rule is
+        WHOLE-ASSERTION, not clause-scoped: round 48 declined to narrow it
+        because narrowing ADDS affirmed claims and so adds possible
+        contradictions. The clause restructure parses per clause, so this is
+        the fact most likely to be lost — if `pain` were affirmed here, an
+        authored "no pain" would hard-block a note that agrees with the
+        transcript."""
+        document = _document(("no fever. pain persists.", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("No pain reported.", "red_flags_screening", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_bilateral_assertion_still_drops_its_anchor(self) -> None:
+        """Task H2.1 must-preserve 2. `_consolidated` groups across the WHOLE
+        assertion, so an anchor carrying BOTH values is dropped entirely —
+        the note is discussing both sides and comparing either half would
+        fire on legitimate wording. Claims from every clause must therefore
+        reach ONE `_consolidated` call; consolidating per clause would keep
+        `knee=right` from the second clause and hard-block a consistent
+        left-knee assertion."""
+        document = _document(
+            ("the left knee is better but the right knee is sore", SPEAKER_1)
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("Left knee strapped.", "treatment_performed", aid="a1"),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
 
     def test_a_contrast_boundary_does_not_poison_the_dose_context(self) -> None:
         """Round 50 PR-MED-001. Round 49 put the adversative in the NEW
@@ -521,6 +559,225 @@ class TestCheck2Contradictions:
         warnings = contradiction_warnings(note, document)
         assert _codes(warnings) == ["contradiction"]
         assert warnings[0].severity == "error"
+
+    def test_a_correlative_not_only_never_becomes_a_one_sided_claim(self) -> None:
+        """Round 54 PR-MED-001. In "Not only the left knee but the right knee
+        is sore" the `but` is not adversative — the sentence asserts BOTH
+        sides. The ordinary contrast split put `not` in the first clause
+        (suppressing its `left knee`) and `right knee` in the second, so
+        `_consolidated` saw a single value and an explicitly BILATERAL
+        statement hard-blocked a consistent left-knee assertion.
+
+        Suppressing the assertion's laterality entirely is the narrow,
+        fail-toward-silence repair; the ordinary adversative below must keep
+        working, which is the direction a naive `but` special case breaks."""
+        document = _document(("the left knee was treated", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "treatment_performed", aid="t0"),
+                _authored(
+                    "Not only the left knee but the right knee is sore.",
+                    "presenting_complaint",
+                    aid="a1",
+                ),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+        # The round-49 true positive, unchanged: an ORDINARY adversative
+        # still limits the negation and still yields its laterality claim.
+        ordinary = _document(("no fever but right knee pain.", SPEAKER_1))
+        still_fires = _note(
+            ordinary,
+            (
+                _quoted(ordinary, 0, "presenting_complaint", aid="t0"),
+                _authored("Left knee strapped.", "treatment_performed", aid="a1"),
+            ),
+        )
+        # Task H4.1: the true positive still FIRES - as review, never a block.
+        assert _codes(contradiction_warnings(still_fires, ordinary)) == ["laterality_mismatch"]
+
+    def test_a_correlative_does_not_negate_its_own_symptom(self) -> None:
+        """Round 55 PR-MED-001. Round 54 taught the parser that `not only` is
+        not ordinary negation, but only the LATERALITY branch consumed that —
+        so "Not only pain but numbness persists." still emitted
+        `pain = negated`, the opposite of what it says, and hard-blocked a
+        consistent "Pain persists." A correlative `not` is no longer a
+        negation SOURCE; it still counts toward the whole-assertion
+        `any_negation`, so the symptom falls to silence rather than becoming
+        newly affirmed."""
+        document = _document(("pain persists", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "Not only pain but numbness persists.",
+                    "presenting_complaint",
+                    aid="a1",
+                ),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+    def test_a_suppressed_side_drops_its_anchor_in_any_word_order(self) -> None:
+        """Round 55 PR-MED-002, both directions.
+
+        Round 54's word-list was adjacency-only and assertion-GLOBAL, so it
+        missed "Not the left knee only but ..." (leaving the original false
+        block reachable) and over-fired on "Not just yet. The left knee is
+        sore." (silencing an unrelated clause). Laterality now consults no
+        vocabulary at all: if one clause's side was discarded by negation, the
+        assertion carries both sides and the anchor is dropped — which covers
+        every word order — while a clause with nothing suppressed keeps its
+        claim.
+        """
+        document = _document(("the left knee was treated", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "treatment_performed", aid="t0"),
+                _authored(
+                    "Not the left knee only but the right knee too.",
+                    "presenting_complaint",
+                    aid="a1",
+                ),
+            ),
+        )
+        assert _codes(contradiction_warnings(note, document)) == []
+
+        # The opposite direction: an adjacent `not just` with no correlative
+        # coordination must NOT silence a different clause's valid claim, so
+        # this genuine left-vs-right conflict still fires.
+        right = _document(("the right knee is the sore one", SPEAKER_1))
+        fires = _note(
+            right,
+            (
+                _quoted(right, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "Not just yet. The left knee is sore.",
+                    "objective_examination",
+                    aid="a1",
+                ),
+            ),
+        )
+        assert _codes(contradiction_warnings(fires, right)) == ["laterality_mismatch"]
+
+    def test_a_negated_side_does_not_erase_the_same_side_asserted_later(self) -> None:
+        """Round 56 PR-MED-001, direction 1 (fix-induced by round 55).
+
+        Round 55 recorded only the anchor NAME when a negated clause discarded
+        a side, so "No pain in the left knee. The left knee was strapped."
+        lost its valid `knee=left` — a real left-vs-right discrepancy went
+        undetected. Recording the VALUE makes the decision exact: one side
+        observed means one side, so the positive claim survives and still
+        contradicts a right-knee transcript.
+        """
+        document = _document(("the right knee is the sore one", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "No pain in the left knee. The left knee was strapped.",
+                    "treatment_performed",
+                    aid="a1",
+                ),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["laterality_mismatch"]
+        assert warnings[0].severity == "review"
+
+    def test_shared_anatomy_coordination_never_becomes_one_sided(self) -> None:
+        """Round 56 PR-MED-001, direction 2 (pre-existing).
+
+        Laterality bound only a side token DIRECTLY preceding anatomy, so
+        "Left and right knee pain." ignored `left`, emitted `knee=right`, and
+        hard-blocked a consistent left-knee assertion — and reversing the
+        wording reversed which side survived. The closed
+        `<side> (and|or <side>)* <anatomy>` coordination now contributes BOTH
+        sides, so the anchor is dropped either way.
+        """
+        for wording in ("Left and right knee pain.", "Right and left knee pain."):
+            document = _document(("the left knee was treated", SPEAKER_1))
+            note = _note(
+                document,
+                (
+                    _quoted(document, 0, "treatment_performed", aid="t0"),
+                    _authored(wording, "presenting_complaint", aid="a1"),
+                ),
+            )
+            assert _codes(contradiction_warnings(note, document)) == [], wording
+
+    def test_unallocated_opposite_side_evidence_only_ever_removes_a_claim(self) -> None:
+        """Round 57 PR-MED-001. The closed `<side> and|or <side> <anatomy>`
+        grammar covers its named form, but an article ("the left and the
+        right knee"), config-admitted punctuation (`&`, `,`, `and/or` - all
+        deliberately allowed by `_ALLOWED_IN_CLAIM_PUNCT`) or ellipsis fell
+        through: the first side went unbound, the second bound alone, and the
+        assertion emitted a one-sided error-grade claim against a note
+        consistent with either side. Side allocation is now clause-local and
+        anchor-aware: a side token the grammar does not bind is UNALLOCATED
+        opposite-side evidence that makes every anchor bound in that clause
+        two-sided. It can only remove a claim - never leave the side adjacent
+        to the anatomy as the lone survivor, which is what rounds 54-57 kept
+        finding one connector spelling at a time.
+        """
+        for wording in (
+            "The left and the right knee is sore.",
+            "Left & right knee pain.",
+            "Left, right knee pain.",
+            "Left and/or right knee pain.",
+            "Left knee and right.",
+        ):
+            document = _document(("the left knee was treated", SPEAKER_1))
+            note = _note(
+                document,
+                (
+                    _quoted(document, 0, "treatment_performed", aid="t0"),
+                    _authored(wording, "presenting_complaint", aid="a1"),
+                ),
+            )
+            assert _codes(contradiction_warnings(note, document)) == [], wording
+
+    def test_explicit_independent_anchors_stay_independently_comparable(self) -> None:
+        """Round 57 PR-MED-001, the guard against over-correction. Allocation
+        is per ANCHOR, so two sides bound to two different anatomies are two
+        independent claims - an assertion-global "saw both sides" flag would
+        have wrongly conflated them. Here `left shoulder` must still
+        contradict a right-shoulder transcript even though `right knee` sits
+        in the same clause; and a shared-anchor pair beside an independent
+        anchor drops only the shared one.
+        """
+        document = _document(("the right shoulder is the sore one", SPEAKER_1))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "Left shoulder and right knee pain.", "objective_examination", aid="a1"
+                ),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["laterality_mismatch"]
+        assert warnings[0].severity == "review"
+
+        mixed = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored(
+                    "Left and right knee and left shoulder pain.",
+                    "objective_examination",
+                    aid="a1",
+                ),
+            ),
+        )
+        # `knee` is dropped (both sides); `shoulder=left` survives and fires.
+        assert _codes(contradiction_warnings(mixed, document)) == ["laterality_mismatch"]
 
     def test_a_temporal_yet_is_not_a_contrast_boundary(self) -> None:
         """Round 50 PR-MED-001. A contrast boundary only ever LIMITS a
@@ -663,7 +920,9 @@ class TestCheck2Contradictions:
             ),
         )
         warnings = contradiction_warnings(note, document)
-        assert _codes(warnings) == ["contradiction_low_confidence"]
+        # Task H4.1: laterality is review in every case, so confidence grading no
+        # longer applies here; it stays exercised by the dose/negation pins.
+        assert _codes(warnings) == ["laterality_mismatch"]
         assert warnings[0].severity == "review"
 
     def test_high_probability_number_marked_uncertain_still_grades_error(self) -> None:
@@ -694,7 +953,7 @@ class TestCheck2Contradictions:
             ),
         )
         warnings = contradiction_warnings(note, document)
-        assert _codes(warnings) == ["contradiction"]
+        assert _codes(warnings) == ["laterality_mismatch"]
         assert warnings[0].assertion_id == "a2"
         assert warnings[0].source_coords is None
 
@@ -721,6 +980,29 @@ class TestCheck2Contradictions:
             ),
         )
         assert contradiction_warnings(note, document) == ()
+
+    def test_a_correlative_across_the_but_boundary_is_review_not_error(self) -> None:
+        """Task H4.1, the round-58 trace that ended parser patching. `but` closes
+        clause 1 as `[not, only, left, but]` - no anatomy for the stray `left`
+        to attach to - so clause 2 binds `right knee` alone and the assertion
+        reads one-sided. Closing that would need cross-clause allocation for
+        correlatives, the extension two peers said to stop. The re-grade is the
+        answer instead: the difference is SURFACED for acknowledgement, never
+        blocked on, so the clinician's decision is the control, not the parser."""
+        for wording in ("Not only left but right knee pain.", "Not only right but left knee pain."):
+            document = _document(("the left knee was treated", SPEAKER_1))
+            note = _note(
+                document,
+                (
+                    _quoted(document, 0, "treatment_performed", aid="t0"),
+                    _authored(wording, "presenting_complaint", aid="a1"),
+                ),
+            )
+            warnings = contradiction_warnings(note, document)
+            codes = _codes(warnings)
+            assert codes in (["laterality_mismatch"], []), (wording, codes)
+            assert all(w.severity == "review" for w in warnings), wording
+
 
     def test_an_assertion_discussing_both_sides_is_not_compared(self) -> None:
         """Consolidation: both values for one anchor inside one assertion
@@ -1577,7 +1859,7 @@ class TestCheckNote:
         note, document, pending = self._composed_fixture()
         codes = set(_codes(check_note(note, document, _CHECK_CONFIG, pending_proposals=pending)))
         assert "reconstruction_mismatch" in codes  # Check 1
-        assert "contradiction" in codes  # Check 2
+        assert "laterality_mismatch" in codes  # Check 2 (Task H4.1: laterality is review-graded)
         assert "unconfirmed_proposal" in codes  # Check 3
         assert "clinician_asserted" in codes  # Check 3
         assert "high_risk_omission" in codes  # Check 4

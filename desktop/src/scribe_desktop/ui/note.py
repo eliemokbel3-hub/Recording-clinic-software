@@ -10,11 +10,18 @@ full uncertainty-marked transcript visible BESIDE the note through the whole
 review, so a low-confidence phrase the note omitted is still reachable.
 
 It also carries the consent Critical Constraint's third clause (Task 7.7):
-a standing, unconditional reminder that Informed Consent is never written,
-ticked, or proposed by this app and must be ticked by hand in Cliniko. It is
-not a warning — nothing acknowledges or suppresses it — and it survives
-``clear()``, because it states what the app never does rather than anything
-about a particular note.
+a standing, unconditional reminder that this app never ticks, writes or
+proposes Cliniko's Informed Consent ATTESTATION CHECKBOX, which must be
+ticked by hand. Round 54 PR-LOW-001 narrowed this sentence: it used to say
+"Informed Consent is never written, ticked, or proposed", which is broader
+than the structure enforces — what is unmappable is an
+``attestation_checkbox`` TARGET, while consent speech may legitimately
+populate the canonical free-text ``consent`` section and another profile may
+map that section to a free-text target (see the rationale on
+``models.CONSENT_MANUAL_REMINDER``, corrected for the same reason at round
+47). The reminder is not a warning — nothing acknowledges or suppresses it —
+and it survives ``clear()``, because it states what the app never does rather
+than anything about a particular note.
 
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is

@@ -257,6 +257,51 @@ the transcript. Specifically:
   structure (a dose / laterality / negation claim over closed lexicons). A
   confirmed assertion the transcript is merely SILENT about — neither quoted
   from it nor contradicted by it — is detectable by NO check in this phase.
+- **What "parses to explicit structure" excludes** (hardening rounds 48–52
+  narrowed this materially; recorded here because it cannot be inferred from
+  the sentence above). Three residues fail toward SILENCE — a contradiction
+  that exists but is not raised, carried by confirmation like the silent case
+  above:
+  - a recognised QUESTION contributes no claim of any kind, so a
+    contradiction stated interrogatively is not caught;
+  - a preposed subordinate negation suppresses its main clause's laterality
+    ("Although no fever, right knee pain persists." yields no laterality
+    claim) — recognising it needs preposed-clause grammar this phase does not
+    have;
+  - a dose difference hard-blocks only when a positive administration or
+    schedule word is present, so bare product-strength wording
+    ("Paracetamol 500 mg") grades the acknowledgeable `dose_mismatch` review
+    and never blocks — deliberate, because two strengths of one product can
+    be held at once.
+
+  One residue runs the OTHER way and is stated with equal care: question
+  recognition keys on a trailing `?`, a WH-opener, or an auxiliary followed by
+  a PRONOUN subject, so wording like "Is the pain in your left knee" is
+  treated as an assertion and CAN still yield a laterality claim. That
+  direction is bounded — such a claim can only ever raise a
+  `laterality_mismatch` REVIEW warning against an assertion about the other
+  side (laterality differences never block; see the next paragraph), and the
+  clinician's exits (decline the proposed line, or cancel and regenerate) are
+  unchanged.
+
+  **Laterality differences are REVIEW-graded, not blocking** (hardening stage,
+  practitioner-ratified 2026-09-03). Five cross-family review rounds each found
+  a new bilateral or correlative wording — "not only the left knee but the
+  right", "the left and the right knee", "not only left but right knee" —
+  that clause-splitting turned into a one-sided claim, and an error-grade
+  `contradiction` then blocked Save, Copy and Complete on a note consistent
+  with what was said. The parser cannot mechanically establish shared-anchor
+  bilateral wording, so the line is drawn where rounds 21–24 drew it for dose:
+  a differing side is surfaced as `laterality_mismatch`, which the clinician
+  must ACKNOWLEDGE before saving and may then save. The responsibility
+  boundary this states plainly: a wrong-side confirmed line is caught by the
+  clinician's acknowledgement, not by an unclearable block. Negated-symptom
+  and exclusive same-state dose differences remain error-grade.
+
+  Each residue is recorded at its mechanism in `note_check.py`
+  (`_CONTRAST_TOKENS`, the modality gate at the top of `_claims_from_tokens`,
+  `_ADMINISTRATION_WITNESS`) and in the plan's Review Findings Log, rounds
+  48–52.
 
 That residual is carried by per-assertion clinician confirmation of the exact
 shown wording and by the clinician's own review and finalisation of every note

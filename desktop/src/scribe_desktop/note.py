@@ -277,6 +277,15 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     "contradiction": "error",
     "contradiction_low_confidence": "review",
     "dose_mismatch": "review",
+    # Task H4.1 (round 58, practitioner-ratified 2026-09-03): a differing
+    # laterality value is REVIEW, never a block. Five cross-family rounds
+    # (48-50, 54-58) each found a new bilateral or correlative wording that
+    # clause-splitting made one-sided, and an error-grade `contradiction`
+    # then blocked Save, Copy and Complete on a consistent note. The parser
+    # cannot mechanically establish shared-anchor bilateral wording, so -
+    # exactly as rounds 21-24 drew the line for dose - the signal stays and
+    # the block goes: the clinician must acknowledge, and may then save.
+    "laterality_mismatch": "review",
     # Check 3 — provenance integrity (Task 5.3).
     "unconfirmed_proposal": "error",
     "autofill_trigger_absent": "error",
