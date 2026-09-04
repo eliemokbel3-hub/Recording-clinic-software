@@ -1839,6 +1839,21 @@ class TestNoteScreen:
         assert not screen.copy_button.isEnabled()
         screen.deleteLater()
 
+    def test_default_copy_binding_equals_the_recorded_flag(self, qapp: Any) -> None:
+        """Task 9.1a, decision-agnostic: whatever Task 9.1 records, the Note
+        tab's default binding IS the recorded flag - the value bound into
+        ``begin_review``'s ``copy_enabled`` default at import is the module
+        constant itself, so the shipped-state pin above and the window wiring
+        tests can never disagree with the flag. (A monkeypatch of the constant
+        does not move this default, which is exactly why the window tests
+        drive ``MainWindow._on_draft_ready``, the call-time read.)"""
+        import inspect
+
+        from scribe_desktop.ui.note import NoteScreen
+
+        default = inspect.signature(NoteScreen.begin_review).parameters["copy_enabled"].default
+        assert default is models.COPY_TO_CLINIKO_ENABLED
+
     def test_cleared_on_close(self, qapp: Any) -> None:
         screen, _record = self._screen()
         assert screen.note_body.toPlainText() != ""
@@ -2214,3 +2229,133 @@ class TestNoteWiring:
         event2 = QCloseEvent()
         window.closeEvent(event2)
         assert event2.isAccepted()
+
+    # --- Task 9.1a: the recorded copy decision, driven through the window ---
+
+    def _generate_through_window(
+        self, qapp: Any, tmp_path: Path
+    ) -> tuple[Any, FakeController]:
+        """Reach a draft under review the way the app does: a live transcript
+        arrives, the clinician confirms role and profile, Generate composes on
+        a worker thread under the controller's lease, and ``draft_ready``
+        routes the result through ``MainWindow._on_draft_ready`` - the one
+        call site that reads ``models.COPY_TO_CLINIKO_ENABLED``, at call time.
+
+        The window builds its Transcript screen with the module DEFAULT config
+        loader and generator factory (both bound as function defaults, so a
+        module-level monkeypatch cannot reach them, and the default generator
+        reads a transcript from disk that the fake controller's ``unused``
+        directory does not hold). The two instance seams below stand in the
+        fixture config and an inert generator - the same shapes
+        ``TestTranscriptGeneration._screen`` passes at construction."""
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        window = self._window(tmp_path, controller)
+        result = _note_result()
+        window.transcript_screen._config_loader = _note_config
+        window.transcript_screen._note_generator_factory = (
+            lambda **_kwargs: lambda _directory, _crypto: result
+        )
+        window.session_screen.transcript_ready.emit(_note_document())
+        qapp.processEvents()
+        window.transcript_screen.set_role(SPEAKER_2)
+        window.transcript_screen.set_profile("clinic-a")
+        window.transcript_screen.generate()
+        assert window.transcript_screen.is_busy  # the lease generate() holds
+        assert _process_until(qapp, lambda: window.note_screen.current_note() is not None)
+        assert window.tabs.currentWidget() is window.note_screen
+        return window, controller
+
+    def _fake_write_note(self, monkeypatch: Any) -> list[str]:
+        """Fake the on-disk note write so a caller's ``NoteScreen.save`` can
+        travel the window's own route - ``MainWindow._on_note_save`` ->
+        ``TranscriptScreen.save_note`` under the held lease - without touching
+        disk; returns the thread names the fake saw."""
+        import threading
+
+        writes: list[str] = []
+
+        def fake_write(directory: Path, crypto: Any, note: Any, config: Any) -> Path:
+            writes.append(threading.current_thread().name)
+            return directory / "note.enc"
+
+        monkeypatch.setattr("scribe_desktop.ui.transcript.write_note", fake_write)
+        return writes
+
+    def test_recorded_fail_keeps_copy_hidden_through_the_window(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 9.1a, the FAIL outcome (the shipped state): with the recorded
+        decision False, the Note tab reached through the window's own wiring
+        shows no copy affordance at all - the button is hidden AND disabled
+        and the note body is display-only - and full ratification changes
+        nothing. The transcript panel is display-only as always."""
+        from PySide6.QtCore import Qt
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", False)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        no_interaction = Qt.TextInteractionFlag.NoTextInteraction
+        assert note_screen.copy_button.isHidden()
+        assert not note_screen.copy_button.isEnabled()
+        assert note_screen.note_body.textInteractionFlags() == no_interaction
+        assert note_screen.transcript_view.textInteractionFlags() == no_interaction
+        # Ratify fully: confirm all -> acknowledge all -> save through the window.
+        writes = self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        assert len(writes) == 1  # the save went through the window's route
+        assert not window.transcript_screen.is_busy  # lease released
+        assert note_screen.copy_button.isHidden()
+        assert not note_screen.copy_button.isEnabled()
+        assert note_screen.note_body.textInteractionFlags() == no_interaction
+        assert note_screen.transcript_view.textInteractionFlags() == no_interaction
+        window.close()
+
+    def test_recorded_pass_enables_copy_only_for_a_ratified_note_through_the_window(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 9.1a, the PASS outcome: with the recorded decision True, the
+        Note tab reached through the window's own wiring SHOWS the copy
+        button but keeps it disabled - and the note body display-only - while
+        any proposal is pending, while a review warning is unacknowledged, and
+        until the note is saved through the window (which needs the lease
+        ``generate()`` holds). Only then is the button enabled and the body
+        selectable. The transcript panel is display-only under this outcome
+        too."""
+        import threading
+
+        from PySide6.QtCore import Qt
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        no_interaction = Qt.TextInteractionFlag.NoTextInteraction
+        # Gate on: shown, but proposals are pending -> disabled, display-only.
+        assert not note_screen.copy_button.isHidden()
+        assert not note_screen.copy_button.isEnabled()
+        assert note_screen.note_body.textInteractionFlags() == no_interaction
+        assert note_screen.transcript_view.textInteractionFlags() == no_interaction
+        writes = self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        assert not note_screen.copy_button.isEnabled()  # review warnings unacknowledged
+        assert note_screen.note_body.textInteractionFlags() == no_interaction
+        note_screen._acknowledge_all()
+        assert not note_screen.copy_button.isEnabled()  # not yet saved
+        assert note_screen.note_body.textInteractionFlags() == no_interaction
+        note_screen.save()  # -> _on_note_save -> save_note under the held lease
+        assert writes == [threading.current_thread().name]  # GUI thread
+        assert ("with_generation_custody",) in controller.calls
+        assert not window.transcript_screen.is_busy  # lease released after the write
+        assert not note_screen.copy_button.isHidden()
+        assert note_screen.copy_button.isEnabled()  # fully ratified
+        flags = note_screen.note_body.textInteractionFlags()
+        assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
+        assert flags & Qt.TextInteractionFlag.TextSelectableByKeyboard
+        # The transcript panels stay display-only whatever the decision.
+        assert note_screen.transcript_view.textInteractionFlags() == no_interaction
+        assert window.transcript_screen.transcript_view.textInteractionFlags() == no_interaction
+        window.close()
