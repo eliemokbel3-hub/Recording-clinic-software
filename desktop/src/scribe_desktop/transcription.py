@@ -505,11 +505,24 @@ def _numpy() -> Any:
     return numpy
 
 
-def _segment_embedding(pcm: bytes, np: Any, *, sample_rate: int = SAMPLE_RATE) -> Any:
+def _segment_embedding(
+    pcm: bytes,
+    np: Any,
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    cepstral_mean_normalisation: bool = True,
+) -> Any:
     """24 mel-band log powers + low-band spectral centroid, averaged over
     non-overlapping 25 ms windows (the D8 decision's feature recipe), with
     the mel part CEPSTRAL-MEAN-NORMALISED per segment so the feature carries
-    spectral shape and not loudness (Phase 3A Task 2.1)."""
+    spectral shape and not loudness (Phase 3A Task 2.1).
+
+    ``cepstral_mean_normalisation=False`` skips exactly that one subtraction
+    and reproduces the pre-Task-2.1 embedding. It exists for the Task 2.3
+    measurement harness (``speaker_eval``), whose "before" condition must
+    differ from the shipped pipeline by precisely the Task 2.1 line; the
+    pipeline's own call in ``transcribe_session`` never passes it.
+    """
     window = int(_EMBED_WINDOW_SECONDS * sample_rate)
     samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
     if len(samples) < window:
@@ -563,7 +576,8 @@ def _segment_embedding(pcm: bytes, np: Any, *, sample_rate: int = SAMPLE_RATE) -
     # at 1.7e-4 over 20 dB, against 4.61 per un-normalised mel band — and
     # folding it into this mean would mix two units and reintroduce a level
     # dependence.
-    log_mel = log_mel - log_mel.mean()
+    if cepstral_mean_normalisation:
+        log_mel = log_mel - log_mel.mean()
 
     low = freqs <= _EMBED_LOW_BAND_HZ
     low_power = spectrum[:, low].mean(axis=0)
@@ -614,7 +628,12 @@ def _cluster_embeddings(embeddings: list[Any], np: Any) -> list[str]:
     return [SPEAKER_1 if label == first else SPEAKER_2 for label in labels]
 
 
-def label_speakers(segment_pcms: list[bytes], *, sample_rate: int = SAMPLE_RATE) -> list[str]:
+def label_speakers(
+    segment_pcms: list[bytes],
+    *,
+    sample_rate: int = SAMPLE_RATE,
+    cepstral_mean_normalisation: bool = True,
+) -> list[str]:
     """Speaker label per segment via D8's 2-means over spectral embeddings.
 
     Fewer than two non-empty segments, or degenerate (identical) features,
@@ -628,6 +647,11 @@ def label_speakers(segment_pcms: list[bytes], *, sample_rate: int = SAMPLE_RATE)
     fewer than two non-empty segments / any empty PCM); change them
     together. Tests exercise this wrapper; the pipeline path is pinned by
     the windowed-batching tests.
+
+    ``cepstral_mean_normalisation=False`` is the Task 2.3 measurement
+    harness's "before Task 2.1" condition (see ``_segment_embedding``);
+    the default is the shipped behaviour and nothing in the app passes
+    ``False``.
     """
     if not segment_pcms:
         return []
@@ -635,7 +659,13 @@ def label_speakers(segment_pcms: list[bytes], *, sample_rate: int = SAMPLE_RATE)
         return [SPEAKER_1] * len(segment_pcms)
     np = _numpy()
     embeddings = [
-        _segment_embedding(pcm, np, sample_rate=sample_rate) for pcm in segment_pcms
+        _segment_embedding(
+            pcm,
+            np,
+            sample_rate=sample_rate,
+            cepstral_mean_normalisation=cepstral_mean_normalisation,
+        )
+        for pcm in segment_pcms
     ]
     return _cluster_embeddings(embeddings, np)
 
