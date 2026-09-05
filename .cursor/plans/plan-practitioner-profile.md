@@ -217,7 +217,7 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 - Finish → `transcribe_session` embeds each VAD segment with the speaker model inside the windowed loop, scores each against the enrolled vector, labels the matched segments as one cluster and 2-means the rest, and writes `enrolled_speaker` + `enrolment_similarity` into the transcript. The Transcript screen shows "Clinician: confirmed from your voice profile (similarity 0.xx) — change", pre-checks that speaker, and Generate becomes available once the template profile is chosen, as today; "change" reverts to the manual radios. The note pipeline is unchanged from there.
 
 ### Flow 3 — A consultation without a profile, or with the model missing
-- Today's path, unchanged: spectral 2-means, `speaker_role` suggestion, manual confirmation. The Status panel's model report says the speaker model is absent (or the profile needs re-enrolment) so the degradation is visible, never silent.
+- Today's path, unchanged: spectral 2-means, `speaker_role` suggestion, manual confirmation. The Microphone screen's model report (`refresh_model_status`) says the speaker model is absent (or the profile needs re-enrolment) so the degradation is visible, never silent (round 3 PR-LOW-019).
 
 ### Flow 4 — Cue routing with the practitioner's file
 - `load_note_config` reads `section_cues.json` (user file, else shipped default); `build_note_generator` constructs `ExtractiveNoteProvider` with the config's cues; every note's `config_digest` covers them.
@@ -298,9 +298,9 @@ Per-phase checks:
 See `Planning Extraction Summary` → `Deferred — Actionable Later`, `Excluded — Revisit Only If Needed`, and `Accepted Assumptions — Revalidate Later` (state-once; nothing is restated here). The Task 9.1 shipping-gate RUN, Task 2.3 and D-S1 remain in `plan-phase3a-note-pipeline.md`; this plan only pauses the run (Task 0.1) and feeds it the single recording set (Task 6.1).
 
 ## Current State / Handoff Note
-- Last completed step: plan peer-review round 2 (codex `gpt-6-astra` at high, 11 of 15 round-1 amendments confirmed, the other four completed, 3 new findings applied 2026-09-05 — see `Review History`); before that round 1 (15 findings, all applied); before that `/review-plan` hardening pass 1 (2026-09-05, Claude Code `claude-fable-5-1`): recovery-path attribution added (`build_recovery_runner`), the zero-match rule under D4 fixed (D13), the label scheme fixed (D13), Phase 5 re-shaped to an explicit chooser control plus remove/move (D14, practitioner Fix-now at the gate), the R3 clarification task 5.5 added, the digest-pin fact recorded. Planning complete before that (same day; exploration scratch `explore-practitioner-profile.md` consumed).
+- Last completed step: plan peer-review PASS CONVERGED at round 3 (codex `gpt-6-astra` at high, 2026-09-05 23:54 UTC: zero new build-affecting findings, one record-only LOW applied) — rounds 1–3 = 15 → 3 → 0 build-affecting, 19 findings verified and applied; see `Review History`. Before that: round 2 (11 of 15 confirmed, four completed, 3 new), round 1 (15 findings), `/review-plan` pass 1; before that `/review-plan` hardening pass 1 (2026-09-05, Claude Code `claude-fable-5-1`): recovery-path attribution added (`build_recovery_runner`), the zero-match rule under D4 fixed (D13), the label scheme fixed (D13), Phase 5 re-shaped to an explicit chooser control plus remove/move (D14, practitioner Fix-now at the gate), the R3 clarification task 5.5 added, the digest-pin fact recorded. Planning complete before that (same day; exploration scratch `explore-practitioner-profile.md` consumed).
 - Current in-progress step: None.
-- Immediate next action: plan peer-review ROUND 3 (confirmation of round 2's amendments; a fresh codex session, `gpt-6-astra` at high — round 2 cost 131k tokens); the pass converges on zero NEW build-affecting findings. Then `/execute-loop` from Task 0.1. Tasks 0.2 and 0.4 need the PRACTITIONER before Phase 1 can start.
+- Immediate next action: the plan is cross-family reviewed and execution-ready. PRACTITIONER first: Task 0.2 (read and ratify the consent text in `Config / Environment / Deployment Impact`). Then `/execute-loop` from Task 0.1 (Phase 0 as one-phase-and-stop: agent tasks 0.1 + 0.3, pause for the practitioner's 0.4 and 0.6, then 0.5 and D-P1) — the loop wizard runs first; the cross-family peer for the run is codex `gpt-6-astra` (xhigh for code rounds). Tasks 0.2 and 0.4 need the PRACTITIONER before Phase 1 can start.
 - Open blockers / open questions: the speaker-embedding model candidate (Tasks 0.3–0.5, D-P1) — practitioner-run fetch.
 - Phase 0 interleaving (for an `/execute-loop` run): agent tasks 0.1 and 0.3 first → PAUSE for the practitioner's 0.2 (consent ratification) and 0.4 (fetch + smoke, normal terminal) → agent task 0.5 → PAUSE for the practitioner's 0.6 (promote the pinned model) → D-P1 (`[decision]`, a planned hard-stop) → Phase 1. Run Phase 0 as one-phase-and-stop; Phases 1–3 may run back-to-back; Phase 6 is practitioner-only.
 - Last plan sync: 2026-09-05 (created).
@@ -319,6 +319,7 @@ this section.
 
 - 2026-09-05 round 1: 0 CRIT / 1 HIGH / 14 MED / 0 LOW; skew=cross-family; action=amended-in-place (plan peer-review — independent cross-family Codex plan peer-review on `gpt-6-astra` xhigh, read-only sandbox, run as a resumed session after the first attempt died on the account's usage limit; block transcribed verbatim by the owning planning session (Claude Code `claude-fable-5-1`). Materiality verified: 15 build-affecting / 0 record-only / 0 invalid — every peer label upheld. All 15 applied as `/review-plan`-style amendments the same day (consent text, D3/D4/D5/D9/D13/D14, new D15/D16, Tasks 0.3/0.5/0.6/1.1/1.2/1.3/2.1–2.4/3.1/3.2/5.1/5.1b/5.2/5.4/5.5/6.1, Flow 2, Critical Constraints), siblings swept. NOT converged: a plan peer-loop never converges on round 1; round 2 is owed. Line owned by the seat that finishes the round.)
 - 2026-09-05 round 2: 0 CRIT / 0 HIGH / 2 MED / 1 LOW; skew=cross-family; action=amended-in-place (plan peer-review — post-round-1-amendment independent cross-family Codex plan peer-review on `gpt-6-astra` at HIGH effort, read-only sandbox, fresh session; block transcribed verbatim by the owning planning session (Claude Code `claude-fable-5-1`). Round-1 confirmations 11 of 15: PR-HIGH-001, PR-MED-004, PR-MED-005, PR-MED-015 NOT CONFIRMED as amended and completed this round. New: PR-MED-016 (the name refusal ran after lowercasing — moved before normalisation), PR-MED-017 (Task 0.6 depended on a Phase 3 report line — re-anchored), PR-LOW-018 (stale summaries — reconciled); materiality verified 2 build-affecting / 1 record-only / 0 invalid, all applied the same day. NOT converged: two NEW build-affecting findings this round; round 3 (confirmation) owed. Line owned by the seat that finishes the round.)
+- 2026-09-05 round 3: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=converged (plan peer-review — post-round-2-amendment independent cross-family Codex plan peer-review on `gpt-6-astra` at HIGH effort, read-only sandbox, fresh session after the usage-window reset; block transcribed verbatim by the owning planning session (Claude Code `claude-fable-5-1`). Round-2 confirmations 6 of 7 (PR-MED-017 completed by the one new finding). New: PR-LOW-019 (Flow 3 named the wrong model-report surface) — materiality verified record-only, applied the same day. PLAN PEER PASS CONVERGED: rounds 1–3 = 15 → 3 → 0 build-affecting findings (1H14M → 2M1L → 1L record-only), 19 findings verified and applied, every peer materiality label upheld. The plan is cross-family reviewed and execution-ready. Round finished by the owning planning session.)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -910,6 +911,61 @@ PEER-PLAN-ROUND-1 RESULT: 15 findings (CRIT 0 / HIGH 1 / MED 14 / LOW 0; build-a
 PEER-PLAN-ROUND-2 RESULT: 3 new findings (CRIT 0 / HIGH 0 / MED 2 / LOW 1; build-affecting 2 / record-only 1 / invalid 0); round-1 confirmations 11 of 15.
 - Composer completions of the four round-1 amendments the peer did NOT confirm (2026-09-05): PR-HIGH-001 → completed by PR-MED-016; PR-MED-004 → D15 now specifies reverse admission (`begin_enrolment` refuses while a session is active or a benchmark runs), the monitor hand-off and suppression, release in the result handler, and both start-order tests plus a poll-tick test; Flow 1's "allowed throughout" corrected; PR-MED-005 → D16 and Tasks 1.1/2.1/3.1 key availability, the factories and the enrolment UI on `SHIPPED_SPEAKER_EMBEDDER`; PR-MED-015 → completed by PR-LOW-018.
 - Composer note (2026-09-05, transcription): block transcribed verbatim from `.cursor/loops/practitioner-profile-plan-peer-r2-findings.md` (codex session `01a0717f-c16a-79b3-97cd-0a888fc5e01d`, `gpt-6-astra` at HIGH effort, 12:16-12:24 UTC, read-only, exit 0, 131k tokens). Dispositions are the owning planning session's; the peer's materiality labels are preserved.
+
+### Round 3 - 2026-09-05 - practitioner-profile plan, post-round-2-amendment independent cross-family codex plan peer-review (round 3, confirmation)
+
+- Round status: Closed (1 of 1 Applied 2026-09-05, record-only) — PASS CONVERGED at this round
+- Source: Codex plan peer-review
+- Materiality: 0 build-affecting / 1 record-only / 0 invalid
+- Plan reviewed at: 8819173
+- Files read:
+  - `.agents/skills/peer-review/SKILL.md`; `.cursor/plans/plan-practitioner-profile.md` in full.
+  - Requested symbols and surrounding code in `desktop/src/scribe_desktop/note.py`, `transcription.py`, `session.py`, `ui/microphone.py`, `ui/models.py`, and `scripts/setup-models.py`.
+  - Privacy contract in `desktop/src/scribe_desktop/note_config.py`; requested sections of `docs/testing/shipping-gate.md`; `docs/lessons.md`.
+  - Pointer-only matches for Task 2.3, D-S1, 9.1 and 9.2 in `.cursor/plans/plan-phase3a-note-pipeline.md`.
+- Finding verification: 3 candidates / 2 dropped / 0 downgraded
+- Verification method: Static review only. No tests run; no files or directories written. Working tree remained clean. Dropped candidates concerned acknowledgement invalidation and the R3 proposal population, both already explicitly handled.
+
+#### Round-2 change confirmations
+
+- **PR-MED-016 — CONFIRMED.** D9, Critical Constraints and Task 5.2 consistently require original-case checks before normalisation (`.cursor/plans/plan-practitioner-profile.md:240`, `:273`, `:958`). Task 5.2 states “the displayed candidate keeps original case”. This addresses `desktop/src/scribe_desktop/note.py:222`, `return _STRIP_PUNCT_RE.sub("", token).lower()`, preceding the uppercase-dependent check at `desktop/src/scribe_desktop/transcription.py:326`. D9 also specifies `first_in_segment` from source-word position.
+- **PR-MED-017 — NOT CONFIRMED in full; build sequencing is corrected.** Task 0.6 now verifies promotion through script output and assigns the later app check to Phase 3 (`.cursor/plans/plan-practitioner-profile.md:923`), consistent with `scripts/setup-models.py:111`, `tmp.replace(target)`. Task 3.2 correctly names the Microphone screen. However, Flow 3 still names the Status panel (`plan:220`), contradicting that amendment and `desktop/src/scribe_desktop/ui/microphone.py:271–272`. The remaining defect is record-only; see PR-LOW-019.
+- **PR-LOW-018 — CONFIRMED.** Agreed Scope now points to Task 5.5’s precise population and exclusions (`.cursor/plans/plan-practitioner-profile.md:31`). The assumption at `:110` says “Phase 6 MEASURES auto-confirm and can trigger a reassessment”, consistent with unconditional activation in Task 2.3 (`:938`) and reassessment in Task 6.2 (`:971`).
+- **PR-HIGH-001 — CONFIRMED.** The original-case refusal completes the mechanical repair; Task 5.2 requires “This phrase contains no patient information” (`.cursor/plans/plan-practitioner-profile.md:958`). Consent discloses plaintext retention and practitioner judgement (`:260`), while Task 5.4 names the semantic limit (`:960`). This matches `desktop/src/scribe_desktop/note_config.py:17`, `"NOT patient data" is a POLICY, not an enforced property.`
+- **PR-MED-004 — CONFIRMED.** D15 explicitly covers reverse admission, monitor handoff and polling suppression, ownership through the result handler, release on every path, and both start-order tests (`.cursor/plans/plan-practitioner-profile.md:245`). Flow 1 now says “Recording is allowed before and after enrolment (D10), never during it (D15)” (`:214`). This addresses the state-agnostic generation precedent (`desktop/src/scribe_desktop/session.py:746`), `ACTIVE_STATES` (`:88–89`), monitor reopening (`ui/microphone.py:199`) and separate benchmark worker (`:291–295`).
+- **PR-MED-005 — CONFIRMED.** D16 and Tasks 1.1, 2.1 and 3.1 consistently select availability, construction and UI behaviour through the chosen embedder (`.cursor/plans/plan-practitioner-profile.md:246`, `:930`, `:936`, `:943`). Task 1.1 explicitly specifies “spectral: always”. The spectral implementation exists at `desktop/src/scribe_desktop/transcription.py:579–585`; both production factories are covered (`ui/models.py:828`, `:856`).
+- **PR-MED-015 — CONFIRMED.** Task 5.5 explicitly includes “transcript assertions + confirmed proposals”, effective-removal counting, move/undo exclusions and manual-addition treatment (`.cursor/plans/plan-practitioner-profile.md:961`); Agreed Scope now delegates to that contract (`:31`). This matches `desktop/src/scribe_desktop/note.py:1939`, `sections = _merge_confirmed(draft.note_sections, confirmed)`, and the post-proposal scoring point at `docs/testing/shipping-gate.md:44`.
+
+#### New findings
+
+##### Practicality / feasibility / sequencing
+
+###### PR-LOW-019 — Flow 3 still names the wrong model-report surface
+
+- Plan section: Planned Workflow Summary, Flow 3; Task 3.2.
+- Materiality: record-only
+- Why it matters: The implementation and verification tasks now identify the correct surface, but the workflow summary directs readers elsewhere. Correcting that summary changes neither the build nor its verification.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:220`:
+  > The Status panel's model report says the speaker model is absent (or the profile needs re-enrolment) so the degradation is visible, never silent.
+- Evidence: Task 3.2, `.cursor/plans/plan-practitioner-profile.md:944`:
+  > shown by the microphone screen's `refresh_model_status` label
+
+  `desktop/src/scribe_desktop/ui/models.py:791`:
+  > Model-readiness lines for the microphone screen's report panel.
+
+  `desktop/src/scribe_desktop/ui/microphone.py:271–272`:
+  ```python
+  def refresh_model_status(self) -> None:
+      self.model_status_label.setText("\n".join(models.model_report_lines()))
+  ```
+- Suggested change: Replace “The Status panel's model report” in Flow 3 with “The Microphone screen's model report”. Preserve Tasks 0.6 and 3.2’s amended sequencing and surface.
+- /fix decision: Applied
+- /fix notes: Verified record-only (composer): Flow 3 still said "Status panel" while Tasks 0.6/3.2 name the Microphone screen's `refresh_model_status` label (`ui/microphone.py:271-272`, `ui/models.py:791`). Amended: Flow 3 now names the Microphone screen's model report. This completes PR-MED-017.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session)
+
+PEER-PLAN-ROUND-3 RESULT: 1 new findings (CRIT 0 / HIGH 0 / MED 0 / LOW 1; build-affecting 0 / record-only 1 / invalid 0); round-2 confirmations 6 of 7.
+- Composer note (2026-09-05, transcription): block transcribed verbatim from `.cursor/loops/practitioner-profile-plan-peer-r3-findings.md` (codex session `01a073fb-0aed-71a0-acb2-e80a5205aa2b`, `gpt-6-astra` at HIGH effort, 23:50-23:54 UTC, read-only, exit 0, 87k tokens; the first round-3 attempt at 12:27 UTC died on the usage window after two commands and emitted nothing). PASS CONVERGED: zero NEW build-affecting findings this round; 6 of 7 round-2 changes confirmed and the seventh completed by PR-LOW-019.
 
 ## Tasks
 Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pass at each boundary). No phase heading carries `[gates: high-auto-ok]`: this plan touches key custody, a biometric artefact, clinical-record content and a ratified safety relaxation, so HIGH findings pause for the practitioner by design. Every task is `[executor: premium-only]` in substance (Executor tier line); the label is omitted per task because the whole plan is premium.
