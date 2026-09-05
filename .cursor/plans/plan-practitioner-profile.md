@@ -25,7 +25,7 @@ Populated 2026-09-05 from the confirmed `/explore` scratch `.cursor/plans/explor
 **Executor tier:** entirely premium — planned on Fable 5.1; executor Fable/Opus-class via `/execute-loop`; tier-gap dosing applied (design decisions locked, edge-case inventory, contracts, per-task acceptance criteria, executor-facts block); every task is premium-only in substance (DPAPI custody, a biometric artefact, the windowed plaintext bound in `transcribe_session`, the confirm-first guards, the security docs)
 
 ### Agreed Scope (Build Now)
-- **Sequencing (practitioner-decided 2026-09-05): enrolment FIRST, then the cue file, then learning.** The Task 9.1 shipping-gate RUN is PAUSED — rubric v1 stays ratified and frozen, nothing is re-ratified — until enrolment ships, so that ONE set of mock recordings serves three purposes: the gate's scoring, Task 2.3's before/after speaker measurement, and the enrolment measurement. Recording protocol for that set (Task 6.1): each mock consultation is recorded through the app (the gate's instrument) AND in parallel by an external recorder to a 16 kHz mono 16-bit WAV with an Audacity role-label track (the harness's input contract), plus one separate enrolment WAV of the practitioner reading aloud; the WAVs fall under the Task 2.3 retention decision.
+- **Sequencing (practitioner-decided 2026-09-05): enrolment FIRST, then the cue file, then learning.** The Task 9.1 shipping-gate RUN is PAUSED — rubric v1 stays ratified and frozen, nothing is re-ratified — until enrolment ships, so that ONE set of mock recordings serves three purposes: the gate's scoring, Task 2.3's before/after speaker measurement, and the enrolment measurement. Recording protocol for that set (Task 6.1): each mock consultation is recorded through the app (the gate's instrument) AND in parallel by an external recorder to a 16 kHz mono 16-bit WAV with an Audacity role-label track (the harness's input contract), with a second real voice speaking the patient part (round 1 PR-MED-013), plus one separate enrolment WAV of the practitioner reading aloud; the WAVs fall under the Task 2.3 retention decision.
 - **Piece 1 — voice enrolment** (Phases 0–3): (a) a local ONNX speaker-embedding model added to `scripts/setup-models.py` (SHA-256-pinned, offline-asserted, `SileroVad`-style load contract, UNC refusal), fetched by the practitioner from a normal terminal, with the existing spectral 2-means path as the VISIBLE fallback when the model or profile is absent; (b) a **Practitioner** tab plus a first-run prompt carrying the consent/disclosure text and checkbox, a ~60 s read-aloud captured through `CaptureBackend` directly into memory (never through `SessionController`; PCM embedded, then dropped — no audio written anywhere), re-enrol and delete; (c) a profile store `%LOCALAPPDATA%\ClinikoScribe\profile\` holding `key.dpapi` (DPAPI-wrapped, the session-key primitives) and `voice.enc` (AES-GCM: the embedding, model id + SHA, created_at, the consent record) — deletion is key deletion; (d) in `transcribe_session`, per-segment model embeddings computed inside the existing windowed loop; with a profile present each segment is scored against the enrolled vector, the practitioner-matched segments get one label and the remaining segments are 2-means-clustered among themselves (labels: `speaker_1` is the practitioner whenever a profile is applied, the others `speaker_2` / `speaker_3` by first appearance — D13); when NO segment clears the threshold the ordinary 2-means over all segments runs and the cluster with the higher mean similarity is the practitioner (D4 is unconditional); both transcription entry points — live Finish (`build_transcriber`) AND crash recovery (`build_recovery_runner` → `recover_session_transcription`) — apply the profile; without a profile the current path runs unchanged; (e) the Transcript screen confirms the clinician role AUTOMATICALLY from the profile — the best-matching cluster, unconditionally whenever a profile exists (practitioner-ratified 2026-09-05; Design Decision D4) — showing "Clinician: confirmed from your voice profile" with a one-click change back to the manual radios; the manual radios remain the path when no profile exists; (f) `speaker_eval.py` gains an "enrolled" condition and an auto-confirm outcome, documented in `docs/testing/speaker-measurement.md`; (g) threat model (a new surface: the practitioner's own biometric at rest; the auto-confirm relaxation as a practitioner-ratified responsibility boundary), retention row, data-flow-map flow, design-system convention for the first-run surface, `AGENTS.md` Local Run Steps.
 - **Piece 2 — the per-practitioner cue file** (Phase 4): a fourth clinician config file `section_cues.json` (`schema_version: 1`, `{section_key: [phrase, ...]}`) shipped as `config_defaults/section_cues.json` carrying today's 98 phrases across the 17 canonical keys; loaded by `load_note_config` with the SAME per-file whole-file replacement (practitioner-confirmed 2026-09-05), first-run default, loud failure and `_TriggerText` validation; a new `NoteConfig.section_cues` field so `config_digest` binds every note to the cue set that routed it; duplicate normalised phrases (within or across sections) refused at validation; `build_note_generator` constructs the provider FROM the config; `DEFAULT_SECTION_CUES` derived from the shipped file (one source); the gate-run cue file `docs/testing/shipping-gate-config/section_cues.json` authored from the practitioner's phrases.
 - **Piece 3 — consented phrase learning, with review edits** (Phase 5): an explicit "Edit the note" control group on the Note tab (the transcript panel itself stays a non-interactive text box): (i) **Add a transcript line** — a chooser listing the eligible utterances, a section chooser limited to what that utterance may enter under the existing ownership rules (a clinician-owned section accepts only the confirmed clinician's non-question utterances), and Add, which inserts the whole utterance as a `transcript`-provenance assertion (contiguous coords, its own assertion-id scheme, refused when the utterance is already anywhere in the note); (ii) **Remove line** and **Move line to section…** for any `transcript`-provenance assertion the router produced (practitioner-decided 2026-09-05, Fix now at the hardening gate) — removal only ever subtracts, is reversible until Save, and any resulting omission warning is acknowledgeable, never blocking (D14); a move is remove + add under the same ownership rules; (iii) after an add or a move of one of the practitioner's OWN utterances, when learning opt-in is on, "Learn this phrasing?" shows the exact phrase (the utterance's leading content tokens, editable) and the exact line that would be appended to the practitioner's `section_cues.json` — saved only on explicit approval; a removal teaches nothing. The Practitioner tab lists and deletes learned phrases. Automatic pattern mining is out. The gate doc's R3 wording is clarified for a run in which removal exists (Task 5.5): numerator = lines removed during review + lines still needing deletion at signing, denominator = assertions the generator produced — a clarification of rubric v1, not a threshold change.
@@ -110,7 +110,7 @@ Populated 2026-09-05 from the confirmed `/explore` scratch `.cursor/plans/explor
   - Risk if assumption becomes false: enrolment ships measured only on synthetic tests until the set exists; the plan gates "auto-confirm on by default" on the Phase 6 run (Task 6.2), not on shipping the code.
   - Trigger for revisit: the recording set is not produced before Phase 6.
   - Recommended next action: none — the practitioner owns Task 6.1.
-- Practitioner-decided 2026-09-05: storing the practitioner's own voice embedding and approved phrases locally, encrypted, with disclosure and consent at first run, is acceptable.
+- Practitioner-decided 2026-09-05: storing the practitioner's own voice embedding (encrypted) and approved phrases (plain-text config) locally, with disclosure and consent at first run, is acceptable.
   - Why accepted for now: the practitioner asked for it, with disclosure from start-up.
   - Risk if assumption becomes false: none for patients (nothing of theirs is stored); the practitioner deletes both from the Practitioner tab at any time.
   - Trigger for revisit: the consent text ratification (Task 0.2) changes the terms.
@@ -214,7 +214,7 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 - The app starts with no profile: the Practitioner tab is selected and a banner explains what will be stored and why. The practitioner reads the consent text, ticks the box (and optionally the learning opt-in), picks the microphone, and records ~60 s of read-aloud; the capture goes straight into memory, VAD keeps the speech, the embedder averages one vector, the vector plus the consent record is encrypted under a fresh DPAPI-wrapped profile key, and the PCM is dropped. Re-enrol replaces the vector; Delete removes the key (cryptographic deletion). Recording sessions is allowed throughout (D10).
 
 ### Flow 2 — A consultation with a profile present
-- Finish → `transcribe_session` embeds each VAD segment with the speaker model inside the windowed loop, scores each against the enrolled vector, labels the matched segments as one cluster and 2-means the rest, and writes `enrolled_speaker` + `enrolment_similarity` into the transcript. The Transcript screen shows "Clinician: confirmed from your voice profile (similarity 0.xx) — change", pre-checks that speaker, and enables Generate immediately; "change" reverts to the manual radios. The note pipeline is unchanged from there.
+- Finish → `transcribe_session` embeds each VAD segment with the speaker model inside the windowed loop, scores each against the enrolled vector, labels the matched segments as one cluster and 2-means the rest, and writes `enrolled_speaker` + `enrolment_similarity` into the transcript. The Transcript screen shows "Clinician: confirmed from your voice profile (similarity 0.xx) — change", pre-checks that speaker, and Generate becomes available once the template profile is chosen, as today; "change" reverts to the manual radios. The note pipeline is unchanged from there.
 
 ### Flow 3 — A consultation without a profile, or with the model missing
 - Today's path, unchanged: spectral 2-means, `speaker_role` suggestion, manual confirmation. The Status panel's model report says the speaker model is absent (or the profile needs re-enrolment) so the degradation is visible, never silent.
@@ -231,21 +231,23 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 ## Design Decisions
 - **D1 — Enrolment feeds the confirmed role through a separate transcript field; cluster labels stay opaque** because the pinned guards (`the result is not itself a speaker label`, the lying-speaker-field check, the confirmed-role guard on `compose_draft`) assume exactly that separation. Alternatives considered: a `practitioner` label written into `TranscriptSegment.speaker` (rejected — breaks three guards and couples the pipeline to a UI decision).
 - **D2 — Model absent or unusable → the shipped spectral path, reported visibly** in `model_report_lines()` and the Transcript screen's status line ("speaker model not installed — run setup-models" / "profile needs re-enrolment"), the same shape as the whisper `medium` → `small` fallback. Alternatives considered: refusing to transcribe without the model (rejected — blocks the clinic for a non-clinical feature); silent fallback (rejected — the project's standing rule against silent degradation).
-- **D3 — Attribution = practitioner-vs-other by cosine similarity against the enrolled vector, then 2-means over the "other" segments.** Segment scoring uses a fixed threshold constant set by D-P1 from the practitioner's own smoke and re-checked in Phase 6; when NO segment clears it, the ordinary 2-means over all segments runs and the cluster with the higher mean similarity is taken as the practitioner (D4 is unconditional, so `enrolled_speaker` is ALWAYS set when a profile is applied); a profile whose `model_sha256` does not match the installed model is ABSENT (re-enrol). Both transcription entry points apply the profile (`build_transcriber` and `build_recovery_runner`). Alternatives considered: estimated-k first (deferred, D-S1); a threshold learned per session (rejected — unmeasurable without labels).
-- **D4 — Auto-confirm the clinician role UNCONDITIONALLY when a profile exists (practitioner-ratified 2026-09-05).** The cluster with the highest mean similarity to the enrolled vector is pre-checked as the clinician; the line "Clinician: confirmed from your voice profile (similarity 0.xx) — change" is always shown; "change" reverts to the manual radios with " (suggested)" from `speaker_role`; Generate is enabled immediately. Residual risk, stated for the threat model: with a weak best match (the practitioner absent, a very different microphone, a profile from another person on the same login) a patient's utterances can populate clinician-owned sections until the practitioner clicks "change" — the compensating controls are the visible similarity value, the Phase 5 checker (which still blocks unresolved errors), per-assertion review, the practitioner's review at signing, and re-enrolment. Alternatives considered: margin-gated auto-confirm with manual fallback when the best match is weak or two clusters both match (offered 2026-09-05; declined — kept here as the documented hardening if Phase 6 measures a problem); no auto-confirm (the original design; superseded by the practitioner's decision).
-- **D5 — Profile custody mirrors session custody**: `%LOCALAPPDATA%\ClinikoScribe\profile\key.dpapi` (DPAPI, description "ClinikoScribe practitioner profile key") + `voice.enc` (AES-256-GCM under that key, AAD `b"clinikoscribe-practitioner-profile-v1"`); deletion = key deletion then blob unlink; the blob holds the vector, `model_id`, `model_sha256`, `embedding_dim`, `created_at`, `enrolment_speech_seconds`, `device_name`, and the consent record (`accepted_at`, `consent_text_version`, `learning_opt_in`); nothing about it is ever logged (the log tripwire's field scan covers any new record fields by construction). Alternatives considered: plaintext JSON in `config\` (rejected — biometric); Credential Manager (rejected — a vector is not a secret string and the store is size-limited).
+- **D3 — Attribution = practitioner-vs-other by cosine similarity against the enrolled vector, then 2-means over the "other" segments.** Segment scoring uses a fixed threshold constant set by D-P1 from the practitioner's own smoke and re-checked in Phase 6; when NO segment clears it, the ordinary 2-means over all segments runs and the cluster with the higher mean similarity is taken as the practitioner (D4 is unconditional, so `enrolled_speaker` is ALWAYS set when a profile is applied and the document has any transcribed speech); similarities are RAW cosines in [-1, 1] (finite; a zero-norm vector scores -1) and the threshold is compared on that scale — never a 0–1 clamp (round 1 PR-MED-007); the candidate clusters for `enrolled_speaker` are those holding at least one segment with transcribed text (a textless cluster has no radio and cannot be confirmed), and a document with no segments at all carries no attribution fields and leaves generation unavailable exactly as today (PR-MED-008); a profile whose `model_sha256` does not match the installed model's VERIFIED digest is ABSENT (re-enrol). Both transcription entry points apply the profile (`build_transcriber` and `build_recovery_runner`). Alternatives considered: estimated-k first (deferred, D-S1); a threshold learned per session (rejected — unmeasurable without labels).
+- **D4 — Auto-confirm the clinician role UNCONDITIONALLY when a profile exists (practitioner-ratified 2026-09-05).** The cluster with the highest mean similarity to the enrolled vector is pre-checked as the clinician; the line "Clinician: confirmed from your voice profile (similarity 0.xx) — change" is always shown; "change" reverts to the manual radios with " (suggested)" from `speaker_role`; auto-confirm satisfies the ROLE predicate only — the template-profile choice, a valid config, no recovery in flight and the generation lease gate Generate exactly as today (round 1 PR-MED-009). Residual risk, stated for the threat model: with a weak best match (the practitioner absent, a very different microphone, a profile from another person on the same login) a patient's utterances can populate clinician-owned sections until the practitioner clicks "change" — the compensating controls are the visible similarity value, the Phase 5 checker (which still blocks unresolved errors), per-assertion review, the practitioner's review at signing, and re-enrolment. Alternatives considered: margin-gated auto-confirm with manual fallback when the best match is weak or two clusters both match (offered 2026-09-05; declined — kept here as the documented hardening if Phase 6 measures a problem); no auto-confirm (the original design; superseded by the practitioner's decision).
+- **D5 — Profile custody mirrors session custody**: `%LOCALAPPDATA%\ClinikoScribe\profile\key.dpapi` (DPAPI, description "ClinikoScribe practitioner profile key") + `voice.enc` (AES-256-GCM under that key, AAD `b"clinikoscribe-practitioner-profile-v1"`); deletion = key deletion then blob unlink; re-enrolment replaces ONLY `voice.enc` (one `os.replace`) under the EXISTING key — the key is generated once at first enrolment and lives until Delete — so a failure between steps leaves the previous profile usable and no older generation can be revived (round 1 PR-MED-012); the blob holds the vector, `model_id`, `model_sha256`, `embedding_dim`, `created_at`, `enrolment_speech_seconds`, `device_name`, and the consent record (`accepted_at`, `consent_text_version`, `learning_opt_in`); nothing about it is ever logged (the log tripwire's field scan covers any new record fields by construction). Alternatives considered: plaintext JSON in `config\` (rejected — biometric); Credential Manager (rejected — a vector is not a secret string and the store is size-limited).
 - **D6 — `section_cues.json` is a whole-file replacement config file** (practitioner-confirmed): the shipped default carries all 98 phrases; a user file replaces it entirely; a section key missing from a user file means NO cues for that section (stated in the file header comment and the loader docstring); validation refuses unknown keys, blank/control-character phrases, and duplicate normalised phrases within or across sections (routing order would otherwise decide silently). Alternatives considered: additive merge (rejected — a second precedence rule).
 - **D7 — Cues are part of `NoteConfig` and therefore of `config_digest`**; `ExtractiveNoteProvider` is constructed from the config at the one production site. Alternatives considered: provider-level constant (rejected — a note would not record which cues routed it).
 - **D8 — Enrolment capture is a dedicated in-memory path** (`enrolment.py`) over `CaptureBackend.open_stream` on a `TaskThread`, VAD-gated to require at least 30 s of speech within a 60–90 s window, returning PCM bytes that are embedded and then dropped; no session, no store, no file. Alternatives considered: `SessionController.start` (rejected — recoverable audio artefact); saving the enrolment WAV (rejected — no audio retained).
-- **D9 — Learning is propose-then-approve and structurally practitioner-only**: the "Learn this phrasing?" prompt follows only an add or a move of an utterance whose speaker equals the confirmed clinician (the add/move controls themselves are D14); the learned phrase is the utterance's leading 2–4 content tokens (editable before approval); the write is an atomic replace of the user `section_cues.json` (created from the shipped default if absent, preserving D6); learning requires `learning_opt_in` in the profile's consent record. Alternatives considered: silent mining (excluded); learning from patient lines (excluded).
+- **D9 — Learning is propose-then-approve and structurally practitioner-only**: the "Learn this phrasing?" prompt follows only an add or a move of an utterance whose speaker equals the confirmed clinician (the add/move controls themselves are D14); the learned phrase is the utterance's leading 2–4 content tokens (editable before approval); a candidate is REFUSED while any token is name-like (`transcription.is_name_like_token`) or numeric, the prompt requires the practitioner to tick "This phrase contains no patient information" before Save, and the consent text says that judgement is theirs — the app validates shape only (round 1 PR-HIGH-001); the prompt dry-runs the proposed cue set on the source utterance and, when an earlier section's cue still wins first-match routing, says so and offers an edit — never a silent cue deletion (PR-MED-011); the write is an atomic replace of the user `section_cues.json` (created from the shipped default if absent, preserving D6); learning requires `learning_opt_in` in the profile's consent record. Alternatives considered: silent mining (excluded); learning from patient lines (excluded).
 - **D10 — First run asks, never blocks**; the Practitioner tab is selected at startup when no profile exists and a banner explains; every other screen works as today.
 - **D11 — The model candidate is fetched by the practitioner and then chosen by a `[decision]` task (D-P1)** after a smoke that reports same-speaker vs different-speaker cosine similarity on the practitioner's own short recordings; the executor pins URL, size and SHA-256 from the practitioner's report, exactly as silero is pinned.
-- **D13 — Label scheme with a profile applied:** `speaker_1` is the practitioner (the matched cluster, or the highest-similarity cluster on zero matches), `speaker_2` and `speaker_3` the remainder by first appearance (2-means over the non-practitioner segments; a degenerate remainder yields only `speaker_2`). The no-profile path keeps "first segment is `speaker_1`". Consumers already tolerate N labels: `speaker_role` scores any number of clusters, the radios are one per label, `format_transcript_text` prints the label, the harness's `cluster_metrics` is label-name independent.
-- **D14 — Review edits (remove / move a routed line) subtract only.** `NoteScreen` keeps a set of removed assertion ids and a list of manual additions; `_refinalise` builds the working draft as a copy of the generated draft with removed assertions filtered out and additions appended to their sections, then calls `finalise_note` as today, so every check (reconstruction, contradiction, provenance, omission) runs on the edited note; an omission warning raised by a removal is acknowledgeable (review severity), never a block; removals and additions are reversible until Save ("Undo"); after Save they are fixed like proposal decisions. Manual additions use an assertion-id scheme distinct from the provider's (`m<segment>` vs `x<segment>`) and refuse an utterance already present in the note. Alternatives considered: extending `finalise_note`'s signature with removal ids (rejected — the screen-held draft is the one input the pipeline already takes); free-text editing (rejected — Check 1).
+- **D13 — Label scheme with a profile applied:** `speaker_1` is the practitioner (the matched cluster, or the highest-similarity cluster on zero matches — in both cases among clusters holding at least one segment with transcribed text, PR-MED-008), `speaker_2` and `speaker_3` the remainder by first appearance (2-means over the non-practitioner segments; a degenerate remainder yields only `speaker_2`). The no-profile path keeps "first segment is `speaker_1`". Consumers already tolerate N labels: `speaker_role` scores any number of clusters, the radios are one per label, `format_transcript_text` prints the label, the harness's `cluster_metrics` is label-name independent.
+- **D14 — Review edits (remove / move a routed line) subtract only.** `NoteScreen` keeps a set of removed assertion ids and a list of manual additions; `_refinalise` builds the working draft as a copy of the generated draft with removed assertions filtered out and additions appended to their sections, then calls `finalise_note` as today, so every check (reconstruction, contradiction, provenance, omission) runs on the edited note; every edit — add, remove, move, undo — goes through the existing content-change helper (`_after_resolution_change`: acknowledgements cleared, note un-saved, re-finalised), so a stale acknowledgement can never survive a changed note (round 1 PR-MED-010); an omission warning raised by a removal is acknowledgeable (review severity), never a block; removals and additions are reversible until Save ("Undo"); after Save they are fixed like proposal decisions. Manual additions use an assertion-id scheme distinct from the provider's (`m<segment>` vs `x<segment>`) and refuse an utterance already present in the note. Alternatives considered: extending `finalise_note`'s signature with removal ids (rejected — the screen-held draft is the one input the pipeline already takes); free-text editing (rejected — Check 1).
+- **D15 — Enrolment is a controller-owned activity.** `SessionController.begin_enrolment()` / `end_enrolment()` (the generation-lease shape): `start`/`resume` refuse while enrolling (`SessionActivityError`), the microphone screen's monitor poll (`_ensure_monitor`) and the benchmark refuse while enrolling, `closeEvent` refuses while the activity is held, Re-record/Delete are disabled meanwhile; the Practitioner tab holds the activity from capture start through embedding and `save_profile` and releases it on every path (round 1 PR-MED-004). Alternatives considered: a one-time monitor stop (rejected — the poll restarts the stream).
+- **D16 — Two embedders behind one protocol.** `OnnxSpeakerEmbedder` (the model) and `SpectralSpeakerEmbedder` (the existing CMN'd mel embedding wrapped; `model_id = "spectral-cmn-v1"`, no file, always available) both satisfy `SpeakerEmbedder`; the profile records which produced it and is usable only with the same `model_id`; D-P1 picks which one SHIPS for enrolment and the other stays for tests and the harness; with the ONNX embedder chosen and its model absent at runtime, D2's visible fallback (no attribution) applies — spectral is never substituted silently (round 1 PR-MED-005).
 - **D12 — Front-end in numpy, model-specific, verified against the model card** (Kaldi-style 80-bin log-mel fbank, 25 ms / 10 ms, Hamming/Povey window, per-utterance mean subtraction, 16 kHz); a wrong front-end fails the D-P1 smoke visibly (near-random similarities), which is why the smoke precedes the build.
 
 ## Schema / Data Changes
-- `TranscriptDocument` (`transcription.py`): three new OPTIONAL fields with `None` defaults — `enrolled_speaker: str | None` (must equal one of the segments' labels when set; validator), `enrolment_similarity: float | None` (0–1, the mean cosine of the matched cluster), `speaker_model_id: str | None`. `schema_version` stays `1` (additive, defaulted; old `transcript.enc` artefacts read unchanged; an artefact written with the fields is read by this version only — the recovery path never runs an older build against a newer store on this single-user machine).
+- `TranscriptDocument` (`transcription.py`): three new OPTIONAL fields with `None` defaults — `enrolled_speaker: str | None` (must equal one of the segments' labels when set; validator), `enrolment_similarity: float | None` (raw cosine in [-1, 1], finite — the mean over the matched cluster; PR-MED-007), `speaker_model_id: str | None`. `schema_version` stays `1` (additive, defaulted; old `transcript.enc` artefacts read unchanged; an artefact written with the fields is read by this version only — the recovery path never runs an older build against a newer store on this single-user machine).
 - `NoteConfig` (`note_config.py`): new field `section_cues: tuple[SectionCues, ...]` (or a mapping model) — frozen, part of `to_bytes()`; `config_digest` changes for every config the moment the field exists (expected; the digest identifies content). No persisted artefact embeds a `NoteConfig`; `GeneratedNote.config_digest` values in existing tests that pin a literal digest are updated (Task 4.4 inventory).
 - New config file `section_cues.json` (`schema_version: 1`, `section_cues: {<canonical key>: [phrase, ...]}`) shipped as `config_defaults/section_cues.json`.
 - New profile store `%LOCALAPPDATA%\ClinikoScribe\profile\` (`key.dpapi`, `voice.enc`) — Design Decision D5.
@@ -255,7 +257,8 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 - No environment variables. No CI changes beyond the model being absent on CI (tests skip-if-absent, the whisper pattern).
 - `scripts/setup-models.py` gains `speaker-embedding` in the `--only` set (URL + SHA-256 + size pin), ~26 MB; `AGENTS.md` Local Run Steps step 3 gains the size and the note that enrolment needs it. User-run only.
 - **Consent text v1 — DRAFT for practitioner ratification (Task 0.2); shown on the Practitioner tab and at first run; the version string is stored in the profile's consent record:**
-  > "This app can learn your voice and your phrasing to improve your notes. If you agree, it stores on this computer, encrypted: a numeric fingerprint of your voice (never a recording), and the phrases you approve for routing your sentences into note sections. Nothing about any patient is stored beyond their session, and nothing leaves this computer. You can re-record your voice, delete it, or delete any learned phrase at any time from this tab. Version consent-v1."
+  > "This app can learn your voice and your phrasing to improve your notes. If you agree, it stores on this computer: a numeric fingerprint of your voice (never a recording), encrypted; and, if you also turn on phrase learning, the short phrases you approve during review, kept as plain text in your own config file until you delete them. The app cannot tell whether a phrase names a patient — only you can — so it shows you every phrase before saving it, refuses names and numbers, and asks you to confirm it contains no patient information; keep phrases general. Nothing else about any patient is stored beyond their session, and nothing leaves this computer. You can re-record your voice, delete it, or delete any learned phrase at any time from this tab. Version consent-v1."
+  (Round 1 PR-MED-002 / PR-HIGH-001: the voice profile is encrypted; approved phrases are PLAIN TEXT in `section_cues.json` with the other clinician config, retained until deleted; the no-patient-information judgement is the practitioner's — the loader validates shape only, `note_config.py:17-21`.)
   A second checkbox, off by default: "Also learn my phrasing from lines I add during review (asks each time)". Ratified text replaces the draft verbatim in `ui/models.py` `CONSENT_TEXT_V1`; changing the text later means a new version and re-consent at next start.
 - Release risk: a practitioner who never enrols sees no change; a practitioner who enrols on one microphone and records on another may see wrong auto-confirms until re-enrolment (D4 residual, visible).
 
@@ -267,7 +270,7 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 - **Cluster labels stay opaque and the confirmed role stays a UI selection** (D1); no code path passes a pipeline field straight into `compose_draft`'s `clinician_speaker`.
 - **Auto-confirm as ratified (D4)**: always shown, always changeable with one click, never hidden behind a setting the practitioner did not choose.
 - **Cue file: whole-file replacement, fail-closed loader, digest-bound** (D6, D7).
-- **Learning: approval-only, practitioner utterances only, opt-in-gated** (D9); the exact text to be written is shown before it is written.
+- **Learning: approval-only, practitioner utterances only, opt-in-gated** (D9); the exact text to be written is shown before it is written; a candidate phrase with a name-like or numeric token is refused, the practitioner confirms it holds no patient information, and the consent text says that judgement is theirs (round 1 PR-HIGH-001).
 - **Review edits subtract or re-route the practitioner's own transcript lines only** (D14): no free-text editing, no new content, ownership rules enforced on every add or move, reversible until Save.
 - **Docstrings and security docs claim only what the structure enforces**, naming residues (the project's recurring review class).
 - **Compatibility**: old `transcript.enc` artefacts read unchanged; a config directory without `section_cues.json` loads the shipped default; a machine without the speaker model behaves exactly as today.
@@ -284,7 +287,7 @@ Baselines pinned at planning (read-only dry-run, 2026-09-05, `main` `8527ce9`):
 Per-phase checks:
 - **Phase 0**: the Phase 3A plan and `AGENTS.md` carry the pause pointer; the consent text is ratified (practitioner); `setup-models.py --only speaker-embedding` fetches the candidate for the practitioner and prints size + SHA-256; the smoke script prints same-speaker vs different-speaker cosine on two short practitioner recordings and one other voice; D-P1 recorded.
 - **Phase 1**: unit tests — embedder load contract (absent → `SpeakerModelError`, UNC refused, offline asserted before import), front-end shape (80 × frames) and determinism, profile round-trip, key-first deletion, unreadable/truncated blob → typed error, model-SHA mismatch → absent, no PCM persisted (mock backend; the enrolment function returns and the only artefacts on disk are `key.dpapi` + `voice.enc`), log-tripwire fixtures extended.
-- **Phase 2**: attribution unit tests with synthetic vectors (matched cluster + 2-means remainder; all-matched; NONE-matched → ordinary 2-means with the higher-similarity cluster as `speaker_1`; single segment; three labels rendered); BOTH entry points (`build_transcriber` and `build_recovery_runner`) pass the embedder + profile (pinned with fakes); pipeline tests with `MockSpeakerEmbedder` injected (document fields set; the plaintext bound test still passes; degenerate policy unchanged); transcript round-trip with the new fields; the `enrolled_speaker` validator refuses a label absent from the segments; offscreen UI tests — auto-confirm pre-check + confirmation line, "change" reverts, Generate enabled, manual path when the field is `None`, the lying-field defence; harness tests for the third condition.
+- **Phase 2**: attribution unit tests with synthetic vectors (matched cluster + 2-means remainder; all-matched; NONE-matched → ordinary 2-means with the higher-similarity cluster as `speaker_1`; single segment; three labels rendered); BOTH entry points (`build_transcriber` and `build_recovery_runner`) pass the embedder + profile (pinned with fakes); pipeline tests with `MockSpeakerEmbedder` injected (document fields set; the plaintext bound test still passes; degenerate policy unchanged); transcript round-trip with the new fields; the `enrolled_speaker` validator refuses a label absent from the segments; offscreen UI tests — auto-confirm pre-check + confirmation line, "change" reverts, Generate still gated on the template profile (enrolment alone leaves it disabled — PR-MED-009), manual path when the field is `None`, the lying-field defence; harness tests for the third condition.
 - **Phase 3**: offscreen UI tests for the Practitioner tab (consent gate, enrol with a mock backend, status, re-enrol, delete), first-run tab selection; docs re-read against the code (the round-40/41 class).
 - **Phase 4**: loader properties for the fourth file (absent → default; malformed → loud; unknown key, blank, duplicate refused; digest changes with the file and with a one-phrase edit); provider routes by config cues (a user file that removes an advice cue stops that routing); `DEFAULT_SECTION_CUES` equals the shipped file; the gate-run cue file loads.
 - **Phase 5**: the utterance chooser lists only eligible utterances and the section chooser only allowed sections (clinician-owned → the confirmed clinician's non-questions); the added assertion reconstructs byte-identically (Check 1) and carries the manual id scheme; an utterance already in the note is refused; Remove filters the assertion out of the working draft and any omission warning is acknowledgeable, never blocking; Undo restores; Move = remove + add under the ownership rules; edits are frozen after Save; the learn prompt fires after an add or a move of a practitioner utterance only and shows the exact line; approve writes atomically and the loader reads it back; decline writes nothing; opt-in off → no prompt; Practitioner tab lists and deletes.
@@ -295,11 +298,11 @@ Per-phase checks:
 See `Planning Extraction Summary` → `Deferred — Actionable Later`, `Excluded — Revisit Only If Needed`, and `Accepted Assumptions — Revalidate Later` (state-once; nothing is restated here). The Task 9.1 shipping-gate RUN, Task 2.3 and D-S1 remain in `plan-phase3a-note-pipeline.md`; this plan only pauses the run (Task 0.1) and feeds it the single recording set (Task 6.1).
 
 ## Current State / Handoff Note
-- Last completed step: `/review-plan` hardening pass 1 (2026-09-05, Claude Code `claude-fable-5-1`): recovery-path attribution added (`build_recovery_runner`), the zero-match rule under D4 fixed (D13), the label scheme fixed (D13), Phase 5 re-shaped to an explicit chooser control plus remove/move (D14, practitioner Fix-now at the gate), the R3 clarification task 5.5 added, the digest-pin fact recorded. Planning complete before that (same day; exploration scratch `explore-practitioner-profile.md` consumed).
+- Last completed step: plan peer-review round 1 (codex `gpt-6-astra`, 15 findings, all verified build-affecting and applied in place 2026-09-05 — see `Review History`); before that `/review-plan` hardening pass 1 (2026-09-05, Claude Code `claude-fable-5-1`): recovery-path attribution added (`build_recovery_runner`), the zero-match rule under D4 fixed (D13), the label scheme fixed (D13), Phase 5 re-shaped to an explicit chooser control plus remove/move (D14, practitioner Fix-now at the gate), the R3 clarification task 5.5 added, the digest-pin fact recorded. Planning complete before that (same day; exploration scratch `explore-practitioner-profile.md` consumed).
 - Current in-progress step: None.
-- Immediate next action: a `/review-plan` hardening pass over this plan (non-trivial: schema fields, custody, multi-screen UI, a practitioner-ratified safety relaxation), ideally followed by a cross-family codex plan peer-review; then `/execute-loop` from Task 0.1. Tasks 0.2 and 0.4 need the PRACTITIONER before Phase 1 can start.
+- Immediate next action: plan peer-review ROUND 2 (a fresh codex session over the amended plan — `gpt-6-astra` if the usage window allows a ~300k-token read, else `gpt-5.6-sol`); the pass converges on zero NEW build-affecting findings. Then `/execute-loop` from Task 0.1. Tasks 0.2 and 0.4 need the PRACTITIONER before Phase 1 can start.
 - Open blockers / open questions: the speaker-embedding model candidate (Tasks 0.3–0.5, D-P1) — practitioner-run fetch.
-- Phase 0 interleaving (for an `/execute-loop` run): agent tasks 0.1 and 0.3 first → PAUSE for the practitioner's 0.2 (consent ratification) and 0.4 (fetch + smoke, normal terminal) → agent task 0.5 → D-P1 (`[decision]`, a planned hard-stop) → Phase 1. Run Phase 0 as one-phase-and-stop; Phases 1–3 may run back-to-back; Phase 6 is practitioner-only.
+- Phase 0 interleaving (for an `/execute-loop` run): agent tasks 0.1 and 0.3 first → PAUSE for the practitioner's 0.2 (consent ratification) and 0.4 (fetch + smoke, normal terminal) → agent task 0.5 → PAUSE for the practitioner's 0.6 (promote the pinned model) → D-P1 (`[decision]`, a planned hard-stop) → Phase 1. Run Phase 0 as one-phase-and-stop; Phases 1–3 may run back-to-back; Phase 6 is practitioner-only.
 - Last plan sync: 2026-09-05 (created).
 - Plan peer-review round 1 (codex `gpt-6-astra` xhigh): ATTEMPTED 2026-09-05 11:40-11:46 UTC and INCONCLUSIVE - the run died on the ChatGPT account's usage limit after reading the code ("You've hit your usage limit ... try again at Sep 6th, 2026 2:41 AM"), no findings emitted, nothing logged; the peer had finished READING every named source (25 commands, 135k tokens) and was cut off before writing; after the reset (or on purchased credits) RESUME that session rather than re-reading: `codex exec resume 01a0715e-f6ba-7bf0-9fa5-e6c6d823b30a -s read-only -m gpt-6-astra -c model_reasoning_effort=xhigh "Your reading is complete. Now output the full Round 1 block exactly as the OUTPUT section of the original prompt specifies, ending with the PEER-PLAN-ROUND-1 RESULT line." </dev/null` (fallback: re-run the unchanged prompt `.cursor/loops/practitioner-profile-plan-peer-r1-prompt.txt` as round 1). The plan is NOT cross-family reviewed until that round lands.
 - Loop config: none yet (first run). Cross-family peer for this plan's reviews and its loop run (practitioner-decided 2026-09-05): codex `gpt-6-astra`, reasoning effort xhigh, read-only sandbox (`codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort=xhigh`), replacing `gpt-5.6-sol` used through round 72.
@@ -313,7 +316,7 @@ highest-History-round fallback when the Log has no headers; every
 findings writer follows it). Ignore the placeholder line when reading
 this section.
 
-- (no reviews yet)
+- 2026-09-05 round 1: 0 CRIT / 1 HIGH / 14 MED / 0 LOW; skew=cross-family; action=amended-in-place (plan peer-review — independent cross-family Codex plan peer-review on `gpt-6-astra` xhigh, read-only sandbox, run as a resumed session after the first attempt died on the account's usage limit; block transcribed verbatim by the owning planning session (Claude Code `claude-fable-5-1`). Materiality verified: 15 build-affecting / 0 record-only / 0 invalid — every peer label upheld. All 15 applied as `/review-plan`-style amendments the same day (consent text, D3/D4/D5/D9/D13/D14, new D15/D16, Tasks 0.3/0.5/0.6/1.1/1.2/1.3/2.1–2.4/3.1/3.2/5.1/5.1b/5.2/5.4/5.5/6.1, Flow 2, Critical Constraints), siblings swept. NOT converged: a plan peer-loop never converges on round 1; round 2 is owed. Line owned by the seat that finishes the round.)
 
 Format /review will append:
 - YYYY-MM-DD round N: X CRIT / X HIGH / X MED / X LOW; skew=<class>; action=<rec>
@@ -329,7 +332,450 @@ summary (canonical definitions in `/peer-review`; `/fix` never ingests
 them). Closed-round compaction follows `/document` Step 6.7 (the
 sidecar would be `findings-practitioner-profile.md`).
 
-- (no findings logged yet)
+### Round 1 - 2026-09-05 - practitioner-profile plan, independent cross-family codex plan peer-review (round 1)
+
+- Round status: Closed (15 of 15 Applied 2026-09-05 as plan amendments by the owning planning session; NOT converged — round 2 owed)
+- Source: Codex plan peer-review
+- Materiality: 15 build-affecting / 0 record-only / 0 invalid
+- Plan reviewed at: b64bddb
+- Files read:
+  - `.agents/skills/peer-review/SKILL.md`; `.cursor/plans/plan-practitioner-profile.md`; `AGENTS.md`; `docs/lessons.md`; `docs/design-system.md`.
+  - Requested symbols in `desktop/src/scribe_desktop/transcription.py`, `note.py`, `note_config.py`, `note_check.py`, `session_store.py`, `secure_storage.py`, `speech.py`, `audio_capture.py`, `session.py`, `speaker_eval.py`.
+  - Requested UI paths in `desktop/src/scribe_desktop/ui/models.py`, `transcript.py`, `note.py`, `main_window.py`; related lifecycle code in `microphone.py`, `session_screen.py`, `tasks.py`.
+  - `desktop/src/scribe_desktop/logging_setup.py`; `desktop/src/scribe_desktop/config_defaults/*.json`; relevant cases in `desktop/tests/test_transcription.py`; `scripts/setup-models.py`.
+  - Requested sections of `docs/security/threat-model.md`, `docs/security/retention-schedule.md`, `docs/security/data-flow-map.md`; `docs/testing/speaker-measurement.md`; `docs/testing/shipping-gate.md`.
+  - Context-only references in `PLAN.md` and `.cursor/plans/plan-phase3a-note-pipeline.md`, including Task 2.3, D-S1, 9.1 and 9.2.
+- Finding verification: 25 candidates / 10 dropped / 0 downgraded
+- Verification method: Static review only; no tests run and no files or directories written.
+
+#### Unstated assumptions
+
+##### PR-HIGH-001 — Clinician attribution does not exclude patient information from persistent learning
+
+- Plan section: Goal; Design Decision D9; Task 5.2; consent draft.
+- Materiality: build-affecting
+- Why it matters: A correctly identified clinician can say “John Smith has diabetes.” Saving that utterance’s leading tokens retains patient information outside session custody. D4 additionally permits incorrectly attributed patient speech to reach this path. Its documented clinical-attribution residual does not disclose this new persistent-retention consequence.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:240`:
+  > the learned phrase is the utterance's leading 2–4 content tokens (editable before approval)
+
+  `.cursor/plans/plan-practitioner-profile.md:258`:
+  > Nothing about any patient is stored beyond their session
+- Evidence: `desktop/src/scribe_desktop/note_config.py:17–21`:
+  > - "NOT patient data" is a POLICY, not an enforced property. Every validator  
+  >   below constrains SHAPE and character content — length, control characters,  
+  >   the single-claim form, duplicate detection — and none of them classifies  
+  >   meaning. A clinician override can put patient data in any accepted string,  
+  >   so nothing here may be treated as non-clinical BECAUSE it validated.
+- Suggested change: Before learning ships, require the practitioner to generalise the candidate and explicitly confirm it contains no patient-specific information. Disclose its actual retention and the semantic-validation limit, including D4’s additional learning consequence, during consent ratification. If absolute exclusion remains a requirement, constrain persistent phrases to a closed non-patient vocabulary. Add clinician-spoken identifier/history and incorrect-role verification cases. Preserve D4 itself.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting (composer). Amended: D9 (name-like/numeric tokens refused via `is_name_like_token`; mandatory no-patient-information checkbox), Task 5.2, the consent text (plain-text phrases, the judgement is the practitioner's), Critical Constraints, Task 5.4 (threat-model residue), the consent assumption wording.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-002 — Consent promises encryption for phrases stored as plaintext JSON
+
+- Plan section: Config / Environment / Deployment Impact; Tasks 0.2 and 5.2.
+- Materiality: build-affecting
+- Why it matters: The proposed consent describes a different storage protection from the implementation being authorised. Atomic replacement supplies durability, not encryption.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:258`:
+  > it stores on this computer, encrypted: a numeric fingerprint of your voice (never a recording), and the phrases you approve for routing your sentences into note sections.
+- Evidence: `desktop/src/scribe_desktop/note_config.py:8–12`:
+  > Config files are INTENDED to be clinician-authored boilerplate rather than  
+  > patient data (plan Schema / Data Changes): they live in plaintext under  
+  > ``%LOCALAPPDATA%\\ClinikoScribe\\config\\``, deliberately outside the  
+  > encrypted session store and the 24 h rule, so they survive session  
+  > destruction.
+
+  `desktop/src/scribe_desktop/note_config.py:782`:
+  ```python
+  return user_path.read_bytes(), "user"
+  ```
+- Suggested change: Correct the consent before Task 0.2 ratification to distinguish the encrypted voice profile from plaintext approved cues, their indefinite retention and ordinary file deletion. If encrypted phrases are required, add the corresponding encryption, loading and deletion contracts explicitly while preserving whole-file replacement semantics.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: the consent text now distinguishes the encrypted voice profile from plain-text approved phrases retained until deleted; the accepted-assumption wording matches.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-003 — The profile/model identity check is not bound to loaded model bytes
+
+- Plan section: Design Decision D3; Task 1.1; Codebase Integration Notes.
+- Materiality: build-affecting
+- Why it matters: A different, shape-compatible ONNX file at the installed path can pass the planned load smoke while the embedder reports the registry’s SHA. The profile then appears compatible with a different embedding space, producing incorrect similarities and unconditional role confirmation.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:348`:
+  > `model_id` + `model_sha256` properties (read from the pinned registry constant, not recomputed per call).
+
+  `.cursor/plans/plan-practitioner-profile.md:234`:
+  > a profile whose `model_sha256` does not match the installed model is ABSENT (re-enrol)
+- Evidence: The referenced Silero construction loads the supplied path, without authenticating its digest, at `desktop/src/scribe_desktop/speech.py:197–199`:
+  ```python
+  self._session = onnxruntime.InferenceSession(
+      str(path), sess_options=options, providers=["CPUExecutionProvider"]
+  )
+  ```
+
+  Actual-byte hashing exists in the setup path, `scripts/setup-models.py:95`:
+  ```python
+  digest = hashlib.sha256(target.read_bytes()).hexdigest()
+  ```
+- Suggested change: Require actual model bytes to match the pin once at embedder construction, before inference, and expose only that verified identity. Per-embedding hashing remains unnecessary. Add a valid-shape/wrong-digest case and verify visible fallback through both production factories.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: Task 1.1 — the model file's bytes are hashed once at construction and checked against the pin; mismatch raises `SpeakerModelError`; D3 says the profile is matched against the VERIFIED digest.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+#### Coverage
+
+##### PR-MED-004 — Enrolment bypasses the existing capture and worker lifecycle guards
+
+- Plan section: Tasks 1.3, 3.1 and 3.2; Planned Workflow Summary, Flow 1.
+- Materiality: build-affecting
+- Why it matters: Enrolment is invisible to the controller’s active-session state. Session capture, monitor polling and benchmark work can therefore overlap it. A one-time monitor stop is insufficient because polling restarts it. Capture-only busy handling also leaves embedding/save and queued success handling outside the close/delete guards.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:361`:
+  > running `record_enrolment` on a `TaskThread` (GUI thread never blocks; the microphone screen's monitor stream is paused during capture)
+
+  Task 3.2:
+  > `closeEvent` refuses close while an enrolment capture runs
+- Evidence: `desktop/src/scribe_desktop/session.py:355–360`:
+  ```python
+  self._refuse_while_generating("start")
+  live = self._live
+  if live is not None and live.session.state in ACTIVE_STATES:
+      raise SessionActivityError(
+          "another session is active (single-active-session invariant)"
+      )
+  ```
+
+  `desktop/src/scribe_desktop/ui/microphone.py:199`:
+  ```python
+  self._ensure_monitor()
+  ```
+
+  Its benchmark guard at `:277` is:
+  ```python
+  if self._controller.state in ACTIVE_STATES:
+  ```
+- Suggested change: Add coordinated enrolment activity ownership, honoured by session Start/Resume, monitor polling, benchmark, Re-record/Delete and window close. Hold it through capture, embedding, save and result handling; release it on every failure path. Test both capture-start orders and a monitor timer tick during enrolment. Recording before enrolment remains allowed under D10.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: new D15 (controller-owned enrolment activity honoured by start/resume, the monitor poll, the benchmark, close, Re-record/Delete); Tasks 1.3, 3.1, 3.2.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-005 — The spectral-only decision outcome has no executable implementation branch
+
+- Plan section: D-P1; Tasks 1.1, 2.1 and 3.1.
+- Materiality: build-affecting
+- Why it matters: D-P1 offers enrolment without an ONNX model, but the implementation tasks provide only ONNX/mock embedders and disable enrolment or omit attribution when the model is absent. A listed decision outcome cannot deliver the feature.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:343`:
+  > spectral features only (enrolment on the CMN'd embedding, no model)
+
+  `.cursor/plans/plan-practitioner-profile.md:354`:
+  > pass the embedder + profile when `speaker_model_available()` and a profile loads (else report the fallback, D2)
+
+  `.cursor/plans/plan-practitioner-profile.md:361`:
+  > disabled states when the speaker model is absent (message names `setup-models.py`)
+- Evidence: A reusable spectral implementation exists at `desktop/src/scribe_desktop/transcription.py:579–580`:
+  ```python
+  if cepstral_mean_normalisation:
+      log_mel = log_mel - log_mel.mean()
+  ```
+
+  Its return at `:585` is:
+  ```python
+  return np.concatenate([log_mel, [centroid / _EMBED_LOW_BAND_HZ]]).astype(np.float32)
+  ```
+- Suggested change: Define a `SpectralSpeakerEmbedder`, versioned algorithm identity, profile compatibility rules and model-free availability/UI behavior, with tests. Alternatively, make selection of this D-P1 option explicitly require amendment of the downstream tasks before Phase 1 proceeds.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: new D16 (`SpectralSpeakerEmbedder` behind the same protocol, profile bound to `model_id`); Task 1.1; D-P1's option text.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+#### Practicality / feasibility / sequencing
+
+##### PR-MED-006 — Phase 0 never installs the verified candidate at the runtime filename
+
+- Plan section: Tasks 0.3–0.5; Current State / Handoff Note.
+- Materiality: build-affecting
+- Why it matters: Task 0.4 leaves a `.part` file. Task 0.5 changes repository pins but cannot promote the practitioner’s cache file from an agent shell. The next phases expect a final `.onnx` file, so following the sequence leaves enrolment unavailable.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:339`:
+  > the script downloads to `models/speaker-embedding/<name>.onnx.part`, prints size and SHA-256, and refuses to finalise until a pin exists
+
+  `.cursor/plans/plan-practitioner-profile.md:341`:
+  > **Pin the model** — SHA-256, size and URL into `setup-models.py` (candidate mode removed for this entry)
+- Evidence: The existing setup completes installation with an explicit promotion, `scripts/setup-models.py:110–111`:
+  ```python
+  tmp.write_bytes(data)
+  tmp.replace(target)
+  ```
+- Suggested change: Add a practitioner-run step after pinning to rerun setup, verify the candidate against the selected pin, promote it to the runtime filename and confirm availability. Specify how the earlier smoke receives the `.part` candidate path before promotion. Include this step in the Phase 0 pause/resume sequence.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: Task 0.3 (candidate file + explicit smoke path), new practitioner Task 0.6 (re-run setup-models to verify and promote), the handoff's Phase 0 pause sequence.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-007 — The similarity range rejects valid unconditional-fallback results
+
+- Plan section: Schema / Data Changes; Design Decision D3; Tasks 1.1 and 2.1.
+- Materiality: build-affecting
+- Why it matters: L2 normalisation does not make cosine similarity nonnegative. If every segment has a negative similarity, D4 still selects the best cluster, whose mean can remain negative. The proposed document validator then prevents transcription from completing.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:248`:
+  > `enrolment_similarity: float | None` (0–1, the mean cosine of the matched cluster)
+
+  `.cursor/plans/plan-practitioner-profile.md:234`:
+  > when NO segment clears it, the ordinary 2-means over all segments runs and the cluster with the higher mean similarity is taken as the practitioner
+- Evidence: The pipeline constructs the validated document before persistence, `desktop/src/scribe_desktop/transcription.py:989`:
+  ```python
+  document = TranscriptDocument(
+  ```
+
+  Persistence occurs afterward at `:1004`:
+  ```python
+  write_transcript(session_dir, crypto, document)
+  ```
+
+  Under Task 1.1’s L2-normalised-vector contract, `(1, 0)` and `(-1, 0)` are valid unit vectors with cosine `-1`.
+- Suggested change: Store finite raw cosine in `[-1, 1]`, with defined handling of numerical overshoot, zero vectors and nonfinite values. Alternatively, specify one consistent transformation into `[0, 1]` for thresholding, storage, UI and reports. Test an all-negative zero-match case without changing D4.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D3 and Tasks 2.1/2.2 — raw cosine in [-1, 1], finite, zero-norm scores -1; the threshold on that scale.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-008 — Segment-label membership does not guarantee a radio exists to auto-confirm
+
+- Plan section: D13; Tasks 2.1–2.3; Schema / Data Changes.
+- Materiality: build-affecting
+- Why it matters: A best-matching acoustic cluster can contain only segments for which Whisper produced no text. It passes the planned membership validator but has no corresponding radio. An entirely silent recording has no cluster at all, making the always-set requirement impossible.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:354`:
+  > set `enrolled_speaker` (always, when a profile is applied)
+
+  `.cursor/plans/plan-practitioner-profile.md:355`:
+  > `enrolled_speaker ∈ segment labels` validator; `read_transcript` round-trip; `models.speaker_quotations` unchanged.
+- Evidence: `desktop/src/scribe_desktop/ui/models.py:298–300` excludes textless clusters:
+  ```python
+  text = " ".join(word.word_text for word in segment.transcript_words).strip()
+  if not text:
+      continue
+  ```
+
+  `desktop/src/scribe_desktop/ui/transcript.py:243–244` builds radios only from those quotations:
+  ```python
+  quotes = models.speaker_quotations(document)
+  for speaker, quote in quotes.items():
+  ```
+
+  The existing silence case at `desktop/tests/test_transcription.py:697–698` asserts:
+  ```python
+  assert document.transcript_segments == ()
+  assert read_transcript(session_dir, crypto) == document
+  ```
+- Suggested change: Define zero detected segments explicitly: preserve the empty document, invent no speaker and keep generation unavailable. For a nonempty acoustic cluster without recognised text, provide a selectable radio with a nonclinical placeholder or another explicit compatible policy. Test both cases through the relevant pipeline/UI paths. This resolves an impossible selection without introducing confidence gating.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D3, D13, Tasks 2.1/2.2 — candidate clusters must hold a segment with text; no segments → no attribution fields, generation unavailable as today.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-009 — “Enable Generate immediately” conflicts with template confirmation
+
+- Plan section: Design Decision D4; Task 2.3; Phase 2 verification.
+- Materiality: build-affecting
+- Why it matters: Voice enrolment confirms the clinician role, but the template remains unselected. Following the task literally either enables a button whose handler does nothing or bypasses the separate template-confirmation control.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:235`:
+  > Generate is enabled immediately.
+- Evidence: `desktop/src/scribe_desktop/ui/transcript.py:273`:
+  ```python
+  self.profile_combo.addItem("- choose template profile -", None)
+  ```
+
+  At `:296`:
+  ```python
+  both_confirmed = self._role_confirmed() and self._profile_confirmed()
+  ```
+
+  At `:303`:
+  ```python
+  self.generate_button.setEnabled(can_generate_now and both_confirmed)
+  ```
+
+  The handler independently refuses a missing template at `:400–401`:
+  ```python
+  if role is None or profile_id is None:
+      return  # Generate is disabled until both are confirmed; defensive.
+  ```
+- Suggested change: Specify that auto-confirm satisfies only the clinician-role predicate. Preserve template selection, valid config, recovery and generation-lease gates. Replace the unconditional enablement test with one proving enrolment alone leaves Generate disabled, then template selection enables it when all other conditions hold.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D4, Flow 2, Task 2.3 — auto-confirm satisfies the role predicate only; Generate stays gated on the template profile, config, recovery and lease.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-010 — Review edits leave previous warning acknowledgements valid
+
+- Plan section: D14; Tasks 5.1 and 5.1b; Phase 5 verification.
+- Materiality: build-affecting
+- Why it matters: Acknowledgements are stored by warning code. After acknowledging one omission, removing another clinician dose line can introduce a new `high_risk_omission` under the already-acknowledged code. Calling `_refinalise` alone allows the edited note to retain that stale acknowledgement.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:374`:
+  > Add appends a `transcript`-provenance `NoteAssertion` (contiguous coords for the whole utterance, id `m<segment>`) to the screen's working draft and `_refinalise`s
+- Evidence: The existing content-change path explicitly invalidates acknowledgements, `desktop/src/scribe_desktop/ui/note.py:367–372`:
+  ```python
+  def _after_resolution_change(self) -> None:
+      # A content change invalidates prior acknowledgements and un-saves the
+      # note: the clinician acknowledges a STABLE note, then saves.
+      self._acknowledged.clear()
+      self._note_saved = False
+      self._refinalise()
+  ```
+
+  Warning state is code-based at `:454`:
+  ```python
+  acked = group.code in self._acknowledged
+  ```
+
+  Removed high-risk coordinates produce this code at `desktop/src/scribe_desktop/note_check.py:1432–1434`:
+  ```python
+  note_warning_code="high_risk_omission",
+  severity="review",
+  source_coords=SourceCoords(segment_index, min(uncovered), max(uncovered)),
+  ```
+- Suggested change: Route add/remove/move/undo through one content-change helper that invalidates acknowledgements before refinalising. Test an acknowledged omission followed by removal of another dose line: Save and Copy must remain unavailable until fresh acknowledgement.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D14, Tasks 5.1/5.1b — every edit goes through `_after_resolution_change` (acknowledgements cleared, un-saved, re-finalised).
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+#### Simpler / safer alternatives
+
+##### PR-MED-011 — Appending a learned cue can leave the demonstrated misrouting unchanged
+
+- Plan section: Goal; D9; Task 5.2.
+- Materiality: build-affecting
+- Why it matters: Routing selects the first matching canonical section. Moving a line to a later section and appending a cue there does not override an existing earlier-section match. The app can approve and save “learning” that cannot reproduce the correction it just observed.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:376`:
+  > After an add or a move of one of the practitioner's own utterances
+
+  The same task specifies:
+  > Approve → `note_config.append_user_cue(section_key, phrase)`
+- Evidence: `desktop/src/scribe_desktop/note.py:1084–1088`:
+  ```python
+  for key in request.section_keys:
+      if key in CLINICIAN_OWNED_SECTIONS and (not is_clinician or question):
+          continue
+      if any(_contains_phrase(tokens, phrase) for phrase in self._cues.get(key, ())):
+          return key
+  ```
+
+  The earlier presenting-complaint section includes this cue at `:738`:
+  ```python
+  "pain in",
+  ```
+- Suggested change: Before offering a cue as a successful learned correction, dry-run the proposed cue set against the source utterance. If the selected section still loses, explain the conflict and offer an explicit cue edit; never delete cues silently. Pin a move to advice for an utterance that also matches an earlier presenting-complaint cue. This preserves the existing routing contract without introducing a new precedence system.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D9 and Task 5.2 — the learn prompt dry-runs the proposed cue set on the source utterance and warns when an earlier section's cue still wins; never a silent deletion.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+#### Missing verification / rollback / migration
+
+##### PR-MED-012 — Per-file atomic writes do not make re-enrolment a safe profile replacement
+
+- Plan section: Design Decision D5; Task 1.2; Phase 1 verification.
+- Materiality: build-affecting
+- Why it matters: Re-enrolment writes a fresh key over the existing key before replacing `voice.enc`. A crash or blob-write failure between those commits leaves the old profile encrypted under a lost key, destroying the previously usable profile and consent record.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:349`:
+  > `save_profile(profile)` (fresh `SessionCrypto`, DPAPI-wrap with the profile description, AES-GCM with the v1 AAD, atomic writes, key first)
+- Evidence: `desktop/src/scribe_desktop/session_store.py:551–552` replaces the fixed key file:
+  ```python
+  key_path = session_dir / KEY_FILENAME
+  atomic_write_bytes(key_path, blob, error_label="key custody blob")
+  ```
+
+  The atomicity boundary is one path, at `:525`:
+  ```python
+  os.replace(tmp_path, path)
+  ```
+
+  The session precedent creates a new directory, `desktop/src/scribe_desktop/session.py:367–371`:
+  ```python
+  session = RecordingSession(key_reference="key.dpapi")  # state defaults to idle
+  directory = self._root / session.session_id
+  crypto = SessionCrypto()
+  try:
+      directory.mkdir(parents=True, exist_ok=True)
+  ```
+- Suggested change: Specify replacement failure semantics separately from first enrolment. A simpler option is to retain the existing profile key during re-enrolment and atomically replace only the authenticated blob; another is a staged key/blob generation with one commit point. Add fault-injection checks around every replacement step, ensuring failed re-enrolment preserves the prior usable profile and Delete cannot revive an older generation.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: D5 and Task 1.2 — the profile key is generated once and re-enrolment replaces only `voice.enc` atomically; fault-injection tests.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-013 — The shared recording protocol does not resolve role-play versus acoustic identity
+
+- Plan section: Agreed Scope; Task 6.1; Phase 6 verification.
+- Materiality: build-affecting
+- Why it matters: The frozen gate procedure defaults to the practitioner acting both roles. Voice enrolment recognises a person, not an acted role: correctly matching both parts to the practitioner would be scored against conflicting `clinician`/`patient` ground truth. This cannot establish speaker separation or auto-confirm accuracy.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:389`:
+  > ~10 mock consultations recorded through the app AND in parallel to labelled 16 kHz WAVs (Audacity role-label tracks; one three-speaker consultation), plus one enrolment WAV
+- Evidence: `docs/testing/shipping-gate.md:17`:
+  > Each consultation is MOCK (the practitioner acting both roles, as at the Phase 2 completion gate) — the ratified default — unless the practitioner expressly substitutes a consented recording for a given consultation.
+
+  The harness treats role labels as speaker truth, `desktop/src/scribe_desktop/speaker_eval.py:583–584`:
+  ```python
+  majority_true = majority(chosen)
+  verdict: RoleVerdict = "CORRECT" if majority_true == CLINICIAN_LABEL else "WRONG"
+  ```
+- Suggested change: Resolve the performer protocol before Task 6.1: use distinct actual voices for the practitioner and other roles, including three actual voices in the D-S1 consultation, while keeping consultation content mock and thresholds frozen. Record this explicitly in the shared-set instructions so the practitioner does not discover after recording that one-person role-play cannot serve all three measurements.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting — and a practitioner-facing change to the recording protocol: a second real voice speaks the patient part (mock content), a third for the three-speaker consultation. Amended: Task 6.1 and the Agreed Scope protocol; the gate doc's mock definition is clarified at Task 5.5 with thresholds untouched. Surfaced to the practitioner in session.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-014 — The inherited scorer suppresses metrics for all-matched enrolled speech
+
+- Plan section: Task 2.4; Phase 2 harness verification.
+- Materiality: build-affecting
+- Why it matters: Under D13, all `speaker_1` can mean either correctly matched practitioner-only speech or every patient segment incorrectly matching the practitioner. The existing scorer classifies both as merged and omits cluster metrics, hiding a significant enrolled-condition failure from the measurement intended to assess it.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:357`:
+  > a third `ConditionResult` "enrolled" over the shipped pipeline with the embedder + a synthetic in-memory profile
+- Evidence: `desktop/src/scribe_desktop/speaker_eval.py:660–667`:
+  ```python
+  merged = len(labels) >= 2 and set(labels) == {SPEAKER_1}
+  scorable = not merged and any(truth.true_label is not None for truth in truths)
+  return ConditionResult(
+      condition=name,
+      predicted_labels=tuple(labels),
+      merged=merged,
+      metrics=cluster_metrics(labels, truths) if scorable else None,
+      role=role_outcome(speaker_role(document), labels, truths),
+  )
+  ```
+- Suggested change: Define an enrolled-condition policy that computes accuracy, confusion and purity even with one predicted cluster. Preserve legacy before/after semantics where required. Add harness cases for all-matched output over both clinician-only and clinician/patient label tracks; verify that the latter retains its measurable false-positive evidence.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: Task 2.4 — the enrolled condition computes cluster metrics even for an all-`speaker_1` output; the legacy conditions keep their merged semantics.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+##### PR-MED-015 — R3’s replacement denominator and removal counting are ambiguous
+
+- Plan section: Task 5.5; Phase 6 gate verification.
+- Materiality: build-affecting
+- Why it matters: “Assertions the generator produced” can mean transcript-only draft assertions, excluding later-confirmed autofill/prefill assertions that the frozen rubric counts. A note with only confirmed proposals can consequently acquire a zero denominator. Counting removal actions also includes undone removals or a move’s removal leg unless explicitly excluded.
+- Current plan text: `.cursor/plans/plan-practitioner-profile.md:379`:
+  > R3's numerator = lines removed during review + lines still needing deletion at signing; denominator = assertions the generator produced (the count before any removal); thresholds untouched
+- Evidence: Confirmed proposals are added during finalisation, `desktop/src/scribe_desktop/note.py:1939`:
+  ```python
+  sections = _merge_confirmed(draft.note_sections, confirmed)
+  ```
+
+  The existing rubric’s scoring population is stated at `docs/testing/shipping-gate.md:44`:
+  > after every proposal is decided and every warning acknowledged, before Save — so R1–R5 count the same note for every scorer.
+
+  Its R3 definition at `:48` is:
+  > **R3 noise** = assertions that must be deleted / assertions in the note.
+- Suggested change: Define the pre-removal denominator explicitly, including how finally confirmed proposal assertions are counted. Define distinct effective deletions, excluding restored removals, moves and undone manual additions, and specify treatment of any retained manual additions. Add text-free worked examples covering proposal-only notes, remove→undo and move. Verify that the agreed clarification preserves the intended rubric-v1 population before recording begins.
+- /fix decision: Applied
+- /fix notes: Verified build-affecting. Amended: Task 5.5 — the denominator is the post-decision, pre-removal note (transcript assertions + confirmed proposals), the numerator counts effective removals only, manual additions count in neither, three worked examples.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, owning planning session, `/review-plan`-style amendments)
+
+PEER-PLAN-ROUND-1 RESULT: 15 findings (CRIT 0 / HIGH 1 / MED 14 / LOW 0; build-affecting 15 / record-only 0 / invalid 0).
+- Composer note (2026-09-05, transcription): block transcribed verbatim from `.cursor/loops/practitioner-profile-plan-peer-r1-findings.md` (codex session `01a0715e-f6ba-7bf0-9fa5-e6c6d823b30a`, read 11:40-11:46 UTC then cut off by the usage limit, resumed 11:57-12:06 UTC with a write-the-round prompt, exit 0). Per-finding dispositions below are the owning planning session's; the peer's materiality labels are preserved beside them.
 
 ## Tasks
 Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pass at each boundary). No phase heading carries `[gates: high-auto-ok]`: this plan touches key custody, a biometric artefact, clinical-record content and a ratified safety relaxation, so HIGH findings pause for the practitioner by design. Every task is `[executor: premium-only]` in substance (Executor tier line); the label is omitted per task because the whole plan is premium.
@@ -337,30 +783,31 @@ Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pas
 ### Phase 0 — Bookkeeping, consent, model candidate
 - [ ] 🟥 0.1: **Record the gate pause by pointer.** `plan-phase3a-note-pipeline.md`: a dated bullet at the top of `Current State / Handoff Note` and one sub-bullet under Task 9.1 ("RUN PAUSED 2026-09-05 until `plan-practitioner-profile.md` Phase 3 ships; rubric v1 unchanged; the single recording set is that plan's Task 6.1"), the START HERE step 4 line annotated; `AGENTS.md` Next priority → this plan; CHANGELOG untouched (no code). Verification: the two files read back; the Phase 3A history checker still passes.
 - [ ] 🟥 0.2: **Ratify the consent text** (PRACTITIONER). Read the draft in `Config / Environment / Deployment Impact`; approve or edit; record "ratified <date>, version consent-v1" on this task. Blocks: 3.1.
-- [ ] 🟥 0.3: **Add the speaker-embedding candidate to `scripts/setup-models.py`.** Registry entry `speaker-embedding` (candidate name, URL, expected size; SHA-256 pin initially EMPTY = "candidate mode": the script downloads to `models/speaker-embedding/<name>.onnx.part`, prints size and SHA-256, and refuses to finalise until a pin exists — the silero shape); `--only speaker-embedding` accepted; `scripts/README.md` line. Plus `scripts/speaker-embedding-smoke.py`: loads the ONNX (the `SileroVad` contract), embeds each WAV given on the command line with the numpy front-end (D12), prints the cosine matrix and dims — text-free. Verification: `--help` and the `--only` validation tested without network; the smoke's front-end unit-tested on synthetic PCM (shape, determinism).
+- [ ] 🟥 0.3: **Add the speaker-embedding candidate to `scripts/setup-models.py`.** Registry entry `speaker-embedding` (candidate name, URL, expected size; SHA-256 pin initially EMPTY = "candidate mode": the script downloads to `models/speaker-embedding/<name>.onnx.candidate`, prints size and SHA-256, and does not promote it until a pin exists; the smoke takes an explicit model path so it can read the candidate file); `--only speaker-embedding` accepted; `scripts/README.md` line. Plus `scripts/speaker-embedding-smoke.py`: loads the ONNX (the `SileroVad` contract), embeds each WAV given on the command line with the numpy front-end (D12), prints the cosine matrix and dims — text-free. Verification: `--help` and the `--only` validation tested without network; the smoke's front-end unit-tested on synthetic PCM (shape, determinism).
 - [ ] 🟥 0.4: **Fetch the candidate and run the smoke** (PRACTITIONER, normal terminal): `setup-models.py --only speaker-embedding`; report the printed size + SHA-256; record two ~20 s recordings of yourself (different days or rooms if possible) and one other person as 16 kHz mono WAVs; run the smoke; paste the cosine matrix onto this task. Blocks: 0.5, D-P1.
 - [ ] 🟥 0.5: **Pin the model** — SHA-256, size and URL into `setup-models.py` (candidate mode removed for this entry); `AGENTS.md` step 3 size note; `docs/security/data-flow-map.md` flow 9 (the one network flow) gains the model. Verification: the pin test (a wrong digest refuses, like silero).
+- [ ] 🟥 0.6: **Promote the pinned model** (PRACTITIONER, normal terminal): re-run `setup-models.py --only speaker-embedding` — it verifies the candidate file against the pin and promotes it to `<name>.onnx` (PR-MED-006) — then launch the app and confirm the Status panel reports the speaker model present. Blocks: D-P1's Phase 1 start.
 - [ ] 🟥 D-P1: **Choose the model and the attribution threshold.**  `[decision]`
-  - Options: candidate 1 (WeSpeaker ResNet34-LM) / candidate 2 (ECAPA-TDNN export) / spectral features only (enrolment on the CMN'd embedding, no model)
+  - Options: candidate 1 (WeSpeaker ResNet34-LM) / candidate 2 (ECAPA-TDNN export) / spectral features only (`SpectralSpeakerEmbedder`, D16 — no model)
   - Decide after: Task 0.4's cosine matrix shows same-speaker similarity clearly above different-speaker (a gap of at least 0.2 is the expected shape); the threshold constant is set at the midpoint and re-checked in Phase 6
   - Blocks: 1.1, 2.1
 
 ### Phase 1 — Embedder and profile custody (foundation)
-- [ ] 🟥 1.1: **`speaker_embedding.py` (new).** `SpeakerEmbedder` (protocol) + `OnnxSpeakerEmbedder(model_path)`: `assert_offline_env` before `import onnxruntime`; `SessionOptions`, telemetry off, UNC refused, `SpeakerModelError` at load (missing/corrupt/wrong I/O shape, probed at construction — the `VadModelError` contract); `embed(pcm16: bytes) -> np.ndarray` L2-normalised; the numpy fbank front-end (D12) as `_fbank(pcm)`; `default_speaker_model_path()`, `speaker_model_available()` (STAT-only probe, UNC-safe), `MockSpeakerEmbedder` (deterministic vectors keyed by a caller-supplied map) for tests. `model_id` + `model_sha256` properties (read from the pinned registry constant, not recomputed per call). Verification: Phase 1 tests; mypy override for onnxruntime already exists.
-- [ ] 🟥 1.2: **`practitioner_profile.py` (new).** `PractitionerProfile` (frozen pydantic: `schema_version=1`, `model_id`, `model_sha256`, `embedding: tuple[float, ...]`, `embedding_dim`, `created_at`, `enrolment_speech_seconds`, `device_name`, `consent: ConsentRecord(accepted_at, consent_text_version, learning_opt_in)`); `default_profile_root()`; `save_profile(profile)` (fresh `SessionCrypto`, DPAPI-wrap with the profile description, AES-GCM with the v1 AAD, atomic writes, key first); `load_profile() -> PractitionerProfile | None` (absent → None; unreadable/undecryptable/wrong AAD/wrong model → `ProfileUnusableError` naming which); `delete_profile()` (key unlink first, then blob, idempotent); the DPAPI helpers in `session_store.py` gain a `description` parameter (session callers unchanged). No logging anywhere in the module. Verification: Phase 1 tests incl. the log-tripwire fixture extension.
-- [ ] 🟥 1.3: **`enrolment.py` (new).** `record_enrolment(backend, device_id, *, target_speech_seconds=30.0, max_seconds=90.0, on_progress) -> bytes` — opens `CaptureBackend.open_stream` into an in-memory buffer (the microphone screen's monitor-stream shape), VAD-gates with `SileroVad` to count speech seconds, stops at the target or the cap, returns PCM (raises `EnrolmentTooShortError` under the target); `enrol(pcm, embedder) -> tuple[np.ndarray, float]` (mean of per-VAD-segment embeddings, L2-normalised, speech seconds); the caller drops the PCM. Never touches `SessionController` or any store. Verification: mock-backend tests; "no file written anywhere" pinned with a temp `LOCALAPPDATA`.
+- [ ] 🟥 1.1: **`speaker_embedding.py` (new).** `SpeakerEmbedder` (protocol) + `OnnxSpeakerEmbedder(model_path)`: `assert_offline_env` before `import onnxruntime`; `SessionOptions`, telemetry off, UNC refused, `SpeakerModelError` at load (missing/corrupt/wrong I/O shape, probed at construction — the `VadModelError` contract); `embed(pcm16: bytes) -> np.ndarray` L2-normalised; the numpy fbank front-end (D12) as `_fbank(pcm)`; `default_speaker_model_path()`, `speaker_model_available()` (STAT-only probe, UNC-safe), `MockSpeakerEmbedder` (deterministic vectors keyed by a caller-supplied map) for tests. `model_id` + `model_sha256` properties — the digest computed from the model FILE'S BYTES once at construction and checked against the pinned value, a mismatch raising `SpeakerModelError` so a shape-compatible substitute cannot pass as the pinned model (round 1 PR-MED-003); `SpectralSpeakerEmbedder` alongside (D16). Verification: Phase 1 tests; mypy override for onnxruntime already exists.
+- [ ] 🟥 1.2: **`practitioner_profile.py` (new).** `PractitionerProfile` (frozen pydantic: `schema_version=1`, `model_id`, `model_sha256`, `embedding: tuple[float, ...]`, `embedding_dim`, `created_at`, `enrolment_speech_seconds`, `device_name`, `consent: ConsentRecord(accepted_at, consent_text_version, learning_opt_in)`); `default_profile_root()`; `save_profile(profile)` (first enrolment: fresh `SessionCrypto`, DPAPI-wrap with the profile description, key written first; re-enrolment: the EXISTING key reused and only `voice.enc` replaced atomically — D5, PR-MED-012; AES-GCM with the v1 AAD; fault-injection tests around each step prove a failed re-enrolment leaves the prior profile usable); `load_profile() -> PractitionerProfile | None` (absent → None; unreadable/undecryptable/wrong AAD/wrong model → `ProfileUnusableError` naming which); `delete_profile()` (key unlink first, then blob, idempotent); the DPAPI helpers in `session_store.py` gain a `description` parameter (session callers unchanged). No logging anywhere in the module. Verification: Phase 1 tests incl. the log-tripwire fixture extension.
+- [ ] 🟥 1.3: **`enrolment.py` (new).** `record_enrolment(backend, device_id, *, target_speech_seconds=30.0, max_seconds=90.0, on_progress) -> bytes` — opens `CaptureBackend.open_stream` into an in-memory buffer (the microphone screen's monitor-stream shape), VAD-gates with `SileroVad` to count speech seconds, stops at the target or the cap, returns PCM (raises `EnrolmentTooShortError` under the target); `enrol(pcm, embedder) -> tuple[np.ndarray, float]` (mean of per-VAD-segment embeddings, L2-normalised, speech seconds); the caller drops the PCM. Never creates a session or touches any store; it runs INSIDE `SessionController.begin_enrolment()` (D15) so Start/Resume, the monitor poll and the benchmark refuse meanwhile. Verification: mock-backend tests; "no file written anywhere" pinned with a temp `LOCALAPPDATA`.
 - [ ] 🟥 1.4: **Phase 1 tests + docs stubs.** `tests/test_speaker_embedding.py`, `tests/test_practitioner_profile.py`, `tests/test_enrolment.py`; the retention-schedule row and the threat-model surface drafted (finalised in 3.3). Verification: the Phase 1 list in `Validation / Verification`; suite green.
 
 ### Phase 2 — Attribution in the pipeline, auto-confirm, harness
-- [ ] 🟥 2.1: **`transcription.py` attribution.** `transcribe_session(..., speaker_embedder: SpeakerEmbedder | None = None, enrolled_profile: PractitionerProfile | None = None)`: inside the windowed loop compute the model embedding per segment when both are supplied (the spectral embedding still computed for the remainder clustering); at the end `attribute_speakers(similarities, spectral_embeddings, threshold)` → labels per D13 (matched → `speaker_1`; the rest → `_cluster_embeddings` among themselves as `speaker_2`/`speaker_3`; zero matches → ordinary 2-means over all segments with the higher-similarity cluster as `speaker_1`; degenerate policy unchanged and still mirrored with `label_speakers`); set `enrolled_speaker` (always, when a profile is applied), `enrolment_similarity`, `speaker_model_id` on the document; without both inputs the current path runs byte-for-byte. `ui/models.py` `build_transcriber` AND `build_recovery_runner` pass the embedder + profile when `speaker_model_available()` and a profile loads (else report the fallback, D2); `recover_session_transcription` gains the same two parameters. Verification: Phase 2 tests; the existing batching/plaintext-bound tests unchanged.
-- [ ] 🟥 2.2: **`TranscriptDocument` fields** (Schema / Data Changes) with the `enrolled_speaker ∈ segment labels` validator; `read_transcript` round-trip; `models.speaker_quotations` unchanged. Verification: round-trip + validator tests.
-- [ ] 🟥 2.3: **Auto-confirm on the Transcript screen (D4).** `_populate_generation_controls`: when `document.enrolled_speaker` is set, pre-check that radio, render the line "Clinician: confirmed from your voice profile (similarity 0.xx) — change" (a link-styled button), enable Generate; "change" un-checks and shows the manual radios with `speaker_role`'s " (suggested)"; when `None`, today's behaviour. `set_role` / `_selected_role` unchanged (the selection stays the UI state `generate()` reads). Status line for the fallback cases (D2). Verification: offscreen tests listed for Phase 2; the lying-field defence (a document whose `enrolled_speaker` names no segment is refused at construction, so the UI never sees it).
-- [ ] 🟥 2.4: **`speaker_eval.py` enrolled condition.** `--enrolment <wav>` (16 kHz mono; refused otherwise) → the enrolment vector via `enrol()`; a third `ConditionResult` "enrolled" over the shipped pipeline with the embedder + a synthetic in-memory profile; `RoleOutcome` for the auto-confirmed label (correct when the matched cluster is mostly the `clinician` label); leave-one-out from labelled clinician spans as the documented fallback when no enrolment WAV is given; report columns; `scripts/measure-speakers.py` flag; `docs/testing/speaker-measurement.md`. Teardown contract untouched (the profile is in memory only — never written by the harness). Verification: harness tests with `MockSpeakerEmbedder`.
+- [ ] 🟥 2.1: **`transcription.py` attribution.** `transcribe_session(..., speaker_embedder: SpeakerEmbedder | None = None, enrolled_profile: PractitionerProfile | None = None)`: inside the windowed loop compute the model embedding per segment when both are supplied (the spectral embedding still computed for the remainder clustering); at the end `attribute_speakers(similarities, spectral_embeddings, threshold)` → labels per D13 (matched → `speaker_1`; the rest → `_cluster_embeddings` among themselves as `speaker_2`/`speaker_3`; zero matches → ordinary 2-means over all segments with the higher-similarity cluster as `speaker_1`; degenerate policy unchanged and still mirrored with `label_speakers`); set `enrolled_speaker` (always when a profile is applied and at least one cluster holds a segment with text — D3/D13; a document with no segments carries no attribution fields), `enrolment_similarity` (raw cosine in [-1, 1]), `speaker_model_id` on the document; without both inputs the current path runs byte-for-byte. `ui/models.py` `build_transcriber` AND `build_recovery_runner` pass the embedder + profile when `speaker_model_available()` and a profile loads (else report the fallback, D2); `recover_session_transcription` gains the same two parameters. Verification: Phase 2 tests; the existing batching/plaintext-bound tests unchanged.
+- [ ] 🟥 2.2: **`TranscriptDocument` fields** (Schema / Data Changes) with the validators `enrolled_speaker ∈ {labels of segments that have transcribed text}` and `enrolment_similarity` finite in [-1, 1]; `read_transcript` round-trip; `models.speaker_quotations` unchanged. Verification: round-trip + validator tests.
+- [ ] 🟥 2.3: **Auto-confirm on the Transcript screen (D4).** `_populate_generation_controls`: when `document.enrolled_speaker` is set, pre-check that radio, render the line "Clinician: confirmed from your voice profile (similarity 0.xx) — change" (a link-styled button); Generate stays gated on the template profile, config, recovery and lease exactly as today (PR-MED-009); "change" un-checks and shows the manual radios with `speaker_role`'s " (suggested)"; when `None`, today's behaviour. `set_role` / `_selected_role` unchanged (the selection stays the UI state `generate()` reads). Status line for the fallback cases (D2). Verification: offscreen tests listed for Phase 2; the lying-field defence (a document whose `enrolled_speaker` names no segment is refused at construction, so the UI never sees it).
+- [ ] 🟥 2.4: **`speaker_eval.py` enrolled condition.** `--enrolment <wav>` (16 kHz mono; refused otherwise) → the enrolment vector via `enrol()`; a third `ConditionResult` "enrolled" over the shipped pipeline with the embedder + a synthetic in-memory profile; the enrolled condition computes `cluster_metrics` even when every predicted label is `speaker_1` (an all-matched output is a measurable false-positive case, not a merged one — PR-MED-014; the legacy two conditions keep their merged semantics); a `RoleOutcome` for the auto-confirmed label (correct when the matched cluster is mostly the `clinician` label); leave-one-out from labelled clinician spans as the documented fallback when no enrolment WAV is given; report columns; `scripts/measure-speakers.py` flag; `docs/testing/speaker-measurement.md`. Teardown contract untouched (the profile is in memory only — never written by the harness). Verification: harness tests with `MockSpeakerEmbedder`.
 - [ ] 🟥 2.5: **Threat-model + data-flow entries for attribution and D4** (drafted; finalised in 3.3). Verification: docs re-read against the code.
 
 ### Phase 3 — Practitioner surface and documentation
-- [ ] 🟥 3.1: **`ui/practitioner.py` — the Practitioner tab.** Consent text (`CONSENT_TEXT_V1` + version constant in `ui/models.py`, ratified in 0.2) with the consent checkbox and the learning opt-in checkbox; device pick (the microphone screen's device list); "Record my voice (about a minute)" with a live level and a speech-seconds counter, running `record_enrolment` on a `TaskThread` (GUI thread never blocks; the microphone screen's monitor stream is paused during capture); on success `enrol` + `save_profile`, PCM dropped, status "Voice profile saved <date> (model <id>)"; "Re-record" and "Delete voice profile" (confirm dialog); a "Learned phrases" list placeholder (Phase 5); disabled states when the speaker model is absent (message names `setup-models.py`). Verification: Phase 3 offscreen tests.
-- [ ] 🟥 3.2: **First-run behaviour + report lines.** `MainWindow`: at startup with no profile, select the Practitioner tab and show a banner ("Set up your voice profile so the app always knows which words are yours — you can still record without it"); `models.model_report_lines()` gains the speaker model + profile state (D2 visibility); `closeEvent` refuses close while an enrolment capture runs (the existing busy pattern). Verification: offscreen tests.
+- [ ] 🟥 3.1: **`ui/practitioner.py` — the Practitioner tab.** Consent text (`CONSENT_TEXT_V1` + version constant in `ui/models.py`, ratified in 0.2) with the consent checkbox and the learning opt-in checkbox; device pick (the microphone screen's device list); "Record my voice (about a minute)" with a live level and a speech-seconds counter, running `record_enrolment` on a `TaskThread` (GUI thread never blocks; the whole capture → embed → save sequence runs under `begin_enrolment()` — D15 — so the monitor poll, Start/Resume and the benchmark refuse meanwhile and Re-record/Delete are disabled); on success `enrol` + `save_profile`, PCM dropped, status "Voice profile saved <date> (model <id>)"; "Re-record" and "Delete voice profile" (confirm dialog); a "Learned phrases" list placeholder (Phase 5); disabled states when the speaker model is absent (message names `setup-models.py`). Verification: Phase 3 offscreen tests.
+- [ ] 🟥 3.2: **First-run behaviour + report lines.** `MainWindow`: at startup with no profile, select the Practitioner tab and show a banner ("Set up your voice profile so the app always knows which words are yours — you can still record without it"); `models.model_report_lines()` gains the speaker model + profile state (D2 visibility); `closeEvent` refuses close while the enrolment activity is held (D15). Verification: offscreen tests.
 - [ ] 🟥 3.3: **Docs.** `threat-model.md`: surface 5 — the practitioner's own biometric at rest (same-user residual; DPAPI; deletion) and the D4 auto-confirm relaxation as a practitioner-ratified responsibility boundary with its named residual; `retention-schedule.md`: profile row (indefinite until deleted; deletion = key deletion; never swept) and the consent record; `data-flow-map.md`: flow 12 (microphone → in-memory PCM → embedding → profile store), the model-cache entry, the explicit non-flows (no enrolment audio on disk); `design-system.md`: the first-run surface convention and the confirmation-line pattern; `AGENTS.md` Subsystem Documentation pointer; CHANGELOG. Verification: every claim traced to a call site (the docs review class).
 - [ ] 🟥 3.4: **Phase 3 smoke by the PRACTITIONER**: fresh start → banner → consent → enrol → a mock consultation → auto-confirmed role shown → Generate. Record PASS/FAIL here.
 
@@ -372,12 +819,12 @@ Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pas
 - [ ] 🟥 4.5: **The gate-run cue file** (PRACTITIONER supplies phrases; executor authors): `docs/testing/shipping-gate-config/section_cues.json` = the shipped defaults plus the practitioner's own phrases for advice, treatment, plan and follow-up; README updated; validated through the loader. Verification: the loader smoke in the README.
 
 ### Phase 5 — Consented phrase learning
-- [ ] 🟥 5.1: **"Add a transcript line" on the Note tab (D14).** An explicit control group beside the transcript panel (the panel stays a non-interactive text box): an utterance chooser listing the utterances not already in the note, labelled by segment index + speaker + the first words; a section chooser limited to the sections that utterance may enter (clinician-owned → the confirmed clinician's non-questions only; the `_route` ownership rule reused, not re-implemented); Add appends a `transcript`-provenance `NoteAssertion` (contiguous coords for the whole utterance, id `m<segment>`) to the screen's working draft and `_refinalise`s; Undo removes it again; edits disabled after Save. Verification: Phase 5 tests incl. Check 1 reconstruction and the duplicate refusal.
-- [ ] 🟥 5.1b: **Remove / Move a routed line (D14).** Per rendered `transcript`-provenance assertion: "Remove line" adds its id to the screen's removed set; "Move to section…" = remove + add through the 5.1 path under the same ownership rules; `_refinalise` filters removed ids out of the working draft before `finalise_note`; an omission warning the checker raises for a removed line is acknowledgeable (review severity) and named in the warning copy; Undo restores; frozen after Save. Verification: Phase 5 tests (remove → warning acknowledgeable, never blocking; undo; move; frozen after Save).
-- [ ] 🟥 5.2: **"Learn this phrasing?" prompt.** After an add or a move of one of the practitioner's own utterances, when `learning_opt_in` is on: a dialog showing the section, the candidate phrase (leading 2–4 content tokens, editable, `_TriggerText`-validated live) and the exact JSON line to be appended; Approve → `note_config.append_user_cue(section_key, phrase)` (creates the user file from the shipped default if absent; atomic replace; refuses duplicates with the same message the loader would give); Decline → nothing written; opt-in off → a one-line hint pointing at the Practitioner tab. Verification: Phase 5 tests.
+- [ ] 🟥 5.1: **"Add a transcript line" on the Note tab (D14).** An explicit control group beside the transcript panel (the panel stays a non-interactive text box): an utterance chooser listing the utterances not already in the note, labelled by segment index + speaker + the first words; a section chooser limited to the sections that utterance may enter (clinician-owned → the confirmed clinician's non-questions only; the `_route` ownership rule reused, not re-implemented); Add appends a `transcript`-provenance `NoteAssertion` (contiguous coords for the whole utterance, id `m<segment>`) to the screen's working draft through the content-change helper (acknowledgements cleared, note un-saved, re-finalised — D14, PR-MED-010); Undo removes it again the same way; edits disabled after Save. Verification: Phase 5 tests incl. Check 1 reconstruction and the duplicate refusal.
+- [ ] 🟥 5.1b: **Remove / Move a routed line (D14).** Per rendered `transcript`-provenance assertion: "Remove line" adds its id to the screen's removed set; "Move to section…" = remove + add through the 5.1 path under the same ownership rules; the content-change helper filters removed ids out of the working draft before `finalise_note` (acknowledgements cleared — PR-MED-010); an omission warning the checker raises for a removed line is acknowledgeable (review severity) and named in the warning copy; Undo restores; frozen after Save. Verification: Phase 5 tests (remove → warning acknowledgeable, never blocking; undo; move; frozen after Save).
+- [ ] 🟥 5.2: **"Learn this phrasing?" prompt.** After an add or a move of one of the practitioner's own utterances, when `learning_opt_in` is on: a dialog showing the section, the candidate phrase (leading 2–4 content tokens, editable, `_TriggerText`-validated live, REFUSED while any token is name-like per `is_name_like_token` or numeric — PR-HIGH-001), a dry-run verdict ("with this phrase the line routes to <section>", or a warning that an earlier section's cue still wins first-match routing plus an offer to edit — never a silent cue deletion, PR-MED-011), the exact JSON line to be appended, and a mandatory "This phrase contains no patient information" checkbox; Approve → `note_config.append_user_cue(section_key, phrase)` (creates the user file from the shipped default if absent; atomic replace; refuses duplicates with the same message the loader would give); Decline → nothing written; opt-in off → a one-line hint pointing at the Practitioner tab. Verification: Phase 5 tests.
 - [ ] 🟥 5.3: **Practitioner tab: learned phrases.** List = phrases in the user `section_cues.json` not present in the shipped default, grouped by section; Delete removes one (atomic replace); the loader is the only reader. Verification: offscreen tests.
-- [ ] 🟥 5.4: **Docs + tests.** Threat-model surface 1 (config as note-content input) extended to the learned-phrase path; surface 2 (clinician-asserted content) extended to review edits (subtract-only, D14); data-flow-map flow 13 (review → approved phrase → cue file); `design-system.md` (the edit controls); CHANGELOG. Verification: suite green.
-- [ ] 🟥 5.5: **Gate-doc R3 clarification** (`docs/testing/shipping-gate.md` "What is measured" + the R3 line in the plan's Task 9.1 table header, both plans): with Remove available, R3's numerator = lines removed during review + lines still needing deletion at signing; denominator = assertions the generator produced (the count before any removal); thresholds untouched; the practitioner initials the clarification on this task. Verification: re-read; no number changed.
+- [ ] 🟥 5.4: **Docs + tests.** Threat-model surface 1 (config as note-content input) extended to the learned-phrase path, naming the semantic limit (the app cannot classify meaning; the name/number refusal plus the practitioner's confirmation are the controls — PR-HIGH-001); surface 2 (clinician-asserted content) extended to review edits (subtract-only, D14); data-flow-map flow 13 (review → approved phrase → cue file); `design-system.md` (the edit controls); CHANGELOG. Verification: suite green.
+- [ ] 🟥 5.5: **Gate-doc R3 clarification** (`docs/testing/shipping-gate.md` "What is measured" + the R3 line in the plan's Task 9.1 table header, both plans): with Remove available: denominator = the assertions in the note at the scoring point BEFORE any removal but AFTER every proposal decision (transcript assertions + confirmed proposals — the population rubric v1 already scores); numerator = EFFECTIVE removals (still in force at the scoring point — an undone removal and a move's removal leg do not count) + lines still needing deletion at signing; manual additions count in neither; thresholds untouched; three text-free worked examples in the doc (a proposal-only note, remove → undo, a move) — PR-MED-015; the practitioner initials the clarification on this task. Verification: re-read; no number changed.
 
 ### Phase H — Hardening stage
 - [ ] 🟥 H1: `/review-loop` (or `/review` → `/fix`) to convergence over Phases 1–5 as one surface
@@ -386,7 +833,7 @@ Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pas
 - [ ] 🟥 H4: final cross-family `/peer-review` (codex) re-check to confirm convergence
 
 ### Phase 6 — Measurement and gate resumption (PRACTITIONER-owned)
-- [ ] 🟥 6.1: **The single recording set.** Per the protocol in `Agreed Scope`: ~10 mock consultations recorded through the app AND in parallel to labelled 16 kHz WAVs (Audacity role-label tracks; one three-speaker consultation), plus one enrolment WAV; the retention decision for the WAVs settled and recorded in the Phase 3A plan's Task 2.3.
+- [ ] 🟥 6.1: **The single recording set.** Per the protocol in `Agreed Scope`: ~10 mock consultations recorded through the app AND in parallel to labelled 16 kHz WAVs (Audacity role-label tracks; one three-speaker consultation), plus one enrolment WAV; **voices (PR-MED-013):** the practitioner speaks ONLY the clinician part and a second real person (a colleague or family member; mock content, no real patient) speaks the patient part, with a third real voice for the three-speaker consultation — one person acting both parts cannot be scored for speaker separation or auto-confirm, because enrolment recognises a person, not a part; the gate doc's mock definition is clarified accordingly at Task 5.5 (thresholds untouched); the retention decision for the WAVs settled and recorded in the Phase 3A plan's Task 2.3.
 - [ ] 🟥 6.2: **Run the harness** (`scripts/measure-speakers.py --enrolment <wav> <dir>` from a normal terminal); record the three conditions' numbers and the auto-confirm correctness here AND in the Phase 3A plan's Task 2.3; decide D-S1 there; if auto-confirm correctness is below the shipped role accuracy, re-open D4's margin-gated alternative as a scoped `/review-plan`.
 - [ ] 🟥 6.3: **Resume the Task 9.1 gate run** in the Phase 3A plan against rubric v1 with the same consultations (the gate scoring happened at recording time in 6.1 — the sheet under Task 9.1 is filled from it); the pause pointer from 0.1 closed.
 
