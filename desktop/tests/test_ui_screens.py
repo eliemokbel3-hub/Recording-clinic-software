@@ -2285,7 +2285,7 @@ class TestNoteWiring:
     def test_recorded_fail_keeps_copy_hidden_through_the_window(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Task 9.1a, the FAIL outcome (the shipped state): with the recorded
+        """Task 9.1a, the FAIL outcome: with the recorded
         decision False, the Note tab reached through the window's own wiring
         shows no copy affordance at all - the button is hidden AND disabled
         and the note body is display-only - and full ratification changes
@@ -2358,4 +2358,101 @@ class TestNoteWiring:
         # The transcript panels stay display-only whatever the decision.
         assert note_screen.transcript_view.textInteractionFlags() == no_interaction
         assert window.transcript_screen.transcript_view.textInteractionFlags() == no_interaction
+        window.close()
+
+    # --- Round 70 PR-HIGH-002 (verified MED): the clipboard contract itself ---
+
+    def _fake_clipboard(self, monkeypatch: Any) -> list[str]:
+        """Stand in for ``QApplication.clipboard()`` inside ``ui.note`` so the
+        copy action is observable WITHOUT touching the real Windows clipboard
+        (history / cloud sync would retain even fixture text); returns every
+        payload ``setText`` received. ``ui.note`` uses ``QApplication`` for
+        nothing else, so the module name is replaced rather than the Qt class
+        patched."""
+        from scribe_desktop.ui import note as note_module
+
+        payloads: list[str] = []
+
+        class _Clipboard:
+            def setText(self, text: str) -> None:  # noqa: N802 - Qt spelling
+                payloads.append(text)
+
+        clipboard = _Clipboard()
+
+        class _StubApplication:
+            @staticmethod
+            def clipboard() -> _Clipboard:
+                return clipboard
+
+        monkeypatch.setattr(note_module, "QApplication", _StubApplication)
+        return payloads
+
+    @staticmethod
+    def _attempt_copy(note_screen: Any) -> None:
+        """Both copy routes: the button (inert while disabled or hidden) and a
+        direct ``_copy_note`` call (the click-time re-check must refuse)."""
+        note_screen.copy_button.click()
+        note_screen._copy_note()
+
+    def test_copy_never_reaches_the_clipboard_under_a_recorded_fail(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 70 PR-HIGH-002 (FAIL outcome): nothing reaches the clipboard on
+        either route - the hidden button's click or a direct ``_copy_note``
+        call - at any point of the review, full ratification included. The
+        presentation pins above say the affordance is absent; this pins that
+        the ACTION is inert."""
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", False)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        payloads = self._fake_clipboard(monkeypatch)
+        self._attempt_copy(note_screen)
+        self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        self._attempt_copy(note_screen)
+        assert payloads == []
+        window.close()
+
+    def test_copy_delivers_exactly_the_ratified_note_under_a_recorded_pass(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 70 PR-HIGH-002 (PASS outcome): the clipboard receives nothing
+        while a proposal is pending, a review warning is unacknowledged, or the
+        note is unsaved - on the button route AND the direct-call route - and
+        once ratified the Copy click delivers EXACTLY ``format_note_body`` of
+        the note under review: the confirmed proposal's text is in it, and
+        every line is a section title or a provenance-tagged bullet, so no raw
+        transcript line can ride along."""
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        payloads = self._fake_clipboard(monkeypatch)
+        self._attempt_copy(note_screen)
+        assert payloads == []  # proposals pending
+        self._fake_write_note(monkeypatch)
+        proposals = list(note_screen._draft.note_proposals)
+        assert proposals  # the fixture's autofill rule must have fired
+        for proposal in proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        self._attempt_copy(note_screen)
+        assert payloads == []  # review warnings unacknowledged
+        note_screen._acknowledge_all()
+        self._attempt_copy(note_screen)
+        assert payloads == []  # not yet saved
+        note_screen.save()
+        note_screen.copy_button.click()
+        note = note_screen.current_note()
+        assert note is not None
+        expected = models.format_note_body(note)
+        assert payloads == [expected]
+        assert "Ice pack use explained." in expected  # the ratified proposal
+        for line in expected.splitlines():
+            if not line:
+                continue
+            assert line.endswith(":") or (line.startswith("  - ") and line.endswith("]"))
+        note_screen._copy_note()
+        assert payloads == [expected, expected]  # the direct route agrees
         window.close()

@@ -25,7 +25,10 @@ than anything about a particular note.
 
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is
-  cleared on close.
+  cleared with the rest of the tab whenever the review ends (``clear()`` on
+  Complete, Discard, cancel, a new transcript or a new generation); an accepted
+  window close ends the process — ``MainWindow.closeEvent`` refuses to close
+  while a review is busy and calls no separate tab-clear (round 70 PR-LOW-013).
 - The note is the RATIFIED copyable surface, but only once the Task 9.1
   shipping gate passes: copy is bound to ``models.COPY_TO_CLINIKO_ENABLED``,
   which ships False, so copy is DISABLED and the note panel is display-only
