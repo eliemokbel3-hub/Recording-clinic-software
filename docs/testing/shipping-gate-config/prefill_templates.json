@@ -8,7 +8,7 @@
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Knee assessed today, range of movement, ligament testing and patella tracking all checked."
+          "seed_text": "Knee examined today."
         }
       ]
     },
@@ -19,7 +19,7 @@
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Shoulder assessed today, range of movement, rotator cuff strength and impingement tests all checked."
+          "seed_text": "Shoulder examined today."
         }
       ]
     },
@@ -30,7 +30,7 @@
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Lower back assessed today, lumbar range of movement, neural tension and palpation all checked."
+          "seed_text": "Lower back examined today."
         }
       ]
     }
