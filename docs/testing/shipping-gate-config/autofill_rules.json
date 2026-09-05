@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "autofill_rules": [
+    {
+      "rule_id": "ice-pack-advice",
+      "section_key": "advice_home_exercise",
+      "trigger_phrase": "ice pack",
+      "expansion": [
+        "Ice pack use explained, 15 minutes wrapped in a cloth, up to four times daily."
+      ]
+    }
+  ]
+}

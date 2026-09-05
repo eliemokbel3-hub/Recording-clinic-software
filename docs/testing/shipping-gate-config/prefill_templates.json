@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "prefill_templates": [
+    {
+      "prefill_id": "knee-exam",
+      "display_name": "Knee examination",
+      "region_keywords": ["knee", "knees"],
+      "seed_assertions": [
+        {
+          "section_key": "objective_examination",
+          "seed_text": "Knee examined for range of motion, ligament stability and patellar tracking."
+        }
+      ]
+    },
+    {
+      "prefill_id": "shoulder-exam",
+      "display_name": "Shoulder examination",
+      "region_keywords": ["shoulder", "shoulders"],
+      "seed_assertions": [
+        {
+          "section_key": "objective_examination",
+          "seed_text": "Shoulder examined for range of motion, rotator cuff strength and impingement signs."
+        }
+      ]
+    },
+    {
+      "prefill_id": "lumbar-exam",
+      "display_name": "Lower back examination",
+      "region_keywords": ["lower back", "low back", "lumbar"],
+      "seed_assertions": [
+        {
+          "section_key": "objective_examination",
+          "seed_text": "Lumbar spine examined for range of motion, neural tension and palpable tenderness."
+        }
+      ]
+    }
+  ]
+}
