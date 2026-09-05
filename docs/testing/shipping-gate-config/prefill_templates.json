@@ -8,7 +8,7 @@
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Knee examined for range of motion, ligament stability and patellar tracking."
+          "seed_text": "Knee assessed today, range of movement, ligament testing and patella tracking all checked."
         }
       ]
     },
@@ -19,18 +19,18 @@
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Shoulder examined for range of motion, rotator cuff strength and impingement signs."
+          "seed_text": "Shoulder assessed today, range of movement, rotator cuff strength and impingement tests all checked."
         }
       ]
     },
     {
       "prefill_id": "lumbar-exam",
       "display_name": "Lower back examination",
-      "region_keywords": ["lower back", "low back", "lumbar"],
+      "region_keywords": ["lower back", "low back", "back pain", "lumbar"],
       "seed_assertions": [
         {
           "section_key": "objective_examination",
-          "seed_text": "Lumbar spine examined for range of motion, neural tension and palpable tenderness."
+          "seed_text": "Lower back assessed today, lumbar range of movement, neural tension and palpation all checked."
         }
       ]
     }
