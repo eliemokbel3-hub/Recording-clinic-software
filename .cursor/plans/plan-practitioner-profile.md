@@ -301,6 +301,7 @@ See `Planning Extraction Summary` → `Deferred — Actionable Later`, `Excluded
 - Open blockers / open questions: the speaker-embedding model candidate (Tasks 0.3–0.5, D-P1) — practitioner-run fetch.
 - Phase 0 interleaving (for an `/execute-loop` run): agent tasks 0.1 and 0.3 first → PAUSE for the practitioner's 0.2 (consent ratification) and 0.4 (fetch + smoke, normal terminal) → agent task 0.5 → D-P1 (`[decision]`, a planned hard-stop) → Phase 1. Run Phase 0 as one-phase-and-stop; Phases 1–3 may run back-to-back; Phase 6 is practitioner-only.
 - Last plan sync: 2026-09-05 (created).
+- Plan peer-review round 1 (codex `gpt-6-astra` xhigh): ATTEMPTED 2026-09-05 11:40-11:46 UTC and INCONCLUSIVE - the run died on the ChatGPT account's usage limit after reading the code ("You've hit your usage limit ... try again at Sep 6th, 2026 2:41 AM"), no findings emitted, nothing logged; prompt `.cursor/loops/practitioner-profile-plan-peer-r1-prompt.txt` is unchanged and is re-run as round 1 after the reset (or on purchased credits). The plan is NOT cross-family reviewed until that round lands.
 - Loop config: none yet (first run). Cross-family peer for this plan's reviews and its loop run (practitioner-decided 2026-09-05): codex `gpt-6-astra`, reasoning effort xhigh, read-only sandbox (`codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort=xhigh`), replacing `gpt-5.6-sol` used through round 72.
 
 ## Review History
