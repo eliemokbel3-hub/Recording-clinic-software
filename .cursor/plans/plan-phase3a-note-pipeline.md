@@ -1397,7 +1397,7 @@ No transcript, note, patient name or clinical quotation appears in the new docum
 - Current behaviour:
 
   ```text
-  Dev-machine parity, same commit: the `AGENTS.md` Local Run Steps prerequisite "Node 20+" becomes "Node 24 LTS (a 22.13+ release of the Node 22 line is also accepted by every extension tool; Node 23 is not)" (the task as first written said "22.12+" — corrected at round 68 LOW-001 and round 71 PR-LOW-018 against eslint's locked `^20.19.0 || ^22.13.0 || >=24`)
+  Dev-machine parity, same commit: the `AGENTS.md` Local Run Steps prerequisite "Node 20+" becomes "Node 24 LTS (22.12+ accepted by every extension tool)"
   ```
 
   ESLint's locked range is:
@@ -1434,7 +1434,7 @@ No transcript, note, patient name or clinical quotation appears in the new docum
   but later says verbatim:
 
   ```text
-  **What remained the practitioner's at the 2026-09-04 hand-off (pre-proof state, kept for the record — round 71 PR-LOW-019):** the CI run was the ONLY proof and needed a pull request or a push to `main` (`push: branches: [main]` / `pull_request` are the sole triggers); until the 2026-09-05 push the Done-when (all three jobs green, zero Node-runtime deprecation annotations) was UNPROVEN and this note claimed local counts and runtime declarations only. The push happened 2026-09-05 and CI run 33934875082 MET it — the CI-proof sub-bullet below is the authoritative result.
+  **What remains is the practitioner's:** the CI run is the ONLY proof and needs a pull request or a push to `main` (`push: branches: [main]` / `pull_request` are the sole triggers) — Done-when (all three jobs green, zero Node-runtime deprecation annotations) is UNPROVEN until then; this note claims local counts and runtime declarations, not a green run.
   ```
 
   The following proof block concludes:
