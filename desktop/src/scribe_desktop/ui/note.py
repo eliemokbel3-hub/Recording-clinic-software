@@ -262,8 +262,11 @@ class NoteScreen(QWidget):
         self._refinalise()  # -> _update_controls -> _apply_copy_binding
 
     def clear(self) -> None:
-        """Clear all plaintext and review state (on close, or when a
-        different transcript loads over this note — Task 7.1/7.3)."""
+        """Clear all plaintext and review state. Called when a different
+        transcript or a new generation replaces this note, on cancel, and
+        when the transcript closes on Complete or Discard (Task 7.1/7.3);
+        an accepted window close is NOT a caller — it ends the process
+        (round 71 PR-LOW-017)."""
         self._draft = None
         self._document = None
         self._config = None

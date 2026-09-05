@@ -360,6 +360,7 @@ Recorded in `Planning Extraction Summary` above — `runtime.py` extraction (→
 Everything Cliniko-facing stays Phase 4: template fetch, draft creation, the write ledger, dedupe, and the offline queue. This phase maps canonical sections onto a practitioner template for **display only**.
 
 ## Current State / Handoff Note
+- **PEER ROUND 71 (codex confirmation of the round-70 fixes) - 8 of 8 fixes CONFIRMED on substance, all three final verdicts CONFIRMED, 3 LOW docs residues APPLIED 2026-09-05; confirmation round 72 NEXT (prompt `.cursor/loops/stage-9-peer-r71-prompt.txt`, log `stage-9-peer-r71.log`, block `stage-9-peer-r71-findings.md`).** Residues: PR-LOW-017 (`NoteScreen.clear()` docstring "on close"), PR-LOW-018 (the Task 9.0 instruction still quoted "22.12+" - PR-LOW-015's class), PR-LOW-019 (the Task 9.0 Done note's pre-proof "UNPROVEN until then" clause beside the CI-proof sub-bullet). Nothing in code or tests changed this round; pytest 1368 stands. The pass converges on a clean round 72; the `AGENTS.md` Known Issues item closes then.
 - **PEER ROUND 70 (codex, the OWED first cross-family round over the stage-9 diff) - 8 findings VERIFIED and APPLIED 2026-09-05; confirmation round 71 NEXT (Windows host, composer Claude Code `claude-fable-5-1`, interactive `/peer-review` driving `codex exec -s read-only -m gpt-5.6-sol -c model_reasoning_effort=xhigh`; prompt `.cursor/loops/stage-9-peer-r70-prompt.txt`, log `stage-9-peer-r70.log`, block `stage-9-peer-r70-findings.md`).** Result 0 CRIT / 1 HIGH / 3 MED / 4 LOW: PR-HIGH-002 (both-outcome tests never exercised the clipboard action or payload - verified MED, two clipboard pins added through a stub that never touches the Windows clipboard), PR-MED-009 (dates axis missing from the proposed set), PR-MED-010 (the doc named a Task 9.1 scoring table that did not exist - skeleton added under Task 9.1), PR-MED-011 (no single scoring point for R1-R5 - defined at the R6 stop, before Save), PR-LOW-013 ("cleared on close" outran `closeEvent` - reworded, sibling docstring too), PR-LOW-014 (FAIL-test docstring carried "(the shipped state)"), PR-LOW-015 ("22.13+" reads as including Node 23), PR-LOW-016 (Current Status still said the CI run was pending). Gates after the fixes: ruff clean, mypy clean, pytest 1368. STEP 2 of START HERE is DONE once round 71 confirms; the `AGENTS.md` Known Issues item closes then.
 - **STEP 1 OF START HERE DONE (2026-09-05, Windows host, Claude Code `claude-fable-5-1`, `/start-session` → practitioner chose "merge the cloud branch and push main").** `origin/claude/load-plan-typsta` fast-forwarded into `main` (`1d786bb..e7f4072`; the base copy of this plan is current again), Windows re-verification green (ruff, mypy, `test_ui_screens.py` 100 passed), `main` pushed, CI run 33934875082 green ×3 with 0 annotations — Task 9.0's CI leg is PROVEN (sub-bullet under 9.0). Node 24 is already on this machine (`v24.18.0`; step 3 done). NEXT: step 2 — the owed cross-family codex peer review, round **70**, over `git diff 84377ad 2a54952 -- .github/workflows/ci.yml docs/testing/shipping-gate.md desktop/tests/test_ui_screens.py AGENTS.md`. Housekeeping noticed, not acted on: the stale worktree `.claude/worktrees/determined-raman-17fdcc` (branch `claude/vibrant-nightingale-35d939`, 2026-08-14, one comment-only commit whose wording `main` already carries from hardening round 45) can be pruned.
 - **START HERE (2026-09-05 — the next session runs on the WINDOWS HOST; cloud sessions are DISABLED by practitioner decision).** The GitHub branch `claude/load-plan-typsta` holds everything from the 2026-09-04/05 cloud sessions — `84377ad` (scoped `/review-plan`: Tasks 9.0 + 9.1a added), `2a54952` (Phase 9 prep built, reviewed, documented), `3cf70c4` + `f9cdb12` (cloud-disabled decision, doc fix) and this handoff; `main` did NOT have them until this session fast-forwarded them in (2026-09-05, `1d786bb..e7f4072`, pushed; step 1 DONE). Plain-language steps for the practitioner, in order:
@@ -631,6 +632,7 @@ Format /review will append:
 - 2026-09-04 round 68: 0 CRIT / 0 HIGH / 0 MED / 6 LOW; skew=none; action=none (Phase 9 Tasks 9.0 + 9.1a, in-session `/review-loop` round 1 of cap 3 on the Claude Code executor subagent under `/execute-loop` run=stage-9, headless. Primary baseline `84377ad`; all five changed paths read in full against an executor-verified tree (ruff clean, mypy error set unchanged, pytest failing set unchanged, 1252 passed). LOW-001 `AGENTS.md` "22.12+" vs eslint `^22.13.0`; LOW-002 the case-sensitive flip grep misses the plan's named `Shipping gate` Validation line; LOW-003 the recovery sweep stated as a destruction path; LOW-004 prompt-injection "nothing to measure" overclaim; LOW-005 `_fake_write_note` docstring; LOW-006 Done-note counts. All Fix-now, AUTO-DISPOSABLE, no gate fired.)
 - 2026-09-04 round 69: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=pre-existing; action=triage-and-ship (Phase 9 Tasks 9.0 + 9.1a, post-round-68-fix `/review-loop` re-review, round 2 of cap 3 on the Claude Code executor subagent under `/execute-loop` run=stage-9. Full-scope re-review of the same five paths against the executor-verified tree (ruff clean, mypy set unchanged, pytest 1252). Post-Fix Regression Check over the six round-68 edits: one narrowing introduced by the LOW-003 fix (LOW-008 ⚡ - the app can be closed on a queued session, so a crash is not the only expiry case); two pre-existing doc overclaims (LOW-007 "runs this same gate", LOW-009 an R4 mis-attribution). All Fix-now, AUTO-DISPOSABLE, applied in-round; 2 🆕 / 1 ⚡; LOOP CONVERGED at round 2 of cap 3.)
 - 2026-09-05 round 70: 0 CRIT / 1 HIGH / 3 MED / 4 LOW; skew=cross-family; action=fix-before-convergence (Phase 9 Tasks 9.0 + 9.1a, the OWED first cross-family Codex peer-review on `gpt-5.6-sol` xhigh, composer-driven interactive `/peer-review` on the Windows host, round 1; read-only sandbox, block transcribed verbatim by the composer; tree composer-verified before the round (pytest 1366, ruff + mypy clean; CI run 33934875082 green). All 8 verified against the code by the composer (Claude Code `claude-fable-5-1`): 8 confirmed, 0 refuted, 1 downgraded - PR-HIGH-002 judged MED (the absent/disabled copy states were already pinned; the unpinned residue was the click-time re-check and the payload identity, test-only). All 8 APPLIED 2026-09-05 (+2 clipboard pins, 1366 -> 1368; docs, plan table skeleton, AGENTS.md, one docstring); composer-verified GREEN (pytest 1368, ruff + mypy clean). NOT CONVERGED until confirmation round 71. Line owned by the seat that finishes the round.)
+- 2026-09-05 round 71: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=cross-family; action=fix-before-convergence (Phase 9 Tasks 9.0 + 9.1a, post-round-70-fix independent cross-family Codex peer-review on `gpt-5.6-sol` xhigh, composer-driven interactive `/peer-review` on the Windows host, round 2; read-only sandbox, block transcribed verbatim by the composer; tree composer-verified before the round (commit `03f0370`: pytest 1368, ruff + mypy clean). Fix confirmations: PR-HIGH-002 (MED grading agreed), PR-MED-009, PR-MED-010, PR-MED-011, PR-LOW-013, PR-LOW-014, PR-LOW-016 CONFIRMED; PR-LOW-015 NOT CONFIRMED as a class (one plan quotation left) -> PR-LOW-018. Final verdicts A (no unratified route to the clipboard without a test failing), B (no claim outruns the code), C (text-free) all CONFIRMED. New: PR-LOW-017 the `clear()` method docstring still said "on close", PR-LOW-018 the Task 9.0 instruction still quoted "22.12+", PR-LOW-019 the Task 9.0 Done note said both proven and unproven; all docs-only, all verified by the composer (3 confirmed, 0 refuted, 0 downgraded) and APPLIED 2026-09-05; ruff + mypy clean. NOT CONVERGED until confirmation round 72. Line owned by the seat that finishes the round.)
 
 ## Review Findings Log
 Each /review invocation appends a detailed findings block here, with
@@ -1266,6 +1268,197 @@ Each /review invocation appends a detailed findings block here, with
 PEER-ROUND-70 RESULT: 8 findings (CRIT 0 / HIGH 1 / MED 3 / LOW 4).
 - Composer note (2026-09-05, transcription): block transcribed verbatim from `.cursor/loops/stage-9-peer-r70-findings.md` (codex session `01a06f23-f1e0-70b0-a805-c3814a57aed1`, 01:17-01:30 UTC, read-only, exit 0). The peer's `Confirmed / disputed` subsection labels rounds 68-69's findings `PR-LOW-00n`; those rounds' ids are `LOW-001`..`LOW-009` (no `PR-` prefix). Verification and fix legs by the composer (Claude Code `claude-fable-5-1`) follow per finding.
 
+### Round 71 - 2026-09-05 - Phase 9 Tasks 9.0 + 9.1a, post-round-70-fix independent cross-family codex peer review (confirmation)
+
+- Round status: Closed (3 of 3 Applied 2026-09-05 by the composer, Claude Code `claude-fable-5-1`, all docs-only; ruff + mypy clean, history checker OK; the eight round-70 fixes CONFIRMED and the three final verdicts CONFIRMED by this round) - NOT CONVERGED until confirmation round 72
+- Source: Codex peer-review
+- Baseline: `6582362`; round-70 fix commit reviewed at HEAD `03f037073979b16044c916efb7281d3061d0f178`
+- Files reviewed: `docs/testing/shipping-gate.md`, `desktop/tests/test_ui_screens.py`, `AGENTS.md`, `desktop/src/scribe_desktop/ui/note.py`, `.cursor/plans/plan-phase3a-note-pipeline.md`; supporting production evidence from `desktop/src/scribe_desktop/ui/main_window.py`, `desktop/src/scribe_desktop/ui/models.py`, `desktop/src/scribe_desktop/ui/transcript.py`, `extension/package-lock.json`, and `PLAN.md`
+- Validation basis: Read-only static review of `git diff 6582362 HEAD` and the named HEAD files and symbols. No pytest, npm, build, or filesystem-writing command was run. The composer's recorded post-fix result—ruff clean, mypy strict clean over 30 source files, pytest 1368 passed—was accepted without re-validation.
+- Finding verification: 6 candidates / 3 dropped / 0 downgraded
+- Composer verification (leg 1, 2026-09-05, Claude Code `claude-fable-5-1`): 3 confirmed / 0 refuted / 0 downgraded; fix leg (leg 2) applied all 3 the same day (one method docstring, two plan lines), each re-read; gates: ruff clean, mypy strict clean (30 files); no test or production path changed, so the round-70 pytest result (1368) stands.
+
+#### PR-HIGH-002 fix confirmation — CONFIRMED
+
+The two new tests exercise both application-controlled routes: `copy_button.click()` and a direct `_copy_note()` call (`desktop/tests/test_ui_screens.py:2390-2395`). Under FAIL they attempt both before and after full ratification and require an empty captured payload list (`desktop/tests/test_ui_screens.py:2397-2417`). Under PASS they require no payload while proposals are pending, review warnings remain unacknowledged, or the note is unsaved; after Save the button route must deliver exactly `models.format_note_body(note)`, include the confirmed proposal, satisfy the section-title/provenance-bullet shape, and agree byte-for-byte with the direct route (`desktop/tests/test_ui_screens.py:2419-2457`).
+
+The stub genuinely intercepts production: `ui/note.py` uses its imported `QApplication` only at `QApplication.clipboard()` (`desktop/src/scribe_desktop/ui/note.py:50`, `desktop/src/scribe_desktop/ui/note.py:519-525`). `monkeypatch.setattr` installs the module replacement at `desktop/tests/test_ui_screens.py:2387` and pytest's monkeypatch fixture restores it after the test, so neither the stub nor the flag/write-note replacements leak into neighbouring Qt tests.
+
+A hidden button alone would not prove that programmatic `click()` is inert, but these states are also disabled; a disabled `QPushButton.click()` does not emit `clicked`. The direct `_copy_note()` attempt independently verifies the click-time guard. A raw appended transcript line would fail `desktop/tests/test_ui_screens.py:2452-2455`, and anything appended by `_copy_note` would fail exact equality at `:2449-2450`. The current formatter also has no transcript input: it renders only `GeneratedNote.note_sections` and their assertions (`desktop/src/scribe_desktop/ui/models.py:400-438`).
+
+The MED regrading is agreed: round 70 identified a test-contract gap around defence-in-depth and payload identity, not a live unsafe implementation defect.
+
+#### PR-MED-009 fix confirmation — CONFIRMED
+
+The proposed set now expressly includes “numbers, dates, medications, doses and measurements” (`docs/testing/shipping-gate.md:23`), covering the date axis required by `PLAN.md:170`.
+
+#### PR-MED-010 fix confirmation — CONFIRMED
+
+The Task 9.1 table exists at `.cursor/plans/plan-phase3a-note-pipeline.md:1540-1556`. It contains consultation IDs, separate numerator/denominator slots for R1, R2, R3 and R5, an R4 count, R6 yes/no and minutes, a totals row, and a dated decision line with rubric version and set ID. Its structure accepts counts, yes/no, IDs and dates—not transcript text, note text, names or quotations.
+
+The sheet description at `docs/testing/shipping-gate.md:40` matches those fields and correctly says that the aggregate decision is recomputable from the retained sheet.
+
+#### PR-MED-011 fix confirmation — CONFIRMED
+
+One scoring point is now defined twice consistently: after all proposal decisions and review-warning acknowledgements, before Save, Cancel or Complete (`docs/testing/shipping-gate.md:37`, `docs/testing/shipping-gate.md:44`). R6 stops at that same point, and regeneration explicitly discards the row (`docs/testing/shipping-gate.md:37`).
+
+The `_refinalise` explanation is correct. Confirm and decline route through `_set_resolution()` and `_after_resolution_change()`, which clears stale state and calls `_refinalise()` (`desktop/src/scribe_desktop/ui/note.py:343-369`); `_refinalise()` reconstructs and rerenders the note (`desktop/src/scribe_desktop/ui/note.py:411-420`). The common snapshot is consistent with R1–R6 at `docs/testing/shipping-gate.md:46-51`.
+
+#### PR-LOW-013 fix confirmation — CONFIRMED
+
+The two corrected claims now match the lifecycle:
+
+- New live and recovered transcripts clear the Note tab at `desktop/src/scribe_desktop/ui/main_window.py:202-205` and `:226-241`.
+- A new generation clears it at `desktop/src/scribe_desktop/ui/main_window.py:326-338`.
+- Successful Complete and Discard emit `closed` at `desktop/src/scribe_desktop/ui/transcript.py:542-575`, reaching `_on_transcript_closed()` and `note_screen.clear()` at `desktop/src/scribe_desktop/ui/main_window.py:340-341`.
+- Cancel invokes its callback and then clears the tab at `desktop/src/scribe_desktop/ui/note.py:508-517`.
+- `closeEvent` refuses while `note_screen.is_busy` and, on acceptance, calls only monitor teardown and the superclass close handler—no tab clear (`desktop/src/scribe_desktop/ui/main_window.py:167-200`).
+
+Accordingly, the shipping-gate wording at `docs/testing/shipping-gate.md:37` and module docstring at `desktop/src/scribe_desktop/ui/note.py:26-31` claim only explicit clears or process termination. A separate stale method-level docstring remains and is logged as `PR-LOW-017`.
+
+#### PR-LOW-014 fix confirmation — CONFIRMED
+
+“The shipped state” is absent from the FAIL-outcome docstring (`desktop/tests/test_ui_screens.py:2285-2292`). `test_default_copy_binding_ships_disabled` remains the dedicated current-decision pin (`desktop/tests/test_ui_screens.py:1828-1830`).
+
+All four `TestNoteWiring` copy tests are decision-agnostic: the original pair and clipboard pair explicitly drive False/FAIL or True/PASS outcomes (`desktop/tests/test_ui_screens.py:2285-2361`, `desktop/tests/test_ui_screens.py:2397-2457`) without claiming either outcome is current. They therefore need no edit when the recorded default flips.
+
+#### PR-LOW-015 fix confirmation — NOT CONFIRMED
+
+`AGENTS.md:30` itself is correct. Static enumeration of every locked `engines.node` range found that all accept Node 22 from 22.13 onward, while the limiting top-level tool, ESLint 10.7.0, declares `^20.19.0 || ^22.13.0 || >=24` and therefore excludes Node 23 (`extension/package-lock.json:1306-1351`). Eight locked ESLint companion packages carry the same discontinuous range; other top-level ranges, including Vite and Vitest, accept 22.13. Thus “a 22.13+ release of the Node 22 line” is accurate, and “Node 23 is not” is true for the complete toolchain because ESLint rejects it.
+
+The current-state and Done-note quotations were updated (`.cursor/plans/plan-phase3a-note-pipeline.md:370`, `.cursor/plans/plan-phase3a-note-pipeline.md:1525`), but the completed Task 9.0 instruction still says the prerequisite becomes `"Node 24 LTS (22.12+ accepted by every extension tool)"` at `.cursor/plans/plan-phase3a-note-pipeline.md:1523`. Although the following Done note identifies 22.12 as rejected task text, the request that the plan's quotations match is not fully satisfied. Logged as `PR-LOW-018`.
+
+#### PR-LOW-016 fix confirmation — CONFIRMED
+
+The three requested `AGENTS.md` surfaces agree that Task 9.0's CI leg is proven:
+
+- Current Status records run 33934875082, three green jobs and zero annotations (`AGENTS.md:56`).
+- Last Session records the same run and evidence (`AGENTS.md:60`).
+- Known Issues marks the Node-24 CI task complete and proven (`AGENTS.md:70`).
+
+A separate stale statement remains in the active plan's Task 9.0 Done note and is logged as `PR-LOW-019`.
+
+#### Post-Fix Regression Check
+
+NOT CLEAN: three LOW documentation residues remain, but no production-behaviour or test-global-state regression was found.
+
+The copy tests change no production signature or data shape. `monkeypatch` restores `models.COPY_TO_CLINIKO_ENABLED`, `ui.note.QApplication`, and `ui.transcript.write_note` after each test (`desktop/tests/test_ui_screens.py:2387`, `:2405`, `:2429`). The replacement `QApplication` name has no second runtime use in `ui/note.py`, so it cannot disturb widget construction or teardown.
+
+The new scoring table and scoring-point prose do not narrow or contradict R1–R6. The table adds no decision-bearing site outside the derived grep's scope: it lives in the already-enumerated plan, while the new tests and module docstring contain grep-visible `COPY_TO_CLINIKO_ENABLED` or shipping-gate language (`docs/testing/shipping-gate.md:70-78`). No checklist update is required.
+
+The three dropped candidates were: stub leakage, which pytest monkeypatch restoration closes; hidden-button activation, which the disabled state plus direct-call test closes; and a hypothetical formatter that independently imports transcript data and disguises it as a provenance bullet, for which no current data path exists because `format_note_body()` receives only the ratified `GeneratedNote`.
+
+#### Final verdict A — CONFIRMED
+
+No current application-controlled route permits unratified content or a payload outside the single ratified note body to reach the clipboard without a `test_ui_screens.py` failure. `_copy_note()` rechecks `_copy_ready()` at click time and writes only `models.format_note_body(note)` (`desktop/src/scribe_desktop/ui/note.py:519-540`); the same predicate controls button enablement and note-body selectability (`desktop/src/scribe_desktop/ui/note.py:543-558`).
+
+Bounded residue: native Qt selection/keyboard copy is not intercepted by `_fake_clipboard`, but the selectable surface is itself pinned to `_copy_ready()` and contains only the ratified note body; the transcript remains `NoTextInteraction`. A future canonical formatter that acquired an entirely new external transcript data source and formatted it as a valid-looking bullet would require a new test, but no such source or route exists now.
+
+#### Final verdict B — CONFIRMED
+
+No sentence in `docs/testing/shipping-gate.md`, the specified `AGENTS.md` surfaces, or the `ui/note.py` module docstring claims a stronger clipboard, lifecycle, custody, CI or runtime guarantee than the reviewed code enforces. `PR-LOW-017` concerns the separate `NoteScreen.clear()` method docstring, not the corrected module docstring.
+
+#### Final verdict C — CONFIRMED
+
+No transcript, note, patient name or clinical quotation appears in the new documentation or scoring-table material. The only clinical sentence added by the tests is the permitted existing fixture assertion at `desktop/tests/test_ui_screens.py:2451`; clipboard contents remain captured in memory and never reach the Windows clipboard.
+
+#### PR-LOW-017
+
+- **[LOW]** `desktop/src/scribe_desktop/ui/note.py:265` — `clear()` still claims it runs on window close
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The round-70 lifecycle correction remains incomplete within the same module and repeats the exact “claim outruns the enforcing structure” mechanism error.
+- Current behaviour:
+
+  ```text
+  """Clear all plaintext and review state (on close, or when a
+  different transcript loads over this note — Task 7.1/7.3)."""
+  ```
+
+  Production `MainWindow.closeEvent` does not call `note_screen.clear()` (`desktop/src/scribe_desktop/ui/main_window.py:167-200`).
+
+- Desired behaviour: Describe `clear()` as clearing plaintext when explicitly invoked for transcript replacement, generation replacement, cancel, Complete or Discard; state that accepted window close relies on process termination rather than this method.
+- Pattern to follow: The corrected module docstring at `desktop/src/scribe_desktop/ui/note.py:26-31`.
+- Pattern siblings: No other uncorrected live lifecycle claim found in the reviewed shipping-gate document or module docstring.
+- Invariant: A lifecycle docstring attributes plaintext removal only to a real call site or process termination.
+- Verification: Static call-site enumeration found `note_screen.clear()` only for new live transcript, recovered transcript, new generation and transcript close, plus `cancel_review()`'s direct `self.clear()`; normal window close is not a caller.
+- Regression risk: Documentation-only.
+- /fix decision: Applied
+- /fix notes: Leg 1 (composer): CONFIRMED - `NoteScreen.clear()`'s docstring said "(on close, ...)" while no close path calls it (`closeEvent` verified again). Leg 2: docstring now names the real callers (transcript or generation replacement, cancel, transcript close on Complete/Discard) and says an accepted window close is not a caller and ends the process.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, composer seat, verify-then-fix)
+
+#### PR-LOW-018
+
+- **[LOW]** `.cursor/plans/plan-phase3a-note-pipeline.md:1523` — Completed Task 9.0 still quotes the unsupported Node 22.12 floor
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The completed task block contradicts the actual prerequisite and the locked ESLint engine, leaving one plan quotation outside PR-LOW-015's claimed sibling update.
+- Current behaviour:
+
+  ```text
+  Dev-machine parity, same commit: the `AGENTS.md` Local Run Steps prerequisite "Node 20+" becomes "Node 24 LTS (a 22.13+ release of the Node 22 line is also accepted by every extension tool; Node 23 is not)" (the task as first written said "22.12+" — corrected at round 68 LOW-001 and round 71 PR-LOW-018 against eslint's locked `^20.19.0 || ^22.13.0 || >=24`)
+  ```
+
+  ESLint's locked range is:
+
+  ```text
+  "node": "^20.19.0 || ^22.13.0 || >=24"
+  ```
+
+  (`extension/package-lock.json:1351`).
+
+- Desired behaviour: Make the Task 9.0 instruction quote the current `AGENTS.md:30` wording, while retaining the Done note's historical explanation that the original 22.12 proposal was corrected.
+- Pattern to follow: The corrected current-state quotation at `.cursor/plans/plan-phase3a-note-pipeline.md:370`.
+- Pattern siblings: `.cursor/plans/plan-phase3a-note-pipeline.md:1525` already carries the corrected actual wording.
+- Invariant: Every plan quotation presented as the required runtime prerequisite matches the narrowest locked tool engine.
+- Verification: Full static enumeration found every locked engine accepts Node 22.13+, while ESLint and eight companion packages reject Node 23 and Node 22.12.
+- Regression risk: Documentation-only; preserve the historical discrepancy explanation.
+- /fix decision: Applied
+- /fix notes: Leg 1: CONFIRMED - the Task 9.0 instruction sub-bullet still quoted "22.12+" (the round-70 sibling replace targeted the "22.13+" wording only). Leg 2: the instruction now quotes the current `AGENTS.md:30` wording with a parenthesis keeping the history (first written 22.12+, corrected at round 68 LOW-001 and here against eslint's locked range). The round-68 record line that cites "22.12+" as LOW-001's finding text is historical and untouched.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, composer seat, verify-then-fix)
+
+#### PR-LOW-019
+
+- **[LOW]** `.cursor/plans/plan-phase3a-note-pipeline.md:1525` — Task 9.0's Done note says its CI proof is both proven and unproven
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The active task record contradicts itself about whether its only external proof has completed, despite PR-LOW-016 correcting the corresponding `AGENTS.md` surfaces.
+- Current behaviour: The line opens with:
+
+  ```text
+  the CI leg PROVEN 2026-09-05 on the Windows host — see the CI-proof sub-bullet
+  ```
+
+  but later says verbatim:
+
+  ```text
+  **What remained the practitioner's at the 2026-09-04 hand-off (pre-proof state, kept for the record — round 71 PR-LOW-019):** the CI run was the ONLY proof and needed a pull request or a push to `main` (`push: branches: [main]` / `pull_request` are the sole triggers); until the 2026-09-05 push the Done-when (all three jobs green, zero Node-runtime deprecation annotations) was UNPROVEN and this note claimed local counts and runtime declarations only. The push happened 2026-09-05 and CI run 33934875082 MET it — the CI-proof sub-bullet below is the authoritative result.
+  ```
+
+  The following proof block concludes:
+
+  ```text
+  Task 9.0's Done-when (three green, zero Node-runtime deprecation annotations, the `Validation / Verification` counts holding — re-counted 0/0/0/0 and 2/1/1/1 on the merged tree) is MET.
+  ```
+
+  (`.cursor/plans/plan-phase3a-note-pipeline.md:1525-1526`).
+
+- Desired behaviour: Remove the stale pre-proof “What remains” clause or explicitly mark it as the pre-2026-09-05 state; leave the adjacent CI-proof block as the authoritative result.
+- Pattern to follow: The consistent proven wording at `AGENTS.md:56`, `AGENTS.md:60`, `AGENTS.md:70`, and `.cursor/plans/plan-phase3a-note-pipeline.md:1526`.
+- Pattern siblings: The dated 2026-09-04 executor handoff at `.cursor/plans/plan-phase3a-note-pipeline.md:370` is historical provenance; the contradiction inside the active Task 9.0 Done record is the actionable site.
+- Invariant: An active task record cannot describe the same completion gate as both proven and unproven.
+- Verification: The contradiction is present within consecutive Task 9.0 lines; CI run 33934875082 is recorded as green with zero annotations in the following proof block and all three requested `AGENTS.md` surfaces.
+- Regression risk: Documentation-only; preserve the CI trigger explanation if it remains useful as historical context.
+- /fix decision: Applied
+- /fix notes: Leg 1: CONFIRMED - the Done note's tail clause ("What remains is the practitioner's ... UNPROVEN until then") survived the 2026-09-05 header edit, contradicting the CI-proof sub-bullet beneath it. Leg 2: the clause is re-framed as the dated pre-proof state kept for the record, ending with the push and CI run 33934875082 having MET the Done-when, and names the CI-proof sub-bullet as authoritative.
+- /fix date: 2026-09-05
+- /fix applied by: Claude Code (`claude-fable-5-1`, composer seat, verify-then-fix)
+
+PEER-ROUND-71 RESULT: 3 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 3).
+- Composer note (2026-09-05, transcription): block transcribed verbatim from `.cursor/loops/stage-9-peer-r71-findings.md` (codex session on `gpt-5.6-sol` xhigh, 01:41-01:52 UTC, read-only, exit 0).
+
 ## Tasks
 
 ### Phase 1 — Foundations, types, providers, custody
@@ -1520,9 +1713,9 @@ PEER-ROUND-70 RESULT: 8 findings (CRIT 0 / HIGH 1 / MED 3 / LOW 4).
 *Ordering (2026-09-04): 9.0 and 9.1a are the AGENT-ELIGIBLE tasks, added by scoped `/review-plan` from the handoff's prep (c) and (b); 9.1 and 9.2 are PRACTITIONER-owned gates. Tasks 2.3 and D-S1 above are practitioner-owned too and stay 🟥 until the recordings exist — an executor treats them as not eligible and starts HERE (see the handoff note's execution pointer).*
 - [x] 🟩 9.0: **CI action runtimes to Node 24** — `.github/workflows/ci.yml` only. Bump `actions/checkout@v4` → `@v5` (both jobs), `actions/setup-python@v5` → `@v6`, `actions/setup-node@v4` → `@v5`, and the extension job's `node-version: 20` → `24` (practitioner-decided 2026-09-04: Node 20 reached end-of-life 2026-04-30 and every extension tool's `engines` range accepts 24 — Key Findings, Phase 9 prep anchors). Every other `with:` input stays exactly as it is (`python-version` matrix, `cache: npm`, `cache-dependency-path`).
   - Before editing: confirm each target major is the Node-24 runtime by reading `runs.using` in that tag's `action.yml` on GitHub, and read the `setup-node@v5` release notes for changed input defaults (v5 turned package-manager caching on by default; the explicit `cache: npm` must still be accepted). If a major is not the one this task names, use the one that is and record it here.
-  - Dev-machine parity, same commit: the `AGENTS.md` Local Run Steps prerequisite "Node 20+" becomes "Node 24 LTS (22.12+ accepted by every extension tool)" and the Known Issues Node-20 bullet is closed — the practitioner installs Node 24 once (`node --version` to check) so the unpacked extension is built on the runtime CI proves.
+  - Dev-machine parity, same commit: the `AGENTS.md` Local Run Steps prerequisite "Node 20+" becomes "Node 24 LTS (a 22.13+ release of the Node 22 line is also accepted by every extension tool; Node 23 is not)" (the task as first written said "22.12+" — corrected at round 68 LOW-001 and round 71 PR-LOW-018 against eslint's locked `^20.19.0 || ^22.13.0 || >=24`) and the Known Issues Node-20 bullet is closed — the practitioner installs Node 24 once (`node --version` to check) so the unpacked extension is built on the runtime CI proves.
   - Verification: nothing runs locally. CI triggers only on a push to `main` or a pull request, so on a feature branch open a PR (or the practitioner merges to `main`). Done when all three jobs are green on that commit with no Node-runtime deprecation annotation in the run summary and the `Validation / Verification` 9.0 counts hold.
-  - **Done (2026-09-04, `/execute-loop` run=stage-9, executor Claude Code subagent; BUILT AND LOCALLY VERIFIED; the CI leg PROVEN 2026-09-05 on the Windows host — see the CI-proof sub-bullet).** `.github/workflows/ci.yml`: `actions/checkout@v4` → `@v5` (both jobs), `actions/setup-python@v5` → `@v6`, `actions/setup-node@v4` → `@v5`, `node-version: 20` → `24`; `git diff` is exactly those five lines — `python-version: ${{ matrix.python }}`, `cache: npm` and `cache-dependency-path: extension/package-lock.json` byte-identical; the file parses (PyYAML, jobs `desktop` + `extension`). Post-edit counts (the `Validation / Verification` 9.0 line): `actions/checkout@v4` 0, `actions/setup-python@v5` 0, `actions/setup-node@v4` 0, `node-version: 20` 0; `actions/checkout@v5` ×2, `actions/setup-python@v6` ×1, `actions/setup-node@v5` ×1, `node-version: 24` ×1. **Runtime verification DONE before editing** (each tag's `action.yml` fetched from `raw.githubusercontent.com`, HTTP 200): `actions/checkout@v5` `runs.using: node24`; `actions/setup-python@v6` `runs.using: 'node24'`; `actions/setup-node@v5` `runs.using: 'node24'` — the majors this task names are the Node-24 ones, none substituted. `setup-node@v5` inputs read from the same file: `cache` is still an accepted input ("Supported values: npm, yarn, pnpm") and `cache-dependency-path` is unchanged; the v5 addition is `package-manager-cache` (default `true`), which auto-enables caching ONLY when `package.json` carries a `packageManager` field — `extension/package.json` has none (verified), so the explicit `cache: npm` remains the only caching configuration and nothing changes there. v5.0.0 release notes (read from the GitHub release page; the releases API refused this session with 403): the Node 24 runtime requires runner ≥ v2.327.1, which GitHub-hosted `ubuntu-latest` / `windows-latest` satisfy; automatic package-manager caching as above. `AGENTS.md`: the Local Run Steps prerequisite reads "Node 24 LTS (a 22.13+ release of the Node 22 line is also accepted by every extension tool; Node 23 is not)" — 22.13, not the task text's 22.12: eslint 10.7.0's engines are `^20.19.0 || ^22.13.0 || >=24` (`extension/package-lock.json`, the range the Phase 9 prep anchors already list), so 22.12 is refused by one tool (round 68 LOW-001; the task wording is the spec discrepancy, corrected here rather than restated) and the Known Issues Node-20 bullet is closed as a dated `- [x]` done note (the file's first checked item — it uses `- [ ]` for open items and had no closed one). **What remains is the practitioner's:** the CI run is the ONLY proof and needs a pull request or a push to `main` (`push: branches: [main]` / `pull_request` are the sole triggers) — Done-when (all three jobs green, zero Node-runtime deprecation annotations) is UNPROVEN until then; this note claims local counts and runtime declarations, not a green run. Dev machines install Node 24 LTS once (`node --version`).
+  - **Done (2026-09-04, `/execute-loop` run=stage-9, executor Claude Code subagent; BUILT AND LOCALLY VERIFIED; the CI leg PROVEN 2026-09-05 on the Windows host — see the CI-proof sub-bullet).** `.github/workflows/ci.yml`: `actions/checkout@v4` → `@v5` (both jobs), `actions/setup-python@v5` → `@v6`, `actions/setup-node@v4` → `@v5`, `node-version: 20` → `24`; `git diff` is exactly those five lines — `python-version: ${{ matrix.python }}`, `cache: npm` and `cache-dependency-path: extension/package-lock.json` byte-identical; the file parses (PyYAML, jobs `desktop` + `extension`). Post-edit counts (the `Validation / Verification` 9.0 line): `actions/checkout@v4` 0, `actions/setup-python@v5` 0, `actions/setup-node@v4` 0, `node-version: 20` 0; `actions/checkout@v5` ×2, `actions/setup-python@v6` ×1, `actions/setup-node@v5` ×1, `node-version: 24` ×1. **Runtime verification DONE before editing** (each tag's `action.yml` fetched from `raw.githubusercontent.com`, HTTP 200): `actions/checkout@v5` `runs.using: node24`; `actions/setup-python@v6` `runs.using: 'node24'`; `actions/setup-node@v5` `runs.using: 'node24'` — the majors this task names are the Node-24 ones, none substituted. `setup-node@v5` inputs read from the same file: `cache` is still an accepted input ("Supported values: npm, yarn, pnpm") and `cache-dependency-path` is unchanged; the v5 addition is `package-manager-cache` (default `true`), which auto-enables caching ONLY when `package.json` carries a `packageManager` field — `extension/package.json` has none (verified), so the explicit `cache: npm` remains the only caching configuration and nothing changes there. v5.0.0 release notes (read from the GitHub release page; the releases API refused this session with 403): the Node 24 runtime requires runner ≥ v2.327.1, which GitHub-hosted `ubuntu-latest` / `windows-latest` satisfy; automatic package-manager caching as above. `AGENTS.md`: the Local Run Steps prerequisite reads "Node 24 LTS (a 22.13+ release of the Node 22 line is also accepted by every extension tool; Node 23 is not)" — 22.13, not the task text's 22.12: eslint 10.7.0's engines are `^20.19.0 || ^22.13.0 || >=24` (`extension/package-lock.json`, the range the Phase 9 prep anchors already list), so 22.12 is refused by one tool (round 68 LOW-001; the task wording is the spec discrepancy, corrected here rather than restated) and the Known Issues Node-20 bullet is closed as a dated `- [x]` done note (the file's first checked item — it uses `- [ ]` for open items and had no closed one). **What remained the practitioner's at the 2026-09-04 hand-off (pre-proof state, kept for the record — round 71 PR-LOW-019):** the CI run was the ONLY proof and needed a pull request or a push to `main` (`push: branches: [main]` / `pull_request` are the sole triggers); until the 2026-09-05 push the Done-when (all three jobs green, zero Node-runtime deprecation annotations) was UNPROVEN and this note claimed local counts and runtime declarations only. The push happened 2026-09-05 and CI run 33934875082 MET it — the CI-proof sub-bullet below is the authoritative result. Dev machines install Node 24 LTS once (`node --version`).
   - **CI proof (2026-09-05, Windows host, Claude Code `claude-fable-5-1`, `/start-session`).** `claude/load-plan-typsta` fast-forwarded into `main` (`1d786bb..e7f4072`) after a Windows re-verification (ruff clean, mypy clean, `tests/test_ui_screens.py` 100 passed including the three new copy-decision tests), then pushed; CI run 33934875082 on `e7f4072`: desktop (Python 3.12) green, desktop (Python 3.14) green, extension green on Node 24.20.0 (`Found in cache`), 2m28s end to end; annotations on all three check runs = 0 (queried through the check-runs API). Desktop pytest 1352 passed / 14 skipped on both versions (1366 collected = the 1363 baseline + the three 9.1a tests); extension vitest 36 passed. HONEST residue: the extension job's stdout carries two Node module DeprecationWarnings (DEP0040 `punycode`, DEP0169 `url.parse`) printed by `setup-node@v5`'s own bundled code under Node 24 — not annotations, not runtime-version notices, nothing this repo controls; cosmetic. Task 9.0's Done-when (three green, zero Node-runtime deprecation annotations, the `Validation / Verification` counts holding — re-counted 0/0/0/0 and 2/1/1/1 on the merged tree) is MET.
 - [x] 🟩 9.1a: **Shipping-gate rubric, transcript-set specification, and both-outcome copy tests** — the agent-doable half of 9.1, so 9.1 becomes a RUN plus a recorded decision once the practitioner ratifies the draft. Files: `docs/testing/shipping-gate.md` (new), `desktop/tests/test_ui_screens.py`; an `AGENTS.md` Subsystem Documentation pointer at the next `/document`. NO production code change: `COPY_TO_CLINIKO_ENABLED` stays `False` and stays a bare flag (Design Decision: Task 9.1's instrument, record and sheet).
   - **The doc**, in the shape of `docs/testing/speaker-measurement.md` (what it decides, preparing, running, what is measured, custody), headed DRAFT — for practitioner ratification at Task 9.1, every number tagged *proposed*:
