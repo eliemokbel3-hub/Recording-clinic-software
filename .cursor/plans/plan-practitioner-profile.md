@@ -284,7 +284,7 @@ See `Planning Extraction Summary` → `Deferred — Actionable Later`, `Excluded
 - Open blockers / open questions: the speaker-embedding model candidate (Tasks 0.3–0.5, D-P1) — practitioner-run fetch.
 - Phase 0 interleaving (for an `/execute-loop` run): agent tasks 0.1 and 0.3 first → PAUSE for the practitioner's 0.2 (consent ratification) and 0.4 (fetch + smoke, normal terminal) → agent task 0.5 → D-P1 (`[decision]`, a planned hard-stop) → Phase 1. Run Phase 0 as one-phase-and-stop; Phases 1–3 may run back-to-back; Phase 6 is practitioner-only.
 - Last plan sync: 2026-09-05 (created).
-- Loop config: none yet (first run).
+- Loop config: none yet (first run). Cross-family peer for this plan's reviews and its loop run (practitioner-decided 2026-09-05): codex `gpt-6-astra`, reasoning effort xhigh, read-only sandbox (`codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort=xhigh`), replacing `gpt-5.6-sol` used through round 72.
 
 ## Review History
 Each /review invocation appends a one-line entry here. Round NUMBERS
