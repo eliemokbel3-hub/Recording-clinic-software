@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** practitioner-profile
-**Overall Progress:** `0%`
+**Overall Progress:** `3%`
 
 ## Lifecycle State
 - Active
@@ -256,7 +256,7 @@ Verified 2026-09-05 at `main` `8527ce9` (re-probed at plan-write time; all prese
 ## Config / Environment / Deployment Impact
 - No environment variables. No CI changes beyond the model being absent on CI (tests skip-if-absent, the whisper pattern).
 - `scripts/setup-models.py` gains `speaker-embedding` in the `--only` set (URL + SHA-256 + size pin), ~26 MB; `AGENTS.md` Local Run Steps step 3 gains the size and the note that enrolment needs it. User-run only.
-- **Consent text v1 — DRAFT for practitioner ratification (Task 0.2); shown on the Practitioner tab and at first run; the version string is stored in the profile's consent record:**
+- **Consent text v1 — RATIFIED 2026-09-05 as written (Task 0.2); shown on the Practitioner tab and at first run; the version string is stored in the profile's consent record:**
   > "This app can learn your voice and your phrasing to improve your notes. If you agree, it stores on this computer: a numeric fingerprint of your voice (never a recording), encrypted; and, if you also turn on phrase learning, the short phrases you approve during review, kept as plain text in your own config file until you delete them. The app cannot tell whether a phrase names a patient — only you can — so it shows you every phrase before saving it, refuses names and numbers, and asks you to confirm it contains no patient information; keep phrases general. Nothing else about any patient is stored beyond their session, and nothing leaves this computer. You can re-record your voice, delete it, or delete any learned phrase at any time from this tab. Version consent-v1."
   (Round 1 PR-MED-002 / PR-HIGH-001: the voice profile is encrypted; approved phrases are PLAIN TEXT in `section_cues.json` with the other clinician config, retained until deleted; the no-patient-information judgement is the practitioner's — the loader validates shape only, `note_config.py:17-21`.)
   A second checkbox, off by default: "Also learn my phrasing from lines I add during review (asks each time)". Ratified text replaces the draft verbatim in `ui/models.py` `CONSENT_TEXT_V1`; changing the text later means a new version and re-consent at next start.
@@ -972,7 +972,8 @@ Phases are grouped for `/execute-loop` (a `/review-loop` + cross-family peer pas
 
 ### Phase 0 — Bookkeeping, consent, model candidate
 - [ ] 🟥 0.1: **Record the gate pause by pointer.** `plan-phase3a-note-pipeline.md`: a dated bullet at the top of `Current State / Handoff Note` and one sub-bullet under Task 9.1 ("RUN PAUSED 2026-09-05 until `plan-practitioner-profile.md` Phase 3 ships; rubric v1 unchanged; the single recording set is that plan's Task 6.1"), the START HERE step 4 line annotated; `AGENTS.md` Next priority → this plan; CHANGELOG untouched (no code). Verification: the two files read back; the Phase 3A history checker still passes.
-- [ ] 🟥 0.2: **Ratify the consent text** (PRACTITIONER). Read the draft in `Config / Environment / Deployment Impact`; approve or edit; record "ratified <date>, version consent-v1" on this task. Blocks: 3.1.
+- [x] 🟩 0.2: **Ratify the consent text** (PRACTITIONER). Read the draft in `Config / Environment / Deployment Impact`; approve or edit; record "ratified <date>, version consent-v1" on this task. Blocks: 3.1.
+  - **Ratified 2026-09-05, version consent-v1, as written** (practitioner, in session: "consent ok") — the post-round-1 wording (plain-text phrases, the no-patient-information judgement the practitioner's) with the off-by-default learning checkbox. Task 3.1 ships this text verbatim as `CONSENT_TEXT_V1`.
 - [ ] 🟥 0.3: **Add the speaker-embedding candidate to `scripts/setup-models.py`.** Registry entry `speaker-embedding` (candidate name, URL, expected size; SHA-256 pin initially EMPTY = "candidate mode": the script downloads to `models/speaker-embedding/<name>.onnx.candidate`, prints size and SHA-256, and does not promote it until a pin exists; the smoke takes an explicit model path so it can read the candidate file); `--only speaker-embedding` accepted; `scripts/README.md` line. Plus `scripts/speaker-embedding-smoke.py`: loads the ONNX (the `SileroVad` contract), embeds each WAV given on the command line with the numpy front-end (D12), prints the cosine matrix and dims — text-free. Verification: `--help` and the `--only` validation tested without network; the smoke's front-end unit-tested on synthetic PCM (shape, determinism).
 - [ ] 🟥 0.4: **Fetch the candidate and run the smoke** (PRACTITIONER, normal terminal): `setup-models.py --only speaker-embedding`; report the printed size + SHA-256; record two ~20 s recordings of yourself (different days or rooms if possible) and one other person as 16 kHz mono WAVs; run the smoke; paste the cosine matrix onto this task. Blocks: 0.5, D-P1.
 - [ ] 🟥 0.5: **Pin the model** — SHA-256, size and URL into `setup-models.py` (candidate mode removed for this entry); `AGENTS.md` step 3 size note; `docs/security/data-flow-map.md` flow 9 (the one network flow) gains the model. Verification: the pin test (a wrong digest refuses, like silero).
