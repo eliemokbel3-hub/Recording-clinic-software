@@ -1,0 +1,8 @@
+# Codex Skill metadata for $update-workflow.
+#
+# Update-workflow is side-effecting: it overwrites installed workflow
+# payloads, writes the installed-version marker, and makes a provenance
+# commit. Require explicit $update-workflow invocation so Codex never
+# runs a workflow update as an implicit action.
+policy:
+  allow_implicit_invocation: false

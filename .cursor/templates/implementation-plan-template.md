@@ -5,6 +5,17 @@
 ## Lifecycle State
 - Active
 
+<!-- Legal values (project-workflow.mdc → Plan lifecycle states is canonical):
+     Active | Completed — Follow-ups Retained | Completed — Archivable | Paused.
+     A Paused plan adds two fields directly beneath the state line:
+       - Paused since: YYYY-MM-DD
+       - Paused reason: <one line>
+     Paused = intentionally suspended: discoverable + recoverable, NEVER
+     executable, archivable, deletable, overwritable, merged-as-complete, or
+     pushed-as-complete. Transitions are user/operator-owned: Active → Paused,
+     Paused → Active (dated resume note replaces the two fields); no direct
+     Paused → Completed step. Headless/loop invocations never flip this state. -->
+
 ## Completion Status
 - Completion timestamp:
 - Main implementation complete: No
@@ -259,13 +270,17 @@ schema, or shared-invariant tasks into their own early phase and batch
 contiguous low-risk tasks together. While grouping, accumulate a
 shared-helpers inventory in `Key Findings` — the helpers, utilities,
 and cross-phase touch points more than one phase will use — so later
-phases reuse them instead of re-inventing them. A phase heading may
-additionally carry the reviewed policy label `[gates: high-auto-ok —
-evidence: <one sentence>]` — written ONLY at planning/hardening time,
-never by an executor mid-run — which under `/execute-loop`'s
-`gates=fix-biased` authorizes composer-seat auto-routing of verified
-in-scope HIGH Fix-now findings for that phase; absent or malformed,
-HIGH pauses (fail-closed).
+phases reuse them instead of re-inventing them. Phase headings carry NO
+autonomy labels: the per-phase `[gates: high-auto-ok]` label grammar was
+RETIRED at v32 — HIGH auto-routing is authorized per RUN by the
+`high-auto=on|off` `Loop config:` key (wizard default on since v32.3;
+an absent or malformed key still fails closed to off; run-start-attested,
+inert under `gates=strict`; see `/execute-loop`'s Safety gates), never
+by plan text. A task auto-appended by that route carries the
+`[pending-hardening]` marker: it is a RECORDED task with no execution
+authority — `/execute` task selection and the loop's phase advance both
+refuse it — until a successful scoped `/review-plan` over it removes
+the marker (a failed or aborted hardening leaves it in place).
 
 A task may also be a **decision-point task (optional)**. A
 decision-point task carries a `[decision]` label and its deliverable is

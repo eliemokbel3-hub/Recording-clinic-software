@@ -20,6 +20,7 @@ Classify each saved plan by its `Lifecycle State`:
 - Active
 - Completed — Follow-ups Retained
 - Completed — Archivable
+- Paused (v32 — an intentionally suspended plan; discoverable + recoverable, never executable while Paused)
 - Unknown / missing state
 
 If no plan files are found:
@@ -35,6 +36,9 @@ Normal in-progress execution plans.
 
 ### Completed Plans With Retained Follow-Ups
 Completed feature plans that still hold actionable deferred / excluded / assumption follow-up context.
+
+### Paused Plans (v32)
+Intentionally suspended plans — list each with its `Paused since:` date and `Paused reason:` line (fall back to "(fields missing)" when a Paused plan lacks them, and flag that gap). A Paused plan is never presented as the current active execution plan.
 
 For each plan file found, read and extract:
 - feature name
@@ -80,7 +84,7 @@ If the selected plan is **Active**:
   6. Validation / Verification
   7. Schema / Config / Deployment impact (if present)
   8. Task progress summary
-  9. Current 🟨 task, otherwise next 🟥 task; plus, from a scan of the `Tasks` section, the count and titles of any unresolved `[decision]` tasks ("N unresolved decision point(s)") so the user sees what choices the plan is waiting on. Display-only and NOT schema-gated — this Tasks-section scan works on any plan regardless of `Workflow Schema:`, so it stays here at item 9 rather than under the v22-only item 10.
+  9. Current 🟨 task, otherwise next 🟥 task; plus, from a scan of the `Tasks` section, the count and titles of any unresolved `[decision]` tasks ("N unresolved decision point(s)") so the user sees what choices the plan is waiting on, AND the count and titles of any tasks carrying the `[pending-hardening]` marker ("N task(s) pending hardening — recorded by an auto-append, not executable until a scoped /review-plan hardens them"; v32) so unhardened auto-appended work is surfaced BEFORE any execution offer. Display-only and NOT schema-gated — this Tasks-section scan works on any plan regardless of `Workflow Schema:`, so it stays here at item 9 rather than under the v22-only item 10.
   10. **v22-only:** Executor tier (suppressed at default `entirely premium`); non-minor risk-tagged retained-item summary; overdue Revisit-by-date count; security/correctness risk-tagged prominent warning. Same surfacing rules and visual cues as `/start-session`'s v22 plan-state surfacing block. None block; all are display + nudge. Warnings fire on tag presence (the retained-item schema preserves tag, not source severity).
 
 Then ask what they would like to do. The Continue option is shaped by the plan itself:
@@ -159,3 +163,11 @@ If the user chooses Review retained follow-up items only:
 If the user chooses No action now:
 - confirm nothing was changed
 - leave the retained-complete plan in place
+
+If the selected plan is **Paused** (v32):
+- read the full plan, surface the `Paused since:` / `Paused reason:` fields, the `Current State / Handoff Note`, and any isolation-registry state (the Step 1 registry check — a paused loop run's worktree/branch are typically retained)
+- then ask:
+  1. Resume now — the explicit `Paused → Active` transition: on confirmation, set `Lifecycle State` to `Active` and replace the two `Paused …` fields with a dated resume note in the handoff; only then offer the normal Active-plan continuation menu
+  2. Review the paused state only — show it and stop; the plan stays Paused
+  3. No action now
+- never execute, archive, overwrite, or otherwise mutate a Paused plan without option 1's explicit transition; a headless/loop invocation reaching a Paused plan surfaces it and moves on (it never flips the state)

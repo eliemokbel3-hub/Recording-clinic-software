@@ -35,6 +35,8 @@ the gates.
 
 ## Before starting
 
+**Paused governing plan (v32 — checked here because the loop is independently invocable):** if the plan in scope has `Lifecycle State: Paused`, REFUSE to start the loop — it composes `/fix`, and a Paused plan is never executable. Surface the `Paused since:`/`Paused reason:` fields and the resume route (`/load-plan`'s explicit `Paused → Active` transition); never flip the state from here.
+
 A saved plan with a `Review Findings Log` is strongly recommended:
 `/review` allocates each round's number from it (per its **Detect
 review round** rule), the loop reads `Review History` to detect

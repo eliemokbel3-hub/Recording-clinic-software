@@ -92,6 +92,8 @@ If none of these exist, stop and tell me:
 - to use native Plan Mode first for significant multi-step work
 - or to use `/explore` then `/create-plan` if I want the exploration-led path instead
 
+**Paused governing plan (v32 — checked here because this workflow is independently invocable, never only caller-gated):** whenever this run would UPDATE an existing saved plan — the Step 5 "Update existing saved plan in place" default, any overwrite disposition, or **Scoped mode** hardening tasks inside an existing plan — read that plan's `Lifecycle State` FIRST. If it is `Paused`, REFUSE the mutation: surface the `Paused since:`/`Paused reason:` fields and the explicit resume route (`/load-plan`'s `Paused → Active` transition), and proceed only after that transition has actually been recorded. Writing a NEW plan file under a different name is unaffected. Under a headless/loop invocation, record the refusal and end — never flip the state.
+
 ## Step 0.5 — Gather all planning sources
 Read and compare these sources before proposing any changes:
 
@@ -134,8 +136,11 @@ Do not write code yet.
 The reconciliation pass (Step 1) and the Critique Gate (Step 1.5) are
 independent lenses over the same plan + code: coverage, practicality /
 feasibility, risk (edge cases, integration, migration, deployment),
-and the simpler-path search. If your tool supports parallel subagents
-(e.g. Cursor's Task subagents, Claude Code's Task tool), you may fan
+and the simpler-path search. If your harness exposes
+agent-spawning/orchestration tools (e.g. a Task tool or
+`spawn_agent`/`wait_agent` — probe what this session actually
+exposes, never assume from the product name) AND the instruction and
+policy stack that applies to this task permits delegation, you may fan
 these lenses out — one subagent each for coverage, practicality /
 feasibility, risk, and simpler-path — each reading the plan plus the
 real code it names and returning concrete findings (plan section or
@@ -143,9 +148,12 @@ real code it names and returning concrete findings (plan section or
 Step 2 adjustment summary, Step 3 clarification, and Step 3.5 gate all
 run once here, with the user.
 
-If your tool does not support parallel subagents (e.g. Codex), run the
-lenses sequentially through Steps 1 and 1.5 — the documented fallback,
-which changes nothing about the critique, only how it is produced.
+If either check fails — no such tools exposed, or delegation not
+authorized for this task — run the lenses sequentially through Steps 1
+and 1.5 — the documented fallback, which changes nothing about the
+critique, only how it is produced. If a spawn or approval failure
+interrupts a fan-out mid-pass, fall back to the same sequential path
+for the remaining lenses.
 
 Subagents add lens diversity, not model diversity (they inherit this
 session's model). For a true cross-model-family check on a non-trivial
@@ -187,6 +195,19 @@ fall back to re-hardening the whole plan.
   addition must fit the existing plan's decisions and constraints; never
   harden it blind. Only the named task(s) are rewritten or expanded —
   existing tasks and their progress markers are left untouched.
+- **Remove the `[pending-hardening]` marker on success — scoped mode is
+  the marker's ONLY remover (v32).** When a named task carries the
+  `[pending-hardening]` marker (a task auto-appended by
+  `/execute-loop`'s `high-auto=on` Include-in-plan route: recorded, but
+  refused by `/execute` task selection and the loop's phase advance
+  until hardened), a SUCCESSFUL scoped pass over that task — context
+  read, critique gate run, the task rewritten in place via Step 6 —
+  removes the marker from the task line as part of that same Step-6
+  write, restoring the task's executability. A failed or aborted scoped
+  pass leaves the marker in place (fail-closed), no other workflow ever
+  removes it, and it is never removed by hand; duplicate appends are
+  idempotent (one task, one marker), so a removal never needs to hunt
+  for twins.
 - **Consult the design doc for UI-touching added task(s).** When any
   named task builds or changes UI, also read `docs/design-system.md` —
   or the design doc named in `AGENTS.md`'s Subsystem Documentation —

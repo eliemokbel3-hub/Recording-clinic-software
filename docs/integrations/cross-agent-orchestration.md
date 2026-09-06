@@ -136,47 +136,12 @@ watcher-exhaustion warning. One-time host setup before running long loops on WSL
   bridge is the fragile piece, not the model. The bridge remains fine for
   interactive work once the mitigations above are applied.
 
-## Host setup — native Windows + Git Bash (2026-08-04)
-
-Verified across a full 9-leg `/execute-loop` phase on native Windows 11 (no WSL), composer =
-Claude Code, executor = `claude -p` through `scripts/loop-spawn-wrapper.sh` in Git Bash,
-peer = `codex exec`. Four host facts that each cost real time to discover:
-
-- **Pin `claude.exe`, never `claude.cmd`.** Both pass the bogus-dir isolation probe and both are
-  `environment_native`, so `probe-models.py` pins whichever comes first on `PATH` — often
-  `…\npm\claude.cmd`. But `.cmd` is **not** executable (`test -x`) under Git Bash, so the spawn
-  wrapper's absolute-and-executable binary validation refuses it and the spawn dies before the
-  child exists. `~\.local\bin\claude.exe` is `-x` and works. Re-verify the pinned binary's
-  `auth status` identity after re-pinning — the default account is per-binary (here it matched).
-- **`flock` does not exist in Git Bash.** The wrapper skips its spawn-lock block entirely when
-  `LOOP_SPAWN_LOCK` is unset, which is the usable configuration; passing the variable makes
-  `flock -n 9` fail and the wrapper refuses with `SPAWN_LOCK_HELD`. Without the lock, the
-  one-live-executor-per-phase invariant rests on the confirmed-dead + probe-for-effects rule
-  (recorded identity dead, role log not growing) before any respawn.
-- **The wrapper exits 4 on every leg, success included.** Its post-`wait` process-group survivor
-  census is a POSIX `ps` pipeline that cannot run here, so each leg ends with
-  `OWNERSHIP: exit-census … refused=capture-failure` and `EXIT:4`. **Exit 4 is not a failure
-  signal on this host.** Classify from the child's own result event (`subtype`, `is_error`), its
-  `VERIFY_OK children=<n>` record, and the `ROLE: handoff` sentinel. Treating exit 4 as failure
-  would have aborted all nine legs of a clean phase.
-- **Desktop gate notices need the `LOOP_JOURNAL_NOTICE_CMD` override.** `loop-journal.py`'s
-  `win32` branch invokes `New-BurntToastNotification`, and BurntToast is a third-party PSGallery
-  module that is not installed — so every MUST-PAUSE notice records `NOTIFY: failed` and the
-  operator learns nothing. The documented override takes an executable receiving title and body
-  as **argv data**, so a small `.cmd` + `.ps1` shim using the native
-  `Windows.UI.Notifications` toast API (AUMID
-  `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe`, with a
-  `NotifyIcon` balloon fallback) restores delivery with no third-party install. Bind the
-  parameters with `param([string]$Title,[string]$Body)` so journal values stay data and never
-  enter program text — that preserves the helper's PR-HIGH-003 injection property. Note the
-  variable must be set on each invocation: shell state does not persist between composer calls.
-
 ## Per-CLI headless invocation (verified from live runs)
 
 | CLI | Family | Headless invocation | Auth | Notes / gotchas |
 |---|---|---|---|---|
 | `claude` | Claude | `claude -p "PROMPT" --output-format text [--permission-mode acceptEdits] [--allowedTools "Bash(<scoped>)"] </dev/null` (or pipe the prompt via stdin) | Works headless | Reads AND writes a WSL-path worktree via interop. `--permission-mode acceptEdits` is the **least-danger write mode and is sufficient** for file edits — no `--dangerously-skip-permissions` needed. Default `-p` mode already allows reads. Edits allowed under `acceptEdits`; UNGRANTED approval-gated shell is HEURISTIC — host-, version-, and config-dependent, with NO established allowed/denied command-class boundary (v27 Stage 8 C2 observed an `npm ...` denial on an earlier version; at 2.1.201 on the source host, 2026-07-10, several ungranted safe commands were auto-approved under `auto`/`acceptEdits` while the one observed denial was an out-of-workspace write — the auto-approval mechanism was not isolated, so treat attribution as inference and never key routing on assumed denials) — an orchestrating composer runs smoke/verification when the preflight harness probe or the grant set says so; scoped `--allowedTools` patterns are the DETERMINISTIC always-allow layer (verified 2026-07-02: `--allowedTools "Bash(npm --version)"` executed headless under `acceptEdits`). **`perms=bypass` recipe (user-opt-in tier, close-table-confirmed):** `--dangerously-skip-permissions` replaces `--permission-mode acceptEdits` AND any `--allowedTools` list (observed live 2026-07-10, 2.1.201: init `permissionMode: bypassPermissions`; ungated Write + unprompted shell with zero grants; the `.claude/` config-dir write-gating is LIFTED); the tier is INVOCATION-SCOPED — every `--resume` must re-pass the flag (a resume without it came up `permissionMode: auto`; the init event's `permissionMode` field is the deterministic per-invocation tier detector). Prefer narrow patterns (`Bash(npm run typecheck)`, `Bash(npx vitest run:*)`) over blanket `bash`; background long-lived processes (`npm run dev &`) or the session stalls; pipe/auto-confirm interactive prompts. **Live mid-run visibility:** `--output-format text` buffers the narrative to exit (a tee log can sit unchanged for a whole multi-minute run and flush at the end, and lines land out of chronological order) — for an orchestrated role, spawn with `--output-format stream-json --verbose` teed instead (verified 2026-07-03: events arrive as JSON lines in real time — init, per-turn assistant messages, tool-use `task_started`/`task_notification`, `result`; the stream also carries a live `rate_limit_event` line with `status` and `resetsAt`, usable for immediate limit-death detection). **Long-prompt shape (v29.2):** write a long spawn prompt to a gitignored file (e.g. `.cursor/loops/<runkey>-<role>-prompt.txt`) and deliver it via stdin redirect — `claude -p < promptfile`, the other flags unchanged — quoting-proof through any host interop layer that flattens or re-expands argv (the recorded `wsl.exe` class: embedded newlines flattened, the line re-expanded once before the inner shell runs, `$VAR`s arriving empty); observed live 2026-07-10: 7/7 incident-free long-prompt spawns in run lr291. |
-| `codex` | GPT | `codex exec [-s read-only\|workspace-write] "PROMPT" </dev/null` | "Logged in using ChatGPT" | **stdin MUST be redirected** (`</dev/null` or a pipe) or it hangs on `Reading additional input from stdin...`. `--skip-git-repo-check` optional. Uses **bundled bubblewrap** for the sandbox (warns if `bubblewrap` not on PATH — optional `apt install bubblewrap` silences it). Prints a git diff of its edits. **`perms=bypass` recipe (user-opt-in tier, close-table-confirmed):** `--dangerously-bypass-approvals-and-sandbox` replaces the `-s` sandbox flag (verbatim from `codex exec --help`, codex 0.144.1; throwaway run observed live 2026-07-10 with run-header `approval: never` + `sandbox: danger-full-access` — the codex-side tier-verification surface); `codex exec resume` carries its OWN bypass flag and exposes NO `-s/--sandbox` option, so the tier is re-rendered per invocation, never inherited from the prior process. **The `workspace-write` sandbox denies localhost network** (observed live 2026-07-03: EPERM connecting to `127.0.0.1`) — a codex peer/role cannot run DB-backed or server-hitting suites; keep DB verification executor/composer-side, and peer reviews should state that split rather than reporting unrun DB suites as a gap. |
+| `codex` | GPT | `codex exec [-s read-only\|workspace-write] "PROMPT" </dev/null` | "Logged in using ChatGPT" | **stdin MUST be redirected** (`</dev/null` or a pipe) or it hangs on `Reading additional input from stdin...`. `--skip-git-repo-check` optional. Uses **bundled bubblewrap** for the sandbox (warns if `bubblewrap` not on PATH — optional `apt install bubblewrap` silences it). Prints a git diff of its edits. **`perms=bypass` recipe (user-opt-in tier, close-table-confirmed):** `--dangerously-bypass-approvals-and-sandbox` replaces the `-s` sandbox flag (verbatim from `codex exec --help`, codex 0.144.1; throwaway run observed live 2026-07-10 with run-header `approval: never` + `sandbox: danger-full-access` — the codex-side tier-verification surface); `codex exec resume` carries its OWN bypass flag and exposes NO `-s/--sandbox` option, so the tier is re-rendered per invocation, never inherited from the prior process. **The `workspace-write` sandbox denies localhost network** (observed live 2026-07-03: EPERM connecting to `127.0.0.1`) — a codex peer/role cannot run DB-backed or server-hitting suites; keep DB verification executor/composer-side, and peer reviews should state that split rather than reporting unrun DB suites as a gap. **Native multi-agent orchestration under `exec` works at 0.147.0 (probed 2026-08-29) — see the codex orchestration matrix below.** |
 | `cursor-agent` | GPT | `cursor-agent -p "PROMPT" --output-format text` | **Headless BLOCKED** | Requires `CURSOR_API_KEY` (or `agent login`); the interactive login that `cursor-agent status` reports is **not** sufficient for `-p`. The thin-orchestrator topology avoids needing it. |
 
 All three support single-shot and resumable multi-turn; transport is a composer
@@ -184,12 +149,17 @@ ergonomics choice, not a capability gap. The spike used single-shot.
 
 **Headless `claude -p` CAN delegate natively (verified 2026-07-02):** a `-p` session
 carries Claude Code's `Agent` subagent tool — a child spawned headless ran and
-replied to a sentinel — and the tool takes a **per-invocation `model` parameter**
-(enum `sonnet | opus | haiku | fable`), so a headless architect can pin its
-delegates' model without any shell nesting or allowlisting. Children **inherit the
-parent session's model unless explicitly overridden** — a delegating architect must
-pin `model:` on every spawn or its delegates silently run on the architect's
-(promo/metered) model. Model alias note: `--model fable` = `claude-fable-5`
+replied to a sentinel — so a headless architect can delegate without any shell
+nesting or allowlisting. Children **inherit the parent session's model unless
+explicitly overridden**. **Pin contract revised at v31.1 (observed live
+2026-08-03):** the tool's per-invocation `model` parameter is an ALIAS-ONLY
+closed enum (`sonnet | opus | haiku | fable`), ACCOUNT-RESOLVED — an alias pin
+silently substituted a wrong tier in a live run, and a full model ID is rejected
+at parameter validation — so the delegate pin is an AGENT DEFINITION (frontmatter
+`model: <full ID>`) selected via `subagent_type` with NO `model` parameter
+passed, verified from the first delegation's `modelUsage`; the full contract
+lives in the `execute-loop` skill's **Optional delegating executor** section.
+Model alias note: `--model fable` = `claude-fable-5`
 (`fable-5` is rejected as an unknown slug). Ungranted headless shell approval
 is HEURISTIC — host-, version-, and config-dependent (see the per-CLI table
 row) — so the composer runs the smokes when the preflight harness probe or the
@@ -197,6 +167,41 @@ grant set says so; scoped `--allowedTools` grants (verified; see the per-CLI
 table row) let the architect run its own gates deterministically, and a
 `perms=bypass` executor needs no grant list at all (see the permission-tiers
 bullet below). Keep grants narrow and background long-lived processes.
+
+**Codex CAN orchestrate subagents natively under `exec` (probed 2026-08-29,
+codex-cli 0.147.0):** the `multi_agent` feature is stable and enabled at this
+version (`multi_agent_v2` — thread orchestration — stays disabled), and the
+orchestration surface works headless under `codex exec` with stdin redirected.
+Every row below is VERSION EVIDENCE for the pinned 0.147.0, never a durable
+capability fact — re-probe on any CLI update before relying on a row.
+Provenance: OFFICIAL = stated by the official docs; PROBED = observed live on
+this host 2026-08-29; SELF-REPORT marks rows whose evidence is the child
+agent's own reply rather than an independent log surface.
+
+| Capability (codex-cli 0.147.0) | Result | Provenance / evidence class |
+|---|---|---|
+| Feature flags | `multi_agent stable true`; `multi_agent_v2 stable false`; `multi_agent_mode removed false` | PROBED (`codex features list`) |
+| Orchestration tool census | six tools, names verbatim from a read-only `exec` census: `collaboration.spawn_agent`, `collaboration.send_message`, `collaboration.followup_task`, `collaboration.wait_agent`, `collaboration.list_agents`, `collaboration.interrupt_agent` | PROBED (tool names are version evidence, not a contract) |
+| Child interrupt primitive (no close/teardown tool) | `collaboration.interrupt_agent` interrupts a running child's ACTIVE TURN — the probed census statement: "interrupts a running child agent; no separate termination tool is available" — and the callable tool contract leaves the interrupted agent ADDRESSABLE for later messages/follow-up tasks; 0.147.0 exposes NO agent-teardown/close primitive, so exit-census expectations key on OBSERVED active-turn status via the probed `interrupt_agent`, never an assumed `close_agent` — a turn-interrupt is never read as lifecycle close | PROBED (census statement) + PEER-CONFIRMED tool contract (round-9 codex peer, same pinned version) |
+| Custom-agent discovery | project-scoped `.codex/agents/` discovery works under non-interactive `exec` and the user-level `~/.codex/agents` dir is also consulted; NOT v2-gated. The OFFICIAL contract is STANDALONE TOML definitions — required `name`/`description`/`developer_instructions`, optional `model`/`model_reasoning_effort`/`sandbox_mode`/`mcp_servers`; the `name` field, not the filename, is the source of truth; markdown-frontmatter is NOT a documented format (developers.openai.com/codex/multi-agent, fetched 2026-08-29). Separately, a PROBED-ONLY 0.147.0 compatibility observation: a YAML-frontmatter `.codex/agents/*.md` fixture WAS discovered (and its frontmatter pins honored — the pin row) — version-pinned behavior, never the official recipe; the deferred architect/delegate work starts from the TOML contract | OFFICIAL (docs — dir locations + the TOML contract) + PROBED (discovery; the `.md` acceptance is PROBED-only) |
+| Model / effort pins | frontmatter `model:` + `model_reasoning_effort:` honored on spawn — a non-default `model: gpt-5.4` / effort `low` pin came back from the child verbatim | PROBED — SELF-REPORT (no session-log/header surface exposed the child's resolved model under `exec`; treat as weaker than a log-verified pin) |
+| Nested spawn (depth 2) | parent → child → grandchild chain returned the sentinel | PROBED — SELF-REPORT for the grandchild (its existence rests on the child's report; the transcript shows only the parent's wait) |
+| Non-interactive `exec` inheritance | children inherit the parent sandbox/approval policy; a fresh-approval action fails back to the parent — probed: a child write under `-s read-only` errored `Read-only file system`, the exact error text routed to parent stdout, no file landed (the parent process surfaced overall exit 2) | OFFICIAL (inherited sandbox/approvals + fresh-approval failure are documented) + PROBED (the error-routing shape) |
+
+Consequences for this workflow: the five review-family skills' fan-out clause
+(v32.3) is capability-AND-authority probe-shaped, so a codex peer that finds
+these tools exposed and delegation authorized may fan its review lenses out
+inside its one `exec` activation, falling back to the documented sequential
+path on any spawn/approval failure — fail-safe by construction (only the
+speed win is lost). The `/execute-loop` architect/advisor/peer-seat role
+menus stay codex-free in v32.3 on a SCOPE rationale, not a capability one:
+the end-to-end `/execute-loop` codex backend route is not implemented or
+field-validated in v32.3 (the probe verifies the primitives, not the route).
+First-use watch items for the first fan-out field round: approval errors in
+the peer's log, and exit-census survivors judged on OBSERVED active-turn
+status — `interrupt_agent` is the probed active-turn interrupt primitive (an
+interrupted agent remains addressable; 0.147.0 exposes no agent-teardown/
+close primitive, so a census never claims teardown from an interrupt).
 
 ## Verification grants: wrapper scripts + the preflight harness probe
 
@@ -300,7 +305,9 @@ codex-cli 0.142.4; claude 2.1.198 via Windows-npm interop):
   model entry if it fails or misparses.
 - **`claude`** — no model-catalog command exists. Curated aliases per `--model` help
   examples + the native subagent tool enum: `fable`, `opus`, `sonnet`, `haiku`
-  (full names also accepted, e.g. `claude-fable-5`). Effort choices are enumerated
+  (full names also accepted by the CLI `--model` flag, e.g. `claude-fable-5` —
+  NOT by the subagent tool's `model` parameter, which is alias-only; see the
+  v31.1 delegate-pin note above). Effort choices are enumerated
   in `claude --help` under `--effort`: low, medium, high, xhigh, max.
 - **Cursor subagents** — no shell probe; enumerate the composer's in-context allowed
   slugs. Effort is encoded in the slug variant (e.g. `-thinking-xhigh`).
@@ -539,6 +546,94 @@ roles under different Anthropic accounts/orgs:
   NON-simultaneous use. For simultaneous multi-org roles, profiles must be fully
   isolated — no shared history junction.
 
+## Cloud VM token pools (Cursor Cloud; v32)
+
+Cursor Cloud environments cannot store browser-login credentials — VM teardown
+destroys everything not committed. The proven pattern (6 pools verified live
+2026-08-10, CLI 2.1.226) seats per-account **setup-token secrets** at boot and
+addresses them as numbered pools:
+
+- **Seating (boot script, kount-side `agent-cli-auth.sh`):** per-account
+  Secrets `CLAUDE_CODE_OAUTH_TOKEN_1..8` (from `claude setup-token`) are
+  seated into per-pool config stores `~/.claude-acct<N>` on boot. The
+  `<N>` binding is DETERMINISTIC: `~/.claude-acctN` ⇔
+  `CLAUDE_CODE_OAUTH_TOKEN_N`, and every consumer (wrapper validation,
+  probes, identity markers) keys on that mapping.
+- **Spawn recipe:** headless spawns prefix BOTH variables —
+  `CLAUDE_CODE_OAUTH_TOKEN="$CLAUDE_CODE_OAUTH_TOKEN_N"` AND
+  `CLAUDE_CONFIG_DIR=~/.claude-acctN` (per-dir `.credentials.json` outranks
+  env auth in 2.1.x, so the pair is belt-and-braces; the interactive
+  `/usage` panel probe is the one seated-store-only exception below).
+  Loop-spawned roles carry this via the spawn wrapper's
+  `LOOP_OAUTH_TOKEN_ENV` input (v32 TD.2): the composer passes the
+  numbered secret's NAME, the wrapper validates it fail-closed (exact
+  numbered grammar; the acct<N> mapping against `LOOP_PROFILE_DIR`; the
+  named variable set non-empty) and exports the canonical variable by
+  shell INDIRECTION — the token value never appears in the wrapper's OWN
+  emissions (argv, its probe-log lines, the identity record, or any
+  wrapper error), and the child environment is least-credential (every
+  numbered pool variable + the selector removed; identical on fresh
+  spawns and resumes). Honest boundary (v32 PR-HIGH-020): the enforced
+  zero-token-bytes guarantee covers wrapper-authored output, the probe
+  log, and the secret-swept committed evidence — NOT the tee'd role log,
+  which mirrors the child's stdout; the child necessarily holds the
+  canonical token to authenticate, so a child that echoes it lands those
+  bytes in the role log. Role logs are gitignored + never committed, and
+  the persist-before-close secret sweep is the backstop — treat a
+  transient role log as potentially token-bearing, never secret-free.
+- **Auth-status shape (setup tokens):** a setup-token credential has no
+  refresh token and no `user:profile` scope, so `claude auth status`
+  reports **`Login: Expired — log in again` with `email: null` while
+  inference WORKS** — never read that status line alone as an auth
+  failure. Verify a pool with ONE cheap `-p` call (e.g.
+  `CLAUDE_CONFIG_DIR=~/.claude-acctN "<pinned claude>" -p "ok"
+  --output-format text </dev/null`); the wizard surfaces such pools as
+  identity-DEGRADED rows, listed and selectable, never dropped.
+- **Usage probes (both, layered — print-mode `/usage` returns NO quota
+  lines at 2.1.226 on these VMs, both auth modes):**
+  1. **Interactive-panel probe (preferred; unbilled; exact at every usage
+     level).** Scripted tmux TTY: throwaway private-socket session running
+     the pinned CLI, send `/usage`, capture-pane, parse the panel
+     (line-wrapped bars parse across lines; "Per-model breakdown
+     unavailable (rate limited)" can coexist with valid bars; press `r`
+     once to retry a panel missing the week line). **Token-env-suppresses-
+     bars gotcha: launch with the SEATED STORE ONLY — a
+     `CLAUDE_CODE_OAUTH_TOKEN` in the environment suppresses the quota
+     bars**, so the panel probe strips the canonical token (plus every
+     numbered pool variable) from its pane environment.
+     `probe-models.py`'s layered `probe_usage()` implements exactly this
+     (usage_source `panel`, usage_quality `exact`).
+  2. **`rate_limit_event` fallback (billed, minimal).** One
+     `-p "/usage" --output-format stream-json --verbose` call emits a
+     `rate_limit_event` carrying
+     `rate_limit_info.{status,utilization,resetsAt,rateLimitType,isUsingOverage}`;
+     statuses rank `allowed > allowed_warning > rejected`, and exact
+     utilization only appears past the ~75% warning threshold — below it
+     treat `allowed` as healthy headroom, never a percentage
+     (usage_quality `threshold`; the probe never renders threshold
+     evidence as a percentage). Gate it behind the existing lazy
+     `--usage` timing.
+  Do NOT build on `api.anthropic.com/api/oauth/usage` — it 429s from
+  shared cloud egress IPs.
+- **Identity mapping + the seat-sharing caveat:** two pools can be seats
+  on ONE underlying plan pool — identical week percentages with
+  to-the-minute-identical resets are the signature — and usage evidence
+  alone cannot distinguish them, so treat same-plan seats as ONE budget
+  when picking pools. The labeling channel is the optional
+  `CLAUDE_PROFILE_EMAILS` secret (`"1:email,2:email,…"`) which the boot
+  script materializes as one-line `~/.claude-acctN/profile-email.txt`
+  markers (writer: kount-side follow-up); the probe/wizard reads them
+  under the pinned bounded safe-read contract (v32 TD.3:
+  `read_profile_email_marker()` — no-follow regular-file open, one short
+  UTF-8 line, pinned email grammar, fail-silent degradation) and renders
+  marker-sourced labels (`ops@example.com [marker]`).
+- **Evidence persistence:** `.cursor/loops/` is gitignored and dies with
+  the VM — a run that should leave evidence uses the wizard's
+  `persist=on` ephemeral-host answer, whose persist-before-close order
+  commits ONE bounded secret-swept evidence file under `docs/retros/` on
+  the run branch before lifecycle close (the `/execute-loop` close
+  contract; v32 TD.5).
+
 ## Cross-repo read roots (`--add-dir` / `additionalDirectories`)
 
 When a plan references a second repo (a companion project, a reference
@@ -649,8 +744,8 @@ the `execute-loop` skill's Visibility + run-state and loop step 1):
   foreground-and-waited regardless (the loop's foregrounded-peer rule is
   unchanged).
 - **Layer 2 — the monitor subagent (default-on for CLI executor backends on
-  hosts with cheap background subagents).** At spawn the composer also arms a
-  cheap-model background monitor subagent with an explicit contract: executor
+  hosts with background subagents).** At spawn the composer also arms a
+  background monitor subagent with an explicit contract: executor
   PID, tee-log path, plan path, the Tier-1 anchor regexes, the liveness
   window, and the current watch baseline (tee-log offset / last-seen anchor
   plus the plan task-marker snapshot at arm time). It polls its inputs every
@@ -710,8 +805,8 @@ the `execute-loop` skill's Visibility + run-state and loop step 1):
   artifact families (alongside `ROLE:` lines):
 
   ```text
-  Wake: run=<runkey> layer1=<bg-shell|subagent-harness|fg-wait|native> layer2=<monitor|sentinel|none> [interval=<minutes>m] [reason="<required when layer2=none>"]
-  WATCH: armed ts=<iso> run=<runkey> role=<executor|architect|delegate|peer|advisor> layer1=<...> layer2=<...> [reason="<required for layer2=none and for any mechanism-change line>"]
+  Wake: run=<runkey> layer1=<bg-shell|subagent-harness|fg-wait|native> layer2=<monitor|sentinel|none> [interval=<minutes>m] [delivery=<fg|bg>] [reason="<required when layer2=none>"]
+  WATCH: armed ts=<iso> run=<runkey> role=<executor|architect|delegate|peer|advisor> layer1=<...> layer2=<...> [delivery=<fg|bg>] [reason="<required for layer2=none and for any mechanism-change line>"]
   MONITOR: ts=<iso> run=<runkey> role=<...> event=<anchor|liveness|anomaly|exit|dead-at-spawn> task="<current task + time-in-state>" log=<growth> last=<age> detail="<one-liner>"
   ```
 
@@ -731,7 +826,9 @@ the `execute-loop` skill's Visibility + run-state and loop step 1):
   ARE the arm/liveness proof (the two-shape clause above).
   Return handling is ATOMIC and CONDITIONAL: a non-exit return is not fully
   processed until the update is posted AND the next watch is armed in the same
-  handling turn; an exit return writes the role's `ROLE: end` FIRST, runs the
+  handling turn; an exit return is VERIFIED with its required `CONSUME:`
+  verdict recorded, then writes the role's `ROLE: end` first among the
+  closure records (the reconciled v32.5 order), runs the
   terminal classification, does NOT re-arm (the role is closed — never a
   watch on a dead PID), and CANCELS every still-armed wake mechanism for that
   role that did not self-terminate with the exit return (v29.2) — an
@@ -741,6 +838,27 @@ the `execute-loop` skill's Visibility + run-state and loop step 1):
   2026-07-10: two post-exit false stalls); a live role with NO Layer-2
   mechanism and NO Layer-1 surface is foreground-waited or MUST-PAUSEd — it
   never continues dark.
+  **Delivery (v32.2).** Both lines MAY carry the optional `delivery=<fg|bg>`
+  key — the preflight-resolved Layer-2 DELIVERY mode, resolved at step 10 from
+  the persisted `monitor-delivery=fg|auto` `Loop config:` key (absence or a
+  malformed value = `auto`, fail-closed; the artifacts carry only the RESOLVED
+  value, never `auto`): `bg` = host-ordinary background return delivery; `fg` =
+  the composer consumes the resolved Layer-2 watch foreground-synchronously
+  over the existing chunked-poll contract — bounded polls of up to
+  min(liveness interval, ~10 min) re-entered until the return (~10 min flat
+  under liveness OFF — the composer-seat bound, v32.5; the monitor child
+  foreground-polled, the sentinel shell
+  foreground-awaited), each return consumed AND the next watch armed in the
+  same handling turn, scoped to delivery-fg Layer-2 consumes only (background
+  executor watches untouched). Drift policing rides a MONOTONIC delivery
+  epoch: before a file's first delivery-bearing `Wake:`, key absence is legal
+  everywhere and key presence on a `WATCH: armed` is a no-authority violation;
+  after it, every Layer-2-consume `Wake:` carries resolved delivery (omission
+  never resets the epoch), a post-epoch `layer2=none` `Wake:` is a NO-ARM
+  state, every comparable `WATCH: armed` carries an agreeing value, and
+  `reason=` never excuses delivery absence or mismatch — a legitimate delivery
+  change lands as a NEW step-10 `Wake:` before the next arm. A `layer2=none`
+  line never carries the key.
   Canonical definition (writers, worked example, the full return-handling
   duty): `/execute-loop` → Visibility + run-state → Wake arming artifacts.
 - **Log rotation protects the anchors.** Tee logs append and run keys get
@@ -1091,6 +1209,28 @@ loop now; the Cursor SDK — see the `sdk` skill — for the Stage 7 capstone).
   live-session architects alike. Delegating mode raises the cross-family peer pass's importance —
   everything is one-family until the peer runs. See `/execute-loop` → Optional delegating
   executor.**]**
+  **[SUPERSEDED for SPAWNED architects at v32.2, 2026-08-13 — delegation-record transport:**
+  the v28.0 sentence above — one destination "for spawned and live-session architects alike" —
+  is HISTORICAL: stdout is not a record transport for a spawned architect, because the mandatory
+  `--output-format stream-json` spawn shape JSON-escapes the tee (the text survives; the
+  line-start record shape `/retro` parses does not). Current contract (v32.2): a SPAWNED
+  architect appends its plain-text `DELEGATION:` records to its activation's COMPOSER-PRE-CREATED
+  leg-keyed STAGING file `stage-<N>-delegation.<leg>.log` (worktree runs under
+  `<worktree>/.cursor/loops/`; `branch`/`none` runs at the flat base log root), and at that
+  activation's exit consume — BEFORE any teardown and BEFORE any generic worktree-record copy —
+  the composer runs `python3 scripts/loop-journal.py fold-delegation` to PROMOTE the staging
+  bytes to the canonical `<log-root>/stage-<N>-delegation.log`: the tool is the canonical file's
+  ONLY writer (validated, bounded, activation-keyed append-once under durable receipts;
+  composer-only at the grant layer — spawned-role grants carry only the narrowed emission
+  shapes), a MISSING staging file at exit consume REFUSES (retained + surfaced, never read as
+  zero work; the pre-created still-empty file is the explicit zero case), and a VERIFIED fold
+  RETIRES that activation's staging file to a non-corpus name so `/retro` sees each admitted
+  record exactly once. A LIVE-SESSION architect keeps the direct role-log append above,
+  unchanged. The record grammar is the CLOSED variant matrix `decision|outcome|roi|smoke-addendum`
+  — normative owner: the `DELEGATION_VARIANTS` constant in `scripts/loop-journal.py`, generated
+  and verified from the checked-in `scripts/fixtures/delegation-variants.json`; this doc is a
+  downstream representation (a selftest row asserts this variant list matches the constant).
+  See `/execute-loop` → Optional delegating executor.**]**
   **[UPDATED v28.2, 2026-07-02 — diagnostics:** the loop recipe's observability gap is closed.
   Every role activation now gets a parseable `ROLE: start`/`end` pair (backend, model, best-effort
   `turns≈`/`tokens≈`/duration where the backend exposes them) in the run's `.cursor/loops/` logs —

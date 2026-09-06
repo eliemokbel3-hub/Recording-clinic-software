@@ -13,7 +13,8 @@
 # (execute, fix, push, end-session, create-branch). In v27.2 the invocation
 # locks were relaxed: $execute, $fix, and $document became agent-invocable
 # (allow_implicit_invocation: true), while $push, $end-session,
-# $create-branch, $review-loop, and $document-review stay explicit-only
-# (allow_implicit_invocation: false).
+# $create-branch, $review-loop, and $document-review stayed explicit-only
+# (allow_implicit_invocation: false). $create-branch itself was retired in
+# v32.0 (branch naming folded into project-workflow.mdc).
 policy:
   allow_implicit_invocation: true

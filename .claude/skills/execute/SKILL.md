@@ -22,6 +22,7 @@ Before starting:
 - read the plan's `Lifecycle State`
 - if the selected plan is `Completed — Follow-ups Retained`, do not resume it like a normal active execution plan
   - instead, tell the user the main implementation is already complete and ask whether to create a follow-up plan now or review retained items only
+- if the selected plan is `Paused` (v32), REFUSE to execute it — a Paused plan is never executable. Surface its `Paused since:`/`Paused reason:` fields and tell the user resuming is the explicit `Paused → Active` transition (via `/load-plan`, or by editing the state with a dated resume note); execution proceeds only after that transition. Under a headless/loop invocation, record the refusal and end — never flip the state
 - read the full plan file to understand:
   - goal
   - key findings / integration notes
@@ -34,7 +35,7 @@ Before starting:
   - current state / handoff note
   - current progress
 - consult `docs/lessons.md`, if it exists, for recurring project gotchas relevant to the plan's area
-- identify the current 🟨 task if one exists, otherwise the first task still marked 🟥
+- identify the current 🟨 task if one exists, otherwise the first task still marked 🟥 — skipping any task that carries the `[pending-hardening]` marker (see the pre-🟨 checks below: a marked task is never selectable work)
 - if another top-level task is already marked 🟨, do not start a second one unless the plan explicitly marks those tasks as parallel-safe
 - if the plan does not explicitly allow parallel work, finish, pause, or re-mark the existing 🟨 task before proceeding
 
@@ -338,6 +339,19 @@ Before implementing the selected task:
   intentional, planned hard-stop whose deliverable is a recorded
   decision. Run the decision-point flow in Hard-stop condition #1
   ("Decision-point tasks") instead.
+- before changing the selected task from 🟥 to 🟨, check whether it
+  carries the `[pending-hardening]` marker — a task auto-appended by
+  `/execute-loop`'s `high-auto=on` Include-in-plan route (v32): a
+  RECORDED task with no execution authority. If yes, REFUSE to build
+  it. The ONLY remover of the marker is a successful scoped
+  `/review-plan` over the marked task(s) — a failed or aborted
+  hardening leaves the marker in place, and the marker is never removed
+  by hand (duplicate appends are idempotent: one task, one marker).
+  Interactively, tell the user the task is pending hardening and offer
+  to run the scoped `/review-plan` now; under a headless/loop
+  invocation, skip the task, record the refusal in the handoff note,
+  and continue to the next eligible task (the loop composer runs the
+  scoped hardening at a phase boundary).
 - before changing the selected task from 🟥 to 🟨, check whether it is
   labelled `[executor: premium-only]`. If yes, hard-stop before marking
   the task in progress. In Cursor, ask the user to confirm a premium

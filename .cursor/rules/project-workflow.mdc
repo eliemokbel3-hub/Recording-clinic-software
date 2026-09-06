@@ -72,9 +72,21 @@ Saved plans in `.cursor/plans/` can be in one of these lifecycle states:
   - no meaningful follow-up execution context needs to remain in the plan
   - this plan can be archived or deleted when the user is ready
 
+- **Paused** (v32)
+  - an intentionally SUSPENDED execution plan: work stopped mid-stream by an explicit user/operator decision, with the intent (or open possibility) of resuming
+  - DISCOVERABLE + RECOVERABLE: it surfaces in every plan listing with its label and holds everything a resume needs; it is NEVER executable, archivable, deletable, overwritable, merged-as-complete, or pushed-as-complete while Paused
+  - the state line carries two fields directly beneath it:
+    `Paused since: YYYY-MM-DD` and `Paused reason: <one line>`
+  - legal transitions (owners in parentheses; nothing else is legal):
+    - `Active → Paused` (the user/operator; a loop composer may RECORD the operator's pause decision at a paused run close, never decide it)
+    - `Paused → Active` (the user/operator, explicit resume — replace the two `Paused …` fields with a dated resume note in the handoff)
+    - there is NO direct `Paused → Completed — …` step: a paused plan resumes (even nominally, to verify state) and then completes normally — completion claims verification a suspended run never ran
+  - headless/loop invocations NEVER flip a plan into or out of Paused
+
 Rules:
 - Do not treat `Completed — Follow-ups Retained` the same as a normal active plan.
 - Do not archive or delete a plan in `Completed — Follow-ups Retained` state unless the user explicitly chooses to close out the retained follow-ups.
+- Never archive, delete, overwrite, execute, merge-as-complete, or push-as-complete a `Paused` plan (or its findings sidecar — the pair rule); every such command surfaces the Paused state and stops until the user runs an explicit legal transition.
 - If follow-up work is resumed from a retained-complete plan, create a new saved follow-up execution plan such as:
   `.cursor/plans/plan-[feature]-followup-1.md`
 - If later follow-up rounds are needed, increment the suffix:
@@ -214,6 +226,7 @@ Calibrate against finding quality, not round count:
 - Do not default to `git add .` unless the user explicitly wants every relevant changed file staged.
 - Prefer staging only the files relevant to the task.
 - Warn before destructive git operations such as reset, rebase with history rewrite, force push, or branch deletion.
+- Branch names use a `feature/` / `fix/` / `hotfix/` / `chore/` prefix with lowercase, hyphen-separated, short descriptive slugs (the retired `/create-branch` wrapper's conventions — v32).
 - If the current branch is `main`, explicitly warn that pushing may deploy the app.
 - Commit messages and PR descriptions must never mention AI, Cursor, Claude, agents, or internal workflow jargon. Keep them professional and human-sounding.
 - Never run two agent sessions against the same checkout concurrently — give each concurrent session its own worktree or clone; a shared working tree lets the sessions corrupt each other's work.

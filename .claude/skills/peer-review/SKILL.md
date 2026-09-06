@@ -14,7 +14,7 @@ Treat this as an independent peer review in a separate agent session. By default
 
 ## Step 0 — Auto-detect plan, findings, and changed files
 
-1. **Find the active plan.** Look in `.cursor/plans/` for `plan-*.md` files, excluding anything under `.cursor/plans/completed/`. If exactly one plan exists, use it. If multiple plans exist, prefer the one with the most recent `Last plan sync` timestamp in its `Current State / Handoff Note`. If no plan file is found, fall through to the Step 0 fallback menu below and skip the remaining sub-steps.
+1. **Find the active plan.** Look in `.cursor/plans/` for `plan-*.md` files, excluding anything under `.cursor/plans/completed/`. If exactly one plan exists, use it. If multiple plans exist, prefer the one with the most recent `Last plan sync` timestamp in its `Current State / Handoff Note`. A `Paused` plan (v32) may be peer-reviewed for its already-built work — its Findings Log stays writable — but surface the Paused state in the Step 0 report and never treat the review as a resume; the state is never flipped here. If no plan file is found, fall through to the Step 0 fallback menu below and skip the remaining sub-steps.
 
 2. **Read the latest applicable Findings Log round.** Locate the most recent round block in the plan's `Review Findings Log` section. If that round's `Source:` field is `Cursor peer-review`, `Claude Code peer-review`, or `Codex peer-review` — or a plan peer-review value (`Cursor plan peer-review`, `Claude Code plan peer-review`, or `Codex plan peer-review`; plan-scoped rounds written by the headless plan-review variant of the non-interactive contract below) — skip back to the most recent `/review`-class round instead — peer-review's job is to validate `/review`-class output, not to re-review other peer-reviews, and a plan peer-review round is never a code-validate target. A `/review`-class round is any round whose `Source:` is a `/review` (or `$review`) run OR a propose-only reviewer that writes `/review`-compatible findings: `… simplify` and `… security-review` rounds (carrying `SIMP-`/`SEC-` IDs) ARE `/review`-class and are valid targets to validate; only `… peer-review` rounds (which by construction includes `… plan peer-review`) are skipped. For each finding in the targeted round, read the severity / title / location header, the structured per-finding fields (`Triage:`, `Fix route:`, `Why it matters:`, `Current behaviour:`, `Desired behaviour:`, `Pattern to follow:`, `Pattern siblings:`, `Invariant:`, `Verification:`, `Regression risk:`, `Scope-expansion disposition:`), and the per-finding `/fix decision:`, `/fix notes:`, `/fix date:`, `/fix applied by:` fields. If the targeted round is a compacted digest (a `Compacted … → findings-[feature].md` marker line under its header), read those full per-finding blocks from the named sidecar instead; a missing or partial sidecar is an error to surface — fail closed, never treat compacted history as absent. If the plan has no `Review Findings Log` section, the section contains only a `(no findings logged yet)` placeholder, or its only rounds are `… plan peer-review` rounds (plan-scoped critique does not make the plan "already reviewed"), this is a pre-execution (or not-yet-reviewed) plan — set **mode = plan review** (see `## Mode — plan review vs code review` below) rather than treating it as an error. The Step 0 fallback menu (sub-step 6) stays available, so the user can instead pick a code review of working-tree changes (option 3).
 
@@ -180,18 +180,24 @@ This workflow's independent passes are independent lenses over the same
 inputs: validating the prior findings (Step 2), the missed-issue pass
 (Step 3, including bounded structural quality), and downstream-breakage
 analysis (Step 4) — or in plan-review mode the coverage / practicality
-/ assumptions / simpler-path / verification lenses above. If your tool
-supports parallel subagents (e.g. Cursor's Task subagents, Claude
-Code's Task tool), you may fan them out: spawn one subagent per lens,
+/ assumptions / simpler-path / verification lenses above. If your
+harness exposes agent-spawning/orchestration tools (e.g. a Task tool
+or `spawn_agent`/`wait_agent` — probe what this session actually
+exposes, never assume from the product name) AND the instruction and
+policy stack that applies to this task permits delegation, you may
+fan them out: spawn one subagent per lens,
 each reading the relevant files in full and returning candidate
 findings with concrete `file:line` (or plan-section) evidence. Collect,
 dedupe (same root cause at the same site = one finding), and reconcile
 severities; the Finding Verification filter (Step 5) and the handoff
 then run once in this orchestrating session.
 
-If your tool does not support parallel subagents (e.g. Codex), run the
-passes sequentially — the documented fallback, which changes nothing
-about the findings, only how they are produced.
+If either check fails — no such tools exposed, or delegation not
+authorized for this task — run the passes sequentially — the
+documented fallback, which changes nothing about the findings, only
+how they are produced. If a spawn or approval failure interrupts a
+fan-out mid-pass, fall back to the same sequential path for the
+remaining passes.
 
 Subagents add **lens diversity, not model diversity**: they inherit
 this session's model and share its blind-spot profile. Peer-review's
@@ -320,7 +326,12 @@ compatible per-finding block with stable IDs prefixed `PR-` (e.g.
   - Current behaviour: ...
   - Desired behaviour: ...
   - Pattern to follow: ...
-  - Pattern siblings: ... (or "none found")
+  - Pattern siblings: ... (or "none found"; for a pattern-shaped
+    finding the list follows /review's exhaustive-in-round rule —
+    enumerate every sibling site a fresh search finds, using several
+    pattern spellings, with the search evidence on the finding;
+    never an illustrative sample, and "none found" only after that
+    search comes back empty)
   - Invariant: ... (when applicable)
   - Verification: ...
   - Regression risk: ...

@@ -240,16 +240,22 @@ the result of each lens explicitly (even if "no issue") so the gate
 is auditable rather than ad hoc.
 
 **Parallel critique (where supported).** As in `/review-plan`'s
-"Parallel critique (where supported)" section: if your tool supports
-parallel subagents (e.g. Cursor's Task subagents, Claude Code's Task
-tool), you may fan the critique lenses out — one subagent each — each
+"Parallel critique (where supported)" section: if your harness
+exposes agent-spawning/orchestration tools (e.g. a Task tool or
+`spawn_agent`/`wait_agent` — probe what this session actually
+exposes, never assume from the product name) AND the instruction and
+policy stack that applies to this task permits delegation, you may
+fan the critique lenses out — one subagent each — each
 reading the confirmed extraction plus the real code it names and
 returning concrete findings (extraction item or `file:line`).
 Collect, dedupe, and reconcile in this session; the gap-raising and
-clarification below run once here, with the user. If your tool does
-not support parallel subagents (e.g. Codex), run the lenses
+clarification below run once here, with the user. If either check
+fails — no such tools exposed, or delegation not authorized for this
+task — run the lenses
 sequentially — the documented fallback, which changes nothing about
-the critique, only how it is produced. Subagents add lens diversity,
+the critique, only how it is produced. If a spawn or approval
+failure interrupts a fan-out mid-pass, fall back to the same
+sequential path for the remaining lenses. Subagents add lens diversity,
 not model diversity (they inherit this session's model); for a true
 cross-model-family check on a non-trivial plan, use the follow-on
 review recommended at Step 4.
@@ -316,6 +322,7 @@ Sanitise the chosen name automatically: lowercase, hyphens only, no spaces or sp
 Check whether `.cursor/plans/plan-[chosen-name].md` already exists.
 
 If it DOES exist:
+- Read the existing plan's `Lifecycle State` FIRST. If it is `Paused` (v32), REFUSE the overwrite/replace path outright: a Paused plan (and its findings sidecar — the pair rule) is never overwritten, archived, or deleted while Paused. Surface its `Paused since:`/`Paused reason:` fields and offer ONLY: (1) Rename this new plan, (2) Cancel, or (3) first run the explicit legal transition (`Paused → Active` via `/load-plan`'s resume, a user decision recorded there) and re-invoke — the refusal stands until that transition has actually happened.
 - Show the user the existing plan's goal and current progress percentage
 - Ask what they want to do:
   1. **Overwrite** — replace the existing plan entirely and start fresh

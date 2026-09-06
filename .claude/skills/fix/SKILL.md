@@ -16,6 +16,8 @@ Please apply findings from the most recent /review output.
 
 ## Step 0 — Identify the review baseline
 
+**Paused governing plan (v32 — checked here because `/fix` is independently invocable, never only caller-gated):** once the governing plan is identified below, read its `Lifecycle State` BEFORE applying anything. If it is `Paused`, REFUSE to apply fixes or amend the plan's scope/tasks — a Paused plan is never executable; surface the `Paused since:`/`Paused reason:` fields and the resume route (`/load-plan`'s explicit `Paused → Active` transition). Under a headless/loop invocation, record the refusal and end — never flip the state.
+
 Look for findings to apply in this order:
 
 1. **Findings Log preferred.** Check the plan file's `Review Findings
@@ -355,6 +357,16 @@ For each confirmed finding:
    entry with the corresponding Decision and a one-line Notes
    explaining why.
 
+   **Tuple-block copy owner (v32).** When this `/fix` runs as the fix
+   leg of a peer round that carries a leg-1 verified-tuple block (the
+   `#### LEG 1 verified tuples` shape from `/execute-loop`'s two-leg
+   routing), /fix ALSO updates that round's tuple-block decision lines
+   with each finding's final disposition as part of this same
+   per-finding update — the tuple block is round state, not scratch,
+   and /fix owns the copy (the composer routes; it never edits round
+   records on /fix's behalf). No tuple block present = nothing extra
+   owed.
+
    **Not reproducible decision (v22).** If /fix attempts the fix but
    cannot reproduce the underlying issue — the finding appears to
    have been resolved by an intervening commit, is environment-
@@ -414,6 +426,51 @@ Step 9's per-finding log entries are retained for every batch member
 (note the batch in `/fix notes`). Everything else — any CRIT/HIGH/MED
 finding, anything carrying an Invariant, signature, or schema change —
 keeps per-finding verification exactly as written above.
+
+## Step 2.5 — Fix-delta self-check (advisory, one per leg)
+
+Before this `/fix` leg ends — every exit shape included: the normal
+Step 3 wrap-up, a leg ending after a Step 2 stop-on-failure report,
+or a pause/hand-back mid-round — if the leg applied at least one
+finding, run ONE targeted ADVISORY review of the hunks this leg
+itself applied. The scope is in-leg memory of its own edits (the
+files and hunks it changed this leg): re-read each applied hunk in
+its surrounding context with fresh eyes, looking for the classic
+fix-induced classes — a fix that broke a neighbouring exit path, an
+incomplete sibling sweep, a drive-by edit that slipped in, a
+verification that exercised the wrong thing. No baseline artifact,
+no durable scope manifest, no new tooling: this is one read-through
+of the leg's own delta, not a re-run of `/review` (the "does NOT
+redo /review" boundary below is untouched — the self-check's scope
+is exactly the hunks this leg applied, nothing else).
+
+Record the outcome as ONE aggregate `Fix-delta self-check:` line on
+the round block in the Review Findings Log (round-level, beside the
+leg's other round updates; one line per leg):
+
+- nothing found → `Fix-delta self-check: PASS — <scope one-liner>`
+  (e.g. `PASS — re-read 4 applied hunks across 2 files`)
+- a suspected regression found → `Fix-delta self-check: flagged —
+  routed to review round <N>`: report the suspicion in the leg's
+  handoff/summary message AND route it into the EXISTING machinery —
+  a fresh scoped `/review` round owns it as a normal new finding
+  (normal round allocation, selection, status, phase-close, and
+  compaction lifecycle; nothing new). The flagged line never changes
+  this round's status — the round still closes or stays open purely
+  by its findings' dispositions.
+- check not performable (no applied delta, or the leg's own edit
+  scope is unclear — e.g. an interrupted leg) →
+  `Fix-delta self-check: SKIP — <why>` or
+  `Fix-delta self-check: ERROR — <why>`; advisory only, never a
+  blocker.
+
+The line is additive plan prose: no consumer parses it, round status
+stays derived from finding dispositions alone, and no selector,
+history-checker, or template change rides it. On `/document`
+compaction it moves to the sidecar with the full round block (the
+canonical in-plan digest grammar does not carry it). There is no
+retry predicate and no blocker state — a leg that cannot perform the
+check records the SKIP/ERROR line and ends normally.
 
 ## Step 3 — Wrap up
 Once all confirmed findings are applied (or skipped):

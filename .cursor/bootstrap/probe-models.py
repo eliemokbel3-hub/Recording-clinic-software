@@ -60,26 +60,40 @@ field names, nesting, and status vocabulary are normative; values illustrate):
                         "plan": "max",
                         "usage": {"status": "skipped", "headline": null,
                                   "session_pct": null, "session_resets": null,
-                                  "week_pct": null, "week_resets": null},
+                                  "week_pct": null, "week_resets": null,
+                                  "usage_quality": "none", "usage_source": "none",
+                                  "availability_band": "unknown",
+                                  "limit_status": null, "limit_utilization": null,
+                                  "limit_resets_at": null, "limit_resets": null},
                         "config_dir": "/home/user/.claude",
                         "config_source": "builtin",
                         "aliases_profile": null,
+                        "marker_email": null,
                         "recent_repos": {"status": "ok", "error": null, "entries": [
                             {"name": "-home-user-projects-example-app",
                              "age_min": 4.2, "in_use": true}]}},
     "profiles": [
       {"dir": "/home/user/.claude-work", "identity": "work@example.com (Work Org)",
        "status": "ok", "plan": "max",
+       "marker_email": null,
        "usage": {"status": "ok",
                  "headline": "Current session: 12% used - resets Jul 20, 9pm "
                              "(Area/City) | Current week (all models): 34% used "
                              "- resets Jul 27, 1pm (Area/City)",
                  "session_pct": 12, "session_resets": "Jul 20, 9pm (Area/City)",
-                 "week_pct": 34, "week_resets": "Jul 27, 1pm (Area/City)"},
+                 "week_pct": 34, "week_resets": "Jul 27, 1pm (Area/City)",
+                 "usage_quality": "exact", "usage_source": "panel",
+                 "availability_band": "allowed",
+                 "limit_status": null, "limit_utilization": null,
+                 "limit_resets_at": null, "limit_resets": null},
        "recent_repos": {"status": "ok", "error": null, "entries": [
            {"name": "-home-user-projects-other-repo",
             "age_min": 3.0, "in_use": true}]}}
-    ]
+    ],
+    "pool_ranking": {"recommended": "/home/user/.claude-work",
+                     "reason": "band=allowed; idle; most headroom",
+                     "bands": {"default": "warning",
+                               "/home/user/.claude-work": "allowed"}}
   },
   "cursor": {
     "status": "in-context",
@@ -163,20 +177,92 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
   the wizard fires the environment-readiness pause) | absent (no candidate
   binary found) | failed (internal error).
 
-- claude usage structured fields (accounts-probe extension; only behind
-  --usage) -- session_pct/session_resets parse ONLY from the exact
-  "Current session:" line and week_pct/week_resets ONLY from the exact
-  "Current week (all models):" line; model-specific "Current week
-  (<Model>):" lines and insight/contribution percentage lines are NEVER
-  substituted (all-models line absent -> week_pct stays null, never another
-  percentage). The separator between the percent and the resets clause is a
-  non-ASCII middle dot on observed hosts and is never keyed on; resets text
-  is carried verbatim (hour-only shapes observed; minute-bearing tolerated
-  as forward-compat). A 0% cell omits its resets clause entirely, so reset
-  fields are nullable even at status ok. A logged-out store's /usage exits
-  0 with a local-stats block carrying no % lines -> the existing
-  degraded/headline path, unchanged. Structured-parse failure never changes
-  status or headline: the new fields simply stay null alongside them.
+- claude usage (LAYERED probe, v32 TD.1 -- only behind --usage; probe_schema
+  stays 1, every new field ADDITIVE-optional in both UPDATE ONLY skew
+  directions). Print-mode /usage on CLI 2.1.226+ NEVER returns quota lines
+  (verified live 2026-08-10), so the probe layers three evidence sources,
+  best-first, each failure falling through silently:
+    1. tmux interactive-panel probe (preferred; UNBILLED; exact at every
+       usage level). Runs the pinned CLI interactively inside a throwaway
+       private-socket tmux session (unique -L label + session name; killed
+       in finally on every path; bounded by a hard deadline), sends
+       "/usage", captures the pane, and parses the panel: line-wrapped
+       bars are parsed ACROSS lines; "Per-model breakdown unavailable
+       (rate limited)" can coexist with valid bars and never blocks; a
+       panel missing the week line gets ONE "r" retry; a workspace-trust
+       prompt is answered once. SEATED-STORE ONLY: the canonical
+       CLAUDE_CODE_OAUTH_TOKEN is stripped from the panel subprocess env
+       (a token in the env suppresses the quota bars -- verified live
+       2026-08-10). tmux absent/timeout/unparseable -> fall through.
+       No-file-creation note: the tmux SERVER creates its own socket
+       under the system tmux dir OUTSIDE the repo (plus the CLI's own
+       store writes, as any probe invocation); the script itself still
+       creates nothing.
+       -> usage_quality "exact", usage_source "panel".
+    2. ONE billed fallback call: '<pinned> -p "/usage" --output-format
+       stream-json --verbose' (retry-once on timeout/failed per v30.1;
+       absent never retries). An older CLI that still prints quota lines
+       yields EXACT print evidence from the result text (usage_source
+       "print" -- the old/new-CLI skew path, exact-prefix anchors below);
+       on 2.1.226+ the stream's rate_limit_event yields THRESHOLD
+       evidence: rate_limit_info.status allowed | allowed_warning |
+       rejected (+ utilization/resetsAt when exposed). Exact utilization
+       only appears past the ~75% warning threshold -- below it "allowed"
+       means healthy headroom, never a percentage.
+       -> usage_quality "exact"/"threshold", usage_source
+       "print"/"rate-limit-event".
+    3. Degraded: no panel, no % lines, no event -> the existing
+       degraded/headline path (usage_quality "none", usage_source "none").
+  Threshold evidence is NEVER rendered as a percentage: session_pct /
+  week_pct stay null on threshold evidence; the raw event rides the
+  additive limit_status / limit_utilization / limit_resets_at /
+  limit_resets fields (limit_utilization is machine evidence for the
+  final ranking tie-break only -- never a usage display value; the
+  threshold headline is percentage-free by construction).
+  availability_band (additive, every usage entry) maps ANY observation
+  into the shared bands: allowed | warning | rejected | unknown --
+  exact percentages band by the SAME thresholds as threshold events
+  (>= 100 rejected, >= 75 warning), so the two evidence classes rank
+  on one dimension (PR-MED-010).
+  Exact-parse anchors (print + panel alike): session_pct/session_resets
+  parse ONLY from the exact "Current session:" line and week_pct/
+  week_resets ONLY from the exact "Current week (all models):" line;
+  model-specific "Current week (<Model>):" lines and insight/contribution
+  percentage lines are NEVER substituted (all-models line absent ->
+  week_pct stays null, never another percentage). The separator between
+  the percent and the resets clause is a non-ASCII middle dot on observed
+  hosts and is never keyed on; resets text is carried verbatim (hour-only
+  shapes observed; minute-bearing tolerated as forward-compat). A 0% cell
+  omits its resets clause entirely, so reset fields are nullable even at
+  status ok. A logged-out store's /usage carries no % lines -> the
+  degraded/headline path, unchanged. Structured-parse failure never
+  changes status or headline: the structured fields simply stay null
+  alongside them.
+
+- claude.pool_ranking (additive; emitted only when --usage ran) -- the
+  TWO-DIMENSIONAL availability-first ranking (PR-MED-010) computed by
+  rank_pool_candidates() over the default account + every probed profile:
+  dimension 1, availability bands DECIDE (rejected/exhausted pools are
+  NEVER recommended regardless of evidence quality; allowed beats
+  warning); dimension 2, within a band the existing idle-first /
+  most-headroom tie rules apply (the recent-repos completeness rule
+  gates idle ranking), with evidence fidelity (exact > threshold) +
+  freshness only as the FINAL tie-breaker. Incomparable or degraded
+  observations produce an explicit no-recommendation ("recommended":
+  null + a reason), never a silent guess. The wizard's menu prose
+  applies the same rule; this field is the mechanical form.
+
+- profile-email.txt identity markers (v32 TD.3; additive "marker_email"
+  on default_account + every profile row) -- the CLAUDE_PROFILE_EMAILS
+  labeling channel (writer: the cloud boot script, kount-side). Read
+  under the PINNED SAFE-READ contract (PR-MED-005): a no-follow open of
+  a REGULAR file inside the already-approved profile dir (O_NOFOLLOW +
+  post-open fstat regular-file check on the OPENED descriptor, so a
+  replacement race cannot swap in a symlink/FIFO/device), bounded to
+  one short UTF-8 line under the pinned email grammar; invalid,
+  oversized, multi-line/control-character, symlinked, special-file, or
+  unreadable markers degrade fail-silent to null -- raw marker content
+  never reaches JSON, stdout, or stderr.
 
 - codex.usage -- the app-server account/rateLimits/read exchange (only
   behind --usage; SKIPPED when --profile-dir is present -- that flag names
@@ -282,6 +368,12 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
   semicolon-separated key=value group parses; unknown keys are ignored --
   the forward-compat rule). Both scans are heading-scoped and fence-skipping,
   so quoted examples inside fenced blocks never count.
+  Paused plans (v32, additive): a lifecycle section leading with 'Paused' is
+  reported in the additive 'paused_plans' list ({file, since, reason,
+  has_loop_config} -- the two fields read from the section's 'Paused since:'/
+  'Paused reason:' bullets, "" when absent). A Paused plan is NEVER an Active
+  candidate and never offered for reuse; the wizard surfaces it as
+  recoverable (resume = /load-plan's explicit Paused -> Active transition).
 
 - report_line -- preassembled four-segment probe report with EXACTLY ONE
   composer-filled placeholder, the literal token {CURSOR_SLUGS} in the cursor
@@ -290,9 +382,11 @@ extensions (probe_schema stays 1; every Stage B field is additive-optional
 
 Flags:
     --usage          run the per-account usage probes for BOTH families:
-                     claude '<pinned> -p "/usage" --output-format text' per
-                     account (~2-7s each; structured fields + headline) and
-                     the codex app-server rateLimits exchange (~10s).
+                     the claude LAYERED probe per account (tmux panel,
+                     unbilled/exact, up to ~45s -> one billed stream-json
+                     fallback carrying print or rate_limit_event evidence
+                     -> degraded; the claude-usage mapping block above)
+                     and the codex app-server rateLimits exchange (~10s).
                      Default off: usage entries report status "skipped".
                      The wizard and the accounts probe submode run this
                      LAZILY -- only when a menu or table actually needs
@@ -317,7 +411,10 @@ Flags:
 Behaviour contract: ASCII-only source, stdlib-only, strictly read-only (the
 only outputs are stdout/stderr; every subprocess is a read-only probe; the
 optional advisor probe bills tokens but writes nothing; the script itself
-never creates a file or directory anywhere), no literal triple-backtick
+never creates a file or directory anywhere -- the usage panel probe's
+throwaway tmux SERVER creates its own socket under the system tmux dir
+outside the repo, and CLI probe invocations refresh their own stores, both
+disclosed subprocess effects, not script writes), no literal triple-backtick
 sequences (fence tokens are built programmatically), every subprocess
 carries a timeout and stdin=DEVNULL so the script never hangs (single
 exception: the codex usage exchange holds stdin OPEN by protocol necessity
@@ -404,6 +501,41 @@ IN_USE_THRESHOLD_MIN = 10.0  # projects-entry age below this reads "in use" (heu
 QUARANTINE_MARKER = ".quarantined-"  # delete-path rename marker; predicate-excluded
 SESSION_LINE_PREFIX = "Current session:"
 WEEK_ALL_LINE_PREFIX = "Current week (all models):"
+
+# Token-pool environment matrix (v32 TD.2 / PR-HIGH-009). The numbered
+# pool variables and the wrapper's selector are SPAWN-TRANSPORT inputs,
+# never probe inputs: they are stripped BY NAME from every claude probe
+# subprocess (values are never read, compared, or logged here). The
+# canonical env-auth variable stays by default (per-dir credentials
+# outrank it in 2.1.x); the interactive panel probe is the one
+# seated-store-only surface that also strips it.
+CANONICAL_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
+NUMBERED_TOKEN_RE = re.compile(r"^CLAUDE_CODE_OAUTH_TOKEN_[1-9][0-9]*$")
+TOKEN_SELECTOR_VAR = "LOOP_OAUTH_TOKEN_ENV"
+
+# Layered usage probe (v32 TD.1). Bands are shared by exact and threshold
+# evidence so ranking has ONE availability dimension (PR-MED-010): an
+# exact percentage >= RATE_REJECTED_PCT is "rejected" (exhausted) and
+# >= RATE_WARNING_PCT is "warning" -- the same thresholds the CLI's
+# rate_limit_event statuses encode (exact utilization only surfaces past
+# the ~75% warning threshold, observed live 2026-08-10 on 2.1.226).
+RATE_WARNING_PCT = 75
+RATE_REJECTED_PCT = 100
+RATE_LIMIT_STATUSES = ("allowed", "allowed_warning", "rejected")
+USAGE_PANEL_DEADLINE_S = 45.0   # hard ceiling on the whole tmux panel probe
+USAGE_PANEL_POLL_S = 1.0        # capture-pane poll interval
+TRUST_PROMPT_MARKER = "trust this folder"        # workspace-trust prompt
+# (observed live 2026-08-11, CLI 2.1.226: "Quick safety check: Is this a
+# project you created or one you trust? ... 1. Yes, I trust this folder";
+# Enter confirms the highlighted trust option)
+PANEL_READY_MARKER = "? for shortcuts"           # interactive input ready
+
+# profile-email.txt identity marker (v32 TD.3 / PR-MED-005).
+PROFILE_EMAIL_MARKER = "profile-email.txt"
+MARKER_MAX_BYTES = 320
+MARKER_EMAIL_RE = re.compile(
+    r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?"
+    r"\.[A-Za-z]{2,}$")
 CODEX_USAGE_INIT_REQ = ('{"jsonrpc":"2.0","id":1,"method":"initialize","params":'
                         '{"clientInfo":{"name":"probe","title":"probe",'
                         '"version":"0.0.1"}}}')
@@ -431,19 +563,11 @@ def run_cli(cmd: list[str], timeout: float, env: dict | None = None,
     status is one of: ok (ran, exit 0), failed (ran, nonzero), timeout,
     absent (executable not found). Never raises; never inherits stdin.
     cwd optionally redirects the subprocess (the neutral-cwd usage probes).
-
-    Decodes as UTF-8 with errors="replace" rather than the locale codec
-    (the codex app-server leg's established shape): a CLI emitting bytes
-    the locale codec cannot map -- codex's catalog carries typographic
-    punctuation, undecodable under cp1252 on a native Windows host --
-    otherwise raises UnicodeDecodeError straight through the never-raises
-    contract, from a reader thread the callers cannot guard.
     """
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
             stdin=subprocess.DEVNULL, env=env, cwd=cwd,
-            encoding="utf-8", errors="replace",
         )
         return ("ok" if proc.returncode == 0 else "failed",
                 proc.stdout, proc.stderr, proc.returncode)
@@ -495,39 +619,53 @@ def which_all(name: str) -> list[str]:
     return hits
 
 
-def codex_bin(timeout: float) -> str:
-    """The INVOCABLE codex program path -- the codex twin of claude's
-    candidate arbitration, and for the same two reasons.
+def strip_token_env(env: dict, seated_store_only: bool = False) -> dict:
+    """Least-credential probe environment (v32 TD.2 / PR-HIGH-009).
 
-    subprocess does not apply PATHEXT to the program name on native
-    Windows (unlike shutil.which), so a bare "codex" raises
-    FileNotFoundError even with an npm-installed codex.cmd on PATH --
-    reported as an ABSENT backend, silently costing the run its only
-    cross-family peer. And the first which_all hit is NOT automatically
-    the invocable one: npm installs an extensionless sh shim beside the
-    .cmd, and candidate_names lists the literal name first, so hits[0]
-    is a non-Win32 image (WinError 193). Probe candidates in PATH order
-    and keep the first that actually runs.
-
-    Falls back to the bare name when nothing runs, so a genuinely absent
-    CLI still reports absent through run_cli's FileNotFoundError branch
-    with its existing message.
+    Removes every numbered token-pool variable (CLAUDE_CODE_OAUTH_TOKEN_N)
+    and the wrapper's selector variable (LOOP_OAUTH_TOKEN_ENV) from a probe
+    subprocess environment -- those are spawn-transport inputs, never probe
+    inputs; removal is by NAME and no value is ever read, compared, or
+    echoed. The ambient canonical CLAUDE_CODE_OAUTH_TOKEN stays by default
+    (it is the CLI's documented env-auth surface, and per-dir credentials
+    outrank it in 2.1.x); seated_store_only=True additionally removes it --
+    the interactive /usage panel probe is the one seated-store-only surface
+    (a token in the env suppresses the panel's quota bars; verified live
+    2026-08-10 on CLI 2.1.226).
     """
-    for cand in which_all("codex"):
-        if run_cli([cand, "--version"], timeout)[0] == "ok":
-            return cand
-    return "codex"
+    out = {k: v for k, v in env.items()
+           if not NUMBERED_TOKEN_RE.match(k) and k != TOKEN_SELECTOR_VAR}
+    if seated_store_only:
+        out.pop(CANONICAL_TOKEN_VAR, None)
+    return out
 
 
-def claude_env(candidate: str, is_wsl: bool, config_dir: str | None = None) -> dict:
+def probe_env() -> dict:
+    """Least-credential environment for a probe subprocess that does NOT
+    take a claude config dir (v32 TD.2 / PR-HIGH-021): `claude --help`,
+    `codex debug models`, the codex app-server usage exchange. These went
+    through `run_cli(..., env=None)` and so inherited the numbered pool
+    variables + the selector wholesale from probe-models.py's own
+    environment (a cloud run carries them). Strip them by name here; the
+    ambient canonical token stays (harmless to a help parse and ignored by
+    codex, matching claude_env's default). claude_env() owns the
+    config-dir-bearing claude probes."""
+    return strip_token_env(dict(os.environ))
+
+
+def claude_env(candidate: str, is_wsl: bool, config_dir: str | None = None,
+               seated_store_only: bool = False) -> dict:
     """Probe environment for a claude candidate.
 
     When a config dir is passed, set CLAUDE_CONFIG_DIR -- and for a /mnt/
     (Windows-shim-under-WSL) candidate, auto-merge CLAUDE_CONFIG_DIR/up into
     WSLENV so the variable crosses the interop boundary (existing WSLENV
-    entries are preserved).
+    entries are preserved). Every claude probe env is token-stripped per
+    strip_token_env (v32 TD.2 -- the former wholesale os.environ clone
+    leaked unselected pool credentials into probe children);
+    seated_store_only rides through for the panel probe.
     """
-    env = dict(os.environ)
+    env = strip_token_env(dict(os.environ), seated_store_only=seated_store_only)
     if config_dir is not None:
         env["CLAUDE_CONFIG_DIR"] = config_dir
         if is_wsl and candidate.startswith("/mnt/"):
@@ -782,9 +920,14 @@ def enumerate_projects(config_root: str, excluded_names: set,
 
 
 def usage_skipped() -> dict:
-    """The claude usage placeholder (structured fields present, null)."""
+    """The claude usage placeholder (structured fields present, null; the
+    v32 additive evidence fields present at their fail-closed values)."""
     return {"status": "skipped", "headline": None, "session_pct": None,
-            "session_resets": None, "week_pct": None, "week_resets": None}
+            "session_resets": None, "week_pct": None, "week_resets": None,
+            "usage_quality": "none", "usage_source": "none",
+            "availability_band": "unknown", "limit_status": None,
+            "limit_utilization": None, "limit_resets_at": None,
+            "limit_resets": None}
 
 
 def codex_usage_skipped() -> dict:
@@ -810,6 +953,487 @@ def parse_usage_line(line: str, prefix: str):
         return None
     r = re.search(r"\bresets\s+(.+?)\s*$", rest)
     return int(m.group(1)), (r.group(1) if r else None)
+
+
+def read_profile_email_marker(profile_dir: str):
+    """profile-email.txt identity-marker SAFE READ (v32 TD.3; PR-MED-005).
+
+    Returns the validated one-line email label, or None. Fail-silent by
+    contract: EVERY failure -- missing, unreadable, oversized, malformed
+    UTF-8, multi-line or control characters, symlinked, special-file
+    (FIFO/device/dir), grammar mismatch, or a replacement race -- degrades
+    to None, and raw marker content NEVER reaches JSON, stdout, or stderr
+    (this function never raises and never echoes what it read).
+
+    Mechanics (DIRFD-ANCHORED, v32 PR-MED-022): the profile dir is opened
+    O_RDONLY|O_DIRECTORY|O_NOFOLLOW, then the marker is opened with
+    `openat(dirfd, "profile-email.txt", O_NOFOLLOW|O_NONBLOCK)` (os.open
+    dir_fd=). Anchoring on the dir fd kills the parent-symlink class the
+    final-component O_NOFOLLOW missed (a symlinked profile dir now fails
+    at the O_NOFOLLOW dir open, degrading fail-silent -- fail-closed is
+    the safe outcome for a v32 identity label) AND the check/open race
+    (openat resolves the leaf relative to the already-opened dir, not a
+    re-walked path). O_NOFOLLOW on the leaf still rejects a symlinked
+    marker; the fstat runs on the OPENED marker descriptor, so a
+    path-swap cannot substitute a special file; O_NONBLOCK keeps a FIFO
+    open from blocking. Hosts without openat (`dir_fd` unsupported) fall
+    back to the single-open form with an lstat symlink pre-check --
+    best-effort there, and the leaf O_NOFOLLOW + fstat type check still
+    hold. The read is bounded to MARKER_MAX_BYTES+1 bytes; the content
+    must strict-decode as UTF-8, be exactly one line (one optional
+    trailing newline), carry no control characters, and match the pinned
+    email grammar MARKER_EMAIL_RE.
+    """
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    nonblock = getattr(os, "O_NONBLOCK", 0)
+    o_directory = getattr(os, "O_DIRECTORY", 0)
+    use_dirfd = (os.open in getattr(os, "supports_dir_fd", set())
+                 and o_directory and nofollow)
+    fd = None
+    dfd = None
+    try:
+        if use_dirfd:
+            # anchor on the profile dir itself (O_NOFOLLOW rejects a
+            # symlinked profile dir), then openat the leaf relative to it
+            dfd = os.open(profile_dir, os.O_RDONLY | o_directory | nofollow)
+            fd = os.open(PROFILE_EMAIL_MARKER,
+                         os.O_RDONLY | nofollow | nonblock, dir_fd=dfd)
+        else:
+            path = os.path.join(profile_dir, PROFILE_EMAIL_MARKER)
+            if not nofollow:
+                if stat.S_ISLNK(os.lstat(path).st_mode):
+                    return None
+            fd = os.open(path, os.O_RDONLY | nofollow | nonblock)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        raw = os.read(fd, MARKER_MAX_BYTES + 1)
+    except (OSError, ValueError):
+        return None
+    finally:
+        for _fd in (fd, dfd):
+            if _fd is not None:
+                try:
+                    os.close(_fd)
+                except OSError:
+                    pass
+    if len(raw) > MARKER_MAX_BYTES:
+        return None  # oversized: never partially honored
+    try:
+        text = raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if text.endswith("\r\n"):
+        text = text[:-2]
+    elif text.endswith("\n"):
+        text = text[:-1]
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7f for ch in text):
+        return None  # a second line or any control character invalidates
+    label = text.strip()
+    if not label or label != text:
+        return None  # surrounding whitespace is not the pinned grammar
+    if not MARKER_EMAIL_RE.match(label):
+        return None
+    return label
+
+
+def panel_has_trust_prompt(text: str) -> bool:
+    """Workspace-trust prompt detection on a captured pane (marker-based;
+    the prompt asks whether to trust the files in the folder)."""
+    return TRUST_PROMPT_MARKER in text.lower()
+
+
+def panel_input_ready(text: str) -> bool:
+    """Interactive-input readiness on a captured pane: the CLI's shortcut
+    hint line is the stable marker across observed 2.1.x builds."""
+    return PANEL_READY_MARKER in text
+
+
+def _panel_heading(line: str):
+    """Classify a panel line as a segment boundary. Returns 'session' /
+    'week' (the two PARSED anchors), 'other' (a boundary that ends the
+    current segment without opening a parsed one -- a model-specific
+    weekly block, the contribution/skills sections), or None."""
+    s = line.strip()
+    if s.startswith("Current session"):
+        return "session"
+    if s.startswith("Current week (all models)"):
+        return "week"
+    if s.startswith("Current week ("):
+        return "other"  # model-specific weekly: NEVER substituted
+    if (s.startswith("What's contributing") or s.startswith("Skills")
+            or s.startswith("Usage credits")):
+        return "other"
+    return None
+
+
+def parse_usage_panel(text: str):
+    """Parse a captured /usage panel -> the exact structured fields, or
+    None when no recognizable usage block exists yet.
+
+    The LIVE panel shape (captured 2026-08-11, CLI 2.1.226) is
+    MULTI-LINE per metric: a colon-less heading line ("Current session" /
+    "Current week (all models)"), a bar line carrying "N% used", and a
+    "Resets <time>" line -- so parsing is segment-scoped across lines:
+    a segment runs from its heading to the next heading-class line, and
+    within it the FIRST "N% used" match is the percentage and the FIRST
+    "resets"-word match (case-insensitive) is the resets text. A resets
+    clause whose parenthetical is left unbalanced by a line wrap joins
+    its continuation line(s) -- the parse-across-lines contract. The
+    inline print-form shape ("Current session: 12% used - resets ...")
+    parses through the same walk (heading and values share a line).
+    Never-substituted noise, by construction: model-specific "Current
+    week (<Model>):" blocks are 'other' boundaries; promo lines
+    ("+50% weekly limits promo...") carry no "% used"; contribution
+    lines ("92% of your usage...") carry no "used" after the percent;
+    "Per-model breakdown unavailable (rate limited)" matches nothing
+    and never blocks. Bar glyphs and the non-ASCII separator collapse
+    to spaces before matching (never keyed on).
+    """
+    lines = [re.sub(r"[^\x20-\x7e]", " ", ln)
+             for ln in (text or "").split("\n")]
+    found: dict = {}
+    i = 0
+    n = len(lines)
+    while i < n:
+        kind = _panel_heading(lines[i])
+        if kind not in ("session", "week"):
+            i += 1
+            continue
+        seg = [lines[i]]
+        j = i + 1
+        while j < n and _panel_heading(lines[j]) is None:
+            seg.append(lines[j])
+            j += 1
+        pct = None
+        resets = None
+        for k, raw in enumerate(seg):
+            flat = re.sub(r"\s+", " ", raw).strip()
+            if pct is None:
+                m = re.search(r"(\d+)\s*%\s*used\b", flat)
+                if m:
+                    pct = int(m.group(1))
+            if resets is None:
+                m = re.search(r"(?i)\bresets\s+(.+?)\s*$", flat)
+                m_end = re.search(r"(?i)\bresets\s*$", flat)
+                if m or (m_end and k + 1 < len(seg)):
+                    if m:
+                        val = m.group(1)
+                        kk = k
+                    else:
+                        # the wrap fell exactly after the word "resets":
+                        # the value starts on the next segment line
+                        kk = k + 1
+                        val = re.sub(r"\s+", " ", seg[kk]).strip()
+                    # line-wrap continuation: an unbalanced parenthetical
+                    # joins the following line(s) of the same segment
+                    while (val.count("(") > val.count(")")
+                           and kk + 1 < len(seg)):
+                        kk += 1
+                        val = (val + " "
+                               + re.sub(r"\s+", " ", seg[kk]).strip()).strip()
+                    resets = re.sub(r"\s+", " ", val).strip() or None
+        if pct is not None:
+            if kind == "session" and "session_pct" not in found:
+                found["session_pct"], found["session_resets"] = pct, resets
+            elif kind == "week" and "week_pct" not in found:
+                found["week_pct"], found["week_resets"] = pct, resets
+        i = j
+    return found or None
+
+
+def tmux_binary():
+    """First tmux on PATH, or None (absent -> the panel layer is skipped)."""
+    hits = which_all("tmux")
+    return hits[0] if hits else None
+
+
+def probe_usage_panel(pinned: str, is_wsl: bool, config_dir: str | None,
+                      cwd: str | None = None, tmux: str | None = None):
+    """Layer-1 tmux interactive-panel usage probe (v32 TD.1). Returns a
+    complete usage dict on a PARSED panel, else None (every failure falls
+    through to the billed fallback -- this layer never errors the row).
+
+    Seated-store only: the pane env strips the canonical token alongside
+    the pool/selector variables (claude_env seated_store_only=True). The
+    throwaway tmux server runs on a UNIQUE private socket label with a
+    unique session name, so it never touches a user's tmux server and a
+    prior run's stale session can never be captured; the finally block
+    kills the private server on every path (success, timeout, parse
+    failure), which is also the stale-session cleanup. All tmux output is
+    captured -- nothing reaches this script's stdout (JSON-only contract).
+    The tmux SERVER creates its socket under the system tmux directory
+    OUTSIDE the repo; the script itself creates no files (the documented
+    no-file-creation note).
+    """
+    if tmux is None:
+        tmux = tmux_binary()
+    if tmux is None:
+        return None
+    env = claude_env(pinned, is_wsl, config_dir, seated_store_only=True)
+    label = "cbg-usage-%d-%d" % (os.getpid(), int(time.time() * 1000) % 1000000000)
+    session = "usage-probe"
+    target = session + ":"
+    deadline = time.monotonic() + USAGE_PANEL_DEADLINE_S
+
+    def tmux_call(args, timeout=5.0):
+        return run_cli([tmux, "-L", label] + args, timeout, env=env)
+
+    try:
+        new_args = ["new-session", "-d", "-s", session, "-x", "200", "-y", "50"]
+        if cwd:
+            new_args += ["-c", cwd]
+        new_args.append(pinned)
+        status, _out, _err, _rc = tmux_call(new_args, timeout=10.0)
+        if status != "ok":
+            return None
+        trust_answered = False
+        usage_sent = False
+        week_retried = False
+        retry_grace = 0
+        cap_fails = 0
+        while time.monotonic() < deadline:
+            time.sleep(USAGE_PANEL_POLL_S)
+            # -S - captures the WHOLE scrollback, not just the visible pane:
+            # the panel's skills/contribution rows grow per account, and a
+            # panel taller than the pane scrolls the session block off-screen
+            status, pane, _err, _rc = tmux_call(
+                ["capture-pane", "-p", "-S", "-", "-t", target])
+            if status != "ok":
+                # a dead session fails every capture -- fall through early
+                # instead of spinning out the whole deadline (r19)
+                cap_fails += 1
+                if cap_fails >= 5:
+                    return None
+                continue
+            cap_fails = 0
+            if not usage_sent:
+                if panel_has_trust_prompt(pane) and not trust_answered:
+                    tmux_call(["send-keys", "-t", target, "Enter"])
+                    trust_answered = True
+                    continue
+                if panel_input_ready(pane):
+                    tmux_call(["send-keys", "-t", target, "/usage"])
+                    tmux_call(["send-keys", "-t", target, "Enter"])
+                    usage_sent = True
+                continue
+            parsed = parse_usage_panel(pane)
+            if parsed is None:
+                continue
+            if parsed.get("week_pct") is None and not week_retried:
+                # a panel missing the week line gets ONE "r" retry, then a
+                # short settle window before the partial result is accepted
+                tmux_call(["send-keys", "-t", target, "r"])
+                week_retried = True
+                retry_grace = 5
+                continue
+            if parsed.get("week_pct") is None and retry_grace > 0:
+                retry_grace -= 1
+                continue
+            result = usage_skipped()
+            result.update(status="ok", usage_quality="exact",
+                          usage_source="panel")
+            for key in ("session_pct", "session_resets",
+                        "week_pct", "week_resets"):
+                if parsed.get(key) is not None:
+                    result[key] = parsed[key]
+            bits = []
+            if result["session_pct"] is not None:
+                bits.append(SESSION_LINE_PREFIX + " " + str(result["session_pct"])
+                            + "% used" + (" - resets " + result["session_resets"]
+                                          if result["session_resets"] else ""))
+            if result["week_pct"] is not None:
+                bits.append(WEEK_ALL_LINE_PREFIX + " " + str(result["week_pct"])
+                            + "% used" + (" - resets " + result["week_resets"]
+                                          if result["week_resets"] else ""))
+            result["headline"] = " | ".join(bits) or None
+            result["availability_band"] = usage_band(result)
+            return result
+        return None
+    finally:
+        try:
+            run_cli([tmux, "-L", label, "kill-server"], 5.0, env=env)
+        except Exception:
+            pass
+
+
+def parse_rate_limit_stream(out: str):
+    """Scan a stream-json transcript for rate-limit + result evidence.
+
+    Returns (rate_limit_info | None, result_text | None): the LAST
+    top-level rate_limit_event's rate_limit_info dict (latest state wins)
+    and the final result event's text. Banner lines and unknown event
+    shapes are tolerated and ignored (iter_json_objects semantics).
+    """
+    info = None
+    result_text = None
+    for obj in iter_json_objects(out or ""):
+        if not isinstance(obj, dict):
+            continue
+        if obj.get("type") == "rate_limit_event":
+            candidate = obj.get("rate_limit_info")
+            if isinstance(candidate, dict):
+                info = candidate
+        elif obj.get("type") == "result":
+            text = obj.get("result")
+            if isinstance(text, str):
+                result_text = text
+    return info, result_text
+
+
+def usage_band(entry: dict) -> str:
+    """Availability band for ONE usage entry (PR-MED-010, dimension 1).
+
+    allowed | warning | rejected | unknown. Exact percentages map into
+    the SAME bands as threshold events (worst of session/week: >=
+    RATE_REJECTED_PCT -> rejected, >= RATE_WARNING_PCT -> warning, else
+    allowed); threshold evidence maps by rate-limit status. No usable
+    evidence -> unknown -- the explicit no-recommendation input, never a
+    silent guess.
+    """
+    quality = entry.get("usage_quality")
+    if quality == "exact":
+        pcts = [p for p in (entry.get("session_pct"), entry.get("week_pct"))
+                if isinstance(p, int)]
+        if not pcts:
+            return "unknown"
+        worst = max(pcts)
+        if worst >= RATE_REJECTED_PCT:
+            return "rejected"
+        if worst >= RATE_WARNING_PCT:
+            return "warning"
+        return "allowed"
+    if quality == "threshold":
+        status = entry.get("limit_status")
+        if status == "allowed":
+            return "allowed"
+        if status == "allowed_warning":
+            return "warning"
+        if status == "rejected":
+            return "rejected"
+    return "unknown"
+
+
+def rank_pool_candidates(rows: list) -> dict:
+    """TWO-DIMENSIONAL availability-first pool ranking (v32 TD.1;
+    PR-MED-010) -- the mechanical form of the wizard's menu-ranking rule.
+
+    Input rows: {"label": <'default' or profile dir>, "usage": <usage
+    dict>, "recent_repos": <snapshot dict>, "stale": <optional bool --
+    evidence NOT refreshed this run>}. Output: {"recommended": <label |
+    None>, "reason": <one line>, "bands": {label: band}}.
+
+    Dimension 1 -- availability bands DECIDE: rejected/exhausted pools
+    are NEVER recommended regardless of evidence quality; allowed beats
+    warning; a band-unknown (degraded/incomparable) row never ranks.
+    Dimension 2 -- within a band, only RECOMMENDABLE rows are eligible
+    (v32 PR-MED-024): a row is recommendable iff its recent-repos
+    snapshot is complete (status == "ok" -- the canonical completeness
+    rule) AND its usage evidence is complete for its class (an exact row
+    needs BOTH session_pct and week_pct -- a PARTIAL exact snapshot is
+    never a pick, just as an incomplete recent-repos snapshot is not; a
+    threshold row is complete by construction). Among recommendable rows
+    the tie rules apply in order: idle-first (no in-use foreign entry),
+    then most-headroom (lower is better -- exact rows by their worst
+    percentage, threshold rows by limit_utilization where present, on
+    one 0-100 scale within the band; a threshold row with no exposed
+    utilization falls to the fidelity tie-break), then evidence fidelity
+    + freshness (a FRESH observation beats a STALE one regardless of
+    fidelity; at equal freshness exact > threshold), then the label as a
+    FINAL deterministic tie-break (identical rows resolve the same
+    regardless of input order). If a band has members but NONE are
+    recommendable, the result is an explicit no-recommendation naming the
+    band -- never a partial-snapshot pick.
+    """
+    bands = {}
+    scored = []
+    for row in rows:
+        usage = row.get("usage") or {}
+        band = usage.get("availability_band")
+        if band not in ("allowed", "warning", "rejected"):
+            band = usage_band(usage)
+        bands[row.get("label")] = band
+        scored.append((row, band))
+
+    def is_recommendable(row):
+        usage = row.get("usage") or {}
+        repos = row.get("recent_repos") or {}
+        if repos.get("status") != "ok":
+            return False  # incomplete recent-repos snapshot
+        quality = usage.get("usage_quality")
+        if quality == "exact":
+            # a PARTIAL exact snapshot (either half missing) is incomplete
+            # usage evidence -- never a pick (PR-MED-024)
+            return (isinstance(usage.get("session_pct"), int)
+                    and isinstance(usage.get("week_pct"), int))
+        if quality == "threshold":
+            return usage.get("limit_status") in RATE_LIMIT_STATUSES
+        return False  # unknown/degraded usage evidence is not recommendable
+
+    for band_want in ("allowed", "warning"):
+        members = [(row, band) for row, band in scored if band == band_want]
+        if not members:
+            continue
+        eligible = [(row, band) for row, band in members if is_recommendable(row)]
+        if not eligible:
+            return {"recommended": None,
+                    "reason": ("band=" + band_want + " reached but no row has a "
+                               "complete recent-repos snapshot AND complete usage "
+                               "evidence -- a partial snapshot is never recommended"),
+                    "bands": bands}
+
+        def sort_key(item):
+            row, _band = item
+            usage = row.get("usage") or {}
+            repos = row.get("recent_repos") or {}
+            busy = any(e.get("in_use") for e in (repos.get("entries") or []))
+            idle_rank = 0 if not busy else 1
+            # unified headroom (lower = more headroom) on one 0-100 scale;
+            # STALE evidence never enters it (its numbers are not current
+            # truth -- it falls to the freshness tie-break instead)
+            headroom = 999
+            if not row.get("stale"):
+                if usage.get("usage_quality") == "exact":
+                    pcts = [p for p in (usage.get("session_pct"),
+                                        usage.get("week_pct"))
+                            if isinstance(p, int)]
+                    if pcts:
+                        headroom = max(pcts)
+                elif usage.get("usage_quality") == "threshold":
+                    util = usage.get("limit_utilization")
+                    if isinstance(util, int):
+                        headroom = util  # order threshold rows by utilization
+            fresh_rank = 1 if row.get("stale") else 0
+            fidelity_rank = 0 if usage.get("usage_quality") == "exact" else 1
+            # label is the FINAL deterministic tie-break (input-order-free)
+            return (idle_rank, headroom, fresh_rank, fidelity_rank,
+                    str(row.get("label")))
+
+        eligible.sort(key=sort_key)
+        best_row, _ = eligible[0]
+        best_usage = best_row.get("usage") or {}
+        repos = best_row.get("recent_repos") or {}
+        idle = not any(e.get("in_use") for e in (repos.get("entries") or []))
+        reason_bits = ["band=" + band_want]
+        reason_bits.append("idle" if idle else "least-busy tie rules")
+        if best_usage.get("usage_quality") == "exact":
+            reason_bits.append("exact evidence")
+        elif best_usage.get("usage_quality") == "threshold":
+            # threshold evidence is percentage-free on EVERY surface (v32
+            # PR-MED-026): limit_utilization is a machine-only ranking input,
+            # never rendered as an NN% figure -- report the qualitative band
+            # only (the reason already carries `band=<band>`)
+            reason_bits.append("threshold evidence")
+        return {"recommended": best_row.get("label"),
+                "reason": "; ".join(reason_bits), "bands": bands}
+    if any(band == "rejected" for _row, band in scored):
+        return {"recommended": None,
+                "reason": ("no pool outside the rejected band -- "
+                           "rejected/exhausted pools are never recommended"),
+                "bands": bands}
+    return {"recommended": None,
+            "reason": ("no comparable usage evidence -- degraded/unknown "
+                       "observations never produce a silent guess"),
+            "bands": bands}
 
 
 def enumerate_claude_candidates(is_wsl: bool) -> list[dict]:
@@ -872,7 +1496,7 @@ def option_block(help_text: str, flag: str) -> str | None:
 
 
 def probe_claude_help(pinned: str, timeout: float) -> dict:
-    status, out, err, _rc = run_cli([pinned, "--help"], timeout)
+    status, out, err, _rc = run_cli([pinned, "--help"], timeout, probe_env())
     if status != "ok":
         return {"status": status if status in ("timeout",) else "failed",
                 "aliases": [], "efforts": [],
@@ -986,15 +1610,33 @@ def probe_identity(pinned: str, is_wsl: bool, timeout: float,
 
 def probe_usage(pinned: str, is_wsl: bool, timeout: float,
                 config_dir: str | None, cwd: str | None = None) -> dict:
-    """Per-account /usage probe: unchanged status/headline behaviour plus
-    the structured session/week fields (see the docstring mapping -- exact
-    line anchors only; parse failure leaves the fields null alongside the
-    unchanged headline). A timeout/failed first attempt is retried ONCE
-    before degrading: a cold store's first call can pay an OAuth token
-    refresh that overruns the budget, while the retry typically returns
-    in ~2s (observed live 2026-07-23); 'absent' never retries."""
+    """LAYERED per-account usage probe (v32 TD.1; the full evidence
+    contract lives in the module docstring's claude-usage mapping block).
+
+    Layer 1 -- tmux interactive-panel probe: preferred, unbilled, exact;
+    seated-store only; tmux absent, deadline, or an unparseable panel
+    falls through silently (print-mode /usage on CLI 2.1.226+ never
+    returns quota lines, so the panel is the only unbilled exact source).
+    Layer 2 -- ONE billed '<pinned> -p "/usage" --output-format
+    stream-json --verbose' call: an older CLI's result text still carries
+    the exact % lines (usage_source "print" -- the old/new skew path);
+    on 2.1.226+ the stream's rate_limit_event yields THRESHOLD evidence
+    (allowed / allowed_warning / rejected). A timeout/failed first
+    attempt is retried ONCE before degrading (v30.1: a cold store's
+    first call can pay an OAuth token refresh that overruns the budget;
+    'absent' never retries).
+    Layer 3 -- degraded: the existing status/headline behaviour, with
+    usage_quality/usage_source "none".
+
+    Threshold evidence NEVER lands in session_pct/week_pct and its
+    headline is percentage-free; availability_band is computed on every
+    outcome (PR-MED-002/PR-MED-010).
+    """
+    panel = probe_usage_panel(pinned, is_wsl, config_dir, cwd=cwd)
+    if panel is not None:
+        return panel
     env = claude_env(pinned, is_wsl, config_dir)
-    cmd = [pinned, "-p", "/usage", "--output-format", "text"]
+    cmd = [pinned, "-p", "/usage", "--output-format", "stream-json", "--verbose"]
     status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
     if status in ("timeout", "failed"):
         status, out, err, _rc = run_cli(cmd, max(timeout, 30.0), env, cwd=cwd)
@@ -1006,30 +1648,60 @@ def probe_usage(pinned: str, is_wsl: bool, timeout: float,
         result.update(status="failed",
                       headline=(err or out or "").strip()[:200] or None)
         return result
-    lines = [ln.strip() for ln in (out or "").split("\n")]
+    info, result_text = parse_rate_limit_stream(out)
+    # exact print evidence first (an older CLI whose /usage still prints
+    # quota lines into the result text -- higher fidelity than threshold)
+    lines = [ln.strip() for ln in (result_text or "").split("\n")]
     pct_lines = [ln for ln in lines if "%" in ln]
-    if not pct_lines:
-        # the logged-out local-stats block lands here: no % lines at all
-        result.update(status="degraded",
-                      headline=(out or "").strip()[:200] or None)
+    if pct_lines:
+        result.update(status="ok", headline=" | ".join(pct_lines[:4]),
+                      usage_quality="exact", usage_source="print")
+        for ln in lines:
+            if result["session_pct"] is None:
+                hit = parse_usage_line(ln, SESSION_LINE_PREFIX)
+                if hit is not None:
+                    result["session_pct"], result["session_resets"] = hit
+                    continue
+            if result["week_pct"] is None:
+                hit = parse_usage_line(ln, WEEK_ALL_LINE_PREFIX)
+                if hit is not None:
+                    result["week_pct"], result["week_resets"] = hit
+        result["availability_band"] = usage_band(result)
         return result
-    result.update(status="ok", headline=" | ".join(pct_lines[:4]))
-    for ln in lines:
-        if result["session_pct"] is None:
-            hit = parse_usage_line(ln, SESSION_LINE_PREFIX)
-            if hit is not None:
-                result["session_pct"], result["session_resets"] = hit
-                continue
-        if result["week_pct"] is None:
-            hit = parse_usage_line(ln, WEEK_ALL_LINE_PREFIX)
-            if hit is not None:
-                result["week_pct"], result["week_resets"] = hit
+    if info is not None and info.get("status") in RATE_LIMIT_STATUSES:
+        limit_status = info.get("status")
+        util = info.get("utilization")
+        resets_at = info.get("resetsAt")
+        resets_iso = None
+        if isinstance(resets_at, (int, float)) and resets_at > 0:
+            try:
+                resets_iso = (datetime.fromtimestamp(resets_at).astimezone()
+                              .isoformat(timespec="seconds"))
+            except (OverflowError, OSError, ValueError):
+                resets_iso = None
+        headline = "rate-limit status: " + limit_status
+        if resets_iso:
+            headline += " - resets " + resets_iso
+        result.update(status="ok", usage_quality="threshold",
+                      usage_source="rate-limit-event",
+                      limit_status=limit_status,
+                      limit_utilization=util if isinstance(util, int) else None,
+                      limit_resets_at=(resets_at
+                                       if isinstance(resets_at, (int, float))
+                                       else None),
+                      limit_resets=resets_iso, headline=headline)
+        result["availability_band"] = usage_band(result)
+        return result
+    # no panel, no % lines, no event: the logged-out local-stats block and
+    # every other unrecognized-but-clean exit land here
+    result.update(status="degraded",
+                  headline=(result_text or out or "").strip()[:200] or None)
     return result
 
 
 def probe_codex(timeout: float) -> dict:
-    status, out, err, rc = run_cli([codex_bin(timeout), "debug", "models"],
-                                   timeout)
+    status, out, err, rc = run_cli(["codex", "debug", "models"], timeout,
+                                   probe_env())
     if status == "absent":
         return {"status": "absent", "error": err, "listed_count": 0,
                 "total_count": 0, "models": []}
@@ -1094,10 +1766,10 @@ def probe_codex_usage(timeout: float) -> dict:
     deadline = max(timeout, 30.0)
     try:
         proc = subprocess.Popen(
-            [codex_bin(timeout), "app-server"], stdin=subprocess.PIPE,
+            ["codex", "app-server"], stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace",
-            cwd=neutral_probe_cwd())
+            cwd=neutral_probe_cwd(), env=probe_env())  # v32 PR-HIGH-021
     except FileNotFoundError:
         result.update(status="absent", error="executable not found: codex")
         return result
@@ -1384,6 +2056,7 @@ def probe_claude(args, is_wsl: bool) -> dict:
     ident["config_dir"] = default_dir
     ident["config_source"] = default_source
     ident["aliases_profile"] = alias_hit
+    ident["marker_email"] = read_profile_email_marker(default_dir)
     ident["recent_repos"] = default_projects
     out["default_account"] = ident
     for p in prof_entries:
@@ -1392,8 +2065,18 @@ def probe_claude(args, is_wsl: bool) -> dict:
         prof["usage"] = (probe_usage(pinned, is_wsl, args.timeout, p["dir"],
                                      cwd=probe_cwd)
                          if args.usage else usage_skipped())
+        prof["marker_email"] = read_profile_email_marker(p["dir"])
         prof["recent_repos"] = snapshots[p["real"]]
         out["profiles"].append(prof)
+    if args.usage:
+        # additive advisory (v32 TD.1): the availability-first ranking over
+        # every probed pool -- the wizard's menu prose applies the same rule
+        rows = [{"label": "default", "usage": ident["usage"],
+                 "recent_repos": default_projects}]
+        rows += [{"label": prof["dir"], "usage": prof["usage"],
+                  "recent_repos": prof["recent_repos"]}
+                 for prof in out["profiles"]]
+        out["pool_ranking"] = rank_pool_candidates(rows)
     out["status"] = "ok" if out["help"]["status"] == "ok" else "degraded"
     if out["status"] == "degraded":
         out["error"] = "help parse incomplete: alias/effort menus degrade to free-text entry"
@@ -1413,13 +2096,19 @@ def loop_config_parses(config: str) -> bool:
 def scan_plan_file(path: Path):
     """Heading-scoped, fence-skipping scan of one plan file.
 
-    Returns (leads_active, loop_config_or_None). Fenced lines never count for
-    headings or bullets, so quoted examples cannot false-positive.
+    Returns (leads_active, loop_config_or_None, paused_or_None). Fenced lines
+    never count for headings or bullets, so quoted examples cannot
+    false-positive. paused is None unless the lifecycle section leads with
+    'Paused' (v32); then it is {"since": ..., "reason": ...} from the section's
+    'Paused since:' / 'Paused reason:' bullets ("" when a field is absent —
+    surfaced, never guessed).
     """
     text = path.read_text(encoding="utf-8", errors="replace")
     section = None
     in_fence = False
     first_lifecycle_line = None
+    paused_since = None
+    paused_reason = None
     loop_config = None
     for raw in text.split("\n"):
         line = raw.rstrip()
@@ -1431,21 +2120,32 @@ def scan_plan_file(path: Path):
         if line.startswith("## ") and not line.startswith("###"):
             section = line[3:].strip()
             continue
-        if section == "Lifecycle State" and first_lifecycle_line is None and line.strip():
-            first_lifecycle_line = line.strip()
+        if section == "Lifecycle State" and line.strip():
+            if first_lifecycle_line is None:
+                first_lifecycle_line = line.strip()
+            bullet = re.sub(r"^[-*]\s+", "", line.strip())
+            if bullet.startswith("Paused since:") and paused_since is None:
+                paused_since = bullet[len("Paused since:"):].strip()
+            if bullet.startswith("Paused reason:") and paused_reason is None:
+                paused_reason = bullet[len("Paused reason:"):].strip()
         if (section == "Current State / Handoff Note" and loop_config is None
                 and line.strip().startswith(LOOP_CONFIG_PREFIX.strip() + " ")):
             candidate = line.strip()[len(LOOP_CONFIG_PREFIX):].strip()
             if loop_config_parses(candidate):
                 loop_config = candidate
-    leads_active = bool(first_lifecycle_line
-                        and re.sub(r"^[-*]\s+", "", first_lifecycle_line).startswith("Active"))
-    return leads_active, loop_config
+    lead = (re.sub(r"^[-*]\s+", "", first_lifecycle_line)
+            if first_lifecycle_line else "")
+    leads_active = lead.startswith("Active")
+    paused = None
+    if lead.startswith("Paused"):
+        paused = {"since": paused_since or "", "reason": paused_reason or ""}
+    return leads_active, loop_config, paused
 
 
 def probe_plans(plans_dir: str) -> dict:
     out: dict = {"status": "ok", "plans_dir": plans_dir, "scanned": 0,
                  "active_candidates": [], "non_active_with_config": 0,
+                 "paused_plans": [],
                  "archived_fallback": None,
                  "q1_offer": {"offer": "none", "plan": None, "label": None, "reason": ""}}
     base = Path(plans_dir)
@@ -1458,10 +2158,20 @@ def probe_plans(plans_dir: str) -> dict:
     for f in sorted(base.glob("*.md")):
         out["scanned"] += 1
         try:
-            leads_active, config = scan_plan_file(f)
+            leads_active, config, paused = scan_plan_file(f)
         except OSError:
             live_errors += 1
             continue
+        # v32 (TE.4): Paused plans are surfaced regardless of a Loop config —
+        # discoverable + recoverable, never an Active candidate. Additive
+        # field inside probe_schema 1; a paused plan WITH a config also still
+        # counts in non_active_with_config (paused IS non-active — the
+        # pre-v32 count's semantics are unchanged).
+        if paused is not None:
+            out["paused_plans"].append({"file": f.name,
+                                        "since": paused["since"],
+                                        "reason": paused["reason"],
+                                        "has_loop_config": config is not None})
         if config is None:
             continue
         if leads_active:
@@ -1491,7 +2201,7 @@ def probe_plans(plans_dir: str) -> dict:
         best = None
         for f in sorted((base / "completed").glob("*.md")):
             try:
-                _active, config = scan_plan_file(f)
+                _active, config, _paused = scan_plan_file(f)
             except OSError:
                 archived_errors += 1
                 continue

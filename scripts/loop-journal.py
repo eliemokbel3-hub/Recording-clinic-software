@@ -22,14 +22,23 @@ INVOCATION SURFACE (pinned by DR-2; the checker-grant precedent —
           [--epoch <id>]                          where the shape carries epoch=
           [--event-ts <iso>]                      emit ONLY; REFUSED on computed
                                                   subcommands
-  SUBCOMMANDS (exactly four):
+  SUBCOMMANDS (exactly six):
     emit <TYPE> [--round <n> --id <finding-ID>] [--repo <root>] [key=value ...]
     escape-check --capture pre|post --leg <leg> --log-root <dir>
                  --root <name>=</abs/path> [--root ...]
     flush [--dry-run]
     idle-check
+    run-close --iso <iso-id> --base </abs/base> --outcome <o> [--plan] [--attest]
+    fold-delegation --base </abs/base> --iso <iso-id> --leg <leg>
+                 (v32.2 T2.3 — the delegation staging→canonical promotion; the
+                 canonical stage-<N>-delegation.log's ONLY writer; COMPOSER-ONLY
+                 at the grant layer: spawned-role grants carry only the narrowed
+                 emission shapes, so this mutating subcommand is unreachable
+                 from a scoped role — under perms=bypass no grant boundary
+                 exists and the close-table confirm covers it)
 
   emit TYPE tokens: MONITOR CONSUME CLASSIFY ADOPT KILL_DUP SENTINEL_ARMED
+  SENTINEL_FIRE SPAWN VERIFY_FAIL
   IDENTITY VERIFY_OK NOTIFY:<state> WATCH:armed WATCH:cancelled ROLE:start
   ROLE:end OWNERSHIP:<subtype>.
 
@@ -52,7 +61,9 @@ REFUSALS BY DESIGN (each closes a run-5 finding class):
   - IDENTITY without session= (F-01); ROLE:start without phase= or carrying
     profile_dir= (F-07 + STICKY:51's prohibition); commit sha= (F-23);
     unknown subtypes `gate-decision`/`phase-close` (F-20/F-24); unknown types
-    (`SENTINEL_FIRE:` — F-03); caller-supplied ts=/logged_ts=/mode=/hash=.
+    (`PHASE:` — the F-03 class; F-03's original token `SENTINEL_FIRE:` was
+    ADMITTED at v32 TB.3, so the refusal is re-pinned on a still-unadmitted
+    shape); caller-supplied ts=/logged_ts=/mode=/hash=.
   - INPUT SAFETY (Critical Constraint 13): any value containing \\n, \\r, or a
     C0 control character; any value containing `"` (the quote grammar has no
     escape — an embedded quote injects well-formed keys); root/path values
@@ -82,8 +93,11 @@ failure (unwritable log, git absent for --repo derivation).
 """
 
 import datetime
+import errno
+import hashlib
 import os
 import re
+import stat
 import subprocess
 import sys
 
@@ -95,9 +109,11 @@ import sys
 # to --emit-vocab output).
 ENUMS = {
     "BACKENDS": {"claude-p", "codex", "cursor-subagent", "live-session"},
+    "DELIVERY_ENUM": {"bg", "fg"},
     "ESCAPE_RESULTS": {"clean", "dirty"},
     "HANDOFF_REASONS": {"composer-run", "must-pause", "phase-complete"},
     "IDENTITY_KEYS": {"claude", "pid", "session", "shell"},
+    "ISOLATION_MODES": {"branch", "none", "worktree"},
     "JOURNAL_TYPES": (
         "CONSUME",
         "CLASSIFY",
@@ -105,7 +121,10 @@ ENUMS = {
         "KILL_DUP",
         "OWNERSHIP",
         "VERIFY_OK",
+        "VERIFY_FAIL",
         "SENTINEL_ARMED",
+        "SENTINEL_FIRE",
+        "SPAWN",
         "IDENTITY",
         "NOTIFY",
     ),
@@ -114,6 +133,7 @@ ENUMS = {
     "MONITOR_EVENTS": {"anchor", "anomaly", "dead-at-spawn", "exit", "liveness"},
     "NOTIFY_CLASSES": {
         "auto-disposition",
+        "cap-accept",
         "cap-raise",
         "config-conflict",
         "docs-only",
@@ -121,6 +141,7 @@ ENUMS = {
         "must-pause",
     },
     "NOTIFY_IMMEDIATE_CLASSES": {
+        "cap-accept",
         "cap-raise",
         "config-conflict",
         "docs-only",
@@ -133,6 +154,8 @@ ENUMS = {
         "auto-disposition",
         "commit",
         "config-change",
+        "config-revoke",
+        "config-snapshot",
         "escape-check",
         "exit-census",
         "gate-disposition",
@@ -140,6 +163,7 @@ ENUMS = {
         "must-pause",
         "phases-extended",
         "profile-switch",
+        "run-close",
         "smoke-pass",
         "sticky-ack",
     },
@@ -152,6 +176,23 @@ ENUMS = {
         "peer",
         "reviewer",
     },
+    "RUN_CLOSE_CELLS": {
+        "cleaned",
+        "contended",
+        "crashed",
+        "creation-window",
+        "dirty",
+        "identity-mismatch",
+        "journal-artifact-mismatch",
+        "marker-only",
+        "merge-failed",
+        "merging",
+        "paused",
+        "pre-journal",
+        "retained-green",
+        "verified-merge",
+    },
+    "RUN_CLOSE_VERDICTS": {"already-closed", "complete", "refused", "retained"},
     "SEVERITIES": {"crit", "high", "low", "med"},
     "WATCH_VERBS": {"armed", "cancelled"},
 }
@@ -165,17 +206,22 @@ NOTIFY_MODE_BY_STATE = {
 }
 MATRIX_REQUIRED = {
     "config-change": ("key", "from", "to"),
+    "config-revoke": ("role", "key", "epoch"),
+    "config-snapshot": ("role", "iso", "plan", "epoch", "key", "value"),
     "escape-check": ("role", "result", "before", "after", "roots"),
     "exit-census": ("role", "leg", "children"),
     "gate-disposition": ("key", "choice"),
     "label-snapshot": ("iso", "epoch", "plan"),
     "must-pause": ("key",),
     "profile-switch": ("from", "to", "transferred", "alive"),
+    "run-close": ("role", "iso", "mode", "cell", "verdict"),
     "sticky-ack": ("role",),
 }
 TS_LOCAL_RE = re.compile(r"\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?[+-]\d{2}:\d{2}\Z")
 DIGEST_RE = re.compile(r"\A[0-9a-f]{8,64}\Z")
-FINDING_ID_RE = re.compile(r"\A(?:PR\d*-)?(CRIT|HIGH|MED|LOW)-\d+\Z")
+# `REG` is an identity-only class: the verified severity is supplied
+# separately as `severity=` / `verified=` on disposition records.
+FINDING_ID_RE = re.compile(r"\A(?:PR\d*-)?(?:(REG)-\d+|(CRIT|HIGH|MED|LOW)-\d+)\Z")
 RUNKEY_RE = re.compile(r"\Astage-\d+\Z")
 IDLE_GAP_MIN = 30  # D8 threshold (DR-4), floored whole minutes
 COMPOSER_WRITE_PREFIXES = (
@@ -193,6 +239,8 @@ COMPOSER_WRITE_PREFIXES = (
     "SENTINEL_ARMED:",
     "IDENTITY:",
     "NOTIFY:",
+    "SPAWN:",
+    "VERIFY_FAIL:",
     "SPAWN_WRAPPER_START",
 )
 SUPPRESSION_KEYS = ("suppressed", "latest")
@@ -254,6 +302,10 @@ STRICT_CLASSES = (
     "mixed-route",
     "bad-verified",
     "orphan-verified",
+    "missing-detail",
+    "empty-detail",
+    "missing-child",
+    "bad-child",
     "logged-ts-on-checkpoint",
     "backwards-logged-ts",
     "bad-logged-ts",
@@ -273,6 +325,19 @@ STRICT_CLASSES = (
     "bad-refused",
     "refused-with-evidence",
     "missing-sticky-hash",
+    "bad-config-key",
+    "bad-config-value",
+    "missing-config-hash",
+    "config-hash-mismatch",
+    "bad-revoke-epoch",
+    "bad-authority-check",
+    "missing-authority-epoch",
+    "bad-authority-epoch",
+    "orphan-authority-epoch",
+    "mixed-attestation",
+    "bad-cap-accept",
+    "bad-delivery",
+    "delivery-on-none",
 )
 WHOLE_FILE_CLASSES = (
     "duplicate-arm",
@@ -298,20 +363,40 @@ WHOLE_FILE_CLASSES = (
     "unqualified-finding-key",
     "missing-sticky-ack",
     "queued-at-commit",
+    "delivery-before-authority",
+    "delivery-missing-wake",
+    "delivery-arm-without-wake",
+    "delivery-drift",
 )
 SCORED_BINDING_CLASSES = (
     "label-check-mismatch",
     "label-check-unauthorized",
     "label-check-unverifiable",
     "bad-label-snapshot",
+    "bad-authority-snapshot",
+    "authority-check-unverifiable",
+    "authority-check-mismatch",
+    "authority-unauthorized",
+    "revoked-authority",
+    "authority-epoch-mismatch",
+    "bad-revocation",
 )
 VARIANT_TOKEN_CENSUS = (
     "backwards-logged-ts",
+    "bad-authority-check",
+    "bad-authority-epoch",
     "bad-backend",
+    "bad-cap-accept",
     "bad-cap-raise",
+    "bad-cell",
+    "bad-child",
     "bad-children-count",
     "bad-class",
     "bad-class-mode",
+    "bad-close-mode",
+    "bad-config-key",
+    "bad-config-value",
+    "bad-delivery",
     "bad-gap-min",
     "bad-handoff-reason",
     "bad-label-check",
@@ -325,20 +410,25 @@ VARIANT_TOKEN_CENSUS = (
     "bad-ownership-subtype",
     "bad-refused",
     "bad-result",
+    "bad-revoke-epoch",
     "bad-role",
     "bad-severity",
     "bad-suppressed",
     "bad-transferred",
+    "bad-verdict",
     "bad-verified",
     "batch-key-mismatch",
     "cancelled-without-reason",
     "commit-seat-violation",
+    "config-hash-mismatch",
+    "delivery-on-none",
     "dirty-result-mismatch",
     "duplicate-key",
     "duplicate-pending-id",
     "empty-after",
     "empty-alive",
     "empty-before",
+    "empty-cell",
     "empty-children",
     "empty-choice",
     "empty-detail",
@@ -349,6 +439,7 @@ VARIANT_TOKEN_CENSUS = (
     "empty-last",
     "empty-leg",
     "empty-log",
+    "empty-mode",
     "empty-plan",
     "empty-result",
     "empty-role",
@@ -358,6 +449,8 @@ VARIANT_TOKEN_CENSUS = (
     "empty-task",
     "empty-to",
     "empty-transferred",
+    "empty-value",
+    "empty-verdict",
     "future-ts",
     "ids-count-mismatch",
     "live-token-drift",
@@ -367,12 +460,16 @@ VARIANT_TOKEN_CENSUS = (
     "malformed-roots",
     "missing-after",
     "missing-alive",
+    "missing-authority-epoch",
     "missing-backend",
     "missing-base",
     "missing-batch",
     "missing-before",
+    "missing-cell",
+    "missing-child",
     "missing-children",
     "missing-choice",
+    "missing-config-hash",
     "missing-detail",
     "missing-epoch",
     "missing-event",
@@ -387,6 +484,7 @@ VARIANT_TOKEN_CENSUS = (
     "missing-last",
     "missing-leg",
     "missing-log",
+    "missing-mode",
     "missing-model",
     "missing-phase",
     "missing-plan",
@@ -402,9 +500,13 @@ VARIANT_TOKEN_CENSUS = (
     "missing-task",
     "missing-to",
     "missing-transferred",
+    "missing-value",
+    "missing-verdict",
+    "mixed-attestation",
     "mixed-route",
     "modeless-legacy",
     "none-without-reason",
+    "orphan-authority-epoch",
     "orphan-verified",
     "profile-on-non-claude-p",
     "refused-with-evidence",
@@ -451,13 +553,33 @@ EMIT_SPECS = {
     "ADOPT": {"prefix": "ADOPT:", "verb": None, "required": (), "enums": {}},
     "KILL_DUP": {"prefix": "KILL_DUP:", "verb": None, "required": (), "enums": {}},
     "SENTINEL_ARMED": {"prefix": "SENTINEL_ARMED:", "verb": None, "required": (), "enums": {}},
+    # v32 TB.3 (run-7 F-2): the composer watch/sentinel narration families —
+    # tool-emitted so no line-start token is ever hand-invented. SPAWN:/
+    # VERIFY_FAIL: pin role (closed enum) + detail; SENTINEL_FIRE:'s role is
+    # optional (the armed shell may omit it; enum-checked when present) and
+    # its id=/reason= evidence keys ride as free kv. SENTINEL_FIRE is NOT a
+    # COMPOSER_WRITE_PREFIXES member — see the V_base note (D8 idle clock).
+    "SENTINEL_FIRE": {"prefix": "SENTINEL_FIRE:", "verb": None, "required": (),
+                      "enums": {"role": "ROLE_ENUM"}},
+    # SPAWN's role= is the WRITER (the --role identity owner, like every
+    # record); the SPAWNED role rides child= (the exit-classify child-kind
+    # vocabulary) — role= cannot carry it because role=/--role must agree.
+    "SPAWN": {"prefix": "SPAWN:", "verb": None, "required": ("role", "child", "detail"),
+              "enums": {"role": "ROLE_ENUM", "child": "ROLE_ENUM"}},
+    "VERIFY_FAIL": {"prefix": "VERIFY_FAIL:", "verb": None, "required": ("role", "detail"),
+                    "enums": {"role": "ROLE_ENUM"}},
     "IDENTITY": {"prefix": "IDENTITY:", "verb": "update",
                  "required": ("role", "session"), "enums": {"role": "ROLE_ENUM"}},
     "VERIFY_OK": {"prefix": "VERIFY_OK:", "verb": None, "required": ("children",), "enums": {}},
+    # v32.2: delivery= is ADDITIVE-OPTIONAL on armed lines — RESOLVED values
+    # only (fg|bg; `auto` is config vocabulary, never artifact state), and a
+    # layer2=none arm never carries it (the oracle's delivery-on-none class;
+    # the etype-specific check below owns that co-presence refusal).
     "WATCH:armed": {"prefix": "WATCH:", "verb": "armed",
                     "required": ("role", "layer1", "layer2"),
                     "enums": {"role": "ROLE_ENUM", "layer1": "LAYER1_ENUM",
-                              "layer2": "LAYER2_ENUM"}},
+                              "layer2": "LAYER2_ENUM",
+                              "delivery": "DELIVERY_ENUM"}},
     "WATCH:cancelled": {"prefix": "WATCH:", "verb": "cancelled",
                         "required": ("role", "reason"), "enums": {"role": "ROLE_ENUM"}},
     "ROLE:start": {"prefix": "ROLE:", "verb": "start",
@@ -479,7 +601,7 @@ PAIR_SUBTYPES = {"auto-disposition", "must-pause"}
 COMPOSER_ONLY_SUBTYPES = frozenset(
     {"gate-disposition", "auto-disposition", "must-pause", "commit",
      "smoke-pass", "phases-extended", "config-change", "profile-switch",
-     "label-snapshot", "sticky-ack"})
+     "label-snapshot", "sticky-ack", "config-snapshot", "config-revoke"})
 # Reserved keys the CALLER may never supply on emit (tool-owned or refused).
 RESERVED_KEYS = {"ts", "logged_ts", "run"}
 
@@ -583,7 +705,8 @@ def parse_argv(argv):
     etype = None
     dry_run = False
     value_flags = {"--run", "--role", "--log", "--log-root", "--epoch", "--event-ts",
-                   "--round", "--id", "--repo", "--capture", "--leg"}
+                   "--round", "--id", "--repo", "--capture", "--leg",
+                   "--iso", "--base", "--outcome", "--plan", "--attest"}
     i = 0
     while i < len(argv):
         tok = argv[i]
@@ -812,7 +935,7 @@ def build_qualified_key(flags):
         refuse("--round must be a positive integer (got %r)" % rnd)
     if not FINDING_ID_RE.match(fid):
         refuse("--id %r does not match the finding-ID grammar" % fid,
-               "(PR[n]-)?<CRIT|HIGH|MED|LOW>-<nnn>")
+               "(PR[n]-)?<REG|CRIT|HIGH|MED|LOW>-<nnn>")
     return "%s/r%s/%s" % (flags["--run"], rnd, fid)
 
 
@@ -899,6 +1022,9 @@ def cmd_emit(flags, etype, kvs, sink):
         if st == "escape-check":
             refuse("emit OWNERSHIP:escape-check is refused — digests are COMPUTED; use the escape-check subcommand (F-04 class)",
                    "escape-check --capture pre|post --leg <leg> --log-root <dir> --root name=/abs [--root ...]")
+        if st == "run-close":
+            refuse("emit OWNERSHIP:run-close is refused — cell/verdict are COMPUTED from disk state; use the run-close subcommand (a hand-authored close is a forged close — the F-04 class)",
+                   "run-close --iso <iso-id> --base </abs/base> --outcome <outcome> [--plan </abs/plan.md>] [--attest owner-dead]")
         # PR-MED-001 (round 12), EXTENDED UNIFORM at R16 PR-HIGH-001 (operator-
         # disposed coherent extension): EVERY composer-owned OWNERSHIP subtype
         # requires --role composer before any notice or write — the SINGLE
@@ -921,6 +1047,12 @@ def cmd_emit(flags, etype, kvs, sink):
             refuse("sha= is not a commit key — the required key is hash= and the tool derives it via --repo (F-23)")
         if "decision" in kv:
             refuse("decision= is not an admitted key — gate-disposition's required keys are key= + choice= (F-20)")
+        # v32 TA.1 (round-8 in-session review): the retired label_check= key is
+        # refused on EVERY OWNERSHIP subtype, not just the auto-disposition
+        # route — a retired attestation must never ride forward as a stray
+        # extra token either (recognize-in-historical-logs only).
+        if "label_check" in kv:
+            refuse("label_check= is retired at v32 on every OWNERSHIP shape — the successor attestation pair is authority_check=<config_hash> + authority_epoch=<N> (recognize historical records on replay, never emit forward)")
 
         # key= construction (DR-3) for finding routes
         key_from_builder = "--round" in flags and "--id" in flags
@@ -1016,16 +1148,59 @@ def cmd_emit(flags, etype, kvs, sink):
         if st == "profile-switch" and kv.get("transferred") not in (None, "yes", "no"):
             refuse("profile-switch transferred= must be yes|no")
         if st == "label-snapshot":
-            # PR-MED-001 (round 7): labels= is REQUIRED and its non-empty value
-            # must parse (the oracle's missing-labels / bad-labels rules) so the
-            # helper never emits an oracle-STRICT-failing label-snapshot. The
-            # empty labels="" is the legal recorded-empty-authorized-set shape.
-            if "labels" not in kv:
-                refuse("OWNERSHIP:label-snapshot requires labels= (missing-labels) — the legal empty is labels=\"\"")
-            elif kv["labels"].strip():
-                _lerrs = parse_labels_map(kv["labels"])[1]
-                if _lerrs:
-                    refuse("labels= is malformed (bad-labels): %s" % _lerrs[0])
+            # v32 TA.1 (D1): the label snapshot is RETIRED forward — the
+            # successor is OWNERSHIP:config-snapshot (the high-auto authority
+            # attestation). Historical logs keep their records (the oracle
+            # recognizes them); the helper never writes a new one.
+            refuse("OWNERSHIP:label-snapshot is retired at v32 — the [gates: high-auto-ok] label grammar is gone; emit the successor attestation OWNERSHIP:config-snapshot (key=high-auto value=on|off; config_hash= derived)")
+        if st == "config-snapshot":
+            # v32 TA.1 (D1/PR-HIGH-013/015): the run-start high-auto authority
+            # attestation — the label-snapshot successor, 1:1 on the policy-log
+            # home, FIRST-wins, and fail-closed reads. key= is the closed
+            # {high-auto} set this release; value= is the closed {on,off} set;
+            # config_hash= is DERIVED (never caller-typed) over the canonical
+            # serialization "iso=<iso>|plan=<plan>|epoch=<epoch>|high-auto=
+            # <value>" (UTF-8, LF-normalized by construction — Constraint 13
+            # refuses embedded line terminators — no trailing newline), so the
+            # hash BINDS the isolation-run identity, authoritative plan, and
+            # run-start epoch, not just the setting value. Contemporaneous
+            # like sticky-ack: a backdated authority record could forge its
+            # ordering against spawn boundaries, so --event-ts is refused.
+            kv.setdefault("role", role)
+            if "--event-ts" in flags:
+                refuse("OWNERSHIP:config-snapshot is a contemporaneous authority record — its ts= IS the attestation time; --event-ts/backfill is refused")
+            if kv.get("key") != "high-auto":
+                refuse("OWNERSHIP:config-snapshot admits key=high-auto only (bad-config-key) — the run-level HIGH auto-route authorization is the sole attested key this release")
+            if kv.get("value") not in ("on", "off"):
+                refuse("OWNERSHIP:config-snapshot value= must be on|off (bad-config-value)")
+            if "config_hash" in kv:
+                refuse("config_hash= is DERIVED, never caller-typed — the tool computes it from iso/plan/epoch/value (the F-23/F-04 derivation class)")
+            for _rk in ("iso", "plan", "epoch"):
+                if not kv.get(_rk, "").strip():
+                    refuse("OWNERSHIP:config-snapshot requires nonblank %s= — the hash binds the full identity (PR-HIGH-015)" % _rk)
+            import hashlib
+            kv["config_hash"] = hashlib.sha256(
+                ("iso=%s|plan=%s|epoch=%s|high-auto=%s"
+                 % (kv["iso"], kv["plan"], kv["epoch"], kv["value"]))
+                .encode("utf-8")).hexdigest()[:12]
+        if st == "config-revoke":
+            # v32 TA.1 (PR-HIGH-006/016): the monotonic one-way revocation
+            # record — the FIRST write of the pinned revoke-first disable
+            # transaction; the authority boundary is effective at THIS append.
+            # epoch= is the revocation counter (a positive integer from 1; the
+            # snapshot is epoch 0); a duplicate/retry disable re-emits the same
+            # epoch idempotently — monotonicity across records is the oracle's
+            # scored-layer check (the stateless writer validates form).
+            # Contemporaneous: --event-ts refused (a backdated boundary would
+            # forge which dispositions it invalidates).
+            kv.setdefault("role", role)
+            if "--event-ts" in flags:
+                refuse("OWNERSHIP:config-revoke is a contemporaneous authority boundary — its ts= IS the revocation time; --event-ts/backfill is refused")
+            if kv.get("key") != "high-auto":
+                refuse("OWNERSHIP:config-revoke admits key=high-auto only (bad-config-key)")
+            _rep = kv.get("epoch", "")
+            if _rep and (not _rep.isdigit() or int(_rep) < 1):
+                refuse("OWNERSHIP:config-revoke epoch= must be a positive integer from 1 (bad-revoke-epoch) — the snapshot is epoch 0")
         if st in ("gate-disposition", "auto-disposition", "must-pause") and "key" in kv:
             # PR-REG-002 (round 8) + PR-MED-002 (round 13): builder ownership
             # (DR-3) applies to every OWNERSHIP finding-route owner — the two
@@ -1042,16 +1217,55 @@ def cmd_emit(flags, etype, kvs, sink):
             # never encode a weaker route than the finding identity requires,
             # and the tool never emits an oracle-STRICT-failing ownership line.
             cap = kv.get("cap-raise")
+            # v32 TA.3 (PR-MED-014): cap-accept=close is the explicit
+            # accept-closure transition — the cap-raise topology rules
+            # mirrored exactly (closed value; zero finding evidence; never
+            # both cap keys on one record).
+            capacc = kv.get("cap-accept")
+            # v32 TA.1: label_check= is RETIRED forward with the label
+            # grammar — refused for EVERY OWNERSHIP subtype by the shared
+            # check above (round-8 review); the successor attestation pair is
+            # authority_check= + authority_epoch=.
             key_sev = None
+            key_is_finding = False
             if "key" in kv:
                 m = FINDING_ID_RE.match(re.split(r"[^A-Za-z0-9-]+", kv["key"])[-1] or "")
-                key_sev = m.group(1).lower() if m else None
-            evidence = "severity" in kv or "verified" in kv or key_sev is not None
+                # `PR-REG-*` is a valid identity but carries no route
+                # severity; verified severity remains the routing authority.
+                key_is_finding = bool(m)
+                key_sev = (m.group(2) or "").lower() or None if m else None
+            # TB.2 (v32): finding evidence is EVERY finding-ID key, including
+            # the identity-only `PR-REG-*` class — keyed off the severity
+            # group alone, a REG key was invisible here, so it could ride a
+            # cap topology record unrefused and (below) skip the
+            # severity-required guard into a silent tiering-owner-unset queue.
+            evidence = "severity" in kv or "verified" in kv or key_is_finding
+            if cap is not None and capacc is not None:
+                refuse("cap-raise= and cap-accept= are mutually exclusive — one record is ONE cap transition (mixed-route)")
             if cap is not None:
                 if cap != "+1":
                     refuse("cap-raise= must be exactly +1 (bad-cap-raise)")
                 if evidence:
                     refuse("cap-raise topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
+            if capacc is not None:
+                if capacc != "close":
+                    refuse("cap-accept= must be exactly close (bad-cap-accept)")
+                if evidence:
+                    refuse("cap-accept topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
+            # v32 TA.1: authority-attestation coherence when-present on any
+            # route — authority_check= is the EXACT 12-hex config_hash echo
+            # and travels WITH authority_epoch= (nonnegative revocation
+            # count; 0 = no prior revocation).
+            if "authority_check" in kv:
+                if not re.match(r"\A[0-9a-f]{12}\Z", kv["authority_check"]):
+                    refuse("authority_check= must be the exact 12-hex config_hash echo (bad-authority-check)")
+                if "authority_epoch" not in kv:
+                    refuse("authority_check= travels with authority_epoch= — the revocation-epoch binding is half the attestation (missing-authority-epoch, PR-HIGH-006)")
+            if "authority_epoch" in kv:
+                if not kv["authority_epoch"].isdigit():
+                    refuse("authority_epoch= must be a nonnegative integer (bad-authority-epoch)")
+                if "authority_check" not in kv:
+                    refuse("authority_epoch= never rides without authority_check= (orphan-authority-epoch)")
             if "severity" in kv and kv["severity"] not in ENUMS["SEVERITIES"]:
                 refuse("severity= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
             if "verified" in kv:
@@ -1059,7 +1273,7 @@ def cmd_emit(flags, etype, kvs, sink):
                     refuse("verified= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
                 if "severity" not in kv:
                     refuse("verified= never rides without severity= — emit BOTH keys on a triage divergence (orphan-verified)")
-            if cap is None:
+            if cap is None and capacc is None:
                 # builder ownership (DR-3) is enforced for BOTH pair subtypes by
                 # the shared check above (PR-REG-002).
                 # PR-HIGH-001 (round 9): a finding-route auto-disposition (a
@@ -1068,8 +1282,12 @@ def cmd_emit(flags, etype, kvs, sink):
                 # a HIGH route can never silently become mode=queued for lack of
                 # an explicit severity=. Cap-raise topology is the documented
                 # zero-severity exception (handled by the `cap is None` guard).
-                if key_sev is not None and "severity" not in kv:
-                    refuse("a finding-route auto-disposition requires severity= (the finding-ID's own class, STICKY section 7) — without it the route's TIERING owner is unset and a HIGH route would silently queue")
+                # TB.2 (v32): the guard fires on ANY finding-ID key — for a
+                # severity-classed ID severity= is the ID's own class; for an
+                # identity-only ID (PR-REG-*) the unqualified key form is
+                # accepted and severity= is the SOLE routing/TIERING owner.
+                if key_is_finding and "severity" not in kv:
+                    refuse("a finding-route auto-disposition requires severity= (the finding-ID's own class; for an identity-only PR-REG-* ID it is the sole routing authority — STICKY section 7) — without it the route's TIERING owner is unset and the route would silently queue")
                 # severity= must AGREE with the finding-ID severity — the tool
                 # refuses the mismatch rather than emitting an oracle
                 # severity-key-mismatch line.
@@ -1084,22 +1302,25 @@ def cmd_emit(flags, etype, kvs, sink):
                 # to CRIT pauses and an upgrade to HIGH is immediate — and a
                 # downgrade routes to the lower tier. BOTH severity fields stay
                 # recorded (severity= the ID's class + verified= the executor
-                # class). CAVEAT: label_check= stays keyed on severity= (the
-                # oracle keys missing-label-check on severity=; the log cannot
-                # prove a downgrade legitimate), so routing it on the verified
-                # value would emit an oracle-flagged line on a HIGH->lower
-                # downgrade.
+                # class). Attestation (r9 PR-HIGH-018, one coherent rule): the
+                # gate fires on resolved-OR-effective HIGH — an upgrade to
+                # HIGH routes and attests as HIGH, and a HIGH->lower downgrade
+                # STILL attests because the resolved class was HIGH (the log
+                # cannot prove a downgrade legitimate). See the gate below.
                 effective = kv.get("verified") or resolved
                 route_sev = effective
                 if effective == "crit":
                     refuse("a CRIT never auto-disposes — a verified/effective CRIT always pauses; route it as OWNERSHIP:must-pause (STICKY section 7)")
-                # label_check= gate stays on severity= (the finding-ID's class),
-                # NOT the effective value — the oracle's contract.
-                if resolved == "high":
-                    if "label_check" not in kv:
-                        refuse("a HIGH auto-route carries its label_check= attestation (missing-label-check)")
-                    if not DIGEST_RE.match(kv["label_check"]):
-                        refuse("label_check= must be an 8-64 char lowercase hex digest")
+                # v32 TA.1 (r9 PR-HIGH-018): the attestation gate fires on
+                # resolved-OR-effective HIGH — a verified-severity UPGRADE to
+                # HIGH routes as HIGH and must attest like one (routing and
+                # attestation share the effective value); the DOWNGRADE caveat
+                # is unaffected: severity=high verified=low still requires the
+                # pair via resolved==high (the log cannot prove a downgrade
+                # legitimate). The successor pair replaces label_check=.
+                if resolved == "high" or effective == "high":
+                    if "authority_check" not in kv or "authority_epoch" not in kv:
+                        refuse("a HIGH auto-route (resolved OR verified-effective HIGH) carries its authority_check=<config_hash> + authority_epoch=<N> attestation pair — bound to the run's OWNERSHIP:config-snapshot record (TA.1; r9 PR-HIGH-018 closed the verified-upgrade bypass)")
         for k in required:
             if k == "run":
                 continue
@@ -1162,6 +1383,13 @@ def cmd_emit(flags, etype, kvs, sink):
                 if cls_arg is not None and cls_arg != "cap-raise":
                     refuse("a cap-raise=+1 route always binds class=cap-raise (immediate) — a conflicting class=%s is refused (PR-HIGH-001 round 10)" % cls_arg)
                 cls = "cap-raise"
+            elif "cap-accept" in kv:
+                # v32 TA.3 (PR-MED-014): the cap-raise binding mirrored — a
+                # cap-accept=close route always binds class=cap-accept
+                # (immediate delivery + the mandatory desktop notice).
+                if cls_arg is not None and cls_arg != "cap-accept":
+                    refuse("a cap-accept=close route always binds class=cap-accept (immediate) — a conflicting class=%s is refused (TA.3/PR-MED-014)" % cls_arg)
+                cls = "cap-accept"
             else:
                 cls = cls_arg or "auto-disposition"
                 # PR-REG-002 (round 8) + PR-HIGH-001 (round 10): a NON-cap
@@ -1372,6 +1600,8 @@ def cmd_emit(flags, etype, kvs, sink):
     if etype == "WATCH:armed":
         if kv.get("layer2") == "none" and "reason" not in kv:
             refuse("layer2=none requires reason= naming the real arm failure / resolved no-monitor case (none-without-reason)")
+        if kv.get("layer2") == "none" and "delivery" in kv:
+            refuse("a layer2=none armed line never carries delivery= — nothing to consume (the oracle's delivery-on-none class; v32.2)")
 
     kv.setdefault("role", role) if "role" in spec["required"] else None
     for k in spec["required"]:
@@ -1802,6 +2032,52 @@ def composer_write_time(line):
     return t
 
 
+def _idle_delivery_echo(lines, run):
+    """v32.3 T2.3 — the fg/bg salience echo: stdout NARRATION ONLY, never a
+    record (no journal append, no new refusal, no exit-status change). Selects
+    the newest `Wake:` line by APPEND ORDER whose run= matches this run — the
+    echo's OWN eligibility scan, separate from the composer-clock scan above
+    (whose refusal semantics stay byte-untouched; canonical Wake: lines are
+    clock-less and never reach that scan's ownership check). Foreign-run or
+    missing-run Wake: lines are silently INELIGIBLE here, never refused;
+    duplicate run=/delivery= keys resolve by parse_kv's existing semantics
+    (last occurrence wins). The selected line's delivery= must validate
+    against the canonical resolved enum (V_base DELIVERY_ENUM — reused, never
+    redefined). No eligible Wake:, or an eligible newest Wake: with no
+    delivery= key, is silent-legal (pre-v32.2 logs, layer2=none resolutions —
+    omission never inherits from an older delivery-bearing line). An INVALID
+    present value suppresses the echo with ONE escaped-and-bounded stderr
+    diagnostic (r1 PR-MED-004: the echo can never advertise an unresolved or
+    out-of-domain value, and never replays control bytes to a terminal).
+    Evaluated INDEPENDENTLY of idle due-ness so it fires on ordinary
+    short-gap wakes — the composer receives the fg duty from tool output even
+    when compaction has dropped it from context."""
+    chosen = None
+    for raw in lines:
+        if not raw.startswith("Wake:"):
+            continue
+        kv, _ = parse_kv(raw)
+        if kv.get("run") != run:
+            continue
+        chosen = kv
+    if chosen is None or "delivery" not in chosen:
+        return
+    delivery = chosen["delivery"]
+    if delivery not in ENUMS["DELIVERY_ENUM"]:
+        rendered = ascii(delivery)
+        if len(rendered) > 40:
+            rendered = rendered[:40] + "...(bounded)"
+        sys.stderr.write(
+            "idle-check: delivery echo suppressed — the newest same-run Wake: "
+            "line carries delivery=%s, outside the resolved enum fg|bg "
+            "(records, journal bytes, and exit status unchanged)\n" % rendered)
+        return
+    if delivery == "fg":
+        sys.stdout.write("idle-check: resolved delivery=fg — consume the Layer-2 watch foreground (chunked ≤2min polls)\n")
+    else:
+        sys.stdout.write("idle-check: resolved delivery=bg — background return delivery; consume returns on wake\n")
+
+
 def cmd_idle_check(flags, sink):
     """DR-4 (D8's dual fix, F-08 + F-21 as ONE change), run UNCONDITIONALLY on
     every wake: the tool computes the gap AND decides due-ness. Gap = now
@@ -1814,7 +2090,11 @@ def cmd_idle_check(flags, sink):
         (self-documenting: the oracle can never see mtimes at census time);
       - genuinely idle -> the checkpoint record (open-role reconciliation
         stays the composer's judgment duty, per the STICKY).
-    No composer line in the log, or gap below threshold -> silent exit 0."""
+    No composer line in the log, or gap below threshold -> no record (exit 0).
+    Independent of due-ness, the delivery echo (_idle_delivery_echo, v32.3
+    T2.3) may print ONE informational stdout line from the newest eligible
+    same-run Wake: — after the ownership scan (a refusal precedes any echo),
+    before the due-ness early returns, journal bytes untouched."""
     log_path = flags["--log"]
     log_root = flags["--log-root"]
     if not os.path.isdir(log_root):
@@ -1839,6 +2119,10 @@ def cmd_idle_check(flags, sink):
                    % (flags["--run"], rec_run))
         if last is None or t > last:
             last = t
+    # v32.3 T2.3: the delivery echo — AFTER the ownership scan above (a
+    # refusal precedes any echo), BEFORE the due-ness early returns (it fires
+    # on ordinary short-gap wakes). Stdout narration only; journal untouched.
+    _idle_delivery_echo(lines, flags["--run"])
     if last is None:
         return  # no composer clock sample — nothing to measure
     now = datetime.datetime.now().astimezone()
@@ -1879,12 +2163,1161 @@ def cmd_idle_check(flags, sink):
     write_lines(sink, [rec])
 
 
+ISO_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\Z")  # filename-safe; derives journal/marker names
+# CLI outcome vocabulary -> the close-state machine's requested transition.
+# `complete` is the branch/none marker-disposition close; `reconcile` is the
+# retroactive-record convergence for the two evidence-verified stale cells
+# (journal-artifact-mismatch; pre-journal marker with --attest owner-dead).
+RUN_CLOSE_OUTCOMES = {"retained-green", "merged", "paused", "crashed",
+                      "merge-failed", "complete", "reconcile"}
+# journal state= value written per requested outcome (worktree mode)
+_OUTCOME_STATE = {"retained-green": "retained-green", "paused": "paused",
+                  "crashed": "crashed/recovery-needed", "merge-failed": "merge-failed"}
+_TERMINAL_STATES = {"cleaned", "retained-green", "paused",
+                    "crashed/recovery-needed", "merge-failed"}
+# terminal journal state that satisfies each outcome idempotently
+_OUTCOME_TERMINAL = {"retained-green": "retained-green", "merged": "cleaned",
+                     "paused": "paused", "crashed": "crashed/recovery-needed",
+                     "merge-failed": "merge-failed", "reconcile": "cleaned"}
+
+
+def _rc_parse_kv_lines(raw):
+    """Best-effort key=value parse of already-read journal/marker lines. Returns
+    (dict, raw-lines) — first occurrence wins; unquotes the serialization rule's
+    double-quoted strings (\\\" \\\\ \\n). Split out (PR-HIGH-001 r12) so the
+    delegation fold can feed bytes read no-follow through a HELD dir fd rather
+    than re-opening the journal/marker by pathname (the check/open gap)."""
+    kv = {}
+    for line in raw:
+        if "=" not in line or line.startswith("#"):
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        if not KEY_ALLOWLIST_RE.match(k) or k in kv:
+            continue
+        if len(v) >= 2 and v.startswith('"') and v.endswith('"'):
+            # Ordered left-to-right unescape (R24 LOW-001): sequential
+            # str.replace corrupts values holding literal backslashes
+            # (`\\` handled last turns a stored `\\n` into a newline).
+            out, i2 = [], 1
+            body = v[:-1]
+            while i2 < len(body):
+                ch = body[i2]
+                if ch == "\\" and i2 + 1 < len(body):
+                    nxt = body[i2 + 1]
+                    out.append({"n": "\n", '"': '"', "\\": "\\"}.get(nxt, "\\" + nxt))
+                    i2 += 2
+                else:
+                    out.append(ch)
+                    i2 += 1
+            v = "".join(out)
+        kv[k] = v
+    return kv, raw
+
+
+def _rc_read_kv_file(path):
+    """Read a journal/marker file by path and parse it (the pathname-read
+    callers: recovery, run-close). The delegation fold instead reads these
+    no-follow through a held dir fd and calls _rc_parse_kv_lines directly."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().splitlines()
+    except OSError as e:
+        envfail("cannot read %s: %s" % (path, e))
+    return _rc_parse_kv_lines(raw)
+
+
+def _rc_rewrite_journal(path, raw_lines, new_state, extra_key, extra_value):
+    """Write-then-atomic-rename journal rewrite: state= replaced, every other
+    line byte-preserved, one optional appended key (closed=/reconciled=)."""
+    import tempfile
+    out = []
+    replaced = False
+    for line in raw_lines:
+        if line.startswith("state=") and not replaced:
+            out.append("state=%s" % new_state)
+            replaced = True
+        else:
+            out.append(line)
+    if not replaced:
+        out.append("state=%s" % new_state)
+    if extra_key is not None:
+        out = [l for l in out if not l.startswith(extra_key + "=")]
+        out.append('%s="%s"' % (extra_key, extra_value))
+    payload = "\n".join(out) + "\n"
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".rc-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(payload)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except OSError as e:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        envfail("cannot rewrite journal %s: %s" % (path, e))
+
+
+def _rc_git(base, *args):
+    """Run git under the BASE checkout; returns (rc, stdout-stripped)."""
+    try:
+        r = subprocess.run(["git", "-C", base] + list(args),
+                           capture_output=True, text=True, timeout=60)
+    except Exception as e:
+        return 1, "git failed: %s" % e
+    return r.returncode, (r.stdout or "").strip()
+
+
+def _rc_report(flags, sink, iso, mode, cell, verdict, detail=None):
+    """Emit the ONE run-close report record; returns the verdict for exit
+    mapping. detail values are fixed tool-authored strings (value-safe)."""
+    ts = now_iso()
+    rec = ("OWNERSHIP: run-close ts=%s run=%s role=%s iso=%s mode=%s cell=%s verdict=%s"
+           % (ts, flags["--run"], flags["--role"], iso, mode, cell, verdict))
+    if detail:
+        check_value_safety("detail", detail)
+        rec += ' detail="%s"' % detail
+    write_lines(sink, [rec])
+    return verdict
+
+
+# r25 PR-MED-028: the close-lock release context — set by cmd_run_close after
+# the contention check, consumed at finish. The close-lock contract holds the
+# lock through the cleanup DECISION and then releases it, so every own-lock
+# path that reaches a decided verdict (complete / retained / already-closed)
+# unlinks it; refusal cells RETAIN the lock conservatively (recovery may still
+# key on it), and foreign/malformed locks are NEVER touched (ownership is
+# re-verified at release time, not assumed from the earlier scan).
+_RC_LOCK_CTX = None
+
+
+def _rc_release_own_lock():
+    if _RC_LOCK_CTX is None:
+        return
+    lock_path, iso = _RC_LOCK_CTX
+    if not os.path.exists(lock_path):
+        return
+    lkv, _ = _rc_read_kv_file(lock_path)
+    if lkv.get("iso") != iso:
+        return  # foreign or malformed — never removed here
+    try:
+        os.unlink(lock_path)
+    except OSError as e:
+        sys.stderr.write("own close.lock release failed: %s\n" % e)
+
+
+def _rc_finish(verdict):
+    if verdict in ("complete", "retained", "already-closed"):
+        _rc_release_own_lock()
+        sys.exit(0)
+    sys.exit(3)
+
+
+def _rc_dispose_marker(marker_path):
+    """`-active` -> `.complete-<ts>` (verified close only); idempotent."""
+    if not os.path.exists(marker_path):
+        return
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    try:
+        os.replace(marker_path, "%s.complete-%s" % (marker_path, stamp))
+    except OSError as e:
+        envfail("cannot disposition marker %s: %s" % (marker_path, e))
+
+
+def _rc_retro_pointer_gap(flags):
+    """Green-close obligation: the plan must carry a `Retro report:` pointer.
+    Returns a detail string on a gap, else None. --plan is REQUIRED on green
+    outcomes (the caller enforces requiredness); check is read-only."""
+    plan = flags.get("--plan")
+    if plan is None:
+        return "plan-flag-missing"
+    if not os.path.isabs(plan):
+        refuse("--plan must be an absolute path")
+    try:
+        with open(plan, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return "plan-unreadable"
+    if "Retro report:" not in text:
+        return "retro-pointer-missing"
+    return None
+
+
+def cmd_run_close(flags, sink):
+    """v32 TE.1 (D5/PR-HIGH-005/PR-HIGH-011): the mechanical run-close — a
+    TOTAL state machine over the canonical close-state table (execute-loop
+    SKILL `Run isolation` + the orchestration doc). One invocation classifies
+    the run's on-disk close state into exactly one CELL, performs that cell's
+    LEGAL actions only, and emits ONE `OWNERSHIP: run-close` report record.
+
+    Hard rules: destructive teardown (worktree removal, run-branch deletion)
+    happens ONLY in the verified-merge worktree cell (journal `merged`,
+    branch tip verified merged into base HEAD) — plus the marker-only unlink
+    in the pre-journal cell under an explicit `--attest owner-dead` with zero
+    matching git artifacts. retained-green / paused / crashed / merge-failed /
+    contended / dirty / mismatch cells verify + disposition + report, NEVER
+    remove. `-active` -> `.complete-<ts>` only on a verified close. Branch/
+    `none` modes carry markers but no journal: their close is marker
+    disposition against verified marker evidence — a missing journal NEVER
+    implies cleanup authority, and destructive checkout cleanup is
+    WORKTREE-ONLY. Idempotent: re-running any cell converges (partial
+    cleanups complete; terminal states report already-closed).
+    Exit: 0 on complete/retained/already-closed; 3 on a refused cell (record
+    written); 2 on grammar/identity refusals (nothing written)."""
+    if flags["--role"] != "composer":
+        refuse("run-close requires --role composer — the close is a composer-seat duty (dispositions are never a spawned role's)")
+    iso = flags.get("--iso")
+    base = flags.get("--base")
+    outcome = flags.get("--outcome")
+    if iso is None or base is None or outcome is None:
+        refuse("run-close requires --iso <iso-id> --base </abs/base> --outcome <o>",
+               "outcomes: %s" % " | ".join(sorted(RUN_CLOSE_OUTCOMES)))
+    if not ISO_ID_RE.match(iso):
+        refuse("--iso %r is not a filename-safe iso-id" % iso[:60])
+    check_value_safety("iso", iso)
+    if outcome not in RUN_CLOSE_OUTCOMES:
+        refuse("--outcome %r is not a close outcome" % outcome[:40],
+               " | ".join(sorted(RUN_CLOSE_OUTCOMES)))
+    if flags.get("--attest") not in (None, "owner-dead"):
+        refuse("--attest accepts exactly `owner-dead` (the pre-journal marker disposition's explicit operator attestation)")
+    if not os.path.isabs(base):
+        refuse("--base must be an absolute path")
+    if not os.path.isdir(base):
+        envfail("--base %s is not a directory" % base)
+    base_real = os.path.realpath(base)
+    loops = os.path.join(base_real, ".cursor", "loops")
+    journal_path = os.path.join(loops, "%s-isolation" % iso)
+    marker_path = os.path.join(loops, "%s-active" % iso)
+    lock_path = os.path.join(loops, "close.lock")
+    has_journal = os.path.exists(journal_path)
+    has_marker = os.path.exists(marker_path)
+    disposed = []
+    if os.path.isdir(loops):
+        disposed = [n for n in sorted(os.listdir(loops))
+                    if n.startswith("%s-active.complete-" % iso)]
+
+    # Contention: a close lock naming ANOTHER holder retains everything. An
+    # OWN lock arms the release context (r25 PR-MED-028): the lock is removed
+    # at any decided verdict, retained on refusals, ownership re-checked at
+    # release.
+    global _RC_LOCK_CTX
+    if os.path.exists(lock_path):
+        lkv, _ = _rc_read_kv_file(lock_path)
+        holder = lkv.get("iso", "")
+        if holder != iso:
+            mode_guess = "worktree" if has_journal else "none"
+            _rc_finish(_rc_report(flags, sink, iso, mode_guess, "contended", "refused",
+                                  "close.lock held by another run"))
+        _RC_LOCK_CTX = (lock_path, iso)
+
+    if not has_journal and not has_marker:
+        if not disposed:
+            refuse("no journal, marker, or disposition found for iso %s under %s — nothing to close (wrong --iso or wrong --base?)" % (iso, loops))
+        # Fully closed already: mode from the preserved marker content.
+        mkv, _ = _rc_read_kv_file(os.path.join(loops, disposed[-1]))
+        mode = mkv.get("mode", "")
+        if mode not in ENUMS["ISOLATION_MODES"]:
+            refuse("disposed marker %s records no parseable mode= — cannot classify (fail-closed)" % disposed[-1])
+        _rc_finish(_rc_report(flags, sink, iso, mode, "cleaned", "already-closed",
+                              "marker already dispositioned"))
+
+    # ---- no journal, marker present ----
+    if not has_journal:
+        mkv, _ = _rc_read_kv_file(marker_path)
+        mode = mkv.get("mode", "")
+        if mode not in ENUMS["ISOLATION_MODES"]:
+            refuse("marker %s records no parseable mode= key — cannot classify the close cell (fail-closed; fix the marker, never guess)" % marker_path)
+        # r25 PR-HIGH-022: the marker's documented identity fields (iso-ID,
+        # mode, checkout realpath) are MANDATORY before any marker-only
+        # disposition — absence refuses, never a pass-through. The pre-journal
+        # worktree cell keeps checkout advisory (its unlink is separately
+        # gated by --attest + the zero-artifact census), but iso is required
+        # everywhere.
+        if mkv.get("iso") != iso:
+            _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                  "marker iso missing or mismatched against --iso"))
+        mchk = mkv.get("checkout")
+        if mode != "worktree":
+            if mchk is None:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                      "marker records no checkout= — the documented identity fields are required before any disposition"))
+            if os.path.realpath(mchk) != base_real:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                      "marker checkout does not match --base"))
+        if mode == "worktree":
+            # Pre-journal crash window (claim-to-journal-rename gap).
+            branch_rc, _ = _rc_git(base_real, "rev-parse", "--verify", "--quiet",
+                                   "refs/heads/loop/%s" % iso)
+            _, wt_list = _rc_git(base_real, "worktree", "list", "--porcelain")
+            artifact = (branch_rc == 0) or (iso in wt_list)
+            if artifact:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "pre-journal", "refused",
+                                      "matching git artifacts exist but no journal — journal-contract recovery owns this"))
+            if outcome == "reconcile" and flags.get("--attest") == "owner-dead":
+                try:
+                    os.unlink(marker_path)
+                except OSError as e:
+                    envfail("cannot remove pre-journal marker: %s" % e)
+                _rc_finish(_rc_report(flags, sink, iso, mode, "pre-journal", "complete",
+                                      "owner-dead attested; zero artifacts; marker removed"))
+            _rc_finish(_rc_report(flags, sink, iso, mode, "pre-journal", "refused",
+                                  "unknown-liveness — retain; reconcile requires --attest owner-dead and --outcome reconcile"))
+        # branch / none: marker disposition is the WHOLE close (no journal,
+        # no merge-back lifecycle, no checkout mutation EVER).
+        if outcome == "complete":
+            gap = _rc_retro_pointer_gap(flags)
+            if gap:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "marker-only", "refused", gap))
+            _rc_dispose_marker(marker_path)
+            _rc_finish(_rc_report(flags, sink, iso, mode, "marker-only", "complete",
+                                  "marker dispositioned; checkout untouched"))
+        if outcome in ("paused", "crashed"):
+            _rc_finish(_rc_report(flags, sink, iso, mode, "marker-only", "retained",
+                                  "marker retained; %s recorded here (no journal in this mode)" % outcome))
+        _rc_finish(_rc_report(flags, sink, iso, mode, "marker-only", "refused",
+                              "outcome %s is not legal without an isolation journal" % outcome))
+
+    # ---- journal present (worktree lifecycle) ----
+    # r25 PR-HIGH-022: MANDATORY identity binding. The journal is the sole
+    # authority admitting the one destructive cell, so every identity field is
+    # required and bound — absence is a refusal, never a pass-through. A
+    # branch/none-mode journal can NEVER reach the worktree lifecycle:
+    # journals exist only for worktree runs (the SKILL's registry contract).
+    jkv, jraw = _rc_read_kv_file(journal_path)
+    mode = jkv.get("mode", "")
+    if mode not in ENUMS["ISOLATION_MODES"]:
+        refuse("journal %s records no parseable mode= — cannot classify (fail-closed)" % journal_path)
+    if mode != "worktree":
+        _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                              "journal records a non-worktree mode — journals exist only for worktree runs; nothing dispositioned"))
+    if jkv.get("iso") != iso:
+        _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                              "journal iso missing or mismatched against --iso"))
+    jbase = jkv.get("base")
+    if jbase is None or os.path.realpath(jbase) != base_real:
+        _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                              "journal base missing or mismatched against --base"))
+    state = jkv.get("state", "")
+    if outcome == "complete":
+        refuse("--outcome complete is the journal-less (branch/none) close — a journaled run closes via its lifecycle outcomes",
+               "retained-green | merged | paused | crashed | merge-failed | reconcile")
+    worktree = jkv.get("worktree", "")
+    branch = jkv.get("branch", "")
+    wt_exists = bool(worktree) and os.path.isdir(worktree)
+    br_exists = False
+    if branch:
+        br_rc, _ = _rc_git(base_real, "rev-parse", "--verify", "--quiet",
+                           "refs/heads/%s" % branch)
+        br_exists = (br_rc == 0)
+
+    terminal_cell = {"cleaned": "cleaned", "retained-green": "retained-green",
+                     "paused": "paused", "crashed/recovery-needed": "crashed",
+                     "merge-failed": "merge-failed"}
+    if state in _TERMINAL_STATES:
+        if _OUTCOME_TERMINAL.get(outcome) == state:
+            if state == "cleaned" and (wt_exists or br_exists):
+                _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "refused",
+                                      "journal cleaned but artifacts persist — re-run the merged close after reconciling"))
+            # Idempotent convergence; complete a partial marker disposition
+            # on the two verified-close terminals only.
+            if state in ("cleaned", "retained-green"):
+                _rc_dispose_marker(marker_path)
+            _rc_finish(_rc_report(flags, sink, iso, mode, terminal_cell[state],
+                                  "already-closed"))
+        _rc_finish(_rc_report(flags, sink, iso, mode, terminal_cell[state],
+                              "refused", "journal already terminal (%s) — a different close needs resume-reconciliation first" % state.split("/")[0]))
+
+    if state in ("intent", "created"):
+        _rc_finish(_rc_report(flags, sink, iso, mode, "creation-window", "refused",
+                              "creation never completed — recovery owns this window; nothing torn down"))
+    if state == "merging":
+        _rc_finish(_rc_report(flags, sink, iso, mode, "merging", "refused",
+                              "journal mid-merge — close-lock recovery owns this; never torn down here"))
+    if state == "active":
+        if not wt_exists and not br_exists:
+            # The v31merge shape (T0.5): journal claims active, artifacts gone.
+            if outcome == "reconcile":
+                _rc_rewrite_journal(journal_path, jraw, "cleaned", "reconciled",
+                                    "%s retroactive-record: worktree and branch already absent at close" % now_iso())
+                _rc_dispose_marker(marker_path)
+                _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "complete",
+                                      "retroactive reconcile recorded; nothing was torn down"))
+            _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "refused",
+                                  "journal active but worktree and branch are gone — reconcile explicitly with --outcome reconcile"))
+        if outcome == "reconcile":
+            _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "refused",
+                                  "artifacts still exist — reconcile is only for the verified-absent shape"))
+        if outcome == "merged":
+            _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused",
+                                  "journal still active — the merge-back (close lock, merging, merged) is the composer's step and must precede cleanup"))
+        if outcome == "retained-green":
+            if not wt_exists or not br_exists:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "refused",
+                                      "retained-green requires the worktree and branch to exist"))
+            gap = _rc_retro_pointer_gap(flags)
+            if gap:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "retained-green", "refused", gap))
+            _rc_rewrite_journal(journal_path, jraw, "retained-green", "closed", now_iso())
+            _rc_dispose_marker(marker_path)
+            _rc_finish(_rc_report(flags, sink, iso, mode, "retained-green", "complete",
+                                  "worktree and branch retained; journal retained-green; marker dispositioned"))
+        # paused / crashed / merge-failed: persist the outcome, retain ALL.
+        _rc_rewrite_journal(journal_path, jraw, _OUTCOME_STATE[outcome], None, None)
+        _rc_finish(_rc_report(flags, sink, iso, mode, outcome, "retained",
+                              "outcome persisted; worktree, branch, journal and marker all retained"))
+    if state == "merged":
+        if outcome != "merged":
+            _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused",
+                                  "journal is merged — only --outcome merged may complete this close"))
+        # r25 PR-HIGH-022: the ONE destructive cell admits only a COMPLETE,
+        # internally consistent worktree-run identity, every leg bound to git
+        # evidence — never to arbitrary journal strings.
+        # (a) The journal must name both artifacts.
+        if not branch or not worktree:
+            _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                  "journal names no branch or no worktree — the destructive cell requires the full recorded identity"))
+        # (b) Worktree-registration binding: the recorded path must be a
+        # REGISTERED worktree of this base, checked out on the run branch. A
+        # directory that exists but is not registered — or is registered on a
+        # different/detached HEAD — is never removed.
+        wt_real = os.path.realpath(worktree)
+        _, wt_porc = _rc_git(base_real, "worktree", "list", "--porcelain")
+        wt_registered = False
+        wt_ref = None
+        cur_path = None
+        for pline in wt_porc.splitlines():
+            if pline.startswith("worktree "):
+                cur_path = os.path.realpath(pline[len("worktree "):])
+            elif pline.startswith("branch ") and cur_path == wt_real:
+                wt_ref = pline[len("branch "):]
+            elif pline.startswith("detached") and cur_path == wt_real:
+                wt_ref = "detached"
+            if cur_path == wt_real:
+                wt_registered = True
+        if wt_exists and not wt_registered:
+            _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                  "recorded worktree directory exists but is not a registered worktree of this base — never removed"))
+        if wt_registered and wt_ref != "refs/heads/%s" % branch:
+            _rc_finish(_rc_report(flags, sink, iso, mode, "identity-mismatch", "refused",
+                                  "registered worktree is not checked out on the recorded run branch (detached or wrong branch) — never removed"))
+        # (c) Ancestry binding against the RESOLVED base: the run-branch tip
+        # must resolve AND be an ancestor of the recorded base branch (HEAD
+        # fallback only when the journal predates base_branch). An ABSENT
+        # branch ref fails closed to report-only whenever anything remains to
+        # tear down — the only ref-less admission is the both-already-gone
+        # idempotent convergence.
+        base_ref = "refs/heads/%s" % jkv["base_branch"] if jkv.get("base_branch") else "HEAD"
+        tip_rc, tip = _rc_git(base_real, "rev-parse", "--verify", "--quiet",
+                              "refs/heads/%s" % branch)
+        if tip_rc != 0:
+            if wt_exists or wt_registered:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused",
+                                      "run-branch ref is absent so the merge cannot be re-verified — worktree retained, report-only"))
+        else:
+            anc_rc, _ = _rc_git(base_real, "merge-base", "--is-ancestor", tip, base_ref)
+            if anc_rc != 0:
+                _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused",
+                                      "merge verification failed — run branch tip is not in the resolved base; everything retained"))
+        gap = _rc_retro_pointer_gap(flags)
+        if gap:
+            _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused", gap))
+        if wt_exists:
+            r = subprocess.run(["git", "-C", base_real, "worktree", "remove", worktree],
+                               capture_output=True, text=True, timeout=120)
+            if r.returncode != 0:
+                sys.stderr.write("worktree remove refused: %s\n" % (r.stderr or "").strip()[:400])
+                _rc_finish(_rc_report(flags, sink, iso, mode, "dirty", "refused",
+                                      "non-force worktree removal refused (dirty or locked) — everything retained"))
+        else:
+            _rc_git(base_real, "worktree", "prune")
+        if tip_rc == 0:
+            r = subprocess.run(["git", "-C", base_real, "branch", "-d", branch],
+                               capture_output=True, text=True, timeout=60)
+            if r.returncode != 0:
+                sys.stderr.write("branch -d refused: %s\n" % (r.stderr or "").strip()[:400])
+                _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "refused",
+                                      "non-force branch deletion refused — re-run after reconciling"))
+        _rc_rewrite_journal(journal_path, jraw, "cleaned", "closed", now_iso())
+        _rc_dispose_marker(marker_path)
+        _rc_finish(_rc_report(flags, sink, iso, mode, "verified-merge", "complete",
+                              "merge verified; worktree removed; branch deleted; journal cleaned; marker dispositioned"))
+    _rc_finish(_rc_report(flags, sink, iso, mode, "journal-artifact-mismatch", "refused",
+                          "unrecognized journal state — retain everything and reconcile by hand"))
+
+
+# --- v32.2 T2.3: fold-delegation — the delegation staging→canonical promotion -
+
+# The CLOSED delegation record matrix consumed at the fold boundary. NORMATIVE
+# OWNER: scripts/fixtures/delegation-variants.json (r4 PR-MED-002 + r5
+# PR-MED-001 — one auditable schema). The GENERATED block below is produced by
+# `python3 scripts/loop-journal.py --emit-delegation-variants` from that fixture
+# (PR-LOW-003: the V_base pattern — a deterministic generation/verification path,
+# not two hand-maintained schema copies); the journal selftest asserts the
+# embedded block is byte-equal to the generator output, so a stale hand-edit
+# FAILS. Runtime is INDEPENDENT of the repo-only fixture — the embedded literal
+# is authoritative at run time; the fixture is read only by the dev/selftest
+# generator. Strictness scopes to the NEW promotion boundary ONLY: historical
+# probe-log DELEGATION lines (any-kv shapes, the kount ledger `peer` verb) stay
+# corpus-legal under the oracle's unchanged loose admission.
+DELEGATION_BLOCK_BEGIN = "# --- BEGIN GENERATED DELEGATION_VARIANTS"
+DELEGATION_BLOCK_END = "# --- END GENERATED DELEGATION_VARIANTS ---"
+
+
+def _py_str_tuple(items):
+    """A deterministic Python source tuple of double-quoted strings, with the
+    single-element trailing comma so `("x",)` stays a tuple."""
+    inner = ", ".join('"%s"' % s for s in items)
+    return "(%s,)" % inner if len(items) == 1 else "(%s)" % inner
+
+
+def delegation_variants_block(fixture):
+    """The deterministic Python source (exclusive of the marker lines) for the
+    DELEGATION_VARIANTS constant + bounds, generated from the fixture dict
+    (PR-LOW-003). One line per variant, in fixture order."""
+    out = []
+    out.append("# Generated by `python3 scripts/loop-journal.py --emit-delegation-variants`")
+    out.append("# from scripts/fixtures/delegation-variants.json (PR-LOW-003 — the schema owner).")
+    out.append("# Do NOT hand-edit; regenerate + re-splice on any fixture change.")
+    out.append("DELEGATION_VARIANTS = {")
+    for name, spec in fixture["variants"].items():
+        out.append('    "%s": {"required": %s, "optional": %s},'
+                   % (name, _py_str_tuple(spec["required"]), _py_str_tuple(spec["optional"])))
+    out.append("}")
+    b = fixture["bounds"]
+    out.append("DELEGATION_MAX_SOURCE_BYTES = %d  # the 256 KiB staging bound (T2.3)"
+               % b["max_source_bytes"])
+    out.append("DELEGATION_MAX_LINE_BYTES = %d" % b["max_line_bytes"])
+    out.append("DELEGATION_MAX_VALUE_CHARS = %d" % b["max_value_chars"])
+    return "\n".join(out) + "\n"
+
+
+# --- BEGIN GENERATED DELEGATION_VARIANTS (python3 scripts/loop-journal.py --emit-delegation-variants) ---
+# Generated by `python3 scripts/loop-journal.py --emit-delegation-variants`
+# from scripts/fixtures/delegation-variants.json (PR-LOW-003 — the schema owner).
+# Do NOT hand-edit; regenerate + re-splice on any fixture change.
+DELEGATION_VARIANTS = {
+    "decision": {"required": ("ts", "run", "unit", "spec", "delegate"), "optional": ("backend", "model", "detail")},
+    "outcome": {"required": ("ts", "run", "unit", "result"), "optional": ("misses", "smoke", "detail")},
+    "roi": {"required": ("ts", "run", "unit", "detail"), "optional": ("tokens", "duration")},
+    "smoke-addendum": {"required": ("ts", "run", "unit", "result"), "optional": ("detail",)},
+}
+DELEGATION_MAX_SOURCE_BYTES = 262144  # the 256 KiB staging bound (T2.3)
+DELEGATION_MAX_LINE_BYTES = 4096
+DELEGATION_MAX_VALUE_CHARS = 1024
+# --- END GENERATED DELEGATION_VARIANTS ---
+
+
+def validate_delegation_snapshot(data, runkey):
+    """Validate ONE staging snapshot (bytes) against the closed variant matrix.
+    Returns the admitted record count. Refuses (exit 2, no side effects — the
+    caller has written nothing yet, so staging is retained by construction) on:
+    over-bound source, invalid UTF-8, a torn trailing line, any non-DELEGATION
+    line-start, control characters, stray prose tokens, an unknown/missing
+    variant verb, duplicate/unknown keys, missing or blank required values,
+    over-bound lines/values, a malformed ts=, or a record claiming another
+    stage's run="""
+    if len(data) > DELEGATION_MAX_SOURCE_BYTES:
+        refuse("staging snapshot exceeds the %d-byte bound (over-bound source — retain + surface)"
+               % DELEGATION_MAX_SOURCE_BYTES)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        refuse("staging snapshot is not valid UTF-8 (retain + surface)")
+    if text and not text.endswith("\n"):
+        refuse("staging snapshot ends in a partial (torn) trailing line — never a partial promotion (retain + surface)")
+    records = 0
+    for n, line in enumerate(text.split("\n")[:-1] if text else [], start=1):
+        if not line.strip():
+            continue  # blank separator lines are tolerated, never records
+        for ch in line:
+            if ord(ch) < 0x20 or ord(ch) == 0x7f:
+                refuse("staging line %d carries a control character — forged-record lever (retain + surface)" % n)
+        if len(line.encode("utf-8")) > DELEGATION_MAX_LINE_BYTES:
+            refuse("staging line %d exceeds the %d-byte line bound (retain + surface)"
+                   % (n, DELEGATION_MAX_LINE_BYTES))
+        if not line.startswith("DELEGATION: "):
+            refuse("staging line %d is not a literal line-start `DELEGATION: ` record — mixed prose never promotes (retain + surface)" % n)
+        why = assembled_line_ok(line)
+        if why is not None:
+            refuse("staging line %d fails the output-chokepoint fidelity check: %s (retain + surface)" % (n, why))
+        keys, kv, bare = [], {}, []
+        for m in PARSE_KV_RE.finditer(line):
+            if m.group(1) is not None:
+                keys.append(m.group(1))
+                kv[m.group(1)] = m.group(2)
+            elif m.group(3) is not None:
+                keys.append(m.group(3))
+                kv[m.group(3)] = m.group(4)
+            else:
+                bare.append(m.group(5))
+        # bare[0] is the "DELEGATION:" prefix token itself; bare[1] the variant.
+        if len(bare) < 2:
+            refuse("staging line %d carries no variant verb — the closed matrix is %s (retain + surface)"
+                   % (n, "|".join(sorted(DELEGATION_VARIANTS))))
+        if len(bare) > 2:
+            refuse("staging line %d carries stray prose tokens %r — a record is one variant verb + key=value only (retain + surface)"
+                   % (n, bare[2:4]))
+        variant = bare[1]
+        if variant not in DELEGATION_VARIANTS:
+            refuse("staging line %d names unknown variant %r — the closed matrix is %s (retain + surface)"
+                   % (n, variant[:40], "|".join(sorted(DELEGATION_VARIANTS))))
+        spec = DELEGATION_VARIANTS[variant]
+        if len(set(keys)) != len(keys):
+            refuse("staging line %d carries a duplicate key (uniqueness rule; retain + surface)" % n)
+        admitted = set(spec["required"]) | set(spec["optional"])
+        for k in keys:
+            if k not in admitted:
+                refuse("staging line %d carries unknown key %s= for variant %s (closed per-variant key sets; retain + surface)"
+                       % (n, k[:40], variant))
+        for k in spec["required"]:
+            if k not in kv:
+                refuse("staging line %d (%s) is missing required key %s= (retain + surface)"
+                       % (n, variant, k))
+            if not kv[k].strip():
+                refuse("staging line %d (%s) has a blank required %s= value (nonblank floor; retain + surface)"
+                       % (n, variant, k))
+        for k, v in kv.items():
+            if len(v) > DELEGATION_MAX_VALUE_CHARS:
+                refuse("staging line %d value %s= exceeds the %d-char value bound (retain + surface)"
+                       % (n, k, DELEGATION_MAX_VALUE_CHARS))
+        if not TS_LOCAL_RE.match(kv["ts"]):
+            refuse("staging line %d ts=%r is not a local ISO-with-offset clock read (the ts-form pin; retain + surface)"
+                   % (n, kv["ts"][:40]))
+        if kv["run"] != runkey:
+            refuse("staging line %d claims run=%s but this fold is --run %s — a record never promotes into another stage's canonical file (retain + surface)"
+                   % (n, kv["run"][:40], runkey))
+        records += 1
+    return records
+
+
+def _fd_walk_dir(root_real, rel_segments, what):
+    """PR-HIGH-001 (v32.2 r12): open the authority root and walk each
+    below-root component with openat + O_DIRECTORY|O_NOFOLLOW, returning a
+    HELD directory fd for the final directory — the CALLER owns the close.
+    Holding the fd across validation AND use closes the check/open race a
+    pathname re-open leaves open: a parent component swapped to a symlink
+    *after* the walk cannot redirect a descriptor already bound to the
+    validated inode (the reproduced `<worktree>/.cursor/loops → /outside`
+    swap). root_real is a realpath (symlink-free chain), so a legitimately-
+    symlinked ANCESTOR *above* the recorded checkout is already resolved into
+    it and the root open follows that canonical path (the finding's regression
+    guard); every component BELOW the root is opened no-follow, so a symlink
+    there refuses. A missing component, a symlink, or a non-directory refuses
+    before any payload read or write."""
+    try:
+        rst = os.lstat(root_real)
+    except OSError:
+        refuse("%s authority root %s does not exist (retain + surface)" % (what, root_real))
+    if stat.S_ISLNK(rst.st_mode) or not stat.S_ISDIR(rst.st_mode):
+        refuse("%s authority root %s is not a real directory (retain + surface)" % (what, root_real))
+    try:
+        dfd = os.open(root_real, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as e:
+        envfail("cannot open %s authority root %s: %s" % (what, root_real, e))
+    ok = False
+    try:
+        for seg in rel_segments:
+            if seg in ("", ".", ".."):
+                refuse("%s path escapes the authority root via %r (root-escape; retain + surface)" % (what, seg))
+            # Classify the component no-follow relative to the HELD parent fd for
+            # a precise message (a symlink-to-dir opens as ELOOP on some kernels
+            # and ENOTDIR on others); the openat O_NOFOLLOW below stays the real
+            # guard and catches any swap between this lstat-at and the open.
+            try:
+                lst = os.stat(seg, dir_fd=dfd, follow_symlinks=False)
+            except FileNotFoundError:
+                refuse("%s component %r is missing (retain + surface)" % (what, seg))
+            except OSError as e:
+                envfail("cannot stat %s component %r: %s" % (what, seg, e))
+            if stat.S_ISLNK(lst.st_mode):
+                refuse("%s component %r is a symlink — no-follow containment forbids a symlink below the recorded root (root-escape; retain + surface)"
+                       % (what, seg))
+            if not stat.S_ISDIR(lst.st_mode):
+                refuse("%s component %r is not a directory (root-escape; retain + surface)" % (what, seg))
+            try:
+                nfd = os.open(seg, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dfd)
+            except OSError as e:
+                if e.errno in (errno.ELOOP, errno.EMLINK, errno.ENOTDIR):
+                    refuse("%s component %r changed to a symlink/non-directory between check and open (check/open race; root-escape; retain + surface)"
+                           % (what, seg))
+                if e.errno == errno.ENOENT:
+                    refuse("%s component %r vanished between check and open (retain + surface)" % (what, seg))
+                envfail("cannot open %s component %r: %s" % (what, seg, e))
+            os.close(dfd)
+            dfd = nfd
+        ok = True
+        return dfd
+    finally:
+        if not ok:
+            try:
+                os.close(dfd)
+            except OSError:
+                pass
+
+
+def _fd_walk_contained_logroot(base_real, recorded_base, log_root, what):
+    """PR-HIGH-001 (r12): open a HELD dir fd for the journal-recorded
+    `log_root=`, which must live UNDER the base checkout. The relative segments
+    are derived TEXTUALLY against the recorded `base=` (which shares log_root's
+    path spelling by journal construction), NOT against base_real — so a
+    legitimately-symlinked ANCESTOR above the checkout cancels in the relpath
+    and is permitted (the finding's regression guard), while any `..` escape
+    refuses. The no-follow walk then runs from base_real, so a symlink
+    component BELOW the checkout still refuses (never realpath the log_root — a
+    below-root symlink would resolve away and defeat the no-follow guard).
+    Returns a HELD directory fd for the log root (caller closes)."""
+    rel = os.path.relpath(os.path.normpath(log_root), os.path.normpath(recorded_base))
+    if rel == os.pardir or rel.startswith(os.pardir + os.sep) or os.path.isabs(rel):
+        refuse("%s %s is not under the recorded base checkout %s (root-escape; retain + surface)"
+               % (what, log_root, recorded_base))
+    rel_segs = [] if rel == os.curdir else rel.split(os.sep)
+    return _fd_walk_dir(base_real, rel_segs, what)
+
+
+def _fd_regular_at(dir_fd, name, what):
+    """PR-HIGH-001 (r12): no-follow fstatat relative to a HELD dir fd — an
+    existing name must be a REGULAR file (symlink/dir/special refuses). Returns
+    the stat (carrying st_dev/st_ino for identity-binding across a later open),
+    or None when absent. `name` is a single path component, never a subpath."""
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        envfail("cannot stat %s %r: %s" % (what, name, e))
+    if not stat.S_ISREG(st.st_mode):
+        refuse("%s %r is not a regular file (no-follow — symlink/dir/special refuses; retain + surface)"
+               % (what, name))
+    return st
+
+
+def _fd_open_ro_at(dir_fd, name, what, expect_st=None):
+    """PR-HIGH-001 (r12): open a payload file read-only RELATIVE to the held
+    dir fd with O_NOFOLLOW + a post-open fstat regular check. The held dir fd
+    already defeats a parent-component swap; when `expect_st` is supplied the
+    (st_dev, st_ino) identity-bind additionally rejects a same-directory
+    substitution of the final component between its stat and this open. Returns
+    the bytes read; refuses a symlink, a non-regular target, or an identity
+    mismatch."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):
+            refuse("%s %r is a symlink (no-follow open; root-escape; retain + surface)" % (what, name))
+        envfail("cannot open %s %r: %s" % (what, name, e))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            refuse("%s %r is not a regular file after open (retain + surface)" % (what, name))
+        if expect_st is not None and (st.st_dev, st.st_ino) != (expect_st.st_dev, expect_st.st_ino):
+            refuse("%s %r changed identity between check and open (check/open race; retain + surface)" % (what, name))
+        with os.fdopen(fd, "rb") as fh:
+            fd = -1
+            return fh.read()
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def _fd_append_at(dir_fd, name, data, what, expect_st=None, create=False):
+    """PR-HIGH-001 (r12/r13): append RELATIVE to the held dir fd with O_NOFOLLOW
+    + O_APPEND and a post-open fstat regular check. **Identity-bound WRITE
+    (r13):** the reads were `(st_dev,st_ino)`-bound (`_fd_open_ro_at`); the write
+    side now is too. `expect_st` (an existing destination's pre-captured stat) —
+    the file MUST already exist (no O_CREAT) and its post-open `fstat` MUST match
+    `(st_dev,st_ino)` BEFORE any byte is written, so a same-directory
+    rename-aside + regular-file replacement of the final component is REFUSED
+    rather than appended-to-then-`published` (the live r13 canonical-swap
+    repro); a removed expected-existing destination (ENOENT) likewise refuses.
+    `create=True` (an expected-absent first publish) opens O_CREAT|O_EXCL — a
+    name that appeared in the interval fails closed (EEXIST). Returns the written
+    inode's stat so a later append on the SAME file threads its identity.
+    `create` and `expect_st` are mutually exclusive. PR-REG-001 (r12): a CHECKED
+    write loop advancing by the returned byte count until EVERY byte is
+    persisted, with zero forward progress a hard failure (never advance to
+    `published`, staging retained)."""
+    if create and expect_st is not None:
+        envfail("%s %r: create and expect_st are mutually exclusive (internal invariant)" % (what, name))
+    flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    try:
+        fd = os.open(name, flags, 0o644, dir_fd=dir_fd)
+    except OSError as e:
+        if e.errno in (errno.ELOOP, errno.EMLINK):
+            refuse("%s %r is a symlink (no-follow open; root-escape; retain + surface)" % (what, name))
+        if create and e.errno == errno.EEXIST:
+            refuse("%s %r appeared between validation and create — an expected-absent destination was substituted (never advance to published; retain + surface)"
+                   % (what, name))
+        if not create and e.errno == errno.ENOENT:
+            refuse("%s %r vanished between validation and append — an expected-existing destination was removed (never advance to published; retain + surface)"
+                   % (what, name))
+        envfail("cannot open %s %r for append: %s" % (what, name, e))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            refuse("%s %r is not a regular file after open (retain + surface)" % (what, name))
+        if expect_st is not None and (st.st_dev, st.st_ino) != (expect_st.st_dev, expect_st.st_ino):
+            refuse("%s %r changed identity between validation and append (check/open race; never advance to published; retain + surface)"
+                   % (what, name))
+        mv = memoryview(data)
+        total = 0
+        while total < len(mv):
+            try:
+                n = os.write(fd, mv[total:])
+            except OSError as e:
+                envfail("%s %r: write failed after %d/%d bytes (partial durable append; never advance to published; retain + surface): %s"
+                        % (what, name, total, len(mv), e))
+            if n <= 0:
+                envfail("%s %r: os.write made zero progress after %d/%d bytes (partial durable append; never advance to published; retain + surface)"
+                        % (what, name, total, len(mv)))
+            total += n
+        os.fsync(fd)
+        return st
+    finally:
+        os.close(fd)
+
+
+def _fd_read_kv_at(dir_fd, name, what, expect_st):
+    """PR-HIGH-001 (r12): read a journal/marker file no-follow RELATIVE to a
+    held dir fd (identity-bound) and parse its key=value lines — no pathname
+    re-open, so a parent-component symlink swapped in between the stat and the
+    authority read cannot redirect it. Returns the parsed dict."""
+    blob = _fd_open_ro_at(dir_fd, name, what, expect_st=expect_st)
+    try:
+        raw = blob.decode("utf-8").splitlines()
+    except UnicodeDecodeError as e:
+        envfail("cannot decode %s %r: %s" % (what, name, e))
+    kv, _ = _rc_parse_kv_lines(raw)
+    return kv
+
+
+def _fd_read_receipts(dir_fd, name, leg):
+    """Newest receipt for this leg from the tool-owned sidecar (append-only;
+    one `leg= state= digest= offset= length= lines= ts=` line per transaction
+    phase), read RELATIVE to the held log-root dir fd (PR-HIGH-001 r12). A
+    malformed line refuses — the sidecar is tool-written, so corruption is an
+    evidence problem, never skippable."""
+    st = _fd_regular_at(dir_fd, name, "receipts sidecar")
+    if st is None:
+        return None, None
+    blob = _fd_open_ro_at(dir_fd, name, "receipts sidecar", expect_st=st)
+    try:
+        raw = blob.decode("utf-8").splitlines()
+    except UnicodeDecodeError as e:
+        envfail("cannot decode receipts sidecar %r: %s" % (name, e))
+    prior = None
+    for n, line in enumerate(raw, start=1):
+        if not line.strip():
+            continue
+        rkv, rbare = parse_kv(line)
+        needed = ("leg", "state", "digest", "offset", "length", "lines", "ts")
+        if rbare or any(k not in rkv for k in needed):
+            refuse("receipts sidecar line %d is malformed — the sidecar is tool-owned; reconcile before folding (retain + surface)" % n)
+        if rkv["state"] not in ("intent", "published"):
+            refuse("receipts sidecar line %d has unknown state=%r" % (n, rkv["state"][:20]))
+        if not rkv["offset"].isdigit() or not rkv["length"].isdigit():
+            refuse("receipts sidecar line %d has a non-numeric offset=/length=" % n)
+        if rkv["leg"] == leg:
+            prior = rkv
+    # PR-HIGH-001 (r13): return the read inode's stat so every subsequent
+    # receipts append binds to the SAME identity (no read/re-stat TOCTOU).
+    return prior, st
+
+
+def _fd_receipt_write(dir_fd, name, leg, state, digest, offset, length, lines_n,
+                      expect_st=None, create=False):
+    """Append one receipt line, identity-bound to the receipts inode (PR-HIGH-001
+    r13): pass expect_st for an existing sidecar, create=True for the first
+    receipt of a fresh fold. Returns the written inode's stat to thread to the
+    next receipt append on the same file."""
+    line = ("leg=%s state=%s digest=%s offset=%d length=%d lines=%d ts=%s\n"
+            % (leg, state, digest, offset, length, lines_n, now_iso()))
+    return _fd_append_at(dir_fd, name, line.encode("utf-8"), "receipts sidecar",
+                         expect_st=expect_st, create=create)
+
+
+def _fd_range_digest_ok(dir_fd, name, offset, length, digest, expect_st=None):
+    """sha256 of canonical[offset:offset+length] equals the receipt digest —
+    the append-only verification a retry keys on (staging content not needed).
+    Reads through the O_NOFOLLOW dir-fd-relative payload opener with the
+    canonical's pre-checked identity bound (PR-HIGH-001 r12)."""
+    blob = _fd_open_ro_at(dir_fd, name, "canonical destination", expect_st=expect_st)
+    chunk = blob[offset:offset + length]
+    if len(chunk) != length:
+        return False
+    return hashlib.sha256(chunk).hexdigest() == digest
+
+
+def _fd_retire(dir_fd, name, digest):
+    """Atomic renameat retirement to a NON-corpus name (no trailing `.log` —
+    leaves /retro's enumeration; r4 PR-MED-001), relative to the held staging
+    dir fd (PR-HIGH-001 r12). DIGEST-BOUND (r24 PR-MED-001): the current
+    occupant at `name` is re-read no-follow (identity-bound via
+    `_fd_open_ro_at`) and compared against the leg's PROVEN digest — the
+    receipt/validated digest the caller's path just verified — immediately
+    before the rename, so retirement applies only to the bytes the receipt
+    proves. A swap after the validated snapshot REFUSES with the occupant
+    RETAINED at the corpus-visible staging name — never renamed to a
+    non-corpus name under a success report (the fail-open loss class). The
+    digest comparison is the load-bearing binding: the r24 leg-1 repro
+    observed filesystem INODE REUSE across a remove+rewrite swap, so a
+    (st_dev, st_ino) compare alone can pass over different bytes. Residual
+    window: the re-read→rename gap only (no portable verify-and-rename
+    atomic exists) — down from the whole fold. Idempotent: an absent staging
+    file after a verified publication is the already-retired state."""
+    try:
+        st = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        envfail("cannot stat staging %r for retirement: %s" % (name, e))
+    occupant = _fd_open_ro_at(dir_fd, name, "staging file at retirement", expect_st=st)
+    if hashlib.sha256(occupant).hexdigest() != digest:
+        refuse("staging %r at retirement does not match the leg's proven digest — occupant swapped after the validated snapshot; retirement refused, occupant retained at the staging name as corpus-visible evidence (r24 PR-MED-001; canonical/receipt state stands as published)" % name)
+    stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = "%s.staged-%s" % (name, stamp)
+    try:
+        os.replace(name, target, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except OSError as e:
+        envfail("cannot retire staging %r: %s" % (name, e))
+    return target
+
+
+def cmd_fold_delegation(flags):
+    """v32.2 T2.3 (r1 PR-HIGH-001 chain → r5): promote ONE spawned-architect
+    activation's staging file into the canonical `<log-root>/stage-<N>-
+    delegation.log` — the canonical file's ONLY writer. AUTHORITY-DERIVED
+    paths (r5 PR-HIGH-003): worktree mode resolves BOTH endpoints from the
+    isolation journal `<base>/.cursor/loops/<iso>-isolation` (iso/mode/base/
+    worktree/log_root/state validated); branch/none — which have NO journal —
+    resolve from the `<iso>-active` marker (iso/mode/checkout validated) with
+    the flat base-side log root; no cwd inference anywhere, every mismatch
+    refuses BEFORE any read or write. PUBLICATION is ACTIVATION-KEYED
+    append-once (r5 PR-HIGH-002): validate the snapshot, two-phase durable
+    receipt (intent → append → published) in the non-corpus `.receipts`
+    sidecar, atomic staging retirement to a non-`.log` name after VERIFIED
+    publication; a retry verifies receipt + canonical bytes, no-ops, and
+    converges the retirement; canonical bytes are never rewritten or
+    truncated. A MISSING staging channel with no receipt REFUSES — absence is
+    never zero work (r4 PR-HIGH-002); the pre-created empty file folds as the
+    explicit zero. Composer-only at the GRANT layer (spawned-role grants carry
+    only the narrowed emission shapes; --role composer here is the
+    mis-attribution gate, not authentication — under perms=bypass no grant
+    boundary exists and the close-table confirm covers it)."""
+    if flags["--role"] != "composer":
+        refuse("fold-delegation requires --role composer — canonical delegation publication is a composer-seat duty (argv label; real ownership is the GRANT layer: spawned-role grants carry only the emission shapes)")
+    iso = flags.get("--iso")
+    base = flags.get("--base")
+    leg = flags.get("--leg")
+    if iso is None or base is None or leg is None:
+        refuse("fold-delegation requires --base </abs/base> --iso <iso-id> --leg <leg> (r5 PR-HIGH-003's pinned argv — paths are authority-derived, never caller-chosen)")
+    if not ISO_ID_RE.match(iso):
+        refuse("--iso %r is not a filename-safe iso-id" % iso[:60])
+    if not LEG_RE.match(leg):
+        refuse("--leg %r must be filename-safe [A-Za-z0-9._-]+ (it keys the staging identity)" % leg[:60])
+    if not os.path.isabs(base):
+        refuse("--base must be an absolute path")
+    if not os.path.isdir(base):
+        envfail("--base %s is not a directory" % base)
+    runkey = flags["--run"]
+    base_real = os.path.realpath(base)
+    loops = os.path.join(base_real, ".cursor", "loops")
+    journal_name = "%s-isolation" % iso
+    marker_name = "%s-active" % iso
+    staging_name = "%s-delegation.%s.log" % (runkey, leg)
+    canonical_name = "%s-delegation.log" % runkey
+    receipts_name = "%s-delegation.receipts" % runkey
+
+    # ---- authority walk + held-dir-fd I/O (PR-HIGH-001 r12) -----------------
+    # Hold the base `.cursor/loops` dir fd FIRST, then read the journal/marker
+    # NO-FOLLOW through it and open every payload openat-relative to a held dir
+    # fd — so no parent component swapped to a symlink AFTER validation (journal,
+    # marker, staging, canonical, or receipts) can redirect the fold outside the
+    # authority pair (r12: the round-11 pathname re-opens left a check/open race
+    # the swap defeated). A symlinked ANCESTOR above the recorded checkout stays
+    # legal (roots realpath'd / relpath-derived); a symlink BELOW refuses. Every
+    # mismatch refuses before any read or write.
+    open_fds = []
+    try:
+        base_loops_fd = _fd_walk_dir(base_real, (".cursor", "loops"), "base loops dir")
+        open_fds.append(base_loops_fd)
+        j_st = _fd_regular_at(base_loops_fd, journal_name, "isolation journal")
+        if j_st is not None:
+            jkv = _fd_read_kv_at(base_loops_fd, journal_name, "isolation journal", j_st)
+            if jkv.get("mode") != "worktree":
+                refuse("journal records mode=%r — journals exist only for worktree runs; a branch/none fold resolves via the -active marker" % jkv.get("mode"))
+            if jkv.get("iso") != iso:
+                refuse("journal iso missing or mismatched against --iso (refuse before any read/write)")
+            jbase = jkv.get("base")
+            if jbase is None or os.path.realpath(jbase) != base_real:
+                refuse("journal base missing or mismatched against --base (refuse before any read/write)")
+            state = jkv.get("state", "")
+            if state not in ("created", "active", "paused", "crashed/recovery-needed",
+                             "retained-green", "merge-failed"):
+                refuse("journal state=%r does not admit a delegation fold — staging exists only between spawn and close (intent/merging/merged/cleaned refuse)" % state[:40])
+            worktree = jkv.get("worktree")
+            if not worktree or not os.path.isabs(worktree):
+                refuse("journal records no absolute worktree= — the authority walk derives the staging root from it (r5 PR-HIGH-003)")
+            if not os.path.isdir(worktree):
+                envfail("journal worktree %s is not a directory" % worktree)
+            log_root = jkv.get("log_root")
+            if not log_root or not os.path.isabs(log_root):
+                refuse("journal records no absolute log_root= — the authority walk derives the canonical destination from it (r5 PR-HIGH-003)")
+            if not os.path.isdir(log_root):
+                envfail("journal log_root %s is not a directory" % log_root)
+            # The recorded worktree/base are the authority roots (realpath'd — a
+            # symlinked ancestor above them is permitted); nothing symlinked below.
+            staging_fd = _fd_walk_dir(os.path.realpath(worktree), (".cursor", "loops"),
+                                      "worktree staging dir")
+            open_fds.append(staging_fd)
+            log_root_fd = _fd_walk_contained_logroot(base_real, jbase, log_root, "canonical log-root")
+            open_fds.append(log_root_fd)
+        else:
+            m_st = _fd_regular_at(base_loops_fd, marker_name, "ownership marker")
+            if m_st is None:
+                refuse("no isolation journal or ownership marker for iso %s under %s — fold paths are authority-derived, never cwd/caller-chosen (r5 PR-HIGH-003; wrong --iso or wrong --base?)" % (iso, loops))
+            mkv = _fd_read_kv_at(base_loops_fd, marker_name, "ownership marker", m_st)
+            if mkv.get("iso") != iso:
+                refuse("marker iso missing or mismatched against --iso (refuse before any read/write)")
+            mmode = mkv.get("mode")
+            if mmode not in ("branch", "none"):
+                refuse("marker records mode=%r without an isolation journal — a worktree fold requires the journal authority (never marker-only)" % (mmode,))
+            mchk = mkv.get("checkout")
+            if mchk is None or os.path.realpath(mchk) != base_real:
+                refuse("marker checkout missing or mismatched against --base (refuse before any read/write)")
+            # branch/none: staging and canonical live in the SAME base loops dir.
+            staging_fd = log_root_fd = base_loops_fd
+
+        # prior + the receipts inode identity (rst) — the SAME stat binds every
+        # later receipts append (PR-HIGH-001 r13); rst is None when the sidecar
+        # is absent (a fresh fold), which routes the first receipt write to
+        # create=True.
+        prior, rst = _fd_read_receipts(log_root_fd, receipts_name, leg)
+        st = _fd_regular_at(staging_fd, staging_name, "staging file")
+        data = None
+        if st is not None:
+            if st.st_size > DELEGATION_MAX_SOURCE_BYTES:
+                refuse("staging %s exceeds the %d-byte bound (over-bound source — retain + surface)"
+                       % (staging_name, DELEGATION_MAX_SOURCE_BYTES))
+            data = _fd_open_ro_at(staging_fd, staging_name, "staging file", expect_st=st)  # ONE snapshot (T2.3)
+        cst = _fd_regular_at(log_root_fd, canonical_name, "canonical destination")
+
+        # ---- retry/convergence dispositions (r5 PR-HIGH-002's state machine)
+        if prior is not None and prior["state"] == "published":
+            p_off, p_len = int(prior["offset"]), int(prior["length"])
+            if p_len > 0 and (cst is None or not _fd_range_digest_ok(log_root_fd, canonical_name, p_off, p_len, prior["digest"], expect_st=cst)):
+                refuse("published receipt for leg %s does not verify against canonical bytes — the append-only invariant is broken (rewritten/truncated canonical); evidence retained" % leg)
+            if data is not None:
+                if hashlib.sha256(data).hexdigest() != prior["digest"]:
+                    refuse("staging for leg %s diverges from its published receipt — a leg is never reused with different content (retain + surface)" % leg)
+                _fd_retire(staging_fd, staging_name, prior["digest"])
+            sys.stdout.write("fold-delegation: no-op leg=%s — receipt verified, canonical bytes intact (already published); retirement converged\n" % leg)
+            return
+        if prior is not None and prior["state"] == "intent":
+            i_off, i_len = int(prior["offset"]), int(prior["length"])
+            c_size = cst.st_size if cst is not None else 0
+            if i_len == 0:
+                # PR-MED-001 (r12): the explicit-zero channel skips canonical
+                # creation by design, so an interrupted FIRST-empty publication
+                # leaves NO canonical inode (cst is None) — a range-digest read
+                # would envfail opening it and block convergence forever.
+                # Converge WITHOUT a canonical read: require the empty digest, a
+                # consistent zero-length range, and (if staging survives) the
+                # empty digest again, then write the one published receipt and
+                # retire. Refuse a non-empty digest, an inconsistent offset/size,
+                # or a divergent surviving staging — never advance the
+                # exactly-once authority on a bad state.
+                if prior["digest"] != hashlib.sha256(b"").hexdigest():
+                    refuse("intent receipt for leg %s declares length=0 but a non-empty digest — inconsistent zero-length intent (retain + surface)" % leg)
+                if c_size != i_off:
+                    refuse("canonical is torn against the zero-length intent for leg %s (size %d, expected %d) — reconcile before folding; evidence retained"
+                           % (leg, c_size, i_off))
+                if data is not None and hashlib.sha256(data).hexdigest() != prior["digest"]:
+                    refuse("staging for leg %s diverges from its zero-length intent receipt — never advance to published on a divergent retry (retain + surface)" % leg)
+                # receipts exists (a prior intent receipt) — identity-bind the append.
+                _fd_receipt_write(log_root_fd, receipts_name, leg, "published", prior["digest"], i_off, 0, int(prior["lines"]), expect_st=rst)
+                if data is not None:
+                    _fd_retire(staging_fd, staging_name, prior["digest"])
+                sys.stdout.write("fold-delegation: converged leg=%s — interrupted zero-length publication completed (no canonical inode by design)\n" % leg)
+                return
+            if c_size >= i_off + i_len and _fd_range_digest_ok(log_root_fd, canonical_name, i_off, i_len, prior["digest"], expect_st=cst):
+                # The append landed; the published receipt/retirement were lost.
+                # PR-MED-001: validate the surviving staging against the intent
+                # BEFORE the durable `published` transition — a divergent same-leg
+                # staging must REFUSE with the receipt stream byte-identical, never
+                # advance the exactly-once authority to a terminal state on a merge
+                # that returned refusal. A legitimately-absent post-append staging
+                # (data is None) still converges on the intent+canonical proof.
+                if data is not None and hashlib.sha256(data).hexdigest() != prior["digest"]:
+                    refuse("staging for leg %s diverges from its intent receipt after a completed append — never advance to published on a divergent retry (retain + surface)" % leg)
+                # receipts exists (a prior intent receipt) — identity-bind the append.
+                _fd_receipt_write(log_root_fd, receipts_name, leg, "published", prior["digest"], i_off, i_len, int(prior["lines"]), expect_st=rst)
+                if data is not None:
+                    _fd_retire(staging_fd, staging_name, prior["digest"])
+                sys.stdout.write("fold-delegation: converged leg=%s — interrupted publication completed (receipt + retirement)\n" % leg)
+                return
+            if c_size != i_off:
+                refuse("canonical is torn against the intent receipt for leg %s (size %d, expected %d or %d) — reconcile before folding; evidence retained"
+                       % (leg, c_size, i_off, i_off + i_len))
+            # size == offset: the append never happened — fall through to a fresh
+            # publish (a fresh intent supersedes; nothing was published).
+        if data is None:
+            refuse("staging channel %s is MISSING and no receipt proves a prior publication — absence is never zero work (r4 PR-HIGH-002: the composer pre-creates the empty channel at the spawn boundary); retain + surface" % staging_name)
+
+        # ---- fresh publication (validate → intent → append → published → retire)
+        # Every durable append is identity-bound (PR-HIGH-001 r13): the receipts
+        # sidecar is created (rst is None) or bound to its pre-read inode; the
+        # intent write returns the sidecar inode (rct) that the published write
+        # then binds to; the canonical append is created (cst is None) or bound
+        # to its pre-captured inode — a same-directory replacement of either
+        # final component between validation and append REFUSES.
+        records = validate_delegation_snapshot(data, runkey)
+        digest = hashlib.sha256(data).hexdigest()
+        offset = cst.st_size if cst is not None else 0
+        length = len(data)
+        rct = _fd_receipt_write(log_root_fd, receipts_name, leg, "intent", digest, offset, length, records,
+                                expect_st=rst, create=(rst is None))
+        if length > 0:
+            _fd_append_at(log_root_fd, canonical_name, data, "canonical destination",
+                          expect_st=cst, create=(cst is None))
+        _fd_receipt_write(log_root_fd, receipts_name, leg, "published", digest, offset, length, records,
+                          expect_st=rct)
+        _fd_retire(staging_fd, staging_name, digest)
+        if records == 0:
+            sys.stdout.write("fold-delegation: published leg=%s records=0 bytes=0 (explicit empty channel) canonical=%s\n" % (leg, canonical_name))
+        else:
+            sys.stdout.write("fold-delegation: published leg=%s records=%d bytes=%d canonical=%s\n" % (leg, records, length, canonical_name))
+    finally:
+        # branch/none aliases base_loops_fd == staging_fd == log_root_fd; the
+        # set() closes each unique descriptor exactly once.
+        for _fd in set(open_fds):
+            try:
+                os.close(_fd)
+            except OSError:
+                pass
+
+
 def main(argv):
+    if argv and argv[0] == "--emit-delegation-variants":
+        # PR-LOW-003: the dev/selftest generator — read the schema-owner fixture
+        # and print the deterministic embedded block. NOT a runtime path (the
+        # embedded literal is authoritative at run time; the fixture is repo-only).
+        import json
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, "fixtures", "delegation-variants.json"),
+                  encoding="utf-8") as f:
+            fixture = json.load(f)
+        sys.stdout.write(delegation_variants_block(fixture))
+        return 0
     sub, etype, flags, roots, kvs, dry_run = parse_argv(argv)
     if sub is None:
-        refuse("no subcommand", "emit | escape-check | flush | idle-check")
-    if sub not in ("emit", "escape-check", "flush", "idle-check"):
-        refuse("unknown subcommand %r" % sub, "emit | escape-check | flush | idle-check (exactly four)")
+        refuse("no subcommand", "emit | escape-check | flush | idle-check | run-close | fold-delegation")
+    if sub not in ("emit", "escape-check", "flush", "idle-check", "run-close", "fold-delegation"):
+        refuse("unknown subcommand %r" % sub, "emit | escape-check | flush | idle-check | run-close | fold-delegation (exactly six)")
     for req in ("--run", "--role"):
         if req not in flags:
             refuse("%s is REQUIRED on every subcommand" % req,
@@ -1909,6 +3342,9 @@ def main(argv):
         refuse("--event-ts is admitted on emit ONLY — a computed subcommand's ts= IS its write time (r3-B3)")
     if sub in ("flush", "idle-check") and "--log" not in flags:
         refuse("--log is REQUIRED on %s (it derives from the log; a sink-less invocation is meaningless)" % sub)
+    if sub == "run-close" and "--log" not in flags:
+        refuse("--log is REQUIRED on run-close (the close record must PERSIST to the probe log — "
+               "a stdout-only record dies with the terminal while close side-effects survive; r31 LOW-002)")
     if sub in ("escape-check", "idle-check") and "--log-root" not in flags:
         refuse("--log-root is REQUIRED on %s (r4-B1)" % sub)
     # PR-MED-001 (round 8): TOTAL per-subcommand argv grammar — every accepted
@@ -1926,6 +3362,13 @@ def main(argv):
                          "roots": False, "kvs": False, "dry_run": True},
         "idle-check":   {"flags": {"--run", "--role", "--log", "--log-root"},
                          "roots": False, "kvs": False, "dry_run": False},
+        "run-close":    {"flags": {"--run", "--role", "--log", "--iso", "--base",
+                                   "--outcome", "--plan", "--attest"},
+                         "roots": False, "kvs": False, "dry_run": False},
+        # v32.2 T2.3: no --log — the receipts sidecar + retirement ARE the
+        # durable evidence; the fold writes no probe-log record.
+        "fold-delegation": {"flags": {"--run", "--role", "--base", "--iso", "--leg"},
+                            "roots": False, "kvs": False, "dry_run": False},
     }
     g = SUB_GRAMMAR[sub]
     for f in flags:
@@ -1947,6 +3390,10 @@ def main(argv):
         cmd_escape_check(flags, roots, sink)
     elif sub == "flush":
         cmd_flush(flags, dry_run, sink)
+    elif sub == "run-close":
+        cmd_run_close(flags, sink)
+    elif sub == "fold-delegation":
+        cmd_fold_delegation(flags)
     else:
         cmd_idle_check(flags, sink)
     return 0

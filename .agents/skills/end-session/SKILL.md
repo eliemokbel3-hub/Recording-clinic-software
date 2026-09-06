@@ -30,6 +30,8 @@ If I choose no:
 
 If the work was small and no active plan or durable doc changes are likely, continue normally.
 
+Paused plans (v32, named rule — never a generic-active fall-through): a `Paused` plan counts as "a plan exists" for the Step 0 `/document` recommendation (its docs may still need sync), and it is surfaced in the closeout summary WITH its `Paused since:`/`Paused reason:` fields — but it is never presented as the current active execution plan, its retained-item warning scans still run read-only, and closeout never flips, archives, or deletes it (resume is `/load-plan`'s explicit `Paused → Active` transition).
+
 ## Step 1 — Update project notes
 Update `AGENTS.md` to reflect:
 - what was built, changed, or fixed

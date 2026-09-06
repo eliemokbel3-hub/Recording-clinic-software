@@ -5,7 +5,7 @@ description: Present a simple git menu for the most common workflows.
 Ask me which git task I want.
 
 Menu:
-1. Create a new branch (`/create-branch`)
+1. Create a new branch
 2. Review, commit, and push changes (`/push`)
 3. Merge current branch into main (`/merge-to-main`)
 4. Check current status
@@ -15,7 +15,7 @@ Menu:
 8. Something else
 
 If I choose:
-- 1 → use the create-branch workflow
+- 1 → check `git status --short --branch` first (if there are uncommitted changes, ask whether to carry them onto the new branch, commit first, or stash first), ask what I'm working on, suggest 2–3 names following the project branch-naming conventions in `project-workflow.mdc` (`feature/` / `fix/` / `hotfix/` / `chore/` prefix, lowercase, hyphens, short and descriptive), then run `git checkout -b <chosen-name>` and confirm
 - 2 → use the push workflow
 - 3 → use the merge-to-main workflow
 - 4 → show branch, status, and whether there are unpushed commits

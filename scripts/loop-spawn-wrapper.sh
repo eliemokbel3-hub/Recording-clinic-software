@@ -115,6 +115,34 @@
 # Optional:
 #   LOOP_EFFORT        --effort value (omit = inherit; no flag is passed)
 #   LOOP_PROFILE_DIR   CLAUDE_CONFIG_DIR for the spawn (account profile)
+#   LOOP_OAUTH_TOKEN_ENV  cloud token-pool selection (v32 TD.2 / PR-HIGH-003):
+#                      the NAME of the numbered secret variable
+#                      (CLAUDE_CODE_OAUTH_TOKEN_<N>, N >= 1) whose value the
+#                      wrapper exports as the canonical CLAUDE_CODE_OAUTH_TOKEN
+#                      by shell INDIRECTION — the token VALUE never appears in
+#                      the wrapper's OWN emissions (argv, its probe-log lines,
+#                      the identity record — which carries the NAME only — or
+#                      any error). Validated fail-closed pre-spawn: the exact
+#                      numbered grammar; LOOP_PROFILE_DIR required, its basename
+#                      .claude-acct<N> matching the SAME N (the deterministic
+#                      pool mapping); the named variable set non-empty. Rides
+#                      fresh spawns AND resumes identically (the env transform
+#                      is invocation-scoped). Whatever the selection, the exec
+#                      environment is LEAST-CREDENTIAL (PR-HIGH-009): every
+#                      CLAUDE_CODE_OAUTH_TOKEN_<N> and the selector itself are
+#                      REMOVED before ANY subprocess — the strip runs before the
+#                      prompt-file acquisition helper (r21 PR-HIGH-021), so not
+#                      even the prompt reader inherits them; with a selection the
+#                      prior canonical token is superseded by the selected value;
+#                      with NO selection the ambient canonical is untouched (the
+#                      seated-store/desktop fallback). Honest boundary (r21
+#                      PR-HIGH-020): the tee'd ROLE log mirrors the CHILD's
+#                      stdout and the child necessarily HOLDS the canonical token
+#                      to authenticate, so a child that echoes it lands those
+#                      bytes there — role logs are gitignored + never committed,
+#                      and the TD.5 persist secret-sweep is the backstop; the
+#                      guarantee is over wrapper-authored + committed output,
+#                      not child-authored log content.
 #   LOOP_PERMS         scoped (default) | bypass — per-invocation tier flags:
 #                      scoped renders --permission-mode acceptEdits (+ the
 #                      grant list); bypass renders --dangerously-skip-permissions
@@ -188,6 +216,38 @@ fi
 [ -n "${LOOP_LEG:-}" ] || fail_usage "LOOP_LEG unset (the activation leg key is required)"
 [ -n "${LOOP_MODEL:-}" ] || fail_usage "LOOP_MODEL unset (a model-less start would emit strict-invalid missing-model)"
 [ -n "${LOOP_ESCAPE_ROOTS:-}" ] || fail_usage "LOOP_ESCAPE_ROOTS unset (the escape-check root manifest is required — F-09)"
+
+# --- token-pool selection + least-credential env (v32 TD.2; PR-HIGH-003/009) --
+# PLACEMENT (r21 PR-HIGH-021): runs BEFORE the prompt-file acquisition helper
+# and every other subprocess/child, so NO wrapper-spawned process — not even
+# the `timeout … cat` prompt reader — inherits the numbered pool credentials
+# or the selector. Validation is fail-closed BEFORE any probe/child effect;
+# the token value moves ONLY by indirection — never interpolated into argv,
+# any log line, the identity record, or an error message.
+_token_env_name=""
+if [ -n "${LOOP_OAUTH_TOKEN_ENV:-}" ]; then
+  [[ "$LOOP_OAUTH_TOKEN_ENV" =~ ^CLAUDE_CODE_OAUTH_TOKEN_[1-9][0-9]*$ ]] \
+    || fail_usage "LOOP_OAUTH_TOKEN_ENV must NAME a numbered pool variable (CLAUDE_CODE_OAUTH_TOKEN_<N>, N >= 1) — the selection grammar is exact (v32 TD.2)"
+  [ -n "${LOOP_PROFILE_DIR:-}" ] \
+    || fail_usage "LOOP_OAUTH_TOKEN_ENV requires LOOP_PROFILE_DIR — the numbered token maps deterministically onto ~/.claude-acct<N> (v32 TD.2)"
+  _acct_n="${LOOP_OAUTH_TOKEN_ENV#CLAUDE_CODE_OAUTH_TOKEN_}"
+  case "${LOOP_PROFILE_DIR%/}" in
+    */.claude-acct"$_acct_n") ;;
+    *) fail_usage "LOOP_OAUTH_TOKEN_ENV names pool $_acct_n but LOOP_PROFILE_DIR does not end in .claude-acct$_acct_n — the acct<N> <-> TOKEN_<N> mapping is deterministic; a mismatch refuses (v32 TD.2)" ;;
+  esac
+  [ -n "${!LOOP_OAUTH_TOKEN_ENV:-}" ] \
+    || fail_usage "LOOP_OAUTH_TOKEN_ENV names $LOOP_OAUTH_TOKEN_ENV but that variable is unset or empty — a missing pool credential refuses, never a silent seated-store fallback (v32 TD.2)"
+  _token_env_name="$LOOP_OAUTH_TOKEN_ENV"
+  export CLAUDE_CODE_OAUTH_TOKEN="${!_token_env_name}"  # indirection; supersedes any ambient canonical
+fi
+# Least-credential strip (unconditional): every numbered pool variable and the
+# selector leave the exec environment; with no selection the ambient canonical
+# CLAUDE_CODE_OAUTH_TOKEN stays (seated-store/desktop behaviour, unchanged).
+for _tok in $(compgen -A export); do
+  [[ "$_tok" =~ ^CLAUDE_CODE_OAUTH_TOKEN_[1-9][0-9]*$ ]] && unset "$_tok"
+done
+unset LOOP_OAUTH_TOKEN_ENV
+
 if [ -n "${LOOP_PROMPT_FILE:-}" ] && [ -n "${LOOP_PROMPT:-}" ]; then
   fail_usage "LOOP_PROMPT_FILE and LOOP_PROMPT are mutually exclusive"
 fi
@@ -662,6 +722,7 @@ write_identity() {
     printf 'cwd=%s\n' "$LOOP_CWD"
     printf 'model=%s\n' "$LOOP_MODEL"
     [ -n "${LOOP_PROFILE_DIR:-}" ] && printf 'profile_dir=%s\n' "$LOOP_PROFILE_DIR"
+    [ -n "$_token_env_name" ] && printf 'token_env=%s\n' "$_token_env_name"
     [ -n "${LOOP_RESUME_SESSION:-}" ] && printf 'resume=%s\n' "$LOOP_RESUME_SESSION"
     [ -n "${1:-}" ] && printf 'session=%s\n' "$1"
     true
@@ -713,7 +774,13 @@ fi
 # `wait "$tee_pid"` returns the pump's status DIRECTLY (the _teestat temp-file
 # machinery is RETIRED; its fail-closed fold-in semantics are preserved below).
 exec 5>&-
-( sleep 5; : > "$tmpd/tee-timeout"; kill "$tee_pid" 2>/dev/null ) &
+# TB.1 (v32): the watchdog subshell opens with `trap - EXIT` — an inherited
+# on_exit firing here emits a second EXIT: record and rm -rf's the pump dir
+# while $HELPER still lives in it, losing the post escape-check + exit-census
+# (observed live: stage-0-verify-r6 double EXIT:0/EXIT:4, intermittent).
+# Defensive mitigation: bash normally resets EXIT traps in subshells, but the
+# reproduced flake says not reliably on every path — clear it explicitly.
+( trap - EXIT; sleep 5; : > "$tmpd/tee-timeout"; kill "$tee_pid" 2>/dev/null ) &
 _teewd=$!
 wait "$tee_pid"
 tee_status=$?

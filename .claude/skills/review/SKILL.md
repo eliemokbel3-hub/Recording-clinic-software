@@ -21,7 +21,7 @@ verification.
 Before reviewing, identify whether an active or recently-completed plan should inform this review.
 
 Detection:
-- check `.cursor/plans/` (excluding `.cursor/plans/completed/`) for plan files — this covers both active plans and those in `Completed — Archivable` or `Completed — Follow-ups Retained` states that have not yet been archived
+- check `.cursor/plans/` (excluding `.cursor/plans/completed/`) for plan files — this covers active plans, those in `Completed — Archivable` or `Completed — Follow-ups Retained` states that have not yet been archived, and `Paused` plans (v32). A `Paused` plan may still inform a review of its already-built work and its records layer stays writable (Findings Log appends are legal — the record belongs to the work), but SURFACE the Paused state when selecting it and never treat the review as license to resume or flip the state. While the plan is Paused, the review's MUTATION routes are disabled: no task/scope amendment (an `Include in plan` disposition is recorded as a Pending finding, never appended as a task), no scoped `/review-plan` hardening, no `/fix` hand-off — those resume only after `/load-plan`'s explicit `Paused → Active` transition
 - if running in the same session that produced the implementation work, the relevant plan is already known from session context — use it directly
 - if exactly one plan file exists, use it
 - if multiple plan files exist, prefer the one with the most recent `Last plan sync` timestamp in its `Current State / Handoff Note`, since that is typically the plan just worked on. State the choice explicitly and ask the user to confirm if the match is ambiguous (e.g. two plans synced on the same day, or the feature name does not obviously match the recent changes)
@@ -193,13 +193,17 @@ Rules:
 
 The finding-producing passes below (correctness/security, Executor
 Judgment, Structural Quality, Post-Fix Regression, Missed-Issue) are
-independent lenses over the same changed-files set. If your tool
-supports parallel subagents, you may fan them out for breadth and
-independence; if it does not, run them sequentially in this same
-session — the sequential path is the default and is fully correct.
+independent lenses over the same changed-files set. Where fan-out is
+available and authorized (the predicate below), you may fan them out
+for breadth and independence; otherwise run them sequentially in this
+same session — the sequential path is the default and is fully
+correct.
 
-If your tool supports parallel subagents (e.g. Cursor's Task
-subagents, Claude Code's Task tool):
+If your harness exposes agent-spawning/orchestration tools (e.g. a
+Task tool or `spawn_agent`/`wait_agent` — probe what this session
+actually exposes, never assume from the product name) AND the
+instruction and policy stack that applies to this task permits
+delegation:
 - Spawn one subagent per lens, each given the same primary review
   baseline and changed-files list but a single focus: one for
   correctness/security, one for Executor Judgment + Structural
@@ -218,9 +222,12 @@ subagents, Claude Code's Task tool):
   delegated to a subagent, because the gate is interactive with the
   user.
 
-If your tool does not support parallel subagents (e.g. Codex), run the
-passes sequentially below. This is the documented fallback and changes
-nothing about the findings — only how they are produced.
+If either check fails — no such tools exposed, or delegation not
+authorized for this task — run the passes sequentially below. This is
+the documented fallback and changes nothing about the findings — only
+how they are produced. If a spawn or approval failure interrupts a
+fan-out mid-pass, fall back to the same sequential path for the
+remaining passes.
 
 Subagents add **lens diversity, not model diversity**: spawned
 subagents inherit this session's model, so they share its blind-spot
@@ -687,12 +694,21 @@ For each finding, use this structure (omit fields that don't apply):
   - Pattern to follow: existing helper / convention / Design Decision
     reference, with brief context if not self-evident
   - Pattern siblings: other places in the codebase where the same
-    idiom appears and likely needs the same fix; list them or write
-    "none found". REQUIRED when the finding is pattern-shaped (raw
-    API errors in toasts, repeated permission checks, repeated query
-    invalidation, repeated transaction guards, repeated fetch-vs-helper
-    drift, repeated microcopy, repeated hook patterns). Optional
-    otherwise.
+    idiom appears and likely needs the same fix. REQUIRED when the
+    finding is pattern-shaped (raw API errors in toasts, repeated
+    permission checks, repeated query invalidation, repeated
+    transaction guards, repeated fetch-vs-helper drift, repeated
+    microcopy, repeated hook patterns). Optional otherwise. For a
+    pattern-shaped finding the list is EXHAUSTIVE IN THIS ROUND,
+    never illustrative: search the codebase for the family NOW —
+    using several pattern spellings, since one regex rarely matches
+    every variant of an idiom — and enumerate every sibling site
+    found, recording the search evidence (the patterns searched) on
+    the finding. Write "none found" only after that search comes
+    back empty. The fix leg then sweeps the enumerated family in
+    one pass (/fix applies to all Pattern Siblings); a sibling left
+    for a later round to rediscover is the 🔁 same-family tail this
+    rule exists to prevent.
   - Invariant: a plain-English statement of what must be true after
     the fix. REQUIRED when the finding involves transactional ordering,
     lock acquisition, hook ordering, render-loop structure, cache

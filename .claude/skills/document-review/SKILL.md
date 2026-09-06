@@ -58,7 +58,11 @@ user can confirm scope before anything is read in depth:
   source or target.
 
 Active plans under `.cursor/plans/` are pointer targets only — verify that docs
-reference them correctly; do not audit them as docs and do not edit them.
+reference them correctly; do not audit them as docs and do not edit them. The
+same pointer-target-only rule covers `Paused` plans by name (v32 — never a
+generic-active fall-through): a Paused plan is never audited as a doc, never
+edited, and never flagged stale merely for being Paused; docs that reference it
+should reflect its Paused state.
 
 ## Step 1 — Parallel read-only audit (four lenses)
 
@@ -88,15 +92,20 @@ nothing.
   version numbers, links to docs that no longer exist, and "next steps" that were
   completed long ago.
 
-If your tool supports parallel subagents (e.g. Cursor's Task subagents, Claude
-Code's Task tool), you may fan the four lenses out — one READ-ONLY subagent per
-lens, each given the same enumerated doc set from Step 0. Each subagent reads its
-docs and the relevant code in full and returns candidate findings with concrete
-`file:line` evidence (the doc path and line, plus the code `file:line` that
-proves or disproves the doc), not prose summaries. Subagents never edit docs. If
-your tool does not support parallel subagents (e.g. Codex), run the four lenses
-sequentially in this same session — the sequential path is the documented
-fallback and produces the same findings, only slower.
+If your harness exposes agent-spawning/orchestration tools (e.g. a Task tool or
+`spawn_agent`/`wait_agent` — probe what this session actually exposes, never
+assume from the product name) AND the instruction and policy stack that applies
+to this task permits delegation, you may fan the four lenses out — one READ-ONLY
+subagent per lens, each given the same enumerated doc set from Step 0. Each
+subagent reads its docs and the relevant code in full and returns candidate
+findings with concrete `file:line` evidence (the doc path and line, plus the
+code `file:line` that proves or disproves the doc), not prose summaries.
+Subagents never edit docs. If either check fails — no such tools exposed, or
+delegation not authorized for this task — run the four lenses sequentially in
+this same session — the sequential path is the documented fallback and produces
+the same findings, only slower. If a spawn or approval failure interrupts a
+fan-out mid-pass, fall back to the same sequential path for the remaining
+lenses.
 
 Subagents add lens diversity, not model diversity: they inherit this session's
 model and blind-spot profile, and only parallelise the read.

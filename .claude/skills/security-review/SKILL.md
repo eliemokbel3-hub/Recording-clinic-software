@@ -16,6 +16,8 @@ Plan files are shared across all three tools. Handoff is through disk state, the
 
 ## Step 0 — Read plan context and scope
 
+**Paused plan (v32):** a plan at `Lifecycle State: Paused` may still be reviewed for its already-built work and its `Review Findings Log` stays writable (append-only evidence) — but SURFACE the Paused state when selecting it, and never amend its tasks/scope or trigger scoped hardening while Paused; resuming is `/load-plan`'s explicit transition, never a review side effect.
+
 Mirror `/review` Step 0:
 
 - check `.cursor/plans/` (excluding `.cursor/plans/completed/`) for a plan file; if running in the same session that produced the work, use that plan; if multiple, prefer the most recent `Last plan sync`; if none, proceed against the code and project conventions and note that findings persist only in the conversation.
@@ -41,7 +43,7 @@ Threat-model checklist (the portable lens; also the gap-check after a native sca
 - **Resource & availability** — missing rate limits, unbounded input, ReDoS, unbounded resource allocation.
 - **Dependencies & config** — risky new dependency, insecure default config, debug/verbose mode left enabled.
 
-Where a finding is pattern-shaped (e.g. one unparameterised query), record its Pattern siblings — the other sites likely sharing the flaw.
+Where a finding is pattern-shaped (e.g. one unparameterised query), record its Pattern siblings — every site sharing the flaw, enumerated EXHAUSTIVELY IN THIS ROUND per /review's rule: search for the family now (several pattern spellings — one regex rarely matches every variant), list every sibling found with the search evidence on the finding, and write "none found" only after that search comes back empty; never an illustrative sample. The fix leg then sweeps the enumerated family in one pass.
 
 ## Step 2 — Verify candidates (false-positive filter)
 

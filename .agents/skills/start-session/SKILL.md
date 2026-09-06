@@ -33,11 +33,12 @@ If the user chooses Cloud agent:
 - read `docs/lessons.md` if it exists — recurring project gotchas recorded there apply from the first task of the session
 - search `.cursor/plans/` for `plan-*.md` files (exclude `.cursor/plans/completed/`)
   - before summarising or selecting any plan, check for base-side isolation registries — `.cursor/loops/*-isolation` intent-journal files written by `/execute-loop`'s run-isolation contract. A live registry whose recorded authority is a run WORKTREE means the base copy of that plan is stale: redirect the plan read to the registry's recorded authoritative plan path, surface the isolation state (run branch, worktree path, journal state) alongside the summary, and never present the base copy as current merely because it exists. When the authoritative worktree lies outside this session's workspace, print the exact reopen/continue-in-worktree handoff (the recorded worktree path + how to resume there) instead of a stale-base summary. Validate the registry against the current base/worktree relationship (`git worktree list`, refs) before following it; on a stale or ambiguous registry, refuse to guess and ask.
-  - classify each plan by its `Lifecycle State`: Active, Completed — Follow-ups Retained, or Completed — Archivable
+  - classify each plan by its `Lifecycle State`: Active, Completed — Follow-ups Retained, Completed — Archivable, or Paused (v32)
   - if both active plans and `Completed — Follow-ups Retained` plans exist:
     - prioritise active plans in the session summary
     - mention retained-complete plans separately as optional follow-up context only
   - do not present a retained-complete plan as the current in-progress execution plan unless the user explicitly chooses it
+  - mention any `Paused` plan separately with its `Paused since:`/`Paused reason:` fields — discoverable + recoverable, never presented as the current execution plan; resuming is `/load-plan`'s explicit `Paused → Active` transition, never a session-start side effect
   - if exactly one active plan exists, present:
     - the feature name
     - the Goal summary
@@ -89,7 +90,7 @@ If the user chooses Cloud agent:
     Display-only and NOT schema-gated — surface regardless of
     `Workflow Schema:`. Skip the line if there are none.
 
-  - **v22 plan-state surfacing** (skip these checks if the plan is pre-v22 — detected by absence of a `Workflow Schema:` line in the Planning Extraction Summary; pre-v22 plans fall back to legacy behaviour, suppressing all four checks below):
+  - **v22 plan-state surfacing** (skip these checks if the plan is pre-v22 — detected by absence of a `Workflow Schema:` line in the Planning Extraction Summary; pre-v22 plans fall back to legacy behaviour, suppressing the schema-gated checks below (the `[pending-hardening]` scan is a plain Tasks-section scan and still runs)):
 
     - **Executor tier:** read the `Executor tier:` line. If the value is `fast/medium involved`, surface one line:
       "Plan executor tier: fast/medium involved. Premium-only tasks should be labelled `[executor: premium-only]`."
@@ -106,6 +107,14 @@ If the user chooses Cloud agent:
     - **Security/correctness risk-tagged (prominent warning):** for any item with `Risk if deferred: security: ...` or `Risk if deferred: correctness: ...`, surface a SEPARATE prominent line distinct from the soft non-minor warning:
       "🛑 P retained items risk-tagged security/correctness — risk-accepted but not blocking plan lifecycle. Run /load-plan to review."
       Suppress if P = 0.
+
+    - **Pending-hardening tasks (v32; NOT schema-gated — a plain Tasks-section scan):** for any task carrying the `[pending-hardening]` marker (auto-appended by `/execute-loop`'s `high-auto=on` Include-in-plan route; recorded but NOT executable until a scoped `/review-plan` hardens it), surface:
+      "🔶 Q task(s) pending hardening — run a scoped /review-plan over them before building (execution refuses the marker)."
+      Suppress if Q = 0. Surface this BEFORE any execution offer.
+
+    - **Consolidable retained plans (v32 planning-time hygiene nudge; repo-wide, strictly fail-silent):** count the plan files directly in `.cursor/plans/` (excluding `completed/`) whose `Lifecycle State` is `Completed — Follow-ups Retained`. If N > 0, print exactly ONE advisory line, rendering the skill name with the current tool's sigil per this skill's shared-workflow rule:
+      "🗂 N completed plan(s) still hold retained follow-ups — run /document to consolidate them (parent/master plan, or the retained register)."
+      Suppress if N = 0. Any failure — an unreadable file, a missing `Lifecycle State` section, no plans directory — skips the scan silently: no error text, no retry, never a changed session-start outcome (the workflow-version nudge's fail-silent contract, applied to a local scan).
 
     None of these block — display + nudge only. Warnings fire on tag presence; the retained-item schema preserves tag (security/correctness/ux-degradation/blocked-work/minor), not source severity, so the surfacing cannot distinguish source severity tiers. The Release Readiness gate that would enforce blocking is deferred to v22+ (see master plan).
   - if multiple active plans exist, present a short numbered list showing feature name and progress percentage, and ask which one is relevant before summarising in detail
@@ -149,7 +158,7 @@ Also read `docs/lessons.md` if it exists — recurring project gotchas recorded 
 
 Before summarising any plan state below (including the no-active-plan case), check for base-side isolation registries — `.cursor/loops/*-isolation` intent-journal files written by `/execute-loop`'s run-isolation contract. A live registry whose recorded authority is a run WORKTREE means the base-side plan copy is stale (or the authoritative plan exists only in the worktree): redirect the plan read to the registry's recorded authoritative plan path, surface the isolation state (run branch, worktree path, journal state) alongside the summary, and never present the base copy as current merely because it exists. When the authoritative worktree lies outside this session's workspace, print the exact reopen/continue-in-worktree handoff (the recorded worktree path + how to resume there) instead of a stale-base summary. Validate the registry against the current base/worktree relationship (`git worktree list`, refs) before following it; on a stale or ambiguous registry, refuse to guess and ask.
 
-If no active plan exists but one or more plans are in `Completed — Follow-ups Retained` state, mention that follow-up context is available via `/load-plan`.
+If no active plan exists but one or more plans are in `Completed — Follow-ups Retained` state, mention that follow-up context is available via `/load-plan`. Likewise mention any `Paused` plan with its `Paused since:`/`Paused reason:` fields — resumable via `/load-plan`'s explicit transition, never auto-resumed here.
 
 If an active plan exists in `.cursor/plans/` (excluding `.cursor/plans/completed/`) and that plan's `Review History` section has at least one real entry (ignoring the `(no reviews yet)` placeholder), surface the latest entry's `skew=` and `action=` fields in a single line, and — when there are unresolved findings to apply — recommend the route the classified Findings-Log line below resolves to (Source-aware: `/fix` for code rounds, not "fix the issues"; the owning planning session / a scoped `/review-plan` for plan peer-review rounds; both routes, unconflated, when both kinds are open). The two lines must never contradict — this line defers to or matches the classified Findings-Log summary. Keep this to one line — do not lecture.
 
@@ -175,7 +184,7 @@ Additionally, scan the active plan's `Tasks` section for unresolved `[decision]`
 
 Display-only and NOT schema-gated — surface regardless of `Workflow Schema:`. Skip the line if there are none.
 
-**v22 plan-state surfacing** (skip these checks if the plan is pre-v22 — detected by absence of a `Workflow Schema:` line in the Planning Extraction Summary; pre-v22 plans fall back to legacy behaviour, suppressing all four checks below):
+**v22 plan-state surfacing** (skip these checks if the plan is pre-v22 — detected by absence of a `Workflow Schema:` line in the Planning Extraction Summary; pre-v22 plans fall back to legacy behaviour, suppressing the schema-gated checks below (the `[pending-hardening]` scan is a plain Tasks-section scan and still runs)):
 
 - **Executor tier:** read the `Executor tier:` line. If the value is `fast/medium involved`, surface one line:
   - "Plan executor tier: fast/medium involved. Premium-only tasks should be labelled `[executor: premium-only]`."
@@ -192,6 +201,14 @@ Display-only and NOT schema-gated — surface regardless of `Workflow Schema:`. 
 - **Security/correctness risk-tagged (prominent warning):** for any item with `Risk if deferred: security: ...` or `Risk if deferred: correctness: ...`, surface a SEPARATE prominent line distinct from the soft non-minor warning:
   - "🛑 P retained items risk-tagged security/correctness — risk-accepted but not blocking plan lifecycle. Run /load-plan to review."
   - Suppress if P = 0.
+
+- **Pending-hardening tasks (v32; NOT schema-gated — a plain Tasks-section scan):** for any task carrying the `[pending-hardening]` marker (auto-appended by `/execute-loop`'s `high-auto=on` Include-in-plan route; recorded but NOT executable until a scoped `/review-plan` hardens it), surface:
+  - "🔶 Q task(s) pending hardening — run a scoped /review-plan over them before building (execution refuses the marker)."
+  - Suppress if Q = 0. Surface this BEFORE any execution offer.
+
+- **Consolidable retained plans (v32 planning-time hygiene nudge; repo-wide, strictly fail-silent):** count the plan files directly in `.cursor/plans/` (excluding `completed/`) whose `Lifecycle State` is `Completed — Follow-ups Retained`. If N > 0, print exactly ONE advisory line, rendering the skill name with the current tool's sigil per this skill's shared-workflow rule:
+  - "🗂 N completed plan(s) still hold retained follow-ups — run /document to consolidate them (parent/master plan, or the retained register)."
+  - Suppress if N = 0. Any failure — an unreadable file, a missing `Lifecycle State` section, no plans directory — skips the scan silently: no error text, no retry, never a changed session-start outcome (the workflow-version nudge's fail-silent contract, applied to a local scan).
 
 None of these block — display + nudge only. Warnings fire on tag presence; the retained-item schema preserves tag (security/correctness/ux-degradation/blocked-work/minor), not source severity, so the surfacing cannot distinguish source severity tiers. The Release Readiness gate that would enforce blocking is deferred to v22+ (see master plan).
 
@@ -226,6 +243,29 @@ If first run is detected:
 - otherwise inspect the project type
 - suggest the install and run commands
 - ask before running them
+
+### Workflow version nudge (best-effort, strictly fail-silent)
+
+Last in Step 4, run ONE bounded, best-effort probe for a newer installed-workflow version. The nudge prints AT MOST one line — only when an update is genuinely available — and NOTHING in every other case: no error text, no retry, no mention of a skipped or failed probe. It NEVER changes this session start's outcome; whatever happens here, continue to Step 5 normally.
+
+Skip the entire nudge silently unless ALL of these preconditions hold (check them with stderr suppressed):
+- the installed-version marker `.cursor/bootstrap/installed-version` exists — repos that never ran the update skill have no marker and stay silent
+- the shared helper `.cursor/bootstrap/workflow-source.py` exists — it is the single owner of the source slug, the version grammar, and every version read boundary; never re-implement or inline any of those rules here
+- `gh` resolves on PATH
+- a hard timeout wrapper resolves AND can actually bound a command in the EXACT hard-bound shape the fetch uses: take `timeout` if present, else `gtimeout` (call the one found `<T>` below), then require the viability check `<T> -k 1 1 true` to exit 0 with stderr suppressed — the same TERM-deadline-plus-forced-KILL form as the fetch below, so a same-named non-GNU command (e.g. Windows System32 `timeout.exe` shadowing Git Bash's coreutils on a misordered PATH) or a wrapper without kill-after support fails this check. If neither wrapper resolves, or the viability check fails, skip the probe entirely — the network call must never run unbounded, and a plain TERM-only bound is NOT enough: a child that catches or ignores TERM would keep a TERM-only wrapper (and the session start) waiting forever, while the kill-after escalation guarantees a finite forced deadline.
+
+Probe — single pass, no retry, every command with stderr suppressed (`2>/dev/null`); ANY non-zero exit or unexpected output at any step means: remove any temp file and skip silently.
+1. Installed version: run `python3 .cursor/bootstrap/workflow-source.py marker-read --target .` and proceed only when the printed state is `state=valid`, taking its `version=` value as `<installed>`. `state=absent`, `state=malformed`, or a non-zero exit → silent skip; never guess or fabricate a version.
+2. Source slug: `slug=$(python3 .cursor/bootstrap/workflow-source.py slug)`.
+3. Remote advertised version: fetch the ~10-byte repo-root `VERSION` object — NEVER the full bootstrap — redirecting the RAW bytes to a fresh restrictive temp file (`tmp=$(mktemp)`; `mktemp` files are 0600 by default), hard-bounded with forced-kill escalation: `<T> -k 1 5 gh api -H "Accept: application/vnd.github.raw" "/repos/$slug/contents/VERSION" > "$tmp"` (TERM at five seconds, KILL one second later if the child survives — the exact shape the viability check proved). A timeout or forced kill, offline failure, missing auth, 404, or any other non-zero exit → remove `$tmp`, silent skip.
+4. Validate framing + grammar through the helper's ONE raw-framing boundary before any comparison: `remote=$(python3 .cursor/bootstrap/workflow-source.py version-read --file "$tmp")` — the raw fetched object goes to the temp file and through `version-read` (exactly one line + one optional trailing LF; CR, extra/blank lines, surrounding whitespace, bad tokens all fail closed), NEVER through shell command substitution of the raw bytes, which strips ALL trailing newlines and silently repairs malformed multi-line framing (capturing `version-read`'s own validated canonical output, as above, is fine). Remove `$tmp` afterwards in every case; a non-zero exit → silent skip.
+5. Compare: `python3 .cursor/bootstrap/workflow-source.py compare "$remote" "$installed"` and read its `result=` field. ONLY `result=newer` (the source advertises a newer version than the installed marker) prints the nudge; `same`, `older`, or any failure → print nothing.
+
+On `result=newer`, print exactly ONE line, rendering the update skill's name with the current tool's sigil per this skill's shared-workflow rule (`/update-workflow` in Cursor and Claude Code, `$update-workflow` in Codex):
+
+"Workflow update available: installed v<installed>, latest v<remote> — run /update-workflow to review and apply."
+
+Do not act on the nudge yourself: the update skill is locked (explicit invocation only) — never invoke it from here, never re-run the probe, and never mention the nudge machinery when it stays silent.
 
 ## Step 5 — Begin
 Ask what I want to work on today.

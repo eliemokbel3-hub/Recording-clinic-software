@@ -27,6 +27,8 @@ If after the pass nothing clears this bar, say so explicitly — "no simplificat
 
 ## Step 0 — Read plan context and scope
 
+**Paused plan (v32):** a plan at `Lifecycle State: Paused` may still be reviewed for its already-built work and its `Review Findings Log` stays writable (append-only evidence) — but SURFACE the Paused state when selecting it, and never amend its tasks/scope or trigger scoped hardening while Paused; resuming is `/load-plan`'s explicit transition, never a review side effect.
+
 Establish what to look at and the reference for severity, mirroring `/review` Step 0:
 
 - check `.cursor/plans/` (excluding `.cursor/plans/completed/`) for a plan file; if running in the same session that produced the work, use that plan; if multiple, prefer the most recent `Last plan sync`; if none, proceed against the code and project conventions and note that findings persist only in the conversation.
@@ -70,6 +72,7 @@ Write findings to the plan's `Review Findings Log` as a `/review`-compatible rou
 - set `Source:` to where this ran plus the skill: `Cursor simplify` / `Claude Code simplify` / `Codex simplify`.
 - assign stable IDs with the `SIMP-` prefix in finding order: `SIMP-001`, `SIMP-002`, … (numbering resets per round). Each finding still carries its severity (CRIT/HIGH/MED/LOW) as a field.
 - use the full per-finding block from `.cursor/templates/implementation-plan-template.md` (Triage, Fix route, Why it matters, Current/Desired behaviour, Pattern to follow, Verification, Regression risk, `/fix decision: Pending`, etc.). A substantial finding becomes a new 🟥 task in the plan, logged with `Triage: Fix-now` so `/fix` ingests it — the same representation `/review` uses for an `Include in plan` outcome (`Include in plan` is NOT a `Scope-expansion disposition` field value; use only the values the template documents for that field). The scoped `/review-plan` then hardens that new task.
+- where a simplification finding is pattern-shaped (e.g. the same duplicated pipeline reimplemented at several sites), its `Pattern siblings:` field follows `/review`'s exhaustive-in-round rule: search for the family now (several pattern spellings — one regex rarely matches every variant), enumerate every sibling site found with the search evidence on the finding, and write "none found" only after that search comes back empty; never an illustrative sample.
 - findings recommended for `Defer` or `Accept` run through the Deferral Confirmation Gate exactly as in `/review`; `Triage: Fix-now` findings (including a substantial finding logged as a new Fix-now task) are not gated.
 - append only after the pass is complete; never for an aborted pass. If no plan file is in scope, skip the log and report findings in the conversation only.
 

@@ -111,6 +111,7 @@ Use more than one signal:
 If a qualifying plan is found, classify it as one of:
 - `Completed — Follow-ups Retained`
 - `Completed — Archivable`
+- `Paused` (v32 — its own class, never a generic-active fall-through)
 - near-complete but still active
 
 If the plan is `Completed — Follow-ups Retained`:
@@ -134,8 +135,20 @@ Then:
 - keep `AGENTS.md` concise and pointer-based
 - update `CHANGELOG.md` if needed
 - **v22 pass-through:** if the plan uses Workflow Schema v22, preserve `Risk if deferred:` and `Revisit by:` fields verbatim on any retained items migrated into AGENTS.md or `docs/known-issues.md` — pass-through only, no transform. Do NOT assign stable IDs (`retained-NNN`) — that remains deferred (see master plan `Deferred — Actionable Later`). The generic `AGENTS.md` bloat guard (Step 7 below) now applies — graduated in v27.0.
-- do NOT recommend archiving or deleting the plan unless the user explicitly asks to close out the retained follow-ups
+- do NOT recommend archiving or deleting the plan unless the user explicitly asks to close out the retained follow-ups — the consolidation offer below is the sanctioned close-out route
 - tell the user the plan remains loadable as a retained follow-up context source
+
+**Consolidation offer (v32 — knowledge consolidation for retained plans).** After the reconciliation pass, OFFER (never auto-run) consolidating the plan's retained items out of the completed plan so the plan+sidecar pair can archive. Every move below is interactive-confirmation-only — the offer, the migration target, and the archive move are each confirmed explicitly; a headless/loop invocation never consolidates, it only surfaces the candidate.
+
+- **Migration home.** Read the plan's `Plan Lineage` for a parent/master plan. The parent is LIVE when its file exists outside `.cursor/plans/completed/` and its `Lifecycle State` is not `Completed — Archivable`. A live parent's `Deferred — Actionable Later` section is the migration home (the kount `686ea5e2` precedent). ONLY when no live parent exists, the home is the committed central register `.cursor/plans/retained-register.md` — create it on first use with a two-line header naming its purpose (orphaned retained follow-ups awaiting a future plan) and the dedupe rule.
+- **Group shape.** Items migrate as ONE dated group: each item is annotated `(migrated YYYY-MM-DD from plan-[feature].md)` on its title line — the source-plan identity plus the item's title form the DEDUPE KEY — and carries its body verbatim below it: `Risk if deferred:` and `Revisit by:` fields pass through unchanged (the v22 pass-through rule above), reconciliation notes included. In the register, the group rides under a `### YYYY-MM-DD — from plan-[feature].md` heading with the items verbatim beneath it. Never rewrite, split, or re-scope an item during migration — consolidation moves knowledge, it does not edit it.
+- **Write order (pinned; every step checks state first, so any interruption recovers by re-running the same order):**
+  1. **Pair precheck over RESOLVED locations** — first resolve each pair member's CURRENT location (active-side or `.cursor/plans/completed/` — an interrupted earlier run may have moved one member; probe BOTH directories, so a fully- or half-moved pair is still discovered). A SPLIT pair (members in different directories) is not an error here — it is the recorded interrupted state step 4 completes. Then run Step 6.7's pre-check over the resolved pair (fail closed on any pair-integrity failure; a plan without a sidecar passes trivially). Nothing is written on a precheck failure.
+  2. **Materialize the target group** — READ the migration home and compute, by dedupe key, which retained items are already present. Append ONLY the missing items (as the dated group, or extending the same-source group created by an interrupted earlier run). A re-run appends nothing — the write is byte-stable.
+  3. **Update pointers** — rewrite the plan-tracking pointer surfaces (`AGENTS.md` Documentation Status / plans-pointer lines) to reflect the consolidation; rewrite only when the content actually differs (no-op on a repeat run).
+  4. **Move the plan+sidecar together, sidecar first** — one lifecycle unit into `.cursor/plans/completed/` (the Step 6.7 one-unit rule; `merge-to-main` Step 7 / `/push` Step 8 enforce the same pairing), in the PINNED member order: the sidecar moves FIRST, the plan LAST. Two single-file moves are not atomic, so the order is load-bearing: the plan is the discovery surface, and moving it last means every interruption point leaves either a fully-moved pair or an active-side plan whose next run re-enters this order (a destination-side sidecar naming this plan as companion is step 1's split-pair state, completed here — verify the moved member's companion identity, then move the lagging member). A destination collision with a DIFFERENT same-name file fails closed — never overwrite. If the pair already moved entirely, skip (no-op).
+  5. **Verify destination** — probe the archive location EXPLICITLY (both pair files present, or the plan alone when no sidecar exists — never rely on an active-side scan, which no longer finds a moved plan) and re-read the migration home (every retained item present exactly once by dedupe key). A verification failure is REPORTED with the recovery step — never silently retried with a second append.
+- The dedupe key is per-(source plan, item title): the same plan consolidated twice never duplicates an item, and a same-titled item from a DIFFERENT plan is a distinct entry, never merged. A register group for a source plan that later gains a live parent stays where it is — groups are never re-migrated automatically.
 
 If the plan is `Completed — Archivable`:
 - ask whether to run a plan-to-docs reconciliation pass
@@ -146,6 +159,11 @@ If the plan is `Completed — Archivable`:
   - update `CHANGELOG.md` if needed
   - tell the user what was migrated and where
   - tell the user whether the plan can now be archived or deleted (a plan with a `findings-[feature].md` sidecar archives or deletes as ONE unit with it — see Step 6.7)
+
+If the plan is `Paused` (v32):
+- never archivable, never consolidation-eligible, never deleted — the Consolidation offer above does not apply to it
+- reconciliation may ANNOTATE (the same dated inline notes as the retained-item reconciliation) but never flips the state or edits the `Paused since:`/`Paused reason:` fields
+- surface it with those fields so the session record reflects the suspension; resuming is `/load-plan`'s explicit `Paused → Active` transition
 
 If the plan is near-complete but still active:
 - sync progress, findings, constraints, and handoff state normally
