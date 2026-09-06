@@ -64,6 +64,7 @@ Local recording and transcription (`PLAN.md` Phase 2): the desktop app records t
   - Recommended next action (Phase 3 plan): replace fixed k=2 with estimated k — e.g. k-means over k∈{1..4} selected by silhouette score, or agglomerative clustering with a distance threshold — plus the already-recorded in-family upgrade to ungated ONNX speaker embeddings (ECAPA/WeSpeaker class, servable through the existing onnxruntime stack, SHA-pinned in `scripts/setup-models.py` like silero) if spectral features prove too weak to separate 3+ voices. Keep the local-only, no-torch, no-gated-model posture. Extend `SPEAKER_*` labelling and the transcript-view rendering accordingly
   - Risk if deferred: ux-degradation: with 3+ people present, a third voice is silently merged into another speaker's label — the clinician must correct attribution when reviewing the draft note
   - Revisit by: Phase 3 validation set construction (same trigger as diarization tuning — do them together)
+  - [2026-09-05 reconciliation] Needs re-evaluation — `plan-practitioner-profile.md` (voice enrolment) classifies practitioner-vs-other before clustering, removing the merged-practitioner failure; estimated k for the remaining voices stays deferred (D-S1 in the Phase 3A plan) pending the shared recording set.
 
 ### Excluded — Revisit Only If Needed
 - GPU-specific acceleration work (CUDA/DirectML tuning)
