@@ -23,11 +23,10 @@ Covered:
   default run includes the entry, a wrong-digest candidate is refused
   against the real pin and left un-promoted, ``--candidate-url`` is refused
   through the CLI, and a pinned download of wrong bytes writes nothing.
-- the smoke's front-end on synthetic PCM (shape, dtype, determinism, CMN,
-  short / odd input refused, both windows, a tone landing in the right
-  mel filter) and its cosine matrix; the load contract (offline asserted,
-  missing and UNC paths refused BEFORE onnxruntime is imported); the whole
-  ``main`` path through a fake session (text-free output).
+- the smoke: since Task 1.1 its front-end, loader and embed step are
+  ``scribe_desktop.speaker_embedding``'s (pinned by identity here; their
+  behaviour is tested in ``test_speaker_embedding.py``); its cosine matrix
+  and text-free rendering; the whole ``main`` path through a fake session.
 """
 
 from __future__ import annotations
@@ -35,15 +34,12 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import io
-import sys
 import wave
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import Any
 
 import pytest
-
-from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -576,66 +572,29 @@ def _noise_pcm(np: Any, samples: int, seed: int = 7) -> bytes:
 
 
 class TestSmokeFrontEnd:
-    def test_shape_follows_kaldi_snip_edges_framing(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        for samples in (400, 559, 560, 16_000, 16_000 + 159):
-            feats = smoke.fbank(_noise_pcm(np, samples))
-            assert feats.shape == (1 + (samples - 400) // 160, smoke.MEL_BINS)
-            assert feats.dtype == np.float32
-            assert np.isfinite(feats).all()
+    """Task 1.1 ("one front-end, one load contract"): the smoke's front-end,
+    loader and embed step ARE the runtime module's objects, so the D-P1
+    evidence and the shipped code are one piece of code. Their behaviour is
+    tested once, in ``test_speaker_embedding.py``; here only the identity
+    and the smoke's own matrix rendering are pinned."""
 
-    def test_deterministic_for_identical_input(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        pcm = _noise_pcm(np, 16_000)
-        first = smoke.fbank(pcm)
-        second = smoke.fbank(bytes(pcm))
-        assert np.array_equal(first, second)
+    def test_front_end_and_load_contract_are_the_modules(self, smoke: ModuleType) -> None:
+        from scribe_desktop import speaker_embedding
 
-    def test_mean_normalised_by_default(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        pcm = _noise_pcm(np, 32_000)
-        normalised = smoke.fbank(pcm)
-        assert np.allclose(normalised.mean(axis=0), 0.0, atol=1e-3)
-        raw = smoke.fbank(pcm, mean_normalise=False)
-        assert not np.allclose(raw.mean(axis=0), 0.0, atol=1e-3)
-        assert np.allclose(raw - raw.mean(axis=0, keepdims=True), normalised, atol=1e-4)
+        assert smoke.fbank is speaker_embedding.fbank
+        assert smoke.load_session is speaker_embedding.load_onnx_session
+        assert smoke.embed is speaker_embedding.embed_features
+        assert smoke.SpeakerModelError is speaker_embedding.SpeakerModelError
+        assert smoke.DEFAULT_WINDOW == speaker_embedding.DEFAULT_WINDOW == "povey"
+        assert "hamming" in smoke.WINDOWS  # the Task 0.4 matrix stays reproducible
 
-    def test_short_and_odd_inputs_are_refused(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        with pytest.raises(ValueError, match="at least 400 samples"):
-            smoke.fbank(_noise_pcm(np, 399))
-        with pytest.raises(ValueError, match="even"):
-            smoke.fbank(_noise_pcm(np, 400) + b"\0")
-        with pytest.raises(ValueError, match="window"):
-            smoke.fbank(_noise_pcm(np, 400), window="rectangular")
-
-    def test_windows_are_kaldi_shaped_and_distinct(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        hamming = smoke.analysis_window("hamming")
-        povey = smoke.analysis_window("povey")
-        assert hamming.shape == povey.shape == (400,)
-        assert np.isclose(hamming[0], 0.08) and np.isclose(hamming[-1], 0.08)
-        assert np.isclose(povey[0], 0.0) and np.isclose(povey[199], 1.0, atol=1e-4)
-        pcm = _noise_pcm(np, 16_000)
-        assert not np.array_equal(smoke.fbank(pcm), smoke.fbank(pcm, window="povey"))
-
-    def test_filterbank_geometry(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        fb = smoke.mel_filterbank()
-        assert fb.shape == (smoke.MEL_BINS, smoke.FFT_SIZE // 2)
-        assert (fb >= 0).all() and (fb <= 1).all()
-        assert (fb.sum(axis=1) > 0).all(), "every filter covers at least one FFT bin"
-        centers = smoke.filter_center_frequencies_hz()
-        assert centers.shape == (smoke.MEL_BINS,)
-        assert np.all(np.diff(centers) > 0)
-        assert centers[0] > smoke.LOW_FREQ_HZ and centers[-1] < 8000.0
-
-    def test_pure_tone_peaks_in_the_matching_filter(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        raw = smoke.fbank(_tone_pcm(np, 1.0, hz=1000.0), mean_normalise=False)
-        peak = int(np.argmax(raw.mean(axis=0)))
-        centers = smoke.filter_center_frequencies_hz()
-        assert abs(float(centers[peak]) - 1000.0) < 120.0, centers[peak]
+    def test_help_defaults_to_the_shipped_window(
+        self, smoke: ModuleType, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit):
+            smoke.main(["--help"])
+        out = capsys.readouterr().out
+        assert "povey" in out and "hamming" in out
 
     def test_cosine_matrix(self, smoke: ModuleType) -> None:
         np = pytest.importorskip("numpy")
@@ -700,97 +659,9 @@ class _FakeSession:
 
 
 class TestSmokeModelContract:
-    def test_load_requires_offline_env(
-        self, smoke: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        for key in OFFLINE_ENV:
-            monkeypatch.delenv(key, raising=False)
-        with pytest.raises(OfflineEnvError):
-            smoke.load_session(tmp_path / "model.onnx")
-
-    def test_missing_and_unc_paths_refused_before_onnxruntime_import(
-        self, smoke: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        apply_offline_env()
-        # ``None`` in sys.modules makes ``import onnxruntime`` raise ImportError,
-        # so a check that ran AFTER the import would fail this test loudly.
-        monkeypatch.setitem(sys.modules, "onnxruntime", None)
-        with pytest.raises(smoke.SpeakerModelError, match="setup-models"):
-            smoke.load_session(tmp_path / "nope.onnx")
-        with pytest.raises(smoke.SpeakerModelError, match="UNC"):
-            smoke.load_session(Path(r"\\evil-host\share\model.onnx"))
-
-    def test_present_file_with_onnxruntime_unimportable_is_typed(
-        self, smoke: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        # Round 6 PR-LOW-020: the path checks pass (the file exists), so the
-        # failure now happens at the import - it must still be typed.
-        apply_offline_env()
-        model = tmp_path / "present.onnx"
-        model.write_bytes(b"not really a model")
-        monkeypatch.setitem(sys.modules, "onnxruntime", None)
-        with pytest.raises(smoke.SpeakerModelError, match=r"not importable.*\[ml\]"):
-            smoke.load_session(model)
-
-    def test_session_setup_failure_is_typed_and_names_the_step(
-        self, smoke: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        apply_offline_env()
-        model = tmp_path / "present.onnx"
-        model.write_bytes(b"not really a model")
-
-        def _boom() -> None:
-            raise RuntimeError("options exploded")
-
-        stub = SimpleNamespace(SessionOptions=_boom)
-        monkeypatch.setitem(sys.modules, "onnxruntime", stub)
-        with pytest.raises(smoke.SpeakerModelError, match=r"\(session options\)") as exc:
-            smoke.load_session(model)
-        assert "options exploded" in str(exc.value)
-
-    def test_embed_batches_rank3_and_normalises(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        session = _FakeSession()
-        feats = smoke.fbank(_noise_pcm(np, 16_000))
-        vector = smoke.embed(session, feats)
-        assert session.feeds[0].shape == (1, feats.shape[0], 80)
-        assert session.feeds[0].dtype == np.float32
-        assert vector.shape == (4,) and np.isclose(np.linalg.norm(vector), 1.0)
-
-    def test_embed_feeds_rank2_unbatched(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        session = _FakeSession(rank=2)
-        feats = smoke.fbank(_noise_pcm(np, 16_000))
-        smoke.embed(session, feats)
-        assert session.feeds[0].shape == feats.shape
-
-    @pytest.mark.parametrize("output_shape", [(4,), (1, 4), (1, 256), (7,)])
-    def test_embed_accepts_one_vector_per_utterance(
-        self, smoke: ModuleType, output_shape: tuple[int, ...]
-    ) -> None:
-        np = pytest.importorskip("numpy")
-        feats = smoke.fbank(_noise_pcm(np, 16_000))
-        vector = smoke.embed(_FakeSession(output_shape=output_shape), feats)
-        assert vector.shape == (output_shape[-1],)
-        assert np.isclose(np.linalg.norm(vector), 1.0)
-
-    @pytest.mark.parametrize(
-        ("output_shape", "reason"),
-        [
-            ((1, 3, 4), "framewise"),
-            ((2, 4), "multi-vector"),
-            ((1, 1, 4), "rank 3 even with a singleton batch"),
-            ((1,), "scalar"),
-            ((1, 1), "one element"),
-        ],
-    )
-    def test_embed_refuses_outputs_that_are_not_one_vector(
-        self, smoke: ModuleType, output_shape: tuple[int, ...], reason: str
-    ) -> None:
-        np = pytest.importorskip("numpy")
-        feats = smoke.fbank(_noise_pcm(np, 16_000))
-        with pytest.raises(smoke.SpeakerModelError, match="embs"):
-            smoke.embed(_FakeSession(output_shape=output_shape), feats)
+    """The smoke's ``main`` path through a fake session. The load contract
+    and the embed step themselves are the module's and are tested in
+    ``test_speaker_embedding.py`` (Task 1.1)."""
 
     def test_cosine_matrix_refuses_mixed_or_non_1d_vectors(self, smoke: ModuleType) -> None:
         np = pytest.importorskip("numpy")
@@ -821,12 +692,6 @@ class TestSmokeModelContract:
         with pytest.raises(SystemExit, match="framewise or multi-vector"):
             smoke.main(["--model", str(tmp_path / "m.onnx"), str(path)])
         assert "Cosine similarity" not in capsys.readouterr().out
-
-    def test_embed_refuses_a_feature_dim_mismatch(self, smoke: ModuleType) -> None:
-        np = pytest.importorskip("numpy")
-        feats = smoke.fbank(_noise_pcm(np, 16_000))
-        with pytest.raises(smoke.SpeakerModelError, match="expects 40 features"):
-            smoke.embed(_FakeSession(feature_dim=40), feats)
 
     def test_help_and_missing_model_argument(
         self, smoke: ModuleType, capsys: pytest.CaptureFixture[str]

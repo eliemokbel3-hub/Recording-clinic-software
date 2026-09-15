@@ -313,6 +313,92 @@ under the shipped single-GUI-thread, queued-signal usage, and full
 arbitrary-thread custody safety is a documented bounded residue for a future
 dedicated hardening.
 
+## Practitioner profile — Phase 1 foundation (DRAFT; finalised at that plan's Task 3.3)
+
+The practitioner-profile plan adds one stored artefact that is about the
+PRACTITIONER, not a patient: an encrypted voice profile used to tell "the
+practitioner" from "someone else" in a consultation. Phase 1 lands the
+embedder, the custody store and the in-memory enrolment capture; the
+attribution path (D3/D4), the Practitioner tab and the first-run flow arrive in
+Phases 2–3, and this section is completed then (the D4 auto-confirm
+responsibility boundary is recorded there, not here). Everything below is
+calibrated to boundary 2: the defended adversary is outside the user's Windows
+session.
+
+1. **The practitioner's own biometric derivative at rest
+   (`%LOCALAPPDATA%\ClinikoScribe\profile\voice.enc`).** The profile holds a
+   numeric speaker-embedding vector — a derivative of the practitioner's
+   voice that, with the same model, can recognise that voice again — plus the
+   embedder identity, timestamps, speech seconds, the device name and the
+   consent record; never audio. What the structure enforces: the blob is
+   AES-256-GCM under a key that exists on disk only DPAPI-wrapped
+   (current-user scope) with a profile-specific description that
+   `session_store.unwrap_key_from_file` VERIFIES, so a session key blob cannot
+   be presented as the profile key nor the reverse; the AAD names the
+   artefact and version, so a blob of another purpose or version fails
+   authentication; the key is written before the blob, and an EXISTING
+   REUSABLE key (present, not zero-length/truncated, and unwrappable) is kept
+   — re-enrolment under it replaces only `voice.enc` by a single
+   `os.replace`, so a failed re-enrolment leaves the previous profile usable
+   and a fresh key is never written beside a blob that reusable key could
+   still open; deletion unlinks the key FIRST, then the blob. Permitted
+   states the ordering allows, none of which loses a readable profile: a key
+   with no blob (a first enrolment that failed after the key write) reads as
+   absent; a present but DEAD key blob is already the cryptographic death of
+   the old blob (the session store's deadness rule), so a save writes a fresh
+   key and then the blob — a failure of that blob write leaves the new key
+   beside the old, already-unreadable blob; an interrupted deletion (key
+   gone, blob unlink failed) leaves a keyless blob, typed and named.
+   Every unusable state (missing/dead/foreign key, unreadable, tampered or
+   truncated blob, wrong AAD, malformed content, a different embedder) is a
+   typed, structural error that carries no field of the profile. Residuals:
+   any process in the user's session can unwrap the key (boundary 2); NTFS
+   unlink is not anti-forensic (§2 above, same acceptance); the vector is
+   sensitive as a biometric derivative even though it is not a secret against
+   a same-user attacker — the compensating control is the practitioner's
+   consent (v1, ratified) and the visible Delete, both on the Practitioner tab
+   in Phase 3.
+2. **No enrolment audio is ever persisted.** `enrolment.record_enrolment`
+   captures into process memory over the microphone screen's monitor-stream
+   shape — no session, no chunk store, no file — returns the PCM to its
+   caller, and clears its own buffers and the VAD's recurrent state on every
+   exit; `enrol` embeds and holds no reference afterwards. Pinned by tests
+   with a mock backend and a temporary `LOCALAPPDATA` under which nothing
+   exists after either outcome. Residual: the returned PCM is the caller's
+   to drop (the Practitioner tab does so after `save_profile`, Phase 3), and
+   plaintext scrubbing is best-effort as for session audio (data-at-rest
+   residuals above).
+3. **The profile never reaches a log.** No module in the profile path logs;
+   the profile and consent models' field names (`embedding`,
+   `enrolment_speech_seconds`, `consent_text_version`) are registered log
+   tripwire signatures, so a stray repr, `model_dump` or JSON of either model
+   is dropped by the last-line filter in quoted and unquoted forms. The
+   tripwire's documented limit is unchanged: bare numbers with no field name
+   attached would not be recognised — the primary control is that nothing
+   logs them.
+4. **The speaker model is pinned, not trusted by shape.** The runtime
+   embedder digests the model FILE'S bytes at construction and refuses any
+   file whose SHA-256 is not the pin recorded from the practitioner's own
+   fetch (the same constant the setup script downloads and promotes by —
+   single-sourced), BEFORE `onnxruntime` is imported; the offline
+   kill-switches are asserted before that import, UNC paths and a missing
+   file are refused before it, telemetry is off, and the I/O signature is
+   probed with one smoke inference at load so an incompatible export fails
+   there rather than on a consultation segment. Residual: a same-user
+   attacker who can replace the model file can also replace the pin (boundary
+   2, code hijack).
+5. **Enrolment holds the microphone exclusively.** `SessionController.
+   begin_enrolment` is refused while a session records, pauses or processes,
+   while a discard is in flight, or while a registered activity runs — the
+   hook (`set_enrolment_blocker`) exists in Phase 1; the app registers the
+   microphone screen's benchmark worker through it at that plan's Task
+   3.1/3.2, so until then no activity is registered and that refusal is not
+   yet live; while it is held, Start/Resume refuse, the benchmark refuses
+   (this direction IS live), and the microphone screen's poll tick keeps the
+   idle monitor closed. This is a device-ownership and correctness guard (no two
+   readers of one microphone, no enrolment audio mixed into a session), not
+   a trust boundary.
+
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —

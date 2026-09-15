@@ -198,9 +198,14 @@ in-process and adds no network surface and no new logging channel.
   transcript-model markers (`transcript_segments`/`transcript_words`/
   `word_text`) and `encounter_context`, and the Phase-3A note-model markers
   (`note_sections`/`note_assertions`/`note_spans`/`span_text`/`note_excerpt`/
-  `note_warnings`/`note_warning_code`/`note_confirmation`), so a stray repr or
-  `model_dump` of a note model is dropped by the last-line filter. The note
-  pipeline itself opens no logging channel.
+  `note_warnings`/`note_warning_code`/`note_confirmation`), and — since the
+  practitioner-profile plan's Phase 1 — the voice-profile markers
+  (`embedding`/`enrolment_speech_seconds`/`consent_text_version`), so a stray
+  repr or `model_dump` of a note model or of the practitioner's profile is
+  dropped by the last-line filter. Neither the note pipeline nor the profile
+  path opens a logging channel. (The profile store and the enrolment flow are
+  mapped at that plan's Task 3.3; the draft custody surface is in the threat
+  model.)
 - No data in Chrome extension storage (plan: credentials/models/audio never
   enter extension storage); no Chrome-side recording surface at all until
   Phase 5.

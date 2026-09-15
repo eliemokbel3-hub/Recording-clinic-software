@@ -78,29 +78,6 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
     ),
 }
 
-# Speaker-embedding model (practitioner-profile plan, Phase 0 Tasks 0.3-0.5):
-# the WeSpeaker VoxCeleb ResNet34-LM ONNX export (80-bin Kaldi fbank in,
-# 256-dim embedding out). Trust-on-first-download pin, computed
-# 2026-09-15 from the practitioner's Task 0.4 fetch of the URL below (26530309
-# bytes) and confirmed by the D-P1 smoke (same-speaker cosine 0.85-0.89,
-# different-speaker -0.01-0.01). The Hugging Face `resolve/main` URL is not an
-# immutable ref - the SHA-256 is what pins the bytes, exactly as for silero.
-# An EMPTY SHA-256 pin would put the entry back into candidate mode (see the
-# module docstring); a filled pin means verify-and-promote.
-SPEAKER_EMBEDDING_NAME = "wespeaker-voxceleb-resnet34-LM"
-SPEAKER_EMBEDDING_URL = (
-    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/"
-    "resolve/main/voxceleb_resnet34_LM.onnx"
-)
-SPEAKER_EMBEDDING_SIZE_BYTES = 26_530_309  # 25.3 MiB, recorded at Task 0.4
-SPEAKER_EMBEDDING_EXPECTED_SIZE = (
-    f"{SPEAKER_EMBEDDING_SIZE_BYTES} bytes (25.3 MiB), recorded 2026-09-15"
-)
-SPEAKER_EMBEDDING_SHA256 = "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
-# Anything smaller than this is an error page or a stub, not a speaker model:
-# refuse it instead of reporting a digest the practitioner would then pin.
-SPEAKER_EMBEDDING_MIN_BYTES = 1024 * 1024
-
 # Snapshot completeness is defined ONCE, in scribe_desktop.benchmark (smoke
 # round 21): model.bin + config.json + (tokenizer.json OR vocabulary.txt OR
 # vocabulary.json) — both CT2 export layouts are valid. The skip guard, the
@@ -111,6 +88,42 @@ from scribe_desktop.benchmark import (  # noqa: E402
     whisper_snapshot_complete,
     whisper_snapshot_missing,
 )
+
+# The speaker-embedding pin is defined ONCE, in scribe_desktop.speaker_embedding
+# (practitioner-profile plan Task 1.1): the runtime embedder verifies the
+# model file against the SAME name, subdirectory, size and SHA-256 this script
+# downloads and promotes by, so the two cannot drift.
+from scribe_desktop.speaker_embedding import (  # noqa: E402
+    SPEAKER_MODEL_NAME,
+    SPEAKER_MODEL_SHA256,
+    SPEAKER_MODEL_SIZE_BYTES,
+    SPEAKER_MODEL_SUBDIR,
+    sha256_of_file,
+)
+
+# Speaker-embedding model (practitioner-profile plan, Phase 0 Tasks 0.3-0.5):
+# the WeSpeaker VoxCeleb ResNet34-LM ONNX export (80-bin Kaldi fbank in,
+# 256-dim embedding out). Trust-on-first-download pin, computed
+# 2026-09-15 from the practitioner's Task 0.4 fetch of the URL below (26530309
+# bytes) and confirmed by the D-P1 smoke (same-speaker cosine 0.85-0.89,
+# different-speaker -0.01-0.01). The Hugging Face `resolve/main` URL is not an
+# immutable ref - the SHA-256 is what pins the bytes, exactly as for silero.
+# An EMPTY SHA-256 pin would put the entry back into candidate mode (see the
+# module docstring); a filled pin means verify-and-promote. The URL is the
+# only setup-time-only constant; the rest mirror the runtime module's.
+SPEAKER_EMBEDDING_NAME = SPEAKER_MODEL_NAME
+SPEAKER_EMBEDDING_URL = (
+    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/"
+    "resolve/main/voxceleb_resnet34_LM.onnx"
+)
+SPEAKER_EMBEDDING_SIZE_BYTES = SPEAKER_MODEL_SIZE_BYTES  # 25.3 MiB, recorded at Task 0.4
+SPEAKER_EMBEDDING_EXPECTED_SIZE = (
+    f"{SPEAKER_EMBEDDING_SIZE_BYTES} bytes (25.3 MiB), recorded 2026-09-15"
+)
+SPEAKER_EMBEDDING_SHA256 = SPEAKER_MODEL_SHA256
+# Anything smaller than this is an error page or a stub, not a speaker model:
+# refuse it instead of reporting a digest the practitioner would then pin.
+SPEAKER_EMBEDDING_MIN_BYTES = 1024 * 1024
 
 
 def models_root() -> Path:
@@ -185,8 +198,10 @@ def fetch_whisper(root: Path, name: str, repo_id: str, revision: str) -> None:
 
 
 def speaker_embedding_paths(root: Path) -> tuple[Path, Path]:
-    """``(promoted, candidate)`` paths: ``<name>.onnx`` and ``<name>.onnx.candidate``."""
-    target = root / "speaker-embedding" / f"{SPEAKER_EMBEDDING_NAME}.onnx"
+    """``(promoted, candidate)`` paths: ``<name>.onnx`` and ``<name>.onnx.candidate``
+    under the runtime's subdirectory (``speaker_embedding.default_speaker_model_path``
+    resolves the same promoted path from the same constants)."""
+    target = root / SPEAKER_MODEL_SUBDIR / f"{SPEAKER_EMBEDDING_NAME}.onnx"
     return target, target.with_name(f"{SPEAKER_EMBEDDING_NAME}.onnx.candidate")
 
 
@@ -195,7 +210,7 @@ def speaker_embedding_pinned() -> bool:
 
 
 def _sha256_of(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_of_file(path)
 
 
 class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):

@@ -98,6 +98,11 @@ class SessionControllerLike(Protocol):
 
     def active_session_ids(self) -> frozenset[str]: ...
 
+    # Practitioner-profile plan D15: True while the voice-enrolment activity
+    # is held — the microphone screen keeps its idle monitor closed meanwhile.
+    @property
+    def enrolling(self) -> bool: ...
+
     # Task 6.3: the note-generation lease plus the lease-aware custody
     # coordinator the recovered path routes through (never raw
     # complete_session/discard_session/crypto.destroy calls from the UI).

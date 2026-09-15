@@ -539,23 +539,39 @@ def _require_windows() -> None:
         raise RuntimeError("DPAPI key custody is Windows-only")
 
 
-def wrap_key_to_file(crypto: SessionCrypto, session_dir: Path) -> Path:
-    """DPAPI-wrap the session key and write `key.dpapi` ATOMICALLY
-    (temp + fsync + os.replace) — called BEFORE the first chunk."""
+# The DPAPI blob description names WHAT a key.dpapi wraps. It is stored
+# inside the blob by CryptProtectData and read back by CryptUnprotectData, so
+# the unwrap verifies it: a blob wrapped for one purpose cannot be presented
+# as a key for another (practitioner-profile plan D5 — the profile key carries
+# its own description and the two custody stores can never read each other's
+# key). Session callers keep the default and are unchanged.
+SESSION_KEY_DESCRIPTION: Final = "ClinikoScribe session key"
+
+
+def wrap_key_to_file(
+    crypto: SessionCrypto, session_dir: Path, *, description: str = SESSION_KEY_DESCRIPTION
+) -> Path:
+    """DPAPI-wrap the key and write `key.dpapi` ATOMICALLY (temp + fsync +
+    os.replace) — for a session, called BEFORE the first chunk. The blob
+    carries ``description`` and ``unwrap_key_from_file`` verifies it."""
     _require_windows()
     import win32crypt
 
     blob: bytes = win32crypt.CryptProtectData(
-        crypto.export_key(), "ClinikoScribe session key", None, None, None, 0
+        crypto.export_key(), description, None, None, None, 0
     )
     key_path = session_dir / KEY_FILENAME
     atomic_write_bytes(key_path, blob, error_label="key custody blob")
     return key_path
 
 
-def unwrap_key_from_file(session_dir: Path) -> SessionCrypto:
-    """Read + DPAPI-unwrap `key.dpapi`. Missing/zero-length/truncated blobs
-    raise KeyCustodyError — the session is cryptographically unrecoverable."""
+def unwrap_key_from_file(
+    session_dir: Path, *, description: str = SESSION_KEY_DESCRIPTION
+) -> SessionCrypto:
+    """Read + DPAPI-unwrap `key.dpapi`. Missing/zero-length/truncated blobs,
+    a failed unwrap, and a blob whose stored description is not
+    ``description`` raise KeyCustodyError — the data under that key is
+    cryptographically unrecoverable through THIS custody store."""
     _require_windows()
     import win32crypt
 
@@ -567,9 +583,11 @@ def unwrap_key_from_file(session_dir: Path) -> SessionCrypto:
     if key_blob_is_dead(len(blob)):
         raise KeyCustodyError("key custody blob is zero-length or truncated")
     try:
-        _description, key = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
+        stored_description, key = win32crypt.CryptUnprotectData(blob, None, None, None, 0)
     except Exception as exc:  # pywin32 raises pywintypes.error (not OSError-rooted)
         raise KeyCustodyError("key custody blob failed DPAPI unwrap") from exc
+    if stored_description != description:
+        raise KeyCustodyError("key custody blob was wrapped for a different store")
     try:
         return SessionCrypto.from_key(key)
     except ValueError as exc:

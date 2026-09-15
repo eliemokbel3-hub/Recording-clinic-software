@@ -231,6 +231,17 @@ class GenerationLease:
     __slots__ = ()
 
 
+class EnrolmentLease:
+    """Opaque token for ONE in-flight voice-enrolment activity
+    (practitioner-profile plan D15): acquired by ``begin_enrolment`` before
+    the capture starts and released by ``end_enrolment`` only after the
+    embedding, ``save_profile`` and the caller's own result handler have run
+    (success or failure), so the microphone stays the enrolment's for the
+    whole sequence. Compared by IDENTITY; carries no state."""
+
+    __slots__ = ()
+
+
 @dataclass
 class _LiveSession:
     """Controller-private mutable record of the one tracked session."""
@@ -309,6 +320,15 @@ class SessionController:
         # overlapping discards are legal, and one finishing must not
         # strip another target's protection.
         self._custody_reservations: dict[str, int] = {}
+        # Practitioner-profile plan D15: the ONE in-flight voice-enrolment
+        # activity. NOT state-agnostic (unlike the generation lease): it is
+        # refused while a session is active and it makes start()/resume()
+        # refuse — the enrolment capture owns the microphone. The optional
+        # blocker lets the app register an activity the controller cannot
+        # see (the microphone screen's benchmark worker): a non-None string
+        # is the reason begin_enrolment() refuses.
+        self._enrolment: EnrolmentLease | None = None
+        self._enrolment_blocker: Callable[[], str | None] | None = None
 
     # --- observers ---------------------------------------------------------
 
@@ -353,6 +373,7 @@ class SessionController:
             # in-memory handle (directory, crypto) a generation worker
             # depends on — so it is refused outright while the lease is held.
             self._refuse_while_generating("start")
+            self._refuse_while_enrolling("start")
             live = self._live
             if live is not None and live.session.state in ACTIVE_STATES:
                 raise SessionActivityError(
@@ -417,6 +438,7 @@ class SessionController:
 
     def resume(self) -> RecordingSession:
         with self._lock:
+            self._refuse_while_enrolling("resume")
             live = self._require_state(SessionState.PAUSED)
             if live.worker is not None:
                 live.worker.resume()
@@ -787,6 +809,72 @@ class SessionController:
     def generating(self) -> bool:
         with self._lock:
             return self._generation is not None
+
+    # --- voice enrolment activity (practitioner-profile plan D15) ----------
+
+    def set_enrolment_blocker(self, blocker: Callable[[], str | None] | None) -> None:
+        """Register (or clear) the app-level activity check consulted by
+        ``begin_enrolment``: return a short reason while an activity the
+        controller cannot see — the microphone screen's benchmark worker —
+        is running, else ``None``. Evaluated under the controller lock."""
+        with self._lock:
+            self._enrolment_blocker = blocker
+
+    def begin_enrolment(self) -> EnrolmentLease:
+        """Acquire THE enrolment activity — call BEFORE the capture starts.
+
+        STATE-AWARE, unlike the generation lease: refused with
+        ``SessionActivityError`` while a session is recording, paused or
+        processing (transcription runs in ``processing``), while a discard
+        holds a custody reservation (its worker join releases the device
+        outside the lock — the enrolment capture must not open it
+        underneath), while the registered blocker reports an activity, and
+        while another enrolment is held. Once held, ``start()`` and
+        ``resume()`` refuse until ``end_enrolment``."""
+        with self._lock:
+            if self._enrolment is not None:
+                raise SessionActivityError("a voice enrolment is already in progress")
+            live = self._live
+            if live is not None and live.session.state in ACTIVE_STATES:
+                raise SessionActivityError(
+                    f"voice enrolment refused: a session is {live.session.state}"
+                )
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "voice enrolment refused: a discard is in flight; retry after it finishes"
+                )
+            if self._enrolment_blocker is not None:
+                reason = self._enrolment_blocker()
+                if reason is not None:
+                    raise SessionActivityError(f"voice enrolment refused: {reason}")
+            lease = EnrolmentLease()
+            self._enrolment = lease
+            return lease
+
+    def end_enrolment(self, lease: EnrolmentLease) -> None:
+        """Release the activity — after the capture, the embedding, the save
+        and the caller's result handler, on every path. Idempotent for the
+        released token; a token that is NOT the held one raises."""
+        with self._lock:
+            if self._enrolment is None:
+                return
+            if self._enrolment is not lease:
+                raise SessionControllerError(
+                    "end_enrolment called with a lease that is not held"
+                )
+            self._enrolment = None
+
+    @property
+    def enrolling(self) -> bool:
+        with self._lock:
+            return self._enrolment is not None
+
+    def _refuse_while_enrolling(self, operation: str) -> None:
+        """Call under ``self._lock``."""
+        if self._enrolment is not None:
+            raise SessionActivityError(
+                f"{operation} refused: a voice enrolment is in progress"
+            )
 
     def reserved_session_ids(self) -> frozenset[str]:
         """Session ids an in-flight Discard has reserved (round 30) — the

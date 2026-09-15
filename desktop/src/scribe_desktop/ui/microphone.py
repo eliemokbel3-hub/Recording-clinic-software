@@ -180,6 +180,16 @@ class MicrophoneScreen(QWidget):
     # --- level meter ----------------------------------------------------------
 
     def _poll_level(self) -> None:
+        if self._controller.enrolling:
+            # Practitioner-profile plan D15: the enrolment capture owns the
+            # microphone. The idle monitor is closed and this poll does NOT
+            # reopen it (a one-time stop would be undone by the next tick)
+            # until the activity is released; the Practitioner tab shows its
+            # own live level meanwhile.
+            self.stop_monitor()
+            self.level_bar.setValue(0)
+            self._set_level_status(None)
+            return
         if self._controller.state in _MONITOR_STATES:
             self._poll_monitor_level()
         else:
@@ -283,6 +293,15 @@ class MicrophoneScreen(QWidget):
             self.benchmark_output.setPlainText(
                 "Benchmark unavailable while a session is active - finish "
                 "the session first (it would starve live capture)."
+            )
+            return
+        if self._controller.enrolling:
+            # D15, the other direction of the enrolment/benchmark exclusion
+            # (begin_enrolment refuses while the benchmark runs, through the
+            # registered blocker).
+            self.benchmark_output.setPlainText(
+                "Benchmark unavailable while a voice enrolment is in progress - "
+                "finish the enrolment first."
             )
             return
         self.benchmark_button.setEnabled(False)

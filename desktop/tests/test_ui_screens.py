@@ -151,6 +151,9 @@ class FakeController:
         # the action (write_note) to actually run.
         self.generation_dir = Path("unused")
         self.generation_crypto: SessionCrypto | None = None
+        # Practitioner-profile plan D15: True while a voice enrolment holds
+        # the microphone (the real controller's `enrolling` property).
+        self.enrolling = False
 
     @property
     def state(self) -> SessionState:
@@ -362,6 +365,46 @@ class TestMicrophoneScreen:
         backend.feed(b"\x00\x40" * 1600)
         screen._poll_level()
         assert not screen.level_status_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_poll_tick_during_enrolment_keeps_the_monitor_closed(self, qapp: Any) -> None:
+        """Practitioner-profile plan D15: a one-time monitor stop would be
+        undone by the next poll tick, so the tick itself must not reopen the
+        stream while the enrolment activity is held — and must resume once
+        it is released."""
+        from scribe_desktop.audio_capture import MockCaptureBackend
+        from scribe_desktop.ui.microphone import MicrophoneScreen
+
+        controller = FakeController()
+        backend = MockCaptureBackend(
+            [AudioDevice(device_id=3, name="Mock Mic", is_default=True)]
+        )
+        screen = MicrophoneScreen(controller, backend, benchmark_runner=list)
+        screen._poll_level()
+        assert backend.stream_open
+        controller.enrolling = True
+        screen._poll_level()  # the tick closes the monitor
+        assert not backend.stream_open
+        assert screen.level_bar.value() == 0
+        screen._poll_level()  # and does NOT reopen it while enrolling
+        assert not backend.stream_open
+        assert not screen.level_status_label.isVisibleTo(screen)  # not an error state
+        controller.enrolling = False
+        screen._poll_level()
+        assert backend.stream_open and backend.opened_device_id == 3
+        screen.stop_monitor()
+        screen.deleteLater()
+
+    def test_benchmark_refused_while_enrolling(self, qapp: Any) -> None:
+        from scribe_desktop.ui.microphone import MicrophoneScreen
+
+        controller = FakeController()
+        controller.enrolling = True
+        screen = MicrophoneScreen(controller, FakeBackend(), benchmark_runner=list)
+        screen.on_run_benchmark()
+        assert "enrolment" in screen.benchmark_output.toPlainText()
+        assert not screen.is_busy
+        assert screen.benchmark_button.isEnabled()
         screen.deleteLater()
 
     def test_monitor_device_loss_surfaces_and_recording_takes_over(

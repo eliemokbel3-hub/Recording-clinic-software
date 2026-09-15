@@ -19,7 +19,9 @@
   `<name>.onnx` or an un-promoted `<name>.onnx.candidate` (what an UNPINNED
   candidate fetch leaves; the entry is pinned since Task 0.5, so
   `setup-models.py --only speaker-embedding` now verifies and promotes) — embeds
-  each 16 kHz mono 16-bit WAV through the numpy Kaldi-style
-  80-bin fbank front-end (D12), and prints the model's I/O shapes, the embedding
-  dimension and the cosine matrix. Text-free: file names, durations and numbers
-  only. Run by the practitioner from a normal terminal (Task 0.4).
+  each 16 kHz mono 16-bit WAV through the SHIPPED front-end (since Task 1.1 the
+  script imports `scribe_desktop.speaker_embedding`'s Kaldi-style 80-bin fbank
+  and load contract — Povey window by default, `--window hamming` reproduces the
+  Task 0.4 matrix), and prints the model's I/O shapes, the embedding dimension
+  and the cosine matrix. Text-free: file names, durations and numbers only. Run
+  by the practitioner from a normal terminal (Task 0.4).

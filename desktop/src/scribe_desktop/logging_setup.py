@@ -139,6 +139,21 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"transcript_utterances"',
     "'transcript_utterances'",
     "transcript_utterances=",
+    # Practitioner-profile plan Phase 1 (D5): the voice-profile markers. A
+    # repr, model_dump or JSON of a ``PractitionerProfile`` carries
+    # ``embedding`` (the biometric vector) and ``enrolment_speech_seconds``;
+    # one of a ``ConsentRecord`` carries ``consent_text_version`` — so every
+    # rendering of either model is dropped, empty or populated. No
+    # ``log_event`` key renders as any of these (pinned by test).
+    '"embedding"',
+    "'embedding'",
+    "embedding=",
+    '"enrolment_speech_seconds"',
+    "'enrolment_speech_seconds'",
+    "enrolment_speech_seconds=",
+    '"consent_text_version"',
+    "'consent_text_version'",
+    "consent_text_version=",
 )
 
 # THE production log format — one string, used to build every handler's
