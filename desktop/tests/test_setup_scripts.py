@@ -11,12 +11,18 @@ is pointed at ``tmp_path``.
 Covered:
 - ``setup-models.py``: ``--help`` and ``--only`` validation (the new
   ``speaker-embedding`` name accepted, unknown names refused, both before
-  the model cache is consulted); candidate mode (no pin: a fetch lands as
-  ``.onnx.candidate`` and prints size + SHA-256, is never promoted, an
-  existing candidate is re-reported without network, an empty URL and a
+  the model cache is consulted); candidate mode (an entry with an EMPTY pin,
+  monkeypatched - the route the shipped entry took at Task 0.4: a fetch
+  lands as ``.onnx.candidate`` and prints size + SHA-256, is never promoted,
+  an existing candidate is re-reported without network, an empty URL and a
   tiny body are refused, the default run skips the entry visibly); pinned
-  mode (a matching candidate is promoted, a wrong digest refuses and leaves
-  the candidate, ``--candidate-url`` refused, a pinned download verifies).
+  mode with a fake pin (a matching candidate is promoted, a wrong digest
+  refuses and leaves the candidate, ``--candidate-url`` refused, a pinned
+  download verifies); and the SHIPPED pin as of Task 0.5 (2026-09-15): the
+  constants are a real https URL, the recorded size and a 64-hex digest, the
+  default run includes the entry, a wrong-digest candidate is refused
+  against the real pin and left un-promoted, ``--candidate-url`` is refused
+  through the CLI, and a pinned download of wrong bytes writes nothing.
 - the smoke's front-end on synthetic PCM (shape, dtype, determinism, CMN,
   short / odd input refused, both windows, a tone landing in the right
   mel filter) and its cosine matrix; the load contract (offline asserted,
@@ -179,14 +185,14 @@ class TestSetupModelsCli:
         assert "[skip] speaker-embedding" in out and "--only speaker-embedding" in out
         assert not (tmp_path / "speaker-embedding").exists()
 
-    def test_default_run_includes_the_entry_once_pinned(
+    def test_default_run_includes_the_entry_under_the_shipped_pin(
         self,
         setup_models: ModuleType,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ) -> None:
+        # No pin monkeypatch: the constants as shipped (Task 0.5) decide.
         calls: list[str] = []
-        monkeypatch.setattr(setup_models, "SPEAKER_EMBEDDING_SHA256", FAKE_SHA)
         monkeypatch.setattr(setup_models, "models_root", lambda: tmp_path)
         monkeypatch.setattr(setup_models, "fetch_silero_vad", lambda root: None)
         monkeypatch.setattr(setup_models, "fetch_whisper", lambda *a: None)
@@ -224,6 +230,63 @@ class TestSetupModelsCli:
         argv = ["--only", "speaker-embedding", "--candidate-url", "https://example.invalid/m"]
         assert setup_models.main(argv) == 0
         assert calls == [f"speaker:https://example.invalid/m:{tmp_path}"]
+
+
+class TestShippedSpeakerEmbeddingPin:
+    """Task 0.5 (2026-09-15): the entry ships PINNED. Nothing here monkeypatches
+    the pin constants - these tests hold against the values in the script."""
+
+    def test_constants_are_a_real_pin(self, setup_models: ModuleType) -> None:
+        assert setup_models.speaker_embedding_pinned()
+        assert setup_models.SPEAKER_EMBEDDING_URL.startswith("https://huggingface.co/")
+        assert setup_models.SPEAKER_EMBEDDING_URL.endswith(".onnx")
+        sha = setup_models.SPEAKER_EMBEDDING_SHA256
+        assert len(sha) == 64 and int(sha, 16) >= 0
+        size = setup_models.SPEAKER_EMBEDDING_SIZE_BYTES
+        assert size == 26_530_309
+        assert size > setup_models.SPEAKER_EMBEDDING_MIN_BYTES
+        assert str(size) in setup_models.SPEAKER_EMBEDDING_EXPECTED_SIZE
+
+    def test_wrong_digest_candidate_is_refused_and_left_unpromoted(
+        self, setup_models: ModuleType, tmp_path: Path
+    ) -> None:
+        # The pin test the task names: a candidate whose bytes do not hash to
+        # the shipped pin is refused, named with both digests, never promoted.
+        target, candidate = setup_models.speaker_embedding_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(FAKE_MODEL)
+        with pytest.raises(SystemExit, match="checksum mismatch") as exc:
+            setup_models.fetch_speaker_embedding(tmp_path)
+        assert setup_models.SPEAKER_EMBEDDING_SHA256 in str(exc.value)
+        assert FAKE_SHA in str(exc.value)
+        assert candidate.read_bytes() == FAKE_MODEL and not target.exists()
+
+    def test_candidate_url_is_refused_through_the_cli(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(setup_models, "models_root", lambda: tmp_path)
+        argv = ["--only", "speaker-embedding", "--candidate-url", "https://example.invalid/m"]
+        with pytest.raises(SystemExit, match="--candidate-url is refused"):
+            setup_models.main(argv)  # the real fetch function; refuses before any opener
+        assert not (tmp_path / "speaker-embedding").exists()
+
+    def test_pinned_download_of_wrong_bytes_writes_nothing(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        seen: list[str] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request, "build_opener", _fake_build_opener(FAKE_MODEL, seen)
+        )
+        with pytest.raises(SystemExit, match="checksum mismatch"):
+            setup_models.fetch_speaker_embedding(tmp_path)
+        assert seen == [setup_models.SPEAKER_EMBEDDING_URL]
+        assert not (tmp_path / "speaker-embedding").exists()
 
 
 class TestSpeakerEmbeddingCandidateMode:

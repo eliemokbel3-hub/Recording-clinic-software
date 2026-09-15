@@ -103,18 +103,32 @@ in-process and adds no network surface and no new logging channel.
    (~2 MiB) plus CTranslate2 whisper snapshots (runtime default
    `whisper\medium`, ~1.43 GiB, with `whisper\small` ~465 MiB as the
    visible fallback; with all four benchmark candidates the cache is
-   ~3.0 GiB). Static program data, no clinical content. Written ONLY by
-   flow 9; runtime processes never write here. The hardware benchmark
-   additionally synthesizes its fixed NON-CLINICAL sample script to a
-   transient plaintext WAV (Windows SAPI) inside an auto-deleted temp
-   directory — no clinical content ever takes that path.
+   ~3.0 GiB) and, for voice enrolment (practitioner-profile plan),
+   `speaker-embedding\wespeaker-voxceleb-resnet34-LM.onnx` (~25 MiB; until
+   that plan's Task 0.6 promotes it, the file exists only as
+   `.onnx.candidate` — promotion is one rename). Static program data, no
+   clinical content. Written ONLY by flow 9; runtime processes never write
+   here. The hardware benchmark additionally synthesizes its fixed
+   NON-CLINICAL sample script to a transient plaintext WAV (Windows SAPI)
+   inside an auto-deleted temp directory — no clinical content ever takes
+   that path.
 
 9. **The ONE sanctioned network flow: `scripts/setup-models.py`
    (setup-time, separate process).** Explicit one-time HTTPS downloads into
    the model cache: silero-vad from its pinned GitHub release tag
-   (SHA-256-verified) and whisper snapshots from Hugging Face pinned to
-   immutable commit SHAs. Idempotent; never invoked by the app; runtime
-   processes stay socketless. It must be run BY THE USER from a normal
+   (SHA-256-verified), whisper snapshots from Hugging Face pinned to
+   immutable commit SHAs, and the speaker-embedding model (WeSpeaker
+   VoxCeleb ResNet34-LM ONNX export, `Wespeaker/wespeaker-voxceleb-resnet34-LM`
+   on Hugging Face) pinned by SHA-256 exactly like silero — a
+   trust-on-first-download digest recorded from the practitioner's own
+   candidate fetch (practitioner-profile plan Tasks 0.4–0.5, 2026-09-15); a
+   digest mismatch refuses the bytes and promotes nothing. The
+   speaker-embedding download — candidate and pinned alike — must be https
+   on every redirect hop: a redirect to http is refused before it is
+   fetched (the guard is installed for that helper only; silero-vad and the
+   whisper snapshots rely on their pre-existing pins, not on a redirect
+   guard). Idempotent; never invoked by the app;
+   runtime processes stay socketless. It must be run BY THE USER from a normal
    terminal — agent/MSIX-virtualized shells write to a package-private
    location invisible to user-launched processes (see `docs/lessons.md`).
 

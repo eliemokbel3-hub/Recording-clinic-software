@@ -1,18 +1,21 @@
 """Speaker-embedding candidate smoke (practitioner-profile plan, Phase 0 Task 0.3).
 
-Answers ONE question before anything is built on a candidate model: does it
-place two recordings of the same voice clearly closer together than a
-recording of someone else? Run it YOURSELF from a normal terminal (agent
-shells cannot see the user's model cache - docs/lessons.md), after
-``scripts/setup-models.py --only speaker-embedding`` has left the candidate
-file in the cache:
+Answers ONE question before anything is built on a speaker-embedding model:
+does it place two recordings of the same voice clearly closer together than
+a recording of someone else? Run it YOURSELF from a normal terminal (agent
+shells cannot see the user's model cache - docs/lessons.md). The shipped
+entry is PINNED (practitioner-profile plan Task 0.5), so
+``scripts/setup-models.py --only speaker-embedding`` leaves the verified,
+promoted model in the cache and the command is:
 
     .venv\\Scripts\\python.exe scripts\\speaker-embedding-smoke.py ^
-        --model "%LOCALAPPDATA%\\ClinikoScribe\\models\\speaker-embedding\\<name>.onnx.candidate" ^
+        --model "%LOCALAPPDATA%\\ClinikoScribe\\models\\speaker-embedding\\wespeaker-voxceleb-resnet34-LM.onnx" ^
         me-day1.wav me-day2.wav other-person.wav
 
-The model path is EXPLICIT so the un-promoted ``.onnx.candidate`` can be
-read; the same command works on the promoted ``<name>.onnx`` later.
+The model path is EXPLICIT so that an UNPINNED candidate - what a
+``--candidate-url`` fetch of a future entry leaves as ``<name>.onnx.candidate``,
+not yet promoted - can be read the same way: pass that ``.candidate`` path
+instead. (Before the pin, Task 0.4 ran exactly that way.)
 
 What it does, in order:
   1. Sets AND asserts the offline kill-switches, then loads the ONNX model
@@ -188,7 +191,8 @@ def load_session(model_path: Path) -> Any:
     if not model_path.is_file():
         raise SpeakerModelError(
             f"speaker model not found at {model_path} - run scripts/setup-models.py "
-            "--only speaker-embedding (the candidate lands as <name>.onnx.candidate)"
+            "--only speaker-embedding (the pinned entry is written or promoted as "
+            "<name>.onnx; an unpinned candidate fetch leaves <name>.onnx.candidate)"
         )
     try:
         import onnxruntime

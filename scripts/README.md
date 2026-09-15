@@ -15,9 +15,11 @@
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is
-  imported, UNC refused, load failures typed) — so it can read the un-promoted
-  `<name>.onnx.candidate` that `setup-models.py --only speaker-embedding` leaves in
-  candidate mode — embeds each 16 kHz mono 16-bit WAV through the numpy Kaldi-style
+  imported, UNC refused, load failures typed) — so it can read the promoted
+  `<name>.onnx` or an un-promoted `<name>.onnx.candidate` (what an UNPINNED
+  candidate fetch leaves; the entry is pinned since Task 0.5, so
+  `setup-models.py --only speaker-embedding` now verifies and promotes) — embeds
+  each 16 kHz mono 16-bit WAV through the numpy Kaldi-style
   80-bin fbank front-end (D12), and prints the model's I/O shapes, the embedding
   dimension and the cosine matrix. Text-free: file names, durations and numbers
   only. Run by the practitioner from a normal terminal (Task 0.4).

@@ -781,3 +781,148 @@ PEER-ROUND-6 RESULT: 4 findings (CRIT 0 / HIGH 1 / MED 1 / LOW 2).
 The broader pass found no additional actionable defect. Candidate reuse visibly instructs deletion before changing candidates (`scripts/setup-models.py:300`); fresh downloads pass the size floor before writing, and pinned candidate/download paths verify before replacement (`:270`, `:288`). The WAV reader checks format and complete frame counts (`desktop/src/scribe_desktop/speaker_eval.py:266`, `:278`), and the front-end consumes bounded PCM16 samples. The round-4 correction at `.cursor/plans/plan-practitioner-profile.md:500` correctly distinguishes a reported digest from authenticated origin. Task 0.4’s PowerShell commands are usable after substituting the requested URL and printed concrete candidate path; Task 1.1 at `:528` explicitly retires the smoke’s private implementation.
 
 PEER-ROUND-7 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
+### Round 8 - 2026-09-15 - practitioner-profile Phase 0 Task 0.5 (the model pin), in-session `/review-loop` round 1 of cap 3
+- Round status: Closed (5 of 5 Applied 2026-09-15 by Claude Code, one at a time, each verified by re-read; the two code-file fixes await the composer's suite re-run before round 9)
+- Fix-delta self-check: PASS — re-read 5 applied hunks across 5 files (the constants comment and the derived size string in `setup-models.py`; the removed fixture parameter in the test module; the flow-8 sentence in `data-flow-map.md`; the smoke entry in `scripts/README.md`); no behaviour changed, no neighbouring exit path touched, the shipped-pin tests' expectations hold (`str(size) in EXPECTED_SIZE` is true of the derived string).
+- Source: Claude Code
+- Primary review baseline: the working tree against `main` `281ae64` (round 1 for Task 0.5; the plan's previous sync predates every change). Changed files, all read in full, nothing skipped: `scripts/setup-models.py`, `desktop/tests/test_setup_scripts.py`, `AGENTS.md` (step 3), `docs/security/data-flow-map.md` (flows 8–9), this plan. Suites at review time: composer-run GREEN (ruff, mypy 30 files, pytest 1431).
+- Looks good: the pin constants match the Task 0.4 record byte for byte (URL, 26530309, the 64-hex digest); the pinned path was already built and tested at Task 0.3 and is now exercised against the SHIPPED values with nothing monkeypatched (the pin test refuses a wrong digest naming both digests and leaves the candidate; the CLI refuses `--candidate-url`; a wrong-bytes download writes nothing and asked for exactly the shipped URL); the module docstring states the pinned behaviour first and candidate mode as the generic empty-pin route; the `--candidate-url` usage line is gone; AGENTS.md step 3 and flow 9 say what the code does; every test stays network-free.
+- Finding verification: 6 candidates; 1 dropped (an "unused" `SPEAKER_EMBEDDING_SIZE_BYTES` — it is the recorded registry fact the task asked for and the shipped-pin test reads it; only its duplication with the human string is a defect, LOW-001); 0 downgraded.
+- Executor judgment: LOW-001, LOW-002 (a claim in a code comment the repo never verified). Structural quality: none. Post-fix regression check: round 1 — no prior fixes on this task; regression baseline = the working tree; none.
+- Missed-issue pass: re-read the five changed files plus `scripts/README.md` (a doc that describes the same entry and was NOT in the diff); result: LOW-004, LOW-005.
+- `ROLE: round` line: NOT written to `.cursor/loops/` (executor write scope).
+- **[LOW]** LOW-001: `scripts/setup-models.py` constants — `SPEAKER_EMBEDDING_SIZE_BYTES` and `SPEAKER_EMBEDDING_EXPECTED_SIZE` both spell the number 26530309; a future re-pin can change one and not the other. Desired: the string derives from the int. — Triage: Fix-now; Decision: Applied (the string is now an f-string over the int; the "25.3 MiB" label and date stay literal; `test_constants_are_a_real_pin` still holds)
+- **[LOW]** LOW-002: `scripts/setup-models.py` constants comment — "MIT-licensed" restated the plan's External / API Finding, which the plan itself marks "not verified online during planning"; the practitioner's model-card read at Task 0.4 recorded the front-end and architecture, not the licence. A code comment must not assert what nothing in the repo verified. Desired: drop the claim from the comment (the plan keeps it with its caveat). — Triage: Fix-now; Decision: Applied (comment now reads "80-bin Kaldi fbank in, 256-dim embedding out"; licence verification stays a commercialisation-time fact outside this plan)
+- **[LOW]** LOW-003: `desktop/tests/test_setup_scripts.py` `test_candidate_url_is_refused_through_the_cli` requested the `capsys` fixture and never read it. — Triage: Fix-now; Decision: Applied (parameter removed; siblings: none — every other `capsys` in the module is read)
+- **[LOW]** LOW-004 (missed-issue pass): `docs/security/data-flow-map.md` flow 8 said "until its promotion … the same bytes sit beside it as `.onnx.candidate`", implying both files coexist; before Task 0.6 only the `.candidate` exists and promotion is one rename. — Triage: Fix-now; Decision: Applied (reworded: "until that plan's Task 0.6 promotes it, the file exists only as `.onnx.candidate` — promotion is one rename")
+- **[LOW]** LOW-005 (missed-issue pass): `scripts/README.md` smoke entry still said `setup-models.py --only speaker-embedding` "leaves [the candidate] in candidate mode" — false since the pin: that command now verifies and promotes. — Triage: Fix-now; Decision: Applied (the entry now says the explicit path reads the promoted `.onnx` or a `.candidate` left by an UNPINNED fetch, and that the entry is pinned since Task 0.5)
+
+### Round 9 - 2026-09-15 - practitioner-profile Phase 0 Task 0.5 (the model pin), in-session `/review-loop` round 2 of cap 3 (confirmation)
+- Round status: Closed (1 of 1 Applied 2026-09-15 by Claude Code, doc-only) — LOOP CONVERGED at this round
+- Fix-delta self-check: PASS — re-read the one applied hunk (the flow-8 paragraph re-wrapped; words unchanged).
+- Source: Claude Code
+- Primary review baseline: unchanged from round 8 — the working tree against `main` `281ae64`; the same six changed files (`git status` identical: `scripts/setup-models.py`, `scripts/README.md`, `desktop/tests/test_setup_scripts.py`, `AGENTS.md`, `docs/security/data-flow-map.md`, this plan), every one re-read in full from disk. Suites after the round-8 fixes: composer-run GREEN (ruff clean, mypy 30 files, pytest 1431 passed).
+- Post-fix regression check (regression baseline = the pre-`/fix` working tree of round 8): five hunks — the derived size string (an f-string over the int; `test_constants_are_a_real_pin` passed), the constants comment (words only), the removed `capsys` parameter (the test passed), the flow-8 sentence and the README entry (prose). No signature, return value or data shape changed; no caller affected. Result: none.
+- Correctness / security / executor-judgment / structural passes: nothing new — the pin constants still match the Task 0.4 record; the pinned path, the redirect policy and the candidate machinery are untouched since round 7; the docs say what the code does.
+- Round classification: 1 🆕 / 0 ⚡ / 0 🔁. Finding verification: 1 candidate; 0 dropped; 0 downgraded. Missed-issue pass: re-read all six changed files with fresh eyes; result: LOW-001.
+- Convergence: no CRIT, HIGH or MED; the single 🆕 LOW is applied; per `/review-loop`'s termination check the loop is CONVERGED at round 2 of cap 3 (rounds 8 → 9: 5 LOW → 1 LOW doc-only → applied). The cross-family codex peer pass over the Task 0.5 diff is owed at the COMPOSER seat.
+- `ROLE: round` line: NOT written to `.cursor/loops/` (executor write scope).
+- **[LOW]** LOW-001: `docs/security/data-flow-map.md` flow 8 — the round-8 rewording left the hard-wrapped paragraph ragged ("… no / clinical content. Written / ONLY by flow 9 …"); rendered output is unaffected, the source is untidy where every neighbouring paragraph is evenly wrapped. — Triage: Fix-now; Decision: Applied (paragraph re-wrapped, no words changed; doc-only, no suite needed)
+
+### Round 10 - 2026-09-15 - practitioner-profile Phase 0 Task 0.5 (pin the model), independent cross-family codex peer review
+
+- Round status: Closed (3 of 3 Applied 2026-09-15 by the executor's `/fix` leg after the composer routed all three to fixing under `gates=fix-biased`; the composer's suite re-run and the codex confirmation round 11 are pending — the round re-opens only if the peer refutes a fix)
+- Fix-delta self-check: PASS — re-read the 4 applied hunks across 4 files (flow 9 in `data-flow-map.md`; the `setup-models.py` module docstring; the smoke's module docstring and missing-file remedy; Task 0.6 in this plan). Words only; no control flow, signature or CLI contract touched; the "scripts/setup-models.py" substring the two tests match is preserved.
+- Source: Codex peer-review
+- Baseline: Working tree against `main` at HEAD `281ae64`; Task 0.5 uncommitted. Independent GPT-family review following Claude-family rounds 8–9.
+- Files reviewed: `scripts/setup-models.py` in full; changed regions of `scripts/README.md`, `desktop/tests/test_setup_scripts.py`, `AGENTS.md`, and `docs/security/data-flow-map.md`; the specified Task 0.4 report, Task 0.5 record, Task 0.6, D-P1, and rounds 8–9 in `.cursor/plans/plan-practitioner-profile.md`. Supporting read: `scripts/speaker-embedding-smoke.py`, including its explicit-path consumer and user instructions.
+- Validation basis: Read-only inspection and diff review. Accepted composer verification: ruff clean, mypy clean over 30 source files, pytest 1431 passed, including 63 setup-script tests. No tests, downloads, application execution, or file writes performed.
+- Finding verification: 5 candidates / 2 dropped / 0 downgraded. Dropped: requiring duplicate literal URL/digest assertions where the requested shipped-pin refusal test already exists; treating flow 8’s recorded pre-promotion state as an assertion about every future installation.
+
+#### Confirmed / disputed (rounds 8–9)
+
+- Round 8 LOW-001 — Confirmed applied: `scripts/setup-models.py:94` now derives the size text with `f"{SPEAKER_EMBEDDING_SIZE_BYTES} bytes …"`.
+- Round 8 LOW-002 — Confirmed applied: `scripts/setup-models.py:79` describes “80-bin Kaldi fbank in” without the unverified licence claim.
+- Round 8 LOW-003 — Confirmed applied: `desktop/tests/test_setup_scripts.py:264` declares the CLI refusal test without `capsys`; its refusal and filesystem assertions remain.
+- Round 8 LOW-004 — Confirmed for the recorded Task 0.4 state: `docs/security/data-flow-map.md:108` says “the file exists only as `.onnx.candidate`”; `scripts/setup-models.py:285` performs `candidate.replace(target)`.
+- Round 8 LOW-005 — Confirmed applied in the README: `scripts/README.md:20` says “the entry is pinned since Task 0.5”. A downstream sibling remains in the smoke script; see PR-REG-001.
+- Round 9 LOW-001 — Confirmed applied: the flow-8 paragraph at `docs/security/data-flow-map.md:107` is rewrapped as recorded; no runtime behaviour changed.
+- Rounds 8–9’s broader conclusion that the documentation fully matches enforcement is disputed in the limited respects below. Their recorded suite results are accepted.
+
+#### Pin, paths, and tests verified
+
+- Ordinal string comparisons against `.cursor/plans/plan-practitioner-profile.md:455` confirm the URL, size `26530309`, and SHA-256 `7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068` match exactly (`scripts/setup-models.py:88`, `:92`, `:96`).
+- The nonempty pin selects pinned mode. Candidate mismatch raises with both digests before `candidate.replace(target)`; fresh-download mismatch raises before `_write_atomically(target, data)` (`scripts/setup-models.py:264`, `:277`, `:295`). No unchecked setup write or promotion path was found.
+- The pinned download calls `_download_speaker_embedding`, which installs `_HttpsOnlyRedirectHandler`; pinning has not bypassed the speaker model’s redirect checks (`scripts/setup-models.py:227`, `:295`).
+- A standard run includes the speaker model through `if speaker_embedding_pinned(): fetch_speaker_embedding(root)` (`scripts/setup-models.py:369`). This intentionally adds the 25.3 MiB model to setup, promoting the existing candidate where present.
+- The shipped-pin tests leave the pin constants unchanged and check wrong-digest refusal, both reported digests, candidate preservation, CLI override refusal, and no write after a wrong download (`desktop/tests/test_setup_scripts.py:235`). The default-run test also uses the shipped pin (`:188`). Candidate-mode assertions were retained; the existing empty-pin fixtures remain (`:292`). Network refusal guards and fake openers remain (`:71`, `:80`).
+
+#### PR-LOW-022 — HTTPS redirect documentation exceeds the installed guard’s scope
+
+- **Severity:** LOW
+- **Location:** `docs/security/data-flow-map.md:125`
+- **Triage:** Fix-now
+- **Fix route:** fix-on-fast
+- **Why it matters:** The security map attributes the speaker-specific transport guarantee to all setup downloads.
+- **Current behaviour:** Flow 9 says, “Every download, and every redirect hop of it, must be https: a redirect to http is refused before it is fetched.” `scripts/setup-models.py:30` similarly says, “Every download here must be https and so must EVERY redirect hop”. However, silero uses `urllib.request.urlopen(SILERO_VAD_URL)` at `scripts/setup-models.py:146`. The custom handler’s own documentation explicitly says “Installed for the speaker-embedding helper only; silero’s already-pinned fetch is untouched” (`:206`).
+- **Desired behaviour:** Scope both statements explicitly to speaker-embedding downloads, in candidate and pinned modes. Preserve the separate digest-verification claims.
+- **Pattern to follow:** The accurate scope statement at `scripts/setup-models.py:206`.
+- **Pattern siblings:** `scripts/setup-models.py:30`. Searches for `Every download`, HTTPS wording, and every-hop/redirect claims across the scoped script and documentation found these two overbroad current statements.
+- **Invariant:** Documented transport guarantees must match the downloader that enforces them.
+- **Verification:** Static repro: if the silero endpoint supplies a downgrade redirect, its ordinary urllib path does not install the speaker guard. The existing socket-free test at `desktop/tests/test_setup_scripts.py:400` documents the default handler’s downgrade-following behaviour. No payload or network request was run.
+- **Regression risk:** Minimal for a prose-only scope correction; extending the guard to other downloaders would be a separate behavioural change.
+- **/fix decision:** Applied
+- **/fix notes:** `docs/security/data-flow-map.md` flow 9 — the sentence now reads "The speaker-embedding download — candidate and pinned alike — must be https on every redirect hop … (the guard is installed for that helper only; silero-vad and the whisper snapshots rely on their pre-existing pins, not on a redirect guard)"; `scripts/setup-models.py` module docstring — the same scoping, naming silero's default opener and its SHA-256 pin and whisper's commit SHAs. The digest claims are untouched. Verified by re-reading both and by grep: no "Every download" claim remains anywhere in the scoped files. Siblings: both sites the finding named; none else found. No code changed.
+- **/fix date:** 2026-09-15
+- **/fix applied by:** Claude Code
+
+#### PR-REG-001 — Smoke guidance still promises a candidate file after pinned setup
+
+- **Severity:** LOW
+- **Location:** `scripts/speaker-embedding-smoke.py:190`
+- **Triage:** Fix-now
+- **Fix route:** fix-on-fast
+- **Why it matters:** After Task 0.6 removes the candidate by promotion, the smoke’s instructions and missing-file remedy direct the practitioner back to a filename setup no longer produces.
+- **Current behaviour:** The missing-model error says, “`--only speaker-embedding (the candidate lands as <name>.onnx.candidate)`” (`scripts/speaker-embedding-smoke.py:191`). Its module instructions likewise say setup “has left the candidate file in the cache” (`:7`) and show a `.onnx.candidate` model argument (`:11`).
+- **Desired behaviour:** Explain that the shipped pinned entry produces `<name>.onnx`, and use that path in the current example and remedy. Retain explicit support for an unpromoted candidate when evaluating an unpinned model.
+- **Pattern to follow:** The corrected distinction in `scripts/README.md:18`.
+- **Pattern siblings:** `scripts/speaker-embedding-smoke.py:7` and `:11`. Searching its setup references and candidate/promotion wording found these instruction sites plus the missing-file message; the dual-path CLI help at `:323` remains accurate.
+- **Invariant:** A recovery instruction must identify the artifact its recommended setup operation actually produces.
+- **Verification:** Static repro: Task 0.6 executes `candidate.replace(target)` (`scripts/setup-models.py:285`); using the smoke’s candidate-path example then fails `model_path.is_file()` (`scripts/speaker-embedding-smoke.py:188`). Repeating pinned setup skips the verified target (`scripts/setup-models.py:270`) and does not recreate the candidate.
+- **Regression risk:** Low; update prose and the error message while preserving explicit-path loading and candidate compatibility.
+- **/fix decision:** Applied
+- **/fix notes:** `scripts/speaker-embedding-smoke.py` — module docstring: the shipped entry is pinned, `setup-models.py --only speaker-embedding` leaves the verified, promoted model, and the example now passes `…\speaker-embedding\wespeaker-voxceleb-resnet34-LM.onnx`; the explicit `--model` path is explained as the way an UNPINNED candidate's `.onnx.candidate` is read (Task 0.4 ran that way); the missing-file remedy now says "the pinned entry is written or promoted as <name>.onnx; an unpinned candidate fetch leaves <name>.onnx.candidate" and still contains "scripts/setup-models.py", the substring the two existing tests match. No control flow, signature or CLI option changed (the `--model` help already named both paths). Verified by re-reading; the composer's suites confirm the two message-matching tests. Siblings: `:7` and `:11` (the finding's) and `:190-191`, all covered.
+- **/fix date:** 2026-09-15
+- **/fix applied by:** Claude Code
+
+#### PR-LOW-023 — Task 0.6’s command is not runnable verbatim from project-root PowerShell
+
+- **Severity:** LOW
+- **Location:** `.cursor/plans/plan-practitioner-profile.md:466`
+- **Triage:** Fix-now
+- **Fix route:** fix-on-fast
+- **Why it matters:** The next practitioner-owned task requires translating shorthand into a working command.
+- **Current behaviour:** Task 0.6 instructs the practitioner to “re-run `setup-models.py --only speaker-embedding`”. The file resides under `scripts/`; that bare command neither selects the project’s virtual-environment interpreter nor supplies the script path.
+- **Desired behaviour:** State “from the project folder in a normal PowerShell” and give `.venv\Scripts\python.exe scripts\setup-models.py --only speaker-embedding`.
+- **Pattern to follow:** The interpreter-qualified setup invocation in `AGENTS.md:34`.
+- **Pattern siblings:** None within Task 0.6’s instruction. Filename shorthand in descriptive inventories is not treated as a runnable command.
+- **Verification:** Read-only file discovery locates `scripts\setup-models.py`; the script’s usage at `scripts/setup-models.py:35` supplies the interpreter and relative path. The promotion branch prints the requested target filename and verified digest (`:286`).
+- **Regression risk:** None to runtime behaviour; instruction-only correction.
+- **/fix decision:** Applied
+- **/fix notes:** Task 0.6 now reads "from the project folder in a normal PowerShell run `.venv\Scripts\python.exe scripts\setup-models.py --only speaker-embedding`" and names the promoted file `wespeaker-voxceleb-resnet34-LM.onnx`; the rest of the task text (what to confirm, the Task 3.2 note, Blocks) is unchanged. Verified by re-reading. Siblings: none (the Current State bullet already carried the full command).
+- **/fix date:** 2026-09-15
+- **/fix applied by:** Claude Code
+
+#### LEG 1 verified tuples (executor `claude-fable-5-1`, 2026-09-15)
+- PR-LOW-022: materiality=docs-only; verified severity=low; peer severity=low (preserved); evidence: `docs/security/data-flow-map.md:125-127` says "Every download, and every redirect hop of it, must be https" and `scripts/setup-models.py:30` "Every download here must be https and so must EVERY redirect hop", while silero fetches through the default opener at `scripts/setup-models.py:146` (`urllib.request.urlopen(SILERO_VAD_URL)`) and only `_download_speaker_embedding` builds its opener with `_HttpsOnlyRedirectHandler` (`:227`), whose own docstring says "Installed for the speaker-embedding helper only" — both prose claims are broader than the enforcing code; CONFIRMED docs-only at LOW (silero's digest pin makes its transport immaterial, so no security gap — an overclaim, the project's recurring class); scope: yes (the flow-9 sentence is Task 0.5's own edit; the docstring sentence is the same claim from Task 0.3, a pattern sibling); production-impacting: no; recommendation: Fix-now — scope both sentences to the speaker-embedding downloads (candidate and pinned) and keep the separate digest claims; no code change.
+- PR-REG-001: materiality=docs-only (a message string and docstring text; no control-flow change); verified severity=low; peer severity=low (preserved); evidence: `scripts/speaker-embedding-smoke.py:7-8` ("has left the candidate file in the cache"), `:11` (the `.onnx.candidate` example path) and the missing-file remedy at `:190-191` ("the candidate lands as <name>.onnx.candidate") all describe the unpinned route; under the shipped pin `setup-models.py --only speaker-embedding` promotes by `candidate.replace(target)` (`scripts/setup-models.py:285`) and a re-run skips the verified `<name>.onnx` (`:270`), so after Task 0.6 the example path fails `is_file()` (`:188`) and the remedy names a file setup no longer produces; the `--model` help at `:323` already states both paths; CONFIRMED at LOW; the fix is wording plus the promoted path as the primary example, with the candidate path kept as the explicit second case (an unpinned candidate — D-P1's second option — must still be readable; `_utterance_vector`, `load_session` and the CLI contract are untouched; the two tests matching "setup-models" in the remedy keep that substring); scope: yes (the smoke is Task 0.3's file, but the claim is made stale by Task 0.5's pin — the same sibling class the round-8 README fix closed); production-impacting: no; recommendation: Fix-now — docstring lines 3-15 and the remedy at `:189-192`; a code file changes, so the composer re-runs the suites after the fix leg.
+- PR-LOW-023: materiality=docs-only; verified severity=low; peer severity=low (preserved); evidence: Task 0.6 at `.cursor/plans/plan-practitioner-profile.md:543` says "re-run `setup-models.py --only speaker-embedding`" with no interpreter or `scripts\` path, whereas `AGENTS.md` step 3 and this plan's own Task 0.4 sub-bullet spell `.venv\Scripts\python.exe scripts\setup-models.py …`; the practitioner-facing instruction for the next practitioner-owned task is not runnable as written (the Current State bullet already carries the full command, but the task is what the practitioner reads); CONFIRMED docs-only at LOW; scope: yes (the instruction for the task Task 0.5 unlocks; the round-8 class); production-impacting: no; recommendation: Fix-now — write the verbatim PowerShell command on Task 0.6 ("from the project folder in a normal PowerShell"), keeping the rest of the task text.
+
+PEER-ROUND-10 RESULT: 3 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 3).
+
+### Round 11 - 2026-09-15 - practitioner-profile Phase 0 Task 0.5 (pin the model), independent cross-family codex peer review (confirmation round after round 10)
+
+- Round status: Closed — No new findings — converged
+- Source: Codex peer-review
+- Baseline: Working tree against `main` at HEAD `281ae64`; Task 0.5 uncommitted. Independent GPT-family confirmation following the Claude-family executor’s round-10 fixes.
+- Files reviewed: `scripts/setup-models.py` and `scripts/speaker-embedding-smoke.py` in full; `scripts/README.md`; scoped changes and relevant assertions in `desktop/tests/test_setup_scripts.py`; `AGENTS.md` step 3; `docs/security/data-flow-map.md` flows 8–9; `.cursor/plans/plan-practitioner-profile.md` round 10 in full, including LEG 1 verified tuples and all `/fix` fields, plus Phase 0 tasks, Task 0.4’s pin record, Task 0.5, Task 0.6 and D-P1.
+- Validation basis: Read-only source inspection, diff review, pattern searches and ordinal comparisons of recorded pin values. Accepted composer verification: ruff clean; mypy clean over 30 source files; pytest 1431 passed, zero network. No tests, downloads, application execution or file writes performed.
+- Finding verification: 0 candidates / 0 dropped / 0 downgraded
+
+#### Confirmed / disputed (round 10 fixes)
+
+- **PR-LOW-022 — Fix confirmed complete.** `docs/security/data-flow-map.md:126` now says “speaker-embedding download — candidate and pinned alike”; `scripts/setup-models.py:33` says “That guard is installed for the speaker-embedding helper only”. This matches the custom opener at `scripts/setup-models.py:230`. Silero’s default opener at `scripts/setup-models.py:149` remains separate from its digest check at `scripts/setup-models.py:152`; flow 8’s pre-promotion record remains accurate for the recorded state.
+- **PR-REG-001 — Fix confirmed complete.** `scripts/speaker-embedding-smoke.py:12` uses `wespeaker-voxceleb-resnet34-LM.onnx`; `scripts/speaker-embedding-smoke.py:15` explicitly retains the unpinned candidate case. The remedy at `scripts/speaker-embedding-smoke.py:194` says “the pinned entry is written or promoted as” `<name>.onnx`. The diff changes wording only: `model_path.is_file()` at `scripts/speaker-embedding-smoke.py:191`, explicit-path loading and CLI behaviour remain unchanged. Both assertions matching `"setup-models"` remain satisfied by the message (`desktop/tests/test_setup_scripts.py:718`, `desktop/tests/test_setup_scripts.py:894`).
+- **PR-LOW-023 — Fix confirmed complete.** `.cursor/plans/plan-practitioner-profile.md:558` now specifies “from the project folder in a normal PowerShell” and supplies `.venv\Scripts\python.exe scripts\setup-models.py --only speaker-embedding`. The interpreter and script paths make this runnable verbatim under the project’s documented prerequisites.
+
+#### Pin and independent scope verification
+
+- Ordinal comparisons against Task 0.4’s record at `.cursor/plans/plan-practitioner-profile.md:547` confirm all three values match exactly:
+  - URL (`scripts/setup-models.py:91`): `https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx`
+  - Size (`scripts/setup-models.py:95`): `26530309`
+  - SHA-256 (`scripts/setup-models.py:99`): `7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068`
+- Candidate promotion remains after digest verification (`scripts/setup-models.py:282`, `scripts/setup-models.py:288`); fresh-download installation remains after digest verification (`scripts/setup-models.py:300`, `scripts/setup-models.py:305`). No unverified installation route was found.
+- Searches across the scoped prose found no remaining overbroad redirect guarantee or current claim that pinned setup produces an unpromoted candidate. Historical task records and explicitly conditional empty-pin guidance remain appropriately distinguished. No further actionable practitioner-command defect or message-assertion regression was found.
+
+PEER-ROUND-11 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).

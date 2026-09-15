@@ -13,24 +13,29 @@ Downloads into %LOCALAPPDATA%\\ClinikoScribe\\models\\:
 Idempotent: existing complete downloads are skipped. No clinical data is
 involved at any point.
 
-The speaker-embedding entry has two modes, decided by its SHA-256 pin:
-  - CANDIDATE mode (pin EMPTY, the state until Task 0.5 of the
-    practitioner-profile plan): ``--only speaker-embedding`` downloads to
-    ``speaker-embedding/<name>.onnx.candidate``, prints the size and SHA-256
-    for the practitioner's report, and does NOT promote the file. A run
-    without ``--only`` skips this entry (printed, never silent). No URL is
-    recorded yet either: pass ``--candidate-url https://...`` (Task 0.4). The
-    URL must be https and so must EVERY redirect hop - a redirect to http is
-    refused before it is fetched, because the bytes reported here are the
-    ones the pin step trusts.
-  - PINNED mode (pin set): an existing ``.onnx.candidate`` is verified
-    against the pin and promoted to ``<name>.onnx`` (Task 0.6); otherwise
-    the file is downloaded, verified and written, exactly like silero-vad.
-    ``--candidate-url`` is refused once the entry is pinned.
+The speaker-embedding entry is PINNED (practitioner-profile plan Task 0.5,
+2026-09-15): URL, size and SHA-256 are recorded below from the practitioner's
+Task 0.4 fetch, so it is handled exactly like silero-vad - an existing
+``speaker-embedding/<name>.onnx.candidate`` left by that fetch is verified
+against the pin and promoted to ``<name>.onnx`` (Task 0.6); otherwise the
+file is downloaded, verified and written; a digest mismatch refuses and
+leaves any candidate un-promoted; ``--candidate-url`` is refused. A run
+without ``--only`` includes the entry.
+
+An entry whose SHA-256 pin is EMPTY runs in CANDIDATE mode instead (the
+route this entry took at Task 0.4, kept for evaluating a future candidate):
+``--only <entry> --candidate-url https://...`` downloads to
+``<name>.onnx.candidate``, prints the size and SHA-256 for the report, never
+promotes, and a run without ``--only`` skips it (printed, never silent).
+The speaker-embedding download - candidate and pinned alike - must be https
+and so must EVERY redirect hop: a redirect to http is refused before it is
+fetched, because the bytes a candidate fetch reports are the ones the pin
+step trusts. That guard is installed for the speaker-embedding helper only;
+silero-vad's fetch keeps the default opener and relies on its pre-existing
+SHA-256 pin, and the whisper snapshots on their immutable commit SHAs.
 
 Usage:
     .venv\\Scripts\\python.exe scripts\\setup-models.py [--only NAME]
-    .venv\\Scripts\\python.exe scripts\\setup-models.py --only speaker-embedding --candidate-url URL
 """
 
 from __future__ import annotations
@@ -73,18 +78,25 @@ WHISPER_CANDIDATES: dict[str, tuple[str, str]] = {
     ),
 }
 
-# Speaker-embedding candidate (practitioner-profile plan, Phase 0 Task 0.3).
-# The plan's first candidate is the WeSpeaker VoxCeleb ResNet34-LM ONNX export
-# (about 26 MB; 80-bin Kaldi fbank in, 256-dim embedding out). The planning
-# session never fetched it, so NOTHING below is verified yet: the URL is to be
-# supplied by the practitioner on the command line (--candidate-url) at Task
-# 0.4, and Task 0.5 records the URL, size and SHA-256 here from that report.
-# An EMPTY SHA-256 pin is what puts the entry in candidate mode (see the
-# module docstring); filling it switches the entry to verify-and-promote.
+# Speaker-embedding model (practitioner-profile plan, Phase 0 Tasks 0.3-0.5):
+# the WeSpeaker VoxCeleb ResNet34-LM ONNX export (80-bin Kaldi fbank in,
+# 256-dim embedding out). Trust-on-first-download pin, computed
+# 2026-09-15 from the practitioner's Task 0.4 fetch of the URL below (26530309
+# bytes) and confirmed by the D-P1 smoke (same-speaker cosine 0.85-0.89,
+# different-speaker -0.01-0.01). The Hugging Face `resolve/main` URL is not an
+# immutable ref - the SHA-256 is what pins the bytes, exactly as for silero.
+# An EMPTY SHA-256 pin would put the entry back into candidate mode (see the
+# module docstring); a filled pin means verify-and-promote.
 SPEAKER_EMBEDDING_NAME = "wespeaker-voxceleb-resnet34-LM"
-SPEAKER_EMBEDDING_URL = ""  # TO BE SUPPLIED by the practitioner (Task 0.4 / pinned at 0.5)
-SPEAKER_EMBEDDING_EXPECTED_SIZE = "about 26 MiB (plan finding, unverified until Task 0.4)"
-SPEAKER_EMBEDDING_SHA256 = ""  # EMPTY = candidate mode; Task 0.5 fills it
+SPEAKER_EMBEDDING_URL = (
+    "https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/"
+    "resolve/main/voxceleb_resnet34_LM.onnx"
+)
+SPEAKER_EMBEDDING_SIZE_BYTES = 26_530_309  # 25.3 MiB, recorded at Task 0.4
+SPEAKER_EMBEDDING_EXPECTED_SIZE = (
+    f"{SPEAKER_EMBEDDING_SIZE_BYTES} bytes (25.3 MiB), recorded 2026-09-15"
+)
+SPEAKER_EMBEDDING_SHA256 = "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068"
 # Anything smaller than this is an error page or a stub, not a speaker model:
 # refuse it instead of reporting a digest the practitioner would then pin.
 SPEAKER_EMBEDDING_MIN_BYTES = 1024 * 1024
@@ -241,7 +253,7 @@ def _report_candidate(candidate: Path) -> None:
     print(f"       sha256  : {_sha256_of(candidate)}")
     print(
         "       NOT promoted (candidate mode - no pin yet). Report the size and SHA-256 "
-        "on Task 0.4; the smoke reads this .candidate path directly."
+        "for the pin step; the smoke reads this .candidate path directly."
     )
 
 
@@ -305,10 +317,10 @@ def fetch_speaker_embedding(root: Path, *, candidate_url: str | None = None) -> 
     url = candidate_url or SPEAKER_EMBEDDING_URL
     if not url:
         raise SystemExit(
-            "no URL is recorded for the speaker-embedding candidate (the plan pinned "
-            "none). Pass it explicitly:\n"
+            "no URL is recorded for the unpinned speaker-embedding candidate. Pass it "
+            "explicitly:\n"
             "    setup-models.py --only speaker-embedding --candidate-url https://...\n"
-            "(practitioner-profile plan Task 0.4; the URL is pinned here at Task 0.5)"
+            "(the pin step then records the URL, size and SHA-256 in this script)"
         )
     data = _download_speaker_embedding(url)
     _write_atomically(candidate, data)
