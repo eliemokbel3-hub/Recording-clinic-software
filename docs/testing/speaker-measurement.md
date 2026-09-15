@@ -1,6 +1,6 @@
 # Speaker measurement (Task 2.3 harness)
 
-How the practitioner measures speaker-cluster and clinician-role accuracy on their own labelled recordings, before and after the Task 2.1 cepstral mean normalisation, through the shipped transcription pipeline. Built as Phase 3A Task 2.3a (2026-09-04); the numbers it produces are what Task 2.3 records and what decision D-S1 (estimated-k speaker counting) is decided on. Code: `desktop/src/scribe_desktop/speaker_eval.py`, launcher `scripts/measure-speakers.py`, tests `desktop/tests/test_speaker_eval.py`.
+How the practitioner measures speaker-cluster and clinician-role accuracy on their own labelled recordings, before and after the Task 2.1 cepstral mean normalisation, through the shipped transcription pipeline — and, since the practitioner-profile plan's Task 2.4, with the voice profile applied (the `enrolled` condition). Built as Phase 3A Task 2.3a (2026-09-04); the numbers it produces are what Task 2.3 records, what decision D-S1 (estimated-k speaker counting) is decided on, and what the practitioner-profile plan's Phase 6 re-checks the attribution threshold against. Code: `desktop/src/scribe_desktop/speaker_eval.py`, launcher `scripts/measure-speakers.py`, tests `desktop/tests/test_speaker_eval.py`.
 
 ## Preparing a recording
 
@@ -16,9 +16,18 @@ From a normal terminal (never an agent shell — those cannot see the model cach
 
 ```bash
 .venv\Scripts\python.exe scripts\measure-speakers.py <recordings-dir>
+.venv\Scripts\python.exe scripts\measure-speakers.py <recordings-dir> --enrolment <me.wav>
 ```
 
 It applies and asserts the offline kill-switches before constructing silero-VAD and the resolved Whisper model, then evaluates each pair in turn. Output is a Markdown table on stdout, headed by the resolved Whisper model name, ready to paste into the plan's Task 2.3. Progress and error lines name files and exception types only; nothing from a recording is printed or logged, and the result types carry no transcript words. Exit status is 0 only when every pair was scored and no error occurred; a failing recording is reported and the run continues.
+
+### The enrolled condition (practitioner-profile plan Task 2.4)
+
+`--enrolment <wav>` takes a **16 kHz mono 16-bit PCM** WAV of the practitioner reading aloud (about 30 s of speech; the same format rule as the recordings, refused otherwise). The harness runs the shipped `enrolment.enrol` over it with the shipped speaker embedder (the pinned WeSpeaker model — an absent model is an error under this flag, with the setup-models remedy) and wraps the vector in an **in-memory** profile that is never written anywhere: the harness imports no profile store and owns none, so the custody statement below is unchanged. Each recording is then run through the shipped `transcribe_session` a second time with that embedder and profile over the same temporary store — the first pass's window transcriptions are replayed from memory, so no second Whisper run is paid — and its labels are the `enrolled` condition. All-`speaker_1` there is not "merged": it is scored like any other output, because it may mean every segment matched the profile (the false-positive case the condition exists to measure) or a degenerate clustering after no segment matched — the labels alone do not say which; the `Auto-confirm` verdict and the `Similarity` column do. The legacy two conditions keep their merged semantics. A second pass that segments the store differently is reported as a harness fault, never a number.
+
+Without `--enrolment`, given two or more pairs, the documented fallback enrols each recording **leave-one-out** from the clinician-labelled spans of the *other* recordings (a recording never contributes to its own enrolment); with one pair and no enrolment WAV the condition is absent and the run says so. The fallback is a stand-in — its enrolment audio comes from consultation recordings rather than a read-aloud — so the dedicated enrolment WAV from the plan's Task 6.1 is what Phase 6 records.
+
+The enrolled condition adds two verdicts to the table: `Auto-confirm` — CORRECT when the cluster the voice profile confirmed (the transcript's `enrolled_speaker`, exactly what the Transcript screen pre-checks under D4) has `clinician` as its duration-weighted majority true label, WRONG otherwise, NONE when the document carries no attribution — with the confirmed label beside it, and `Similarity`, that cluster's mean raw cosine against the enrolment vector (the number the practitioner sees on the confirmation line). The heuristic `Role` verdict is still computed for the enrolled labels, so the manual path's suggestion can be compared with the auto-confirm on the same recording.
 
 ## What is measured
 

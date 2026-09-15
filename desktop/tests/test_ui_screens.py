@@ -2499,3 +2499,280 @@ class TestNoteWiring:
         note_screen._copy_note()
         assert payloads == [expected, expected]  # the direct route agrees
         window.close()
+
+
+# ---------------------------------------------------------------------------
+# Transcript screen auto-confirm from the voice profile (practitioner-profile
+# plan Task 2.3, D4 / D2).
+# ---------------------------------------------------------------------------
+
+
+def _attributed_document(
+    enrolled: str = SPEAKER_2, similarity: float = 0.83
+) -> TranscriptDocument:
+    return _note_document().model_copy(
+        update={
+            "enrolled_speaker": enrolled,
+            "enrolment_similarity": similarity,
+            "speaker_model_id": "mock-speaker-embedder-v1",
+        }
+    )
+
+
+def _readiness(present: bool, reason: str | None = None) -> Callable[[], Any]:
+    readiness = models.AttributionReadiness(profile_present=present, profile=None, reason=reason)
+    return lambda: readiness
+
+
+class TestTranscriptAutoConfirm:
+    def _screen(
+        self,
+        document: TranscriptDocument,
+        *,
+        readiness: Callable[[], Any] | None = None,
+        can_generate: bool = True,
+        config_loader: Callable[[], Any] = _note_config,
+    ) -> tuple[Any, FakeController, list[dict[str, Any]]]:
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        result = _note_result()
+        factory_kwargs: list[dict[str, Any]] = []
+
+        def factory(**kwargs: Any) -> Callable[[Path, Any], models.NoteGenerationResult]:
+            factory_kwargs.append(kwargs)
+            return lambda _directory, _crypto: result
+
+        screen = TranscriptScreen(
+            controller,
+            note_generator_factory=factory,
+            config_loader=config_loader,
+            attribution_readiness_provider=readiness or _readiness(False),
+        )
+        screen.show_document(
+            document,
+            on_complete=controller.complete,
+            on_discard=controller.discard,
+            can_generate=can_generate,
+        )
+        return screen, controller, factory_kwargs
+
+    def test_enrolled_speaker_is_prechecked_with_the_confirmation_line(self, qapp: Any) -> None:
+        screen, _controller, _kwargs = self._screen(_attributed_document(SPEAKER_2, 0.83))
+        assert screen.role_auto_confirmed
+        assert screen._selected_role() == SPEAKER_2
+        assert screen.attribution_label.isVisibleTo(screen)
+        assert screen.attribution_label.text() == (
+            "Clinician: confirmed from your voice profile (similarity 0.83) -"
+        )
+        assert screen.change_role_button.isVisibleTo(screen)
+        assert screen.change_role_button.text() == "change"
+        # The manual radios are replaced by the line (not merely pre-checked).
+        assert not screen.role_prompt_label.isVisibleTo(screen)
+        assert all(not radio.isVisibleTo(screen) for radio in screen._role_buttons.values())
+        # PR-MED-009: the auto-confirm satisfies the ROLE predicate only.
+        assert not screen.generate_button.isEnabled()
+        screen.set_profile("clinic-a")
+        assert screen.generate_button.isEnabled()
+        screen.deleteLater()
+
+    def test_the_similarity_is_shown_raw_even_when_negative(self, qapp: Any) -> None:
+        screen, _controller, _kwargs = self._screen(_attributed_document(SPEAKER_1, -0.25))
+        assert "(similarity -0.25)" in screen.attribution_label.text()
+        assert screen._selected_role() == SPEAKER_1
+        screen.deleteLater()
+
+    def test_change_reverts_to_the_manual_radios_with_the_suggestion(self, qapp: Any) -> None:
+        from scribe_desktop.note import speaker_role
+
+        document = _attributed_document(SPEAKER_2, 0.83)
+        screen, _controller, _kwargs = self._screen(document)
+        screen.set_profile("clinic-a")
+        assert screen.generate_button.isEnabled()
+        screen.change_role_button.click()
+        assert not screen.role_auto_confirmed
+        assert screen._selected_role() is None  # un-checked: the choice is explicit again
+        assert not screen.generate_button.isEnabled()  # role predicate no longer satisfied
+        assert not screen.attribution_label.isVisibleTo(screen)
+        assert not screen.change_role_button.isVisibleTo(screen)
+        assert screen.role_prompt_label.isVisibleTo(screen)
+        assert all(radio.isVisibleTo(screen) for radio in screen._role_buttons.values())
+        suggested = speaker_role(document).preselected_clinician_speaker
+        assert suggested is not None
+        assert " (suggested)" in screen._role_buttons[suggested].text()
+        marked = [s for s, r in screen._role_buttons.items() if " (suggested)" in r.text()]
+        assert marked == [suggested]
+        screen.set_role(SPEAKER_1)
+        assert screen.generate_button.isEnabled()
+        screen.change_role()  # idempotent once on the manual path
+        assert screen._selected_role() == SPEAKER_1
+        screen.deleteLater()
+
+    def test_generate_reads_the_prechecked_role_as_the_confirmed_clinician(
+        self, qapp: Any
+    ) -> None:
+        screen, controller, factory_kwargs = self._screen(_attributed_document(SPEAKER_2, 0.83))
+        screen.set_profile("clinic-a")
+        drafts: list[Any] = []
+        screen.draft_ready.connect(drafts.append)
+        screen.generate()
+        assert _process_until(qapp, lambda: bool(drafts))
+        assert factory_kwargs[-1]["clinician_speaker"] == SPEAKER_2
+        assert ("begin_generation",) in controller.calls
+        screen.deleteLater()
+
+    def test_manual_path_when_the_document_carries_no_attribution(self, qapp: Any) -> None:
+        screen, _controller, _kwargs = self._screen(_note_document(), readiness=_readiness(False))
+        assert not screen.role_auto_confirmed
+        assert screen._selected_role() is None
+        assert not screen.attribution_label.isVisibleTo(screen)
+        assert not screen.change_role_button.isVisibleTo(screen)
+        assert screen.role_prompt_label.isVisibleTo(screen)
+        assert all(radio.isVisibleTo(screen) for radio in screen._role_buttons.values())
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            models.SPEAKER_MODEL_MISSING_REASON,
+            models.PROFILE_REENROL_REASON,
+            models.PROFILE_UNUSABLE_REASON.format(reason="authentication"),
+        ],
+    )
+    def test_the_fallback_is_named_when_a_profile_exists_but_was_not_applied(
+        self, qapp: Any, reason: str
+    ) -> None:
+        screen, _controller, _kwargs = self._screen(
+            _note_document(), readiness=_readiness(True, reason)
+        )
+        # The status line lives OUTSIDE the generation group (PR-HIGH-004).
+        assert screen.attribution_status_label.isVisibleTo(screen)
+        assert screen.attribution_status_label.text() == reason
+        assert not screen.attribution_label.isVisibleTo(screen)  # no confirmation line
+        assert not screen.change_role_button.isVisibleTo(screen)  # nothing to change
+        assert screen._selected_role() is None  # still the manual path
+        assert all(radio.isVisibleTo(screen) for radio in screen._role_buttons.values())
+        screen.deleteLater()
+
+    def test_a_usable_profile_with_no_attribution_says_attribution_did_not_run(
+        self, qapp: Any
+    ) -> None:
+        screen, _controller, _kwargs = self._screen(_note_document(), readiness=_readiness(True))
+        assert screen.attribution_status_label.isVisibleTo(screen)
+        assert screen.attribution_status_label.text() == models.ATTRIBUTION_DID_NOT_RUN_REASON
+        screen.deleteLater()
+
+    def test_the_recovered_view_still_names_the_fallback(self, qapp: Any) -> None:
+        """PR-HIGH-004: the recovered path applies the profile too, has no
+        generation controls by design, and must still show the D2 line."""
+        reason = models.PROFILE_REENROL_REASON
+        screen, _controller, _kwargs = self._screen(
+            _note_document(), readiness=_readiness(True, reason), can_generate=False
+        )
+        assert not screen.generate_box.isVisibleTo(screen)
+        assert screen._role_buttons == {}  # no radios, no Generate: unchanged
+        assert screen.attribution_status_label.isVisibleTo(screen)
+        assert screen.attribution_status_label.text() == reason
+        assert not screen.generate_button.isEnabled()
+        screen.deleteLater()
+
+    def test_no_status_on_the_recovered_view_without_a_profile(self, qapp: Any) -> None:
+        screen, _controller, _kwargs = self._screen(
+            _note_document(), readiness=_readiness(False), can_generate=False
+        )
+        assert not screen.attribution_status_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_a_failed_note_config_keeps_the_fallback_visible(self, qapp: Any) -> None:
+        """PR-HIGH-004: a config error hides the generation group; the D2
+        line must survive it, and Generate stays unavailable."""
+        from scribe_desktop.note_config import NoteConfigError
+
+        def broken() -> Any:
+            raise NoteConfigError("template_profiles.json: field x is invalid")
+
+        reason = models.SPEAKER_MODEL_MISSING_REASON
+        screen, _controller, _kwargs = self._screen(
+            _note_document(), readiness=_readiness(True, reason), config_loader=broken
+        )
+        assert "Note config could not be loaded" in screen.message_label.text()
+        assert not screen.generate_box.isVisibleTo(screen)
+        assert not screen.generate_button.isEnabled()
+        assert screen.attribution_status_label.isVisibleTo(screen)
+        assert screen.attribution_status_label.text() == reason
+        screen.deleteLater()
+
+    def test_no_status_for_a_transcript_without_speech(self, qapp: Any) -> None:
+        def never() -> Any:
+            pytest.fail("readiness consulted for a transcript with no speech")
+
+        silent = _note_document().model_copy(update={"transcript_segments": ()})
+        screen, _controller, _kwargs = self._screen(silent, readiness=never, can_generate=False)
+        assert not screen.attribution_status_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_the_readiness_probe_is_not_consulted_for_an_attributed_document(
+        self, qapp: Any
+    ) -> None:
+        def never() -> Any:
+            pytest.fail("readiness consulted although the document is attributed")
+
+        screen, _controller, _kwargs = self._screen(_attributed_document(), readiness=never)
+        assert screen.role_auto_confirmed
+        screen.deleteLater()
+
+    def test_recovered_view_shows_no_auto_confirm_line(self, qapp: Any) -> None:
+        screen, _controller, _kwargs = self._screen(_attributed_document(), can_generate=False)
+        assert not screen.generate_box.isVisibleTo(screen)
+        assert not screen.attribution_label.isVisibleTo(screen)
+        assert not screen.role_auto_confirmed
+        screen.deleteLater()
+
+    def test_a_new_document_resets_the_auto_confirm_state(self, qapp: Any) -> None:
+        screen, controller, _kwargs = self._screen(_attributed_document())
+        assert screen.role_auto_confirmed
+        screen.show_document(
+            _note_document(),
+            on_complete=controller.complete,
+            on_discard=controller.discard,
+            can_generate=True,
+        )
+        assert not screen.role_auto_confirmed
+        assert screen._selected_role() is None
+        assert not screen.attribution_label.isVisibleTo(screen)
+        assert all(radio.isVisibleTo(screen) for radio in screen._role_buttons.values())
+        screen.on_discard()
+        assert not screen.attribution_label.isVisibleTo(screen)
+        assert not screen.attribution_status_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_a_lying_enrolled_speaker_is_refused_before_the_screen_can_see_it(
+        self, qapp: Any
+    ) -> None:
+        from pydantic import ValidationError
+
+        base = _note_document().model_dump()
+        with pytest.raises(ValidationError, match="transcribed text"):
+            TranscriptDocument(
+                **{
+                    **base,
+                    "enrolled_speaker": "speaker_9",
+                    "enrolment_similarity": 0.9,
+                    "speaker_model_id": "mock-speaker-embedder-v1",
+                }
+            )
+        # A label that exists but transcribed to nothing has no radio either.
+        textless = TranscriptSegment(
+            start_seconds=50.0, end_seconds=51.0, speaker="speaker_3", transcript_words=()
+        )
+        with pytest.raises(ValidationError, match="transcribed text"):
+            TranscriptDocument(
+                **{
+                    **base,
+                    "transcript_segments": (*base["transcript_segments"], textless),
+                    "enrolled_speaker": "speaker_3",
+                    "enrolment_similarity": 0.9,
+                    "speaker_model_id": "mock-speaker-embedder-v1",
+                }
+            )

@@ -41,10 +41,24 @@ Constraints honoured (plan Critical Constraints / executor facts):
 - Plaintext audio/transcript exist only in transient processing memory;
   the pipeline streams the store one transcription window at a time and
   never materialises the whole recording.
+
+Voice attribution (practitioner-profile plan, Phase 2 — Design Decisions
+D1, D3, D4, D13): when ``transcribe_session`` is given a ``SpeakerEmbedder``
+AND the practitioner's enrolled ``PractitionerProfile`` together, every VAD
+segment is ALSO embedded with that model inside the same window its spectral
+embedding is computed in (the plaintext bound is unchanged — only one float
+per segment is retained from it, the raw cosine against the enrolled vector),
+and the labels follow D13: the practitioner's cluster is ``speaker_1``, the
+remaining voices are ``speaker_2`` / ``speaker_3`` by first appearance. The
+document then carries ``enrolled_speaker`` / ``enrolment_similarity`` /
+``speaker_model_id`` — a SEPARATE field the Transcript screen auto-confirms
+from (D4), never a speaker label itself (D1). Without both inputs the path
+below runs exactly as before, byte for byte.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
@@ -53,7 +67,14 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.exceptions import InvalidTag
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from scribe_desktop.benchmark import (
     assert_offline_env,
@@ -61,6 +82,7 @@ from scribe_desktop.benchmark import (
     whisper_snapshot_complete,
     whisper_snapshot_missing,
 )
+from scribe_desktop.practitioner_profile import PractitionerProfile
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -75,6 +97,7 @@ from scribe_desktop.session_store import (
     store_has_footer,
     unwrap_key_from_file,
 )
+from scribe_desktop.speaker_embedding import ATTRIBUTION_THRESHOLD, FRAME_LENGTH, SpeakerEmbedder
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
     SAMPLE_RATE,
@@ -231,6 +254,14 @@ _KMEANS_ITERATIONS = 30
 
 SPEAKER_1 = "speaker_1"
 SPEAKER_2 = "speaker_2"
+# D13: with a profile applied, the non-practitioner voices split 2-means among
+# themselves — a third label is reachable only on that path.
+SPEAKER_3 = "speaker_3"
+
+# The shortest segment slice the speaker embedder is asked to embed: one
+# front-end frame (25 ms). A shorter slice — only a padded tail past the
+# audio end can be one — gets no similarity rather than a front-end refusal.
+MIN_ATTRIBUTION_PCM_BYTES = FRAME_LENGTH * BYTES_PER_SAMPLE
 
 
 class TranscriptionError(SpeechError):
@@ -273,8 +304,40 @@ class TranscriptSegment(BaseModel):
     transcript_words: tuple[TranscriptWord, ...]
 
 
+def words_have_text(words: Iterable[TranscriptWord]) -> bool:
+    """Whether any word is non-blank — the ONE definition of "holds
+    transcribed text" the attribution fields, the D13 candidate clusters
+    (the pipeline applies it per segment before the document exists) and the
+    Transcript screen's radios (built from ``ui.models.speaker_quotations``,
+    which quotes the first non-blank utterance per label) all agree on."""
+    return any(word.word_text.strip() for word in words)
+
+
+def segment_has_text(segment: TranscriptSegment) -> bool:
+    """``words_have_text`` over a built segment's words."""
+    return words_have_text(segment.transcript_words)
+
+
 class TranscriptDocument(BaseModel):
-    """The complete transcript artifact stored in ``transcript.enc``."""
+    """The complete transcript artifact stored in ``transcript.enc``.
+
+    Voice attribution (practitioner-profile plan Phase 2, D1/D3/D13): the
+    three OPTIONAL fields are set TOGETHER when an enrolled profile was
+    applied and the document holds transcribed speech, and are all ``None``
+    otherwise — no profile, no segments, or no segment with text — so an
+    artefact written before they existed reads unchanged (``schema_version``
+    stays 1; additive, defaulted). ``enrolled_speaker`` is the cluster label
+    the Transcript screen auto-confirms as the clinician (D4) and MUST be the
+    label of a segment that has transcribed text (``segment_has_text``): a
+    textless cluster has no radio and cannot be confirmed, and a document
+    naming a label its segments do not carry is refused at construction, so
+    the UI never sees one (the lying-field defence). ``enrolment_similarity``
+    is the RAW mean cosine of that cluster's segments against the enrolled
+    vector — finite, in [-1, 1], never a 0–1 clamp; ``speaker_model_id``
+    names the embedder that produced it. Cluster labels stay opaque (D1):
+    ``enrolled_speaker`` is a pre-check for a UI selection, not a value the
+    note pipeline accepts as the confirmed role.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -284,6 +347,35 @@ class TranscriptDocument(BaseModel):
     model_name: str
     sample_rate: int = Field(gt=0)
     transcript_segments: tuple[TranscriptSegment, ...]
+    enrolled_speaker: str | None = None
+    enrolment_similarity: float | None = None
+    speaker_model_id: str | None = Field(default=None, min_length=1)
+
+    @field_validator("enrolment_similarity")
+    @classmethod
+    def _similarity_is_a_cosine(cls, value: float | None) -> float | None:
+        if value is not None and not (math.isfinite(value) and -1.0 <= value <= 1.0):
+            raise ValueError("enrolment_similarity must be a finite cosine in [-1, 1]")
+        return value
+
+    @model_validator(mode="after")
+    def _attribution_fields_agree(self) -> TranscriptDocument:
+        present = [
+            value is not None
+            for value in (self.enrolled_speaker, self.enrolment_similarity, self.speaker_model_id)
+        ]
+        if any(present) and not all(present):
+            raise ValueError(
+                "enrolled_speaker, enrolment_similarity and speaker_model_id are set "
+                "together or not at all"
+            )
+        if self.enrolled_speaker is not None and self.enrolled_speaker not in {
+            segment.speaker for segment in self.transcript_segments if segment_has_text(segment)
+        }:
+            raise ValueError(
+                "enrolled_speaker must be the label of a segment with transcribed text"
+            )
+        return self
 
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
@@ -671,6 +763,135 @@ def label_speakers(
 
 
 # ---------------------------------------------------------------------------
+# Voice attribution against the enrolled profile (practitioner-profile plan
+# D3 / D13). Pure numpy functions over per-segment values; the pipeline
+# computes the values inside its windowed loop and calls these at the end.
+# ---------------------------------------------------------------------------
+
+
+def _unit_vector(values: Sequence[float], np: Any) -> Any:
+    vector = np.asarray(values, dtype=np.float64).reshape(-1)
+    norm = float(np.linalg.norm(vector))
+    if not math.isfinite(norm) or norm == 0.0:
+        raise ValueError("the enrolled vector has no direction")
+    return vector / norm
+
+
+def _cosine(embedding: Any, reference_unit: Any, np: Any) -> float:
+    """RAW cosine similarity in [-1, 1] between a segment embedding and the
+    unit-normalised enrolled vector (D3): a zero-norm or non-finite embedding
+    scores -1 (no direction to compare), and the result is bounded to
+    [-1, 1] only against float dust from two unit vectors — this is not a
+    0–1 clamp and the threshold is compared on this scale."""
+    vector = np.asarray(embedding, dtype=np.float64).reshape(-1)
+    if vector.shape[0] != reference_unit.shape[0]:
+        raise ValueError(
+            f"segment embedding has {vector.shape[0]} elements; the enrolled vector has "
+            f"{reference_unit.shape[0]}"
+        )
+    norm = float(np.linalg.norm(vector))
+    if not math.isfinite(norm) or norm == 0.0:
+        return -1.0
+    value = float(np.dot(vector / norm, reference_unit))
+    if not math.isfinite(value):
+        return -1.0
+    return max(-1.0, min(1.0, value))
+
+
+def enrolled_cluster(
+    labels: Sequence[str],
+    similarities: Sequence[float | None],
+    has_text: Sequence[bool],
+) -> tuple[str, float] | None:
+    """The cluster the profile confirms as the practitioner and its mean
+    similarity (D3/D13, PR-MED-008): among the labels holding at least one
+    segment with transcribed text AND at least one computed similarity, the
+    one with the highest mean similarity — ties go to the label that
+    appears first. ``None`` when no label qualifies (no text, or no segment
+    could be embedded), in which case the document carries no attribution
+    fields. The mean is a ``math.fsum`` over the label's similarities, so
+    segment order cannot move it."""
+    if not (len(labels) == len(similarities) == len(has_text)):
+        raise ValueError("one label, similarity and text flag per segment")
+    scored: dict[str, list[float]] = {}
+    textual: set[str] = set()
+    first_index: dict[str, int] = {}
+    for index, (label, similarity, text) in enumerate(
+        zip(labels, similarities, has_text, strict=True)
+    ):
+        first_index.setdefault(label, index)
+        if text:
+            textual.add(label)
+        if similarity is not None:
+            scored.setdefault(label, []).append(similarity)
+    candidates = {
+        label: math.fsum(values) / len(values)
+        for label, values in scored.items()
+        if label in textual
+    }
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda label: (candidates[label], -first_index[label]))
+    return best, max(-1.0, min(1.0, candidates[best]))
+
+
+def attribute_speakers(
+    similarities: Sequence[float | None],
+    embeddings: Sequence[Any],
+    has_text: Sequence[bool],
+    np: Any,
+    *,
+    threshold: float = ATTRIBUTION_THRESHOLD,
+) -> list[str]:
+    """Speaker labels with a profile applied (D3 / D13), one per segment.
+
+    A segment MATCHES when its similarity is at or above ``threshold`` (a
+    raw cosine; a segment without a similarity never matches). With at
+    least one match the matched segments are ``speaker_1`` and the rest are
+    2-means-clustered among themselves (``_cluster_embeddings`` over their
+    spectral embeddings — the SAME degenerate policy as the no-profile
+    path) as ``speaker_2`` / ``speaker_3`` by first appearance; a lone or
+    degenerate remainder is all ``speaker_2``. Residue, stated plainly: a
+    2-means over two or more NON-IDENTICAL remainder segments always yields
+    two clusters, so one other voice heard in several segments splits into
+    ``speaker_2`` and ``speaker_3`` — the same assumption of two voices the
+    no-profile path makes today; a single label for a one-voice remainder
+    needs an estimated speaker count (plan D-S1, deferred; Task 2.6 records
+    the consequence). With NO match the ordinary
+    2-means over every segment runs and the cluster with the higher mean
+    similarity — among clusters holding a segment with transcribed text
+    (``enrolled_cluster``) — is ``speaker_1``, the other ``speaker_2``; when
+    no cluster holds text the clustering's own first-appearance order
+    stands. Callers keep the pipeline's degenerate policy (fewer than two
+    embeddable segments -> all ``speaker_1``) BEFORE calling this, exactly
+    as ``label_speakers`` mirrors it.
+    """
+    count = len(similarities)
+    if not (len(embeddings) == len(has_text) == count):
+        raise ValueError("one similarity, embedding and text flag per segment")
+    if count == 0:
+        return []
+    matched = {i for i, s in enumerate(similarities) if s is not None and s >= threshold}
+    if matched:
+        labels = [SPEAKER_1] * count
+        rest = [i for i in range(count) if i not in matched]
+        if len(rest) >= 2:
+            rest_labels = _cluster_embeddings([embeddings[i] for i in rest], np)
+        else:
+            rest_labels = [SPEAKER_1] * len(rest)
+        renamed = {SPEAKER_1: SPEAKER_2, SPEAKER_2: SPEAKER_3}
+        for index, label in zip(rest, rest_labels, strict=True):
+            labels[index] = renamed[label]
+        return labels
+    labels = _cluster_embeddings(list(embeddings), np) if count >= 2 else [SPEAKER_1]
+    chosen = enrolled_cluster(labels, similarities, has_text)
+    if chosen is not None and chosen[0] == SPEAKER_2:
+        swapped = {SPEAKER_1: SPEAKER_2, SPEAKER_2: SPEAKER_1}
+        labels = [swapped[label] for label in labels]
+    return labels
+
+
+# ---------------------------------------------------------------------------
 # WhisperSpeechProvider — the real SpeechProvider (D6 as revised at the
 # Step 13 gate: faster-whisper, CTranslate2 CPU int8, model `medium`
 # by default with `small` as the visible fallback).
@@ -892,6 +1113,8 @@ def transcribe_session(
     require_footer: bool = True,
     model_name: str = "",
     uncertainty_threshold: float = UNCERTAINTY_THRESHOLD,
+    speaker_embedder: SpeakerEmbedder | None = None,
+    enrolled_profile: PractitionerProfile | None = None,
 ) -> TranscriptDocument:
     """Flow 2: VAD -> Whisper per ~30 s window of consecutive segments ->
     word->segment attribution -> uncertainty marks -> speaker labels ->
@@ -901,7 +1124,32 @@ def transcribe_session(
     reproduces and atomically replaces the transcript. ``require_footer``
     stays True for Finished stores (post-Finish truncation must fail);
     pass False only when recovering a store that never reached Finish.
+
+    ``speaker_embedder`` and ``enrolled_profile`` are supplied TOGETHER (one
+    without the other is a ``ValueError``, as is a profile made by a
+    different embedder — the composition layer, ``ui.models``, loads the
+    profile against the embedder's identity and reports the D2 fallback
+    instead of calling this). With both, each segment slice is also embedded
+    by the model inside its window and scored against the enrolled vector,
+    labels follow ``attribute_speakers`` and the document carries the
+    attribution fields (``TranscriptDocument``); without them nothing below
+    changes. An embedder failure on a segment propagates like any pipeline
+    failure (the session becomes recoverable) — the load contract's smoke
+    inference at construction is what keeps that off the consultation path.
     """
+    if (speaker_embedder is None) != (enrolled_profile is None):
+        raise ValueError("speaker_embedder and enrolled_profile must be supplied together")
+    if (
+        speaker_embedder is not None
+        and enrolled_profile is not None
+        and (
+            enrolled_profile.model_id != speaker_embedder.model_id
+            or enrolled_profile.model_sha256 != speaker_embedder.model_sha256
+            or enrolled_profile.embedding_dim != speaker_embedder.embedding_dim
+        )
+    ):
+        raise ValueError("the enrolled profile was made by a different speaker embedder")
+    attributing = speaker_embedder is not None and enrolled_profile is not None
     audio_path = session_dir / AUDIO_FILENAME
     header = read_store_header(audio_path)
     if header.sample_rate != SAMPLE_RATE:
@@ -924,11 +1172,21 @@ def transcribe_session(
     # by ONE window per iteration (packed windows are <= 30 s ~= 960 KB at
     # 16 kHz mono; a lone VAD segment longer than the budget materialises
     # whole — exactly as the old per-segment path did) and DROPPED at loop
-    # advance — only the 25-float speaker embeddings are retained, never
-    # the plaintext audio of the whole consultation.
-    np = _numpy() if len(segments) >= 2 else None
+    # advance — only the 25-float speaker embeddings (and, with a profile
+    # applied, one similarity float per segment) are retained, never the
+    # plaintext audio of the whole consultation. The model embedding for
+    # attribution is computed on the SAME slice inside the SAME window and
+    # reduced to that one float before the loop advances (plan Critical
+    # Constraint: the windowed plaintext bound is unchanged).
+    np = _numpy() if len(segments) >= 2 or attributing else None
+    reference_unit = (
+        _unit_vector(enrolled_profile.embedding, np)
+        if attributing and enrolled_profile is not None
+        else None
+    )
     marked_segments: list[tuple[SpeechSegment, tuple[TranscriptWord, ...]]] = []
     embeddings: list[Any] = []
+    similarities: list[float | None] = []
     saw_empty_segment = False
     window_spans = pack_transcription_windows(segments)
     window_segments = [
@@ -979,13 +1237,27 @@ def transcribe_session(
                     # Beyond-audio-end segment (VAD zero-pads its last
                     # frame): same degradation as the old per-segment path.
                     saw_empty_segment = True
+                if speaker_embedder is not None and reference_unit is not None:
+                    # Same slice, same window; reduced to one float here so
+                    # the model embedding never outlives the iteration.
+                    similarities.append(
+                        _cosine(speaker_embedder.embed(segment_pcm), reference_unit, np)
+                        if len(segment_pcm) >= MIN_ATTRIBUTION_PCM_BYTES
+                        else None
+                    )
 
     # Degenerate-case policy mirrors label_speakers — change together
-    # (round 42 LOW-011).
+    # (round 42 LOW-011). With a profile applied the SAME degenerate cases
+    # still yield a single ``speaker_1`` cluster; only the non-degenerate
+    # clustering is replaced by D13's attribution.
+    has_text = [words_have_text(words) for _, words in marked_segments]
     if np is None or saw_empty_segment or len(embeddings) < 2:
         speakers = [SPEAKER_1] * len(segments)
+    elif attributing:
+        speakers = attribute_speakers(similarities, embeddings, has_text, np)
     else:
         speakers = _cluster_embeddings(embeddings, np)
+    enrolled = enrolled_cluster(speakers, similarities, has_text) if attributing else None
     document = TranscriptDocument(
         session_id=header.session_id,
         created_at=datetime.now(UTC),
@@ -999,6 +1271,13 @@ def transcribe_session(
                 transcript_words=words,
             )
             for (segment, words), speaker in zip(marked_segments, speakers, strict=True)
+        ),
+        enrolled_speaker=enrolled[0] if enrolled is not None else None,
+        enrolment_similarity=enrolled[1] if enrolled is not None else None,
+        speaker_model_id=(
+            speaker_embedder.model_id
+            if enrolled is not None and speaker_embedder is not None
+            else None
         ),
     )
     write_transcript(session_dir, crypto, document)
@@ -1029,6 +1308,8 @@ def recover_session_transcription(
     frame_probability: FrameProbabilityFn,
     *,
     model_name: str = "",
+    speaker_embedder: SpeakerEmbedder | None = None,
+    enrolled_profile: PractitionerProfile | None = None,
 ) -> RecoveryOutcome:
     """Flow 3 resume-processing: unwrap the DPAPI key custody and restart
     transcription from audio (idempotent; a partial transcript is replaced
@@ -1037,8 +1318,10 @@ def recover_session_transcription(
     (truncated tail tolerated as expected crash behaviour) and flagged via
     ``RecoveryOutcome.store_finished`` for the recovery UI.
 
-    The returned crypto lets the caller drive queued -> Complete (which
-    destroys the crypto) or Discard.
+    ``speaker_embedder`` / ``enrolled_profile`` are passed straight to
+    ``transcribe_session`` (D3: both transcription entry points apply the
+    profile). The returned crypto lets the caller drive queued -> Complete
+    (which destroys the crypto) or Discard.
     """
     crypto = unwrap_key_from_file(session_dir)
     store_finished = store_has_footer(session_dir / AUDIO_FILENAME)
@@ -1049,6 +1332,8 @@ def recover_session_transcription(
         frame_probability,
         require_footer=store_finished,
         model_name=model_name,
+        speaker_embedder=speaker_embedder,
+        enrolled_profile=enrolled_profile,
     )
     return RecoveryOutcome(document=document, crypto=crypto, store_finished=store_finished)
 
@@ -1057,8 +1342,10 @@ __all__ = [
     "CLINICAL_INITIAL_PROMPT",
     "DEFAULT_WHISPER_MODEL",
     "FALLBACK_WHISPER_MODEL",
+    "MIN_ATTRIBUTION_PCM_BYTES",
     "SPEAKER_1",
     "SPEAKER_2",
+    "SPEAKER_3",
     "TRANSCRIBE_WINDOW_MAX_GAP_SECONDS",
     "TRANSCRIBE_WINDOW_SECONDS",
     "UNCERTAINTY_THRESHOLD",
@@ -1070,7 +1357,9 @@ __all__ = [
     "TranscriptionModelError",
     "WhisperSpeechProvider",
     "assign_words_to_segments",
+    "attribute_speakers",
     "default_whisper_model_dir",
+    "enrolled_cluster",
     "extract_segment_pcm",
     "is_name_like_token",
     "is_number_token",
@@ -1080,7 +1369,9 @@ __all__ = [
     "read_transcript",
     "recover_session_transcription",
     "resolve_whisper_model",
+    "segment_has_text",
     "transcribe_session",
     "whisper_model_available",
+    "words_have_text",
     "write_transcript",
 ]

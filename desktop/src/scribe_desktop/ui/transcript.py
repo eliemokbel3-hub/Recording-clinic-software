@@ -17,6 +17,21 @@ worker-thread write could interleave with a GUI-thread Complete, which a
 button guard cannot prevent). Generation is LIVE-path only: the recovered
 path has no QUEUED controller session for the scoped op, so its transcript
 view shows Complete/Discard only.
+
+Auto-confirm from the voice profile (practitioner-profile plan D4, ratified
+unconditional): when the document carries ``enrolled_speaker`` that radio is
+pre-checked, the manual radios are replaced by the line "Clinician: confirmed
+from your voice profile (similarity 0.xx) - change", and the link-styled
+"change" un-checks it and brings the manual radios back with ``speaker_role``'s
+" (suggested)" marker. The auto-confirm satisfies the ROLE predicate only —
+the template profile, a loadable config, no recovery in flight and the lease
+gate Generate exactly as before (PR-MED-009); the selection stays the UI state
+``generate()`` reads (D1: nothing passes a document field into
+``compose_draft`` directly). With no attribution the manual path is today's,
+plus a status line — OUTSIDE the generation group, so it shows on the
+recovered view and beside a failed note config too (peer round 19
+PR-HIGH-004) — naming the D2 fallback when a voice profile exists but was
+not applied.
 """
 
 from __future__ import annotations
@@ -45,7 +60,7 @@ from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_co
 from scribe_desktop.note_fill import detect_prefill_candidates
 from scribe_desktop.session import GenerationLease
 from scribe_desktop.session_store import write_note
-from scribe_desktop.transcription import TranscriptDocument
+from scribe_desktop.transcription import TranscriptDocument, segment_has_text
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
 
@@ -80,12 +95,20 @@ class TranscriptScreen(QWidget):
         ),
         config_loader: Callable[[], NoteConfig] = load_note_config,
         recovery_busy_provider: Callable[[], bool] | None = None,
+        attribution_readiness_provider: Callable[[], models.AttributionReadiness] = (
+            models.attribution_readiness
+        ),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._note_generator_factory = note_generator_factory
         self._config_loader = config_loader
+        # D2: consulted only for a document WITHOUT attribution, to name the
+        # fallback when a voice profile exists (a stat and a profile read —
+        # no model is loaded on the GUI thread).
+        self._attribution_readiness_provider = attribution_readiness_provider
+        self._auto_confirmed = False
         # Round 33 MED-001: a generation lease must NEVER be held while a
         # recovery resume is in flight — otherwise the resume's completion
         # (`_on_recovered`) swaps the transcript view and releases the lease
@@ -128,14 +151,48 @@ class TranscriptScreen(QWidget):
 
         self.legend_label = QLabel("Uncertain words are shown as [word?] - verify them.")
 
+        # --- practitioner-profile plan D2: the attribution status line -------
+        # OUTSIDE the generation group (peer round 19 PR-HIGH-004): the
+        # fallback must stay visible on the recovered view, which has no
+        # generation controls, and on a live view whose note config failed
+        # to load — whenever attribution is off and a voice profile exists.
+        self.attribution_status_label = QLabel()
+        self.attribution_status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.attribution_status_label.setWordWrap(True)
+        self.attribution_status_label.hide()
+
         # --- Task 7.5: pre-generation role + template controls -------------
         self.generate_box = QGroupBox("Generate note")
         generate_layout = QVBoxLayout(self.generate_box)
         generate_layout.addWidget(
             QLabel("Confirm the clinician and template before generating a note:")
         )
+        # --- practitioner-profile plan D4: the auto-confirm line -------------
+        attribution_row = QHBoxLayout()
+        self.attribution_label = QLabel()
+        # Plain text: this label renders a number and fixed copy only, but the
+        # discipline is the same as every other label on this screen.
+        self.attribution_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.attribution_label.setWordWrap(True)
+        self.attribution_label.hide()
+        self.change_role_button = QPushButton("change")
+        self.change_role_button.setFlat(True)
+        self.change_role_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.change_role_button.setStyleSheet(
+            "QPushButton { border: none; color: #0645ad; text-decoration: underline; "
+            "padding: 0px; }"
+        )
+        self.change_role_button.setToolTip(
+            "Choose the clinician yourself instead of the voice-profile match."
+        )
+        self.change_role_button.clicked.connect(self.change_role)
+        self.change_role_button.hide()
+        attribution_row.addWidget(self.attribution_label, 1)
+        attribution_row.addWidget(self.change_role_button)
+        generate_layout.addLayout(attribution_row)
         self._role_box = QVBoxLayout()
-        generate_layout.addWidget(QLabel("Clinician (choose the speaker who is the clinician):"))
+        self.role_prompt_label = QLabel("Clinician (choose the speaker who is the clinician):")
+        generate_layout.addWidget(self.role_prompt_label)
         generate_layout.addLayout(self._role_box)
         profile_row = QHBoxLayout()
         profile_row.addWidget(QLabel("Template profile:"))
@@ -188,6 +245,7 @@ class TranscriptScreen(QWidget):
         layout.addWidget(self.warning_label)
         layout.addWidget(self.transcript_view)
         layout.addWidget(self.legend_label)
+        layout.addWidget(self.attribution_status_label)
         layout.addWidget(self.generate_box)
         layout.addLayout(buttons)
         layout.addWidget(self.message_label)
@@ -226,11 +284,34 @@ class TranscriptScreen(QWidget):
             # Binding Step-10 note (PR-HIGH-007 residual).
             self.warning_label.setText(models.UNFINISHED_STORE_WARNING)
             self.warning_label.show()
+        self._show_attribution_status(document)
         self._can_generate = can_generate and self._controller is not None
         if self._can_generate:
             self._populate_generation_controls(document)
         self.generate_box.setVisible(self._can_generate)
         self._update_controls()
+
+    def _show_attribution_status(self, document: TranscriptDocument) -> None:
+        """D2's visible fallback, independent of note generation: for a
+        transcript that holds speech but carries no attribution, name why a
+        present voice profile was not applied — the readiness probe's reason,
+        or ``ATTRIBUTION_DID_NOT_RUN_REASON`` when the probe sees nothing
+        wrong (a model file that failed to LOAD in the worker). Shown on both
+        entry points, whether or not generation controls exist; touches no
+        Generate gate. Nothing is shown when no profile exists (the
+        pre-enrolment path) or when the document is attributed (the
+        generation group's confirmation line is that case's status)."""
+        self.attribution_status_label.hide()
+        if document.enrolled_speaker is not None:
+            return
+        if not any(segment_has_text(segment) for segment in document.transcript_segments):
+            return
+        readiness = self._attribution_readiness_provider()
+        if readiness.profile_present:
+            self.attribution_status_label.setText(
+                readiness.reason or models.ATTRIBUTION_DID_NOT_RUN_REASON
+            )
+            self.attribution_status_label.show()
 
     def _populate_generation_controls(self, document: TranscriptDocument) -> None:
         _clear_layout(self._role_box)
@@ -248,7 +329,27 @@ class TranscriptScreen(QWidget):
             self._role_buttons[speaker] = radio
             radio.toggled.connect(lambda *_: self._update_controls())
             self._role_box.addWidget(radio)
-        # None is pre-checked: role confirmation is mandatory and explicit.
+        # D4: with a voice-profile attribution the enrolled cluster's radio IS
+        # pre-checked and the confirmation line replaces the radios; a one
+        # click "change" reverts to the manual path. Otherwise none is
+        # pre-checked: role confirmation is mandatory and explicit (the D2
+        # fallback status for that case lives OUTSIDE this group —
+        # ``_show_attribution_status``). The validator on
+        # ``TranscriptDocument`` guarantees ``enrolled_speaker`` names a
+        # segment with text, i.e. one of these radios — the membership test
+        # below is belt and braces, never the defence.
+        self._clear_auto_confirm()
+        enrolled = document.enrolled_speaker
+        similarity = document.enrolment_similarity
+        if enrolled is not None and similarity is not None and enrolled in self._role_buttons:
+            self._role_buttons[enrolled].setChecked(True)
+            self._auto_confirmed = True
+            self.attribution_label.setText(
+                f"Clinician: confirmed from your voice profile (similarity {similarity:.2f}) -"
+            )
+            self.attribution_label.show()
+            self.change_role_button.show()
+        self._set_manual_role_controls_visible(not self._auto_confirmed)
         self.profile_combo.clear()
         self.prefill_combo.clear()
         try:
@@ -277,10 +378,47 @@ class TranscriptScreen(QWidget):
         for candidate in detect_prefill_candidates(document, config):
             self.prefill_combo.addItem(candidate.display_name, candidate.prefill_id)
 
+    def _set_manual_role_controls_visible(self, visible: bool) -> None:
+        self.role_prompt_label.setVisible(visible)
+        for radio in self._role_buttons.values():
+            radio.setVisible(visible)
+
+    def _clear_auto_confirm(self) -> None:
+        """Forget the voice-profile pre-check and hide its line — the ONE
+        place the three pieces of that state are reset together."""
+        self._auto_confirmed = False
+        self.attribution_label.hide()
+        self.change_role_button.hide()
+
+    @property
+    def role_auto_confirmed(self) -> bool:
+        """True while the clinician radio is checked from the voice profile
+        (D4) rather than by hand — cleared by ``change_role``."""
+        return self._auto_confirmed
+
+    def change_role(self) -> None:
+        """D4's one-click change: un-check the auto-confirmed radio and show
+        the manual radios (with ``speaker_role``'s " (suggested)" marker) so
+        the practitioner chooses explicitly. Touches UI state only — the
+        document is unchanged and Generate is disabled again until a radio
+        is chosen."""
+        if not self._auto_confirmed:
+            return
+        group = self._role_group
+        if group is not None:
+            group.setExclusive(False)
+            for radio in self._role_buttons.values():
+                radio.setChecked(False)
+            group.setExclusive(True)
+        self._clear_auto_confirm()
+        self._set_manual_role_controls_visible(True)
+        self._update_controls()
+
     def _reset_generation_state(self) -> None:
         self._release_lease()
         self._generation_result = None
         self._config = None
+        self._clear_auto_confirm()
         self._note_review_state = models.NoteReviewState()
         # Reset the committed-note flag ONLY on a new session (show_document)
         # or a terminal action (_clear) — NOT on cancel_note_review, which
@@ -303,6 +441,7 @@ class TranscriptScreen(QWidget):
         self.generate_button.setEnabled(can_generate_now and both_confirmed)
         self.profile_combo.setEnabled(can_generate_now)
         self.prefill_combo.setEnabled(can_generate_now)
+        self.change_role_button.setEnabled(can_generate_now)
         for radio in self._role_buttons.values():
             radio.setEnabled(can_generate_now)
         # Complete gating (Flow 2): refused while generating, while a proposal
@@ -336,6 +475,7 @@ class TranscriptScreen(QWidget):
         self._on_discard = None
         self.transcript_view.setPlainText("")
         self.warning_label.hide()
+        self.attribution_status_label.hide()
         self._can_generate = False
         self.generate_box.hide()
         self._reset_generation_state()

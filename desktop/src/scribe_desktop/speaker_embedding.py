@@ -402,6 +402,9 @@ class SpeakerEmbedder(Protocol):
     usable only with the same id, D16); ``model_sha256`` is the verified
     digest of the model file (empty for the file-less embedders);
     ``embedding_dim`` is the vector length every ``embed`` call returns.
+    ``embed`` accepts any PCM of at least ``FRAME_LENGTH`` samples (one 25 ms
+    front-end frame); a shorter input MAY be refused with ``ValueError``, so
+    the pipeline does not ask (``transcription.MIN_ATTRIBUTION_PCM_BYTES``).
     """
 
     @property
@@ -565,6 +568,19 @@ class MockSpeakerEmbedder:
         return _l2_normalised(np.asarray(raw, dtype=np.float32), np)
 
 
+def shipped_embedder_identity(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> tuple[str, str]:
+    """``(model_id, model_sha256)`` the selected embedder reports once built —
+    known WITHOUT loading it: the onnx embedder refuses to load unless the
+    file digests to ``SPEAKER_MODEL_SHA256``, so that pin IS its verified
+    digest, and spectral has no file. Lets the composition layer and the
+    Transcript screen's status line decide whether a stored profile matches
+    the shipped embedder (D3 / D16) off the worker thread, from a stat and a
+    profile read, before any model is constructed."""
+    if kind == "spectral":
+        return SPECTRAL_MODEL_ID, ""
+    return ONNX_MODEL_ID, SPEAKER_MODEL_SHA256
+
+
 def speaker_embedder_available(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> bool:
     """Whether the SELECTED embedder can be built: spectral always; onnx iff
     the pinned model file is present (a STAT-only, UNC-safe probe — the
@@ -619,6 +635,7 @@ __all__ = [
     "load_onnx_session",
     "mel_filterbank",
     "sha256_of_file",
+    "shipped_embedder_identity",
     "speaker_embedder_available",
     "speaker_model_available",
 ]

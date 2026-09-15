@@ -58,12 +58,37 @@ Input contract (practitioner-decided 2026-09-03): one directory of
 ``<name>.wav`` / ``<name>.txt`` pairs; any other WAV rate, channel count or
 sample width is REFUSED per file (no resampling); a lone WAV or lone label
 file is reported and skipped.
+
+The **enrolled** condition (practitioner-profile plan Task 2.4): with
+``--enrolment <wav>`` (16 kHz mono, refused otherwise) the practitioner's
+enrolment vector is produced by the shipped ``enrolment.enrol`` and wrapped in
+a synthetic IN-MEMORY ``PractitionerProfile`` that is never written anywhere —
+this module imports no profile store and owns none; the teardown contract
+above is untouched. Each recording is then run through the SHIPPED
+``transcribe_session`` a second time with the shipped embedder and that
+profile, over the same temporary store, with the first pass's window
+transcriptions replayed from memory (VAD segmentation and window packing are
+deterministic over one store, so no second Whisper run is paid; an unseen
+window still goes to the real provider); a segmentation that differs between
+the passes is a harness fault, never a number. Its labels are the third
+condition: ``cluster_metrics`` is computed even when every label is
+``speaker_1`` — a one-cluster enrolled output is scored whatever produced it,
+every segment matching the profile (the false-positive case the condition
+exists to measure) or a degenerate clustering after no segment matched, since
+the labels alone do not say which and the legacy "merged" exclusion would hide
+exactly the case that matters (the legacy two conditions keep their merged
+semantics) — and the auto-confirmed cluster (``enrolled_speaker``, what the Transcript screen
+pre-checks under D4) gets its own ``RoleOutcome``. Without ``--enrolment``
+and with two or more pairs, the documented fallback enrols each recording
+from the clinician-labelled spans of the OTHER recordings (leave-one-out);
+with one pair and no enrolment WAV the condition is absent and reported.
 """
 
 from __future__ import annotations
 
 import argparse
 import functools
+import hashlib
 import itertools
 import math
 import os
@@ -75,13 +100,16 @@ import traceback
 import wave
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from statistics import fmean
 from typing import Final, Literal
 
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+from scribe_desktop.enrolment import EnrolmentError, enrol
 from scribe_desktop.note import SpeakerRolePreselection, speaker_role
+from scribe_desktop.practitioner_profile import ConsentRecord, PractitionerProfile
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -90,6 +118,11 @@ from scribe_desktop.session_store import (
     delete_session_key,
     wrap_key_to_file,
 )
+from scribe_desktop.speaker_embedding import (
+    SpeakerEmbedder,
+    SpeakerModelError,
+    build_speaker_embedder,
+)
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
     SAMPLE_RATE,
@@ -97,6 +130,7 @@ from scribe_desktop.speech import (
     SileroVad,
     SpeechProvider,
     SpeechSegment,
+    TranscribedWord,
 )
 from scribe_desktop.transcription import (
     SPEAKER_1,
@@ -125,6 +159,10 @@ _SHARE_EPSILON: Final = 1e-9
 # Condition names, printed as-is in the report.
 BEFORE: Final = "before"
 AFTER: Final = "after"
+ENROLLED: Final = "enrolled"
+# The synthetic in-memory profile's fixed fields (never persisted).
+HARNESS_DEVICE_NAME: Final = "measurement harness (in-memory profile, never saved)"
+HARNESS_CONSENT_VERSION: Final = "consent-v1"
 # Store chunking for the temporary session (1 s of PCM, the test-suite shape).
 STORE_CHUNK_BYTES: Final = SAMPLE_RATE * BYTES_PER_SAMPLE
 TEMP_DIR_PREFIX: Final = "scribe-speaker-eval-"
@@ -160,9 +198,10 @@ class WavFormatError(RecordingRefusedError):
 
 
 class HarnessFaultError(SpeakerEvalError):
-    """``label_speakers`` disagreed with the pipeline over identical segments:
-    the two sites must mirror one degenerate-case policy (round 42 LOW-011),
-    so this is a harness/pipeline drift, not a measurement."""
+    """``label_speakers`` disagreed with the pipeline over identical segments
+    (the two sites must mirror one degenerate-case policy, round 42 LOW-011),
+    or the enrolled pass segmented the same store differently from the plain
+    pass: a harness/pipeline drift, not a measurement."""
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +554,13 @@ class RoleOutcome:
     settled by a cluster's name; ``clinician_labelled_share`` is the
     clinician's share of all labelled seconds — Task 2.2's talk-time
     DIRECTION assumption, measured directly.
+
+    For the enrolled condition's AUTO-CONFIRM outcome (``auto_confirm_outcome``)
+    the same verdict is judged for the cluster the voice profile confirmed
+    (``TranscriptDocument.enrolled_speaker``), and ``margin`` carries that
+    document's ``enrolment_similarity`` — the number the practitioner sees
+    on the confirmation line — rather than a heuristic score gap; the
+    report labels the column accordingly.
     """
 
     verdict: RoleVerdict
@@ -587,6 +633,29 @@ def role_outcome(
     )
 
 
+def auto_confirm_outcome(
+    document: TranscriptDocument,
+    predicted: Sequence[str],
+    truths: Sequence[SegmentTruth],
+) -> RoleOutcome:
+    """The enrolled condition's verdict for the cluster the voice profile
+    confirmed (D4's pre-check, ``enrolled_speaker``): CORRECT when that
+    cluster's duration-weighted majority true label is ``clinician``, WRONG
+    otherwise, NONE when the document carries no attribution. Judged by the
+    same rule as the heuristic outcome (``role_outcome``), with the
+    document's ``enrolment_similarity`` in ``margin`` and the heuristic's
+    evidence supplying the talk-time shares."""
+    evidence = speaker_role(document).speaker_evidence
+    similarity = document.enrolment_similarity
+    if similarity is None:
+        similarity = 0.0
+    return role_outcome(
+        SpeakerRolePreselection(document.enrolled_speaker, similarity, evidence),
+        predicted,
+        truths,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Per-recording results.
 # ---------------------------------------------------------------------------
@@ -598,13 +667,20 @@ class ConditionResult:
     clustering MERGED (all ``speaker_1`` over two or more segments — reported,
     not scored) or when no segment is labelled; ``role`` is always present
     because ``speaker_role`` is defined on either (a merged clustering
-    yields NONE, which is what the app would show)."""
+    yields NONE, which is what the app would show). The ``ENROLLED``
+    condition is never ``merged``: one cluster there is scored whatever
+    produced it — every segment matching the profile (the false-positive
+    case PR-MED-014 wants measured) or a degenerate clustering after no
+    match; the labels alone do not say which, the ``auto_confirm`` verdict
+    and ``enrolment_similarity`` (carried by this condition alone) do."""
 
     condition: str
     predicted_labels: tuple[str, ...]
     merged: bool
     metrics: ClusterMetrics | None
     role: RoleOutcome
+    auto_confirm: RoleOutcome | None = None
+    enrolment_similarity: float | None = None
 
 
 @dataclass(frozen=True)
@@ -623,9 +699,16 @@ class RecordingResult:
     point_labels_ignored: int
     conditions: tuple[ConditionResult, ...]
 
+    def has_condition(self, name: str) -> bool:
+        return any(c.condition == name for c in self.conditions)
+
     def condition(self, name: str) -> ConditionResult:
-        """The ``BEFORE`` or ``AFTER`` condition of this recording."""
-        return next(c for c in self.conditions if c.condition == name)
+        """The ``BEFORE``, ``AFTER`` or (when measured) ``ENROLLED``
+        condition of this recording; ``KeyError`` for an absent one."""
+        for candidate in self.conditions:
+            if candidate.condition == name:
+                return candidate
+        raise KeyError(name)
 
 
 def _segments_and_labels(document: TranscriptDocument) -> tuple[list[SpeechSegment], list[str]]:
@@ -656,8 +739,10 @@ def _score_condition(
     labels: Sequence[str],
     truths: Sequence[SegmentTruth],
     document: TranscriptDocument,
+    *,
+    enrolled: bool = False,
 ) -> ConditionResult:
-    merged = len(labels) >= 2 and set(labels) == {SPEAKER_1}
+    merged = not enrolled and len(labels) >= 2 and set(labels) == {SPEAKER_1}
     scorable = not merged and any(truth.true_label is not None for truth in truths)
     return ConditionResult(
         condition=name,
@@ -665,6 +750,8 @@ def _score_condition(
         merged=merged,
         metrics=cluster_metrics(labels, truths) if scorable else None,
         role=role_outcome(speaker_role(document), labels, truths),
+        auto_confirm=auto_confirm_outcome(document, labels, truths) if enrolled else None,
+        enrolment_similarity=document.enrolment_similarity if enrolled else None,
     )
 
 
@@ -673,16 +760,32 @@ def score_document(
     document: TranscriptDocument,
     track: LabelTrack,
     before_labels: Sequence[str],
+    *,
+    enrolled_document: TranscriptDocument | None = None,
 ) -> RecordingResult:
     """Score a transcribed document against its label track. ``document``
     carries the "after" labels (the pipeline's own); ``before_labels`` are
-    the re-clustered ones. Pure and ML-free — the CI-testable half of
+    the re-clustered ones; ``enrolled_document``, when given, is the shipped
+    pipeline's output WITH the embedder and profile over the same segments
+    (one label per segment of ``document``, ``ValueError`` otherwise) and
+    yields the third condition. Pure and ML-free — the CI-testable half of
     ``evaluate_recording``."""
     segments, after_labels = _segments_and_labels(document)
     if len(before_labels) != len(segments):
         raise ValueError("one before-condition label per segment")
     truths = align_segments(segments, track)
     before_document = _relabelled(document, before_labels)
+    conditions = [
+        _score_condition(BEFORE, before_labels, truths, before_document),
+        _score_condition(AFTER, after_labels, truths, document),
+    ]
+    if enrolled_document is not None:
+        _enrolled_segments, enrolled_labels = _segments_and_labels(enrolled_document)
+        if len(enrolled_labels) != len(segments):
+            raise ValueError("one enrolled-condition label per segment")
+        conditions.append(
+            _score_condition(ENROLLED, enrolled_labels, truths, enrolled_document, enrolled=True)
+        )
     return RecordingResult(
         name=name,
         segment_count=len(segments),
@@ -691,11 +794,72 @@ def score_document(
         tied_count=sum(1 for truth in truths if truth.tied),
         label_names=track.labels,
         point_labels_ignored=track.point_labels_ignored,
-        conditions=(
-            _score_condition(BEFORE, before_labels, truths, before_document),
-            _score_condition(AFTER, after_labels, truths, document),
+        conditions=tuple(conditions),
+    )
+
+
+# ---------------------------------------------------------------------------
+# The enrolled condition's inputs: an in-memory profile, never a store.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class EnrolmentInputs:
+    """What the enrolled condition passes to the shipped pipeline: the
+    embedder and a synthetic profile built by ``enrolment_inputs``. The
+    profile lives in this process only — the harness imports no profile
+    store and never writes one (the teardown contract covers the temporary
+    session store alone, because nothing else is ever created). Neither
+    field takes part in ``repr``: the profile's rendering carries the
+    enrolment vector, and this module's result types stay renderable
+    without it (the text-free contract in the module docstring)."""
+
+    embedder: SpeakerEmbedder = field(repr=False)
+    profile: PractitionerProfile = field(repr=False)
+
+
+def enrolment_inputs(
+    pcm: bytes, embedder: SpeakerEmbedder, frame_probability: FrameProbabilityFn
+) -> EnrolmentInputs:
+    """The shipped ``enrolment.enrol`` over ``pcm`` (an enrolment WAV, or the
+    leave-one-out pool of clinician spans), wrapped in an in-memory
+    ``PractitionerProfile`` recording the embedder's identity, so the
+    pipeline applies it exactly as it would the practitioner's stored
+    profile. Raises ``EnrolmentError`` (numbers only) when the audio holds
+    no usable speech."""
+    vector, speech_seconds = enrol(pcm, embedder, frame_probability=frame_probability)
+    now = datetime.now(UTC)
+    embedding = tuple(float(value) for value in vector)
+    profile = PractitionerProfile(
+        model_id=embedder.model_id,
+        model_sha256=embedder.model_sha256,
+        embedding=embedding,
+        embedding_dim=len(embedding),
+        created_at=now,
+        enrolment_speech_seconds=speech_seconds,
+        device_name=HARNESS_DEVICE_NAME,
+        consent=ConsentRecord(
+            accepted_at=now, consent_text_version=HARNESS_CONSENT_VERSION, learning_opt_in=False
         ),
     )
+    return EnrolmentInputs(embedder=embedder, profile=profile)
+
+
+def clinician_pcm(pcm: bytes, track: LabelTrack) -> bytes:
+    """The PCM under every ``clinician``-labelled span of one recording,
+    concatenated in track order and clipped to the audio — the leave-one-out
+    fallback's raw material. Overlapping clinician spans repeat their
+    overlap; that only weights the enrolment mean, never the measured
+    recording, which is always left out of its own pool."""
+    parts: list[bytes] = []
+    for span in track.spans:
+        if span.label != CLINICIAN_LABEL:
+            continue
+        start = int(span.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        end = min(int(span.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE, len(pcm))
+        if end > start:
+            parts.append(pcm[start:end])
+    return b"".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -845,11 +1009,47 @@ def _destroy_temporary_store(
         _raise_if_residue(temp_root, session_dir, crypto, failures)
 
 
+class _ReplayProvider:
+    """The real provider for the plain pass, a memory for the enrolled pass:
+    every window the inner provider transcribes is remembered by the SHA-256
+    of its PCM, and a window seen again is answered from that memory, so the
+    enrolled pass over the same store costs no second Whisper run (VAD and
+    window packing are deterministic over one store). An unseen window still
+    goes to the inner provider — a difference in segmentation is then caught
+    as a harness fault by ``evaluate_recording``. What it holds, for one
+    recording at a time and never beyond the process: the transcribed words
+    per window — the same plaintext the practitioner's WAV already is on
+    disk (module docstring: not the app's plaintext bound)."""
+
+    def __init__(self, inner: SpeechProvider) -> None:
+        self._inner = inner
+        self._seen: dict[bytes, list[TranscribedWord]] = {}
+
+    @property
+    def model_name(self) -> str:
+        return str(getattr(self._inner, "model_name", type(self._inner).__name__))
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        key = hashlib.sha256(pcm).digest()
+        words = self._seen.get(key)
+        if words is None:
+            words = list(self._inner.transcribe_segment(pcm, sample_rate))
+            self._seen[key] = words
+        return list(words)
+
+
 def _transcribe_in_temporary_store(
-    pcm: bytes, provider: SpeechProvider, frame_probability: FrameProbabilityFn
-) -> TranscriptDocument:
+    pcm: bytes,
+    provider: SpeechProvider,
+    frame_probability: FrameProbabilityFn,
+    *,
+    enrolment: EnrolmentInputs | None = None,
+) -> tuple[TranscriptDocument, TranscriptDocument | None]:
     """``pcm`` -> fresh store under a real DPAPI-wrapped key -> the shipped
-    ``transcribe_session`` -> ``_destroy_temporary_store`` on every path.
+    ``transcribe_session`` (twice when ``enrolment`` is given: the plain
+    pass, then the same store with the embedder and profile through a
+    ``_ReplayProvider``) -> ``_destroy_temporary_store`` on every path.
+    Returns ``(plain document, enrolled document or None)``.
     The guard begins the moment the in-memory key exists: a failure
     anywhere after it — ``mkdtemp`` included — still reaches the teardown,
     with a root that never came to exist passed as None and a session
@@ -861,6 +1061,7 @@ def _transcribe_in_temporary_store(
     crypto = SessionCrypto()
     temp_root: Path | None = None
     session_dir: Path | None = None
+    enrolled_document: TranscriptDocument | None = None
     try:
         temp_root = Path(tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX))
         session_id = secrets.token_hex(16)
@@ -869,7 +1070,19 @@ def _transcribe_in_temporary_store(
         wrap_key_to_file(crypto, session_dir)
         _write_store(session_dir, crypto, session_id, pcm)
         try:
-            document = transcribe_session(session_dir, crypto, provider, frame_probability)
+            if enrolment is None:
+                document = transcribe_session(session_dir, crypto, provider, frame_probability)
+            else:
+                replay = _ReplayProvider(provider)
+                document = transcribe_session(session_dir, crypto, replay, frame_probability)
+                enrolled_document = transcribe_session(
+                    session_dir,
+                    crypto,
+                    replay,
+                    frame_probability,
+                    speaker_embedder=enrolment.embedder,
+                    enrolled_profile=enrolment.profile,
+                )
         except BaseException as exc:
             # The pipeline streams ``audio.enc`` through suspended generators
             # (``iter_chunks`` -> ``extract_segment_pcm``). An exception's
@@ -885,7 +1098,7 @@ def _transcribe_in_temporary_store(
         _destroy_temporary_store(temp_root, session_dir, crypto)
         raise
     _destroy_temporary_store(temp_root, session_dir, crypto)
-    return document
+    return document, enrolled_document
 
 
 def evaluate_recording(
@@ -893,15 +1106,21 @@ def evaluate_recording(
     labels_path: Path,
     provider: SpeechProvider,
     frame_probability: FrameProbabilityFn,
+    *,
+    enrolment: EnrolmentInputs | None = None,
 ) -> RecordingResult:
-    """Measure one recording, both conditions. Inputs are validated BEFORE
-    any store is built. Raises ``LabelTrackError`` / ``WavFormatError`` for
-    unusable inputs and ``HarnessFaultError`` when ``label_speakers`` with
-    the default does not reproduce the pipeline's labels over the same
-    segments (both sites must mirror one policy, round 42 LOW-011)."""
+    """Measure one recording: both legacy conditions, plus the enrolled one
+    when ``enrolment`` is given. Inputs are validated BEFORE any store is
+    built. Raises ``LabelTrackError`` / ``WavFormatError`` for unusable
+    inputs and ``HarnessFaultError`` when ``label_speakers`` with the default
+    does not reproduce the pipeline's labels over the same segments (both
+    sites must mirror one policy, round 42 LOW-011) or when the enrolled
+    pass segmented the store differently from the plain pass."""
     track = parse_audacity_labels(labels_path.read_text(encoding="utf-8-sig"))
     pcm = read_wav_pcm(wav_path)
-    document = _transcribe_in_temporary_store(pcm, provider, frame_probability)
+    document, enrolled_document = _transcribe_in_temporary_store(
+        pcm, provider, frame_probability, enrolment=enrolment
+    )
 
     segments, after_labels = _segments_and_labels(document)
     # The same floor arithmetic the pipeline slices its windows with
@@ -914,8 +1133,18 @@ def evaluate_recording(
             "pipeline's labels - the two sites must mirror one policy (round 42 LOW-011); "
             "fix the drift before measuring"
         )
+    if enrolled_document is not None:
+        enrolled_segments, _labels = _segments_and_labels(enrolled_document)
+        if enrolled_segments != segments:
+            raise HarnessFaultError(
+                "the enrolled pass segmented the same store differently from the plain "
+                "pass - VAD segmentation must be deterministic over one store; fix the "
+                "drift before measuring"
+            )
     before_labels = label_speakers(segment_pcms, cepstral_mean_normalisation=False)
-    return score_document(wav_path.stem, document, track, before_labels)
+    return score_document(
+        wav_path.stem, document, track, before_labels, enrolled_document=enrolled_document
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -939,14 +1168,21 @@ def render_report(results: Sequence[RecordingResult], *, model_name: str) -> str
         f"## Speaker measurement (Task 2.3) - whisper model `{model_name}`",
         "",
         f"Recordings scored: {len(results)}. Conditions: `{BEFORE}` = Task 2.1 cepstral mean "
-        f"normalisation OFF over the same VAD segments; `{AFTER}` = the shipped pipeline. "
+        f"normalisation OFF over the same VAD segments; `{AFTER}` = the shipped pipeline; "
+        f"`{ENROLLED}` (when measured) = the shipped pipeline with the speaker embedder and "
+        "an enrolment vector applied (practitioner-profile plan), where a one-cluster "
+        "output is scored rather than reported as merged (every segment matched, or a "
+        "degenerate clustering after none did - the labels alone do not say which). "
         "Cluster accuracy is the best injective predicted->true mapping, duration-weighted "
-        "(s) and by segment count (n), over labelled segments only.",
+        "(s) and by segment count (n), over labelled segments only. `Auto-confirm` is the "
+        "verdict for the cluster the voice profile confirmed (what the Transcript screen "
+        "pre-checks) and `Similarity` its mean cosine against the enrolment vector.",
         "",
         "| Recording | Segments | Unlabelled | Mixed | Labels | Condition | Clusters pred/true "
         "| Cluster acc. (s) | Cluster acc. (n) | Role | Preselected | Majority true | Margin "
-        "| Clinician cluster talk share | Clinician labelled share |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Clinician cluster talk share | Clinician labelled share | Auto-confirm "
+        "| Auto-confirmed | Similarity |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for result in results:
         for cond in result.conditions:
@@ -963,13 +1199,17 @@ def render_report(results: Sequence[RecordingResult], *, model_name: str) -> str
                     f"({metrics.correct_count}/{metrics.labelled_count})"
                 )
             role = cond.role
+            auto = cond.auto_confirm
+            auto_verdict = auto.verdict if auto is not None else "-"
+            auto_speaker = (auto.preselected_speaker or "-") if auto is not None else "-"
             lines.append(
                 f"| {result.name} | {result.segment_count} | {result.unlabelled_count} "
                 f"| {result.mixed_count} | {', '.join(result.label_names)} | {cond.condition} "
                 f"| {clusters} | {acc_s} | {acc_n} | {role.verdict} "
                 f"| {role.preselected_speaker or '-'} | {role.majority_true_label or '-'} "
                 f"| {role.margin:.3f} | {_share(role.clinician_cluster_talk_time_share)} "
-                f"| {_share(role.clinician_labelled_share)} |"
+                f"| {_share(role.clinician_labelled_share)} | {auto_verdict} | {auto_speaker} "
+                f"| {_share(cond.enrolment_similarity)} |"
             )
 
     notes: list[str] = []
@@ -1009,19 +1249,30 @@ def render_report(results: Sequence[RecordingResult], *, model_name: str) -> str
         "### Aggregate per condition",
         "",
         "| Condition | Recordings | Scored | Merged | Mean cluster acc. (s) "
-        "| Mean cluster acc. (n) | Role CORRECT | Role WRONG | Role NONE |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| Mean cluster acc. (n) | Role CORRECT | Role WRONG | Role NONE "
+        "| Auto-confirm CORRECT | Auto-confirm WRONG | Auto-confirm NONE |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
-    for name in (BEFORE, AFTER):
-        conds = [result.condition(name) for result in results]
+    for name in (BEFORE, AFTER, ENROLLED):
+        conds = [result.condition(name) for result in results if result.has_condition(name)]
+        if name == ENROLLED and not conds:
+            continue  # not measured on this run: no row rather than a row of zeros
         scored = [c.metrics for c in conds if c.metrics is not None]
         verdicts = Counter(c.role.verdict for c in conds)
+        auto_counts = Counter(
+            c.auto_confirm.verdict for c in conds if c.auto_confirm is not None
+        )
         mean_s = f"{fmean([m.accuracy_seconds for m in scored]):.3f}" if scored else "-"
         mean_n = f"{fmean([m.accuracy_count for m in scored]):.3f}" if scored else "-"
+        auto_cells = (
+            f"{auto_counts['CORRECT']} | {auto_counts['WRONG']} | {auto_counts['NONE']}"
+            if name == ENROLLED
+            else "- | - | -"
+        )
         lines.append(
             f"| {name} | {len(conds)} | {len(scored)} | {sum(1 for c in conds if c.merged)} "
             f"| {mean_s} | {mean_n} | {verdicts['CORRECT']} | {verdicts['WRONG']} "
-            f"| {verdicts['NONE']} |"
+            f"| {verdicts['NONE']} | {auto_cells} |"
         )
     return "\n".join(lines)
 
@@ -1063,14 +1314,51 @@ def _configure_output() -> None:
             reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
+def _leave_one_out_pool(
+    pairs: Sequence[tuple[Path, Path]],
+) -> tuple[dict[str, bytes], dict[str, str]]:
+    """``(pool, failures)``: recording stem -> its clinician-labelled PCM for
+    every pair that prepares, and WAV name -> exception type name for every
+    pair whose clinician-span extraction failed. Every input-dependent step
+    of preparing one entry sits inside the per-pair boundary (peer rounds 19
+    PR-REG-003 / 20 PR-REG-004: preparation must never abort the run before
+    a recording is scored). Two failure classes, reported once each: a pair
+    whose READ or PARSE fails is skipped silently here, because the
+    per-recording evaluation re-reads the same inputs and reports that pair
+    by type; a pair that reads but whose EXTRACTION fails (an accepted label
+    timestamp too large for a sample index, ``OverflowError``) is returned in
+    ``failures`` because the evaluation, which compares timestamps as floats,
+    would never trip on it — ``main`` reports it by type and counts it
+    towards the exit status."""
+    pool: dict[str, bytes] = {}
+    failures: dict[str, str] = {}
+    for wav_path, labels_path in pairs:
+        try:
+            track = parse_audacity_labels(labels_path.read_text(encoding="utf-8-sig"))
+            pcm = read_wav_pcm(wav_path)
+        except Exception:  # noqa: BLE001 - the evaluation loop reports it, type only
+            continue
+        try:
+            pool[wav_path.stem] = clinician_pcm(pcm, track)
+        except Exception as exc:  # noqa: BLE001 - reported by main, type only
+            failures[wav_path.name] = type(exc).__name__
+    return pool, failures
+
+
 def main(argv: list[str] | None = None) -> int:
     """Exit status 0 only when at least one recording was scored and none
-    errored; a refused or unpaired file is reported, not an error."""
+    errored; a refused or unpaired file is reported, not an error. An
+    unusable ``--enrolment`` WAV or an absent speaker model under
+    ``--enrolment`` is an error (the practitioner asked for that condition);
+    without the flag the leave-one-out fallback needs the speaker model and
+    two or more pairs, and says so when it cannot run."""
     _configure_output()
     parser = argparse.ArgumentParser(
         description=(
             "Measure speaker-cluster and clinician-role accuracy on labelled recordings "
-            "(Task 2.3), before and after Task 2.1, through the shipped pipeline."
+            "(Task 2.3), before and after Task 2.1, through the shipped pipeline - and, "
+            "with an enrolment WAV (or two or more recordings), with the practitioner's "
+            "voice profile applied."
         )
     )
     parser.add_argument(
@@ -1079,6 +1367,18 @@ def main(argv: list[str] | None = None) -> int:
         help=(
             "directory of <name>.wav (16 kHz mono 16-bit PCM) + <name>.txt "
             "(Audacity label track; labels are role names, one must be 'clinician') pairs"
+        ),
+    )
+    parser.add_argument(
+        "--enrolment",
+        type=Path,
+        default=None,
+        metavar="WAV",
+        help=(
+            f"a {WAV_FORMAT_HELP} of the practitioner reading aloud (about 30 s of speech); "
+            f"adds the '{ENROLLED}' condition with that voice profile applied in memory. "
+            "Without it, given two or more recordings, each recording is enrolled from the "
+            "clinician-labelled spans of the OTHER recordings (leave-one-out)."
         ),
     )
     args = parser.parse_args(argv)
@@ -1100,13 +1400,70 @@ def main(argv: list[str] | None = None) -> int:
     model_name = resolve_whisper_model()
     vad = SileroVad()
     provider = WhisperSpeechProvider(model_name=model_name)
+    enrolment_wav: Path | None = args.enrolment
+    embedder: SpeakerEmbedder | None = None
+    if enrolment_wav is not None or len(pairs) >= 2:
+        try:
+            embedder = build_speaker_embedder()
+        except SpeakerModelError as exc:
+            if enrolment_wav is not None:
+                print(f"[error] --enrolment: {exc}")
+                return 1
+            print(f"[skip] {ENROLLED} condition: {exc}")
+    fixed_enrolment: EnrolmentInputs | None = None
+    pool: dict[str, bytes] = {}
+    pool_failures: dict[str, str] = {}
+    if embedder is not None and enrolment_wav is not None:
+        try:
+            fixed_enrolment = enrolment_inputs(
+                read_wav_pcm(enrolment_wav), embedder, vad.frame_probability
+            )
+        except (WavFormatError, EnrolmentError, OSError) as exc:
+            # WavFormatError / EnrolmentError text is this module's or numbers
+            # only; an OSError names the path the practitioner typed.
+            print(f"[error] --enrolment {enrolment_wav.name}: {exc}")
+            return 1
+    elif embedder is not None:
+        pool, pool_failures = _leave_one_out_pool(pairs)
+        print(
+            f"[info] no --enrolment given: the {ENROLLED} condition enrols each recording "
+            "from the clinician-labelled spans of the other recordings (leave-one-out)"
+        )
+    elif len(pairs) < 2:
+        print(f"[skip] {ENROLLED} condition: give --enrolment <wav> or two or more recordings")
     results: list[RecordingResult] = []
     errors = 0
+    for wav_name, failure in pool_failures.items():
+        # PR-REG-004: an extraction-only failure is reported here, once, by
+        # TYPE (the evaluation below cannot re-hit it), and counts towards
+        # the exit status like any other per-recording failure.
+        errors += 1
+        print(f"[error] {wav_name}: {ENROLLED} pool preparation failed - {failure}")
     for wav_path, labels_path in pairs:
+        enrolment = fixed_enrolment
+        if embedder is not None and fixed_enrolment is None:
+            others = b"".join(pcm for stem, pcm in pool.items() if stem != wav_path.stem)
+            try:
+                enrolment = enrolment_inputs(others, embedder, vad.frame_probability)
+            except EnrolmentError as exc:
+                print(f"[skip] {wav_path.name}: {ENROLLED} condition not measured - {exc}")
+                enrolment = None
+            except Exception as exc:  # noqa: BLE001 - isolated exactly like the evaluation
+                # PR-REG-003: the same per-recording isolation as the
+                # evaluation below — the recording is still measured on the
+                # legacy conditions, the failure counts towards the exit
+                # status, and only the exception TYPE is printed (its text is
+                # unaudited for content, Critical Constraint).
+                errors += 1
+                failure = type(exc).__name__
+                print(f"[error] {wav_path.name}: {ENROLLED} condition failed - {failure}")
+                enrolment = None
         print(f"[run ] {wav_path.name}", flush=True)
         try:
             results.append(
-                evaluate_recording(wav_path, labels_path, provider, vad.frame_probability)
+                evaluate_recording(
+                    wav_path, labels_path, provider, vad.frame_probability, enrolment=enrolment
+                )
             )
         except RecordingRefusedError as exc:
             print(f"[skip] {wav_path.name}: {exc}")
@@ -1136,11 +1493,15 @@ __all__ = [
     "AFTER",
     "BEFORE",
     "CLINICIAN_LABEL",
+    "ENROLLED",
+    "HARNESS_CONSENT_VERSION",
+    "HARNESS_DEVICE_NAME",
     "MIXED_MAJORITY_SHARE",
     "TEMP_DIR_PREFIX",
     "WAV_FORMAT_HELP",
     "ClusterMetrics",
     "ConditionResult",
+    "EnrolmentInputs",
     "HarnessFaultError",
     "LabelSpan",
     "LabelTrack",
@@ -1152,7 +1513,10 @@ __all__ = [
     "SpeakerEvalError",
     "WavFormatError",
     "align_segments",
+    "auto_confirm_outcome",
+    "clinician_pcm",
     "cluster_metrics",
+    "enrolment_inputs",
     "evaluate_recording",
     "find_recording_pairs",
     "main",

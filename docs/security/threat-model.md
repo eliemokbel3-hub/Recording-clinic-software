@@ -313,15 +313,15 @@ under the shipped single-GUI-thread, queued-signal usage, and full
 arbitrary-thread custody safety is a documented bounded residue for a future
 dedicated hardening.
 
-## Practitioner profile — Phase 1 foundation (DRAFT; finalised at that plan's Task 3.3)
+## Practitioner profile — Phases 1–2 (DRAFT; finalised at that plan's Task 3.3)
 
 The practitioner-profile plan adds one stored artefact that is about the
 PRACTITIONER, not a patient: an encrypted voice profile used to tell "the
-practitioner" from "someone else" in a consultation. Phase 1 lands the
-embedder, the custody store and the in-memory enrolment capture; the
-attribution path (D3/D4), the Practitioner tab and the first-run flow arrive in
-Phases 2–3, and this section is completed then (the D4 auto-confirm
-responsibility boundary is recorded there, not here). Everything below is
+practitioner" from "someone else" in a consultation. Phase 1 landed the
+embedder, the custody store and the in-memory enrolment capture (surfaces 1–5);
+Phase 2 landed the attribution path and the auto-confirm (surfaces 6–8, with
+the D4 responsibility boundary); the Practitioner tab and the first-run flow
+arrive in Phase 3, and this section is completed then. Everything below is
 calibrated to boundary 2: the defended adversary is outside the user's Windows
 session.
 
@@ -398,6 +398,66 @@ session.
    idle monitor closed. This is a device-ownership and correctness guard (no two
    readers of one microphone, no enrolment audio mixed into a session), not
    a trust boundary.
+6. **Attribution keeps the windowed plaintext bound and adds one number per
+   segment to the transcript (Phase 2, D3/D13).** With an embedder and a
+   profile supplied together, `transcribe_session` embeds each VAD segment
+   slice with the speaker model INSIDE the same transcription window its
+   spectral embedding is computed in — windows are packed to at most 30 s,
+   and a lone VAD segment longer than that budget is its own oversized
+   window, exactly as before attribution — and reduces it to one float, the
+   raw cosine against the enrolled vector, before the loop advances; no
+   whole-session PCM and no model embedding outlives an iteration (the same
+   bound the batching and oversized-window tests pin, unchanged when the
+   inputs are absent — that path runs byte for byte as before). The transcript artefact gains three OPTIONAL,
+   defaulted fields, set together or not at all: a cluster label
+   (`enrolled_speaker`, structurally required to name a segment that has
+   transcribed text — a document naming any other label is refused at
+   construction, so the Transcript screen cannot be shown one), a finite
+   cosine in [-1, 1] (`enrolment_similarity`) and the embedder's `model_id`.
+   None of the three is clinical content; none is a field name the log
+   tripwire needs, because none carries text. Old `transcript.enc` artefacts
+   read unchanged. Both transcription entry points (`ui.models
+   build_transcriber` / `build_recovery_runner`) resolve the inputs the same
+   way, and a profile made by a different embedder (`model_id` or the
+   model's verified digest), an absent model file, an unusable profile or a
+   model file that refuses to load all yield NO attribution rather than a
+   failed transcription — the fallback is REPORTED on the Transcript screen
+   (D2), never silent, and the readiness probe that names it loads no model
+   on the GUI thread. Residual: the readiness probe compares a stored profile
+   against the PIN, not against bytes; a present-but-wrong model file is
+   discovered by the worker at load and the screen then says only that
+   attribution did not run, not why.
+7. **The confirmed role stays a UI selection; the attribution field is a
+   pre-check, not a label (D1).** `enrolled_speaker` never reaches
+   `compose_draft`'s `clinician_speaker` from the document: the Transcript
+   screen checks the matching radio and `generate()` reads the checked
+   radio exactly as for a hand-chosen role; the note checker's provenance
+   check keeps deriving speaker roles from coordinates, so the spoken-
+   injection defence for clinician-owned sections is unchanged. A document
+   with a lying `enrolled_speaker` (a label no textual segment carries)
+   cannot be constructed, and a label that exists but is wrong is the D4
+   boundary below, not a structural failure.
+8. **Auto-confirm responsibility boundary (D4, practitioner-ratified
+   2026-09-05, UNCONDITIONAL).** Whenever a profile is applied and the
+   transcript holds speech, the cluster with the highest mean similarity is
+   pre-checked as the clinician and the line "Clinician: confirmed from your
+   voice profile (similarity 0.xx) - change" is shown; `change` reverts to the
+   manual radios in one click. This is a ratified relaxation of the Phase 3A
+   rule that role confirmation is explicit: the pre-check satisfies the ROLE
+   predicate only — the template profile, a loadable config, no recovery in
+   flight and the generation lease still gate Generate — and it is never
+   hidden behind a setting. The risk it accepts: with a weak best match (the
+   practitioner absent from the room, a very different microphone, a profile
+   enrolled by another person on the same Windows login) a patient's
+   utterances can populate clinician-owned sections until the practitioner
+   clicks `change`. The compensating controls are the VISIBLE similarity
+   value on the line, the note checker (which still blocks unresolved
+   errors), per-assertion review and the practitioner's review at signing,
+   and re-enrolment; a margin-gated auto-confirm (manual fallback when the
+   best match is weak or two clusters both match) was offered and declined
+   and stays the documented hardening if Phase 6's measurement finds a
+   problem. This is a responsibility boundary — the practitioner's choice,
+   recorded — not a control claim.
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 

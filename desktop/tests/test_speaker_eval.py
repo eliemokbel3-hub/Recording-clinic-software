@@ -37,9 +37,11 @@ from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env, assert_offl
 from scribe_desktop.note import SpeakerEvidence, SpeakerRolePreselection
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import KEY_FILENAME, SessionChunkStore
+from scribe_desktop.speaker_embedding import SpeakerModelError
 from scribe_desktop.speaker_eval import (
     AFTER,
     BEFORE,
+    ENROLLED,
     TEMP_DIR_PREFIX,
     HarnessFaultError,
     LabelSpan,
@@ -64,6 +66,7 @@ from scribe_desktop.speaker_eval import (
 )
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
+    FRAME_BYTES,
     SAMPLE_RATE,
     MockSpeechProvider,
     SpeechSegment,
@@ -72,6 +75,7 @@ from scribe_desktop.speech import (
 from scribe_desktop.transcription import (
     SPEAKER_1,
     SPEAKER_2,
+    SPEAKER_3,
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
@@ -1441,7 +1445,7 @@ class TestMain:
         sentinel = "zebrafruit"
         self._pairs(tmp_path, "a", "b", "c")
 
-        def evaluate(wav_path: Path, *args: object) -> RecordingResult:
+        def evaluate(wav_path: Path, *args: object, **kwargs: object) -> RecordingResult:
             if wav_path.stem == "a":
                 raise RuntimeError(f"model blew up on {sentinel}")
             if wav_path.stem == "c":
@@ -1450,6 +1454,7 @@ class TestMain:
 
         monkeypatch.setattr(speaker_eval, "SileroVad", _InertVad)
         monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _InertProvider)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _no_speaker_model)
         monkeypatch.setattr(speaker_eval, "evaluate_recording", evaluate)
         assert main([str(tmp_path)]) == 1
         out = capsys.readouterr().out
@@ -1477,7 +1482,7 @@ class TestMain:
         monkeypatch.setattr(sys, "stdout", io.TextIOWrapper(sink, encoding="cp1252"))
         monkeypatch.setattr(speaker_eval, "SileroVad", _InertVad)
         monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _InertProvider)
-        monkeypatch.setattr(speaker_eval, "evaluate_recording", lambda *args: scored)
+        monkeypatch.setattr(speaker_eval, "evaluate_recording", lambda *args, **kwargs: scored)
         assert main([str(tmp_path)]) == 0
         sys.stdout.flush()
         text = sink.getvalue().decode("utf-8")
@@ -1489,13 +1494,519 @@ class TestMain:
     ) -> None:
         self._pairs(tmp_path, "a", "b")
 
-        def evaluate(wav_path: Path, *args: object) -> RecordingResult:
+        def evaluate(wav_path: Path, *args: object, **kwargs: object) -> RecordingResult:
             return _scored(wav_path.stem)
 
         monkeypatch.setattr(speaker_eval, "SileroVad", _InertVad)
         monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _InertProvider)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _no_speaker_model)
         monkeypatch.setattr(speaker_eval, "evaluate_recording", evaluate)
         assert main([str(tmp_path)]) == 0
         out = capsys.readouterr().out
         assert "[error]" not in out
         assert "| a | 2 |" in out and "| b | 2 |" in out
+        # Two pairs and no --enrolment: the leave-one-out fallback wanted the
+        # speaker model, which is absent here — said visibly, never an error.
+        assert f"[skip] {ENROLLED} condition:" in out
+
+
+# ---------------------------------------------------------------------------
+# the enrolled condition (practitioner-profile plan Task 2.4)
+# ---------------------------------------------------------------------------
+
+
+def _no_speaker_model(*args: object, **kwargs: object) -> object:
+    raise SpeakerModelError("speaker model not found - run scripts/setup-models.py")
+
+
+class _FrequencyEmbedder:
+    """An ML-free ``SpeakerEmbedder`` for the enrolled condition: the unit
+    vector e1 for a low-pitched tone (zero-crossing rate under 1000/s), e2
+    otherwise — so a 220 Hz voice matches an e1 profile and a 2600 Hz voice
+    does not, deterministically, with no model file."""
+
+    @property
+    def model_id(self) -> str:
+        return "mock-frequency-v1"
+
+    @property
+    def model_sha256(self) -> str:
+        return ""
+
+    @property
+    def embedding_dim(self) -> int:
+        return 2
+
+    def embed(self, pcm16: bytes) -> object:
+        import numpy as np
+
+        samples = struct.unpack(f"<{len(pcm16) // 2}h", pcm16)
+        pairs = zip(samples, samples[1:], strict=False)
+        crossings = sum(1 for a, b in pairs if (a < 0) != (b < 0))
+        rate = crossings / (len(samples) / SAMPLE_RATE)
+        return np.asarray([1.0, 0.0] if rate < 1000 else [0.0, 1.0], dtype=np.float32)
+
+
+def _build_frequency_embedder(*args: object, **kwargs: object) -> _FrequencyEmbedder:
+    return _FrequencyEmbedder()
+
+
+def _enrolment(frequency: float = 220.0) -> speaker_eval.EnrolmentInputs:
+    return speaker_eval.enrolment_inputs(
+        tone_pcm(2.0, frequency=frequency), _FrequencyEmbedder(), amplitude_vad
+    )
+
+
+def _attributed(
+    rows: Sequence[tuple[float, float, str, str]], enrolled: str | None, sim: float
+) -> TranscriptDocument:
+    fields = (
+        {}
+        if enrolled is None
+        else {
+            "enrolled_speaker": enrolled,
+            "enrolment_similarity": sim,
+            "speaker_model_id": "mock-frequency-v1",
+        }
+    )
+    return _document(rows).model_copy(update=fields)
+
+
+class TestEnrolmentInputs:
+    def test_the_profile_records_the_embedder_and_lives_in_memory_only(self) -> None:
+        pytest.importorskip("numpy")
+        inputs = _enrolment()
+        profile = inputs.profile
+        assert inputs.embedder.model_id == profile.model_id == "mock-frequency-v1"
+        assert profile.model_sha256 == ""
+        assert profile.embedding == (1.0, 0.0)
+        assert profile.embedding_dim == 2
+        assert profile.enrolment_speech_seconds > 0
+        assert profile.device_name == speaker_eval.HARNESS_DEVICE_NAME
+        assert profile.consent.consent_text_version == speaker_eval.HARNESS_CONSENT_VERSION
+        assert profile.consent.learning_opt_in is False
+        # The inputs render without the vector (repr=False on both fields).
+        rendered = repr(inputs)
+        assert "embedding" not in rendered and "1.0" not in rendered
+        # No profile store anywhere in the harness: nothing can be written.
+        assert "save_profile" not in speaker_eval.__dict__
+        assert "delete_profile" not in speaker_eval.__dict__
+        assert "default_profile_root" not in speaker_eval.__dict__
+
+    def test_audio_without_speech_is_an_enrolment_error(self) -> None:
+        pytest.importorskip("numpy")
+        from scribe_desktop.enrolment import EnrolmentError
+
+        with pytest.raises(EnrolmentError):
+            speaker_eval.enrolment_inputs(silence_pcm(2.0), _FrequencyEmbedder(), amplitude_vad)
+
+    def test_clinician_pcm_takes_clinician_spans_in_order_clipped_to_the_audio(self) -> None:
+        pcm = bytes(range(256)) * 250  # 64 000 bytes = 2.0 s
+        track = _track((0.0, 0.5, "clinician"), (0.5, 1.0, "patient"), (1.5, 3.0, "clinician"))
+        expected = pcm[: 8000 * 2] + pcm[24000 * 2 :]
+        assert speaker_eval.clinician_pcm(pcm, track) == expected
+        overlapping = _track((0.0, 1.0, "clinician"), (0.0, 1.0, "patient"))
+        assert speaker_eval.clinician_pcm(pcm, overlapping) == pcm[:32000]
+
+
+class TestAutoConfirmOutcome:
+    def _rows(self) -> list[tuple[float, float, str, str]]:
+        return [(0.0, 2.0, SPEAKER_1, "how is it"), (2.0, 5.0, SPEAKER_2, "sore")]
+
+    def _truths(self) -> list[SegmentTruth]:
+        return _truths((0.0, 2.0, "clinician"), (2.0, 5.0, "patient"))
+
+    def test_correct_when_the_confirmed_cluster_is_mostly_the_clinician(self) -> None:
+        document = _attributed(self._rows(), SPEAKER_1, 0.8)
+        outcome = speaker_eval.auto_confirm_outcome(
+            document, [SPEAKER_1, SPEAKER_2], self._truths()
+        )
+        assert outcome.verdict == "CORRECT"
+        assert outcome.preselected_speaker == SPEAKER_1
+        assert outcome.margin == 0.8  # the similarity, per the RoleOutcome docstring
+
+    def test_wrong_when_it_is_the_patient(self) -> None:
+        document = _attributed(self._rows(), SPEAKER_2, 0.55)
+        outcome = speaker_eval.auto_confirm_outcome(
+            document, [SPEAKER_1, SPEAKER_2], self._truths()
+        )
+        assert outcome.verdict == "WRONG"
+        assert outcome.majority_true_label == "patient"
+
+    def test_none_without_attribution(self) -> None:
+        document = _attributed(self._rows(), None, 0.0)
+        outcome = speaker_eval.auto_confirm_outcome(
+            document, [SPEAKER_1, SPEAKER_2], self._truths()
+        )
+        assert outcome.verdict == "NONE"
+        assert outcome.preselected_speaker is None
+
+
+class TestScoreDocumentEnrolled:
+    def _inputs(self) -> tuple[TranscriptDocument, LabelTrack]:
+        rows = [(0.0, 2.0, SPEAKER_1, "how is it"), (2.0, 5.0, SPEAKER_2, "sore")]
+        return _document(rows), _track((0.0, 2.0, "clinician"), (2.0, 5.0, "patient"))
+
+    def test_third_condition_with_its_own_verdicts(self) -> None:
+        document, track = self._inputs()
+        enrolled = _attributed(
+            [(0.0, 2.0, SPEAKER_1, "how is it"), (2.0, 5.0, SPEAKER_2, "sore")], SPEAKER_1, 0.8
+        )
+        result = score_document(
+            "rec", document, track, [SPEAKER_1, SPEAKER_2], enrolled_document=enrolled
+        )
+        assert [c.condition for c in result.conditions] == [BEFORE, AFTER, ENROLLED]
+        assert result.has_condition(ENROLLED)
+        cond = result.condition(ENROLLED)
+        assert cond.predicted_labels == (SPEAKER_1, SPEAKER_2)
+        assert cond.metrics is not None and cond.metrics.accuracy_seconds == pytest.approx(1.0)
+        assert cond.auto_confirm is not None and cond.auto_confirm.verdict == "CORRECT"
+        assert cond.enrolment_similarity == 0.8
+        assert result.condition(AFTER).auto_confirm is None
+        assert result.condition(AFTER).enrolment_similarity is None
+        report = render_report([result], model_name="m")
+        assert f"| {ENROLLED} | 2/2 | 1.000 | 1.000 (2/2) |" in report
+        assert "| CORRECT | speaker_1 | 0.800 |" in report
+        assert f"| {ENROLLED} | 1 | 1 | 0 | 1.000 | 1.000 | 1 | 0 | 0 | 1 | 0 | 0 |" in report
+        assert f"| {AFTER} | 1 | 1 | 0 | 1.000 | 1.000 | 1 | 0 | 0 | - | - | - |" in report
+
+    def test_all_speaker_1_is_scored_as_all_matched_not_merged(self) -> None:
+        """PR-MED-014: the legacy conditions report all-speaker_1 as merged;
+        the enrolled condition scores it (every segment matched the profile)."""
+        document, track = self._inputs()
+        enrolled = _attributed(
+            [(0.0, 2.0, SPEAKER_1, "how is it"), (2.0, 5.0, SPEAKER_1, "sore")], SPEAKER_1, 0.9
+        )
+        result = score_document(
+            "rec", document, track, [SPEAKER_1, SPEAKER_1], enrolled_document=enrolled
+        )
+        assert result.condition(BEFORE).merged
+        assert result.condition(BEFORE).metrics is None
+        cond = result.condition(ENROLLED)
+        assert not cond.merged
+        assert cond.metrics is not None
+        assert cond.metrics.predicted_speaker_count == 1
+        # ``cluster_metrics`` is label-name agnostic: the ONE predicted cluster
+        # maps to whichever true role it covers longest (the patient's 3 s of
+        # 5), so the accuracy reads 0.6 — the false-positive match is exposed by
+        # the 1/2 cluster count and the auto-confirm verdict, not by the mapping.
+        assert cond.metrics.mapping == ((SPEAKER_1, "patient"),)
+        assert cond.metrics.accuracy_seconds == pytest.approx(3.0 / 5.0)
+        assert cond.auto_confirm is not None and cond.auto_confirm.verdict == "WRONG"
+        report = render_report([result], model_name="m")
+        assert f"| {ENROLLED} | 1/2 |" in report
+
+    def test_absent_condition_is_absent_from_the_report(self) -> None:
+        document, track = self._inputs()
+        result = score_document("rec", document, track, [SPEAKER_1, SPEAKER_2])
+        assert not result.has_condition(ENROLLED)
+        with pytest.raises(KeyError):
+            result.condition(ENROLLED)
+        report = render_report([result], model_name="m")
+        assert f"| {ENROLLED} |" not in report
+        assert f"| {AFTER} | 1 | 1 | 0 | 1.000 | 1.000 | 1 | 0 | 0 | - | - | - |" in report
+
+    def test_enrolled_label_count_must_match(self) -> None:
+        document, track = self._inputs()
+        enrolled = _document([(0.0, 2.0, SPEAKER_1, "one")])
+        with pytest.raises(ValueError, match="enrolled-condition"):
+            score_document(
+                "rec", document, track, [SPEAKER_1, SPEAKER_2], enrolled_document=enrolled
+            )
+
+    def test_enrolled_report_rows_carry_no_transcript_text(self) -> None:
+        sentinel = "zebrafruit"
+        rows = [(0.0, 2.0, SPEAKER_1, f"the {sentinel}"), (2.0, 5.0, SPEAKER_2, sentinel)]
+        document = _document(rows)
+        enrolled = _attributed(rows, SPEAKER_1, 0.7)
+        track = _track((0.0, 2.0, "clinician"), (2.0, 5.0, "patient"))
+        result = score_document(
+            "rec", document, track, [SPEAKER_1, SPEAKER_2], enrolled_document=enrolled
+        )
+        assert sentinel not in render_report([result], model_name="m")
+        assert sentinel not in repr(result)
+
+
+@windows_only
+class TestEvaluateRecordingEnrolled:
+    def _inputs(self, tmp_path: Path) -> tuple[Path, Path]:
+        wav = _write_wav(tmp_path / "two-voices.wav", _two_voice_pcm())
+        labels = tmp_path / "two-voices.txt"
+        labels.write_text(TWO_VOICE_LABELS, encoding="utf-8")
+        return wav, labels
+
+    def test_enrolled_condition_runs_the_shipped_pipeline_with_the_profile(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("numpy")
+        wav, labels = self._inputs(tmp_path)
+        stores_before = _temp_stores()
+        counting = _CountingProvider()
+        result = evaluate_recording(wav, labels, counting, amplitude_vad, enrolment=_enrolment())
+        assert _temp_stores() == stores_before
+        after = result.condition(AFTER)
+        assert after.predicted_labels == (SPEAKER_1, SPEAKER_2, SPEAKER_1)  # unchanged
+        enrolled = result.condition(ENROLLED)
+        assert enrolled.predicted_labels == (SPEAKER_1, SPEAKER_2, SPEAKER_1)
+        assert enrolled.enrolment_similarity == pytest.approx(1.0)
+        assert enrolled.auto_confirm is not None
+        assert enrolled.auto_confirm.verdict == "CORRECT"
+        assert enrolled.auto_confirm.preselected_speaker == SPEAKER_1
+        assert enrolled.metrics is not None and enrolled.metrics.accuracy_seconds == 1.0
+        # One window in this fixture, transcribed ONCE: the enrolled pass replayed it.
+        assert counting.calls == 1
+
+    def test_a_profile_of_the_other_voice_confirms_the_patient_visibly(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("numpy")
+        wav, labels = self._inputs(tmp_path)
+        result = evaluate_recording(
+            wav, labels, MockSpeechProvider(), amplitude_vad, enrolment=_enrolment(2600.0)
+        )
+        enrolled = result.condition(ENROLLED)
+        # The 2600 Hz segment matched the (wrong) profile and is speaker_1;
+        # the two 220 Hz segments are the remainder, split by D13's 2-means
+        # into speaker_2 / speaker_3 (not byte-identical slices — the D-S1
+        # residue, exactly as the no-profile path splits two segments today).
+        assert enrolled.predicted_labels == (SPEAKER_2, SPEAKER_1, SPEAKER_3)
+        assert enrolled.auto_confirm is not None
+        assert enrolled.auto_confirm.verdict == "WRONG"
+        assert enrolled.auto_confirm.preselected_speaker == SPEAKER_1
+
+    def test_a_failing_enrolled_pass_still_tears_the_store_down(self, tmp_path: Path) -> None:
+        pytest.importorskip("numpy")
+        wav, labels = self._inputs(tmp_path)
+
+        class _Exploding(_FrequencyEmbedder):
+            def embed(self, pcm16: bytes) -> object:
+                raise RuntimeError("embedder failed")
+
+        inputs = _enrolment()
+        broken = speaker_eval.EnrolmentInputs(embedder=_Exploding(), profile=inputs.profile)
+        stores_before = _temp_stores()
+        with pytest.raises(RuntimeError, match="embedder failed"):
+            evaluate_recording(wav, labels, MockSpeechProvider(), amplitude_vad, enrolment=broken)
+        assert _temp_stores() == stores_before
+
+    def test_a_second_pass_that_segments_differently_is_a_harness_fault(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("numpy")
+        wav, labels = self._inputs(tmp_path)
+        passes = {"frames": 0}
+        first_pass_frames = len(_two_voice_pcm()) // FRAME_BYTES + 8
+
+        def drifting_vad(frame: bytes) -> float:
+            passes["frames"] += 1
+            if passes["frames"] > first_pass_frames:
+                return 0.02  # the second pass hears silence: different segments
+            return amplitude_vad(frame)
+
+        stores_before = _temp_stores()
+        with pytest.raises(HarnessFaultError, match="segmented the same store differently"):
+            evaluate_recording(
+                wav, labels, MockSpeechProvider(), drifting_vad, enrolment=_enrolment()
+            )
+        assert _temp_stores() == stores_before
+
+
+class _CountingProvider(MockSpeechProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.calls = 0
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        self.calls += 1
+        return super().transcribe_segment(pcm, sample_rate)
+
+
+class _AmplitudeVad:
+    """Stands in for ``SileroVad`` where ``main`` itself enrols: the harness
+    hands the run's VAD to ``enrol``, so the stub must hear the tone
+    fixtures as speech (the inert stub hears nothing and would refuse them)."""
+
+    def frame_probability(self, frame: bytes) -> float:
+        return amplitude_vad(frame)
+
+
+class TestMainEnrolled:
+    def _pair(self, tmp_path: Path, stem: str, pcm: bytes, labels: str) -> None:
+        _write_wav(tmp_path / f"{stem}.wav", pcm)
+        (tmp_path / f"{stem}.txt").write_text(labels, encoding="utf-8")
+
+    def _capture(self, monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+        seen: dict[str, object] = {}
+
+        def evaluate(wav_path: Path, *args: object, **kwargs: object) -> RecordingResult:
+            seen[wav_path.stem] = kwargs.get("enrolment")
+            return _scored(wav_path.stem)
+
+        monkeypatch.setattr(speaker_eval, "SileroVad", _AmplitudeVad)
+        monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _InertProvider)
+        monkeypatch.setattr(speaker_eval, "evaluate_recording", evaluate)
+        return seen
+
+    def test_enrolment_wav_builds_one_in_memory_profile_for_every_recording(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pytest.importorskip("numpy")
+        self._pair(tmp_path, "a", tone_pcm(0.1), "0.0\t0.1\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        (tmp_path / "enrol").mkdir()
+        me = _write_wav(tmp_path / "enrol" / "me.wav", tone_pcm(2.0, frequency=220.0))
+        assert main([str(tmp_path), "--enrolment", str(me)]) == 0
+        enrolment = seen["a"]
+        assert isinstance(enrolment, speaker_eval.EnrolmentInputs)
+        assert enrolment.profile.embedding == (1.0, 0.0)
+        assert "[info] no --enrolment" not in capsys.readouterr().out
+
+    def test_enrolment_wav_is_refused_like_a_recording(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._pair(tmp_path, "a", tone_pcm(0.1), "0.0\t0.1\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        (tmp_path / "enrol").mkdir()
+        stereo = _write_wav(tmp_path / "enrol" / "me.wav", tone_pcm(0.5) * 2, channels=2)
+        assert main([str(tmp_path), "--enrolment", str(stereo)]) == 1
+        assert "[error] --enrolment me.wav:" in capsys.readouterr().out
+        assert seen == {}  # nothing was evaluated
+
+    def test_enrolment_wav_without_the_speaker_model_is_an_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._pair(tmp_path, "a", tone_pcm(0.1), "0.0\t0.1\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _no_speaker_model)
+        (tmp_path / "enrol").mkdir()
+        me = _write_wav(tmp_path / "enrol" / "me.wav", tone_pcm(2.0))
+        assert main([str(tmp_path), "--enrolment", str(me)]) == 1
+        assert "[error] --enrolment: speaker model not found" in capsys.readouterr().out
+        assert seen == {}
+
+    def test_leave_one_out_enrols_each_recording_from_the_others(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pytest.importorskip("numpy")
+        # a's clinician is the LOW voice, b's clinician is the HIGH voice.
+        self._pair(tmp_path, "a", tone_pcm(2.0, frequency=220.0), "0.0\t2.0\tclinician\n")
+        self._pair(tmp_path, "b", tone_pcm(2.0, frequency=2600.0), "0.0\t2.0\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        assert main([str(tmp_path)]) == 0
+        a, b = seen["a"], seen["b"]
+        assert isinstance(a, speaker_eval.EnrolmentInputs)
+        assert isinstance(b, speaker_eval.EnrolmentInputs)
+        assert a.profile.embedding == (0.0, 1.0)  # enrolled from b's clinician spans
+        assert b.profile.embedding == (1.0, 0.0)  # enrolled from a's clinician spans
+        assert "[info] no --enrolment given" in capsys.readouterr().out
+
+    def test_leave_one_out_needs_two_recordings(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._pair(tmp_path, "a", tone_pcm(0.1), "0.0\t0.1\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _no_speaker_model)
+        assert main([str(tmp_path)]) == 0
+        assert seen == {"a": None}
+        assert f"[skip] {ENROLLED} condition: give --enrolment" in capsys.readouterr().out
+
+    def test_an_undecodable_label_track_does_not_abort_the_leave_one_out_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Peer round 19 PR-REG-003: pool preparation runs before the
+        per-recording error boundary; a label file that is not UTF-8 raises
+        ``UnicodeDecodeError`` (not an ``OSError``) and used to abort the
+        whole run. Now the pool skips it, the evaluation reports that pair
+        once by TYPE, the other recording is scored and the exit is non-zero."""
+        pytest.importorskip("numpy")
+        self._pair(tmp_path, "a", tone_pcm(2.0, frequency=220.0), "0.0\t2.0\tclinician\n")
+        _write_wav(tmp_path / "b.wav", tone_pcm(2.0, frequency=2600.0))
+        (tmp_path / "b.txt").write_bytes(b"0.0\t2.0\tclinician\n\xff\xfe")  # not UTF-8
+        seen: dict[str, object] = {}
+
+        def evaluate(
+            wav_path: Path, labels_path: Path, *args: object, **kwargs: object
+        ) -> RecordingResult:
+            labels_path.read_text(encoding="utf-8-sig")  # the real path's first read
+            seen[wav_path.stem] = kwargs.get("enrolment")
+            return _scored(wav_path.stem)
+
+        monkeypatch.setattr(speaker_eval, "SileroVad", _AmplitudeVad)
+        monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _InertProvider)
+        monkeypatch.setattr(speaker_eval, "evaluate_recording", evaluate)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        assert main([str(tmp_path)]) == 1
+        out = capsys.readouterr().out
+        assert "[info] no --enrolment given" in out
+        assert "[error] b.wav: UnicodeDecodeError\n" in out  # type only
+        assert "\\xff" not in out and "invalid" not in out
+        assert "| a | 2 |" in out  # the valid recording was still scored
+        assert seen == {"a": None}  # b never contributed a pool, so a had none
+        assert f"[skip] a.wav: {ENROLLED} condition not measured" in out
+
+    def test_an_unexpected_enrolment_failure_is_reported_by_type_and_the_run_continues(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """PR-REG-003, the per-recording enrolment step: a failure that is not
+        an ``EnrolmentError`` used to escape the loop; now it is isolated like
+        an evaluation failure — the recording is still measured, the type
+        alone is printed, and the exit status says an error happened."""
+        pytest.importorskip("numpy")
+        sentinel = "zebrafruit"
+        self._pair(tmp_path, "a", tone_pcm(2.0, frequency=220.0), "0.0\t2.0\tclinician\n")
+        self._pair(tmp_path, "b", tone_pcm(2.0, frequency=2600.0), "0.0\t2.0\tclinician\n")
+        seen = self._capture(monkeypatch)
+
+        class _Exploding(_FrequencyEmbedder):
+            def embed(self, pcm16: bytes) -> object:
+                raise RuntimeError(f"embedder failed on {sentinel}")
+
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", lambda *a, **k: _Exploding())
+        assert main([str(tmp_path)]) == 1
+        out = capsys.readouterr().out
+        assert f"[error] a.wav: {ENROLLED} condition failed - RuntimeError\n" in out
+        assert f"[error] b.wav: {ENROLLED} condition failed - RuntimeError\n" in out
+        assert sentinel not in out
+        assert "| a | 2 |" in out and "| b | 2 |" in out  # both still measured
+        assert seen == {"a": None, "b": None}
+
+    def test_an_oversized_label_timestamp_does_not_abort_the_leave_one_out_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Peer round 20 PR-REG-004: the parser admits any finite timestamp,
+        so ``1e305`` seconds reads fine, but its sample index overflows
+        (``int(inf)``) in ``clinician_pcm`` — which used to run outside the
+        pool's guard and abort the run. The evaluation never converts these
+        timestamps, so it cannot report this pair itself: the pool builder
+        reports it once, by type, the run continues, both recordings are
+        still measured, and the exit is non-zero."""
+        pytest.importorskip("numpy")
+        self._pair(tmp_path, "a", tone_pcm(2.0, frequency=220.0), "0.0\t2.0\tclinician\n")
+        self._pair(tmp_path, "b", tone_pcm(2.0, frequency=2600.0), "0.0\t1e305\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        assert main([str(tmp_path)]) == 1
+        out = capsys.readouterr().out
+        assert f"[error] b.wav: {ENROLLED} pool preparation failed - OverflowError\n" in out
+        assert "infinity" not in out  # type only, never the message
+        assert "| a | 2 |" in out and "| b | 2 |" in out  # both still measured
+        assert seen["a"] is None  # b contributed no pool, so a had none
+        assert f"[skip] a.wav: {ENROLLED} condition not measured" in out
+        assert isinstance(seen["b"], speaker_eval.EnrolmentInputs)  # enrolled from a's spans
+
+    def test_leave_one_out_with_no_usable_pool_skips_that_recording_only(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        pytest.importorskip("numpy")
+        # b's "clinician" span is silence: a's pool holds no speech.
+        self._pair(tmp_path, "a", tone_pcm(2.0, frequency=220.0), "0.0\t2.0\tclinician\n")
+        self._pair(tmp_path, "b", silence_pcm(2.0), "0.0\t2.0\tclinician\n")
+        seen = self._capture(monkeypatch)
+        monkeypatch.setattr(speaker_eval, "build_speaker_embedder", _build_frequency_embedder)
+        assert main([str(tmp_path)]) == 0
+        assert seen["a"] is None
+        assert isinstance(seen["b"], speaker_eval.EnrolmentInputs)
+        assert f"[skip] a.wav: {ENROLLED} condition not measured" in capsys.readouterr().out

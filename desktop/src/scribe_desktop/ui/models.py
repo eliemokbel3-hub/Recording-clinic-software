@@ -27,6 +27,11 @@ from scribe_desktop.note import (
     compose_draft,
 )
 from scribe_desktop.note_config import NoteConfig, load_note_config
+from scribe_desktop.practitioner_profile import (
+    PractitionerProfile,
+    ProfileUnusableError,
+    load_profile,
+)
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import GenerationLease, RecordingSession, SessionState
 from scribe_desktop.session_store import (
@@ -40,6 +45,15 @@ from scribe_desktop.session_store import (
     key_blob_is_dead,
     read_store_header,
     store_has_footer,
+)
+from scribe_desktop.speaker_embedding import (
+    SHIPPED_SPEAKER_EMBEDDER,
+    EmbedderKind,
+    SpeakerEmbedder,
+    SpeakerModelError,
+    build_speaker_embedder,
+    shipped_embedder_identity,
+    speaker_embedder_available,
 )
 from scribe_desktop.speech import SileroVad, vad_model_available
 from scribe_desktop.transcription import (
@@ -826,12 +840,128 @@ def models_ready() -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Voice attribution readiness (practitioner-profile plan D2 / D3 / D16).
+# ---------------------------------------------------------------------------
+
+# The D2 fallback lines. Plain clinical English, each naming the remedy.
+SPEAKER_MODEL_MISSING_REASON: Final = (
+    "Voice attribution is off: the speaker model is not installed - run "
+    "scripts/setup-models.py --only speaker-embedding."
+)
+PROFILE_REENROL_REASON: Final = (
+    "Voice attribution is off: your voice profile was made with a different speaker "
+    "model - re-enrol on the Practitioner tab."
+)
+PROFILE_UNUSABLE_REASON: Final = (
+    "Voice attribution is off: your voice profile cannot be read ({reason}) - re-enrol "
+    "or delete it on the Practitioner tab."
+)
+ATTRIBUTION_DID_NOT_RUN_REASON: Final = (
+    "Voice attribution did not run for this transcript: the speaker model could not be "
+    "loaded - run scripts/setup-models.py --only speaker-embedding, then re-check on the "
+    "Practitioner tab."
+)
+
+
+@dataclass(frozen=True)
+class AttributionReadiness:
+    """Whether the shipped voice-attribution path can run, decided from one
+    profile read and a model-file stat only — no model is loaded, so this
+    is safe on the GUI thread. ``profile_present``: a ``voice.enc`` exists
+    (usable or not — an existing profile that cannot be used is PRESENT and
+    carries a ``reason``, never "never enrolled");
+    ``profile``: the loaded profile when it records the shipped embedder's
+    identity (``shipped_embedder_identity``) and the model file is present —
+    attribution WILL be attempted by the worker; ``reason``: the visible D2
+    fallback line when a profile is present but attribution cannot run
+    (model absent, profile made by another model, profile unusable). What
+    this cannot see is a model FILE that is present but not the pinned bytes
+    or otherwise unloadable — the worker discovers that at load and falls
+    back; the Transcript screen then reads the fallback off the DOCUMENT
+    (no attribution fields with a profile present) and shows
+    ``ATTRIBUTION_DID_NOT_RUN_REASON``."""
+
+    profile_present: bool
+    profile: PractitionerProfile | None
+    reason: str | None
+
+
+def attribution_readiness(
+    *, profile_root: Path | None = None, kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER
+) -> AttributionReadiness:
+    """See ``AttributionReadiness``. Presence is decided by ``load_profile``'s
+    own distinction — ``None`` is a CONFIRMED absence (no ``voice.enc``), a
+    ``ProfileUnusableError`` is a profile that exists but cannot be used —
+    never by the D10 first-run stat (peer round 19 PR-HIGH-005: a zero-length
+    or stat-refused blob must read as needing attention, not as never
+    enrolled). Order: the profile read against the shipped identity (D3: a
+    profile whose ``model_id`` / ``model_sha256`` differ from the shipped
+    embedder's is ABSENT for attribution and reported as needing
+    re-enrolment; any other unusable state is reported with its structural
+    reason word — never a field of the profile) → model presence (a stat,
+    UNC-safe) for a usable profile."""
+    model_id, model_sha256 = shipped_embedder_identity(kind)
+    try:
+        profile = load_profile(root=profile_root, model_id=model_id, model_sha256=model_sha256)
+    except ProfileUnusableError as exc:
+        reason = (
+            PROFILE_REENROL_REASON
+            if exc.reason == "model"
+            else PROFILE_UNUSABLE_REASON.format(reason=exc.reason)
+        )
+        return AttributionReadiness(profile_present=True, profile=None, reason=reason)
+    if profile is None:
+        return AttributionReadiness(profile_present=False, profile=None, reason=None)
+    if not speaker_embedder_available(kind):
+        return AttributionReadiness(
+            profile_present=True, profile=None, reason=SPEAKER_MODEL_MISSING_REASON
+        )
+    return AttributionReadiness(profile_present=True, profile=profile, reason=None)
+
+
+AttributionInputs = tuple[SpeakerEmbedder | None, PractitionerProfile | None]
+
+
+def attribution_inputs(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> AttributionInputs:
+    """WORKER-THREAD step: the ``(embedder, profile)`` pair both pipeline
+    factories pass to ``transcribe_session`` / ``recover_session_transcription``
+    (D3: both entry points apply the profile), or ``(None, None)`` for the
+    D2 fallback — no profile, model absent, profile made by another model or
+    unusable (``attribution_readiness``), or a model file present but
+    refusing to load (``SpeakerModelError``: not the pinned bytes, an
+    incompatible export, a broken runtime). The embedder is BUILT here, off
+    the GUI thread, and the profile is re-checked against the identity the
+    built embedder reports — the readiness probe compared the pin, this
+    compares what actually loaded. A load failure never blocks the
+    consultation: the transcript is produced without attribution and the
+    Transcript screen names the fallback. An ``OfflineEnvError`` is NOT
+    caught — the Whisper provider would refuse on the same precondition."""
+    readiness = attribution_readiness(kind=kind)
+    profile = readiness.profile
+    if profile is None:
+        return None, None
+    try:
+        embedder = build_speaker_embedder(kind)
+    except SpeakerModelError:
+        return None, None
+    if (
+        profile.model_id != embedder.model_id
+        or profile.model_sha256 != embedder.model_sha256
+        or profile.embedding_dim != embedder.embedding_dim
+    ):
+        return None, None
+    return embedder, profile
+
+
+# ---------------------------------------------------------------------------
 # Pipeline factories (constructed lazily, inside the worker thread).
 # ---------------------------------------------------------------------------
 
 
 def build_transcriber(
     model_name: str | None = None,
+    *,
+    attribution: Callable[[], AttributionInputs] = attribution_inputs,
 ) -> Callable[[Path, SessionCrypto], TranscriptDocument]:
     """A ``SessionController.transcribe`` transcriber over the real ML stack.
 
@@ -840,12 +970,16 @@ def build_transcriber(
     (the default) applies the Step 13 fallback policy at call time via
     ``resolve_whisper_model``; the resolved name is recorded in the
     transcript document so the artifact says which model actually ran.
+    ``attribution`` (default ``attribution_inputs``) resolves the speaker
+    embedder and the enrolled profile inside the same call — both entry
+    points pass them (D3), or ``(None, None)`` for the visible D2 fallback.
     """
 
     def transcriber(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocument:
         name = model_name if model_name is not None else resolve_whisper_model()
         vad = SileroVad()
         provider = WhisperSpeechProvider(model_name=name)
+        embedder, profile = attribution()
         return transcribe_session(
             session_dir,
             crypto,
@@ -853,6 +987,8 @@ def build_transcriber(
             vad.frame_probability,
             require_footer=True,
             model_name=name,
+            speaker_embedder=embedder,
+            enrolled_profile=profile,
         )
 
     return transcriber
@@ -860,28 +996,44 @@ def build_transcriber(
 
 def build_recovery_runner(
     model_name: str | None = None,
+    *,
+    attribution: Callable[[], AttributionInputs] = attribution_inputs,
 ) -> Callable[[Path], RecoveryOutcome]:
     """Flow 3 resume-processing over the real ML stack (worker thread).
 
-    Same Step 13 call-time model resolution as ``build_transcriber``.
+    Same Step 13 call-time model resolution — and the same attribution
+    resolution (D3: the recovery path applies the profile too) — as
+    ``build_transcriber``.
     """
 
     def runner(session_dir: Path) -> RecoveryOutcome:
         name = model_name if model_name is not None else resolve_whisper_model()
         vad = SileroVad()
         provider = WhisperSpeechProvider(model_name=name)
+        embedder, profile = attribution()
         return recover_session_transcription(
-            session_dir, provider, vad.frame_probability, model_name=name
+            session_dir,
+            provider,
+            vad.frame_probability,
+            model_name=name,
+            speaker_embedder=embedder,
+            enrolled_profile=profile,
         )
 
     return runner
 
 
 __all__ = [
+    "ATTRIBUTION_DID_NOT_RUN_REASON",
     "CONSENT_MANUAL_REMINDER",
     "COPY_TO_CLINIKO_ENABLED",
+    "PROFILE_REENROL_REASON",
+    "PROFILE_UNUSABLE_REASON",
+    "SPEAKER_MODEL_MISSING_REASON",
     "UNFINISHED_STORE_WARNING",
     "WARNING_COPY",
+    "AttributionInputs",
+    "AttributionReadiness",
     "ControlSet",
     "NoteGenerationResult",
     "NoteReviewState",
@@ -893,6 +1045,8 @@ __all__ = [
     "WarningCopy",
     "WarningGroup",
     "WarningSummary",
+    "attribution_inputs",
+    "attribution_readiness",
     "build_note_generator",
     "build_recovery_runner",
     "build_transcriber",

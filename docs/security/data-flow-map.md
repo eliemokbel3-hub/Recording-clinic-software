@@ -83,11 +83,27 @@ in-process and adds no network surface and no new logging channel.
    chunks are decrypted streamwise → silero-VAD segmentation → faster-whisper
    (CTranslate2, model `medium` per D6 as REVISED at the Step 13 gate;
    `small` stays the visible fallback when the medium snapshot is absent)
-   with word timestamps, transcribed in packed ≤30 s windows →
+   with word timestamps, transcribed in packed ≤30 s windows (a lone VAD
+   segment longer than the budget is its own oversized window) →
    uncertainty marks (low-confidence words, numbers, names) → 2-speaker
    labels → `sessions\<id>\transcript.enc`, written atomically under the
    SAME session key. The transcript renders in a display-only view; the
    explicit Complete action runs fsync → decrypt-verify → key deletion.
+   Since the practitioner-profile plan's Phase 2 the SAME in-process flow
+   optionally applies the practitioner's voice profile: the worker reads
+   `profile\voice.enc` (flow 12, mapped at that plan's Task 3.3) and loads
+   the speaker model from the cache (flow 8) INSIDE the transcription call,
+   each VAD segment slice is embedded by that model inside the same
+   transcription window as its spectral embedding (packed to ≤30 s; a lone
+   longer VAD segment is its own oversized window) and reduced to one cosine
+   against the enrolled vector before the window is dropped, labels become
+   practitioner-vs-others (`speaker_1` / `speaker_2` / `speaker_3`), and the
+   transcript artefact carries three additional non-content fields (a
+   cluster label, a cosine, a model id) under the same key — the recovery
+   path (resume-processing) applies the profile identically. No profile, an
+   absent model or a profile made by another model leaves this flow exactly
+   as before and the Transcript screen names the fallback; nothing about the
+   profile is written back and no audio or embedding is retained.
    Offline enforcement: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
    `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
    ML import; models load from explicit local paths with
@@ -203,9 +219,13 @@ in-process and adds no network surface and no new logging channel.
   (`embedding`/`enrolment_speech_seconds`/`consent_text_version`), so a stray
   repr or `model_dump` of a note model or of the practitioner's profile is
   dropped by the last-line filter. Neither the note pipeline nor the profile
-  path opens a logging channel. (The profile store and the enrolment flow are
-  mapped at that plan's Task 3.3; the draft custody surface is in the threat
-  model.)
+  path opens a logging channel. The Phase-2 attribution fields on the
+  transcript (`enrolled_speaker` / `enrolment_similarity` /
+  `speaker_model_id`) are a cluster label, a number and a model name — no
+  content, so they register no marker; a transcript repr is still caught by
+  the transcript markers it already carries. (The profile store and the
+  enrolment flow are mapped at that plan's Task 3.3; the draft custody and
+  attribution surfaces are in the threat model.)
 - No data in Chrome extension storage (plan: credentials/models/audio never
   enter extension storage); no Chrome-side recording surface at all until
   Phase 5.

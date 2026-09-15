@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -17,6 +19,8 @@ from scribe_desktop.transcription import (
     TranscriptWord,
 )
 from scribe_desktop.ui import models
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
 
 
 def _word(text: str, *, uncertain: bool = False) -> TranscriptWord:
@@ -332,3 +336,264 @@ def test_pipeline_factories_are_lazy(factory_name: str) -> None:
     factory = getattr(models, factory_name)
     runner = factory()  # must not raise even with no models cached
     assert callable(runner)
+
+
+# ---------------------------------------------------------------------------
+# Voice attribution readiness and the pipeline factories (practitioner-profile
+# plan Phase 2, D2 / D3 / D16).
+# ---------------------------------------------------------------------------
+
+
+def _profile(model_id: str, model_sha256: str = "", dim: int = 4) -> Any:
+    from datetime import UTC, datetime
+
+    from scribe_desktop.practitioner_profile import ConsentRecord, PractitionerProfile
+
+    now = datetime.now(UTC)
+    return PractitionerProfile(
+        model_id=model_id,
+        model_sha256=model_sha256,
+        embedding=tuple([1.0] + [0.0] * (dim - 1)),
+        embedding_dim=dim,
+        created_at=now,
+        enrolment_speech_seconds=30.0,
+        device_name="test",
+        consent=ConsentRecord(
+            accepted_at=now, consent_text_version="consent-v1", learning_opt_in=False
+        ),
+    )
+
+
+class TestAttributionReadiness:
+    def test_no_profile_means_nothing_to_report_and_no_model_probe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            models, "speaker_embedder_available", lambda *a, **k: pytest.fail("not probed")
+        )
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness == models.AttributionReadiness(
+            profile_present=False, profile=None, reason=None
+        )
+
+    def test_presence_is_the_loaders_verdict_not_the_first_run_stat(self) -> None:
+        """Peer round 19 PR-HIGH-005: the readiness probe never consults the
+        D10 stat (``profile_present``), whose zero-byte / stat-refused
+        answers would read an unusable profile as never enrolled."""
+        assert "profile_present" not in models.__dict__
+
+    def test_model_missing_with_a_usable_profile_names_the_remedy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.speaker_embedding import shipped_embedder_identity
+
+        usable = _profile(*shipped_embedder_identity())
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: False)
+        monkeypatch.setattr(models, "load_profile", lambda **k: usable)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.profile_present and readiness.profile is None
+        assert readiness.reason == models.SPEAKER_MODEL_MISSING_REASON
+        assert "setup-models" in models.SPEAKER_MODEL_MISSING_REASON
+
+    @pytest.mark.parametrize("reason", ["blob", "authentication"])
+    def test_an_existing_unusable_blob_is_present_not_never_enrolled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+    ) -> None:
+        """PR-HIGH-005: a zero-length or unreadable ``voice.enc`` — states the
+        loader reports as unusable — must carry a reason line, whatever a
+        size-based stat would have said (and whether or not the model is
+        installed: the profile is read first)."""
+        from scribe_desktop.practitioner_profile import ProfileUnusableError
+
+        (tmp_path / "voice.enc").write_bytes(b"")  # zero bytes: the D10 stat says "absent"
+        monkeypatch.setattr(
+            models, "speaker_embedder_available", lambda *a, **k: pytest.fail("not probed")
+        )
+
+        def load(**kwargs: Any) -> Any:
+            raise ProfileUnusableError(reason, "detail never shown")  # type: ignore[arg-type]
+
+        monkeypatch.setattr(models, "load_profile", load)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.profile_present is True
+        assert readiness.profile is None
+        assert readiness.reason == models.PROFILE_UNUSABLE_REASON.format(reason=reason)
+
+    @windows_only
+    def test_a_real_zero_byte_blob_reads_as_unusable_through_the_real_loader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same case end to end: an empty ``voice.enc`` with no key beside
+        it is ``key``-unusable to the real loader, so the probe names it."""
+        (tmp_path / "voice.enc").write_bytes(b"")
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.profile_present is True
+        assert readiness.reason == models.PROFILE_UNUSABLE_REASON.format(reason="key")
+
+    def test_a_profile_from_another_model_needs_re_enrolment(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.practitioner_profile import ProfileUnusableError
+
+        (tmp_path / "voice.enc").write_bytes(b"sealed")
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+
+        def load(**kwargs: Any) -> Any:
+            raise ProfileUnusableError("model", "different embedder")
+
+        monkeypatch.setattr(models, "load_profile", load)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.profile is None
+        assert readiness.reason == models.PROFILE_REENROL_REASON
+
+    @pytest.mark.parametrize("reason", ["key", "blob", "authentication", "malformed"])
+    def test_an_unusable_profile_names_only_its_structural_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+    ) -> None:
+        from scribe_desktop.practitioner_profile import ProfileUnusableError
+
+        (tmp_path / "voice.enc").write_bytes(b"sealed")
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+
+        def load(**kwargs: Any) -> Any:
+            raise ProfileUnusableError(reason, "detail never shown")  # type: ignore[arg-type]
+
+        monkeypatch.setattr(models, "load_profile", load)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.reason == models.PROFILE_UNUSABLE_REASON.format(reason=reason)
+        assert "detail never shown" not in readiness.reason
+
+    def test_a_usable_profile_is_loaded_against_the_shipped_identity(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.speaker_embedding import shipped_embedder_identity
+
+        (tmp_path / "voice.enc").write_bytes(b"sealed")
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        model_id, model_sha256 = shipped_embedder_identity()
+        profile = _profile(model_id, model_sha256)
+        asked: list[dict[str, Any]] = []
+
+        def load(**kwargs: Any) -> Any:
+            asked.append(kwargs)
+            return profile
+
+        monkeypatch.setattr(models, "load_profile", load)
+        monkeypatch.setattr(
+            models, "build_speaker_embedder", lambda *a, **k: pytest.fail("no model on GUI path")
+        )
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness == models.AttributionReadiness(
+            profile_present=True, profile=profile, reason=None
+        )
+        assert asked == [{"root": tmp_path, "model_id": model_id, "model_sha256": model_sha256}]
+
+    def test_the_loaders_none_is_the_only_confirmed_absence(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            models, "speaker_embedder_available", lambda *a, **k: pytest.fail("not probed")
+        )
+        monkeypatch.setattr(models, "load_profile", lambda **k: None)
+        readiness = models.attribution_readiness(profile_root=tmp_path)
+        assert readiness.profile_present is False and readiness.reason is None
+
+
+class TestAttributionInputs:
+    def _ready(self, profile: Any) -> Any:
+        return lambda **k: models.AttributionReadiness(
+            profile_present=profile is not None, profile=profile, reason=None
+        )
+
+    def test_no_usable_profile_builds_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(models, "attribution_readiness", self._ready(None))
+        monkeypatch.setattr(
+            models, "build_speaker_embedder", lambda *a, **k: pytest.fail("must not build")
+        )
+        assert models.attribution_inputs() == (None, None)
+
+    def test_a_model_that_refuses_to_load_falls_back_visibly_later(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.speaker_embedding import MOCK_MODEL_ID, SpeakerModelError
+
+        monkeypatch.setattr(models, "attribution_readiness", self._ready(_profile(MOCK_MODEL_ID)))
+
+        def build(*a: Any, **k: Any) -> Any:
+            raise SpeakerModelError("not the pinned model")
+
+        monkeypatch.setattr(models, "build_speaker_embedder", build)
+        assert models.attribution_inputs() == (None, None)
+
+    def test_the_built_embedder_identity_is_rechecked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.speaker_embedding import MOCK_MODEL_ID, MockSpeakerEmbedder
+
+        embedder = MockSpeakerEmbedder(embedding_dim=4)
+        monkeypatch.setattr(models, "build_speaker_embedder", lambda *a, **k: embedder)
+        profile = _profile(MOCK_MODEL_ID)
+        monkeypatch.setattr(models, "attribution_readiness", self._ready(profile))
+        assert models.attribution_inputs() == (embedder, profile)
+        mismatched = (
+            _profile("other-model-v1"),
+            _profile(MOCK_MODEL_ID, "a" * 64),
+            _profile(MOCK_MODEL_ID, dim=5),
+        )
+        for wrong in mismatched:
+            monkeypatch.setattr(models, "attribution_readiness", self._ready(wrong))
+            assert models.attribution_inputs() == (None, None)
+
+
+class _InertVad:
+    def frame_probability(self, frame: bytes) -> float:
+        return 0.0
+
+
+class _InertProvider:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
+@pytest.mark.parametrize("with_inputs", [True, False])
+@pytest.mark.parametrize("factory_name", ["build_transcriber", "build_recovery_runner"])
+def test_both_pipeline_factories_pass_the_attribution_inputs(
+    factory_name: str, with_inputs: bool, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """D3: BOTH entry points hand the embedder and the profile to the
+    pipeline — or ``None`` for both on the D2 fallback — resolved inside the
+    worker call, never at construction."""
+    from scribe_desktop.speaker_embedding import MOCK_MODEL_ID, MockSpeakerEmbedder
+
+    embedder = MockSpeakerEmbedder(embedding_dim=4)
+    profile = _profile(MOCK_MODEL_ID)
+    inputs = (embedder, profile) if with_inputs else (None, None)
+    resolved: list[int] = []
+    seen: list[dict[str, Any]] = []
+
+    def attribution() -> Any:
+        resolved.append(1)
+        return inputs
+
+    def record(*args: Any, **kwargs: Any) -> Any:
+        seen.append(kwargs)
+        return object()
+
+    monkeypatch.setattr(models, "SileroVad", _InertVad)
+    monkeypatch.setattr(models, "WhisperSpeechProvider", _InertProvider)
+    monkeypatch.setattr(models, "resolve_whisper_model", lambda *a, **k: "small")
+    monkeypatch.setattr(models, "transcribe_session", record)
+    monkeypatch.setattr(models, "recover_session_transcription", record)
+    factory = getattr(models, factory_name)
+    runner = factory(attribution=attribution)
+    assert resolved == []  # resolved at call time, in the worker
+    if factory_name == "build_transcriber":
+        runner(tmp_path, SessionCrypto())
+    else:
+        runner(tmp_path)
+    assert resolved == [1]
+    assert len(seen) == 1
+    assert seen[0]["speaker_embedder"] is inputs[0]
+    assert seen[0]["enrolled_profile"] is inputs[1]
+    assert seen[0]["model_name"] == "small"
