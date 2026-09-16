@@ -783,13 +783,23 @@ class NoteGenerationResult:
     document: TranscriptDocument
 
 
+def _extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
+    """The shipping provider built FROM the loaded config (practitioner-profile
+    plan Task 4.3): the cues that route utterances are the config's own —
+    the fourth clinician config file, digest-bound (D7) — never the module
+    defaults, so a practitioner's ``section_cues.json`` is what routes."""
+    return ExtractiveNoteProvider(cues=config.normalised_cues())
+
+
 def build_note_generator(
     *,
     clinician_speaker: str,
     template_profile_id: str | None,
     prefill_id: str | None = None,
     config_root: Path | None = None,
-    provider_factory: Callable[[], NoteModelProvider] = ExtractiveNoteProvider,
+    provider_factory: Callable[[NoteConfig], NoteModelProvider] = (
+        _extractive_provider_from_config
+    ),
 ) -> Callable[[Path, SessionCrypto], NoteGenerationResult]:
     """A generation worker for ``SessionController.with_generation_custody``.
 
@@ -799,7 +809,10 @@ def build_note_generator(
     is required and typed ``str``, so a generator cannot be built without a
     confirmed role). Config load and provider construction happen at call
     time, inside the worker thread, off the GUI thread — mirroring
-    ``build_transcriber``. Returns the draft plus the resolved config."""
+    ``build_transcriber``; the provider is built FROM the resolved config
+    (``provider_factory(config)``), so the cues it routes by are the ones the
+    draft's ``config_digest`` binds. Returns the draft plus the resolved
+    config."""
 
     def generator(session_dir: Path, crypto: SessionCrypto) -> NoteGenerationResult:
         document = read_transcript(session_dir, crypto)
@@ -807,7 +820,7 @@ def build_note_generator(
         draft = compose_draft(
             document,
             config,
-            provider_factory(),
+            provider_factory(config),
             template_profile_id=template_profile_id,
             clinician_speaker=clinician_speaker,
             prefill_id=prefill_id,

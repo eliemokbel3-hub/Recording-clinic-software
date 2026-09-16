@@ -48,9 +48,11 @@ Constraints honoured (plan Critical Constraints):
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from importlib import resources
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -721,122 +723,102 @@ class NoteModelProvider(Protocol):
 # ExtractiveNoteProvider — the phase's shipping default (no LLM).
 # ---------------------------------------------------------------------------
 
-# Cue phrases per canonical section, authored as readable phrases and
-# normalised through ``content_tokens`` at import so cue matching and every
-# other tokenisation share one rule. Routing takes the FIRST canonical
-# section whose cue matches, so the table's order of evaluation is the
-# canonical order, not this literal's order.
+# Shipped config defaults are package data under ``scribe_desktop/config_defaults/``
+# (Phase 3A Task 3.3), read through ``importlib.resources`` so a wheel install
+# resolves them exactly as the dev checkout does. The directory name and the
+# cue file's name are single-sourced HERE because ``note_config`` — the module
+# that owns the other three filenames and the loader — imports this one.
+_DEFAULTS_RESOURCE_DIR: Final = "config_defaults"
+SECTION_CUES_FILENAME: Final = "section_cues.json"
+
+# Cue phrases per canonical section. Since the practitioner-profile plan's
+# Phase 4 the ONE source is the packaged ``config_defaults/section_cues.json``
+# — the very file ``note_config.load_note_config`` reads as the shipped
+# default of the fourth clinician config file — so these defaults and the
+# loader's first-run result cannot drift apart. A practitioner's own file
+# replaces the shipped one whole (D6) and enters the config digest (D7); the
+# provider the app builds takes its cues FROM the loaded config
+# (``ui.models.build_note_generator``), and ``DEFAULT_SECTION_CUES`` is what
+# a bare ``ExtractiveNoteProvider()`` falls back to. The shipped phrases are a
+# FIRST CUT authored against the fixture matrix and ordinary physiotherapy
+# vocabulary, NOT clinical evidence — the honesty note ``note_check`` shares.
+# Phrases are normalised through ``content_tokens`` at import so cue matching
+# and every other tokenisation share one rule. Routing takes the FIRST
+# canonical section whose cue matches, so the order of evaluation is the
+# request's canonical section order, not the file's.
+#
+# The read below checks SHAPE and COMPLETENESS, nothing more: a package-data
+# read of a file this checkout ships, refused loudly at import
+# (``RuntimeError`` — a broken install, not a runtime state) when the payload
+# is not an object of canonical keys to lists of strings, when any canonical
+# key is missing, or when any list is empty (peer round 32 PR-HIGH-007: an
+# emptied-but-valid-JSON package would otherwise import as a zero-cue default
+# and route nothing while every status line read healthy). Completeness is a
+# rule for the PACKAGED default only — a user override may be sparse or
+# empty under D6, and that is the loader's contract, not this one's. Every
+# CONTENT rule — blank text, control characters, a phrase with no content
+# tokens, a duplicate within or across sections — is
+# ``note_config.SectionCuesFile``'s, and the shipped file is validated against
+# that model by test; the model cannot live here because ``note_config``
+# imports this module.
+_SECTION_KEYS_BY_NAME: Final[dict[str, NoteSectionKey]] = {
+    key: key for key in CANONICAL_SECTION_KEYS
+}
+
+
+def _parse_shipped_section_cues(
+    payload: object,
+) -> tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]:
+    """The packaged default's shape + completeness rule (comment above),
+    over an already-decoded payload so a test can drive every refusal
+    without touching the packaged file."""
+    cues = payload.get("section_cues") if isinstance(payload, dict) else None
+    if not isinstance(cues, dict):
+        raise RuntimeError(
+            f"shipped {SECTION_CUES_FILENAME} is malformed (broken install): "
+            "no section_cues object"
+        )
+    loaded: list[tuple[NoteSectionKey, tuple[str, ...]]] = []
+    for name, phrases in cues.items():
+        key = _SECTION_KEYS_BY_NAME.get(name)
+        if key is None or not isinstance(phrases, list):
+            raise RuntimeError(
+                f"shipped {SECTION_CUES_FILENAME} is malformed (broken install): "
+                f"section {name!r}"
+            )
+        if not phrases:
+            raise RuntimeError(
+                f"shipped {SECTION_CUES_FILENAME} is incomplete (broken install): "
+                f"no phrases under {name!r}"
+            )
+        if not all(isinstance(phrase, str) for phrase in phrases):
+            raise RuntimeError(
+                f"shipped {SECTION_CUES_FILENAME} is malformed (broken install): "
+                f"a non-string phrase under {name!r}"
+            )
+        loaded.append((key, tuple(phrases)))
+    missing = [key for key in CANONICAL_SECTION_KEYS if key not in cues]
+    if missing:
+        raise RuntimeError(
+            f"shipped {SECTION_CUES_FILENAME} is incomplete (broken install): "
+            f"no cues for {', '.join(missing)}"
+        )
+    return tuple(loaded)
+
+
+def _load_shipped_section_cues() -> tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]:
+    resource = resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / SECTION_CUES_FILENAME
+    try:
+        payload = json.loads(resource.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(
+            f"shipped {SECTION_CUES_FILENAME} unreadable (broken install): {exc}"
+        ) from exc
+    return _parse_shipped_section_cues(payload)
+
+
 _RAW_SECTION_CUES: Final[tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]] = (
-    (
-        "presenting_complaint",
-        (
-            "came in because",
-            "here for",
-            "here about",
-            "the problem is",
-            "complaining of",
-            "pain in",
-            "sore",
-            "hurts",
-        ),
-    ),
-    (
-        "history_presenting_complaint",
-        ("started", "began", "first noticed", "ever since", "it came on", "weeks ago", "days ago"),
-    ),
-    (
-        "progress_since_last_visit",
-        (
-            "since last time",
-            "since the last visit",
-            "since last session",
-            "since i saw you",
-            "compared to last",
-            "better since",
-            "worse since",
-        ),
-    ),
-    (
-        "past_medical_history",
-        ("history of", "previously had", "past surgery", "operated on", "diagnosed with"),
-    ),
-    (
-        "red_flags_screening",
-        (
-            "any numbness",
-            "any tingling",
-            "weight loss",
-            "night pain",
-            "bladder",
-            "bowel",
-            "fever",
-            "saddle",
-        ),
-    ),
-    (
-        "objective_examination",
-        (
-            "on examination",
-            "range of motion",
-            "palpation",
-            "tender to touch",
-            "i can feel",
-            "test is",
-            "straight leg raise",
-        ),
-    ),
-    (
-        "outcome_measures",
-        ("out of ten", "pain score", "scale of", "degrees of", "score is"),
-    ),
-    (
-        "assessment",
-        ("my assessment is", "clinically this is", "this presents as", "consistent with"),
-    ),
-    (
-        "diagnosis",
-        ("the diagnosis is", "you have", "this is a", "working diagnosis"),
-    ),
-    (
-        "treatment_performed",
-        (
-            "today we did",
-            "i treated",
-            "we mobilised",
-            "soft tissue",
-            "dry needling",
-            "manipulation",
-            "i released",
-        ),
-    ),
-    (
-        "response_to_treatment",
-        ("feels better now", "eased off", "after treatment", "responded well", "less sore now"),
-    ),
-    (
-        "advice_home_exercise",
-        ("home exercise", "exercises to do", "stretch", "advice is", "avoid lifting"),
-    ),
-    (
-        "management_plan",
-        ("the plan is", "we will", "next few weeks", "course of treatment", "management plan"),
-    ),
-    (
-        "consent",
-        ("happy to proceed", "consent", "explained the risks", "is that okay with you"),
-    ),
-    (
-        "referrals_investigations",
-        ("refer you", "referral", "imaging", "x ray", "scan", "blood test", "gp letter"),
-    ),
-    (
-        "precautions_contraindications",
-        ("be careful", "avoid", "do not", "precaution", "contraindicated"),
-    ),
-    (
-        "follow_up_review",
-        ("see you in", "book in", "next appointment", "follow up", "review you in"),
-    ),
+    _load_shipped_section_cues()
 )
 
 DEFAULT_SECTION_CUES: Final[Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]]] = {
@@ -1975,6 +1957,7 @@ __all__ = [
     "MAX_ASSERTION_CHARS",
     "MOCK_BEHAVIOURS",
     "NOTE_WARNING_SEVERITY",
+    "SECTION_CUES_FILENAME",
     "SECTION_INDEX",
     "CanonicalSection",
     "ConfirmationDecision",

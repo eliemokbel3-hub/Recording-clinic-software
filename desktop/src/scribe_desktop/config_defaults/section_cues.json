@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "section_cues": {
+    "presenting_complaint": [
+      "came in because",
+      "here for",
+      "here about",
+      "the problem is",
+      "complaining of",
+      "pain in",
+      "sore",
+      "hurts"
+    ],
+    "history_presenting_complaint": [
+      "started",
+      "began",
+      "first noticed",
+      "ever since",
+      "it came on",
+      "weeks ago",
+      "days ago"
+    ],
+    "progress_since_last_visit": [
+      "since last time",
+      "since the last visit",
+      "since last session",
+      "since i saw you",
+      "compared to last",
+      "better since",
+      "worse since"
+    ],
+    "past_medical_history": [
+      "history of",
+      "previously had",
+      "past surgery",
+      "operated on",
+      "diagnosed with"
+    ],
+    "red_flags_screening": [
+      "any numbness",
+      "any tingling",
+      "weight loss",
+      "night pain",
+      "bladder",
+      "bowel",
+      "fever",
+      "saddle"
+    ],
+    "objective_examination": [
+      "on examination",
+      "range of motion",
+      "palpation",
+      "tender to touch",
+      "i can feel",
+      "test is",
+      "straight leg raise"
+    ],
+    "outcome_measures": [
+      "out of ten",
+      "pain score",
+      "scale of",
+      "degrees of",
+      "score is"
+    ],
+    "assessment": [
+      "my assessment is",
+      "clinically this is",
+      "this presents as",
+      "consistent with"
+    ],
+    "diagnosis": [
+      "the diagnosis is",
+      "you have",
+      "this is a",
+      "working diagnosis"
+    ],
+    "treatment_performed": [
+      "today we did",
+      "i treated",
+      "we mobilised",
+      "soft tissue",
+      "dry needling",
+      "manipulation",
+      "i released"
+    ],
+    "response_to_treatment": [
+      "feels better now",
+      "eased off",
+      "after treatment",
+      "responded well",
+      "less sore now"
+    ],
+    "advice_home_exercise": [
+      "home exercise",
+      "exercises to do",
+      "stretch",
+      "advice is",
+      "avoid lifting"
+    ],
+    "management_plan": [
+      "the plan is",
+      "we will",
+      "next few weeks",
+      "course of treatment",
+      "management plan"
+    ],
+    "consent": [
+      "happy to proceed",
+      "consent",
+      "explained the risks",
+      "is that okay with you"
+    ],
+    "referrals_investigations": [
+      "refer you",
+      "referral",
+      "imaging",
+      "x ray",
+      "scan",
+      "blood test",
+      "gp letter"
+    ],
+    "precautions_contraindications": [
+      "be careful",
+      "avoid",
+      "do not",
+      "precaution",
+      "contraindicated"
+    ],
+    "follow_up_review": [
+      "see you in",
+      "book in",
+      "next appointment",
+      "follow up",
+      "review you in"
+    ]
+  }
+}

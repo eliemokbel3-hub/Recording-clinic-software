@@ -33,6 +33,7 @@ import scribe_desktop.note_config as note_config_module
 import scribe_desktop.note_fill as note_fill_module
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
+    DEFAULT_SECTION_CUES,
     DIGEST_PATTERN,
     GeneratedSection,
     NoteAssertion,
@@ -45,7 +46,9 @@ from scribe_desktop.note_config import (
     AUTOFILL_RULES_FILENAME,
     CONFIG_FILENAMES,
     MAX_CONFIG_LABEL_CHARS,
+    MAX_TRIGGER_CHARS,
     PREFILL_TEMPLATES_FILENAME,
+    SECTION_CUES_FILENAME,
     TEMPLATE_PROFILES_FILENAME,
     AutofillRule,
     AutofillRulesFile,
@@ -56,9 +59,11 @@ from scribe_desktop.note_config import (
     NoteConfigUnreadableError,
     PrefillTemplate,
     PrefillTemplatesFile,
+    SectionCuesFile,
     TemplateProfile,
     TemplateProfilesFile,
     TemplateProfileUnboundError,
+    _canonical_config,
     bind_template_profile,
     build_note_request,
     default_config_root,
@@ -959,6 +964,103 @@ class TestSchemaValidation:
 
 
 # ---------------------------------------------------------------------------
+# Practitioner-profile plan Task 4.2 — the fourth config file's own model.
+# ---------------------------------------------------------------------------
+
+
+class TestSectionCuesFile:
+    def test_unknown_section_key_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            SectionCuesFile.model_validate(
+                {"schema_version": 1, "section_cues": {"not_a_section": ["pain in"]}}
+            )
+
+    def test_blank_phrase_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="blank"):
+            SectionCuesFile.model_validate(
+                {"schema_version": 1, "section_cues": {"assessment": [" "]}}
+            )
+
+    def test_control_character_in_a_phrase_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="control character"):
+            SectionCuesFile.model_validate(
+                {"schema_version": 1, "section_cues": {"assessment": ["my\tassessment"]}}
+            )
+
+    def test_phrase_with_no_content_tokens_is_refused(self) -> None:
+        """A pure-disfluency phrase could never route an utterance, so it is
+        refused at authoring time rather than silently ignored."""
+        with pytest.raises(ValidationError, match="no content tokens"):
+            SectionCuesFile.model_validate(
+                {"schema_version": 1, "section_cues": {"assessment": ["um ..."]}}
+            )
+
+    def test_phrase_length_limit_applies(self) -> None:
+        with pytest.raises(ValidationError):
+            SectionCuesFile.model_validate(
+                {
+                    "schema_version": 1,
+                    "section_cues": {"assessment": ["a" * (MAX_TRIGGER_CHARS + 1)]},
+                }
+            )
+        parsed = SectionCuesFile.model_validate(
+            {"schema_version": 1, "section_cues": {"assessment": ["a" * MAX_TRIGGER_CHARS]}}
+        )
+        assert parsed.section_cues["assessment"] == ("a" * MAX_TRIGGER_CHARS,)
+
+    def test_duplicate_within_a_section_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="same phrase"):
+            SectionCuesFile.model_validate(
+                {
+                    "schema_version": 1,
+                    "section_cues": {"assessment": ["Consistent with!", "consistent  with"]},
+                }
+            )
+
+    def test_duplicate_across_sections_is_refused(self) -> None:
+        with pytest.raises(ValidationError, match="same phrase"):
+            SectionCuesFile.model_validate(
+                {
+                    "schema_version": 1,
+                    "section_cues": {
+                        "assessment": ["consistent with"],
+                        "diagnosis": ["Consistent With"],
+                    },
+                }
+            )
+
+    def test_unknown_schema_version_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            SectionCuesFile.model_validate({"schema_version": 2, "section_cues": {}})
+
+    def test_extra_field_is_refused(self) -> None:
+        with pytest.raises(ValidationError):
+            SectionCuesFile.model_validate(
+                {"schema_version": 1, "section_cues": {}, "surprise": True}
+            )
+
+    def test_a_missing_key_has_no_cues(self) -> None:
+        parsed = SectionCuesFile.model_validate(
+            {"section_cues": {"assessment": ["consistent with"]}}
+        )
+        config = NoteConfig(section_cues=parsed.section_cues)
+        assert config.normalised_cues() == {"assessment": (("consistent", "with"),)}
+
+    def test_note_config_holds_the_same_rule_without_the_file_model(self) -> None:
+        """`_check_section_cues` is `NoteConfig`'s validator too, so a config
+        assembled without the file model is held to the same rule."""
+        with pytest.raises(ValidationError, match="no content tokens"):
+            NoteConfig(section_cues={"assessment": ("um",)})
+        with pytest.raises(ValidationError, match="same phrase"):
+            NoteConfig(section_cues={"assessment": ("pain in",), "diagnosis": ("Pain in!",)})
+
+    def test_file_is_frozen(self) -> None:
+        parsed = SectionCuesFile.model_validate({"schema_version": 1, "section_cues": {}})
+        with pytest.raises(ValidationError):
+            parsed.schema_version = 1  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
 # Round 15 PR-HIGH-001 — entry-level atomicity: list shape is not proof of
 # atomicity. One entry carrying two claims, or one claim authored twice,
 # breaks the confirmation-unit = assertion-unit contract at the AUTHORING
@@ -1419,6 +1521,114 @@ class TestLoader:
 
 
 # ---------------------------------------------------------------------------
+# Practitioner-profile plan Task 4.2 — the cue file through the SAME loader:
+# shipped default on first run, whole-file replacement, typed loud failure,
+# and the cue set inside the config digest (D7).
+# ---------------------------------------------------------------------------
+
+
+def _shipped_cues_bytes() -> bytes:
+    resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+    return resource.read_bytes()
+
+
+class TestSectionCuesLoader:
+    def test_absent_file_loads_the_shipped_default(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        config = load_note_config(root)
+        assert config.normalised_cues() == DEFAULT_SECTION_CUES
+        assert tuple(config.section_cues) == CANONICAL_SECTION_KEYS
+        assert not root.exists()
+
+    def test_malformed_user_file_fails_loudly_naming_the_file(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / SECTION_CUES_FILENAME).write_text("{not json", encoding="utf-8")
+        with pytest.raises(NoteConfigInvalidError, match=SECTION_CUES_FILENAME):
+            load_note_config(root)
+
+    def test_unknown_key_in_the_user_file_names_the_file(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            SECTION_CUES_FILENAME,
+            {"schema_version": 1, "section_cues": {"not_a_section": ["pain in"]}},
+        )
+        with pytest.raises(NoteConfigInvalidError, match=SECTION_CUES_FILENAME):
+            load_note_config(root)
+
+    def test_duplicate_in_the_user_file_names_the_file_and_the_phrase(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            SECTION_CUES_FILENAME,
+            {
+                "schema_version": 1,
+                "section_cues": {
+                    "assessment": ["consistent with"],
+                    "diagnosis": ["Consistent With"],
+                },
+            },
+        )
+        with pytest.raises(NoteConfigInvalidError) as excinfo:
+            load_note_config(root)
+        assert SECTION_CUES_FILENAME in str(excinfo.value)
+        assert "same phrase" in str(excinfo.value)
+
+    def test_unreadable_user_file_is_loud_not_a_silent_fallback(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        (root / SECTION_CUES_FILENAME).mkdir(parents=True)
+        with pytest.raises(NoteConfigUnreadableError, match=SECTION_CUES_FILENAME):
+            load_note_config(root)
+
+    def test_user_file_replaces_the_shipped_cues_wholly(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            SECTION_CUES_FILENAME,
+            {"schema_version": 1, "section_cues": {"advice_home_exercise": ["home exercise"]}},
+        )
+        config = load_note_config(root)
+        assert config.normalised_cues() == {"advice_home_exercise": (("home", "exercise"),)}
+        # ...while the files the user never overrode still ship defaults.
+        assert config.template_profiles[0].template_profile_id == "template-a"
+
+    def test_a_user_file_identical_to_the_shipped_one_leaves_the_digest_unchanged(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / SECTION_CUES_FILENAME).write_bytes(_shipped_cues_bytes())
+        shipped = load_note_config(tmp_path / "other").config_digest()
+        assert load_note_config(root).config_digest() == shipped
+
+    def test_digest_changes_with_a_one_phrase_edit(self, tmp_path: Path) -> None:
+        shipped = load_note_config(tmp_path / "shipped").config_digest()
+        payload = json.loads(_shipped_cues_bytes())
+        payload["section_cues"]["advice_home_exercise"].remove("avoid lifting")
+        removed_root = tmp_path / "removed"
+        _write_user_file(removed_root, SECTION_CUES_FILENAME, payload)
+        removed = load_note_config(removed_root).config_digest()
+        assert removed != shipped
+
+        payload = json.loads(_shipped_cues_bytes())
+        payload["section_cues"]["advice_home_exercise"].append("keep moving")
+        added_root = tmp_path / "added"
+        _write_user_file(added_root, SECTION_CUES_FILENAME, payload)
+        added = load_note_config(added_root).config_digest()
+        assert added != shipped
+        assert added != removed
+
+    def test_cues_survive_the_canonical_round_trip(self, tmp_path: Path) -> None:
+        config = load_note_config(tmp_path / "config")
+        rebuilt = _canonical_config(config)
+        assert rebuilt.normalised_cues() == config.normalised_cues()
+        assert rebuilt.config_digest() == config.config_digest()
+
+
+# ---------------------------------------------------------------------------
 # Task 3.2 — config_digest.
 # ---------------------------------------------------------------------------
 
@@ -1469,6 +1679,7 @@ class TestShippedDefaultsPackaging:
             (TEMPLATE_PROFILES_FILENAME, TemplateProfilesFile),
             (AUTOFILL_RULES_FILENAME, AutofillRulesFile),
             (PREFILL_TEMPLATES_FILENAME, PrefillTemplatesFile),
+            (SECTION_CUES_FILENAME, SectionCuesFile),
         ):
             blob = (
                 resources.files("scribe_desktop") / "config_defaults" / filename

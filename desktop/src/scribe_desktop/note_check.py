@@ -140,9 +140,12 @@ cannot smuggle a lying digest past the gate.
 
 The three lexicons here are a FIRST CUT authored against the fixture matrix
 and ordinary physiotherapy vocabulary, NOT clinical evidence — the same
-honesty note the ``ExtractiveNoteProvider`` cue lists carry. They are
-closed sets by design: a token outside them yields no structure and
-therefore no contradiction, which fails toward silence, never toward a
+honesty note the shipped ``ExtractiveNoteProvider`` cues carry
+(``config_defaults/section_cues.json``, the fourth clinician config file
+since the practitioner-profile plan's Phase 4; a practitioner's own file
+replaces it whole). Unlike those cues, the lexicons are NOT configurable:
+they are closed sets by design, so a token outside them yields no structure
+and therefore no contradiction, which fails toward silence, never toward a
 false accusation.
 """
 

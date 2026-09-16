@@ -3,7 +3,9 @@
 This module owns the CONFIG side of the note pipeline: the template-mapping
 model (canonical section -> real Cliniko template field), the autofill-rule
 and prefill-template schemas, and the validating loader that resolves shipped
-defaults against clinician overrides into one immutable ``NoteConfig``.
+defaults against clinician overrides into one validated, attribute-frozen
+``NoteConfig`` (pydantic ``frozen`` refuses reassignment; the cue mapping's
+in-place residue is named and bounded on ``NoteConfig.section_cues``).
 
 Config files are INTENDED to be clinician-authored boilerplate rather than
 patient data (plan Schema / Data Changes): they live in plaintext under
@@ -29,7 +31,7 @@ matching the rounds 40-41 correction already applied to the security docs:
 Resolution precedence (Task 3.2 — the specification ``config_digest``
 depends on):
 
-- **Per-file, whole-file replacement.** For each of the three config
+- **Per-file, whole-file replacement.** For each of the four config
   filenames, a user file under the config root REPLACES the shipped default
   of the same name entirely. There is no deep merge: merge semantics are
   where "never partially applies" goes to die, and a clinician editing a
@@ -48,6 +50,20 @@ depends on):
   not choose. ``load_note_config`` either returns one fully-validated
   ``NoteConfig`` or raises; it mutates no state either way, so a failed
   load leaves nothing half-applied.
+
+The fourth file (practitioner-profile plan Phase 4): ``section_cues.json``
+holds the phrases that route a transcript utterance into a canonical section
+— ``ExtractiveNoteProvider``'s cues — as one list per canonical key. It
+follows the same precedence (whole-file replacement, first-run default, loud
+failure — D6), the same text rule (``_TriggerText``), refuses a phrase with
+no content tokens and any normalised duplicate within or across sections,
+and enters ``config_digest`` like the other three (D7), so every note is
+bound to the cue set that routed it. A key MISSING from the file has no cues
+— nothing is routed to that section from cues — and the shipped default
+carries every key. Cue phrases never enter a note: they select which
+VERBATIM transcript utterance lands in which section.
+``NoteConfig.normalised_cues()`` is the provider-shaped accessor, and the
+app builds its provider from it (``ui.models.build_note_generator``).
 
 ``config_digest`` (Task 3.2, "well-defined"): ``note.digest_bytes`` — the
 same ``"sha256-v1:<hex>"`` primitive as ``transcript_digest`` — over the
@@ -91,7 +107,7 @@ from __future__ import annotations
 
 import os
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from importlib import resources
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self, final
@@ -114,9 +130,11 @@ from scribe_desktop.note import (
     # across the note pipeline. ``_assemble_note_request`` is consumed ONLY
     # by ``build_note_request`` below — the generation-facing boundary lives
     # here because the reverse import would be a cycle.
+    _DEFAULTS_RESOURCE_DIR,
     _ID_PATTERN,
     _PROFILE_ID_PATTERN,
     CANONICAL_SECTION_KEYS,
+    SECTION_CUES_FILENAME,
     GeneratedSection,
     NoteRequest,
     NoteSectionKey,
@@ -135,13 +153,16 @@ CONFIG_FILENAMES: Final[tuple[str, ...]] = (
     TEMPLATE_PROFILES_FILENAME,
     AUTOFILL_RULES_FILENAME,
     PREFILL_TEMPLATES_FILENAME,
+    # The fourth file (practitioner-profile plan Phase 4); its name lives in
+    # ``note`` because that module derives its default cues from the file.
+    SECTION_CUES_FILENAME,
 )
 
 # Shipped defaults travel INSIDE the package (Task 3.3): package data under
-# ``scribe_desktop/config_defaults/``, read through ``importlib.resources``
-# so a non-editable (wheel) install resolves them identically to the dev
-# checkout. Never resolved via ``__file__`` and never via LOCALAPPDATA.
-_DEFAULTS_RESOURCE_DIR: Final = "config_defaults"
+# ``scribe_desktop/config_defaults/`` (``note._DEFAULTS_RESOURCE_DIR``, the
+# one spelling), read through ``importlib.resources`` so a non-editable
+# (wheel) install resolves them identically to the dev checkout. Never
+# resolved via ``__file__`` and never via LOCALAPPDATA.
 
 # Field bounds — artifact sanity bounds on clinician-authored config text,
 # far above real use but low enough that a pasted document fails loudly.
@@ -671,8 +692,62 @@ class PrefillTemplate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# The three config FILES (one pydantic model each) and the RESOLVED config.
+# The four config FILES (one pydantic model each) and the RESOLVED config.
 # ---------------------------------------------------------------------------
+
+
+def _check_section_cues(cues: Mapping[NoteSectionKey, tuple[str, ...]]) -> None:
+    """THE cue-phrase validator (practitioner-profile plan Task 4.2), called
+    by ``SectionCuesFile`` — so a malformed user file names ITS file — and
+    again by ``NoteConfig``, so a config assembled without the file model is
+    held to the same rule. A phrase with no content tokens could never route
+    anything; two phrases that are the same under the module's one shared
+    normalisation — within a section or across two — would make which
+    section wins an accident of canonical order (routing takes the first
+    match), so both are refused at authoring time.
+    """
+    seen: dict[tuple[str, ...], tuple[str, int]] = {}
+    for key, phrases in cues.items():
+        for position, phrase in enumerate(phrases, start=1):
+            tokens = content_tokens(phrase)
+            if not tokens:
+                raise ValueError(
+                    f"section_cues {key}: phrase {position} has no content tokens "
+                    "and could never route an utterance"
+                )
+            earlier = seen.get(tokens)
+            if earlier is not None:
+                raise ValueError(
+                    f"section_cues {key}: phrase {position} is the same phrase as "
+                    f"{earlier[0]} phrase {earlier[1]} once normalised - remove the duplicate"
+                )
+            seen[tokens] = (key, position)
+
+
+class SectionCuesFile(BaseModel):
+    """On-disk shape of ``section_cues.json`` (practitioner-profile plan
+    Phase 4): ``{"schema_version": 1, "section_cues": {<canonical key>:
+    [phrase, ...]}}``.
+
+    Keys are canonical section keys (an unknown key is refused by the
+    ``Literal``), phrases are ``_TriggerText`` (the autofill trigger's own
+    bound and control-character rule), and ``_check_section_cues`` refuses a
+    phrase that could never fire and any normalised duplicate. A key that is
+    absent simply has no cues — nothing is routed to that section from this
+    file — and the shipped default carries every key. ``frozen`` here means
+    no attribute reassignment; the mapping itself is a plain dict (the
+    residue ``NoteConfig.section_cues`` names and bounds).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    section_cues: Mapping[NoteSectionKey, tuple[_TriggerText, ...]] = {}
+
+    @model_validator(mode="after")
+    def _check_cues(self) -> Self:
+        _check_section_cues(self.section_cues)
+        return self
 
 
 class TemplateProfilesFile(BaseModel):
@@ -712,9 +787,27 @@ class NoteConfig(BaseModel):
     template_profiles: tuple[TemplateProfile, ...] = ()
     autofill_rules: tuple[AutofillRule, ...] = ()
     prefill_templates: tuple[PrefillTemplate, ...] = ()
+    # The cue set that routes utterances (practitioner-profile plan Phase 4,
+    # D7): part of ``to_bytes()`` and therefore of ``config_digest``. The
+    # model default is EMPTY like the other three fields' — the first-run
+    # default is the loader's, which reads the shipped file. Residue, named:
+    # ``frozen=True`` refuses attribute REASSIGNMENT only; the mapping is a
+    # plain dict, so an in-place mutation is not refused by construction as
+    # it is for the three tuple fields. The bound, stated exactly (peer round
+    # 32 PR-LOW-034): no shipped path mutates it — the loader,
+    # ``normalised_cues``, ``_check_section_cues`` and the provider factory
+    # only read it; ``_canonical_config`` re-validates whatever the field
+    # holds NOW, and ``check_note`` rejects a config whose digest disagrees
+    # with the one the draft RECORDED — so a change made after the draft's
+    # digest was taken is rejected at check time, while one made before it
+    # (between the factory's ``normalised_cues()`` snapshot and
+    # ``compose_draft``) would not be detected; nothing in the shipped
+    # worker sits in that window. Neither mechanism is general immutability.
+    section_cues: Mapping[NoteSectionKey, tuple[_TriggerText, ...]] = {}
 
     @model_validator(mode="after")
     def _check_config(self) -> Self:
+        _check_section_cues(self.section_cues)
         profile_ids: set[str] = set()
         for profile in self.template_profiles:
             if profile.template_profile_id in profile_ids:
@@ -744,6 +837,17 @@ class NoteConfig(BaseModel):
                 raise ValueError(f"duplicate prefill_id: {prefill.prefill_id}")
             prefill_ids.add(prefill.prefill_id)
         return self
+
+    def normalised_cues(self) -> Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]]:
+        """The cue set in ``ExtractiveNoteProvider``'s shape — every phrase
+        normalised through ``content_tokens``, the derivation
+        ``note.DEFAULT_SECTION_CUES`` applies to the shipped file. A section
+        absent from the file is absent here, and the provider's
+        ``self._cues.get(key, ())`` then routes nothing to it."""
+        return {
+            key: tuple(content_tokens(phrase) for phrase in phrases)
+            for key, phrases in self.section_cues.items()
+        }
 
     def to_bytes(self) -> bytes:
         """Canonical serialization — the byte domain of ``config_digest``."""
@@ -825,6 +929,7 @@ def load_note_config(config_root: Path | None = None) -> NoteConfig:
     profiles_blob, profiles_source = _read_config_blob(root, TEMPLATE_PROFILES_FILENAME)
     rules_blob, rules_source = _read_config_blob(root, AUTOFILL_RULES_FILENAME)
     prefills_blob, prefills_source = _read_config_blob(root, PREFILL_TEMPLATES_FILENAME)
+    cues_blob, cues_source = _read_config_blob(root, SECTION_CUES_FILENAME)
     profiles_file = _parse_config_blob(
         TemplateProfilesFile, profiles_blob, TEMPLATE_PROFILES_FILENAME, profiles_source
     )
@@ -834,11 +939,13 @@ def load_note_config(config_root: Path | None = None) -> NoteConfig:
     prefills_file = _parse_config_blob(
         PrefillTemplatesFile, prefills_blob, PREFILL_TEMPLATES_FILENAME, prefills_source
     )
+    cues_file = _parse_config_blob(SectionCuesFile, cues_blob, SECTION_CUES_FILENAME, cues_source)
     try:
         return NoteConfig(
             template_profiles=profiles_file.template_profiles,
             autofill_rules=rules_file.autofill_rules,
             prefill_templates=prefills_file.prefill_templates,
+            section_cues=cues_file.section_cues,
         )
     except ValidationError as exc:
         raise NoteConfigInvalidError(f"resolved note config is invalid: {exc}") from exc

@@ -181,7 +181,12 @@ note inherit exactly that posture.
 
 1. **Config as a note-content input.** Autofill rules and prefill templates are
    clinician-authored plaintext under `%LOCALAPPDATA%\ClinikoScribe\config\`
-   (`template_profiles.json`, `autofill_rules.json`, `prefill_templates.json`),
+   (`template_profiles.json`, `autofill_rules.json`, `prefill_templates.json`,
+   and since the practitioner-profile plan's Phase 4 `section_cues.json` — a
+   ROUTING input, not a content input: its phrases never enter a note, they
+   select which verbatim transcript utterance lands in which section, so a
+   hand-edited cue file can misplace transcript text but cannot author note
+   text; it is digest-bound like the other three),
    deliberately OUTSIDE the encrypted session store and the 24 h rule — they
    are INTENDED as boilerplate, not patient data, and must survive session
    destruction (the loader validates structure only and cannot detect patient
@@ -194,7 +199,7 @@ note inherit exactly that posture.
    unreadable or malformed raises a typed error and applies nothing, so a
    corrupt or half-edited config cannot silently drive a generation. A same-user
    attacker can of course edit these files (boundary 2); the control that
-   matters is downstream — nothing from config reaches `note.enc` without
+   matters is downstream — no text AUTHORED in config reaches `note.enc` without
    explicit per-assertion clinician confirmation of the exact shown wording, and
    config text rejects Unicode line/paragraph separators and bidirectional
    format controls so the confirmed wording cannot differ from what was

@@ -179,7 +179,9 @@ in-process and adds no network surface and no new logging channel.
     `note_config.load_note_config` reads clinician-authored config from
     `%LOCALAPPDATA%\ClinikoScribe\config\` — `template_profiles.json`
     (canonical-section → Cliniko-template-field mapping), `autofill_rules.json`,
-    and `prefill_templates.json` — falling back to shipped package defaults per
+    `prefill_templates.json` and, since the practitioner-profile plan's Phase 4,
+    `section_cues.json` (the phrases that route a transcript utterance into a
+    canonical section) — falling back to shipped package defaults per
     filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
     the encrypted session store and the 24 h rule so it survives session
     destruction. Patient data and secrets are prohibited by policy, but the
@@ -190,8 +192,14 @@ in-process and adds no network surface and no new logging channel.
     CLOSED (a malformed or unreadable user file raises a typed error and applies
     nothing — never a silent partial apply of the shipped default). `config_digest` over
     the resolved config binds a generation run to the exact config that drove
-    it. Config text feeds the note pipeline (flow 10) only as PROPOSALS; nothing
-    from it reaches `note.enc` without per-assertion clinician confirmation.
+    it — the cue set included, so a note is bound to the cues that routed it.
+    Autofill and prefill text feeds the note pipeline (flow 10) only as
+    PROPOSALS; nothing from those files reaches `note.enc` without per-assertion
+    clinician confirmation. Cue phrases never enter a note at all: they select
+    which VERBATIM transcript utterance is placed in which section (a
+    `transcript`-provenance assertion, reconstructed exactly by Check 1), so a
+    hand-edited cue file can misplace transcript text but cannot add text to
+    the note.
 
 12. **Voice enrolment → profile store (practitioner-profile plan Phase 3,
     in-process, zero network).** On the Practitioner tab (`ui/practitioner.py`),

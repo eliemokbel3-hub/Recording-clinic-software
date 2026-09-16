@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -10,13 +11,18 @@ from typing import Any
 
 import pytest
 
+from scribe_desktop.note import ExtractiveNoteProvider, NoteModelProvider
+from scribe_desktop.note_config import SECTION_CUES_FILENAME, NoteConfig
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
 from scribe_desktop.session_store import AUDIO_FILENAME, KEY_FILENAME, SessionChunkStore
+from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
+    SPEAKER_2,
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
+    write_transcript,
 )
 from scribe_desktop.ui import models
 
@@ -682,3 +688,109 @@ def test_both_pipeline_factories_pass_the_attribution_inputs(
     assert seen[0]["speaker_embedder"] is inputs[0]
     assert seen[0]["enrolled_profile"] is inputs[1]
     assert seen[0]["model_name"] == "small"
+
+
+# ---------------------------------------------------------------------------
+# Practitioner-profile plan Task 4.3 — the generator's provider is built FROM
+# the resolved config, so the cue file routes what reaches the note.
+# ---------------------------------------------------------------------------
+
+CUE_UTTERANCE = "Your home exercise is the wall slide"
+
+
+def _cue_document(text: str, speaker: str) -> TranscriptDocument:
+    words = text.split()
+    transcript_words = tuple(
+        TranscriptWord(
+            word_text=word,
+            start_seconds=index * 0.3,
+            end_seconds=index * 0.3 + 0.2,
+            probability=0.9,
+            uncertain=False,
+        )
+        for index, word in enumerate(words)
+    )
+    segment = TranscriptSegment(
+        start_seconds=0.0,
+        end_seconds=len(words) * 0.3,
+        speaker=speaker,
+        transcript_words=transcript_words,
+    )
+    return TranscriptDocument(
+        session_id="d" * 32,
+        created_at=datetime(2026, 9, 16, 12, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=(segment,),
+    )
+
+
+def _write_cue_file(root: Path, cues: dict[str, list[str]]) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    (root / SECTION_CUES_FILENAME).write_text(
+        json.dumps({"schema_version": 1, "section_cues": cues}), encoding="utf-8"
+    )
+
+
+def _generate(
+    tmp_path: Path, config_root: Path, **factory_overrides: Any
+) -> models.NoteGenerationResult:
+    session_dir = tmp_path / "session"
+    session_dir.mkdir(exist_ok=True)
+    crypto = SessionCrypto()
+    write_transcript(session_dir, crypto, _cue_document(CUE_UTTERANCE, SPEAKER_2))
+    generator = models.build_note_generator(
+        clinician_speaker=SPEAKER_2,
+        template_profile_id="template-a",
+        config_root=config_root,
+        **factory_overrides,
+    )
+    return generator(session_dir, crypto)
+
+
+def _section_keys(result: models.NoteGenerationResult) -> list[str]:
+    return [section.section_key for section in result.draft.note_sections]
+
+
+class TestProviderFromConfig:
+    def test_the_shipped_cues_route_through_the_generator(self, tmp_path: Path) -> None:
+        result = _generate(tmp_path, tmp_path / "config")
+        assert _section_keys(result) == ["advice_home_exercise"]
+        assert result.draft.note_sections[0].note_assertions[0].text == CUE_UTTERANCE
+
+    def test_a_user_file_that_drops_the_cue_stops_the_routing(self, tmp_path: Path) -> None:
+        shipped = _generate(tmp_path, tmp_path / "config")
+        root = tmp_path / "user-config"
+        _write_cue_file(root, {"presenting_complaint": ["came in because"]})
+        result = _generate(tmp_path, root)
+        assert "advice_home_exercise" not in _section_keys(result)
+        assert result.draft.note_sections == ()
+        assert result.config.config_digest() != shipped.config.config_digest()
+
+    def test_a_user_file_that_adds_a_cue_reroutes_the_utterance(self, tmp_path: Path) -> None:
+        root = tmp_path / "user-config"
+        _write_cue_file(root, {"treatment_performed": ["wall slide"]})
+        result = _generate(tmp_path, root)
+        assert _section_keys(result) == ["treatment_performed"]
+        assert result.draft.note_sections[0].note_assertions[0].text == CUE_UTTERANCE
+
+    def test_the_factory_receives_the_resolved_config(self, tmp_path: Path) -> None:
+        received: list[NoteConfig] = []
+
+        def factory(config: NoteConfig) -> NoteModelProvider:
+            received.append(config)
+            return ExtractiveNoteProvider(cues=config.normalised_cues())
+
+        result = _generate(tmp_path, tmp_path / "config", provider_factory=factory)
+        assert len(received) == 1
+        assert received[0] is result.config
+        assert received[0].config_digest() == result.config.config_digest()
+
+    def test_the_default_factory_is_the_extractive_provider_from_the_config(
+        self, tmp_path: Path
+    ) -> None:
+        provider = models._extractive_provider_from_config(
+            models.load_note_config(tmp_path / "config")
+        )
+        assert isinstance(provider, ExtractiveNoteProvider)
+        assert provider.provider_name == "extractive-v1"

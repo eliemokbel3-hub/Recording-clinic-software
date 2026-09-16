@@ -10,11 +10,13 @@ clinician-authored assertion cannot exist without its confirmation record.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections import Counter
 from collections.abc import Callable
 from datetime import UTC, datetime
+from importlib import resources
 from pathlib import Path
 from typing import get_args
 
@@ -25,6 +27,7 @@ from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
     _FABRICATED_TEXT,
+    _RAW_SECTION_CUES,
     # The first-speaker margin test asserts against the WEIGHT, not a copy of
     # its literal value, so retuning the weight cannot leave the test passing
     # against a number nothing uses any more.
@@ -32,9 +35,11 @@ from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     CANONICAL_SECTIONS,
     CLINICIAN_OWNED_SECTIONS,
+    DEFAULT_SECTION_CUES,
     DIGEST_PATTERN,
     MOCK_BEHAVIOURS,
     NOTE_WARNING_SEVERITY,
+    SECTION_CUES_FILENAME,
     SECTION_INDEX,
     ConfirmationDecision,
     ExtractiveNoteProvider,
@@ -55,6 +60,7 @@ from scribe_desktop.note import (
     ProposalResolution,
     SourceCoords,
     SpeakerRolePreselection,
+    _parse_shipped_section_cues,
     content_tokens,
     digest_bytes,
     is_interrogative,
@@ -776,6 +782,90 @@ class TestExtractiveProvider:
     def test_uncued_speech_is_dropped_not_invented(self) -> None:
         chat = _document(texts=(("Terrible traffic on the way in today", SPEAKER_1),))
         assert ExtractiveNoteProvider().generate_sections(_request(document=chat)) == ()
+
+
+def _packaged_payload(cues: dict[str, object]) -> dict[str, object]:
+    return {"schema_version": 1, "section_cues": cues}
+
+
+def _complete_cues() -> dict[str, object]:
+    return {key: ["one phrase"] for key in CANONICAL_SECTION_KEYS}
+
+
+def _cues_without(key: str) -> dict[str, object]:
+    cues = _complete_cues()
+    del cues[key]
+    return cues
+
+
+def _cues_with(key: str, phrases: object) -> dict[str, object]:
+    cues = _complete_cues()
+    cues[key] = phrases
+    return cues
+
+
+# Peer round 32 PR-HIGH-007: every payload a packaged default must REFUSE at
+# import — the shape refusals and the two completeness refusals (an emptied
+# package must never become a zero-cue default).
+_BROKEN_PACKAGED_PAYLOADS = [
+    pytest.param([], id="not-an-object"),
+    pytest.param({"schema_version": 1}, id="no-section_cues-object"),
+    pytest.param(_packaged_payload({}), id="empty-object"),
+    pytest.param(_packaged_payload(_cues_without("consent")), id="missing-canonical-key"),
+    pytest.param(_packaged_payload(_cues_with("consent", [])), id="empty-phrase-list"),
+    pytest.param(_packaged_payload(_cues_with("not_a_section", ["x"])), id="unknown-key"),
+    pytest.param(_packaged_payload(_cues_with("consent", "consent")), id="not-a-list"),
+    pytest.param(_packaged_payload(_cues_with("consent", [1])), id="non-string-phrase"),
+]
+
+
+class TestShippedSectionCues:
+    """The cue defaults are DERIVED from the packaged file (practitioner-profile
+    plan Phase 4), so the module default and the loader's first-run result
+    cannot drift apart."""
+
+    @pytest.mark.parametrize("payload", _BROKEN_PACKAGED_PAYLOADS)
+    def test_a_broken_packaged_default_is_refused_at_import(self, payload: object) -> None:
+        with pytest.raises(RuntimeError, match="broken install"):
+            _parse_shipped_section_cues(payload)
+
+    def test_a_complete_packaged_default_is_accepted_whatever_its_counts(self) -> None:
+        """Completeness, not a count pin: a maintainer adding a phrase must not
+        break import (the 17/98 pin lives in the next test, not the reader)."""
+        cues = _cues_with("consent", ["one phrase", "another phrase"])
+        parsed = _parse_shipped_section_cues(_packaged_payload(cues))
+        assert tuple(key for key, _ in parsed) == CANONICAL_SECTION_KEYS
+        assert dict(parsed)["consent"] == ("one phrase", "another phrase")
+
+    def test_the_packaged_file_parses_to_the_module_constant(self) -> None:
+        resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+        assert _parse_shipped_section_cues(json.loads(resource.read_bytes())) == _RAW_SECTION_CUES
+
+    def test_seventeen_sections_and_ninety_eight_phrases_in_canonical_order(self) -> None:
+        assert len(_RAW_SECTION_CUES) == 17
+        assert sum(len(phrases) for _, phrases in _RAW_SECTION_CUES) == 98
+        assert tuple(key for key, _ in _RAW_SECTION_CUES) == CANONICAL_SECTION_KEYS
+
+    def test_defaults_are_derived_from_the_packaged_file(self) -> None:
+        resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+        payload = json.loads(resource.read_bytes())
+        section_cues = payload["section_cues"]
+        assert payload["schema_version"] == 1
+        assert list(section_cues) == list(CANONICAL_SECTION_KEYS)
+        assert _RAW_SECTION_CUES == tuple(
+            (key, tuple(phrases)) for key, phrases in section_cues.items()
+        )
+        assert DEFAULT_SECTION_CUES == {
+            key: tuple(content_tokens(phrase) for phrase in phrases)
+            for key, phrases in section_cues.items()
+        }
+
+    def test_every_shipped_phrase_is_a_distinct_content_token_run(self) -> None:
+        normalised = [
+            content_tokens(phrase) for _, phrases in _RAW_SECTION_CUES for phrase in phrases
+        ]
+        assert all(tokens for tokens in normalised)
+        assert len(set(normalised)) == 98
 
 
 SPEAKER_3 = "speaker_3"
