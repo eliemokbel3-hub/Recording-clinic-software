@@ -97,7 +97,9 @@ in-process and adds no network surface and no new logging channel.
    transcription window as its spectral embedding (packed to ≤30 s; a lone
    longer VAD segment is its own oversized window) and reduced to one cosine
    against the enrolled vector before the window is dropped, labels become
-   practitioner-vs-others (`speaker_1` / `speaker_2` / `speaker_3`), and the
+   practitioner-vs-others (`speaker_1` is the practitioner, `speaker_2` is
+   everyone else — one label for the whole remainder until D-S1 estimates
+   the speaker count; D13 as amended 2026-09-16), and the
    transcript artefact carries three additional non-content fields (a
    cluster label, a cosine, a model id) under the same key — the recovery
    path (resume-processing) applies the profile identically. No profile, an

@@ -75,7 +75,6 @@ from scribe_desktop.speech import (
 from scribe_desktop.transcription import (
     SPEAKER_1,
     SPEAKER_2,
-    SPEAKER_3,
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
@@ -1766,10 +1765,9 @@ class TestEvaluateRecordingEnrolled:
         )
         enrolled = result.condition(ENROLLED)
         # The 2600 Hz segment matched the (wrong) profile and is speaker_1;
-        # the two 220 Hz segments are the remainder, split by D13's 2-means
-        # into speaker_2 / speaker_3 (not byte-identical slices — the D-S1
-        # residue, exactly as the no-profile path splits two segments today).
-        assert enrolled.predicted_labels == (SPEAKER_2, SPEAKER_1, SPEAKER_3)
+        # the two 220 Hz segments are the remainder — one speaker_2 under D13
+        # as amended (Task 2.6: the remainder is no longer 2-means-split).
+        assert enrolled.predicted_labels == (SPEAKER_2, SPEAKER_1, SPEAKER_2)
         assert enrolled.auto_confirm is not None
         assert enrolled.auto_confirm.verdict == "WRONG"
         assert enrolled.auto_confirm.preselected_speaker == SPEAKER_1

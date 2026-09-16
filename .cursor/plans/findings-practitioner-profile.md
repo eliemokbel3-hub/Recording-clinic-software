@@ -1392,3 +1392,85 @@ Fix-delta self-check: PASS — re-read the 3 applied hunks in `speaker_eval.py` 
 
 PEER-ROUND-21 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
 
+### Round 22 - 2026-09-16 - practitioner-profile Task 2.6 (the amended D13 remainder rule), in-session `/review-loop` round 1 of cap 3
+- Round status: Closed (no findings) — LOOP CONVERGED at this round
+- Source: Claude Code
+- Primary review baseline: HEAD `4caef36` (the Phase 2 commit; the Task 2.6 diff is the working tree against it). Changed files (all read in full via the diff plus the surrounding regions): `desktop/src/scribe_desktop/transcription.py` (the module docstring, the `SPEAKER_3` comment, `attribute_speakers`' docstring and matched branch), `desktop/tests/test_attribution.py` (one pure and two pipeline expectations), `desktop/tests/test_speaker_eval.py` (one harness expectation, one import), `docs/security/data-flow-map.md` (flow 7), `CHANGELOG.md` (the Phase 2 entry). Composer suites before this round: ruff clean, mypy clean over 33 files, `pytest tests/test_attribution.py` 51 passed, full suite 1636 passed.
+- Looks good: the matched branch is now one comprehension (`speaker_1` for matched indices, `speaker_2` otherwise) — no clustering, no rename map, no `SPEAKER_3` emission; the zero-match branch, `enrolled_cluster`, the callers' degenerate policy and the function signature are byte-identical to the reviewed Phase 2 code (`embeddings` / `has_text` stay used by the zero-match branch); `_cluster_embeddings` keeps its two callers (`label_speakers`, the zero-match branch); `SPEAKER_3` stays defined, exported, documented as D-S1's and exercised by the label-name-independence fixture and a negative pin; the four retargeted tests pin the rule from both sides (differing remainder features in the pure test, two different other tones in the pipeline test, the same voice twice on the heard-second and wrong-profile tests) and the rendered label set is asserted to be exactly `{speaker_1, speaker_2}`; the docstrings say what the structure enforces and name the residue (a second other voice is merged, as the no-profile path merges it today); the data-flow map and the CHANGELOG state the amended rule; no threat-model, design-system or measurement-doc sentence names the retired split (grep). Plan alignment: D13 as amended, the task's Code / Tests / Docs sub-bullets, and the Critical Constraints (the plaintext bound, D1, D4 untouched) — matched.
+- Executor judgment: none. Structural quality: none.
+- Post-Fix Regression Check: not applicable — no `/fix` has run on this work; the regression baseline is the working tree itself (stated).
+- Missed-issue pass (small changeset — every changed file re-read): `transcription.py:45-57`, `:257-262`, `:846-880`; `test_attribution.py:200-225`, `:441-503`; `test_speaker_eval.py:74-82`, `:1760-1775`; `data-flow-map.md:93-106`; the CHANGELOG line; result: none. Checked and cleared: `test_a_degenerate_remainder_is_all_speaker_2` still holds and still reads correctly under the amended rule (a lone or identical remainder was always `speaker_2`); the `speaker_role` heuristic and the radios see one fewer label, which is the intended effect.
+- Finding verification: 0 candidates.
+- Fix-delta self-check: SKIP — no delta applied this round.
+- Summary: files reviewed 5; critical 0; warnings 0 (0 HIGH / 0 MED / 0 LOW); executor judgment items 0; structural quality items 0; round 22 (round 1 of cap 3 over Task 2.6 — zero actionable findings, converged); no code changed, so no suite is owed. Next per the loop's convergence actions: the composer-seat cross-family codex confirmation round over the Task 2.6 diff (NOT chained by the executor).
+
+### Round 23 - 2026-09-16 - practitioner-profile Task 2.6 (the amended D13 remainder rule), independent cross-family codex peer review
+
+- Round status: Closed (1 of 1 Applied 2026-09-16 by the composer as the completion of its scoped /review-plan sibling sweep — plan prose only, docs-only under gates=fix-biased; the codex confirmation round 24 is pending — the round re-opens only if the peer refutes the fix)
+- Source: Codex peer-review
+- Baseline: `main` at HEAD `4caef36bf00c9c61df5243a68e37c78357ca2804`; working-tree diff. Exactly the six pinned files changed; no changes outside that surface.
+- Files reviewed: `.cursor/plans/plan-practitioner-profile.md` (applicable specification and round 22); `desktop/src/scribe_desktop/transcription.py`; `desktop/tests/test_attribution.py`; `desktop/tests/test_speaker_eval.py`; `docs/security/data-flow-map.md`; `CHANGELOG.md`. Downstream inspection: `ui/transcript.py`, `ui/models.py`, `note.py`, `speaker_eval.py`, relevant UI tests, `docs/security/threat-model.md`, and `docs/testing/speaker-measurement.md`.
+- Validation basis: Read-only source, diff, caller, and documentation inspection. Accepted composer verification: ruff clean; mypy strict clean over 33 files; pytest 1636 passed, zero network. No tests executed or files written.
+- Finding verification: 1 candidates / 0 dropped / 0 downgraded
+
+#### Build verification (Task 2.6)
+
+The implementation matches amended D13 and Task 2.6: `desktop/src/scribe_desktop/transcription.py:875` identifies matches and `:877` returns `speaker_1` for every matched index and `speaker_2` for every remainder index, without clustering. Source comparisons confirm the zero-match tail, `enrolled_cluster`, `label_speakers`, `_cluster_embeddings`, and both transcription entry points are identical to HEAD after CRLF/LF normalization; the degenerate policy remains at `:1246`. `SPEAKER_3` remains defined at `:262` and exported at `:1340`; module, function, and constant documentation name D-S1. Positive and negative pins exist at `desktop/tests/test_attribution.py:216`, `:217`, `:454`, and `:494`; the wrong-profile harness remains WRONG at `desktop/tests/test_speaker_eval.py:1770`. Literal third-label fixtures remain valid at `test_attribution.py:403` and `test_speaker_eval.py:577`. Consumers accept arbitrary labels. Auto-confirm still checks a radio (`ui/transcript.py:344`), Generate retains its gates (`:429`), and generation passes the checked selection (`:538`, `:563`) through `ui/models.py:796`. Windowed processing and output custody are unchanged; no new content-bearing output or security-doc contradiction was found. The remaining issue is inconsistent current plan prose.
+
+#### PR-LOW-027 — [LOW] `.cursor/plans/plan-practitioner-profile.md:234` — Current plan summaries still prescribe the retired remainder split
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: D3 and the current scope/verification summaries contradict amended D13, leaving future implementation and review instructions pointing at the behaviour Task 2.6 deliberately removed. This is documentation-only; the implementation is correct.
+- Current behaviour: D3 at `:234` says **“then 2-means over the "other" segments.”** The Agreed Scope at `:29` says **“the remaining segments are 2-means-clustered among themselves”**. The per-phase verification summary at `:290` still requires **“matched cluster + 2-means remainder”** and **“three labels rendered”**.
+- Desired behaviour: Align these current summaries with D13: when at least one segment matches, the whole remainder is `speaker_2`; retain ordinary clustering for zero matches and retain generic third-label compatibility fixtures. Preserve dated historical build/review records.
+- Pattern to follow: Amended D13 at `:243`, the updated label summary at `:152`, and Task 2.6 at `:610`.
+- Pattern siblings: `:29` and `:290`. Searches for remainder, other-segment clustering, `speaker_3`, and third-label wording identified these current-summary siblings; dated execution records are excluded.
+- Invariant: Current specification and verification prose must agree with the practitioner’s amended D13 decision.
+- Verification: Re-read all three statements against `desktop/src/scribe_desktop/transcription.py:877` and the replacement assertions at `desktop/tests/test_attribution.py:216` and `:501`. The contradiction is present and was not identified in round 22.
+- Regression risk: None at runtime; limit the correction to current plan prose.
+- /fix decision: Applied
+- /fix notes: D3 title (:234), the Agreed Scope sentence (:29) and the Phase 2 verification summary (:290) now state the whole-remainder rule and point at Task 2.6; dated historical records untouched. Landed + siblings re-swept (grep for "2-means" outside the Findings Log: only the zero-match and no-profile clauses remain, which are correct).
+- /fix date: 2026-09-16
+- /fix applied by: composer (Claude Code)
+
+PEER-ROUND-23 RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 1).
+
+### Round 24 - 2026-09-16 - practitioner-profile Task 2.6 (the amended D13 remainder rule), independent cross-family codex peer review (confirmation round after round 23)
+
+- Round status: Closed (1 of 1 Applied 2026-09-16 by the composer — plan prose only, docs-only under gates=fix-biased; the pass accept-closes on the tail signature (rounds 23–24 docs-only, nothing pending) per cap-raise=follow)
+- Source: Codex peer-review
+- Baseline: `main` at HEAD `4caef36bf00c9c61df5243a68e37c78357ca2804`; working-tree diff. Exactly the six pinned files are changed; no changes outside that surface.
+- Files reviewed: `.cursor/plans/plan-practitioner-profile.md` (current specification, Task 2.6, dated handoff/build records and round 23; rounds 1–22 excluded); `desktop/src/scribe_desktop/transcription.py`; `desktop/tests/test_attribution.py`; `desktop/tests/test_speaker_eval.py`; `docs/security/data-flow-map.md`; `CHANGELOG.md`. Supporting inspection: `AGENTS.md`, `docs/lessons.md`, `docs/security/threat-model.md`, `desktop/src/scribe_desktop/ui/transcript.py`.
+- Validation basis: Read-only source, diff and documentation inspection. Accepted composer verification: ruff clean; mypy strict clean over 33 source files; pytest 1636 passed, zero network. No tests executed or files written. The composer’s statement that code is unchanged since round 23 is consistent with that round’s build record and the current diff; no separate round-23 source snapshot was supplied.
+- Finding verification: 1 candidates / 0 dropped / 0 downgraded
+
+#### Confirmed / disputed (round 23 fix)
+
+- **PR-LOW-027 — fix confirmed partial:** `.cursor/plans/plan-practitioner-profile.md:234` now says “the WHOLE remainder is `speaker_2`” and `:290` requires “two labels rendered with a profile applied”; however, the amended sentence at `:29` retains “the others `speaker_2` / `speaker_3` by first appearance — D13”. All 31 checked pre-existing dated handoff/build lines remain identical to HEAD.
+
+#### Build verification (Task 2.6)
+
+The implementation remains correct: `desktop/src/scribe_desktop/transcription.py:875` identifies threshold matches and `:877` returns `return [SPEAKER_1 if i in matched else SPEAKER_2 for i in range(count)]`. The zero-match branch remains at `:878`. The source diff contains only this branch replacement and explanatory documentation changes; entry points, windowed processing, custody, schemas and the degenerate policy are unchanged.
+
+The replacement assertions pin the whole remainder and absence of a third emitted label (`desktop/tests/test_attribution.py:216`, `:217`, `:501`, `:502`); the wrong-profile harness still reports WRONG (`desktop/tests/test_speaker_eval.py:1770`). Critical Constraints remain unaffected by Task 2.6: no added network, persistence or logging path; auto-confirm still checks the radio (`desktop/src/scribe_desktop/ui/transcript.py:345`), Generate retains its gates (`:434`), and generation passes the selected role (`:538`, `:563`). D-S1 remains deferred.
+
+#### PR-LOW-028 — [LOW] `.cursor/plans/plan-practitioner-profile.md:217` — Remaining current-plan summaries still prescribe remainder clustering
+
+- Triage: Fix-now
+- Fix route: fix-on-fast
+- Why it matters: The sibling sweep remains incomplete. Current workflow and design summaries contradict amended D13 and the correct implementation, leaving conflicting instructions for subsequent work.
+- Current behaviour: Flow 2 at `:217` says “labels the matched segments as one cluster and 2-means the rest”. Additional current summaries retain the same retired behaviour.
+- Desired behaviour: State that, with at least one match, matched segments receive `speaker_1` and the whole remainder receives `speaker_2`. Preserve zero-match clustering, generic label compatibility and dated historical records. Annotate the earlier Task 2.1 specification as superseded by Task 2.6 where necessary.
+- Pattern to follow: Amended D13 at `.cursor/plans/plan-practitioner-profile.md:243`, the label summary at `:152`, and `desktop/src/scribe_desktop/transcription.py:877`.
+- Pattern siblings: `.cursor/plans/plan-practitioner-profile.md:29` retains “the others `speaker_2` / `speaker_3` by first appearance”; `:36` says “patient-vs-bystander separation stays 2-means”; `:124` says “then cluster the rest” and is explicitly marked still applicable at `:127`; the undated Task 2.1 specification at `:633` prescribes remainder clustering into `speaker_2`/`speaker_3`. Searches covered `2-means`, `speaker_3`, third/three-label wording, remainder, clustering the rest and first appearance, excluding Findings Log and dated handoff/build records. The `:29` residue is the partial PR-LOW-027 fix, included here as one correction set rather than a separate finding.
+- Invariant: Current specification must agree with amended D13; historical records retain their as-of meaning.
+- Verification: Re-read each cited sentence against `transcription.py:877`. These are current prescriptions, not quotations explaining retired behaviour. D-S1’s deferral is unchanged; only its description of present behaviour needs correction.
+- Regression risk: None at runtime. Preserve the dated Task 2.1 build record at `:634` and other historical records.
+- /fix decision: Applied
+- /fix notes: fixed as a CLASS this time — a whole-plan sweep outside the Findings Log and the dated records (grep: 2-means | speaker_3 | cluster the rest | among themselves | first appearance | three labels) — `:29` label parenthetical, `:36` deferred-item rationale, `:124` design-decision summary, `:217` flow 2, and the undated Task 2.1 spec annotated SUPERSEDED by Task 2.6; the no-profile-path clauses (`:175`, `:220`, the zero-match tails) are correct and unchanged; dated build/handoff records (`:302-310`, `:634`) untouched. Landed + re-swept: no current prescription of the split remains.
+- /fix date: 2026-09-16
+- /fix applied by: composer (Claude Code)
+
+PEER-ROUND-24 RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 1).
+

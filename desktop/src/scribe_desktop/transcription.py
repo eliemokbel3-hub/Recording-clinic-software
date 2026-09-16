@@ -48,12 +48,14 @@ AND the practitioner's enrolled ``PractitionerProfile`` together, every VAD
 segment is ALSO embedded with that model inside the same window its spectral
 embedding is computed in (the plaintext bound is unchanged — only one float
 per segment is retained from it, the raw cosine against the enrolled vector),
-and the labels follow D13: the practitioner's cluster is ``speaker_1``, the
-remaining voices are ``speaker_2`` / ``speaker_3`` by first appearance. The
-document then carries ``enrolled_speaker`` / ``enrolment_similarity`` /
-``speaker_model_id`` — a SEPARATE field the Transcript screen auto-confirms
-from (D4), never a speaker label itself (D1). Without both inputs the path
-below runs exactly as before, byte for byte.
+and the labels follow D13 as amended 2026-09-16 (Task 2.6): the
+practitioner's cluster is ``speaker_1`` and the WHOLE non-practitioner
+remainder is ``speaker_2`` — a third label returns only when D-S1 estimates
+the speaker count from the shared recording set. The document then carries
+``enrolled_speaker`` / ``enrolment_similarity`` / ``speaker_model_id`` — a
+SEPARATE field the Transcript screen auto-confirms from (D4), never a speaker
+label itself (D1). Without both inputs the path below runs exactly as before,
+byte for byte.
 """
 
 from __future__ import annotations
@@ -254,8 +256,9 @@ _KMEANS_ITERATIONS = 30
 
 SPEAKER_1 = "speaker_1"
 SPEAKER_2 = "speaker_2"
-# D13: with a profile applied, the non-practitioner voices split 2-means among
-# themselves — a third label is reachable only on that path.
+# Defined for D-S1's return (an estimated speaker count); since D13's 2026-09-16
+# amendment (Task 2.6) no shipped path emits it — with a profile applied the
+# whole non-practitioner remainder is ``speaker_2``.
 SPEAKER_3 = "speaker_3"
 
 # The shortest segment slice the speaker embedder is asked to embed: one
@@ -847,18 +850,16 @@ def attribute_speakers(
 
     A segment MATCHES when its similarity is at or above ``threshold`` (a
     raw cosine; a segment without a similarity never matches). With at
-    least one match the matched segments are ``speaker_1`` and the rest are
-    2-means-clustered among themselves (``_cluster_embeddings`` over their
-    spectral embeddings — the SAME degenerate policy as the no-profile
-    path) as ``speaker_2`` / ``speaker_3`` by first appearance; a lone or
-    degenerate remainder is all ``speaker_2``. Residue, stated plainly: a
-    2-means over two or more NON-IDENTICAL remainder segments always yields
-    two clusters, so one other voice heard in several segments splits into
-    ``speaker_2`` and ``speaker_3`` — the same assumption of two voices the
-    no-profile path makes today; a single label for a one-voice remainder
-    needs an estimated speaker count (plan D-S1, deferred; Task 2.6 records
-    the consequence). With NO match the ordinary
-    2-means over every segment runs and the cluster with the higher mean
+    least one match the matched segments are ``speaker_1`` and the WHOLE
+    remainder is ``speaker_2`` (D13 as amended 2026-09-16, Task 2.6): the
+    remainder is not clustered, because a 2-means over two or more
+    non-identical segments always yields two clusters and so split one
+    other voice into two labels in every ordinary two-person consultation;
+    a third label (``SPEAKER_3``) returns only when D-S1 estimates the
+    speaker count, which needs the shared recording set — until then a
+    second other voice is merged into ``speaker_2``, exactly as the
+    no-profile path merges it today. With NO match the ordinary 2-means
+    over every segment runs and the cluster with the higher mean
     similarity — among clusters holding a segment with transcribed text
     (``enrolled_cluster``) — is ``speaker_1``, the other ``speaker_2``; when
     no cluster holds text the clustering's own first-appearance order
@@ -873,16 +874,7 @@ def attribute_speakers(
         return []
     matched = {i for i, s in enumerate(similarities) if s is not None and s >= threshold}
     if matched:
-        labels = [SPEAKER_1] * count
-        rest = [i for i in range(count) if i not in matched]
-        if len(rest) >= 2:
-            rest_labels = _cluster_embeddings([embeddings[i] for i in rest], np)
-        else:
-            rest_labels = [SPEAKER_1] * len(rest)
-        renamed = {SPEAKER_1: SPEAKER_2, SPEAKER_2: SPEAKER_3}
-        for index, label in zip(rest, rest_labels, strict=True):
-            labels[index] = renamed[label]
-        return labels
+        return [SPEAKER_1 if i in matched else SPEAKER_2 for i in range(count)]
     labels = _cluster_embeddings(list(embeddings), np) if count >= 2 else [SPEAKER_1]
     chosen = enrolled_cluster(labels, similarities, has_text)
     if chosen is not None and chosen[0] == SPEAKER_2:

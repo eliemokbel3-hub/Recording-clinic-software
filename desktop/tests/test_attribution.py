@@ -203,14 +203,18 @@ class TestAttributeSpeakers:
         )
         assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_1]
 
-    def test_remainder_splits_into_speaker_2_and_speaker_3_by_first_appearance(self) -> None:
+    def test_the_whole_remainder_is_speaker_2_even_when_its_features_differ(self) -> None:
+        """D13 as amended (Task 2.6): the unmatched segments are NOT clustered
+        among themselves — two clearly different remainder embeddings still
+        share ``speaker_2``; ``speaker_3`` waits for D-S1."""
         labels = attribute_speakers(
             [0.9, 0.1, 0.2, 0.1],
             self._rows((0, 0), (5, 5), (-5, -5), (5, 5)),
             [True] * 4,
             self.np,
         )
-        assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_3, SPEAKER_2]
+        assert labels == [SPEAKER_1, SPEAKER_2, SPEAKER_2, SPEAKER_2]
+        assert SPEAKER_3 not in labels
 
     def test_a_degenerate_remainder_is_all_speaker_2(self) -> None:
         labels = attribute_speakers(
@@ -441,19 +445,16 @@ class TestAttributedPipeline:
     def test_the_practitioner_is_speaker_1_even_when_heard_second(self, tmp_path: Path) -> None:
         """D13: the no-profile path would label these speaker_1, speaker_2,
         speaker_1 (first heard is speaker_1); with the profile the MATCHED
-        voice is speaker_1 wherever it first appears. The two unmatched
-        segments are the same tone but not byte-identical slices (the VAD's
-        frame-aligned padding differs), so D13's 2-means over the remainder
-        splits them into speaker_2 and speaker_3 by first appearance — exactly
-        as the no-profile 2-means splits any two non-identical segments today
-        (the D-S1 residue; a single label for a one-voice remainder needs an
-        estimated k, recorded on Task 2.6)."""
+        voice is speaker_1 wherever it first appears, and the two unmatched
+        segments — the same tone, not byte-identical slices — are ONE
+        ``speaker_2`` (D13 as amended, Task 2.6: the remainder is no longer
+        2-means-clustered, which used to split them into two labels)."""
         pcm = _three_tones(2600.0, 220.0, 2600.0)
         document, _embedder, _dir, _crypto = _attributed_run(tmp_path, "ab", pcm, [E2, E1, E2])
         assert [s.speaker for s in document.transcript_segments] == [
             SPEAKER_2,
             SPEAKER_1,
-            SPEAKER_3,
+            SPEAKER_2,
         ]
         assert document.enrolled_speaker == SPEAKER_1
 
@@ -484,18 +485,21 @@ class TestAttributedPipeline:
         assert document.enrolled_speaker == SPEAKER_1
         assert document.enrolment_similarity == pytest.approx(0.4, abs=1e-6)
 
-    def test_the_remainder_splits_into_speaker_2_and_speaker_3(self, tmp_path: Path) -> None:
+    def test_the_whole_remainder_is_speaker_2_whatever_its_voices(self, tmp_path: Path) -> None:
+        """D13 as amended (Task 2.6): two clearly different unmatched tones
+        (2600 Hz and 700 Hz) still share ``speaker_2`` — a second other voice
+        is merged, as the no-profile path merges it today, until D-S1."""
         pcm = _three_tones(220.0, 2600.0, 700.0)
         document, _embedder, _dir, _crypto = _attributed_run(tmp_path, "ae", pcm, [E1, E2, E2])
         assert [s.speaker for s in document.transcript_segments] == [
             SPEAKER_1,
             SPEAKER_2,
-            SPEAKER_3,
+            SPEAKER_2,
         ]
         assert document.enrolled_speaker == SPEAKER_1
-        # Three labels render and the manual-path radios have one each.
-        assert set(models.speaker_quotations(document)) == {SPEAKER_1, SPEAKER_2, SPEAKER_3}
-        assert "speaker_3" in models.format_transcript_text(document)
+        # Exactly two labels render and the manual-path radios have one each.
+        assert set(models.speaker_quotations(document)) == {SPEAKER_1, SPEAKER_2}
+        assert "speaker_3" not in models.format_transcript_text(document)
 
     def test_single_segment_is_speaker_1_with_its_own_similarity(self, tmp_path: Path) -> None:
         pcm = silence_pcm(1.0) + tone_pcm(1.5, frequency=220.0) + silence_pcm(1.0)
