@@ -49,6 +49,7 @@ Read the recorded Hosting target's provenance before trusting it: a target marke
 ## Active Plan Discipline
 - If work relates to a feature that already has an active file in `.cursor/plans/plan-*.md`, treat that plan as the feature-level source of truth.
 - Master/stage convention for staged programs: a coordination-level master plan may exist alongside per-stage execution plans. The STAGE plan is the active execution plan; the master holds cross-stage coordination context and is never `/execute`d directly. `Plan Lineage` links them (the stage plan records the master as its parent). When both are Active, execute against the current stage plan.
+- Loop composer rehydrate (v33.0) — applies ONLY when BOTH hold: (1) a `.cursor/loops/<iso-id>-active` marker in the BASE checkout claims this checkout as a LIVE `/execute-loop` run (no `.complete-*` sibling; a `mode=worktree` run is live only while its `<iso-id>-isolation` journal reads `state=active`), and (2) this session is that run's composer. Then, before acting on any request: re-read `.claude/skills/execute-loop/STICKY.md` and the plan's `Current State / Handoff Note`, state the runkey, current phase, and next action, and never implement phase work yourself — spawn or resume the phase's executor. A spawned role or an unrelated session on a shared checkout is not the composer and skips this bullet.
 
 ### Plan lifecycle states
 Saved plans in `.cursor/plans/` can be in one of these lifecycle states:

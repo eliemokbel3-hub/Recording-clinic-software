@@ -25,15 +25,31 @@ Look at the message that triggered this command.
 Your job is to explore and understand the requested work.
 
 Please:
+- first, you may `git fetch` the remote-tracking refs so the baseline is current — fail-soft: if the fetch fails, say so and continue; never `pull`, never `checkout`. Say in chat when the tree is behind its upstream, and note the branch and commit you are reading at (the scratch's `Code baseline:` line, Step 3)
 - check `AGENTS.md` for any `Subsystem Documentation` pointers relevant to the requested area
 - if relevant deeper docs exist, read them as part of the exploration before forming your analysis
+- consult `docs/lessons.md`, if it exists, for the entries relevant to the requested area
 - analyse the relevant parts of the codebase
 - identify integration points, dependencies, edge cases, and constraints
-- list ambiguities or questions
-- separate facts you found in the code from assumptions
+
+What counts as a finding:
+- a Key Findings item states what the code, data, or runtime actually does, verified by reading the whole seam or by a read-only probe
+- a claim taken from a code comment, a doc, a type signature, a schema- or query-derived name, or `AGENTS.md` that you did NOT probe is never a finding — record it under `Accepted Assumptions — Revalidate Later` as "per `<source>`, unverified" with its risk if wrong
+- where a doc and the code disagree, surface the contradiction (never silently resolve it) and flag it for `/document`
+- every count or list ("all N routes", "the three FK columns") and every absence claim ("no X exists anywhere") comes from a shell search whose pattern you record in the scratch
 
 Do not write code yet.
-When you finish the analysis, ask only the questions you genuinely need answered before proceeding.
+
+## Step 2.5 — Surface and ask
+This step is interactive-only — `/explore` is never a loop step. Before producing the summary, present to the user:
+1. **Contradictions** — anything you found that contradicts the request's premises
+2. **Recommendations** — a simpler, cleaner, or safer alternative where you see one
+3. **Blind spots, edge cases, missing pieces** — an explicit inventory of what the request does not cover, what breaks at the edges, and what you could not verify (this inventory also goes into the scratch's "Edge cases / blind spots" block, Step 3)
+4. **Clarifying questions** — what you need answered before planning, under this convention:
+
+Batch independent questions, each with a recommended answer; sequence only the questions that depend on an earlier answer. Skip anything the user already resolved — including during `/explore`.
+
+Wait for the answers. An answered question becomes a decision or an assumption in the summary below; an unanswered proposal never becomes a decision.
 
 Before finishing exploration, produce a compact **Exploration Summary** structured to match the `Planning Extraction Summary` section names, field order, and category meanings used by `/create-plan` and the plan template at `.cursor/templates/implementation-plan-template.md`. This lets `/create-plan` absorb the summary verbatim into the plan file without restructuring.
 
@@ -59,17 +75,19 @@ Exploration Summary categories (in this order, same names as Planning Extraction
   - include rejected alternatives where relevant
 
 Rules:
-- separate facts found in the code from assumptions
 - keep this summary compact and structured
 - do not turn it into a full plan
+- `Key Design Decisions` hold only decisions the user confirmed or the code forces; an unconfirmed agent proposal is an Accepted Assumption ("agent-proposed, unconfirmed") or an open question, never a decision
 - this summary is a handoff anchor for `/create-plan` or native Plan Mode — `/create-plan` should be able to copy this block into the plan's `Planning Extraction Summary` verbatim
 - do NOT include `Workflow Schema:` or `Executor tier:` lines here — those are written by `/create-plan`'s Step 0 Executor Capability Gate, not during exploration
-- if the exploration conversation touches on executor-tier concerns (e.g. work that fast models would reliably miss), record those concerns inside `Key Design Decisions` so `/create-plan` Step 0 has them as context when recording the `Executor tier:` answer
+- if the exploration conversation touches on executor-tier concerns (e.g. work that fast models would reliably miss), a confirmed or code-forced executor-tier decision goes inside `Key Design Decisions`; an unconfirmed concern stays an Accepted Assumption or an open question — either way `/create-plan` Step 0 has it as context when recording the `Executor tier:` answer
+
+For UI-bearing work, after the summary and the questions above, offer to produce 3–4 wildly different mockups before planning; if accepted, record the chosen direction and where the artefact lives as a Key Design Decision.
 
 ## Step 3 — Persist the exploration to a scratch file
 After producing the Exploration Summary, also save it to a committed scratch file so the exploration survives context resets, session switches, or moving to another machine — and so `/create-plan` or `/review-plan` can consume it later without re-deriving it.
 
-This scratch write is `/explore`'s only side effect; `/explore` stays read-mostly — it persists exploration NOTES, not code, and "do not implement anything yet" still holds.
+This scratch write and the fail-soft `git fetch` of remote-tracking refs (Step 2) are `/explore`'s only side effects; `/explore` stays read-mostly — it persists exploration NOTES, not code, and "do not implement anything yet" still holds.
 
 Write the scratch as follows:
 - derive a short kebab-case slug from the explored area (e.g. `stripe-webhook-handler`)
@@ -79,8 +97,10 @@ Write the scratch as follows:
 
 The scratch file contains, in this order:
 1. a header line naming the area explored and the date
+   - followed by a second header line `Code baseline: <branch> @ <sha>` — the branch and commit the findings were read at
 2. the code-verified **Key Findings** — files / symbols involved, codebase integration notes, and external / API findings (if any) — using the same section names as the plan template's `Key Findings`
-3. the full 5-category **Exploration Summary** block from Step 2 (Agreed Scope / Deferred / Excluded / Accepted Assumptions / Key Design Decisions), so `/create-plan` can copy it into `Planning Extraction Summary` verbatim
+   - plus an "Edge cases / blind spots" block inside `Key Findings`, carrying the inventory from Step 2.5
+3. the full 5-category **Exploration Summary** block from Step 2.5 (Agreed Scope / Deferred / Excluded / Accepted Assumptions / Key Design Decisions), so `/create-plan` can copy it into `Planning Extraction Summary` verbatim
 
 Do NOT add `Workflow Schema:` or `Executor tier:` lines to the scratch — those belong to `/create-plan`'s Step 0 gate, exactly as for the in-conversation summary.
 

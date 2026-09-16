@@ -78,7 +78,16 @@
 #   LOOP_CWD           the role's pinned working directory (the worktree under
 #                      isolation; the repo root otherwise) — never inherited
 #   LOOP_PROBE_LOG     absolute BASE-SIDE probe-log path (append-only)
-#   LOOP_ROLE_LOG      absolute BASE-SIDE role tee-log path (append-only)
+#   LOOP_ROLE_LOG      absolute BASE-SIDE role tee-log path (append-only; v33.0
+#                      D8 — ROTATED at spawn, BEFORE the retained open, when the
+#                      existing file exceeds 52,428,800 bytes or under
+#                      LOOP_ROLE_LOG_ROTATE=leg: a no-clobber `mv` to
+#                      `<stem>.leg-<YYYYMMDD-HHMMSS>[-n].log` (timestamp before
+#                      the extension so /retro's `*.log` scan ingests archives;
+#                      `-2`, `-3`, … on a same-second collision; refuse exit 2
+#                      when no unique name exists), announced as
+#                      `SPAWN_WARN check=role-log-rotated` on the wrapper's OWN
+#                      stdout — never a probe-log line; the pump is untouched)
 #   LOOP_RUNKEY        the run's phase-scoped runkey (stage-<N> — the helper
 #                      refuses an iso-id; the F-12 domain split)
 #   LOOP_ROLE          executor|architect|delegate|peer|advisor|reviewer
@@ -161,6 +170,45 @@
 #                      consume time by the composer
 #   LOOP_SPAWN_ENV     override path for the CLOSED-transport detection check
 #                      (the file is never consumed; a LOOP_* key in it refuses)
+#   LOOP_ROLE_LOG_ROTATE  `leg` = rotate the role log at EVERY spawn (v33.0 D8);
+#                      absent/empty = rotate only past the size threshold; any
+#                      other value refuses (exit 2, pre-START)
+#   v33.0 D4 escape-verdict inputs — PASSED THROUGH to BOTH escape-check twins
+#   (pre and post) as helper flags; the helper is the single verdict owner
+#   (Critical Constraint 4 — the wrapper computes nothing):
+#   LOOP_EDIT_SURFACE  the spawned role's declared edit surface — a
+#                      LOOP_ESCAPE_ROOTS member NAME (executor/architect/
+#                      delegate under isolation: `worktree`; peers: unset) →
+#                      `--edit-surface`; the record reports it as
+#                      `edit_surface=<name>:<changed|unchanged>` and EXCLUDES
+#                      it from `result=`. Must name a manifest root (refuse
+#                      exit 2, pre-START otherwise). Absent ⇒ the all-roots
+#                      verdict (today's behaviour).
+#   LOOP_ALLOW_PATH    `<root>:<repo-relative path>[;<root>:<path>...]` — the
+#                      paths whose git-status entries are FILTERED OUT of that
+#                      root's digest (a peer's plan file + findings sidecar) →
+#                      one `--allow-path` value (the helper splits on `;`;
+#                      quote the value in a shell — `;` is a command separator)
+#   LOOP_ISO           THIS run's iso-id → `--iso` (base-dirt attribution needs
+#                      a DIFFERENT run's live marker; absent ⇒ no attribution)
+#   LOOP_LIVENESS      `<minutes>|off` — the run's liveness interval (the
+#                      attribution freshness window is 2x it; `off` disables
+#                      attribution) → `--liveness`; absent ⇒ the helper's
+#                      default 10. The composer passes the SAME resolved value
+#                      to its composer-run peer twin (R2 PR-MED-005).
+#   v33.0 D3 per-pass cap keys — ALL THREE or NONE (partial refuses exit 2,
+#   pre-START — Critical Constraint 16); ride the wrapper-written ROLE: start
+#   as `pass= peer_round= cap=`, and the helper SEQUENCES that keyed start
+#   against the ACTUAL prior probe log via `--read-log "$LOOP_PROBE_LOG"` (a
+#   READ-ONLY prior-record source — the sink stays the retained fd-8 write,
+#   so the start still lands exactly once through the inode-bound descriptor;
+#   PR-MED-003). Value rules (peer-only, `<slice>.p<N>`, consecutive rounds,
+#   cap bound to the pass's recorded budget) are the helper's, never mirrored
+#   here: a helper refusal is the existing post-START `check=role-start`
+#   refusal (START/EXIT:2 pair, no child).
+#   LOOP_PASS          the invocation-unique pass id `<phase-or-slice>.p<N>`
+#   LOOP_PEER_ROUND    this activation's round within the pass (1-based)
+#   LOOP_CAP           the pass's current cap
 #
 # Exit codes: the child's real exit code (via wait); 2 = parameter/validation
 # refusal (pre-START: no probe-log write; post-START — a failed pre-capture or
@@ -290,6 +338,13 @@ case "${LOOP_PERMS:-scoped}" in
   scoped|bypass) ;;
   *) fail_usage "LOOP_PERMS must be scoped or bypass" ;;
 esac
+# v33.0 D8: the rotation policy is a closed two-value grammar — `leg` (rotate
+# the role log at EVERY spawn) or absent/empty (rotate only when the target
+# already exceeds the size threshold). Any other value refuses here, pre-START.
+case "${LOOP_ROLE_LOG_ROTATE:-}" in
+  ''|leg) ;;
+  *) fail_usage "LOOP_ROLE_LOG_ROTATE must be 'leg' or unset (absent = size-threshold rotation only; v33.0 D8)" ;;
+esac
 
 # --- absolute-path contract (PR-MED-042): the wrapper pins the binary, cwd,
 # prompts, and evidence paths ONCE — a RELATIVE input resolves to a DIFFERENT
@@ -384,6 +439,47 @@ case "${_eroots[0]}" in
   base=*) ;;
   *) fail_usage "LOOP_ESCAPE_ROOTS: base= is REQUIRED and FIRST" ;;
 esac
+# --- v33.0 D4 escape-verdict inputs → the helper's flags (both twins) --------
+# The wrapper checks only what it already owns (the manifest's member NAMES;
+# control bytes on a value it forwards) and forwards everything else verbatim —
+# the helper is the single deep-validation owner (allow-path grammar, iso
+# shape, liveness domain) and the ONLY verdict computer (Constraint 4).
+_escargs=()
+if [ -n "${LOOP_EDIT_SURFACE:-}" ]; then
+  require_line_safe LOOP_EDIT_SURFACE "$LOOP_EDIT_SURFACE"
+  _es_ok=0
+  for _er in "${_eroots[@]}"; do
+    [ "${_er%%=*}" = "$LOOP_EDIT_SURFACE" ] && _es_ok=1
+  done
+  [ "$_es_ok" = "1" ] || fail_usage "LOOP_EDIT_SURFACE '$LOOP_EDIT_SURFACE' must name a LOOP_ESCAPE_ROOTS member (the spawned role's edit surface is one of the manifest roots — v33.0 D4)"
+  _escargs+=(--edit-surface "$LOOP_EDIT_SURFACE")
+fi
+if [ -n "${LOOP_ALLOW_PATH:-}" ]; then
+  require_line_safe LOOP_ALLOW_PATH "$LOOP_ALLOW_PATH"
+  _escargs+=(--allow-path "$LOOP_ALLOW_PATH")
+fi
+if [ -n "${LOOP_ISO:-}" ]; then
+  require_token LOOP_ISO "$LOOP_ISO"
+  _escargs+=(--iso "$LOOP_ISO")
+fi
+if [ -n "${LOOP_LIVENESS:-}" ]; then
+  require_token LOOP_LIVENESS "$LOOP_LIVENESS"
+  _escargs+=(--liveness "$LOOP_LIVENESS")
+fi
+# --- v33.0 D3 per-pass cap keys: all three or none (Constraint 16) ----------
+_pass_kv=()
+_pass_present=0
+for _pk in LOOP_PASS LOOP_PEER_ROUND LOOP_CAP; do
+  [ -n "$(eval "printf %s \"\${$_pk:-}\"")" ] && _pass_present=$((_pass_present + 1))
+done
+if [ "$_pass_present" -eq 3 ]; then
+  require_token LOOP_PASS "$LOOP_PASS"
+  require_token LOOP_PEER_ROUND "$LOOP_PEER_ROUND"
+  require_token LOOP_CAP "$LOOP_CAP"
+  _pass_kv=("pass=$LOOP_PASS" "peer_round=$LOOP_PEER_ROUND" "cap=$LOOP_CAP")
+elif [ "$_pass_present" -ne 0 ]; then
+  fail_usage "LOOP_PASS / LOOP_PEER_ROUND / LOOP_CAP ride together or not at all (partial-pass-keys — absence is the standalone shape; v33.0 D3, Critical Constraint 16)"
+fi
 
 # --- spawn-path dependency gate (Constraint 10): python3 + blob-clean helper -
 command -v python3 >/dev/null 2>&1 \
@@ -441,6 +537,72 @@ for _lv in LOOP_ROLE_LOG LOOP_PROBE_LOG; do
     fail_usage "$_lv exists but is not a regular file (device/FIFO/directory?): $_lp"
   fi
 done
+
+# --- v33.0 D8: spawn-time role-log rotation — BEFORE the `exec 7>>` open ------
+# One role log appended across 109 legs reached 1 GB in the field (88% executor
+# tee). The bound is applied at the ONE moment the file is provably not held by
+# THIS wrapper's pump — before the retained descriptor opens (the pump below is
+# byte-untouched: Critical Constraint 8) — after the OPTIONAL spawn flock above
+# (when LOOP_SPAWN_LOCK is passed, two spawns never race one rotation; without
+# it the no-clobber move + verify below is the only race guard, and the loser
+# simply lands on the next suffix). Policy: rotate when the existing REGULAR
+# target exceeds 52,428,800 bytes, or at every spawn under
+# LOOP_ROLE_LOG_ROTATE=leg. Archive name `<stem>.leg-<YYYYMMDD-HHMMSS>[-n].log`
+# — the timestamp goes BEFORE the `.log` extension so `/retro`'s existing
+# `*.log` role-log scan ingests every archive unchanged and orders legs by name
+# (R3 PR-MED-006). NO-CLOBBER (PR-MED-008): the destination is chosen only
+# where nothing exists, moved with `mv -n`, and VERIFIED moved (a raced or
+# skipped move falls through to the next deterministic suffix `-2`, `-3`, …);
+# when no unique name can be created within the bound the spawn REFUSES (exit
+# 2, nothing moved) — rotation never replaces an earlier leg's evidence.
+# A `mv` renames by inode: a stray writer still holding the OLD inode keeps
+# appending to the ARCHIVE, never to the fresh log — append-only is preserved
+# on both files. The announcement is a SPAWN_WARN on the wrapper's OWN stdout
+# (the composer's channel; open `check=` vocabulary) — never a probe-log line.
+ROLE_LOG_ROTATE_BYTES=52428800
+_rotate_reason=""
+if [ -f "$LOOP_ROLE_LOG" ]; then
+  _rl_size="$(stat -c %s "$LOOP_ROLE_LOG" 2>/dev/null || stat -f %z "$LOOP_ROLE_LOG" 2>/dev/null || wc -c < "$LOOP_ROLE_LOG" 2>/dev/null)"
+  _rl_size="${_rl_size//[[:space:]]/}"
+  case "$_rl_size" in
+    ''|*[!0-9]*) fail_usage "could not read the size of LOOP_ROLE_LOG for the v33.0 D8 rotation decision: $LOOP_ROLE_LOG" ;;
+  esac
+  if [ "${LOOP_ROLE_LOG_ROTATE:-}" = "leg" ]; then
+    _rotate_reason="policy=leg size=$_rl_size"
+  elif [ "$_rl_size" -gt "$ROLE_LOG_ROTATE_BYTES" ]; then
+    _rotate_reason="policy=size size=$_rl_size threshold=$ROLE_LOG_ROTATE_BYTES"
+  fi
+fi
+if [ -n "$_rotate_reason" ]; then
+  _rl_stem="${LOOP_ROLE_LOG%.log}"
+  _rl_ts="$(date +%Y%m%d-%H%M%S)"
+  case "$_rl_ts" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) ;;
+    *) fail_usage "could not read a YYYYMMDD-HHMMSS timestamp for the role-log archive name (date failed?)" ;;
+  esac
+  _rl_archive=""
+  _rl_n=1
+  while [ "$_rl_n" -le 99 ]; do
+    if [ "$_rl_n" -eq 1 ]; then
+      _rl_cand="$_rl_stem.leg-$_rl_ts.log"
+    else
+      _rl_cand="$_rl_stem.leg-$_rl_ts-$_rl_n.log"
+    fi
+    if [ ! -e "$_rl_cand" ] && mv -n -- "$LOOP_ROLE_LOG" "$_rl_cand" 2>/dev/null \
+       && [ ! -e "$LOOP_ROLE_LOG" ] && [ -f "$_rl_cand" ]; then
+      _rl_archive="$_rl_cand"
+      break
+    fi
+    # the candidate existed, or the no-clobber move was skipped/raced: the
+    # source is untouched — try the next deterministic suffix
+    _rl_n=$((_rl_n + 1))
+  done
+  if [ -z "$_rl_archive" ]; then
+    fail_usage "role-log rotation could not create a unique archive name for $LOOP_ROLE_LOG (every $_rl_stem.leg-$_rl_ts[-n].log up to -99 exists) — refusing rather than overwrite an earlier leg's evidence (v33.0 D8, PR-MED-008); nothing was moved"
+  fi
+  echo "SPAWN_WARN check=role-log-rotated detail=\"role log rotated before open: $_rotate_reason archive=$_rl_archive (v33.0 D8; the new leg starts on a fresh $LOOP_ROLE_LOG)\""
+fi
+
 if ! { exec 7>>"$LOOP_ROLE_LOG"; } 2>/dev/null; then
   fail_usage "LOOP_ROLE_LOG is not an appendable file (directory/device/broken symlink?): $LOOP_ROLE_LOG"
 fi
@@ -590,6 +752,22 @@ fi
 # pump dir, drop an unconsumed pre-state this invocation created).
 on_exit() {
   ec_trap=$?
+  # v33.0 T2.1 (the TB.1 double-EXIT flake — recurred once on leg
+  # phase1-verify-r13-1 WITH the watchdog's `trap - EXIT` in place): the footer
+  # and the pump-dir teardown belong to the MAIN wrapper process ONLY. Bash
+  # documents that subshells reset caught traps, yet the field shape (an
+  # EXIT:0 written BEFORE the post-capture, the pump dir gone under the live
+  # helper, then the real EXIT:4) is exactly an inherited trap firing in a
+  # forked shell (command substitution / `( ) &` / pipeline element) — and a
+  # bounded probe on this host reproduced NONE of those paths deliberately, so
+  # the mechanism is unidentified. Rather than chase the path, make EVERY
+  # forked-shell firing inert BY CONSTRUCTION: $BASHPID is the executing
+  # process's pid while $$ stays the main shell's, so a subshell running this
+  # body returns before touching fd 8 or $tmpd. (bash < 4 has no BASHPID —
+  # the guard degrades to the pre-v33.0 behaviour there, never to a refusal.)
+  if [ "${BASHPID:-$$}" != "$$" ]; then
+    return 0
+  fi
   echo "EXIT:$ec_trap" >&8
   if [ -n "${tee_pid:-}" ]; then
     kill "$tee_pid" 2>/dev/null
@@ -621,7 +799,8 @@ trap 'on_signal HUP 129' HUP
 log_root="${LOOP_PROBE_LOG%/*}"
 _prestate="$log_root/$LOOP_RUNKEY-escape-$LOOP_LEG.pre"
 if ! python3 "$HELPER" escape-check --run "$LOOP_RUNKEY" --role "$LOOP_ROLE" \
-    --capture pre --leg "$LOOP_LEG" --log-root "$log_root" "${_rootargs[@]}"; then
+    --capture pre --leg "$LOOP_LEG" --log-root "$log_root" "${_rootargs[@]}" \
+    ${_escargs[@]+"${_escargs[@]}"}; then
   echo "SPAWN_REFUSED check=escape-pre detail=\"pre-spawn escape-check capture failed — refusing (exit 2, no spawn; F-04 fail-closed)\"" >&2
   exit 2
 fi
@@ -633,8 +812,22 @@ _start_kv=("phase=$LOOP_PHASE" backend=claude-p "model=$LOOP_MODEL" "leg=$LOOP_L
 if [ -n "${LOOP_EFFORT:-}" ]; then
   _start_kv+=("effort=$LOOP_EFFORT")
 fi
+# v33.0 D3: a KEYED peer start carries pass=/peer_round=/cap= and is SEQUENCED
+# by the helper against the actual prior log through the READ-ONLY --read-log
+# (the validated absolute probe-log PATHNAME — a re-open by path, NOT a read
+# of fd 8: the read side is the composer-owned pathname trust class, the same
+# residual the prompt-file pathname carries, while the EVIDENCE side stays
+# inode-bound); the emission's SINK stays this retained-descriptor write (>&8),
+# so the start lands exactly once and a path swap cannot detach it
+# (PR-MED-003). An unkeyed start passes no --read-log (the helper refuses it
+# on an unkeyed shape).
+_start_flags=()
+if [ "${#_pass_kv[@]}" -ne 0 ]; then
+  _start_kv+=("${_pass_kv[@]}")
+  _start_flags=(--read-log "$LOOP_PROBE_LOG")
+fi
 if ! python3 "$HELPER" emit ROLE:start --run "$LOOP_RUNKEY" --role "$LOOP_ROLE" \
-    "${_start_kv[@]}" >&8; then
+    ${_start_flags[@]+"${_start_flags[@]}"} "${_start_kv[@]}" >&8; then
   echo "SPAWN_REFUSED check=role-start detail=\"the helper refused the ROLE: start emission — refusing (exit 2, no spawn)\"" >&2
   exit 2
 fi
@@ -806,7 +999,8 @@ fi
 # escape record that did not land is never a silent success — the escape-check
 # is a MUST-PAUSE safety gate).
 python3 "$HELPER" escape-check --run "$LOOP_RUNKEY" --role "$LOOP_ROLE" \
-    --capture post --leg "$LOOP_LEG" --log-root "$log_root" "${_rootargs[@]}" >&8
+    --capture post --leg "$LOOP_LEG" --log-root "$log_root" "${_rootargs[@]}" \
+    ${_escargs[@]+"${_escargs[@]}"} >&8
 esc_ec=$?
 if [ "$esc_ec" -eq 3 ]; then
   echo "SPAWN_WARN check=escape-post detail=\"post-capture failed (exit 3) — the helper's refusal record naming the root is on the probe log; composer disposition\""

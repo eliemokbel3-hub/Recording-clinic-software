@@ -22,10 +22,19 @@ INVOCATION SURFACE (pinned by DR-2; the checker-grant precedent —
           [--epoch <id>]                          where the shape carries epoch=
           [--event-ts <iso>]                      emit ONLY; REFUSED on computed
                                                   subcommands
-  SUBCOMMANDS (exactly six):
+  SUBCOMMANDS (exactly seven):
     emit <TYPE> [--round <n> --id <finding-ID>] [--repo <root>] [key=value ...]
+                 [--read-log <probe-log>]  (v33.0 D3: the READ-ONLY prior-record
+                 source for a keyed ROLE:start or a keyed cap transition —
+                 the sink stays stdout)
+                 [--liveness <min>|off]    (v33.0 D5: the must-pause re-fire
+                 dedupe window; needs --log; default 10)
     escape-check --capture pre|post --leg <leg> --log-root <dir>
                  --root <name>=</abs/path> [--root ...]
+                 [--edit-surface <root-name>] [--allow-path <root>:<rel>[;...]]
+                 [--iso <this run>] [--liveness <min>|off]
+                 (v33.0 D4: the edit-surface-aware verdict + the liveness-gated
+                 base-dirt attribution)
     flush [--dry-run]
     idle-check
     run-close --iso <iso-id> --base </abs/base> --outcome <o> [--plan] [--attest]
@@ -36,6 +45,14 @@ INVOCATION SURFACE (pinned by DR-2; the checker-grant precedent —
                  emission shapes, so this mutating subcommand is unreachable
                  from a scoped role — under perms=bypass no grant boundary
                  exists and the close-table confirm covers it)
+    attest-check --policy-log </abs/policy.log> --iso <iso-id> --plan <plan>
+                 [--key high-auto|gates]
+                 (v33.0 D12 — the READ-ONLY identity-bound attestation read:
+                 the FIRST config-snapshot per key, validated with the SAME
+                 emit-side rules the writer applied, bound to --iso/--plan;
+                 exit 0 = bound + unrevoked; exit 3 = absent | malformed |
+                 wrong-identity | off-at-start | revoked, each named on
+                 stdout; COMPOSER-ONLY under the grant sentence)
 
   emit TYPE tokens: MONITOR CONSUME CLASSIFY ADOPT KILL_DUP SENTINEL_ARMED
   SENTINEL_FIRE SPAWN VERIFY_FAIL
@@ -140,14 +157,7 @@ ENUMS = {
         "invalid",
         "must-pause",
     },
-    "NOTIFY_IMMEDIATE_CLASSES": {
-        "cap-accept",
-        "cap-raise",
-        "config-conflict",
-        "docs-only",
-        "invalid",
-        "must-pause",
-    },
+    "NOTIFY_IMMEDIATE_CLASSES": {"cap-accept", "cap-raise", "config-conflict", "must-pause"},
     "NOTIFY_MODES": {"immediate", "queued"},
     "NOTIFY_STATES": {"batch-flushed", "failed", "queued", "retried", "sent", "skipped"},
     "OWNERSHIP_SUBTYPES": {
@@ -246,6 +256,15 @@ COMPOSER_WRITE_PREFIXES = (
 SUPPRESSION_KEYS = ("suppressed", "latest")
 SUPPRESSED_VALUES = {"artifact-activity"}
 REFUSED_VALUES = {"capture-failure"}
+RESIDUE_VALUES = {"deferred"}
+EDIT_SURFACE_STATES = {"changed", "unchanged"}
+REC_SOURCES = {"composer", "executor"}
+AUTHORITY_KEYS = {"gates", "high-auto"}
+GATES_MODES = {"executor", "fix-biased", "strict"}
+AUTHORITY_VALUE_DOMAINS = {
+    "gates": ("executor", "fix-biased", "strict"),
+    "high-auto": ("on", "off"),
+}
 QUALIFIED_KEY_FORM = "<runkey>/r<round>/<finding-ID>"
 EFFECTIVE_WRITE_TIME_RULE = (
     "valid logged_ts= else valid ts= per line (K7); the idle checkpoint/"
@@ -338,6 +357,20 @@ STRICT_CLASSES = (
     "bad-cap-accept",
     "bad-delivery",
     "delivery-on-none",
+    "bad-edit-surface",
+    "edit-surface-root-absent",
+    "edit-surface-mismatch",
+    "bad-attributed",
+    "partial-pass-keys",
+    "bad-pass",
+    "bad-peer-round",
+    "bad-cap",
+    "peer-round-over-cap",
+    "pass-keys-on-non-peer",
+    "peer-round-on-transition",
+    "pass-keys-on-finding-route",
+    "bad-residue",
+    "bad-rec",
 )
 WHOLE_FILE_CLASSES = (
     "duplicate-arm",
@@ -367,6 +400,7 @@ WHOLE_FILE_CLASSES = (
     "delivery-missing-wake",
     "delivery-arm-without-wake",
     "delivery-drift",
+    "pass-sequence",
 )
 SCORED_BINDING_CLASSES = (
     "label-check-mismatch",
@@ -383,9 +417,11 @@ SCORED_BINDING_CLASSES = (
 )
 VARIANT_TOKEN_CENSUS = (
     "backwards-logged-ts",
+    "bad-attributed",
     "bad-authority-check",
     "bad-authority-epoch",
     "bad-backend",
+    "bad-cap",
     "bad-cap-accept",
     "bad-cap-raise",
     "bad-cell",
@@ -397,6 +433,7 @@ VARIANT_TOKEN_CENSUS = (
     "bad-config-key",
     "bad-config-value",
     "bad-delivery",
+    "bad-edit-surface",
     "bad-gap-min",
     "bad-handoff-reason",
     "bad-label-check",
@@ -408,7 +445,11 @@ VARIANT_TOKEN_CENSUS = (
     "bad-mode-state",
     "bad-monitor-event",
     "bad-ownership-subtype",
+    "bad-pass",
+    "bad-peer-round",
+    "bad-rec",
     "bad-refused",
+    "bad-residue",
     "bad-result",
     "bad-revoke-epoch",
     "bad-role",
@@ -425,6 +466,8 @@ VARIANT_TOKEN_CENSUS = (
     "dirty-result-mismatch",
     "duplicate-key",
     "duplicate-pending-id",
+    "edit-surface-mismatch",
+    "edit-surface-root-absent",
     "empty-after",
     "empty-alive",
     "empty-before",
@@ -508,6 +551,11 @@ VARIANT_TOKEN_CENSUS = (
     "none-without-reason",
     "orphan-authority-epoch",
     "orphan-verified",
+    "partial-pass-keys",
+    "pass-keys-on-finding-route",
+    "pass-keys-on-non-peer",
+    "peer-round-on-transition",
+    "peer-round-over-cap",
     "profile-on-non-claude-p",
     "refused-with-evidence",
     "role-no-space",
@@ -606,11 +654,38 @@ COMPOSER_ONLY_SUBTYPES = frozenset(
 RESERVED_KEYS = {"ts", "logged_ts", "run"}
 
 
+class _Refusal(Exception):
+    """R14 class fix: a refusal captured as a REASON instead of an exit — raised
+    by refuse() only while reason_of() has the capture flag set, so the
+    writer's validators can be reused by the READERS without duplicating
+    their rules (the single-validation-owner constraint)."""
+
+
+_CAPTURE_REFUSALS = [False]
+
+
 def refuse(msg, expected=None):
+    if _CAPTURE_REFUSALS[0]:
+        raise _Refusal(msg)
     sys.stderr.write("REFUSE: %s\n" % msg)
     if expected:
         sys.stderr.write("EXPECTED: %s\n" % expected)
     sys.exit(2)
+
+
+def reason_of(fn, *args, **kwargs):
+    """Run a refuse()-mode validator in REASON mode: returns None when it
+    passes, else the refusal message. The writer path (capture off) is
+    byte-equivalent — refuse() still exits 2 there."""
+    prev = _CAPTURE_REFUSALS[0]
+    _CAPTURE_REFUSALS[0] = True
+    try:
+        fn(*args, **kwargs)
+        return None
+    except _Refusal as e:
+        return str(e)
+    finally:
+        _CAPTURE_REFUSALS[0] = prev
 
 
 def envfail(msg):
@@ -682,6 +757,47 @@ def check_key_safety(key):
         refuse("key %r is not in the closed key grammar ^[a-z][a-z0-9_-]*$ — a key is a lowercase [a-z0-9_-] token; any whitespace (ASCII or Unicode), non-ASCII, quote, or structural byte would let a downstream Unicode-\\S tokenizer split it and forge a field (Constraint 13, PR-HIGH-001)" % key[:60])
 
 
+def check_field_safety(key, value):
+    """R15 class fix — the ONE owner of the generic per-FIELD rules every
+    record field obeys (the writer applies it to each caller token; the
+    readers apply it to each field of a prior record through validate_record):
+    the closed key charset, value safety (control / Unicode-whitespace /
+    quote / path-delimiter), and the empty-value floor (labels="" is the one
+    legal empty)."""
+    check_key_safety(key)
+    check_value_safety(key, value, is_path=(key in ("roots", "latest", "log", "repo")))
+    if value == "" and key != "labels":
+        refuse("empty value for %s= — blank identity/evidence fails the empty-<key> floor (labels=\"\" is the one legal empty)" % key)
+    # R16 PR-MED-001: the oracle's centralized blank-IDENTITY floor (R43
+    # PR-HIGH-026 — run/leg/epoch/session are audit identities; present-but-
+    # blank fails `empty-<key>` whether the shape requires the key or not) is
+    # the writer's rule too: a whitespace-only optional identity carries
+    # nothing and is refused rather than emitted (absence stays legal). Non-
+    # identity prose keeps its own value; the required-cell floors are separate.
+    if key in AUDIT_IDENTITY_KEYS and not value.strip():
+        refuse("%s= is present-but-blank — an audit identity carries a nonblank value or is absent (empty-%s)" % (key, key))
+
+
+# the oracle's blank-identity floor keys (R43 PR-HIGH-026): present ⇒ nonblank
+AUDIT_IDENTITY_KEYS = frozenset({"run", "leg", "epoch", "session"})
+
+COUNT_MAX_DIGITS = 9
+
+
+def parse_count(s, max_digits=COUNT_MAX_DIGITS):
+    """R16 PR-MED-002 — the ONE total numeric-admission primitive: an ASCII
+    decimal digit string of 1..max_digits digits → its int, else None. Never
+    raises. `str.isdigit()` alone admits what `int()` rejects (U+00B2 '²' →
+    ValueError) and admits non-ASCII numerals `int()` accepts ('١٢' → 12), and
+    an unbounded digit string trips Python's int-conversion limit — each was a
+    traceback (writer, readers, attest-check, --liveness) or a non-canonical
+    numeral in a record. Callers keep their own bounds (`< 1` for positive
+    counts). The oracle carries the byte-equal twin (no import either way)."""
+    if not (0 < len(s) <= max_digits) or not s.isascii() or not s.isdigit():
+        return None
+    return int(s)
+
+
 def fmt_kv(key, value):
     # Quote on ANY whitespace, not just ASCII space/tab (R27 defense-in-depth):
     # a quoted value cannot `\S`-split. check_value_safety already rejects every
@@ -704,9 +820,16 @@ def parse_argv(argv):
     sub = None
     etype = None
     dry_run = False
+    # v33.0 (Phase 1): --edit-surface / --liveness (D4, escape-check + the
+    # must-pause re-fire dedupe), --read-log (D3, the read-only prior-record
+    # source for a keyed ROLE:start), --policy-log / --key (D12, attest-check).
+    # Each is registered ONCE here; the per-subcommand SUB_GRAMMAR in main()
+    # decides where it is accepted (an irrelevant flag still REFUSES there).
     value_flags = {"--run", "--role", "--log", "--log-root", "--epoch", "--event-ts",
                    "--round", "--id", "--repo", "--capture", "--leg",
-                   "--iso", "--base", "--outcome", "--plan", "--attest"}
+                   "--iso", "--base", "--outcome", "--plan", "--attest",
+                   "--edit-surface", "--liveness", "--read-log", "--policy-log", "--key"}
+    allow_paths = []  # v33.0 D4: --allow-path <root>:<repo-relative>, repeatable (list, like --root)
     i = 0
     while i < len(argv):
         tok = argv[i]
@@ -716,6 +839,13 @@ def parse_argv(argv):
             if i + 1 >= len(argv):
                 refuse("--root needs a value", "--root name=/abs/path")
             roots.append(argv[i + 1])
+            i += 1
+        elif tok == "--allow-path":
+            if i + 1 >= len(argv):
+                refuse("--allow-path needs a value", "--allow-path <root-name>:<repo-relative path>[;<root>:<path>...]")
+            # the wrapper passes LOOP_ALLOW_PATH as ONE `;`-joined value; a
+            # composer may repeat the flag — both spellings land in one list.
+            allow_paths.extend(p for p in argv[i + 1].split(";") if p != "")
             i += 1
         elif tok in value_flags:
             if i + 1 >= len(argv):
@@ -727,7 +857,9 @@ def parse_argv(argv):
         elif tok.startswith("--"):
             refuse("unknown flag %s" % tok,
                    "global: --run --role [--log] [--log-root] [--epoch] [--event-ts]; "
-                   "emit: [--round --id --repo]; escape-check: --capture --leg --root")
+                   "emit: [--round --id --repo --read-log --liveness]; "
+                   "escape-check: --capture --leg --root [--edit-surface --allow-path --iso --liveness]; "
+                   "attest-check: --policy-log --iso --plan [--key]")
         elif sub is None:
             sub = tok
         elif sub == "emit" and etype is None and "=" not in tok:
@@ -740,6 +872,11 @@ def parse_argv(argv):
         else:
             refuse("stray bare token %r" % tok, "values ride key=value tokens; the TYPE rides `emit <TYPE>`")
         i += 1
+    # --allow-path rides `flags` as a LIST under its own key (the one
+    # list-valued flag; SUB_GRAMMAR keys on the flag NAME, so the per-subcommand
+    # admission check covers it like any other flag).
+    if allow_paths:
+        flags["--allow-path"] = allow_paths
     return sub, etype, flags, roots, kvs, dry_run
 
 
@@ -825,9 +962,31 @@ def write_lines(sink, lines, token_lists=None):
 
 
 NOTICE_TITLE = "execute-loop: operator needed"
+# v33.0 D5 — notification TIERS (no new class, no new state; urgency is
+# orthogonal to mode=). The operator-needed tier: `class=must-pause` (every
+# reason — live-smoke, usage/auth, limit-death, [decision], escape, a SURFACED
+# cap) and `class=config-conflict` → critical, persistent, NOTICE_TITLE. Every
+# other class (auto-disposition, docs-only, invalid, the AUTOMATIC cap-raise /
+# cap-accept transitions, HIGH auto-routes) is act-and-inform → normal, 20 s
+# expiry, the per-run "done" title. An UNKNOWN/absent class (a legacy retry
+# record without class=) fails toward the LOUDER tier.
+NOTICE_CRITICAL_CLASSES = frozenset({"must-pause", "config-conflict"})
+NOTICE_INFO_EXPIRY_MS = 20000
+NOTICE_CRITICAL_EXPIRY_MS = 0  # persistent by design (GNOME ignores -t on critical)
 
 
-def notice_spec(platform, runkey, summary):
+def notice_tier(cls):
+    """(urgency, expiry_ms) for a NOTIFY class — the D5 tier map."""
+    if cls is None or cls in NOTICE_CRITICAL_CLASSES:
+        return "critical", NOTICE_CRITICAL_EXPIRY_MS
+    return "normal", NOTICE_INFO_EXPIRY_MS
+
+
+def notice_title(runkey, urgency):
+    return NOTICE_TITLE if urgency == "critical" else "execute-loop: %s — done" % runkey
+
+
+def notice_spec(platform, runkey, summary, urgency="critical", expiry_ms=NOTICE_CRITICAL_EXPIRY_MS, title=None):
     """Build (argv, env) for the desktop notice with the notification values
     carried ONLY as DATA — argv data elements on Linux/macOS, environment
     variables on Windows — NEVER concatenated into an interpreter program
@@ -835,34 +994,65 @@ def notice_spec(platform, runkey, summary):
     reads its text from `argv`, and the Windows PowerShell body reads it from
     `$env:`, so a value containing a quote, `;`, backtick, or `$(...)` can
     never alter the executed program. The program text is byte-stable across
-    values by construction."""
+    values by construction.
+
+    v33.0 D5: `urgency`/`expiry_ms`/`title` carry the tier — Linux gets
+    `-u <urgency>` (+ `-t <ms>` on the informational tier; the critical tier
+    is persistent by design, so no `-t`); macOS/Windows have no urgency or
+    expiry, so the tier degrades to the TITLE split."""
     body = "%s: %s" % (runkey, summary)
+    title = title if title is not None else notice_title(runkey, urgency)
     if platform == "darwin":
         return (["osascript",
                  "-e", "on run argv",
                  "-e", "display notification (item 1 of argv) with title (item 2 of argv)",
                  "-e", "end run",
-                 body, NOTICE_TITLE], {})
+                 body, title], {})
     if platform == "win32":
         prog = ("New-BurntToastNotification -Text "
                 "$env:LOOP_JOURNAL_NOTICE_TITLE,$env:LOOP_JOURNAL_NOTICE_BODY")
         return (["powershell", "-NoProfile", "-NonInteractive", "-Command", prog],
-                {"LOOP_JOURNAL_NOTICE_TITLE": NOTICE_TITLE,
+                {"LOOP_JOURNAL_NOTICE_TITLE": title,
                  "LOOP_JOURNAL_NOTICE_BODY": body})
     # linux and any other host: notify-send takes title/body as data args
-    return (["notify-send", "-u", "critical", NOTICE_TITLE, body], {})
+    argv = ["notify-send", "-u", urgency]
+    if urgency != "critical":
+        argv += ["-t", str(expiry_ms)]
+    return (argv + [title, body], {})
 
 
-def fire_notice(runkey, summary):
+def notify_policy():
+    """v33.0 D5: LOOP_NOTIFY=action-only|all (exported by the composer at
+    preflight from the `notify=` key). Absent → `all`; an unrecognized value
+    fails CLOSED to `all` (the louder policy) with ONE stderr warning — a
+    typo never silences a notice."""
+    raw = os.environ.get("LOOP_NOTIFY")
+    if raw is None or raw == "all":
+        return "all"
+    if raw == "action-only":
+        return "action-only"
+    sys.stderr.write("WARN: LOOP_NOTIFY=%r is not action-only|all — treated as `all` (fail-closed to the louder policy)\n" % raw[:40])
+    return "all"
+
+
+def fire_notice(runkey, summary, cls=None, reason=None):
     """One per-OS desktop notice; returns True on confirmed delivery.
-    LOOP_JOURNAL_NOTICE_CMD overrides with title/body as DATA argv (selftest
-    hook + operator custom). Built-in backends route through notice_spec so
-    journal values never enter interpreter source on any host (PR-HIGH-003)."""
+    LOOP_JOURNAL_NOTICE_CMD overrides with the TIERED argv as DATA —
+    `[override, "-u", <urgency>, "-t", <ms>, <title>, <body>]` (v33.0 D5: the
+    selftest hook observes the tier; `-t 0` = the persistent critical tier).
+    Built-in backends route through notice_spec so journal values never
+    enter interpreter source on any host (PR-HIGH-003). `cls` selects the
+    tier (D5); `reason` is carried for the operator-needed body only."""
+    urgency, expiry_ms = notice_tier(cls)
+    title = notice_title(runkey, urgency)
+    if reason and urgency == "critical" and reason not in summary:
+        summary = "%s [reason=%s]" % (summary, reason)
     override = os.environ.get("LOOP_JOURNAL_NOTICE_CMD")
     if override:
-        cmd, env_extra = [override, NOTICE_TITLE, "%s: %s" % (runkey, summary)], {}
+        cmd, env_extra = [override, "-u", urgency, "-t", str(expiry_ms), title,
+                          "%s: %s" % (runkey, summary)], {}
     else:
-        cmd, env_extra = notice_spec(sys.platform, runkey, summary)
+        cmd, env_extra = notice_spec(sys.platform, runkey, summary, urgency, expiry_ms, title)
     env = None
     if env_extra:
         env = dict(os.environ)
@@ -925,6 +1115,588 @@ def parse_labels_map(value):
     return label_map, errors
 
 
+def authority_hash(iso, plan, epoch, key, value):
+    """The per-key config_hash serialization (v33.0 D1 — byte-identical to the
+    v32 form for key=high-auto): sha256("iso=…|plan=…|epoch=…|<key>=<value>")[:12]."""
+    return hashlib.sha256(("iso=%s|plan=%s|epoch=%s|%s=%s" % (iso, plan, epoch, key, value))
+                          .encode("utf-8")).hexdigest()[:12]
+
+
+def validate_authority_record(kv, st, check_hash=True):
+    """v33.0 D12 — the ONE record-shape owner for the two authority subtypes,
+    applied by the WRITER (cmd_emit, before it derives the hash) and by the
+    READER (attest-check / read_authority) alike, so the shipped helper never
+    imports the unshipped oracle and the two cannot drift. Returns None when
+    the record is well-formed, else a short reason (the oracle's class token
+    in parentheses). Rules: role=composer; key in AUTHORITY_KEYS; value in the
+    key's closed domain (snapshot); nonblank iso/plan/epoch (snapshot);
+    revoke epoch a positive integer from 1; and — reading — config_hash= is
+    the exact 12-hex recompute over the record's own fields."""
+    # R13 PR-HIGH-001: NO composer default here — the WRITER stamps role= via
+    # its own setdefault BEFORE calling; the READER must see the record's own
+    # role= (a role-less snapshot is the oracle's missing-role, never bound).
+    if kv.get("role") != "composer":
+        return "is a composer-owned record — role=%s (%s)" % (kv.get("role"), "missing-role" if "role" not in kv else "bad-role")
+    key = kv.get("key")
+    if key not in AUTHORITY_KEYS:
+        return "admits key=%s only (bad-config-key) — got key=%r" % ("|".join(sorted(AUTHORITY_KEYS)), key)
+    if st == "config-snapshot":
+        if kv.get("value") not in AUTHORITY_VALUE_DOMAINS[key]:
+            return "value= for key=%s must be %s (bad-config-value)" % (key, "|".join(AUTHORITY_VALUE_DOMAINS[key]))
+        for rk in ("iso", "plan", "epoch"):
+            if not kv.get(rk, "").strip():
+                return "requires nonblank %s= — the hash binds the full identity (PR-HIGH-015; missing-%s)" % (rk, rk)
+        if check_hash:
+            ch = kv.get("config_hash")
+            if ch is None:
+                return "carries no config_hash= (missing-config-hash)"
+            if not re.match(r"\A[0-9a-f]{12}\Z", ch):
+                return "config_hash= is not 12 lowercase hex (malformed-digest)"
+            if ch != authority_hash(kv["iso"], kv["plan"], kv["epoch"], key, kv["value"]):
+                return "config_hash= does not recompute from the record's own iso/plan/epoch/key/value (config-hash-mismatch)"
+        return None
+    # config-revoke
+    ep = kv.get("epoch", "")
+    if not ep.strip():
+        return "requires epoch= (missing-epoch)"
+    _epn = parse_count(ep)
+    if _epn is None or _epn < 1:
+        return "epoch= must be a positive integer from 1 (bad-revoke-epoch) — the snapshot is epoch 0"
+    return None
+
+
+def validate_gate_record_fields(st, kv):
+    """R14 class fix — the ONE owner of the gate-record FIELD rules shared by
+    the writer (cmd_emit, refuse mode) and the readers (reason mode via
+    emittable_record): `rec=` rides must-pause/gate-disposition only and is
+    `<executor|composer>:<nonblank>` (D6); a gate-disposition on a cap key
+    carries the pass=+cap= bundle both-or-neither and never residue=, a
+    non-cap gate-disposition none of the pass keys (D3/D2)."""
+    if "rec" in kv:
+        if st not in ("must-pause", "gate-disposition"):
+            refuse("rec= rides OWNERSHIP:must-pause and OWNERSHIP:gate-disposition only (the recommendation-first ask — D6), not OWNERSHIP:%s" % st)
+        _rs, _sep, _rd = kv["rec"].partition(":")
+        if not _sep or _rs not in REC_SOURCES or not _rd.strip():
+            refuse("rec= must be <source>:<disposition> with source in %s and a nonblank disposition (bad-rec; D6) — got %r"
+                   % ("|".join(sorted(REC_SOURCES)), kv["rec"][:60]))
+    if st == "gate-disposition":
+        if kv.get("key") in CAP_TRANSITION_GATE_KEYS:
+            if "residue" in kv:
+                refuse("residue= rides the cap-accept=close auto-disposition only, never a gate-disposition (D2)")
+            check_cap_transition_bundle(kv, "OWNERSHIP:gate-disposition (cap key)")
+        elif any(k in kv for k in PASS_KEYS) or "residue" in kv:
+            refuse("pass=/peer_round=/cap=/residue= ride a cap gate-disposition (key=cap-raise|peer-cap|peer-cap-accept) only (D3)")
+
+
+def finding_evidence(kv):
+    """The auto-disposition route discriminator (TB.2): severity=, verified=,
+    or a finding-ID key (identity-only PR-REG-* included)."""
+    key_is_finding = False
+    if "key" in kv:
+        key_is_finding = bool(FINDING_ID_RE.match(re.split(r"[^A-Za-z0-9-]+", kv["key"])[-1] or ""))
+    return "severity" in kv or "verified" in kv or key_is_finding
+
+
+def validate_cap_route(kv):
+    """R14 class fix — the ONE owner of the auto-disposition CAP-ROUTE rules
+    (writer + readers): exactly one of cap-raise=+1 / cap-accept=close, closed
+    values, ZERO finding evidence on a cap route (mixed-route), the pass=+cap=
+    bundle both-or-neither (never peer_round=; residue= on accept-close only),
+    and none of the pass keys on a finding route."""
+    cap, capacc = kv.get("cap-raise"), kv.get("cap-accept")
+    if cap is not None and capacc is not None:
+        refuse("cap-raise= and cap-accept= are mutually exclusive — one record is ONE cap transition (mixed-route)")
+    if cap is not None or capacc is not None:
+        check_cap_transition_bundle(kv, "OWNERSHIP:auto-disposition (cap transition)")
+    elif any(k in kv for k in PASS_KEYS) or "residue" in kv:
+        refuse("pass=/peer_round=/cap=/residue= ride cap-transition records (cap-raise=+1 / cap-accept=close) — a finding route carries none of them (D3)")
+    evidence = finding_evidence(kv)
+    if cap is not None:
+        if cap != "+1":
+            refuse("cap-raise= must be exactly +1 (bad-cap-raise)")
+        if evidence:
+            refuse("cap-raise topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
+    if capacc is not None:
+        if capacc != "close":
+            refuse("cap-accept= must be exactly close (bad-cap-accept)")
+        if evidence:
+            refuse("cap-accept topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
+
+
+# the shapes whose ts= IS the write time — the writer refuses --event-ts on
+# them, so a logged_ts= can never appear on one (the oracle's
+# logged-ts-on-checkpoint class).
+CONTEMPORANEOUS_SUBTYPES = frozenset({"config-snapshot", "config-revoke", "sticky-ack", "run-close"})
+
+
+def check_seat_gate(st, actor):
+    """The composer-seat gate (PR-MED-001 round 12 / R16 PR-HIGH-001): every
+    composer-owned OWNERSHIP subtype is certified by role=composer only. ONE
+    owner — the writer applies it to --role before any derivation, and
+    validate_record applies it to the record's own role= (else the writer's
+    --role) so a carried non-composer actor is never emittable. The gate is a
+    mis-attribution guard, not caller authentication (the grant/process layer
+    is the authority boundary — the retained R12 item)."""
+    if st in COMPOSER_ONLY_SUBTYPES and actor != "composer":
+        refuse("OWNERSHIP:%s is a composer-owned record — it requires --role composer; a %s role can never certify one (dispositions/attestations are never delegated; the seat gate is a mis-attribution guard — caller AUTHORITY is the grant/process boundary, the retained R12 item)" % (st, actor))
+
+
+def ownership_required(st, kv):
+    """R15 class fix — the ONE owner of an OWNERSHIP subtype's required cell
+    set (the MATRIX row, plus commit's derived hash=/seat= and sticky-ack's
+    derived sticky_hash=, minus exit-census's children= when the capture
+    failed). Shared by the writer (ordering + floor) and validate_record."""
+    required = ("run",) + V_MATRIX.get(st, ())
+    if st == "commit":
+        required += ("hash", "seat")
+    if st == "sticky-ack":
+        required += ("sticky_hash",)
+    if st == "exit-census" and kv.get("refused") is not None:
+        required = tuple(k for k in required if k != "children")
+    return required
+
+
+def validate_auto_disposition(kv):
+    """R15 class fix — the ONE owner of the auto-disposition ROUTE rules
+    beyond the cap route: the when-present authority-attestation pair
+    coherence, the severity=/verified= enums and the orphan-verified rider,
+    and the finding-route rules (a finding-ID key requires severity=,
+    severity= agrees with the ID's class, a CRIT never auto-disposes, a
+    resolved-or-effective HIGH carries the attestation pair)."""
+    validate_cap_route(kv)
+    cap, capacc = kv.get("cap-raise"), kv.get("cap-accept")
+    key_sev = None
+    key_is_finding = False
+    if "key" in kv:
+        m = FINDING_ID_RE.match(re.split(r"[^A-Za-z0-9-]+", kv["key"])[-1] or "")
+        # `PR-REG-*` is a valid identity but carries no route severity;
+        # verified severity remains the routing authority.
+        key_is_finding = bool(m)
+        key_sev = (m.group(2) or "").lower() or None if m else None
+    # v32 TA.1: authority-attestation coherence when-present on any route —
+    # authority_check= is the EXACT 12-hex config_hash echo and travels WITH
+    # authority_epoch= (nonnegative revocation count; 0 = no prior revocation).
+    if "authority_check" in kv:
+        if not re.match(r"\A[0-9a-f]{12}\Z", kv["authority_check"]):
+            refuse("authority_check= must be the exact 12-hex config_hash echo (bad-authority-check)")
+        if "authority_epoch" not in kv:
+            refuse("authority_check= travels with authority_epoch= — the revocation-epoch binding is half the attestation (missing-authority-epoch, PR-HIGH-006)")
+    if "authority_epoch" in kv:
+        if parse_count(kv["authority_epoch"]) is None:
+            refuse("authority_epoch= must be a nonnegative integer (bad-authority-epoch)")
+        if "authority_check" not in kv:
+            refuse("authority_epoch= never rides without authority_check= (orphan-authority-epoch)")
+    if "severity" in kv and kv["severity"] not in ENUMS["SEVERITIES"]:
+        refuse("severity= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
+    if "verified" in kv:
+        if kv["verified"] not in ENUMS["SEVERITIES"]:
+            refuse("verified= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
+        if "severity" not in kv:
+            refuse("verified= never rides without severity= — emit BOTH keys on a triage divergence (orphan-verified)")
+    if cap is None and capacc is None:
+        # PR-HIGH-001 (round 9): a finding-route auto-disposition (a finding-ID
+        # key) REQUIRES its own severity= (STICKY section 7) — the resolved
+        # severity is the SINGLE owner TIERING consumes. TB.2 (v32): the guard
+        # fires on ANY finding-ID key (identity-only PR-REG-* included).
+        if key_is_finding and "severity" not in kv:
+            refuse("a finding-route auto-disposition requires severity= (the finding-ID's own class; for an identity-only PR-REG-* ID it is the sole routing authority — STICKY section 7) — without it the route's TIERING owner is unset and the route would silently queue")
+        if "severity" in kv and key_sev is not None and kv["severity"] != key_sev:
+            refuse("severity=%s disagrees with the finding-ID severity %s in key= — the tool never emits a mismatched route (severity-key-mismatch)"
+                   % (kv["severity"], key_sev))
+        resolved = kv.get("severity") or key_sev
+        # PR-HIGH-001 (round 12): the executor-VERIFIED severity is the ROUTING
+        # authority — the CRIT-pause and the attestation gate key on the
+        # EFFECTIVE severity (verified= when present, else the ID's own).
+        effective = kv.get("verified") or resolved
+        if effective == "crit":
+            refuse("a CRIT never auto-disposes — a verified/effective CRIT always pauses; route it as OWNERSHIP:must-pause (STICKY section 7)")
+        # v32 TA.1 (r9 PR-HIGH-018): the attestation gate fires on resolved-OR-
+        # effective HIGH (a downgrade from HIGH still attests — the log cannot
+        # prove a downgrade legitimate).
+        if resolved == "high" or effective == "high":
+            if "authority_check" not in kv or "authority_epoch" not in kv:
+                refuse("a HIGH auto-route (resolved OR verified-effective HIGH) carries its authority_check=<config_hash> + authority_epoch=<N> attestation pair — bound to the run's OWNERSHIP:config-snapshot record (TA.1; r9 PR-HIGH-018 closed the verified-upgrade bypass)")
+
+
+def route_severity(kv):
+    """The EFFECTIVE severity the pair's TIERING consumes (the auto-disposition
+    finding route: verified= else severity= else the finding-ID's class; a cap
+    route or any other subtype: the record's own severity=, usually absent)."""
+    if kv.get("cap-raise") is None and kv.get("cap-accept") is None and "key" in kv:
+        m = FINDING_ID_RE.match(re.split(r"[^A-Za-z0-9-]+", kv["key"])[-1] or "")
+        key_sev = (m.group(2) or "").lower() or None if m else None
+        return kv.get("verified") or kv.get("severity") or key_sev
+    return kv.get("severity")
+
+
+def validate_record(family, kv, role=None, reader=False):
+    """R15 class fix (Round 15 PR-HIGH-001 — the residual of the Rounds 13–15
+    reader-trust class): THE single owner of every RECORD-INTRINSIC rule the
+    writer applies, invoked by BOTH the writer (cmd_emit, refuse mode, on the
+    ASSEMBLED kv — after role stamping and hash derivation, before the
+    prior-log sequencing checks and any notice) and the readers (via
+    emittable_record in reason mode). There is deliberately no second list:
+    a rule that lives here is enforced on emission AND on every prior-record
+    read; a rule that does not live here is one of the documented ARGV-ONLY
+    rules below, which a completed record cannot carry.
+
+    Rules owned here — every OWNERSHIP subtype: the generic per-field rules
+    (check_field_safety) on every non-tool-owned field; the composer-seat
+    gate on the actor (`role=` when carried, else the writer's --role); the
+    closed subtype vocabulary; the retired/reserved extras (sha=, decision=,
+    label_check=); the retired label-snapshot; commit's seat=composer;
+    exit-census's children=/refused= rules; profile-switch's transferred=;
+    the authority records (validate_authority_record, config_hash= recomputed
+    — the writer's pre-derivation form check + derivation run in cmd_emit
+    first); the gate-record field rules (validate_gate_record_fields); the
+    auto-disposition route rules (validate_auto_disposition); the
+    required-cell presence + nonblank floor (ownership_required); no
+    epoch=/mode=/class= token on a gate pair's OWNER line (the pair's epoch
+    has ONE owner, --epoch → the NOTIFY; mode is COMPUTED; class= is consumed
+    by the writer into the NOTIFY).
+    Every EMIT_SPECS family (ROLE:start/end and the simple types): the spec's
+    required presence + nonblank floor and closed enums; ROLE:start's
+    profile_dir refusal, profile=-on-claude-p-only, and the pass-key form +
+    role=peer rule (check_pass_key_forms).
+
+    ARGV-ONLY rules (writer only — a completed record cannot violate them):
+    the type-scoped flag admissions (--round/--id/--repo/--epoch/--liveness/
+    --read-log/--event-ts), the tool-owned RESERVED_KEYS and the caller-typed
+    derived fields (config_hash=/hash=/sticky_hash= — the completed record
+    legitimately CARRIES them), the role=-token-vs---role conflict, the
+    finding-key builder ownership (hand-typed vs built), the conflicting-
+    class= value rules on a pair emission (the NOTIFY member's), and the
+    prior-log SEQUENCING (pass_start_check / cap_transition_check / the
+    must-pause dedupe) which stays in cmd_emit.
+
+    HISTORICAL CARVE-OUT (reader=True only, the one documented exception):
+    leg= on a ROLE record is the whole-file --forward-legs duty — a legacy
+    (pre-v31) start/end may omit it; when PRESENT it must be nonblank."""
+    prefix, _sep, sub = family.partition(":")
+    for k, v in kv.items():
+        if k in RESERVED_KEYS:
+            continue
+        check_field_safety(k, v)
+    if prefix == "OWNERSHIP":
+        st = sub
+        actor = kv.get("role", role)
+        if actor is not None:
+            check_seat_gate(st, actor)
+        if st not in V_OWNERSHIP_SUBTYPES:
+            refuse("unknown OWNERSHIP subtype %r (invented vocabulary — the F-20/F-24 class)" % st,
+                   "one of: %s" % ", ".join(sorted(V_OWNERSHIP_SUBTYPES)))
+        if "sha" in kv:
+            refuse("sha= is not a commit key — the required key is hash= and the tool derives it via --repo (F-23)")
+        if "decision" in kv:
+            refuse("decision= is not an admitted key — gate-disposition's required keys are key= + choice= (F-20)")
+        # v32 TA.1 (round-8 in-session review): the retired label_check= key is
+        # refused on EVERY OWNERSHIP subtype (recognize-in-historical-logs only).
+        if "label_check" in kv:
+            refuse("label_check= is retired at v32 on every OWNERSHIP shape — the successor attestation pair is authority_check=<config_hash> + authority_epoch=<N> (recognize historical records on replay, never emit forward)")
+        # class= belongs to the paired NOTIFY only (LOW-001 round 5) — the
+        # writer pops the caller token off a PAIR subtype before this point, so
+        # a pair OWNER line carrying class= is never its output; on the other
+        # subtypes class= is an ordinary extra (unchanged writer acceptance).
+        if st in PAIR_SUBTYPES and "class" in kv:
+            refuse("class= never rides a gate pair's OWNERSHIP owner line — it belongs to the paired NOTIFY only (LOW-001 round 5)")
+        if st == "commit" and kv.get("seat", "composer") != "composer":
+            refuse("seat=%s is a commit-authority violation — commits are composer-seat only; the tool never writes one" % kv["seat"])
+        if st == "exit-census":
+            if "children" in kv and not kv["children"].isdigit():  # (an older v32 site — retained follow-up, not this leg)
+                refuse("exit-census children= must be a nonnegative integer (got %r)" % kv["children"])
+            # R16 PR-MED-001: the ADMITTED capture-failure refusal shape waives
+            # children= — both keys together are contradictory evidence.
+            if kv.get("refused") is not None:
+                if kv["refused"] != "capture-failure":
+                    refuse("exit-census refused= admits only capture-failure")
+                if "children" in kv:
+                    refuse("exit-census refused=capture-failure and children= are mutually exclusive — a failed capture carries no confirmed count")
+        if st == "profile-switch" and kv.get("transferred") not in (None, "yes", "no"):
+            refuse("profile-switch transferred= must be yes|no")
+        if st == "label-snapshot":
+            refuse("OWNERSHIP:label-snapshot is retired at v32 — the [gates: high-auto-ok] label grammar is gone; emit the successor attestation OWNERSHIP:config-snapshot (key=high-auto value=on|off; config_hash= derived)")
+        if st in ("config-snapshot", "config-revoke"):
+            # the writer's pre-derivation form check + derivation happen in
+            # cmd_emit before this call, so the completed record (writer or
+            # read) always recomputes its own config_hash= here.
+            _why = validate_authority_record(kv, st)
+            if _why:
+                refuse("OWNERSHIP:%s %s" % (st, _why))
+        validate_gate_record_fields(st, kv)
+        if st == "auto-disposition":
+            validate_auto_disposition(kv)
+        required = ownership_required(st, kv)
+        for k in required:
+            if k == "run":
+                continue
+            if k not in kv:
+                refuse("OWNERSHIP:%s requires %s=" % (st, k),
+                       "required keys: ts run " + " ".join(required[1:]))
+            # PR-MED-001 (round 13): required identity/evidence values are
+            # present AND nonblank (the oracle keys empty-<key> on exactly this).
+            if not kv[k].strip():
+                refuse("OWNERSHIP:%s %s= is present-but-blank (empty-%s floor) — a required identity/evidence value must be nonblank" % (st, k, k))
+        # PR-MED-003 (round 12): a gate pair's epoch identity has ONE owner — the
+        # required --epoch flag (consumed by the paired NOTIFY); a separate
+        # epoch= token would split the two members' epochs.
+        if st in PAIR_SUBTYPES and "epoch" in kv:
+            refuse("a gate pair's epoch has ONE owner — the required --epoch; a separate epoch= token is refused (it would split the OWNERSHIP/NOTIFY epochs)")
+        if st in PAIR_SUBTYPES and "mode" in kv:
+            refuse("mode= is COMPUTED from class+severity (the TIERING table is mechanical) — never caller-supplied")
+        return
+    spec = EMIT_SPECS.get(family)
+    if spec is None:
+        refuse("unknown emit TYPE %r (invented line-start types are the F-03 class)" % family,
+               "one of: %s, NOTIFY:<state>, OWNERSHIP:<subtype>" % ", ".join(sorted(EMIT_SPECS)))
+    if family == "ROLE:start":
+        if "profile_dir" in kv:
+            refuse("profile_dir lives in Loop config:, never as a start key (STICKY:51; observed F-07 adjunct)")
+        if "profile" in kv and kv.get("backend") != "claude-p":
+            refuse("profile= is admitted only on backend=claude-p (profile-on-non-claude-p)")
+        # v33.0 D3: the per-pass cap keys on an orchestrated peer start —
+        # all-or-none, peer-only (the SEQUENCING bind stays in cmd_emit).
+        if check_pass_key_forms(kv, "ROLE:start") is not None and kv.get("role", role) != "peer":
+            refuse("pass=/peer_round=/cap= ride a ROLE:start role=peer only — the per-pass cap counter is the peer pass's (D3)")
+    for k in spec["required"]:
+        if k not in kv:
+            if reader and k == "leg":
+                continue  # HISTORICAL CARVE-OUT: a legacy ROLE record may omit leg= (see the docstring)
+            refuse("%s requires %s=" % (family, k),
+                   "required keys: ts run " + " ".join(spec["required"]))
+        if kv[k] == "" or not kv[k].strip():
+            refuse("%s %s= is present-but-blank (empty-%s floor)" % (family, k, k))
+    for k, enum_name in spec["enums"].items():
+        if k in kv and kv[k] not in ENUMS[enum_name]:
+            refuse("%s %s= must be one of %s (got %r)"
+                   % (family, k, ", ".join(sorted(ENUMS[enum_name])), kv[k]))
+
+
+def assemble_ownership_record(st, ts, logged, runkey, required, kv, kvs):
+    """The writer's OWN OWNERSHIP serializer (R15: exposed so the selftest's
+    generated corpus assembles a would-be record through the writer, never a
+    hand-typed twin): `OWNERSHIP: <st> ts= [logged_ts=] run= <required in
+    matrix order> <extras in caller order, then derived>`. Returns (line,
+    intent tokens)."""
+    parts = [st, fmt_kv("ts", ts)]
+    if logged:
+        parts.append(fmt_kv("logged_ts", logged))
+    parts.append(fmt_kv("run", runkey))
+    ordered = [k for k in required if k != "run" and k in kv]
+    extras = [k for k, _ in kvs if k in kv and k not in ordered] + \
+             [k for k in kv if k not in ordered and k not in dict(kvs)]
+    for k in ordered + [k for k in extras if k not in ordered]:
+        parts.append(fmt_kv(k, kv[k]))
+    return "OWNERSHIP: " + " ".join(parts), ["OWNERSHIP:"] + parts
+
+
+def assemble_simple_record(spec, ts, logged, runkey, kv, kvs):
+    """The writer's OWN serializer for the EMIT_SPECS families (ROLE:start/end
+    and the simple types): `<prefix> [<verb>] ts= [logged_ts=] run= <required
+    in spec order> <extras in caller order>`. Returns (line, intent tokens)."""
+    parts = []
+    if spec["verb"]:
+        parts.append(spec["verb"])
+    parts.append(fmt_kv("ts", ts))
+    if logged:
+        parts.append(fmt_kv("logged_ts", logged))
+    parts.append(fmt_kv("run", runkey))
+    ordered = [k for k in spec["required"] if k in kv]
+    listed = set(ordered)
+    for k in ordered:
+        parts.append(fmt_kv(k, kv[k]))
+    for k, _ in kvs:
+        if k in kv and k not in listed and k not in RESERVED_KEYS:
+            parts.append(fmt_kv(k, kv[k]))
+            listed.add(k)
+    return spec["prefix"] + " " + " ".join(parts), spec["prefix"].split() + parts
+
+
+def emittable_record(line, family):
+    """R14 class fix (Rounds 13–14 were ONE class: helper READERS of prior
+    records trusting shapes the helper's own WRITER refuses and the oracle
+    rejects). THE shared predicate every prior-record reader consults —
+    "would this helper's writer have emitted this line?" — built from the
+    helper's own primitives only (never an oracle import):
+      lexical — an even double-quote count (the classifier's malformed-
+        quoting), no duplicate keys (last-wins would rebind identity), and
+        exactly the family's bare token (`<subtype>` / `start` / `end`);
+      clock — ts= parses (parse_iso, calendar-total) and is not impossible-
+        future (future_instant, the K9 skew bound); logged_ts= is refused on
+        the contemporaneous shapes, and elsewhere must parse, not be future,
+        and never precede ts= (backwards-logged-ts);
+      identity — run= is a stage-<N> runkey (the F-12 domain split);
+      fields — the MATRIX_REQUIRED presence + nonblank floor, then the
+        subtype's own writer validators reused in REASON mode:
+        validate_authority_record / validate_gate_record_fields /
+        validate_cap_route / check_pass_key_forms (a keyed ROLE:start must be
+        role=peer) / the ROLE enums.
+    Returns (kv, bare, None) when emittable, else (kv_or_None, bare_or_None,
+    reason). Readers SKIP a non-emittable record toward their documented
+    fail-closed side; a class-level parity corpus in the selftest asserts
+    `reason is not None` ⇔ the oracle classifies the line non-strict.
+
+    R15 class fix (Round 15 PR-HIGH-001): the field/subtype rules are no
+    longer re-listed here — after the LINE layers (the writer's exact emitted
+    prefix `<PREFIX>: <verb> `, the assembled_line_ok round-trip, quoting,
+    duplicates, bare token, clock, run=) the predicate invokes the writer's
+    ONE record owner, validate_record(reader=True), in reason mode — so no
+    writer rule can be omitted by construction. Where the writer is STRICTER
+    than the oracle (key charset / value safety inside quoted content /
+    spacing fidelity / glued OWNERSHIP prefix / retired extras / a non-
+    composer role token / mode= or class= or epoch= on the owner / CRIT auto /
+    profile_dir=) the direction "oracle non-strict ⇒ helper refuses" still
+    holds and the reverse is the selftest's enumerated carve-out set."""
+    line = line.rstrip("\r\n")
+    prefix, _sep, sub = family.partition(":")
+    head = prefix + ":"
+    if not line.startswith(head):
+        return None, None, "not a %s record" % head
+    # the writer emits exactly `<PREFIX>: <verb> ` — a glued or double-spaced
+    # prefix is never its output (the oracle's role-no-space class on ROLE;
+    # the R12-MED-001 glued-OWNERSHIP trigger shape).
+    if not line.startswith(head + " " + sub + " "):
+        return None, None, "prefix is not the writer's exact `%s %s ` (glued or misplaced verb — role-no-space)" % (head, sub)
+    fidelity = assembled_line_ok(line)
+    if fidelity:
+        return None, None, fidelity
+    body = line[len(head):]
+    if body.count('"') % 2:
+        return None, None, "odd double-quote count — an unbalanced quote lets a value swallow fields (malformed-quoting)"
+    keys = []
+    for m in PARSE_KV_RE.finditer(body):
+        k = m.group(1) if m.group(1) is not None else m.group(3)
+        if k is not None:
+            keys.append(k)
+    dups = sorted(set(k for k in keys if keys.count(k) > 1))
+    if dups:
+        return None, None, "duplicate key(s) %s — last-value-wins parsing would silently rebind identity (duplicate-key)" % ",".join(dups)
+    kv, bare = parse_kv(body)
+    if bare != [sub]:
+        return kv, bare, "bare token(s) %r — a %s%s record is exactly `%s` + key=value fields (stray-token / missing verb)" % (bare[:3], head, " " + sub, sub)
+    t = parse_iso(kv.get("ts"))
+    if t is None:
+        return kv, bare, "ts= missing or not a valid local ISO-with-offset instant (ts-malformed)"
+    if future_instant(t):
+        return kv, bare, "ts= is an impossible-future instant beyond the %dh skew bound (future-ts)" % FUTURE_SKEW_HOURS
+    if "logged_ts" in kv:
+        if sub in CONTEMPORANEOUS_SUBTYPES:
+            return kv, bare, "carries logged_ts= — a contemporaneous record's ts= IS its write time (logged-ts-on-checkpoint)"
+        lt = parse_iso(kv["logged_ts"])
+        if lt is None:
+            return kv, bare, "logged_ts= is not a valid local ISO-with-offset instant (bad-logged-ts)"
+        if future_instant(lt):
+            return kv, bare, "logged_ts= is an impossible-future instant (future-ts)"
+        if lt < t:
+            return kv, bare, "logged_ts= precedes ts= — a backdated append (backwards-logged-ts)"
+    if not RUNKEY_RE.match(kv.get("run", "")):
+        return kv, bare, "run= missing or not a stage-<N> runkey (missing-run)"
+    if prefix not in ("OWNERSHIP", "ROLE"):
+        return kv, bare, "family %r is not a reader-consulted record family" % family
+    # the writer's ONE record owner, in reason mode (R15 class fix)
+    return kv, bare, reason_of(validate_record, family, kv, reader=True)
+
+
+def read_authority(lines, expect_iso, expect_plan, key):
+    """v33.0 D12 — the identity-bound authority READ implemented in the shipped
+    helper on the emit-side rules (never an import from the oracle). Selects
+    the FIRST snapshot-shaped record PER KEY (FIRST-wins — a malformed,
+    hash-mismatched, or wrong-identity first record poisons the key; a later
+    valid snapshot never repairs or replaces it), then scans the per-key
+    revocation stream (every `config-revoke` whose key= is this key — valid or
+    malformed, fail-closed — PLUS any revoke-shaped record with a missing or
+    unknown key, which revokes every key). Returns (state, info) with state in
+    {"bound", "absent", "malformed", "wrong-identity", "off-at-start",
+    "revoked"} and info the snapshot fields (+ `revoke_ts`/`revoke_valid` when
+    revoked, `reason` when unusable)."""
+    snap, snap_reason, snap_seen = None, None, False
+    revokes = []
+    for n, raw in enumerate(lines, 1):
+        line = raw.rstrip("\r\n")
+        if not line.startswith("OWNERSHIP:"):
+            continue
+        kv, bare = parse_kv(line[len("OWNERSHIP:"):])
+        if not bare:
+            continue
+        if bare[0] == "config-snapshot" and kv.get("key") == key and not snap_seen:
+            snap_seen = True
+            # R13 PR-HIGH-001 → R14 class fix: the shared "would the writer
+            # have emitted this?" predicate (lexical + clock + identity +
+            # MATRIX + validate_authority_record) — a failure poisons this key
+            # (never repaired by a later record).
+            why = emittable_record(line, "OWNERSHIP:config-snapshot")[2]
+            if why:
+                snap_reason = "line %d: %s" % (n, why)
+            elif kv["iso"] != expect_iso or kv["plan"] != expect_plan:
+                snap_reason = ("line %d: identity mismatch — record iso=%s plan=%s vs expected iso=%s plan=%s (a copied or wrongly-selected policy log is never bearer authority; PR-HIGH-015)"
+                               % (n, kv["iso"][:40], kv["plan"][:60], expect_iso[:40], expect_plan[:60]))
+                snap_reason = "wrong-identity:" + snap_reason
+            else:
+                snap = dict(kv, line=n)
+        elif bare[0] == "config-revoke":
+            rkey = kv.get("key")
+            if rkey == key or rkey not in AUTHORITY_KEYS:
+                # a malformed revoke (shape OR rules) is recorded valid=False
+                # and STILL revokes — fail-closed (unchanged semantics; R13
+                # PR-HIGH-001 adds the shape check to the validity flag).
+                _rvalid = emittable_record(line, "OWNERSHIP:config-revoke")[2] is None and rkey == key
+                revokes.append((n, kv.get("ts"), _rvalid))
+    if not snap_seen:
+        return "absent", {"reason": "no OWNERSHIP: config-snapshot key=%s record in the policy log" % key}
+    if snap is None:
+        if snap_reason.startswith("wrong-identity:"):
+            return "wrong-identity", {"reason": snap_reason[len("wrong-identity:"):]}
+        return "malformed", {"reason": snap_reason}
+    if key == "high-auto" and snap["value"] == "off":
+        return "off-at-start", dict(snap, reason="value=off at run start — nothing was ever authorized")
+    if revokes:
+        n, ts, valid = revokes[0]
+        return "revoked", dict(snap, revoke_line=n, revoke_ts=ts, revoke_valid=valid,
+                               reason="a config-revoke for key=%s follows at line %d (%s) — the boundary is effective at its write"
+                               % (key, n, "valid" if valid else "malformed; fail-closed"))
+    return "bound", snap
+
+
+def cmd_attest_check(flags):
+    """v33.0 D12 — `attest-check`: the READ-ONLY identity-bound attestation
+    read for the composer seat (COMPOSER-ONLY at the grant layer; the seat gate
+    here is the mis-attribution guard). Prints ONE result line to stdout; exit
+    0 only on a bound, unrevoked `on`/mode; exit 3 on every non-usable state
+    (absent, malformed/hash-mismatch, wrong identity, off-at-start, revoked);
+    exit 2 on a grammar refusal. Never writes a probe-log record."""
+    if flags["--role"] != "composer":
+        refuse("attest-check is a composer-seat read — it requires --role composer (spawned-role grants never carry it; SKILL Setup wizard close table)")
+    key = flags.get("--key", "high-auto")
+    if key not in AUTHORITY_KEYS:
+        refuse("--key must be one of %s" % "|".join(sorted(AUTHORITY_KEYS)))
+    for req in ("--policy-log", "--iso", "--plan"):
+        if req not in flags:
+            refuse("attest-check REQUIRES %s — a policy log is never bearer authority for another run; the expected identity is fail-closed input (PR-HIGH-015)" % req)
+    pol = flags["--policy-log"]
+    if not os.path.isabs(pol):
+        refuse("--policy-log must be an absolute path")
+    if not ISO_ID_RE.match(flags["--iso"]):
+        refuse("--iso %r is not a filename-safe iso-id" % flags["--iso"][:60])
+    try:
+        with open(pol, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError as e:
+        sys.stdout.write("attest-check: key=%s state=absent reason=\"policy log unreadable: %s\"\n" % (key, str(e).replace('"', "'")[:120]))
+        sys.exit(3)
+    state, info = read_authority(lines, flags["--iso"], flags["--plan"], key)
+    if state == "bound":
+        sys.stdout.write("attest-check: key=%s state=bound value=%s config_hash=%s epoch=%s iso=%s plan=\"%s\" ts=%s revoked=no\n"
+                         % (key, info["value"], info["config_hash"], info["epoch"], info["iso"], info["plan"], info.get("ts", "")))
+        return
+    extra = ""
+    if state == "revoked":
+        extra = " value=%s config_hash=%s revoke_ts=%s revoke_valid=%s" % (
+            info["value"], info["config_hash"], info.get("revoke_ts"), "yes" if info.get("revoke_valid") else "no")
+    sys.stdout.write("attest-check: key=%s state=%s%s reason=\"%s\"\n" % (key, state, extra, info["reason"].replace('"', "'")))
+    if state == "absent" and key != "high-auto":
+        sys.stdout.write("attest-check: note — an absent key=%s snapshot on a strict/fix-biased run is INFORMATIONAL, never a downgrade (only gates=executor requires one; D1)\n" % key)
+    sys.exit(3)
+
+
 def build_qualified_key(flags):
     """DR-3: the tool builds finding-route gate keys; composers never
     hand-compose. Requires --round (positive int) + --id (finding-ID grammar);
@@ -941,8 +1713,10 @@ def build_qualified_key(flags):
 
 def compute_mode(cls, severity):
     """STICKY section 7 TIERING, fully mechanical: immediate — HIGH routes,
-    docs-only/invalid, every must-pause, config-conflict, cap-raise; queued —
-    LOW/MED auto-routes only."""
+    every must-pause, config-conflict, cap-raise, cap-accept; queued —
+    LOW/MED auto-routes and (v33.0 D5) the docs-only/invalid triage
+    resolutions, delivered as the phase-boundary batch. The immediate set is
+    the generated ENUMS["NOTIFY_IMMEDIATE_CLASSES"] (oracle-owned)."""
     if cls in ENUMS["NOTIFY_IMMEDIATE_CLASSES"]:
         return "immediate"
     if cls == "auto-disposition" and severity == "high":
@@ -982,6 +1756,10 @@ def cmd_emit(flags, etype, kvs, sink):
             etype in ("OWNERSHIP:auto-disposition", "OWNERSHIP:must-pause")
             or etype.startswith("NOTIFY:")):
         refuse("--epoch is only accepted where the emitted shape carries epoch= (the gate OWNERSHIP pairs OWNERSHIP:auto-disposition/must-pause, and NOTIFY:<state>), not %s — it would be silently discarded" % etype)
+    # v33.0 D5: --liveness is the must-pause re-fire dedupe window — meaningful
+    # on emit OWNERSHIP:must-pause ONLY (the same type-scoped total-argv rule).
+    if "--liveness" in flags and etype != "OWNERSHIP:must-pause":
+        refuse("--liveness is accepted on emit OWNERSHIP:must-pause only (the re-fire dedupe window), not %s — it would be silently discarded" % etype)
 
     # duplicate caller keys are lexical ambiguity (duplicate-key class)
     seen = set()
@@ -995,9 +1773,7 @@ def cmd_emit(flags, etype, kvs, sink):
         check_key_safety(k)  # PR-HIGH-001: the KEY reaches the line via fmt_kv, so validate it too
         if k in RESERVED_KEYS:
             refuse("%s= is tool-owned — the clock and run identity are never caller-supplied (use --event-ts / --run)" % k)
-        check_value_safety(k, v, is_path=(k in ("roots", "latest", "log", "repo")))
-        if v == "" and k != "labels":
-            refuse("empty value for %s= — blank identity/evidence fails the empty-<key> floor (labels=\"\" is the one legal empty)" % k)
+        check_field_safety(k, v)  # R15: the ONE per-field owner (value safety + the empty floor), shared with the readers
 
     # PR-MED-002 (round 7): --role is the SINGLE owner of record identity. A
     # caller role= token may not name a different actor than the required
@@ -1012,6 +1788,13 @@ def cmd_emit(flags, etype, kvs, sink):
     lines = []
     token_lists = []  # R29: the INTENT (ordered token structure) parallel to `lines`
 
+    # v33.0 D3 / R13 PR-MED-002: --read-log is meaningful ONLY where a keyed
+    # shape consumes it (a keyed ROLE:start, a keyed cap transition on
+    # auto-disposition / a cap-key gate-disposition); every branch that admits
+    # it sets read_log_consumed, and an unconsumed --read-log refuses below
+    # (the round-8 total-argv contract — never silently discarded).
+    read_log_consumed = False
+
     # ---- OWNERSHIP family ----
     if etype.startswith("OWNERSHIP:"):
         st = etype[len("OWNERSHIP:"):]
@@ -1025,34 +1808,20 @@ def cmd_emit(flags, etype, kvs, sink):
         if st == "run-close":
             refuse("emit OWNERSHIP:run-close is refused — cell/verdict are COMPUTED from disk state; use the run-close subcommand (a hand-authored close is a forged close — the F-04 class)",
                    "run-close --iso <iso-id> --base </abs/base> --outcome <outcome> [--plan </abs/plan.md>] [--attest owner-dead]")
-        # PR-MED-001 (round 12), EXTENDED UNIFORM at R16 PR-HIGH-001 (operator-
-        # disposed coherent extension): EVERY composer-owned OWNERSHIP subtype
-        # requires --role composer before any notice or write — the SINGLE
-        # gate owner (Round-11's commit-specific check is absorbed here).
-        # Role-BEARING shapes keep their subject-role semantics: exit-census
-        # carries the spawned role, and escape-check (refused via emit) is the
-        # spawning session's — neither is gated. NOTE (the R12 retained
-        # boundary, surfaced not closed): this gate is a MIS-ATTRIBUTION
-        # guard, not caller authentication — --role is argv for every caller;
-        # the authority boundary that makes composer-owned records unreachable
-        # from a spawned role is the grant/process layer (the wrapper's
-        # composer-only exact-path grant pattern), which stays the retained
-        # R12 PR-MED-001 item.
-        if st in COMPOSER_ONLY_SUBTYPES and role != "composer":
-            refuse("OWNERSHIP:%s is a composer-owned record — it requires --role composer; a %s role can never certify one (dispositions/attestations are never delegated; the seat gate is a mis-attribution guard — caller AUTHORITY is the grant/process boundary, the retained R12 item)" % (st, role))
+        # PR-MED-001 (round 12) / R16 PR-HIGH-001: EVERY composer-owned OWNERSHIP
+        # subtype requires --role composer before any notice or write — the
+        # gate is a MIS-ATTRIBUTION guard, not caller authentication (the
+        # grant/process layer is the authority boundary, the retained R12
+        # item). R15 class fix: the gate, the closed subtype vocabulary and the
+        # retired/reserved extras (sha=/decision=/label_check=) now live in
+        # validate_record — the ONE record owner (applied below, after the
+        # subtype branches stamp/derive their fields). The seat gate is kept
+        # HERE as well (the same check_seat_gate owner) so a non-composer
+        # caller is refused before any derivation (git/STICKY reads) runs.
+        check_seat_gate(st, role)
         if st not in V_OWNERSHIP_SUBTYPES:
             refuse("unknown OWNERSHIP subtype %r (invented vocabulary — the F-20/F-24 class)" % st,
                    "one of: %s" % ", ".join(sorted(V_OWNERSHIP_SUBTYPES)))
-        if "sha" in kv:
-            refuse("sha= is not a commit key — the required key is hash= and the tool derives it via --repo (F-23)")
-        if "decision" in kv:
-            refuse("decision= is not an admitted key — gate-disposition's required keys are key= + choice= (F-20)")
-        # v32 TA.1 (round-8 in-session review): the retired label_check= key is
-        # refused on EVERY OWNERSHIP subtype, not just the auto-disposition
-        # route — a retired attestation must never ride forward as a stray
-        # extra token either (recognize-in-historical-logs only).
-        if "label_check" in kv:
-            refuse("label_check= is retired at v32 on every OWNERSHIP shape — the successor attestation pair is authority_check=<config_hash> + authority_epoch=<N> (recognize historical records on replay, never emit forward)")
 
         # key= construction (DR-3) for finding routes
         key_from_builder = "--round" in flags and "--id" in flags
@@ -1063,9 +1832,9 @@ def cmd_emit(flags, etype, kvs, sink):
                 refuse("key= conflicts with --round/--id — the tool BUILDS finding-route keys (never hand-composed)")
             kv["key"] = build_qualified_key(flags)
 
-        required = ("run",) + V_MATRIX.get(st, ())
+        # (the required cell set is ownership_required — the R15 single owner,
+        # consumed by validate_record and the serializer below)
         if st == "commit":
-            required += ("hash", "seat")
             # PR-MED-001 (round 11): commit authority is COMPOSER-SEAT ONLY, so
             # the authoritative global --role must itself be composer — the tool
             # never converts a non-composer declared identity into a clean
@@ -1090,9 +1859,7 @@ def cmd_emit(flags, etype, kvs, sink):
             # PR-HIGH-004 sibling (round 7): a subprocess-derived value reaching
             # a journal line is Constraint-13-checked like any other.
             check_value_safety("hash", kv["hash"])
-            kv.setdefault("seat", "composer")
-            if kv["seat"] != "composer":
-                refuse("seat=%s is a commit-authority violation — commits are composer-seat only; the tool never writes one" % kv["seat"])
+            kv.setdefault("seat", "composer")  # seat=composer is enforced by validate_record
         if st == "sticky-ack":
             # Round-4 S1 (DR4-1): the composer's run-start STICKY-read receipt.
             # sticky_hash= is COMPUTED, never caller-typed: the tool resolves
@@ -1102,7 +1869,6 @@ def cmd_emit(flags, etype, kvs, sink):
             # 12-hex prefix). Missing mirror files are an ENVIRONMENT failure
             # (exit 3, the git-absent precedent); a divergent pair is a
             # Constraint-5 violation the composer must fix (exit 2).
-            required += ("sticky_hash",)
             kv.setdefault("role", role)
             # R6 (round-6 review): the receipt is CONTEMPORANEOUS by nature —
             # its ts= IS the read time (the idle-checkpoint precedent). A
@@ -1130,59 +1896,35 @@ def cmd_emit(flags, etype, kvs, sink):
                 refuse("the two STICKY mirrors under %s differ (byte-compare) — the ack is a run-start pair-discipline check; re-mirror before acknowledging (Constraint 5)" % repo)
             kv["sticky_hash"] = hashlib.sha256(_mirror_bytes[0]).hexdigest()[:12]
         if st == "exit-census":
-            # DR-1 item 4 (admitted at R8): the wrapper's census record.
+            # DR-1 item 4 (admitted at R8): the wrapper's census record — the
+            # children=/refused= rules (R16 PR-MED-001) live in validate_record.
             kv.setdefault("role", role)
-            if "children" in kv and not kv["children"].isdigit():
-                refuse("exit-census children= must be a nonnegative integer (got %r)" % kv["children"])
-            # R16 PR-MED-001: the ADMITTED capture-failure refusal shape — a
-            # failed census emits `refused=capture-failure` and WAIVES
-            # `children=` (a failed capture is never a fabricated clean zero;
-            # the escape-check refusal-record precedent). Both keys together
-            # would be contradictory evidence — refused.
-            if kv.get("refused") is not None:
-                if kv["refused"] != "capture-failure":
-                    refuse("exit-census refused= admits only capture-failure")
-                if "children" in kv:
-                    refuse("exit-census refused=capture-failure and children= are mutually exclusive — a failed capture carries no confirmed count")
-                required = tuple(k for k in required if k != "children")
-        if st == "profile-switch" and kv.get("transferred") not in (None, "yes", "no"):
-            refuse("profile-switch transferred= must be yes|no")
-        if st == "label-snapshot":
-            # v32 TA.1 (D1): the label snapshot is RETIRED forward — the
-            # successor is OWNERSHIP:config-snapshot (the high-auto authority
-            # attestation). Historical logs keep their records (the oracle
-            # recognizes them); the helper never writes a new one.
-            refuse("OWNERSHIP:label-snapshot is retired at v32 — the [gates: high-auto-ok] label grammar is gone; emit the successor attestation OWNERSHIP:config-snapshot (key=high-auto value=on|off; config_hash= derived)")
+        # profile-switch transferred= and the retired label-snapshot (v32 TA.1)
+        # are validate_record rules too.
         if st == "config-snapshot":
-            # v32 TA.1 (D1/PR-HIGH-013/015): the run-start high-auto authority
+            # v32 TA.1 (D1/PR-HIGH-013/015): the run-start authority
             # attestation — the label-snapshot successor, 1:1 on the policy-log
-            # home, FIRST-wins, and fail-closed reads. key= is the closed
-            # {high-auto} set this release; value= is the closed {on,off} set;
-            # config_hash= is DERIVED (never caller-typed) over the canonical
-            # serialization "iso=<iso>|plan=<plan>|epoch=<epoch>|high-auto=
-            # <value>" (UTF-8, LF-normalized by construction — Constraint 13
-            # refuses embedded line terminators — no trailing newline), so the
-            # hash BINDS the isolation-run identity, authoritative plan, and
-            # run-start epoch, not just the setting value. Contemporaneous
-            # like sticky-ack: a backdated authority record could forge its
-            # ordering against spawn boundaries, so --event-ts is refused.
+            # home, FIRST-wins PER KEY, and fail-closed reads. v33.0 D1/T1.6
+            # WIDENS the admitted keys to AUTHORITY_KEYS {high-auto, gates}
+            # with per-key value domains (high-auto: on|off; gates:
+            # strict|fix-biased|executor) and PER-KEY hash serialization
+            # "iso=<iso>|plan=<plan>|epoch=<epoch>|<key>=<value>" — for
+            # key=high-auto this is BYTE-IDENTICAL to the v32 serialization, so
+            # every existing high-auto hash is unchanged. config_hash= is
+            # DERIVED (never caller-typed); the hash BINDS the isolation-run
+            # identity, authoritative plan, and run-start epoch, not just the
+            # setting value. Contemporaneous like sticky-ack: --event-ts is
+            # refused. The RULES live in validate_authority_record — the ONE
+            # record-shape owner the attest-check reader also applies (D12).
             kv.setdefault("role", role)
             if "--event-ts" in flags:
                 refuse("OWNERSHIP:config-snapshot is a contemporaneous authority record — its ts= IS the attestation time; --event-ts/backfill is refused")
-            if kv.get("key") != "high-auto":
-                refuse("OWNERSHIP:config-snapshot admits key=high-auto only (bad-config-key) — the run-level HIGH auto-route authorization is the sole attested key this release")
-            if kv.get("value") not in ("on", "off"):
-                refuse("OWNERSHIP:config-snapshot value= must be on|off (bad-config-value)")
             if "config_hash" in kv:
-                refuse("config_hash= is DERIVED, never caller-typed — the tool computes it from iso/plan/epoch/value (the F-23/F-04 derivation class)")
-            for _rk in ("iso", "plan", "epoch"):
-                if not kv.get(_rk, "").strip():
-                    refuse("OWNERSHIP:config-snapshot requires nonblank %s= — the hash binds the full identity (PR-HIGH-015)" % _rk)
-            import hashlib
-            kv["config_hash"] = hashlib.sha256(
-                ("iso=%s|plan=%s|epoch=%s|high-auto=%s"
-                 % (kv["iso"], kv["plan"], kv["epoch"], kv["value"]))
-                .encode("utf-8")).hexdigest()[:12]
+                refuse("config_hash= is DERIVED, never caller-typed — the tool computes it from iso/plan/epoch/key/value (the F-23/F-04 derivation class)")
+            _why = validate_authority_record(kv, "config-snapshot", check_hash=False)
+            if _why:
+                refuse("OWNERSHIP:config-snapshot %s" % _why)
+            kv["config_hash"] = authority_hash(kv["iso"], kv["plan"], kv["epoch"], kv["key"], kv["value"])
         if st == "config-revoke":
             # v32 TA.1 (PR-HIGH-006/016): the monotonic one-way revocation
             # record — the FIRST write of the pinned revoke-first disable
@@ -1191,16 +1933,34 @@ def cmd_emit(flags, etype, kvs, sink):
             # snapshot is epoch 0); a duplicate/retry disable re-emits the same
             # epoch idempotently — monotonicity across records is the oracle's
             # scored-layer check (the stateless writer validates form).
-            # Contemporaneous: --event-ts refused (a backdated boundary would
-            # forge which dispositions it invalidates).
+            # v33.0 D1: key= admits AUTHORITY_KEYS — a `key=gates` revoke is the
+            # same one-way transaction on its OWN per-key stream.
+            # Contemporaneous: --event-ts refused.
             kv.setdefault("role", role)
             if "--event-ts" in flags:
                 refuse("OWNERSHIP:config-revoke is a contemporaneous authority boundary — its ts= IS the revocation time; --event-ts/backfill is refused")
-            if kv.get("key") != "high-auto":
-                refuse("OWNERSHIP:config-revoke admits key=high-auto only (bad-config-key)")
-            _rep = kv.get("epoch", "")
-            if _rep and (not _rep.isdigit() or int(_rep) < 1):
-                refuse("OWNERSHIP:config-revoke epoch= must be a positive integer from 1 (bad-revoke-epoch) — the snapshot is epoch 0")
+        # LOW-001 (round 5): class= belongs to the paired NOTIFY only — it never
+        # rides the OWNERSHIP record (consumed here, before the record check).
+        cls_arg = kv.pop("class", None) if st in PAIR_SUBTYPES else None
+        # R15 class fix: THE record check — every record-intrinsic rule (the
+        # R14 validate_gate_record_fields / validate_cap_route owners included)
+        # on the ASSEMBLED kv, in refuse mode; the readers apply the same
+        # function in reason mode via emittable_record. Only ARGV rules and the
+        # prior-log SEQUENCING checks remain below.
+        validate_record("OWNERSHIP:" + st, kv, role=role)
+        route_sev = route_severity(kv) if st == "auto-disposition" else kv.get("severity")
+        if st == "gate-disposition":
+            if kv.get("key") in CAP_TRANSITION_GATE_KEYS:
+                _bundle = check_cap_transition_bundle(kv, "OWNERSHIP:gate-disposition (cap key)")
+                if _bundle is not None:
+                    # R13 PR-MED-002: an operator raise records a LARGER cap;
+                    # any other cap disposition records the current budget.
+                    _src = flags.get("--log") or flags.get("--read-log")
+                    if _src is None:
+                        refuse("a keyed cap gate-disposition (pass=/cap=) REQUIRES a readable prior-record source — pass --log <probe-log> or --read-log <probe-log> (D3, R13 PR-MED-002)")
+                    read_log_consumed = True
+                    cap_transition_check(_src, runkey, _bundle[0],
+                                         "operator-raise" if kv.get("choice") == "raise" else "operator-other", _bundle[1])
         if st in ("gate-disposition", "auto-disposition", "must-pause") and "key" in kv:
             # PR-REG-002 (round 8) + PR-MED-002 (round 13): builder ownership
             # (DR-3) applies to every OWNERSHIP finding-route owner — the two
@@ -1213,150 +1973,33 @@ def cmd_emit(flags, etype, kvs, sink):
                 refuse("a finding-route key= must be built via --round/--id (DR-3 builder ownership), never hand-supplied — applies to OWNERSHIP:%s" % st)
         if st == "auto-disposition":
             # PR-HIGH-001 (round 7): ONE route-identity validator, resolved
-            # BEFORE either pair member is assembled. A tool-emitted pair can
-            # never encode a weaker route than the finding identity requires,
-            # and the tool never emits an oracle-STRICT-failing ownership line.
+            # BEFORE either pair member is assembled — R14/R15: it is
+            # validate_auto_disposition (cap route + attestation coherence +
+            # severity/verified + the finding-route rules), applied by
+            # validate_record above. Only the KEYED transition's prior-log
+            # sequencing (R13 PR-MED-002) remains here.
             cap = kv.get("cap-raise")
-            # v32 TA.3 (PR-MED-014): cap-accept=close is the explicit
-            # accept-closure transition — the cap-raise topology rules
-            # mirrored exactly (closed value; zero finding evidence; never
-            # both cap keys on one record).
             capacc = kv.get("cap-accept")
-            # v32 TA.1: label_check= is RETIRED forward with the label
-            # grammar — refused for EVERY OWNERSHIP subtype by the shared
-            # check above (round-8 review); the successor attestation pair is
-            # authority_check= + authority_epoch=.
-            key_sev = None
-            key_is_finding = False
-            if "key" in kv:
-                m = FINDING_ID_RE.match(re.split(r"[^A-Za-z0-9-]+", kv["key"])[-1] or "")
-                # `PR-REG-*` is a valid identity but carries no route
-                # severity; verified severity remains the routing authority.
-                key_is_finding = bool(m)
-                key_sev = (m.group(2) or "").lower() or None if m else None
-            # TB.2 (v32): finding evidence is EVERY finding-ID key, including
-            # the identity-only `PR-REG-*` class — keyed off the severity
-            # group alone, a REG key was invisible here, so it could ride a
-            # cap topology record unrefused and (below) skip the
-            # severity-required guard into a silent tiering-owner-unset queue.
-            evidence = "severity" in kv or "verified" in kv or key_is_finding
-            if cap is not None and capacc is not None:
-                refuse("cap-raise= and cap-accept= are mutually exclusive — one record is ONE cap transition (mixed-route)")
-            if cap is not None:
-                if cap != "+1":
-                    refuse("cap-raise= must be exactly +1 (bad-cap-raise)")
-                if evidence:
-                    refuse("cap-raise topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
-            if capacc is not None:
-                if capacc != "close":
-                    refuse("cap-accept= must be exactly close (bad-cap-accept)")
-                if evidence:
-                    refuse("cap-accept topology records carry ZERO finding evidence — no severity=/verified=/finding-ID key (mixed-route)")
-            # v32 TA.1: authority-attestation coherence when-present on any
-            # route — authority_check= is the EXACT 12-hex config_hash echo
-            # and travels WITH authority_epoch= (nonnegative revocation
-            # count; 0 = no prior revocation).
-            if "authority_check" in kv:
-                if not re.match(r"\A[0-9a-f]{12}\Z", kv["authority_check"]):
-                    refuse("authority_check= must be the exact 12-hex config_hash echo (bad-authority-check)")
-                if "authority_epoch" not in kv:
-                    refuse("authority_check= travels with authority_epoch= — the revocation-epoch binding is half the attestation (missing-authority-epoch, PR-HIGH-006)")
-            if "authority_epoch" in kv:
-                if not kv["authority_epoch"].isdigit():
-                    refuse("authority_epoch= must be a nonnegative integer (bad-authority-epoch)")
-                if "authority_check" not in kv:
-                    refuse("authority_epoch= never rides without authority_check= (orphan-authority-epoch)")
-            if "severity" in kv and kv["severity"] not in ENUMS["SEVERITIES"]:
-                refuse("severity= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
-            if "verified" in kv:
-                if kv["verified"] not in ENUMS["SEVERITIES"]:
-                    refuse("verified= must be one of %s" % ", ".join(sorted(ENUMS["SEVERITIES"])))
-                if "severity" not in kv:
-                    refuse("verified= never rides without severity= — emit BOTH keys on a triage divergence (orphan-verified)")
-            if cap is None and capacc is None:
-                # builder ownership (DR-3) is enforced for BOTH pair subtypes by
-                # the shared check above (PR-REG-002).
-                # PR-HIGH-001 (round 9): a finding-route auto-disposition (a
-                # finding-ID key) REQUIRES its own severity= (STICKY section 7).
-                # The resolved severity is the SINGLE owner TIERING consumes, so
-                # a HIGH route can never silently become mode=queued for lack of
-                # an explicit severity=. Cap-raise topology is the documented
-                # zero-severity exception (handled by the `cap is None` guard).
-                # TB.2 (v32): the guard fires on ANY finding-ID key — for a
-                # severity-classed ID severity= is the ID's own class; for an
-                # identity-only ID (PR-REG-*) the unqualified key form is
-                # accepted and severity= is the SOLE routing/TIERING owner.
-                if key_is_finding and "severity" not in kv:
-                    refuse("a finding-route auto-disposition requires severity= (the finding-ID's own class; for an identity-only PR-REG-* ID it is the sole routing authority — STICKY section 7) — without it the route's TIERING owner is unset and the route would silently queue")
-                # severity= must AGREE with the finding-ID severity — the tool
-                # refuses the mismatch rather than emitting an oracle
-                # severity-key-mismatch line.
-                if "severity" in kv and key_sev is not None and kv["severity"] != key_sev:
-                    refuse("severity=%s disagrees with the finding-ID severity %s in key= — the tool never emits a mismatched route (severity-key-mismatch)"
-                           % (kv["severity"], key_sev))
-                resolved = kv.get("severity") or key_sev
-                # PR-HIGH-001 (round 12): the executor-VERIFIED severity is the
-                # ROUTING authority (STICKY section 7). The CRIT-pause and the
-                # TIERING mode key on the EFFECTIVE severity (verified= when
-                # present, else the ID's own severity=), so an executor upgrade
-                # to CRIT pauses and an upgrade to HIGH is immediate — and a
-                # downgrade routes to the lower tier. BOTH severity fields stay
-                # recorded (severity= the ID's class + verified= the executor
-                # class). Attestation (r9 PR-HIGH-018, one coherent rule): the
-                # gate fires on resolved-OR-effective HIGH — an upgrade to
-                # HIGH routes and attests as HIGH, and a HIGH->lower downgrade
-                # STILL attests because the resolved class was HIGH (the log
-                # cannot prove a downgrade legitimate). See the gate below.
-                effective = kv.get("verified") or resolved
-                route_sev = effective
-                if effective == "crit":
-                    refuse("a CRIT never auto-disposes — a verified/effective CRIT always pauses; route it as OWNERSHIP:must-pause (STICKY section 7)")
-                # v32 TA.1 (r9 PR-HIGH-018): the attestation gate fires on
-                # resolved-OR-effective HIGH — a verified-severity UPGRADE to
-                # HIGH routes as HIGH and must attest like one (routing and
-                # attestation share the effective value); the DOWNGRADE caveat
-                # is unaffected: severity=high verified=low still requires the
-                # pair via resolved==high (the log cannot prove a downgrade
-                # legitimate). The successor pair replaces label_check=.
-                if resolved == "high" or effective == "high":
-                    if "authority_check" not in kv or "authority_epoch" not in kv:
-                        refuse("a HIGH auto-route (resolved OR verified-effective HIGH) carries its authority_check=<config_hash> + authority_epoch=<N> attestation pair — bound to the run's OWNERSHIP:config-snapshot record (TA.1; r9 PR-HIGH-018 closed the verified-upgrade bypass)")
-        for k in required:
-            if k == "run":
-                continue
-            if k not in kv:
-                refuse("OWNERSHIP:%s requires %s=" % (st, k),
-                       "required keys: ts run " + " ".join(required[1:]))
-            # PR-MED-001 (round 13): required identity/evidence values are
-            # present AND nonblank (the simple/canonical types' floor applied to
-            # the OWNERSHIP matrix + delta cells; the oracle keys empty-<key> on
-            # exactly this). labels="" is not a matrix cell — its legal-empty
-            # carve-out lives in the bespoke label-snapshot check.
-            if not kv[k].strip():
-                refuse("OWNERSHIP:%s %s= is present-but-blank (empty-%s floor) — a required identity/evidence value must be nonblank" % (st, k, k))
+            if cap is not None or capacc is not None:
+                _bundle = check_cap_transition_bundle(kv, "OWNERSHIP:auto-disposition (cap transition)")
+                if _bundle is not None:
+                    # R13 PR-MED-002: a KEYED transition is validated against
+                    # the pass's recorded budget in the prior log — a raise
+                    # records budget+1, an accept-close the current budget.
+                    _src = flags.get("--log") or flags.get("--read-log")
+                    if _src is None:
+                        refuse("a keyed cap transition (pass=/cap=) REQUIRES a readable prior-record source — pass --log <probe-log> or --read-log <probe-log> (the pass's budget lives on its own records; D3/D2, R13 PR-MED-002)")
+                    read_log_consumed = True
+                    cap_transition_check(_src, runkey, _bundle[0],
+                                         "auto-raise" if cap is not None else "accept-close", _bundle[1])
 
-        # PR-MED-003 (round 12): a gate pair's epoch identity has ONE owner —
-        # the required --epoch flag (consumed by the paired NOTIFY). A separate
-        # epoch= kv token would ride the OWNERSHIP extras and split the two
-        # members' epochs; refuse it (the pair analogue of the standalone
-        # --epoch/epoch= conflict rule).
-        if st in PAIR_SUBTYPES and "epoch" in kv:
-            refuse("a gate pair's epoch has ONE owner — the required --epoch; a separate epoch= token is refused (it would split the OWNERSHIP/NOTIFY epochs)")
-        # LOW-001 (round 5): class= belongs to the paired NOTIFY only — it
-        # never rides the OWNERSHIP record.
-        cls_arg = kv.pop("class", None) if st in PAIR_SUBTYPES else None
+        if "--read-log" in flags and not read_log_consumed:
+            refuse("--read-log is accepted only where a KEYED shape reads the prior log (a keyed ROLE:start, a keyed cap-raise/cap-accept auto-disposition, a keyed cap gate-disposition), not OWNERSHIP:%s — it would be silently ignored" % st)
 
-        parts = [st, fmt_kv("ts", ts)]
-        if logged:
-            parts.append(fmt_kv("logged_ts", logged))
-        parts.append(fmt_kv("run", runkey))
-        ordered = [k for k in required if k != "run" and k in kv]
-        extras = [k for k, _ in kvs if k in kv and k not in ordered] + \
-                 [k for k in kv if k not in ordered and k not in dict(kvs)]
-        for k in ordered + [k for k in extras if k not in ordered]:
-            parts.append(fmt_kv(k, kv[k]))
-        lines.append("OWNERSHIP: " + " ".join(parts))
-        token_lists.append(["OWNERSHIP:"] + parts)
+        # the writer's OWN serializer (R15: shared with the selftest's generated corpus)
+        _line, _tokens = assemble_ownership_record(st, ts, logged, runkey, ownership_required(st, kv), kv, kvs)
+        lines.append(_line)
+        token_lists.append(_tokens)
 
         # ---- the atomic paired NOTIFY (gate routes) ----
         if st in PAIR_SUBTYPES:
@@ -1402,12 +2045,29 @@ def cmd_emit(flags, etype, kvs, sink):
                     refuse("OWNERSHIP:auto-disposition may only route class in {auto-disposition, docs-only, invalid} (cap-raise binds via cap-raise=+1) — class=%s falsely names the route (PR-REG-002/PR-HIGH-001)" % cls)
             if cls not in ENUMS["NOTIFY_CLASSES"]:
                 refuse("class= must be one of %s" % ", ".join(sorted(ENUMS["NOTIFY_CLASSES"])))
-            if "mode" in kv:
-                refuse("mode= is COMPUTED from class+severity (the TIERING table is mechanical) — never caller-supplied")
+            # (a caller mode= token is refused by validate_record — mode is COMPUTED)
             mode = compute_mode(cls, route_sev)
+            # v33.0 D5 (PR-MED-005): the must-pause RE-FIRE dedupe runs BEFORE
+            # any notice or write — with --log present, the same qualified key
+            # already owning a must-pause with NO later gate-disposition, whose
+            # owner is younger than the liveness window, REFUSES the whole pair
+            # (nothing written; the still-open gate keeps its existing owner +
+            # notice). Past the window on a new epoch the full pair fires as
+            # today; the same-key-same-epoch `NOTIFY: skipped` shape is untouched.
+            if st == "must-pause":
+                _lv = parse_liveness(flags)
+                if "--liveness" in flags and "--log" not in flags:
+                    refuse("--liveness needs --log — the must-pause re-fire dedupe reads the prior-record source (an unpersisted stdout pair has no record to dedupe against)")
+                if "--log" in flags and _lv is not None:
+                    _open_age = must_pause_open_owner_age(flags["--log"], runkey, kv["key"])
+                    if _open_age is not None and _open_age < _lv * 60:
+                        refuse("OWNERSHIP:must-pause key=%s already has an OPEN owner %d s old (no later gate-disposition) inside the %d-min liveness window — the re-fire is REFUSED as a whole pair; the open gate keeps its existing owner and notice (D5, PR-MED-005); narrate in chat only"
+                               % (kv["key"], _open_age, _lv))
             if mode == "immediate":
                 summary = kv.get("detail") or kv.get("reason") or ("%s %s" % (st, kv["key"]))
-                state = "sent" if fire_notice(runkey, summary) else "failed"
+                if "rec" in kv:
+                    summary = "%s [rec=%s]" % (summary, kv["rec"])  # D6: the recommendation rides the body
+                state = "sent" if fire_notice(runkey, summary, cls, kv.get("reason")) else "failed"
             else:
                 state = "queued"
             # PR-MED-002 (round 11): under --event-ts the pair's OWNERSHIP member
@@ -1428,6 +2088,8 @@ def cmd_emit(flags, etype, kvs, sink):
 
     # ---- NOTIFY standalone ----
     if etype.startswith("NOTIFY:"):
+        if "--read-log" in flags:
+            refuse("--read-log is accepted only on the keyed emit shapes (ROLE:start / cap transitions), not %s — it would be silently ignored" % etype)
         state = etype[len("NOTIFY:"):]
         if state not in ENUMS["NOTIFY_STATES"]:
             refuse("unknown NOTIFY state %r" % state,
@@ -1549,7 +2211,9 @@ def cmd_emit(flags, etype, kvs, sink):
                     refuse("an immediate retry was already attempted for key=%s in epoch %s — <=1 attempt per (run,key,epoch); a new activation epoch permits exactly one more"
                            % (kv["key"], kv["epoch"]))
                 summary = kv.get("detail") or kv.get("reason") or ("retry %s" % kv["key"])
-                state = "retried" if fire_notice(runkey, summary) else "failed"
+                # v33.0 D5: the retry fires at ITS class's tier (a class-less
+                # legacy record fails toward the louder critical tier).
+                state = "retried" if fire_notice(runkey, summary, cls, kv.get("reason")) else "failed"
         parts = [state, fmt_kv("ts", ts)]
         if logged:
             parts.append(fmt_kv("logged_ts", logged))
@@ -1569,6 +2233,12 @@ def cmd_emit(flags, etype, kvs, sink):
     if spec is None:
         refuse("unknown emit TYPE %r (invented line-start types are the F-03 class)" % etype,
                "one of: %s, NOTIFY:<state>, OWNERSHIP:<subtype>" % ", ".join(sorted(EMIT_SPECS)))
+
+    kv.setdefault("role", role) if "role" in spec["required"] else None
+    # R15 class fix: THE record check FIRST (spec required floor + enums + the
+    # ROLE:start field rules) — the same owner the readers apply in reason mode;
+    # the type-specific ARGV rules and the prior-log sequencing follow.
+    validate_record(etype, kv, role=role)
 
     if etype == "CONSUME":
         if kv.get("source") == "idle-reentry":
@@ -1593,47 +2263,36 @@ def cmd_emit(flags, etype, kvs, sink):
         if "detail" in kv and len(kv["detail"]) > 160:
             refuse("MONITOR detail= is a quoted summary <=160 chars, never pasted log content (STICKY section 3)")
     if etype == "ROLE:start":
-        if "profile_dir" in kv:
-            refuse("profile_dir lives in Loop config:, never as a start key (STICKY:51; observed F-07 adjunct)")
-        if "profile" in kv and kv.get("backend") != "claude-p":
-            refuse("profile= is admitted only on backend=claude-p (profile-on-non-claude-p)")
+        # profile_dir / profile-on-claude-p-only / the pass-key form + role=peer
+        # rule are validate_record's (R15) — applied below with the spec floor.
+        # v33.0 D3: a keyed peer start is SEQUENCED against the actual prior log
+        # (--log, or the READ-ONLY --read-log whose sink stays stdout).
+        _pk = check_pass_key_forms(kv, "ROLE:start")
+        if _pk is not None:
+            _src = flags.get("--log") or flags.get("--read-log")
+            if _src is None:
+                refuse("a keyed ROLE:start (pass=/peer_round=/cap=) REQUIRES a readable prior-record source — pass --log <probe-log> (composer emission) or --read-log <probe-log> (read-only; the wrapper's retained-descriptor write stays the sink) (D3, PR-MED-003)")
+            pass_start_check(_src, runkey, _pk[0], _pk[1], _pk[2])
+        elif "--read-log" in flags:
+            refuse("--read-log is meaningful only on a keyed ROLE:start (pass=/peer_round=/cap= present) — on any other emission it would be silently ignored")
+    elif "--read-log" in flags:
+        refuse("--read-log is accepted only on the keyed emit shapes (a keyed ROLE:start, a keyed cap transition), not %s" % etype)
+    if etype == "SPAWN":
+        # v33.0 D3: the same three keys ride `SPAWN … child=peer` ADDITIVELY
+        # (diagnostic) — form + all-or-none only; the sequencing bind lives on
+        # the ROLE: start (one validation owner).
+        if check_pass_key_forms(kv, "SPAWN") is not None and kv.get("child") != "peer":
+            refuse("pass=/peer_round=/cap= on SPAWN ride a child=peer spawn only (D3)")
     if etype == "WATCH:armed":
         if kv.get("layer2") == "none" and "reason" not in kv:
             refuse("layer2=none requires reason= naming the real arm failure / resolved no-monitor case (none-without-reason)")
         if kv.get("layer2") == "none" and "delivery" in kv:
             refuse("a layer2=none armed line never carries delivery= — nothing to consume (the oracle's delivery-on-none class; v32.2)")
 
-    kv.setdefault("role", role) if "role" in spec["required"] else None
-    for k in spec["required"]:
-        if k not in kv:
-            refuse("%s requires %s=" % (etype, k),
-                   "required keys: ts run " + " ".join(spec["required"]))
-        if kv[k] == "" or not kv[k].strip():
-            refuse("%s %s= is present-but-blank (empty-%s floor)" % (etype, k, k))
-    for k, enum_name in spec["enums"].items():
-        if k in kv and kv[k] not in ENUMS[enum_name]:
-            refuse("%s %s= must be one of %s (got %r)"
-                   % (etype, k, ", ".join(sorted(ENUMS[enum_name])), kv[k]))
-
-    parts = []
-    if spec["verb"]:
-        parts.append(spec["verb"])
-    parts.append(fmt_kv("ts", ts))
-    if logged:
-        parts.append(fmt_kv("logged_ts", logged))
-    parts.append(fmt_kv("run", runkey))
-    ordered = [k for k in spec["required"] if k in kv]
-    listed = set(ordered)
-    for k in ordered:
-        parts.append(fmt_kv(k, kv[k]))
-    for k, _ in kvs:
-        if k in kv and k not in listed and k not in RESERVED_KEYS:
-            parts.append(fmt_kv(k, kv[k]))
-            listed.add(k)
-    # R29: thread the INTENT — the prefix's bare tokens + each fmt_kv'd part is the
-    # ordered token structure the emitter built; the chokepoint compares parsed==this.
-    write_lines(sink, [spec["prefix"] + " " + " ".join(parts)],
-                token_lists=[spec["prefix"].split() + parts])
+    # the writer's OWN serializer; R29: the INTENT token list rides beside the
+    # line — the chokepoint compares parsed==this.
+    _line, _tokens = assemble_simple_record(spec, ts, logged, runkey, kv, kvs)
+    write_lines(sink, [_line], token_lists=[_tokens])
 
 
 def parse_kv(text):
@@ -1654,11 +2313,18 @@ ROOT_NAME_RE = re.compile(r"\A[a-z0-9-]+\Z")  # \A..\Z (R28)
 LEG_RE = re.compile(r"\A[A-Za-z0-9._-]+\Z")  # rides a state-file name — filename-safe; \A..\Z (R28)
 
 
-def status_digest(root):
+def status_digest(root, allow=()):
     """The PINNED digest convention (DR-1 item 3, F-04's fix): sha256 hex over
     the root's `git status --short` output with the trailing newline stripped.
     Returns (digest, None) or (None, error-string) — NEVER an empty-string
-    digest on failure."""
+    digest on failure.
+
+    v33.0 D4 `allow` (the --allow-path list for THIS root, repo-relative):
+    status lines whose path is EXACTLY one of the allowed paths are dropped
+    BEFORE hashing — on both the pre and post capture, so a permitted write
+    (a peer's authoritative plan file / findings sidecar) is invisible to the
+    verdict while any other change in the root stays visible. Exact-path only:
+    a rename line (`R  a -> b`) or a quoted path never matches an allow entry."""
     import hashlib
     try:
         r = subprocess.run(["git", "-C", root, "status", "--short"],
@@ -1667,7 +2333,135 @@ def status_digest(root):
         return None, "git status failed under %s: %s" % (root, e)
     if r.returncode != 0:
         return None, "git status failed under %s: %s" % (root, r.stderr.strip()[:200])
-    return hashlib.sha256(r.stdout.rstrip("\n").encode("utf-8")).hexdigest(), None
+    out = r.stdout.rstrip("\n")
+    if allow:
+        allowed = set(allow)
+        kept = [l for l in out.split("\n") if not (len(l) > 3 and l[3:] in allowed)]
+        out = "\n".join(kept)
+    return hashlib.sha256(out.encode("utf-8")).hexdigest(), None
+
+
+# R13 PR-MED-001: a leading `.` is LEGAL (the canonical `.cursor/plans/plan-*.md`
+# + `findings-*.md` allow-list); traversal is refused by the SEGMENT rule in
+# allow_path_ok, never by the charset. Charset still excludes whitespace,
+# quotes, and every pre-state delimiter (`|` `,` `;`).
+ALLOW_PATH_RE = re.compile(r"\A[A-Za-z0-9._][A-Za-z0-9._/@+-]*\Z")
+
+
+def allow_path_ok(rel):
+    """v33.0 D4 — the ONE admission rule for an allow-path (CLI `--allow-path`
+    and the 5-field pre-state share it — R13 PR-MED-001): repo-relative, the
+    charset above, never absolute, and every `/`-split segment nonempty and
+    not `.`/`..` (so `./x`, `a//b`, `a/./b`, `../x`, and a trailing `/` all
+    refuse while `.cursor/plans/plan.md` and `apps/x/.cursor/plans/plan.md`
+    are exact, canonical spellings)."""
+    if not ALLOW_PATH_RE.match(rel) or os.path.isabs(rel):
+        return False
+    return all(seg not in ("", ".", "..") for seg in rel.split("/"))
+
+
+def parse_allow_paths(entries, root_names):
+    """v33.0 D4: `<root-name>:<repo-relative path>` entries → {root: [paths]}.
+    Fail-closed: the root must be a manifest root, the path must be relative
+    (never absolute, never a `..` segment), and its charset excludes every
+    pre-state delimiter (`|` `,` `;`) plus whitespace/quotes (Constraint 13)."""
+    by_root = {}
+    for ent in entries:
+        if ":" not in ent:
+            refuse("--allow-path %r is not <root-name>:<repo-relative path>" % ent[:80])
+        rname, rel = ent.split(":", 1)
+        if rname not in root_names:
+            refuse("--allow-path names root %r which is not in the --root manifest (%s)" % (rname[:40], ", ".join(root_names)))
+        if not allow_path_ok(rel):
+            refuse("--allow-path path %r must be an exact repo-relative path — no empty/`.`/`..` segment, no absolute prefix, no whitespace, quote, or delimiter (| , ;)" % rel[:80])
+        lst = by_root.setdefault(rname, [])
+        if rel not in lst:
+            lst.append(rel)
+    return by_root
+
+
+def parse_liveness(flags):
+    """v33.0 D4/D5: `--liveness <min>|off` → positive int minutes, or None for
+    OFF (no freshness basis: attribution / the re-fire dedupe are disabled).
+    Absent → the helper default 10 (the wizard's liveness default)."""
+    raw = flags.get("--liveness")
+    if raw is None:
+        return 10
+    if raw == "off":
+        return None
+    _n = parse_count(raw)
+    if _n is None or _n < 1:
+        refuse("--liveness must be a positive integer (minutes) or `off` (got %r)" % raw[:20])
+    return _n
+
+
+def attribute_base_dirt(base_path, own_iso, liveness_min, changed_paths):
+    """v33.0 D4 (advisory attribution, KNOWN-WEAK — Accepted Assumptions):
+    scan `<base>/.cursor/loops/*-active` for a marker of a DIFFERENT run that
+    (a) has no `<iso>-active.complete-*` sibling, (b) claims (`checkout=`,
+    realpath'd) the realpath of EVERY changed root, and (c) has a newest
+    GENUINE probe log — `.cursor/loops/<iso>/stage-*-probe.log` exactly,
+    `*harness-probe*` transcripts excluded — whose mtime is within
+    2 x liveness_min of now. Returns (iso, age_min) for the FRESHEST such
+    marker, else None. Liveness OFF (None) ⇒ None (no freshness basis).
+    Never raises on unreadable markers — an unreadable/foreign-shaped marker
+    simply does not attribute (attribution is advisory; the pause is the
+    safe default)."""
+    import glob as _glob
+    import time as _time
+    if liveness_min is None or not changed_paths:
+        return None
+    try:
+        changed_real = set(os.path.realpath(p) for p in changed_paths)
+    except OSError:
+        return None
+    loops = os.path.join(base_path, ".cursor", "loops")
+    window_s = 2 * liveness_min * 60
+    now = _time.time()
+    best = None
+    for marker in sorted(_glob.glob(os.path.join(loops, "*-active"))):
+        iso = os.path.basename(marker)[:-len("-active")]
+        if not iso or iso == own_iso or not ISO_ID_RE.match(iso):
+            continue
+        if _glob.glob(marker + ".complete-*"):
+            continue
+        try:
+            with open(marker, encoding="utf-8") as f:
+                kv, _raw = _rc_parse_kv_lines(f.read().splitlines())
+        except (OSError, UnicodeDecodeError):
+            # R17 PR-MED-001: an unreadable OR undecodable foreign marker is
+            # unusable ADVISORY evidence — skip the candidate; the escape
+            # verdict stays dirty-unattributed and is still written.
+            continue
+        if kv.get("iso") != iso:
+            continue  # a marker whose body disagrees with its name is not evidence
+        chk = kv.get("checkout")
+        if not chk or not os.path.isabs(chk):
+            continue
+        try:
+            chk_real = os.path.realpath(chk)
+        except OSError:
+            continue
+        if changed_real != {chk_real}:
+            continue  # every changed root must BE the claimed checkout
+        newest = None
+        for p in _glob.glob(os.path.join(loops, iso, "stage-*-probe.log")):
+            if "harness-probe" in os.path.basename(p):
+                continue
+            try:
+                m = os.stat(p).st_mtime
+            except OSError:
+                continue
+            newest = m if newest is None or m > newest else newest
+        if newest is None:
+            continue
+        age_s = now - newest
+        if age_s < 0 or age_s > window_s:
+            continue
+        age_min = int(age_s // 60)
+        if best is None or age_min < best[1]:
+            best = (iso, age_min)
+    return best
 
 
 def parse_root_args(roots):
@@ -1721,16 +2515,37 @@ def cmd_escape_check(flags, roots, sink):
     if not os.path.isdir(log_root):
         envfail("--log-root %s is not a directory" % log_root)
     pairs = parse_root_args(roots)
+    root_names = [n for n, _p in pairs]
     state_path = os.path.join(log_root, "%s-escape-%s.pre" % (flags["--run"], leg))
+    # v33.0 D4: the edit-surface declaration, the allow-path list, the run's
+    # own iso (attribution needs a DIFFERENT run's marker) and the liveness
+    # window — validated on BOTH captures (a bad value never reaches the
+    # pre-state file or a record).
+    edit_surface = flags.get("--edit-surface")
+    if edit_surface is not None and edit_surface not in root_names:
+        refuse("--edit-surface %r must name one of the --root manifest roots (%s)"
+               % (edit_surface[:40], ", ".join(root_names)))
+    allow_by_root = parse_allow_paths(flags.get("--allow-path", []), root_names)
+    own_iso = flags.get("--iso")
+    if own_iso is not None and not ISO_ID_RE.match(own_iso):
+        refuse("--iso %r is not a filename-safe iso-id" % own_iso[:60])
+    liveness_min = parse_liveness(flags)
 
     if capture == "pre":
         lines = []
         for name, path in pairs:
-            digest, err = status_digest(path)
+            digest, err = status_digest(path, allow_by_root.get(name, ()))
             if err:
                 refuse("pre-capture FAILED for root %s — refusing (exit 2, no spawn, nothing written): %s"
                        % (name, err))
-            lines.append("%s|%s|%s" % (name, path, digest))
+            # v33.0 D4: FIVE fields — name|path|digest|edit-surface-flag|allow-list
+            # (allow-list `,`-joined, empty when none). A v32.5 helper refuses
+            # this width (a downgrade is legal only at a completed-leg
+            # boundary); a v33.0 helper reading a legacy 3-field file falls
+            # back to the all-roots verdict (the post branch below).
+            lines.append("%s|%s|%s|%s|%s" % (name, path, digest,
+                                             "1" if name == edit_surface else "0",
+                                             ",".join(allow_by_root.get(name, ()))))
         # PR-HIGH-001 (round 8): the pre-state is created EXACTLY ONCE and is
         # IMMUTABLE until --capture post consumes it. A second --capture pre for
         # the same (run,leg) is refused so it can never silently re-baseline and
@@ -1768,14 +2583,39 @@ def cmd_escape_check(flags, roots, sink):
     # Constraint-13 sibling Round-7 PR-HIGH-004 required auditing on this path).
     pre = {}
     order = []
-    for raw in open(state_path, encoding="utf-8"):
+    pre_edit = {}    # v33.0: name -> "1"/"0" (5-field files only)
+    pre_allow = {}   # v33.0: name -> [paths]  (5-field files only)
+    widths = set()
+    try:
+        _pre_lines = open(state_path, encoding="utf-8").read().splitlines()
+    except UnicodeDecodeError as e:
+        # R17 PR-MED-001: a pre-state the helper cannot decode is a CAPTURE
+        # FAILURE, never a verdict — the ONE admitted refusal record (exit 3),
+        # naming the first declared root; the diagnostic stays on stderr and
+        # the unusable pre-state is consumed like every other post outcome.
+        sys.stderr.write("ENVFAIL: pre-state file %s is not valid UTF-8 (%s) — no baseline to prove against\n" % (state_path, e))
+        rec = ("OWNERSHIP: escape-check ts=%s run=%s role=%s leg=%s refused=capture-failure root=%s detail=\"pre-state file undecodable; diagnostic on stderr\""
+               % (now_iso(), flags["--run"], flags["--role"], leg, pairs[0][0]))
+        write_lines(sink, [rec])
+        try:
+            os.remove(state_path)
+        except OSError:
+            pass
+        sys.exit(3)
+    for raw in _pre_lines:
         raw = raw.rstrip("\n")
         if not raw:
             continue
         parts = raw.split("|")
-        if len(parts) != 3:
-            refuse("malformed pre-state line (expected name|path|digest): %r" % raw[:80])
-        name, path, digest = parts
+        # v33.0 D4: FIVE fields forward; the legacy THREE-field shape (a leg
+        # whose pre ran on a v32.5 helper) is accepted with the all-roots
+        # verdict. Any other width, or a mixed-width file, is malformed.
+        if len(parts) not in (3, 5):
+            refuse("malformed pre-state line (expected name|path|digest[|edit-surface-flag|allow-list]): %r" % raw[:80])
+        widths.add(len(parts))
+        if len(widths) > 1:
+            refuse("pre-state file mixes 3-field and 5-field lines — one baseline, one width")
+        name, path, digest = parts[0], parts[1], parts[2]
         if not ROOT_NAME_RE.match(name):
             refuse("pre-state root name %r is not lowercase [a-z0-9-]+" % name[:40])
         if name in pre:
@@ -1785,6 +2625,14 @@ def cmd_escape_check(flags, roots, sink):
         check_value_safety("root", path, is_path=True)
         if not DIGEST_RE.match(digest):
             refuse("pre-state digest for root %s is not an 8-64 char lowercase hex digest" % name)
+        if len(parts) == 5:
+            if parts[3] not in ("0", "1"):
+                refuse("pre-state edit-surface flag for root %s must be 0|1 (got %r)" % (name, parts[3][:10]))
+            pre_edit[name] = parts[3]
+            pre_allow[name] = [p for p in parts[4].split(",") if p]
+            for p in pre_allow[name]:
+                if not allow_path_ok(p):  # the same single owner as the CLI parse (R13 PR-MED-001)
+                    refuse("pre-state allow-list entry %r for root %s is not an exact repo-relative path" % (p[:60], name))
         pre[name] = (path, digest)
         order.append(name)
     if not order:
@@ -1792,10 +2640,39 @@ def cmd_escape_check(flags, roots, sink):
     if [n for n, _ in pairs] != order or any(pre[n][0] != p for n, p in pairs):
         refuse("post root set/order differs from the pre capture (%s) — the root set never shrinks or reorders mid-run"
                % ", ".join(order))
+    legacy = (widths == {3})
     ts = now_iso()
+    if legacy:
+        # Mixed-version leg (D4): the pre digests were UNFILTERED and carried no
+        # edit-surface declaration, so the post must compare like-for-like —
+        # all-roots verdict, no edit_surface= key, no allow filtering, and the
+        # post-side flags are ignored for the verdict (they cannot be applied
+        # to a baseline that never saw them).
+        edit_surface = None
+        allow_by_root = {}
+    else:
+        # v33.0 D4 (PR-MED-002): a pre/post edit-surface or allow-path
+        # MISMATCH is not a grammar refusal — the activation already ran, so
+        # the evidence must land: the ONE admitted refusal record
+        # (`refused=capture-failure`, exit 3) naming the first mismatching
+        # root, never a recordless exit 2.
+        for name, _p in pairs:
+            want_edit = "1" if name == edit_surface else "0"
+            if pre_edit.get(name) != want_edit or pre_allow.get(name, []) != list(allow_by_root.get(name, [])):
+                sys.stderr.write("ENVFAIL: edit-surface/allow-path declaration for root %s differs between pre and post (pre edit=%s allow=%s; post edit=%s allow=%s)\n"
+                                 % (name, pre_edit.get(name), ",".join(pre_allow.get(name, [])),
+                                    want_edit, ",".join(allow_by_root.get(name, []))))
+                rec = ("OWNERSHIP: escape-check ts=%s run=%s role=%s leg=%s refused=capture-failure root=%s detail=\"edit-surface/allow-path mismatch between pre and post\""
+                       % (ts, flags["--run"], flags["--role"], leg, name))
+                write_lines(sink, [rec])
+                try:
+                    os.remove(state_path)  # the pair is consumed by its refusal record
+                except OSError:
+                    pass
+                sys.exit(3)
     manifest = []
     for name, path in pairs:
-        after, err = status_digest(path)
+        after, err = status_digest(path, allow_by_root.get(name, ()))
         if err:
             # PR-HIGH-004 (round 7): NEVER copy subprocess/filesystem
             # diagnostics into a journal value — a multiline git stderr would
@@ -1808,19 +2685,318 @@ def cmd_escape_check(flags, roots, sink):
             rec = ("OWNERSHIP: escape-check ts=%s run=%s role=%s leg=%s refused=capture-failure root=%s detail=\"post-capture git status failed; diagnostic on stderr\""
                    % (ts, flags["--run"], flags["--role"], leg, name))
             write_lines(sink, [rec])
+            try:
+                os.remove(state_path)  # v33.0 (R11 LOW-001): the refusal record IS the pair's record — consumed like every other post outcome
+            except OSError:
+                pass
             sys.exit(3)
         manifest.append((name, path, pre[name][1], after))
-    all_eq = all(b == a for _n, _p, b, a in manifest)
+    # v33.0 D4: the verdict is computed over the NON-edit-surface roots; the
+    # edit-surface root is REPORTED (edit_surface=<name>:<changed|unchanged>),
+    # never judged — an executor's own worktree product is not an escape.
+    # `before=`/`after=` stay the base root's pair (manifest[0]); the oracle's
+    # agreement rule (R27-HIGH-01, amended) excludes the edit-surface root.
+    judged = [m for m in manifest if m[0] != edit_surface]
+    all_eq = all(b == a for _n, _p, b, a in judged)
     result = "clean" if all_eq else "dirty"
     roots_val = "; ".join("%s=%s|%s|%s" % m for m in manifest)
     base = manifest[0]
     rec = ("OWNERSHIP: escape-check ts=%s run=%s role=%s result=%s before=%s after=%s roots=\"%s\" leg=%s"
            % (ts, flags["--run"], flags["--role"], result, base[2], base[3], roots_val, leg))
+    if edit_surface is not None:
+        es = [m for m in manifest if m[0] == edit_surface][0]
+        rec += " edit_surface=%s:%s" % (edit_surface, "changed" if es[2] != es[3] else "unchanged")
+    if result == "dirty" and own_iso is not None:
+        # v33.0 D4 (advisory attribution): only when EVERY changed judged root
+        # is the checkout a LIVE foreign marker claims (base/external — never
+        # the worktree), within 2x the liveness window; liveness OFF or no
+        # --iso ⇒ unattributed (a `dirty` without attribution pauses in every
+        # mode — the composer rule, STICKY §4.7 / SKILL Filesystem-escape).
+        changed = [m[1] for m in judged if m[2] != m[3]]
+        att = attribute_base_dirt(base[1], own_iso, liveness_min, changed)
+        if att is not None:
+            check_value_safety("attributed", att[0])
+            rec += " attributed=%s attributed_age=%d" % (att[0], att[1])
     write_lines(sink, [rec])
     try:
         os.remove(state_path)  # consumed — exactly one record per pre/post pair
     except OSError:
         pass
+
+
+PASS_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9._-]*\.p[1-9]\d*\Z")  # <phase-or-slice>.p<N> (D3)
+PASS_KEYS = ("pass", "peer_round", "cap")
+CAP_TRANSITION_GATE_KEYS = {"cap-raise", "peer-cap", "peer-cap-accept"}
+INCONCLUSIVE_RESULT_RE = re.compile(r"(?i)(?<![A-Za-z])(inconclusive|incomplete)(?![A-Za-z])")
+
+
+def check_pass_key_forms(kv, shape):
+    """v33.0 D3 (Critical Constraint 16): the three per-pass keys are
+    ALL-OR-NONE on `shape` — absence is the legal standalone/legacy shape,
+    partial presence is the grammar error. Returns (pass, peer_round, cap)
+    as (str, int, int) when all three ride, else None."""
+    present = [k for k in PASS_KEYS if k in kv]
+    if not present:
+        return None
+    if len(present) != len(PASS_KEYS):
+        refuse("%s carries %s but not %s — pass= peer_round= cap= ride together or not at all (partial-pass-keys; absence is the standalone shape, Constraint 16)"
+               % (shape, "/".join(present), "/".join(k for k in PASS_KEYS if k not in kv)))
+    if not PASS_ID_RE.match(kv["pass"]):
+        refuse("pass=%r is not an invocation-unique pass id <phase-or-slice>.p<N> (bad-pass; D3)" % kv["pass"][:60])
+    _n = {}
+    for k in ("peer_round", "cap"):
+        _n[k] = parse_count(kv[k])  # R16 PR-MED-002: total admission — never a ValueError
+        if _n[k] is None or _n[k] < 1:
+            refuse("%s= must be a positive integer (bad-%s; D3)" % (k, k.replace("_", "-")))
+    if _n["peer_round"] > _n["cap"]:
+        refuse("peer_round=%s exceeds cap=%s — a pass never runs past its cap (peer-round-over-cap; D3)"
+               % (kv["peer_round"], kv["cap"]))
+    return kv["pass"], _n["peer_round"], _n["cap"]
+
+
+def check_cap_transition_bundle(kv, shape):
+    """v33.0 D3 (R2 PR-MED-003): a cap-transition record carries the TWO-key
+    bundle pass=+cap= both (orchestrated) or neither (standalone/legacy),
+    never peer_round=; residue= (D2) rides ONLY a cap-accept=close record
+    and only with a RESIDUE_VALUES member. Returns (pass, cap) or None."""
+    if "peer_round" in kv:
+        refuse("%s never carries peer_round= — a cap transition is pass-scoped, not round-scoped (D3)" % shape)
+    has_pass, has_cap = "pass" in kv, "cap" in kv
+    if has_pass != has_cap:
+        refuse("%s carries %s without %s — a cap transition's pass=/cap= bundle rides together or not at all (partial-pass-keys; D3 R2 PR-MED-003)"
+               % (shape, "pass=" if has_pass else "cap=", "cap=" if has_pass else "pass="))
+    if "residue" in kv:
+        if kv.get("cap-accept") != "close":
+            refuse("residue= rides ONLY a cap-accept=close record (the defer-residue verdict — D2)")
+        if kv["residue"] not in RESIDUE_VALUES:
+            refuse("residue= must be one of %s (bad-residue; D2)" % ", ".join(sorted(RESIDUE_VALUES)))
+    if not has_pass:
+        return None
+    if not PASS_ID_RE.match(kv["pass"]):
+        refuse("pass=%r is not an invocation-unique pass id <phase-or-slice>.p<N> (bad-pass; D3)" % kv["pass"][:60])
+    _cap = parse_count(kv["cap"])  # R16 PR-MED-002: total admission
+    if _cap is None or _cap < 1:
+        refuse("cap= must be a positive integer (bad-cap; D3)")
+    return kv["pass"], _cap
+
+
+def _pass_records(lines, expected_run, pass_id):
+    """v33.0 D3 — the pass's records in append order: keyed same-pass peer
+    starts, every ROLE: end, and the same-pass KEYED cap transitions as
+    (index, kind, recorded cap or None) with kind in auto-raise
+    (`cap-raise=+1`), accept-close (`cap-accept=close`), operator-raise
+    (`gate-disposition key=<cap key> choice=raise`), operator-other (any other
+    choice on a cap key). Records of another run= are ignored."""
+    # R14 class fix (PR-MED-001): every state-bearing record is admitted ONLY
+    # when the shared emittable_record predicate passes — a start the writer
+    # could not have emitted (over-cap, non-numeric, non-peer, partial keys),
+    # a route-incoherent transition (mixed-route, both cap keys, a bad bundle),
+    # or a malformed end never seeds, advances, counts, or closes anything
+    # (the same skip the oracle's check_pass_sequencing applies via strictness).
+    starts, ends, transitions = [], [], []
+    for i, raw in enumerate(lines):
+        if raw.startswith("ROLE: "):
+            kv0, bare0 = parse_kv(raw[len("ROLE:"):].strip())
+            if kv0.get("run") != expected_run or not bare0:
+                continue
+            if bare0[0] == "start":
+                if kv0.get("pass") != pass_id or not all(k in kv0 for k in PASS_KEYS):
+                    continue
+                kv, _b, why = emittable_record(raw, "ROLE:start")
+                if why is None:
+                    starts.append((i, kv))
+            elif bare0[0] == "end":
+                kv, _b, why = emittable_record(raw, "ROLE:end")
+                if why is None:
+                    ends.append((i, kv))
+        elif raw.startswith("OWNERSHIP:"):
+            kv0, bare0 = parse_kv(raw[len("OWNERSHIP:"):])
+            if not bare0 or kv0.get("run") != expected_run or kv0.get("pass") != pass_id:
+                continue
+            if bare0[0] not in ("auto-disposition", "gate-disposition"):
+                continue
+            kv, _b, why = emittable_record(raw, "OWNERSHIP:" + bare0[0])
+            if why is not None:
+                continue
+            cap = parse_count(kv.get("cap", ""))  # R16: total — None on anything but an ASCII count
+            if bare0[0] == "auto-disposition" and kv.get("cap-raise") == "+1":
+                transitions.append((i, "auto-raise", cap))
+            elif bare0[0] == "auto-disposition" and kv.get("cap-accept") == "close":
+                transitions.append((i, "accept-close", cap))
+            elif bare0[0] == "gate-disposition" and kv.get("key") in CAP_TRANSITION_GATE_KEYS:
+                transitions.append((i, "operator-raise" if kv.get("choice") == "raise" else "operator-other", cap))
+    return starts, ends, transitions
+
+
+def transition_ok(kind, cap, budget):
+    """R13 PR-MED-002 — D2's record contract per transition kind against the
+    running budget: an automatic raise records exactly budget+1; an operator
+    raise records a LARGER cap; an accept-close (or any other operator cap
+    disposition) records the CURRENT budget. Returns (valid, new_budget,
+    expected-description)."""
+    if kind == "auto-raise":
+        return cap == budget + 1, budget + 1, "cap=%d (the budget %d + 1)" % (budget + 1, budget)
+    if kind == "operator-raise":
+        valid = cap is not None and cap > budget
+        return valid, (cap if valid else budget), "cap > %d (the current budget)" % budget
+    return cap == budget, budget, "cap=%d (the current budget)" % budget
+
+
+def pass_budget(starts, transitions):
+    """R13 PR-MED-002 — the pass's recorded budget: the seed start's cap= plus
+    every VALID ordered same-pass transition after it (transition_ok); an
+    INVALID transition (a recorded cap disagreeing with its kind's expected
+    result, or one before the seed) is NOT counted — the budget never moves on
+    a lie. Returns (budget, invalid) or (None, []) when the pass has no seed."""
+    if not starts:
+        return None, []
+    seed_i, seed = starts[0]
+    budget = int(seed["cap"])
+    invalid = []
+    for ti, kind, cap in transitions:
+        if ti < seed_i:
+            invalid.append((ti, kind, cap, "before the pass's seed start"))
+            continue
+        valid, nb, exp = transition_ok(kind, cap, budget)
+        if valid:
+            budget = nb
+        else:
+            invalid.append((ti, kind, cap, exp))
+    return budget, invalid
+
+
+def cap_transition_check(source_path, expected_run, pass_id, kind, cap):
+    """R13 PR-MED-002 — WRITER-side validation of a KEYED cap transition
+    (the pass=+cap= bundle) against the pass's recorded budget in the prior
+    log: the pass must have a seed start, and the recorded cap= must be its
+    kind's expected result (transition_ok). Refuses otherwise, naming the
+    expected value. Unkeyed standalone transitions never reach here."""
+    try:
+        lines = open(source_path, encoding="utf-8").read().splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        # R17 PR-MED-001: a REQUIRED prior-record source that cannot be read
+        # OR decoded is the same controlled failure (exit 3, nothing written)
+        # — a budget is never bound against a corrupt log.
+        envfail("cannot read the prior-record source %s: %s" % (source_path, e))
+    starts, _ends, transitions = _pass_records(lines, expected_run, pass_id)
+    budget, _invalid = pass_budget(starts, transitions)
+    if budget is None:
+        refuse("a keyed cap transition for pass=%s precedes any keyed ROLE:start for that pass — a pass's budget is seeded by its first start (D3); emit the start first or drop the bundle for a standalone transition" % pass_id)
+    valid, _nb, exp = transition_ok(kind, cap, budget)
+    if not valid:
+        refuse("pass=%s %s records cap=%d but the pass's recorded budget is %d — expected %s (D2 record contract; R13 PR-MED-002)"
+               % (pass_id, kind, cap, budget, exp))
+
+
+def pass_start_check(source_path, expected_run, pass_id, peer_round, cap):
+    """v33.0 D3 — the per-pass cap counter, MECHANIZED on the enforced record
+    (the single validation owner — Critical Constraint 4; never a second
+    parser in the wrapper or the history checker). Reads the prior records
+    of this run from `source_path` (the --log sink or the read-only
+    --read-log) and validates a keyed `ROLE: start role=peer`:
+      * no prior keyed start for this pass ⇒ the GRANDFATHER seed: any
+        peer_round <= cap is accepted (a v33.0 composer resuming a v32.5-
+        started run restarts the counter; never SPAWN_REFUSED);
+      * else peer_round == previous same-pass start's peer_round + 1, with ONE
+        admitted exception (R4 PR-MED-001, the inconclusive retry): the SAME
+        peer_round is accepted when the previous activation is CLOSED by a
+        `ROLE: end` whose result= names an inconclusive/incomplete outcome
+        (word match: `inconclusive` | `incomplete`) — a same-round start over
+        an OPEN activation, or after a completed round, refuses;
+      * cap= is BOUND to the pass's recorded budget (R2 PR-MED-002): the seed
+        cap (its first keyed start) + every ordered same-pass transition —
+        an automatic `cap-raise=+1` auto-disposition (+1) or an operator
+        `gate-disposition key=cap-raise|peer-cap choice=raise pass=<p>
+        cap=<N+k>` (+k = its cap= minus the previous expected cap; counted
+        ONCE — R5 PR-MED-001) — larger or smaller refuses; a transition
+        recorded under ANOTHER pass= never counts.
+    Records of another run= are ignored here (a probe log is per-run; the
+    flush/retry paths own their fail-closed run checks)."""
+    try:
+        lines = open(source_path, encoding="utf-8").read().splitlines()
+    except (OSError, UnicodeDecodeError) as e:
+        # R17 PR-MED-001: an undecodable source is the unreadable-source
+        # controlled failure — never a grandfather seed over a corrupt log.
+        envfail("cannot read the prior-record source %s: %s" % (source_path, e))
+    starts, ends, transitions = _pass_records(lines, expected_run, pass_id)
+    if not starts:
+        return  # grandfather seed — any peer_round <= cap (form-checked by the caller)
+    prev_i, prev = starts[-1]
+    prev_round = int(prev["peer_round"])
+    if peer_round != prev_round + 1:
+        if peer_round == prev_round:
+            # the inconclusive-retry exception: the previous activation must
+            # be CLOSED by an inconclusive/incomplete end.
+            closing = None
+            for ei, ekv in ends:
+                if ei <= prev_i:
+                    continue
+                if prev.get("leg") and ekv.get("leg") not in (None, prev.get("leg")):
+                    continue
+                if ekv.get("role") not in (None, prev.get("role", "peer")):
+                    continue
+                closing = ekv
+                break
+            if closing is None:
+                refuse("pass=%s peer_round=%d repeats the previous start's round over an OPEN activation (no closing ROLE: end) — the same round is legal only as the inconclusive retry (D3, R4 PR-MED-001)"
+                       % (pass_id, peer_round))
+            if not INCONCLUSIVE_RESULT_RE.search(closing.get("result", "")):
+                refuse("pass=%s peer_round=%d repeats a COMPLETED round (the closing ROLE: end result=%r names no inconclusive/incomplete outcome) — rounds are consecutive per pass (D3)"
+                       % (pass_id, peer_round, closing.get("result", "")[:60]))
+        else:
+            refuse("pass=%s peer_round=%d is not consecutive — the previous same-pass start was peer_round=%d (expected %d; D3)"
+                   % (pass_id, peer_round, prev_round, prev_round + 1))
+    # R13 PR-MED-002: the budget counts only VALID transitions (transition_ok)
+    # — a forged/inconsistent transition never moves it, so a start at the
+    # lie's value refuses and a start at the true budget is accepted.
+    expected_cap, invalid = pass_budget(starts, transitions)
+    if cap != expected_cap:
+        refuse("pass=%s cap=%d does not equal the pass's recorded budget %d (seed cap=%s + %d valid same-pass transition(s); %d inconsistent transition(s) ignored) — a start binds to its OWN pass's records; a raise recorded under another pass never counts (D3, R2 PR-MED-002)"
+               % (pass_id, cap, expected_cap, starts[0][1]["cap"], len(transitions) - len(invalid), len(invalid)))
+
+
+def must_pause_open_owner_age(log_path, expected_run, key):
+    """v33.0 D5 (PR-MED-005): the age in seconds of the NEWEST
+    `OWNERSHIP: must-pause` owner for `key` in this run that has NO later
+    `OWNERSHIP: gate-disposition` on the same key — i.e. the gate is still
+    OPEN — or None when no open owner exists (never owned, or closed by a
+    disposition). The owner's own ts= (K7 write time) is the age source; an
+    unparseable ts= is treated as no-owner (fail toward firing — a notice
+    is never suppressed on unreadable evidence)."""
+    try:
+        lines = open(log_path, encoding="utf-8").read().splitlines()
+    except OSError as e:
+        envfail("cannot read --log %s: %s" % (log_path, e))
+    except UnicodeDecodeError as e:
+        # R17 PR-MED-001: suppression evidence that cannot be decoded is NO
+        # owner — the pair FIRES (the documented direction: a notice is never
+        # suppressed on unreadable evidence). Diagnostic on stderr only.
+        sys.stderr.write("WARN: --log %s is not valid UTF-8 (%s) — no usable must-pause owner evidence; the pair fires\n" % (log_path, e))
+        return None
+    # R14 class fix (PR-MED-002): an OWNER counts only when the shared
+    # emittable_record predicate passes — a forged/impossible-future/
+    # malformed must-pause record is never suppression evidence (fail toward
+    # FIRING). A gate-disposition on the key closes the gate whatever its
+    # shape (closing is the firing direction — the fail-closed side here).
+    owner_ts = None
+    for raw in lines:
+        if not raw.startswith("OWNERSHIP:"):
+            continue
+        kv, bare = parse_kv(raw[len("OWNERSHIP:"):])
+        if not bare or kv.get("run") != expected_run or kv.get("key") != key:
+            continue
+        if bare[0] == "must-pause":
+            okv, _b, why = emittable_record(raw, "OWNERSHIP:must-pause")
+            owner_ts = okv.get("ts") if why is None else None
+        elif bare[0] == "gate-disposition":
+            owner_ts = None  # the operator closed the gate — a later fire is a NEW gate
+    if owner_ts is None:
+        return None
+    t = parse_iso(owner_ts)
+    if t is None or future_instant(t):
+        return None  # unreadable or impossible clock ⇒ no owner ⇒ the pair fires
+    age = (datetime.datetime.now().astimezone() - t).total_seconds()
+    return int(age) if age >= 0 else 0
 
 
 def immediate_retry_state(log_path, expected_run, key, epoch):
@@ -1877,7 +3053,9 @@ def derive_pending(log_path, expected_run):
     NEWEST queued record has no LATER batch-flushed record for the same key
     (MED-001, round 5 — last-state-wins in append order; a re-fire in a new
     epoch legally re-queues a member flushed earlier). Returns
-    (pending, is_retry, retry_attempts_by_epoch). PR-MED-003 (round 7): retry
+    (pending, is_retry, retry_attempts_by_epoch, member_classes) — the fourth
+    element (v33.0 D5) maps each pending key to the class= on its newest
+    queued record. PR-MED-003 (round 7): retry
     state is MEMBER-LEVEL and unresolved-only — is_retry is true iff a CURRENTLY
     pending member experienced a failed flush while queued and has not been
     batch-flushed since. PR-MED-003 (round 8): the retry BUDGET is per-epoch
@@ -1889,6 +3067,7 @@ def derive_pending(log_path, expected_run):
     retries from over-blocking."""
     last_state = {}    # key -> ("queued"|"flushed", epoch)
     saw_failed = {}    # key -> bool: a failed flush occurred while this member was queued
+    member_cls = {}    # key -> the class= on its newest queued record (v33.0 D5 batch tier)
     order = []         # first-appearance order of keys
     retry_attempts_by_epoch = {}   # epoch -> retry ATTEMPTS on the current unresolved batch
     seen_initial = False           # the run's initial flush failure has been seen
@@ -1924,6 +3103,7 @@ def derive_pending(log_path, expected_run):
                 order.append(key)
             last_state[key] = ("queued", kv.get("epoch", ""))
             saw_failed[key] = False  # a fresh queue clears prior failure history
+            member_cls[key] = kv.get("class")
         elif state == "batch-flushed" and key:
             if key not in last_state:
                 order.append(key)
@@ -1942,7 +3122,10 @@ def derive_pending(log_path, expected_run):
                 retry_attempts_by_epoch[ep] = retry_attempts_by_epoch.get(ep, 0) + 1
     pending = [(k, last_state[k][1]) for k in order if last_state[k][0] == "queued"]
     is_retry = any(saw_failed.get(k) for k, _ in pending)
-    return pending, is_retry, retry_attempts_by_epoch
+    # v33.0 D5: the pending members' class= (from each member's newest queued
+    # record) — the flush synthesizes the batch notice's tier from it.
+    member_classes = {k: member_cls.get(k) for k, _ in pending}
+    return pending, is_retry, retry_attempts_by_epoch, member_classes
 
 
 def cmd_flush(flags, dry_run, sink):
@@ -1960,7 +3143,7 @@ def cmd_flush(flags, dry_run, sink):
     if not dry_run and flags["--role"] != "composer":
         refuse("flush is a composer-owned transition — it requires --role composer (a %s role can never flush durable notices); flush --dry-run stays read-open for RESUME derivation" % flags["--role"])
     log_path = flags["--log"]
-    pending, is_retry, retry_attempts_by_epoch = derive_pending(log_path, flags["--run"])
+    pending, is_retry, retry_attempts_by_epoch, member_classes = derive_pending(log_path, flags["--run"])
     if dry_run:
         sys.stdout.write("flush-dry-run: pending=%d\n" % len(pending))
         for key, epoch in pending:
@@ -1984,14 +3167,30 @@ def cmd_flush(flags, dry_run, sink):
     # spaces would otherwise be interpolated unquoted and split into two tokens
     # (a non-STRICT flush record). Record-derived member keys are additionally
     # value-safety-checked before they reach a new line/notice.
-    def flush_line(state, key):
-        return "NOTIFY: " + " ".join([state, fmt_kv("ts", ts), fmt_kv("run", flags["--run"]),
-                                      fmt_kv("key", key), fmt_kv("epoch", epoch),
-                                      fmt_kv("mode", "queued"), fmt_kv("batch", batch)])
+    def flush_line(state, key, detail=None):
+        parts = [state, fmt_kv("ts", ts), fmt_kv("run", flags["--run"]),
+                 fmt_kv("key", key), fmt_kv("epoch", epoch),
+                 fmt_kv("mode", "queued"), fmt_kv("batch", batch)]
+        if detail is not None:
+            parts.append(fmt_kv("detail", detail))
+        return "NOTIFY: " + " ".join(parts)
     for key, _qep in pending:
         check_value_safety("key", key)
     summary = "flushing %d queued notice(s): %s" % (len(pending), ", ".join(k for k, _ in pending))
-    if not fire_notice(flags["--run"], summary):
+    # v33.0 D5: the batch notice's TIER is the members' highest class (an
+    # operator-needed member — impossible today, since must-pause never queues,
+    # but the synthesis stays truthful — lifts the whole batch to critical).
+    _batch_cls = next((c for c in member_classes.values() if c in NOTICE_CRITICAL_CLASSES), "auto-disposition")
+    # v33.0 D5 (R4 PR-MED-004): LOOP_NOTIFY=action-only suppresses ONLY the
+    # batch DESKTOP notice — the queue still SETTLES truthfully: per-member
+    # batch-flushed records carry detail="policy-suppressed notify=action-only",
+    # a suppressed settlement is never a delivery or a successful retry (no
+    # `retried` record), and the members leave the pending set.
+    if notify_policy() == "action-only":
+        write_lines(sink, [flush_line("batch-flushed", key, "policy-suppressed notify=action-only")
+                           for key, _qep in pending])
+        return
+    if not fire_notice(flags["--run"], summary, _batch_cls):
         # a failed flush leaves members queued: ONE failed record on the batch key
         write_lines(sink, [flush_line("failed", batch)])
         return
@@ -3315,9 +4514,9 @@ def main(argv):
         return 0
     sub, etype, flags, roots, kvs, dry_run = parse_argv(argv)
     if sub is None:
-        refuse("no subcommand", "emit | escape-check | flush | idle-check | run-close | fold-delegation")
-    if sub not in ("emit", "escape-check", "flush", "idle-check", "run-close", "fold-delegation"):
-        refuse("unknown subcommand %r" % sub, "emit | escape-check | flush | idle-check | run-close | fold-delegation (exactly six)")
+        refuse("no subcommand", "emit | escape-check | flush | idle-check | run-close | fold-delegation | attest-check")
+    if sub not in ("emit", "escape-check", "flush", "idle-check", "run-close", "fold-delegation", "attest-check"):
+        refuse("unknown subcommand %r" % sub, "emit | escape-check | flush | idle-check | run-close | fold-delegation | attest-check (exactly seven)")
     for req in ("--run", "--role"):
         if req not in flags:
             refuse("%s is REQUIRED on every subcommand" % req,
@@ -3352,11 +4551,17 @@ def main(argv):
     # irrelevant flag/root/token REFUSES rather than silently disappearing (a
     # `--dry-run`-labelled invocation never reaches a mutating subcommand).
     SUB_GRAMMAR = {
+        # v33.0: --read-log (D3 — the keyed ROLE:start's read-only prior-record
+        # source; type-scoped inside cmd_emit) and --liveness (D5 — the
+        # must-pause re-fire dedupe window; type-scoped inside cmd_emit).
         "emit":         {"flags": {"--run", "--role", "--log", "--epoch", "--event-ts",
-                                   "--round", "--id", "--repo"},
+                                   "--round", "--id", "--repo", "--read-log", "--liveness"},
                          "roots": False, "kvs": True, "dry_run": False},
+        # v33.0 D4: --edit-surface / --allow-path / --iso / --liveness — the
+        # edit-surface-aware verdict + the liveness-gated base-dirt attribution.
         "escape-check": {"flags": {"--run", "--role", "--log", "--log-root",
-                                   "--capture", "--leg"},
+                                   "--capture", "--leg", "--edit-surface",
+                                   "--allow-path", "--iso", "--liveness"},
                          "roots": True, "kvs": False, "dry_run": False},
         "flush":        {"flags": {"--run", "--role", "--log", "--epoch"},
                          "roots": False, "kvs": False, "dry_run": True},
@@ -3369,6 +4574,10 @@ def main(argv):
         # durable evidence; the fold writes no probe-log record.
         "fold-delegation": {"flags": {"--run", "--role", "--base", "--iso", "--leg"},
                             "roots": False, "kvs": False, "dry_run": False},
+        # v33.0 D12: the read-only identity-bound attestation read — no --log
+        # (it writes nothing), --iso/--plan REQUIRED, --key optional.
+        "attest-check": {"flags": {"--run", "--role", "--policy-log", "--iso", "--plan", "--key"},
+                         "roots": False, "kvs": False, "dry_run": False},
     }
     g = SUB_GRAMMAR[sub]
     for f in flags:
@@ -3383,6 +4592,15 @@ def main(argv):
     if dry_run and not g["dry_run"]:
         refuse("--dry-run is only accepted by flush (its SOLE read-only surface) — it never previews a mutating subcommand (PR-MED-001)")
 
+    if "--read-log" in flags:
+        # v33.0 D3 (PR-MED-003): --read-log is a READ-ONLY prior-record source
+        # and NEVER the sink — the wrapper keeps its retained-descriptor write
+        # (>&8), so the ROLE: start still lands exactly once. Absolute, and
+        # never beside --log (one prior-record source per invocation).
+        if not os.path.isabs(flags["--read-log"]):
+            refuse("--read-log must be an absolute path")
+        if "--log" in flags:
+            refuse("--read-log and --log together are ambiguous — --log already IS the prior-record source (and the sink); pass exactly one")
     sink = open_sink(flags)
     if sub == "emit":
         cmd_emit(flags, etype, kvs, sink)
@@ -3394,6 +4612,8 @@ def main(argv):
         cmd_run_close(flags, sink)
     elif sub == "fold-delegation":
         cmd_fold_delegation(flags)
+    elif sub == "attest-check":
+        cmd_attest_check(flags)
     else:
         cmd_idle_check(flags, sink)
     return 0

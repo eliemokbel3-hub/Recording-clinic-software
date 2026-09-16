@@ -267,5 +267,21 @@ On `result=newer`, print exactly ONE line, rendering the update skill's name wit
 
 Do not act on the nudge yourself: the update skill is locked (explicit invocation only) — never invoke it from here, never re-run the probe, and never mention the nudge machinery when it stays silent.
 
+### Loop rehydrate-hook nudge (v33.0; best-effort, strictly fail-silent)
+
+After the version nudge, run ONE bounded local check for an unwired composer rehydrate hook. It prints AT MOST one line — only when every condition below holds — and NOTHING otherwise: no error text, no retry, never a changed session-start outcome.
+
+Skip the whole check silently unless ALL of these hold (every command with stderr suppressed):
+- the shipped hook `.claude/hooks/loop-rehydrate.sh` exists in this checkout
+- at least one of `.claude/settings.json` / `.claude/settings.local.json` exists — when NEITHER exists, stay silent (there is nothing to check against)
+- none of the settings files that exist contains the text `loop-rehydrate.sh`
+- a LIVE `/execute-loop` run claims this checkout — decided by the hook's own resolver, never re-implemented here: `bash .claude/hooks/loop-rehydrate.sh --session` prints a non-empty result (the script owns the base resolution through `git rev-parse --git-common-dir` and the mode-specific live predicate: a worktree run needs its `-isolation` journal at `state=active`, branch/none runs need only their marker, any `.complete-*` sibling means closed; inside a spawned role it prints nothing, so this nudge is silent there too)
+
+On all four, print exactly ONE line:
+
+"Loop rehydrate hook not wired: a live /execute-loop run claims this checkout — add the SessionStart snippet (guide §1 Machine Setup / docs/integrations/cross-agent-orchestration.md) to .claude/settings.json or .claude/settings.local.json so a compacted or resumed Claude Code composer re-reads the STICKY card."
+
+Never write either settings file from here — the snippet is documented, never installed — and never mention this check when it stays silent.
+
 ## Step 5 — Begin
 Ask what I want to work on today.

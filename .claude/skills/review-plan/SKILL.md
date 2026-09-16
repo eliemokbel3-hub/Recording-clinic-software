@@ -38,49 +38,21 @@ The recorded tier drives the Critique Gate (Step 1.5) executor-tier-
 aware item and any fast-executor hardening additions surfaced as
 proposed adjustments at Step 2.
 
-If entirely premium, skip fast-executor-specific hardening, but still
-include any specification the feature needs for correctness, review
-continuity, and fresh-session handoff. Premium execution reduces the
-need for defensive detail; it does not remove the need for important
-design decisions, API contracts, permission matrices, or UX
-requirements when those are central to the work.
-
-**Planner/executor tier gap (within "entirely premium").** When the
-answer is "entirely premium", also confirm (from the conversation, the
-saved plan, or by asking) whether the plan was — or is being —
-authored on a HIGHER tier than the model that will execute it — for
-example the plan is written on an ultra-tier model while an Opus-class
-premium model executes. A premium executor is not the planning model:
-judgment the planner would apply at build time does not transfer on
-its own. When such a gap exists, do not skip the fast-executor list
-wholesale — apply it selectively and at lighter dosing, prioritising
-locked design decisions, an edge-case inventory, API contracts,
-design-doc-anchored UI specification, and per-task acceptance
-criteria; surface anything the saved plan is missing on these fronts
-as a proposed adjustment (Step 2). Preserve any tier-gap free text the
-saved plan already carries, and record or enrich the gap as free text
-appended to the hardened plan's `Executor tier:` line — no schema
-change, and the value MUST keep `entirely premium` leading (downstream
-commands substring-check this line; never include the literal phrase
-`fast/medium involved` in the enrichment text). Worked example:
-
-`**Executor tier:** entirely premium — planned on Fable 5; executor
-Opus-class; tier-gap dosing applied (design decisions, edge-case
-inventory, API contracts, acceptance criteria locked)`
-
-If fast/medium will execute UI-bearing or specification-sensitive
-work, judge what the plan needs from the same suggested list as
-`/create-plan` Step 0 (anchor patterns, per-screen UI specification,
-microcopy dictionary, API contract appendix, permission matrix,
-per-phase files-touched manifest, per-phase Definition of Done,
-premium-only task labels). Add only those elements that apply. If the
-saved plan was missing anything you judge necessary, treat that as a
-proposed adjustment (Step 2) and surface it under "Added for
+For everything after the recorded answer — the entirely-premium
+guidance, the tier-gap paragraph with its worked example and the
+`Executor tier:` line grammar, and the fast-executor list — apply
+`/create-plan` Step 0 ("Planner/executor tier gap") exactly as written
+there: that section is the canonical definition; do not restate it
+here. Read it against the SAVED plan rather than a plan being written:
+confirm a tier gap from the conversation, the saved plan, or by
+asking; preserve any tier-gap free text the saved plan already
+carries, and record or enrich the gap as free text appended to the
+hardened plan's `Executor tier:` line; and surface anything the saved
+plan is missing on these fronts — tier-gap dosing or fast-executor
+additions — as a proposed adjustment (Step 2), under "Added for
 Fresh-Session Handoff" or "Validation / Deployment / Migration
-Additions" as appropriate.
-
-Trust your judgment about what's needed. Do not pad the plan with
-sections that don't apply just because the gate listed them.
+Additions" as appropriate. Add only what applies; do not pad the plan
+with sections that don't apply just because the gate listed them.
 
 ## Step 0.1 — Confirm planning inputs exist
 Before doing anything else, confirm that at least one planning source exists:
@@ -120,6 +92,7 @@ Apply the same **scratch-consumption rule** that `/create-plan` uses:
 - if one or several exist, present each by its in-file header (area explored + date) and path, and ask the user to choose one, or none
 - select by the in-file header date/area the user confirms — never auto-anchor on filesystem "latest by mtime" (a committed scratch travels across machines, where `git checkout` / `pull` does not preserve the original mtime)
 - absorb the chosen scratch as an ADDITIONAL planning source only after the user confirms — never silently recognize a scratch, and never mix an unrelated exploration into a native-plan hardening pass
+- a scratch's Accepted Assumptions marked "unverified" or "agent-proposed" are reconciliation inputs for Step 1 — never promoted to decisions and never listed in their raw form under Step 2's Proposed Adjustments; a conflict or consequence that Step 1's reconciliation VERIFIES against the code follows the normal Step 2 reporting and confirmation path like any other reconciliation result
 - remember whether a scratch was consumed, and which file — Step 7 offers to delete only that file after the plan is saved
 
 Before proposing changes, also run `/create-plan` Step 0.3's
@@ -405,7 +378,7 @@ Use a conversational style. For example:
 - "These are the remaining assumptions I'd like to validate."
 - "I have a few follow-up questions so I don't harden the wrong plan."
 
-Ask questions one at a time and provide your recommended answer for each. Wait for the user's response before asking the next. Walk down the design tree, resolving dependencies one decision at a time.
+Batch independent questions, each with a recommended answer; sequence only the questions that depend on an earlier answer. Skip anything the user already resolved — including during `/explore`.
 
 4. Continue asking follow-up questions as long as the answers materially affect:
 - implementation
@@ -451,31 +424,9 @@ If no candidates accumulated, the gate is silent — do not fire it on an empty 
 
 Do not double-prompt items the user has already explicitly resolved earlier in the planning discussion, in Step 2's Proposed Adjustments, or in Step 3's clarification pass. If the user clearly chose `Fix now`, `Include in plan`, `Defer`, or `Accept` for an item in conversation, record that disposition and skip the gate for that item.
 
-For each remaining candidate, present one at a time using this shape:
-
-```text
-Item N of M: <one-line point>
-Recommended: <Fix now | Include in plan | Defer | Accept> — <reason>
-App impact if not fixed now: <one or two lines>
-Production-impact flag: <yes/no, category if yes>
-
-1. Fix now — apply immediately before continuing
-2. Include in plan — add as a new task in Agreed Scope
-3. Defer — record as Deferred — Actionable Later
-4. Accept — record with rationale; no follow-up action
-
-Reply with 1, 2, 3, or 4.
-```
-
-Production-impact categories: new runtime dependency, new environment variable, database migration, deploy-side config change, dev/prod parity drift. Flag `yes` and name the category whenever a candidate hits one of these; flag `no` otherwise. The flag biases the recommendation toward `Fix now` or `Include in plan`; it does not force a disposition.
-
-When choosing the **Recommended** disposition above, prefer `Fix now` or `Include in plan`, and reserve `Defer` for genuinely large or out-of-scope work; recommend `Accept` only when there is no benefit to fixing or a net downside.
-
-Wait for the user's reply before moving to the next candidate. Apply the chosen disposition before continuing:
+Present each remaining candidate and apply its disposition exactly as `/create-plan` Step 0.6 ("For each remaining candidate, present one at a time using this shape") defines — the presentation shape, the production-impact categories and flag, the **Recommended** preference, the wait-for-reply rule, and the four disposition rules; that section is the canonical definition; do not restate it here. Two dispositions land differently in a hardening pass:
 - `Fix now` — resolve the item during this hardening pass, then update the reconciliation so the resolution appears in Agreed Scope or Key Design Decisions before the plan is saved
 - `Include in plan` — add the item as a new task in Agreed Scope so it appears in the final Tasks list (during a FULL-plan pass this task is hardened by THIS same pass — it does NOT trigger a nested scoped `/review-plan`; see the Scoped-mode no-recursion guard, case 2)
-- `Defer` — keep the item in Deferred Items with a `Risk if deferred:` tag (security / correctness / ux-degradation / blocked-work / minor) and a `Revisit by:` date or trigger string
-- `Accept` — record the item under Accepted Assumptions or Excluded Items with the user-supplied rationale and no follow-up action
 
 If the user aborts the gate mid-flow, do not save the hardened plan with the pending dispositions applied. Pending state lives only in the conversation until the gate completes. Only finalise the hardened plan once every gated candidate has a recorded disposition or the user explicitly closes the gate.
 
@@ -540,48 +491,18 @@ Requirements:
   - 🟨 In Progress
   - 🟩 Done
 
-### Task Specification Standard
-
-Each task in the `Tasks` section must be written so it can be implemented without cross-referencing more than one other plan section.
-
-For each task, include inline or as one-line sub-bullets:
-- the specific file(s), symbol(s), or route(s) the task touches
-- the expected behaviour or output once the task completes (one sentence)
-- a pointer to the relevant Design Decision, Critical Constraint, or Integration Note only if the task is not locally obvious from the task wording itself
-- whether the task includes its own verification step, or defers to the plan's Validation / Verification section
-
-Rules:
-- prefer concrete file paths and symbol names over general descriptions ("edit `src/webhooks/stripe.ts` `handleEvent`" rather than "update the webhook handler")
-- do not embed pseudo-code or implementation detail that will be wrong the moment the executor reads the real file — keep task specs grounded in what the code should *do*, not how to write it
-- do not duplicate content already in Design Decisions, Integration Notes, or Critical Constraints — point to it instead
-- if a task genuinely cannot be made self-contained, split it into smaller tasks that can
-- tasks that are obviously trivial (single-line config changes, renaming a variable) do not need the full structure — use judgment
-
-The goal is that any executor — fast or premium — can implement each task by reading the task plus at most one referenced section, without needing to reconstruct intent from the whole plan.
-
-Decision-point tasks (optional): when a genuinely-uncertain choice
-cannot be made well until execution reduces the uncertainty, you MAY
-record it as a `[decision]`-labelled task instead of forcing it into an
-Accepted Assumption. Its deliverable is a recorded decision, not code,
-and `/execute` treats it as an intentional, planned hard-stop. Shape it
-with `Options:` plus an optional `Decide after:` and an optional
-`Blocks:` note, placed AFTER the tasks that resolve the uncertainty and
-BEFORE the tasks that consume the decision (see the plan template's
-`Tasks` section). Keep them rare and optional — prefer deciding a choice
-now when you can, and use a `Defer` for work that belongs to a later
-plan. A decision point is IN-SCOPE work resolved during THIS execution,
-distinct from a `Defer`, which pushes work to a later plan.
-
-Hardening stage (standard for multi-phase plans): when hardening a
-multi-phase executable plan, include a Hardening stage near the end of
-the task list by default — `/review-loop` → `/simplify` →
-`/security-review` → route findings (trivial → `/fix`; substantial →
-scoped `/review-plan`) → final re-review — as documented in the plan
-template's `## Tasks` section; its whole-stage fresh-eyes sweep
-catches the cross-phase issues per-phase reviews miss. For a small
-single-phase plan it stays optional and proportional. It belongs on
-the executable stage / feature plan, not a master coordination plan
-(use a child hardening-stage plan for a master).
+Write every task to `/create-plan` Step 3 ("Task Specification
+Standard") — the standard itself plus its decision-point and
+hardening-stage notes — that section is the canonical definition; do
+not restate it here. Both notes have a hardening-pass reading: a
+choice discussed but deferred, or an Accepted Assumption that is
+really a genuinely-uncertain decision, MAY be hardened into a
+`[decision]` task (Step 1 and Step 1.5 already look for these); and
+when hardening a multi-phase executable plan, include the Hardening
+stage near the end of the task list by default (`/review-loop` →
+`/simplify` → `/security-review` → route findings → final re-review),
+on the executable stage / feature plan, never a master coordination
+plan.
 
 Make sure the saved plan's `Planning Extraction Summary` is complete and reconciled against:
 - the approved native plan

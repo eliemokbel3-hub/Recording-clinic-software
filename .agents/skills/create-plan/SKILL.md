@@ -187,7 +187,7 @@ Check whether we have adequately covered:
 
 If anything significant is missing, unclear, or under-explored (or if /explore was not run), list the gaps now and ask me clarifying questions.
 
-When asking clarifying questions, ask them one at a time and provide your recommended answer for each. Wait for my response before asking the next. Walk down the design tree, resolving dependencies one decision at a time.
+Batch independent questions, each with a recommended answer; sequence only the questions that depend on an earlier answer. Skip anything the user already resolved — including during `/explore`.
 
 If you see a simpler, cleaner, or safer approach, flag it before we lock in the plan.
 
@@ -205,9 +205,14 @@ dry-run executes READ-ONLY checks only — greps, counts, `--verify`
 modes; a side-effecting pinned command (anything that writes, syncs,
 regenerates, migrates, or deploys) is inspected instead — confirm its
 exact spelling, interpreter, paths, and flags resolve on this host —
-and is NEVER executed during planning. This is the canonical
-definition; `/review-plan` Step 0.5 points here rather than restating
-it.
+and is NEVER executed during planning. When a `/explore` scratch was
+consumed, diff the tree from the SHA on its `Code baseline:` line
+when the scratch carries one (what changed since the exploration),
+and take every Accepted Assumption the scratch marked "unverified" or
+"agent-proposed" through the same re-probe: verify it against the
+code, or keep it as an assumption — never promote it silently. This
+is the canonical definition; `/review-plan` Step 0.5 points here
+rather than restating it.
 
 Only proceed once you are confident the scope is clear and complete.
 
@@ -239,26 +244,17 @@ extraction and proposed approach rather than to a saved plan. State
 the result of each lens explicitly (even if "no issue") so the gate
 is auditable rather than ad hoc.
 
-**Parallel critique (where supported).** As in `/review-plan`'s
-"Parallel critique (where supported)" section: if your harness
-exposes agent-spawning/orchestration tools (e.g. a Task tool or
-`spawn_agent`/`wait_agent` — probe what this session actually
-exposes, never assume from the product name) AND the instruction and
-policy stack that applies to this task permits delegation, you may
-fan the critique lenses out — one subagent each — each
-reading the confirmed extraction plus the real code it names and
-returning concrete findings (extraction item or `file:line`).
-Collect, dedupe, and reconcile in this session; the gap-raising and
-clarification below run once here, with the user. If either check
-fails — no such tools exposed, or delegation not authorized for this
-task — run the lenses
-sequentially — the documented fallback, which changes nothing about
-the critique, only how it is produced. If a spawn or approval
-failure interrupts a fan-out mid-pass, fall back to the same
-sequential path for the remaining lenses. Subagents add lens diversity,
-not model diversity (they inherit this session's model); for a true
-cross-model-family check on a non-trivial plan, use the follow-on
-review recommended at Step 4.
+**Parallel critique (where supported).** Fan the three lenses out —
+one subagent each, reading the confirmed extraction plus the real code
+it names and returning concrete findings (extraction item or
+`file:line`) — or run them sequentially, exactly as `/review-plan`'s
+"Parallel critique (where supported)" section defines (the tool and
+authorization predicate, the sequential and mid-pass fallbacks, and
+lens-not-model diversity; that section is the canonical definition;
+do not restate it here), collecting, deduping, and reconciling in
+this session — the gap-raising and clarification below run once here,
+with the user — and using the follow-on review recommended at Step 4
+for a true cross-model-family check.
 
 If you find a real gap or risk:
 - raise it now before finalising the plan

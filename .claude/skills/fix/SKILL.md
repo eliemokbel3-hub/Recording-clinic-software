@@ -458,6 +458,16 @@ leg's other round updates; one line per leg):
   compaction lifecycle; nothing new). The flagged line never changes
   this round's status — the round still closes or stays open purely
   by its findings' dispositions.
+- a suspected regression found AND corrected within this same leg
+  (the re-read caught the leg's own slip before the leg ended — an
+  edit the leg itself made, verified again in-leg) →
+  `Fix-delta self-check: flagged-and-fixed in-leg — <what was caught
+  and corrected>` (v33.0 D13 — the second admitted `flagged` form,
+  beside the routed one above; the field measurement behind it is ~3
+  in-leg catches per 232 legs, 0 routed). It reports a catch, never
+  closes anything: the correction is part of the leg's applied delta,
+  and the NEXT review round remains the regression net — this line
+  never substitutes for it.
 - check not performable (no applied delta, or the leg's own edit
   scope is unclear — e.g. an interrupted leg) →
   `Fix-delta self-check: SKIP — <why>` or

@@ -1131,6 +1131,132 @@ the `MUST-PAUSE` half of the headless mode the Stage 1 forward-reference stub
 points at — Stage 4/5 authors the full policy prose into the 5 gate sections
 against this proven mechanism.
 
+## v33.0 composer-seat autonomy — condensed forms (loop-autonomy + hygiene release)
+
+Condensed reference for the v33.0 contracts; the canonical text is the `execute-loop`
+skill pair (`SKILL.md` → Safety gates / Termination / The per-phase loop; `STICKY.md`
+§4/§6/§7). Every value here is helper-validated (`scripts/loop-journal.py`) and
+oracle-admitted — nothing in this section is a new line-start, enum value, class, or
+state; the v33.0 delta is additive keys plus a widened attestation key.
+
+**Gate modes (D1).** `gates=strict|fix-biased|executor`, wizard default `executor`
+(absent/malformed → `strict`); `cap-raise=ask|auto-plus-one|follow|executor`, wizard
+default `executor` (absent → `ask`); `high-auto=on|off`, wizard default `on` (absent →
+`off`). `gates=executor` requires `high-auto=on` — the wizard writes both; an explicit
+`executor` beside `off` is a preflight `config-conflict` must-pause (emitted as the
+must-pause pair with `key=config-conflict`; the helper binds every must-pause owner to
+`class=must-pause`). Under `executor` the composer follows the executor-verified
+recommendation act-and-inform for MED-and-below Fix-now/Accept/Defer/Include-in-plan,
+docs-only/invalid below CRIT, and HIGH Fix-now (with the `high-auto` attestation pair);
+the residual MUST-PAUSE list is stated ONCE, in the SKILL's composer-seat policy bullet
+— never restated here. Attestation: executor mode adds a second run-start
+`config-snapshot key=gates value=executor` record (per-key hash
+`iso|plan|epoch|gates=<value>`, FIRST-wins per key, its own `config-revoke key=gates`
+stream); legacy modes write none. The read is
+`python3 scripts/loop-journal.py attest-check --run <runkey> --role composer --policy-log <abs> --iso <iso> --plan <plan> --key gates`
+(exit 0 = bound + unrevoked; exit 3 names `absent | malformed | wrong-identity |
+off-at-start | revoked`). The operator's "autonomy on|off" is a MID-RUN-CHANGE mode
+selection bounded by that run-start authority — never a revoke, and "on" is legal only
+for a run that started in executor mode.
+
+**Cap verdict + budget (D2/D3).** Under `cap-raise=executor` every LEG-1 verify brief
+ends with `Cap verdict: raise <+n> | accept | defer-residue — <production-behavioral |
+test-harness | docs-only> — <evidence>`; at cap the composer runs `follow`'s pinned
+total order with the verdict as the recommendation input and the tail signature
+DECIDED by the verdict (accept ⇒ `cap-accept=close`). One `cap-raise=+1` record per cap
+event (`+1` stays the only raise token) within a +3 per-pass budget; then `peer-max`
+(default 12) surfaces once per pass. `defer-residue` ⇒ `cap-accept=close … residue=deferred`.
+The v32.3 pre-cap early tail accept-close is NOT evaluated under `executor` (neither
+closes nor surfaces — its predicate is `fix-biased`+`follow` only); a mid-pass tail
+signature continues to the next round and the verdict decides at cap.
+The cap is per PASS: every orchestrated peer `ROLE: start role=peer` carries
+`pass=<slice>.p<N> peer_round=<k> cap=<N>` (all three or none — wrapper
+`LOOP_PASS`/`LOOP_PEER_ROUND`/`LOOP_CAP`, validated through `--read-log`; codex peers
+via `emit ROLE:start … --log`), sequenced by the helper against the prior log
+(`peer_round ≤ cap`, consecutive rounds with the inconclusive-retry exception, `cap=`
+bound to the seed plus recorded same-pass transitions; a pass with no prior keyed
+start grandfathers its seed). Cap transitions carry the `pass=`+`cap=` bundle (both or
+neither) and need `--log` when keyed. A raise never rewrites `Loop config:`'s `caps=`.
+
+**Escape verdict + attribution (D4).** `escape-check` gains `--edit-surface <root>`
+(wrapper `LOOP_EDIT_SURFACE` — `worktree` for executor/architect/delegate; peers none),
+`--allow-path <root>:<path>` (wrapper `LOOP_ALLOW_PATH`, `;`-joined — quote it in a shell, `;` is a command
+separator — a peer's plan file + `findings-*.md` sidecar, filtered from the digest), `--iso <this run>` (`LOOP_ISO`) and
+`--liveness <min>|off` (`LOOP_LIVENESS`). `result=clean|dirty` is computed over the
+non-edit-surface roots; the record reports `edit_surface=<root>:<changed|unchanged>`
+and, on a base/external-only `dirty`, the advisory `attributed=<foreign iso>
+attributed_age=<min>` when a LIVE concurrent run's `-active` marker claims the changed
+checkout (no `.complete-*` sibling, `checkout=` realpath-equal, newest genuine
+`stage-*-probe.log` within 2× liveness; liveness off ⇒ never attributed). Composer rule:
+unattributed `dirty` ⇒ MUST-PAUSE in every mode; attributed `dirty` ⇒ under
+`gates=executor` auto-proceed act-and-inform (`OWNERSHIP: auto-disposition …
+key=escape-attributed-<leg>`), otherwise surface with the attribution. Pre-state is the
+5-field `name|path|digest|edit-flag|allow-list` file (legacy 3-field ⇒ the all-roots
+verdict); a pre/post mismatch writes the exit-3 `refused=capture-failure` record. Every
+spawned role's cwd under worktree isolation is the worktree — peers included.
+
+**Notify tiers (D5).** Helper-computed from `class=`: `must-pause` (every reason, a
+surfaced cap included) and `config-conflict` → `notify-send -u critical
+"execute-loop: operator needed"`; every other class → `-u normal -t 20000
+"execute-loop: <runkey> — done"` (macOS/Windows degrade to the title split).
+`docs-only`/`invalid` are `mode=queued` (delivered in the phase batch); cap classes and
+HIGH auto-routes stay `mode=immediate`. `notify=action-only` (`LOOP_NOTIFY`, rendered per
+preflight step 14 at run start and re-rendered at every resume and `notify=` change — an
+explicit `all` on an absent/malformed key; the helper reads only the environment; a running
+observer keeps its startup policy until restarted) mutes only the batch desktop notice — members settle
+as `batch-flushed detail="policy-suppressed notify=action-only"`. A must-pause re-fire
+for a still-open key inside the liveness window (`--liveness`, default 10, needs
+`--log`) refuses the whole pair. The observer (`scripts/loop-observer/watch-loop-run.sh`)
+applies the same tiers: gates/append violations `critical`, the poll-driven categories
+`normal -t 20000` and muted under `LOOP_NOTIFY=action-only`.
+
+**Recommendation-first asks + `rec=` (D6), `PROGRESS` (D10), `profile-fallback=` (D11),
+role-log rotation (D8).** Every surfaced ask leads with `Executor recommendation:` and
+`Composer recommendation:` (option 1 = the executor's); `must-pause` and
+`gate-disposition` carry the optional `rec=<executor|composer>:<disposition>`. The
+phase-close `[<runkey>] Progress: …` line is chat-only (not log-derivable — `/retro`
+names the gap). `profile-fallback="<profile_dir>"` records the fallback DECISION as
+`auto-disposition key=profile-fallback` (queued) before the existing `profile-switch`
+transaction, once per run (counter = the decision records). The spawn wrapper rotates an
+oversized role log (> 50 MB, or every leg under `LOOP_ROLE_LOG_ROTATE=leg`) to
+`<stem>.leg-<TS>[-n].log` before its retained open, announced as `SPAWN_WARN
+check=role-log-rotated` on its own stdout.
+
+**Rehydrate surfaces (D7).** The request-path rehydrate has two seats and no per-turn
+injection: a marker-gated, seat-gated clause in `project-workflow.mdc` (`alwaysApply`) for
+Cursor composers, and the shipped `.claude/hooks/loop-rehydrate.sh` for Claude Code
+composers, wired by the DOCUMENTED `SessionStart` (`compact`, `resume`) settings snippet
+below — the bootstrap never writes a settings file (guide §1 carries the same snippet):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/loop-rehydrate.sh --session" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook (invoked via `bash`, no exec bit needed; `--session` is its only mode) prints
+NOTHING when `LOOP_ROLE`/`LOOP_RUNKEY` is set (a spawned role) or when no LIVE run claims
+the current root; it resolves the base checkout via `git rev-parse --git-common-dir`,
+scans `<base>/.cursor/loops/*-active` with the mode-specific live predicate (worktree ⇒
+its `-isolation` journal at `state=active`; branch/none ⇒ the marker alone; any
+`.complete-*` sibling ⇒ closed), and matches the current root against the marker's
+`checkout=` or the journal's `worktree=`. On a match it prints a CONDITIONAL pointer
+("if this session is the run's composer, re-read STICKY + the handoff note; if not,
+ignore"), listing every matching run; only `iso`/`mode`/`plan`/`worktree` are echoed,
+each charset-validated and length-capped (`withheld` otherwise) — marker text is data,
+never program text. `/start-session` prints a one-line nudge when the hook reports a live
+run and neither `.claude/settings.json` nor `.claude/settings.local.json` names
+`loop-rehydrate.sh` (silent when neither file exists).
+
 ## Build-vs-adopt: A (build) vs ralphex (B)
 
 ralphex (https://ralphex.com/docs/, reviewed 2026-06-29) is a mature standalone Go
