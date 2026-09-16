@@ -21,7 +21,7 @@ in-process and adds no network surface and no new logging channel.
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write) runs in-process here | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write) and the practitioner-profile voice enrolment (flow 12) run in-process here | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 
 ## Flows
@@ -122,10 +122,9 @@ in-process and adds no network surface and no new logging channel.
    `whisper\medium`, ~1.43 GiB, with `whisper\small` ~465 MiB as the
    visible fallback; with all four benchmark candidates the cache is
    ~3.0 GiB) and, for voice enrolment (practitioner-profile plan),
-   `speaker-embedding\wespeaker-voxceleb-resnet34-LM.onnx` (~25 MiB; until
-   that plan's Task 0.6 promotes it, the file exists only as
-   `.onnx.candidate` — promotion is one rename). Static program data, no
-   clinical content. Written ONLY by flow 9; runtime processes never write
+   `speaker-embedding\wespeaker-voxceleb-resnet34-LM.onnx` (~25 MiB; promoted
+   from the practitioner's digest-verified candidate at that plan's Task 0.6,
+   2026-09-15). Static program data, no clinical content. Written ONLY by flow 9; runtime processes never write
    here. The hardware benchmark additionally synthesizes its fixed
    NON-CLINICAL sample script to a transient plaintext WAV (Windows SAPI)
    inside an auto-deleted temp directory — no clinical content ever takes
@@ -194,6 +193,30 @@ in-process and adds no network surface and no new logging channel.
     it. Config text feeds the note pipeline (flow 10) only as PROPOSALS; nothing
     from it reaches `note.enc` without per-assertion clinician confirmation.
 
+12. **Voice enrolment → profile store (practitioner-profile plan Phase 3,
+    in-process, zero network).** On the Practitioner tab (`ui/practitioner.py`),
+    with the consent box ticked, `enrolment.record_enrolment` opens the capture
+    backend's stream for the chosen microphone on a worker thread under
+    `SessionController.begin_enrolment` and buffers the read-aloud as PCM IN
+    PROCESS MEMORY — VAD-gated to 30 s of speech, capped at 90 s of audio; only
+    numbers (speech seconds, seconds captured, a level) reach the tab, over a Qt
+    signal. `enrolment.enrol` embeds each VAD segment with the pinned speaker
+    model (flow 8) and averages one L2-normalised vector; the worker then drops
+    its PCM reference, and `practitioner_profile.save_profile` writes
+    `%LOCALAPPDATA%\ClinikoScribe\profile\key.dpapi` (first enrolment only —
+    DPAPI-wrapped, current-user, with the profile description) and `voice.enc`
+    (AES-256-GCM under that key: the vector, the embedder identity, the
+    creation time, speech seconds, the device name and the consent record —
+    version `consent-v1`, acceptance time, learning opt-in). The lease is
+    released after the tab's own status update, on every path. Re-record
+    replaces `voice.enc` under the existing key; Delete (confirmed) unlinks the
+    key first, then the blob. Read back by flow 7 (attribution, inside the
+    transcription worker) and by the readiness probe that renders the tab's
+    status and the microphone screen's report lines (a stat and one profile
+    read on the GUI thread; no model is loaded there). Nothing about the
+    profile is logged (flow 2's tripwire markers), and no audio from this flow
+    touches disk (the non-flow below).
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -226,8 +249,16 @@ in-process and adds no network surface and no new logging channel.
   `speaker_model_id`) are a cluster label, a number and a model name — no
   content, so they register no marker; a transcript repr is still caught by
   the transcript markers it already carries. (The profile store and the
-  enrolment flow are mapped at that plan's Task 3.3; the draft custody and
-  attribution surfaces are in the threat model.)
+  enrolment flow are flow 12; the custody and attribution surfaces are in the
+  threat model.)
+- No enrolment audio on disk. The Practitioner tab's read-aloud (flow 12) is
+  buffered in process memory only — never a session store, a chunk file, a
+  WAV or a temp file — and the buffers, the VAD's recurrent state and the
+  worker's PCM reference are all dropped before the profile is written; the
+  only artefacts a completed enrolment leaves are `key.dpapi` and `voice.enc`.
+  Pinned with a mock backend under a temporary `LOCALAPPDATA`
+  (`desktop/tests/test_enrolment.py`) and at the tab level with a fake capture
+  over a temporary profile root (`desktop/tests/test_ui_screens.py`).
 - No data in Chrome extension storage (plan: credentials/models/audio never
   enter extension storage); no Chrome-side recording surface at all until
   Phase 5.

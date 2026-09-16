@@ -9,9 +9,12 @@ Suggested sections as this grows: surfaces & layout · dialogs · menus · forms
 view patterns · tokens · microcopy.
 
 ## Surfaces & layout
-- One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** / Status —
-  `desktop/src/scribe_desktop/ui/main_window.py`. No secondary windows; no new UI
-  framework (PySide6 only, extending the Phase-1 status panel rather than replacing it).
+- One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
+  **Practitioner** / Status — `desktop/src/scribe_desktop/ui/main_window.py`. No secondary
+  windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
+  than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
+  practitioner's OWN data is set up: consent, voice enrolment, deletion, later learned
+  phrases.
 - The **Note review tab** shows the generated note and the full uncertainty-marked
   transcript SIDE BY SIDE through the whole review, until copy or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
@@ -23,7 +26,9 @@ view patterns · tokens · microcopy.
   transcript rendering, readiness reports). Widgets stay thin so the logic is testable
   offscreen — every screen has offscreen tests, no real audio or ML in CI.
 - Long work never blocks the UI thread: `ui/tasks.py` `TaskThread` with indeterminate
-  progress (transcription, benchmark runs).
+  progress (transcription, benchmark runs) or, for the voice enrolment capture, numbers
+  marshalled back over a Qt signal (a level and a speech-seconds counter —
+  `ui/practitioner.py`).
 
 ## Interaction posture
 - **State drives enablement.** Controls are enabled/disabled from the session state
@@ -31,9 +36,30 @@ view patterns · tokens · microcopy.
   `ui/session_screen.py`. A control that would be invalid in the current state is
   disabled, not merely error-handling a bad click.
 - **Refuse destructive actions during live work, with a reason.** Closing the window is
-  refused while recording (`ui/main_window.py` `closeEvent`); the benchmark is refused
-  while a session is active (`ui/microphone.py`). The failure being prevented is lost
-  consultation audio, so refusal beats a confirmation dialog.
+  refused while recording and while a voice enrolment is in flight (`ui/main_window.py`
+  `closeEvent`); the benchmark is refused while a session is active or an enrolment runs,
+  and an enrolment is refused while a session or benchmark runs (`ui/microphone.py`,
+  `session.py` `begin_enrolment`). The failure being prevented is lost consultation audio
+  or a destroyed worker, so refusal beats a confirmation dialog.
+- **First-run surfaces ask, never block.** With no voice profile the app opens on the
+  Practitioner tab with a one-line banner saying what setting it up gains and that
+  recording works without it; every other screen behaves as before (`ui/main_window.py`,
+  `ui/models.py` `FIRST_RUN_BANNER`; plan D10). Consent is a visible checkbox directly
+  above the action it gates, under the FULL ratified text shown verbatim
+  (`ui/models.py` `CONSENT_TEXT_V1`); the action is disabled, not error-handled, until
+  the box is ticked, and withdrawing consent is the visible Delete, not an un-tick
+  (`ui/practitioner.py`). Only a READABLE profile's own consent record pre-ticks the
+  box; a stored blob the app cannot read never does — presence is not consent.
+- **A confirmation line replaces a choice the app made for you, with a one-click way
+  back.** When the clinician role is auto-confirmed from the voice profile, the manual
+  radios are replaced by ONE plain-text line stating what was decided and the evidence
+  (`Clinician: confirmed from your voice profile (similarity 0.xx) - change`) with a
+  link-styled `change` that restores the manual controls (`ui/transcript.py`; plan D4).
+  The line is always shown when the decision was made — never hidden behind a setting —
+  and the value that justifies it sits on the line. When the decision could NOT be made
+  (no model, a stale profile), a status line outside the controls says why and names the
+  remedy, on every view that could show the transcript (`ui/models.py`, the D2 reason
+  constants).
 - **Never auto-resume recording.** Recovery offers resume-processing or discard only —
   `ui/recovery.py`. Restarting a microphone without the clinician's say-so is out of
   bounds.

@@ -4,6 +4,7 @@ report panel (plan Step 10; the benchmark is a PANEL here, not a screen)."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -57,11 +58,16 @@ class MicrophoneScreen(QWidget):
         backend: CaptureBackend,
         *,
         benchmark_runner: Callable[[], list[BenchmarkResult]] | None = None,
+        profile_root: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._backend = backend
+        # Practitioner-profile plan Task 3.2: the model report's voice-profile
+        # line reads the profile store; this is the test seam for it (peer
+        # round 27 PR-REG-005 — tests must never read the default store).
+        self._profile_root = profile_root
         self._benchmark_runner = (
             benchmark_runner if benchmark_runner is not None else _default_benchmark_runner
         )
@@ -279,7 +285,9 @@ class MicrophoneScreen(QWidget):
     # --- benchmark / model report panel ---------------------------------------
 
     def refresh_model_status(self) -> None:
-        self.model_status_label.setText("\n".join(models.model_report_lines()))
+        self.model_status_label.setText(
+            "\n".join(models.model_report_lines(profile_root=self._profile_root))
+        )
 
     def on_run_benchmark(self) -> None:
         if self._benchmark_task is not None and self._benchmark_task.isRunning():

@@ -313,17 +313,17 @@ under the shipped single-GUI-thread, queued-signal usage, and full
 arbitrary-thread custody safety is a documented bounded residue for a future
 dedicated hardening.
 
-## Practitioner profile — Phases 1–2 (DRAFT; finalised at that plan's Task 3.3)
+## Practitioner profile — Phases 1–3 (finalised at that plan's Task 3.3, 2026-09-16)
 
 The practitioner-profile plan adds one stored artefact that is about the
 PRACTITIONER, not a patient: an encrypted voice profile used to tell "the
 practitioner" from "someone else" in a consultation. Phase 1 landed the
 embedder, the custody store and the in-memory enrolment capture (surfaces 1–5);
 Phase 2 landed the attribution path and the auto-confirm (surfaces 6–8, with
-the D4 responsibility boundary); the Practitioner tab and the first-run flow
-arrive in Phase 3, and this section is completed then. Everything below is
-calibrated to boundary 2: the defended adversary is outside the user's Windows
-session.
+the D4 responsibility boundary); Phase 3 landed the Practitioner tab, the
+first-run flow and the consent gate (surface 9, and the wiring surface 5 was
+waiting for). Everything below is calibrated to boundary 2: the defended
+adversary is outside the user's Windows session.
 
 1. **The practitioner's own biometric derivative at rest
    (`%LOCALAPPDATA%\ClinikoScribe\profile\voice.enc`).** The profile holds a
@@ -357,7 +357,7 @@ session.
    sensitive as a biometric derivative even though it is not a secret against
    a same-user attacker — the compensating control is the practitioner's
    consent (v1, ratified) and the visible Delete, both on the Practitioner tab
-   in Phase 3.
+   (surface 9).
 2. **No enrolment audio is ever persisted.** `enrolment.record_enrolment`
    captures into process memory over the microphone screen's monitor-stream
    shape — no session, no chunk store, no file — returns the PCM to its
@@ -365,8 +365,10 @@ session.
    exit; `enrol` embeds and holds no reference afterwards. Pinned by tests
    with a mock backend and a temporary `LOCALAPPDATA` under which nothing
    exists after either outcome. Residual: the returned PCM is the caller's
-   to drop (the Practitioner tab does so after `save_profile`, Phase 3), and
-   plaintext scrubbing is best-effort as for session audio (data-at-rest
+   to drop — the Practitioner tab's worker (`ui/practitioner.py`) holds the
+   one reference only until `enrol` returns and deletes it before the profile
+   is built, so no PCM reference outlives the embedding on the app's own path —
+   and plaintext scrubbing is best-effort as for session audio (data-at-rest
    residuals above).
 3. **The profile never reaches a log.** No module in the profile path logs;
    the profile and consent models' field names (`embedding`,
@@ -389,15 +391,31 @@ session.
    2, code hijack).
 5. **Enrolment holds the microphone exclusively.** `SessionController.
    begin_enrolment` is refused while a session records, pauses or processes,
-   while a discard is in flight, or while a registered activity runs — the
-   hook (`set_enrolment_blocker`) exists in Phase 1; the app registers the
-   microphone screen's benchmark worker through it at that plan's Task
-   3.1/3.2, so until then no activity is registered and that refusal is not
-   yet live; while it is held, Start/Resume refuse, the benchmark refuses
-   (this direction IS live), and the microphone screen's poll tick keeps the
-   idle monitor closed. This is a device-ownership and correctness guard (no two
-   readers of one microphone, no enrolment audio mixed into a session), not
-   a trust boundary.
+   while a discard is in flight, or while the registered activity runs —
+   `MainWindow` registers the microphone screen's benchmark worker through
+   `set_enrolment_blocker` at construction (Phase 3), so a benchmark in
+   flight refuses an enrolment and an enrolment in flight refuses the
+   benchmark; while the lease is held, Start/Resume refuse, the idle monitor
+   is handed over SYNCHRONOUSLY — the tab calls the microphone screen's
+   `stop_monitor` on the GUI thread right after the lease is acquired and
+   before the worker can open the device, and the poll tick keeps it closed
+   afterwards (the consultation Start path keeps its pre-existing tick-based
+   handoff: the capture worker and the idle monitor can both hold the device
+   until the next monitor poll runs — a 100 ms `QTimer` interval on the GUI
+   thread, a cadence rather than a bound, since GUI-thread work delays it —
+   a named residue outside this plan) — the window refuses to close, and the tab's own
+   Re-record and Delete are disabled. The
+   Practitioner tab acquires the lease BEFORE the capture starts and releases
+   it inside its result handler — after the embedding, `save_profile` and its
+   own status update — on every path (saved, failed, stopped), so the
+   microphone is the enrolment's for the whole sequence. Stop is honoured
+   inside the capture, again before the embedding and again after it; once
+   that final check has passed, the profile is built and `save_profile`
+   runs regardless of a later Stop — the one residue — and the profile is
+   then written and shown, and Delete removes it.
+   This is a device-ownership and correctness guard (no two readers of one
+   microphone, no enrolment audio mixed into a session), not a trust
+   boundary.
 6. **Attribution keeps the windowed plaintext bound and adds one number per
    segment to the transcript (Phase 2, D3/D13).** With an embedder and a
    profile supplied together, `transcribe_session` embeds each VAD segment
@@ -458,6 +476,39 @@ session.
    and stays the documented hardening if Phase 6's measurement finds a
    problem. This is a responsibility boundary — the practitioner's choice,
    recorded — not a control claim.
+9. **Consent, first run and deletion are UI state at the same-user
+   boundary, not identity (Phase 3, D10).** What the structure enforces: the
+   Practitioner tab shows consent text v1 verbatim (`ui/models.py`
+   `CONSENT_TEXT_V1`) and the Record button is enabled only while the consent
+   box is ticked (and a microphone is selected and the selected embedder and
+   the VAD model are present — an absent model disables the action and names
+   `setup-models.py`, D16); the profile's consent record stores the ratified
+   text's version (`CONSENT_TEXT_VERSION`), the acceptance time and the
+   learning opt-in as ticked at that enrolment, so a later text is a new
+   version; while a READABLE profile exists its own consent record is what
+   pre-ticks the box, shown ticked and disabled — withdrawing consent IS
+   Delete, which asks for confirmation and runs `delete_profile` (key
+   first); a blob that cannot be read (a keyless remainder of an interrupted
+   Delete, a tampered file) is reported and deletable but is NOT evidence of
+   consent — its box stays unticked and enabled, so recording over it needs
+   a fresh tick (peer round 27 PR-HIGH-006); the learning opt-in stays
+   editable and applies at the next (re-)record — the stored value stands
+   until a save succeeds. First run selects the tab and shows a
+   banner but gates nothing: recording, transcription and note generation
+   work without a profile exactly as before. Residuals: consent is a checkbox
+   ticked by whoever sits at the logged-in Windows session — the app cannot
+   verify that the person enrolling is the practitioner (boundary 2, the same
+   same-login residual accepted for the vector in surface 1); the record is
+   the version string and time, not a copy of the text; the learning opt-in
+   changes only with a re-record (a re-save without re-recording is a Phase 5
+   candidate); a Delete that races a transcription's profile read has two
+   outcomes and neither is a wrong attribution — a read that reaches the key
+   after it is gone fails typed (`load_profile`: blob, then key, then
+   decrypt) and that transcript gets the visible D2 fallback, while a read
+   that has already unwrapped the key completes and that one transcription
+   keeps its in-memory copy of the practitioner's own just-deleted profile
+   (deleting persisted custody never revokes plaintext a worker already
+   holds; the copy dies with the transcription).
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 

@@ -64,7 +64,12 @@ def test_window_offscreen_smoke(tmp_path) -> None:
     app = QApplication.instance() or QApplication([])
     backend = MockCaptureBackend()
     controller = SessionController(backend, sessions_root=tmp_path / "sessions")
-    window = MainWindow(controller, backend, sessions_root=tmp_path / "sessions")
+    window = MainWindow(
+        controller,
+        backend,
+        sessions_root=tmp_path / "sessions",
+        profile_root=tmp_path / "profile",
+    )
     panel = window.status_panel
     assert "Registration:" in panel.registration_label.text()
     panel.on_self_test()

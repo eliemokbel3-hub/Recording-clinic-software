@@ -221,15 +221,20 @@ def _fake_whisper_snapshot(local_app_data: Path, name: str) -> None:
 
 
 class TestModelReport:
-    def test_report_lines_name_the_default_model(self) -> None:
+    def test_report_lines_name_the_default_model(self, tmp_path: Path) -> None:
         from scribe_desktop.transcription import DEFAULT_WHISPER_MODEL
 
-        lines = models.model_report_lines()
-        assert len(lines) == 2
+        lines = models.model_report_lines(profile_root=tmp_path)
+        assert len(lines) == 4
         assert lines[0].startswith(f"Whisper model ({DEFAULT_WHISPER_MODEL}):")
         assert lines[1].startswith("VAD model (silero):")
-        for line in lines:
+        assert lines[2].startswith("Speaker model (")
+        assert lines[3] == models.PROFILE_NOT_ENROLLED_LINE
+        for line in lines[:2]:
             assert ("ready" in line) or ("setup-models" in line)
+        # The speaker line claims presence only (PR-LOW-029); the profile
+        # line names the Practitioner tab, not a setup script.
+        assert ("installed" in lines[2]) or ("setup-models" in lines[2])
 
     def test_models_ready_matches_resolved_availability(self) -> None:
         from scribe_desktop.speech import vad_model_available
@@ -498,6 +503,86 @@ class TestAttributionReadiness:
         monkeypatch.setattr(models, "load_profile", lambda **k: None)
         readiness = models.attribution_readiness(profile_root=tmp_path)
         assert readiness.profile_present is False and readiness.reason is None
+
+
+class TestPractitionerReportLines:
+    """The two D2 report lines the Practitioner tab and the microphone
+    screen's panel share (Task 3.2), plus the ratified consent text."""
+
+    def test_speaker_model_line_names_the_remedy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.speaker_embedding import shipped_embedder_identity
+
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: False)
+        missing = models.speaker_model_report_line()
+        assert "MISSING" in missing
+        assert "--only speaker-embedding" in missing
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        installed = models.speaker_model_report_line()
+        # PR-LOW-029: a stat proves presence, not loadability.
+        assert installed.endswith("installed - verified when it loads")
+        assert "ready" not in installed
+        assert shipped_embedder_identity()[0] in installed
+        assert models.speaker_model_report_line("spectral").endswith("ready (built in)")
+
+    def test_profile_line_not_enrolled(self, tmp_path: Path) -> None:
+        line = models.voice_profile_report_line(profile_root=tmp_path)
+        assert line == models.PROFILE_NOT_ENROLLED_LINE
+        assert "Practitioner tab" in line
+
+    @windows_only
+    def test_profile_line_enrolled(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.practitioner_profile import save_profile
+        from scribe_desktop.speaker_embedding import shipped_embedder_identity
+
+        model_id, model_sha256 = shipped_embedder_identity()
+        profile = _profile(model_id, model_sha256)
+        save_profile(profile, root=tmp_path)
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        assert models.voice_profile_report_line(profile_root=tmp_path) == (
+            f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {model_id})"
+        )
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: False)
+        assert (
+            models.voice_profile_report_line(profile_root=tmp_path)
+            == models.SPEAKER_MODEL_MISSING_REASON
+        )
+
+    @windows_only
+    def test_profile_line_made_by_another_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.practitioner_profile import save_profile
+
+        save_profile(_profile("other-model"), root=tmp_path)
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        assert (
+            models.voice_profile_report_line(profile_root=tmp_path)
+            == models.PROFILE_REENROL_REASON
+        )
+
+    def test_consent_text_is_versioned(self) -> None:
+        from scribe_desktop.practitioner_profile import ConsentRecord
+
+        assert models.CONSENT_TEXT_VERSION == "consent-v1"
+        assert models.CONSENT_TEXT_V1.endswith(f"Version {models.CONSENT_TEXT_VERSION}.")
+        # The version string the text carries is the one a profile records.
+        ConsentRecord(
+            accepted_at=datetime.now(UTC),
+            consent_text_version=models.CONSENT_TEXT_VERSION,
+            learning_opt_in=False,
+        )
+        for promise in (
+            "never a recording",
+            "plain text",
+            "refuses names and numbers",
+            "nothing leaves this computer",
+            "delete it",
+        ):
+            assert promise in models.CONSENT_TEXT_V1
 
 
 class TestAttributionInputs:

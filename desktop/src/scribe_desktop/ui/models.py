@@ -33,7 +33,12 @@ from scribe_desktop.practitioner_profile import (
     load_profile,
 )
 from scribe_desktop.secure_storage import SessionCrypto
-from scribe_desktop.session import GenerationLease, RecordingSession, SessionState
+from scribe_desktop.session import (
+    EnrolmentLease,
+    GenerationLease,
+    RecordingSession,
+    SessionState,
+)
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -116,6 +121,17 @@ class SessionControllerLike(Protocol):
     # is held — the microphone screen keeps its idle monitor closed meanwhile.
     @property
     def enrolling(self) -> bool: ...
+
+    # D15, the activity itself: the Practitioner tab acquires the lease before
+    # the capture starts and releases it after its own result handler; the
+    # main window registers the benchmark worker as the blocker the
+    # controller cannot see for itself (Phase 3, Task 3.1/3.2 wiring).
+
+    def begin_enrolment(self) -> EnrolmentLease: ...
+
+    def end_enrolment(self, lease: EnrolmentLease) -> None: ...
+
+    def set_enrolment_blocker(self, blocker: Callable[[], str | None] | None) -> None: ...
 
     # Task 6.3: the note-generation lease plus the lease-aware custody
     # coordinator the recovered path routes through (never raw
@@ -806,13 +822,23 @@ def build_note_generator(
 # ---------------------------------------------------------------------------
 
 
-def model_report_lines() -> list[str]:
+def model_report_lines(
+    *, profile_root: Path | None = None, kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER
+) -> list[str]:
     """Model-readiness lines for the microphone screen's report panel.
 
     Step 13 fallback policy: when the default (medium) snapshot is absent
     but the fallback (small) is present, the pipeline degrades to the
     fallback and this report says so VISIBLY — the clinician must never
     discover the quality difference by surprise.
+
+    Practitioner-profile plan D2 (Task 3.2, the surface Task 0.6 deferred
+    to): two further lines name the speaker model's presence and the voice
+    profile's state, so a consultation that will run WITHOUT attribution is
+    visible before it is recorded — the same shape as the whisper fallback
+    line. Both come from stats and one profile read (``attribution_readiness``:
+    no model is loaded on the GUI thread); the profile line renders a date
+    and a model id, never a field of the profile.
     """
     resolved = resolve_whisper_model()
     missing = "MISSING - run scripts/setup-models.py"
@@ -830,13 +856,91 @@ def model_report_lines() -> list[str]:
     return [
         whisper_line,
         "VAD model (silero): " + ("ready" if vad_ready else missing),
+        speaker_model_report_line(kind),
+        voice_profile_report_line(profile_root=profile_root, kind=kind),
     ]
+
+
+def speaker_model_report_line(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> str:
+    """The speaker model's presence (a stat — D16: spectral has no file and
+    is always available; onnx iff the pinned file is present). The line
+    claims only what the stat establishes (peer round 27 PR-LOW-029): the
+    file is INSTALLED; its digest and I/O contract are verified when the
+    worker loads it, and a failure there is reported on the Transcript
+    screen (``ATTRIBUTION_DID_NOT_RUN_REASON``)."""
+    model_id, _sha = shipped_embedder_identity(kind)
+    if kind == "spectral":
+        return f"Speaker model ({model_id}): ready (built in)"
+    if speaker_embedder_available(kind):
+        return f"Speaker model ({model_id}): installed - verified when it loads"
+    return (
+        f"Speaker model ({model_id}): MISSING - run scripts/setup-models.py "
+        "--only speaker-embedding (voice attribution is off until then)"
+    )
+
+
+PROFILE_NOT_ENROLLED_LINE: Final = (
+    "Voice profile: not enrolled - set it up on the Practitioner tab (recording works "
+    "without it)"
+)
+
+
+def voice_profile_report_line(
+    *, profile_root: Path | None = None, kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER
+) -> str:
+    """The voice profile's state as ``attribution_readiness`` sees it: not
+    enrolled, enrolled (its creation date and the embedder's ``model_id``),
+    or the D2 fallback line naming why a present profile will not be applied
+    (model absent, made by another model, unusable)."""
+    readiness = attribution_readiness(profile_root=profile_root, kind=kind)
+    if not readiness.profile_present:
+        return PROFILE_NOT_ENROLLED_LINE
+    profile = readiness.profile
+    if profile is None:
+        return readiness.reason or ATTRIBUTION_DID_NOT_RUN_REASON
+    return f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {profile.model_id})"
 
 
 def models_ready() -> bool:
     """True when a USABLE whisper model (default or fallback) and the VAD
     model are both locally complete."""
     return whisper_model_available(resolve_whisper_model()) and vad_model_available()
+
+
+# ---------------------------------------------------------------------------
+# Practitioner tab copy (practitioner-profile plan Tasks 0.2 / 3.1 / 3.2).
+# ---------------------------------------------------------------------------
+
+# Consent text v1 — RATIFIED by the practitioner 2026-09-05 (Task 0.2) and
+# shipped VERBATIM. The version string is stored in the profile's consent
+# record (``ConsentRecord.consent_text_version``); changing the text means a
+# new version and re-consent at the next enrolment.
+CONSENT_TEXT_VERSION: Final = "consent-v1"
+CONSENT_TEXT_V1: Final = (
+    "This app can learn your voice and your phrasing to improve your notes. If you agree, "
+    "it stores on this computer: a numeric fingerprint of your voice (never a recording), "
+    "encrypted; and, if you also turn on phrase learning, the short phrases you approve "
+    "during review, kept as plain text in your own config file until you delete them. The "
+    "app cannot tell whether a phrase names a patient — only you can — so it shows you "
+    "every phrase before saving it, refuses names and numbers, and asks you to confirm it "
+    "contains no patient information; keep phrases general. Nothing else about any patient "
+    "is stored beyond their session, and nothing leaves this computer. You can re-record "
+    "your voice, delete it, or delete any learned phrase at any time from this tab. "
+    f"Version {CONSENT_TEXT_VERSION}."
+)
+CONSENT_CHECKBOX_LABEL: Final = (
+    "I agree - store an encrypted fingerprint of my voice on this computer"
+)
+# The second checkbox, off by default (Config / Environment / Deployment Impact).
+LEARNING_OPT_IN_LABEL: Final = (
+    "Also learn my phrasing from lines I add during review (asks each time)"
+)
+# D10: first run ASKS, never blocks — shown on the Practitioner tab, which the
+# main window selects at startup when no profile exists.
+FIRST_RUN_BANNER: Final = (
+    "Set up your voice profile so the app always knows which words are yours - you can "
+    "still record without it."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1025,8 +1129,14 @@ def build_recovery_runner(
 
 __all__ = [
     "ATTRIBUTION_DID_NOT_RUN_REASON",
+    "CONSENT_CHECKBOX_LABEL",
     "CONSENT_MANUAL_REMINDER",
+    "CONSENT_TEXT_V1",
+    "CONSENT_TEXT_VERSION",
     "COPY_TO_CLINIKO_ENABLED",
+    "FIRST_RUN_BANNER",
+    "LEARNING_OPT_IN_LABEL",
+    "PROFILE_NOT_ENROLLED_LINE",
     "PROFILE_REENROL_REASON",
     "PROFILE_UNUSABLE_REASON",
     "SPEAKER_MODEL_MISSING_REASON",
@@ -1063,6 +1173,8 @@ __all__ = [
     "provenance_label",
     "render_note_sections",
     "render_proposal",
+    "speaker_model_report_line",
     "speaker_quotations",
     "summarise_warnings",
+    "voice_profile_report_line",
 ]

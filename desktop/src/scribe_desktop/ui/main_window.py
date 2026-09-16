@@ -32,6 +32,7 @@ from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
+from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.transcript import TranscriptScreen
@@ -82,6 +83,7 @@ class MainWindow(QMainWindow):
             [], Callable[[Path, SessionCrypto], TranscriptDocument]
         ] = models.build_transcriber,
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
+        profile_root: Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Cliniko Scribe")
@@ -100,7 +102,7 @@ class MainWindow(QMainWindow):
         self._recovered_crypto: SessionCrypto | None = None
 
         self.microphone_screen = MicrophoneScreen(
-            controller, backend, benchmark_runner=benchmark_runner
+            controller, backend, benchmark_runner=benchmark_runner, profile_root=profile_root
         )
         self.session_screen = SessionScreen(
             controller,
@@ -116,6 +118,17 @@ class MainWindow(QMainWindow):
             controller, recovery_busy_provider=self._recovery_in_flight
         )
         self.note_screen = NoteScreen()
+        # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
+        # the profile store at construction (a stat and one profile read, no
+        # model loaded) — `profile_root` is the test seam for the store.
+        self.practitioner_screen = PractitionerScreen(
+            controller,
+            backend,
+            profile_root=profile_root,
+            # D15 (peer round 27 PR-MED-022): the idle monitor is handed over
+            # synchronously before the enrolment worker opens the device.
+            on_capture_start=self.microphone_screen.stop_monitor,
+        )
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -124,8 +137,20 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.recovery_screen, "Recovery")
         self.tabs.addTab(self.transcript_screen, "Transcript")
         self.tabs.addTab(self.note_screen, "Note")
+        self.tabs.addTab(self.practitioner_screen, "Practitioner")
         self.tabs.addTab(self.status_panel, "Status")
         self.setCentralWidget(self.tabs)
+
+        # D15 (the wiring owed from Phase 1): the controller cannot see the
+        # microphone screen's benchmark `TaskThread`, so `begin_enrolment`
+        # consults this blocker; the reverse refusal (the benchmark while
+        # enrolling) lives in `MicrophoneScreen.on_run_benchmark`.
+        controller.set_enrolment_blocker(self._enrolment_blocker)
+        # D10: first run asks, never blocks — with no profile the tab is
+        # selected and its banner shown; every other screen works as today.
+        if not self.practitioner_screen.profile_present:
+            self.practitioner_screen.show_first_run_banner()
+            self.tabs.setCurrentWidget(self.practitioner_screen)
 
         self.session_screen.transcript_ready.connect(self._on_live_transcript)
         self.recovery_screen.recovered.connect(self._on_recovered)
@@ -141,6 +166,12 @@ class MainWindow(QMainWindow):
         )
 
     # --- routing -----------------------------------------------------------
+
+    def _enrolment_blocker(self) -> str | None:
+        """The activity `begin_enrolment` cannot see for itself (D15): a
+        benchmark run saturates every core and owns no microphone, but its
+        worker must not overlap the enrolment capture."""
+        return "a benchmark is running" if self.microphone_screen.is_busy else None
 
     def _recovery_in_flight(self) -> bool:
         """Round 33 MED-001: a recovery resume is running, so a note
@@ -178,6 +209,19 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 "Recording in progress - Finish or Discard the session "
                 "before closing."
+            )
+            event.ignore()
+            return
+        if self._controller.enrolling or self.practitioner_screen.is_busy:
+            # Practitioner-profile plan D15: the activity spans capture ->
+            # embed -> save -> the tab's result handler; closing mid-way would
+            # destroy the running worker (the PR6 hazard) or leave the lease
+            # held. Stop is the escape: it is honoured inside the capture and
+            # before the embedding and the save; the WORKER saves, and the
+            # lease stays held through the handler that reports the result.
+            self.statusBar().showMessage(
+                "Voice enrolment in progress - wait for it to finish (or Stop "
+                "it) before closing."
             )
             event.ignore()
             return
