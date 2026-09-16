@@ -1,0 +1,12 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          { "type": "command", "command": "bash .claude/hooks/loop-rehydrate.sh --session" }
+        ]
+      }
+    ]
+  }
+}
