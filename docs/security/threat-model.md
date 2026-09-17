@@ -204,6 +204,59 @@ note inherit exactly that posture.
    config text rejects Unicode line/paragraph separators and bidirectional
    format controls so the confirmed wording cannot differ from what was
    digested.
+   **The app itself now writes ONE of these files (practitioner-profile plan
+   Phase 5, D9 as amended 2026-09-16 — auto-learn, review later).** When a
+   note is SAVED, `note_config.append_user_cues` appends learned phrases to
+   the user `section_cues.json` (creating it from the shipped default if
+   absent, so the practitioner keeps every shipped cue) and records each
+   phrase's section and date in a sidecar `section_cues.learned.json` that
+   the loader never reads; `delete_user_cue` removes one. What can be written
+   is bounded by structure at five points, each a call site: (a) only the
+   Note tab's add/move path enqueues a candidate (`ui/note.py`
+   `_consider_learning`) and only after `note.spoken_by_confirmed_clinician`
+   says the utterance is the CONFIRMED clinician's — a patient's, carer's or
+   interpreter's line never reaches the learner, whatever the settings; (b)
+   only while `ui.models.learning_status` finds a READABLE profile whose
+   consent record carries the CURRENT text version (`consent_is_current` —
+   an older version disables learning until the practitioner re-consents on
+   the Practitioner tab) with the learning opt-in ticked, read at review
+   start, re-read at every add or move, and AGAIN at Save (so a practitioner
+   who turns learning on or off mid-review is never gated by a stale read);
+   (c) the candidate is the utterance's leading two
+   to four content tokens only (`note_config.propose_learning_phrase`),
+   stored normalised; (d) `note_config.refuse_learning_candidate` — the
+   ENFORCING control — refuses a candidate whose SOURCE tokens (original
+   case, before normalisation) include a name-like token
+   (`transcription.is_name_like_token`, sentence-initial position honoured),
+   a numeric token (`is_number_token`), a date-shaped token (`d/d`, `d-d`,
+   `d.d`, a four-digit run, a month name) or a medication-shaped token (a
+   listed drug suffix, or a dose unit within two words), pinned by test as a
+   class; (e) the queue is written only on Save, after `write_note`
+   committed the note — an add undone before Save, a removal, a move's
+   removal leg and a cancelled or abandoned review write nothing — and the
+   exact bytes are validated by the loader's own two rules before either file
+   is replaced (each replace atomic; a failure leaves the file as it was and
+   is reported on the tab, never un-saving the note). The honest limit,
+   stated plainly (round 1 PR-HIGH-001): the filter classifies SHAPE, not
+   meaning. A benign-looking phrase that IS patient-identifying in context
+   passes it; so does a drug name carrying none of the listed suffixes with
+   no unit within two words; and a benign word ending in a listed suffix is
+   refused (two anatomical words are exempted by name — an exemption admits
+   a named form only, so an unforeseen form still fails toward refusal). One
+   more limit runs the SAFE way and is named because it narrows what learning
+   can pick up: the name heuristic is the transcript's pinned one, which at an
+   utterance's first word exempts only the common sentence openers it lists,
+   so a practitioner line opening with any other capitalised word ("On
+   examination…", "Your home exercise…") is refused as name-like and never
+   teaches — visible as a "not learned" note, a refusal rather than a leak. The
+   compensating control is the after-the-fact review: every learned phrase is
+   listed on the Practitioner tab by section, the twenty most recent with
+   their date as well (the sidecar's entries; a phrase whose sidecar write
+   failed is listed without one), one click deletes it (surface 10 of the
+   practitioner-profile section), and the phrase is the practitioner's own
+   words, learned under consent text v2.
+   The consent-version check is itself a control: a text change is a new
+   version, and no record carrying an older one can enable learning.
 2. **Clinician-asserted content in a clinical record.** A confirmed
    autofill/prefill proposal becomes a `NoteAssertion` and, once the note is
    saved, ratified content in the encrypted LOCAL DRAFT (`note.enc`). It is not
@@ -217,6 +270,27 @@ note inherit exactly that posture.
    `ConfirmationDecision` is unconstructable. Confirmation — not trigger
    presence, role attribution, or provenance — is the only thing that turns a
    proposal into record content; provenance proves attribution, never truth.
+   **Review edits (practitioner-profile plan Phase 5, D14).** The clinician can
+   also ADD a whole transcript utterance to a section, REMOVE a line the
+   router placed, MOVE one to another section, and UNDO any of those until
+   Save (`ui/note.py` `add_line` / `remove_line` / `move_line` / `undo_line`).
+   What the structure enforces: an addition is a `transcript`-provenance
+   `NoteAssertion` over the whole utterance's contiguous coordinates
+   (`note.whole_utterance_assertion`, id `m<segment>`), so Check 1 rebuilds
+   it exactly as it rebuilds a provider line and a mutated quote is an
+   unclearable error; an utterance already anywhere in the working note is
+   refused; the section chooser and every move apply the router's own
+   ownership rule (`note.admissible_sections` — a clinician-owned section
+   admits only the confirmed clinician's non-question lines), and Check 3
+   derives the role from coordinates regardless, so an edit cannot place a
+   patient's or a question line in a clinician-owned section; removal only
+   subtracts; every edit re-finalises the WORKING draft
+   (`ui.models.working_draft`) through the one content-change path, clearing
+   acknowledgements, so every check runs over the edited note and a stale
+   acknowledgement cannot survive; an omission a removal creates is Check 4's
+   review warning, acknowledgeable, never a block; free-text editing of an
+   assertion does not exist. Edits freeze at Save like proposal decisions,
+   and the transcript panel stays a non-interactive text box.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE Note-tab review (`ui/note.py`), longer than the
@@ -318,17 +392,20 @@ under the shipped single-GUI-thread, queued-signal usage, and full
 arbitrary-thread custody safety is a documented bounded residue for a future
 dedicated hardening.
 
-## Practitioner profile — Phases 1–3 (finalised at that plan's Task 3.3, 2026-09-16)
+## Practitioner profile — Phases 1–5 (surfaces 1–9 finalised at that plan's Task 3.3; surface 10 and the consent v2 amendments at Task 5.4, 2026-09-16)
 
-The practitioner-profile plan adds one stored artefact that is about the
+The practitioner-profile plan adds two stored artefacts that are about the
 PRACTITIONER, not a patient: an encrypted voice profile used to tell "the
-practitioner" from "someone else" in a consultation. Phase 1 landed the
+practitioner" from "someone else" in a consultation, and — since Phase 5 —
+learned phrases in the practitioner's own cue file. Phase 1 landed the
 embedder, the custody store and the in-memory enrolment capture (surfaces 1–5);
 Phase 2 landed the attribution path and the auto-confirm (surfaces 6–8, with
 the D4 responsibility boundary); Phase 3 landed the Practitioner tab, the
 first-run flow and the consent gate (surface 9, and the wiring surface 5 was
-waiting for). Everything below is calibrated to boundary 2: the defended
-adversary is outside the user's Windows session.
+waiting for); Phase 5 landed consent text v2, re-consent, review edits and
+consented phrase learning (surface 10 below; the Phase 3A section's surfaces
+1 and 2 carry the note-side controls). Everything below is calibrated to
+boundary 2: the defended adversary is outside the user's Windows session.
 
 1. **The practitioner's own biometric derivative at rest
    (`%LOCALAPPDATA%\ClinikoScribe\profile\voice.enc`).** The profile holds a
@@ -361,7 +438,8 @@ adversary is outside the user's Windows session.
    unlink is not anti-forensic (§2 above, same acceptance); the vector is
    sensitive as a biometric derivative even though it is not a secret against
    a same-user attacker — the compensating control is the practitioner's
-   consent (v1, ratified) and the visible Delete, both on the Practitioner tab
+   consent (v2 since Phase 5, ratified; v1 records are readable but not
+   current) and the visible Delete, both on the Practitioner tab
    (surface 9).
 2. **No enrolment audio is ever persisted.** `enrolment.record_enrolment`
    captures into process memory over the microphone screen's monitor-stream
@@ -482,31 +560,40 @@ adversary is outside the user's Windows session.
    problem. This is a responsibility boundary — the practitioner's choice,
    recorded — not a control claim.
 9. **Consent, first run and deletion are UI state at the same-user
-   boundary, not identity (Phase 3, D10).** What the structure enforces: the
-   Practitioner tab shows consent text v1 verbatim (`ui/models.py`
-   `CONSENT_TEXT_V1`) and the Record button is enabled only while the consent
+   boundary, not identity (Phase 3, D10; consent v2 and re-consent at Phase
+   5, Task 5.0).** What the structure enforces: the Practitioner tab shows
+   the CURRENT consent text verbatim (`ui/models.py` `CONSENT_TEXT_V2`,
+   version `CONSENT_TEXT_VERSION`; the v1 text stays in the file as history)
+   and the Record button is enabled only while the consent
    box is ticked (and a microphone is selected and the selected embedder and
    the VAD model are present — an absent model disables the action and names
    `setup-models.py`, D16); the profile's consent record stores the ratified
-   text's version (`CONSENT_TEXT_VERSION`), the acceptance time and the
-   learning opt-in as ticked at that enrolment, so a later text is a new
-   version; while a READABLE profile exists its own consent record is what
-   pre-ticks the box, shown ticked and disabled — withdrawing consent IS
-   Delete, which asks for confirmation and runs `delete_profile` (key
-   first); a blob that cannot be read (a keyless remainder of an interrupted
-   Delete, a tampered file) is reported and deletable but is NOT evidence of
-   consent — its box stays unticked and enabled, so recording over it needs
-   a fresh tick (peer round 27 PR-HIGH-006); the learning opt-in stays
-   editable and applies at the next (re-)record — the stored value stands
-   until a save succeeds. First run selects the tab and shows a
+   text's version, the acceptance time and the learning opt-in as ticked when
+   it was saved, so a later text is a new version; while a READABLE profile
+   whose record carries the CURRENT version exists, that record is what
+   pre-ticks the box, shown ticked and disabled (`consent_is_current`) —
+   withdrawing consent IS Delete, which asks for confirmation and runs
+   `delete_profile` (key first); a readable record carrying an OLDER version
+   is not consent to the current text: the box stays unticked and editable, a
+   notice asks for a fresh tick, Record needs it, and phrase learning is off
+   until re-consent; "Confirm consent" (`on_confirm_consent`) re-saves the
+   SAME vector under the existing key with a current record — no
+   re-recording — and is also how the learning opt-in is changed (a
+   re-record saves both too); a blob that cannot be read (a keyless remainder
+   of an interrupted Delete, a tampered file) is reported and deletable but
+   is NOT evidence of consent — its box stays unticked and enabled, so
+   recording over it needs a fresh tick (peer round 27 PR-HIGH-006). First
+   run selects the tab and shows a
    banner but gates nothing: recording, transcription and note generation
    work without a profile exactly as before. Residuals: consent is a checkbox
    ticked by whoever sits at the logged-in Windows session — the app cannot
    verify that the person enrolling is the practitioner (boundary 2, the same
    same-login residual accepted for the vector in surface 1); the record is
-   the version string and time, not a copy of the text; the learning opt-in
-   changes only with a re-record (a re-save without re-recording is a Phase 5
-   candidate); a Delete that races a transcription's profile read has two
+   the version string and time, not a copy of the text; a re-consent needs
+   the profile to be READABLE against the shipped embedder's identity (the
+   tab's readiness probe), so a profile made by another model or with the
+   model file absent is re-enrolled rather than re-consented; a Delete that
+   races a transcription's profile read has two
    outcomes and neither is a wrong attribution — a read that reaches the key
    after it is gone fails typed (`load_profile`: blob, then key, then
    decrypt) and that transcript gets the visible D2 fallback, while a read
@@ -514,6 +601,43 @@ adversary is outside the user's Windows session.
    keeps its in-memory copy of the practitioner's own just-deleted profile
    (deleting persisted custody never revokes plaintext a worker already
    holds; the copy dies with the transcription).
+10. **Learned phrases at rest — plain text, the practitioner's own words, by
+    consent (Phase 5, D9 as amended).** Where: the user
+    `%LOCALAPPDATA%\ClinikoScribe\config\section_cues.json` (the fourth
+    clinician config file, surface 1 of the Phase 3A section) and the sidecar
+    `section_cues.learned.json` beside it (`{phrase: {section, learned_at}}`,
+    read only by the Practitioner tab's "Recently learned" list, never by the
+    loader — it cannot affect routing or the config digest). What a phrase
+    is: at most four normalised content tokens from the START of a line the
+    practitioner added or moved during review — a bounded prefix, which for
+    a line of two to four content words is that line's whole content — and
+    never a patient's line (the ownership test in `ui/note.py`
+    `_consider_learning` over `note.spoken_by_confirmed_clinician`, pinned).
+    The controls that bound what gets written are the five call sites listed
+    at the Phase 3A section's surface 1; the two on this tab are the consent
+    gate (a readable profile, the CURRENT consent version, the opt-in —
+    `ui.models.learning_status`) and the after-the-fact review:
+    `note_config.load_learned_phrases` lists the last 20 learned phrases with
+    section and date (sidecar entries whose phrase is no longer in the cue
+    file are dropped on read) and every phrase in the user file the shipped
+    default does not carry, by section; Delete on either runs
+    `note_config.delete_user_cue`, which removes the phrase from the cue file
+    and the sidecar. Retention: until deleted (retention schedule), outside
+    the 24 h rule like the rest of config. Residuals, named: the refusal
+    filter is shape-only (surface 1's honest limit) — the practitioner's
+    review is the control for meaning; the cue file and the sidecar are two
+    atomic writes, not one — on learning, a sidecar write that fails after
+    the cue file was replaced is REPORTED on the Note tab (the phrase is
+    learned, listed under "Learned phrases" without a date), never raised as
+    "not learned"; on deletion, a sidecar write that fails after the cue was
+    removed leaves the entry in the sidecar, the tab keeps the row for a
+    retry, and the retry — or any later delete, which prunes every sidecar
+    entry whose phrase is no longer in the cue file — removes it; a
+    phrase the practitioner hand-edits into the cue file is indistinguishable
+    from a learned one on that list (both are theirs to delete); the write
+    happens on the GUI thread at Save (two small atomic replaces); and the
+    same-user boundary applies to the plaintext exactly as to the other
+    config files.
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 

@@ -13,8 +13,8 @@ view patterns · tokens · microcopy.
   **Practitioner** / Status — `desktop/src/scribe_desktop/ui/main_window.py`. No secondary
   windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
-  practitioner's OWN data is set up: consent, voice enrolment, deletion, later learned
-  phrases.
+  practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
+  phrases with their delete.
 - The **Note review tab** shows the generated note and the full uncertainty-marked
   transcript SIDE BY SIDE through the whole review, until copy or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
@@ -46,10 +46,37 @@ view patterns · tokens · microcopy.
   recording works without it; every other screen behaves as before (`ui/main_window.py`,
   `ui/models.py` `FIRST_RUN_BANNER`; plan D10). Consent is a visible checkbox directly
   above the action it gates, under the FULL ratified text shown verbatim
-  (`ui/models.py` `CONSENT_TEXT_V1`); the action is disabled, not error-handled, until
-  the box is ticked, and withdrawing consent is the visible Delete, not an un-tick
-  (`ui/practitioner.py`). Only a READABLE profile's own consent record pre-ticks the
-  box; a stored blob the app cannot read never does — presence is not consent.
+  (`ui/models.py` `CONSENT_TEXT_V2`, the current version); the action is disabled, not
+  error-handled, until the box is ticked, and withdrawing consent is the visible Delete,
+  not an un-tick (`ui/practitioner.py`). Only a READABLE profile's own consent record,
+  carrying the CURRENT text version, pre-ticks the box; a stored blob the app cannot
+  read never does — presence is not consent — and a record for an OLDER text leaves the
+  box unticked with a one-line notice asking for a fresh tick (`CONSENT_STALE_NOTICE`),
+  with "Confirm consent" saving the new consent (and the learning opt-in) without a
+  re-record.
+- **Edits that subtract or re-route, never free text.** The Note tab's "Edit the note"
+  group (`ui/note.py`) offers Add line / Remove line / Move / Undo over whole transcript
+  utterances: a chooser lists only the lines not already in the note, a section chooser
+  lists only the sections that line may enter (the router's own ownership rule), and
+  every edit re-finalises the note with acknowledgements cleared. There is no text
+  field — an assertion is a quoted utterance or nothing — and the transcript panel stays
+  a non-interactive text box; edits freeze at Save like proposal decisions.
+- **Say what was learned, and what was not, on the spot — and name the control that
+  writes it.** After an add or a move the edit group's status line says either "Will
+  learn '<phrase>' for <section> when you press Save note on this tab", "Not learned:
+  contains a name/number/date/medication (<class>)", "Not learned: this line is not
+  attributed to you …", or the one-line reason learning is off (naming the Practitioner
+  tab) — a status line, never a modal, never a prompt (plan D9 as amended: auto-learn,
+  review later). While phrases are queued the learning line above it reads "N phrases
+  queued - press Save note on this tab to learn them (Cancel, Delete and Complete learn
+  nothing)": the live smoke of 2026-09-17 showed a queued phrase read as the outcome and
+  the review left by another exit. On Save the same status line reports what was written,
+  why the write failed, or — when lines were added but nothing queued — why nothing was
+  learned.
+- **What the app learned is listed where it can be deleted.** The Practitioner tab
+  shows "Recently learned" (the last 20 phrases with section and date, newest first)
+  and every learned phrase by section, each with a one-click Delete; the empty state
+  says "No learned phrases yet." rather than hiding the lists (`ui/practitioner.py`).
 - **A confirmation line replaces a choice the app made for you, with a one-click way
   back.** When the clinician role is auto-confirmed from the voice profile, the manual
   radios are replaced by ONE plain-text line stating what was decided and the evidence

@@ -21,7 +21,7 @@ in-process and adds no network surface and no new logging channel.
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write) and the practitioner-profile voice enrolment (flow 12) run in-process here | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 
 ## Flows
@@ -199,7 +199,9 @@ in-process and adds no network surface and no new logging channel.
     which VERBATIM transcript utterance is placed in which section (a
     `transcript`-provenance assertion, reconstructed exactly by Check 1), so a
     hand-edited cue file can misplace transcript text but cannot add text to
-    the note.
+    the note. The loader itself stays read-only; since the practitioner-profile
+    plan's Phase 5 the app WRITES the cue file through one path of its own —
+    flow 13 — and reads it back only through this loader.
 
 12. **Voice enrolment → profile store (practitioner-profile plan Phase 3,
     in-process, zero network).** On the Practitioner tab (`ui/practitioner.py`),
@@ -215,15 +217,53 @@ in-process and adds no network surface and no new logging channel.
     DPAPI-wrapped, current-user, with the profile description) and `voice.enc`
     (AES-256-GCM under that key: the vector, the embedder identity, the
     creation time, speech seconds, the device name and the consent record —
-    version `consent-v1`, acceptance time, learning opt-in). The lease is
+    the CURRENT text's version, `consent-v2` since Phase 5 (a `consent-v1`
+    record is readable but not current: the tab asks for a fresh tick and
+    phrase learning stays off until re-consent), acceptance time, learning
+    opt-in). The lease is
     released after the tab's own status update, on every path. Re-record
-    replaces `voice.enc` under the existing key; Delete (confirmed) unlinks the
+    replaces `voice.enc` under the existing key; "Confirm consent" (Phase 5)
+    re-saves the SAME vector under the existing key with a current consent
+    record and the learning opt-in as ticked — one atomic replace of
+    `voice.enc`, no microphone, no lease; Delete (confirmed) unlinks the
     key first, then the blob. Read back by flow 7 (attribution, inside the
-    transcription worker) and by the readiness probe that renders the tab's
+    transcription worker), by the readiness probe that renders the tab's
     status and the microphone screen's report lines (a stat and one profile
-    read on the GUI thread; no model is loaded there). Nothing about the
+    read on the GUI thread; no model is loaded there), and by the Note tab's
+    learning-status read (flow 13). Nothing about the
     profile is logged (flow 2's tripwire markers), and no audio from this flow
     touches disk (the non-flow below).
+
+13. **Review edit → queued phrase → Save → cue file + sidecar (practitioner-
+    profile plan Phase 5, D9 as amended; in-process, zero network).** On the
+    Note tab (`ui/note.py`), the clinician adds a whole transcript utterance
+    to a section, or moves a routed line to another section, through the
+    "Edit the note" controls (the transcript panel stays display-only). If
+    the utterance is the CONFIRMED clinician's (`note.spoken_by_confirmed_
+    clinician` — any other speaker's line stops here) and the learning
+    status — read at review start and re-read at this add or move
+    (`ui.models.learning_status`: a readable profile, the current consent
+    version, the opt-in) — says learning is on, the utterance's leading two
+    to four content tokens
+    (`note_config.propose_learning_phrase`) are checked by
+    `note_config.refuse_learning_candidate` — a name-like, numeric,
+    date-shaped or medication-shaped source token refuses the candidate with
+    a "not learned" note on the tab's status line — and an accepted phrase is
+    QUEUED in memory on the screen with its section. Undo drops it; Cancel,
+    Delete-and-complete and a new transcript clear the queue. On Save, after
+    `write_note` has committed `note.enc` (flow 10), the status is re-read
+    and `note_config.append_user_cues` reads the user `section_cues.json` (or
+    the shipped default when there is none), appends the normalised phrases
+    (duplicates under the loader's normalisation skipped), validates the
+    exact bytes by the loader's rules, and replaces `%LOCALAPPDATA%\
+    ClinikoScribe\config\section_cues.json` atomically (`session_store.
+    atomic_write_bytes`), then the sidecar `section_cues.learned.json`
+    (`{phrase: {section, learned_at}}`) the same way. The Practitioner tab
+    lists the sidecar's recent entries and every non-shipped phrase in the
+    cue file (`note_config.load_learned_phrases`) and deletes one from both
+    files (`delete_user_cue`). Only the practitioner's own words leave the
+    review, as config plaintext, by their consent (text v2); nothing here is
+    logged (the phrase is shown on the local UI only).
 
 ## Explicit non-flows
 
@@ -234,7 +274,13 @@ in-process and adds no network surface and no new logging channel.
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
   semantically (it validates structure only), so it is NOT a content guarantee —
-  whatever a clinician hand-edits in is retained verbatim.
+  whatever a clinician hand-edits in is retained verbatim. The one thing the
+  app writes into that class itself is a learned phrase (flow 13): two to
+  four words from the start of a line the PRACTITIONER said and added or
+  moved during review, by consent — structurally never a patient's line, and
+  shape-filtered against names, numbers, dates and medication names — but
+  the filter cannot judge meaning, so a learned phrase is reviewable and
+  deletable on the Practitioner tab rather than guaranteed non-clinical.
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the

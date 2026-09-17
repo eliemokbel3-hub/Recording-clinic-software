@@ -4,6 +4,7 @@ or ML in CI (mock backends and canned transcripts only)."""
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
@@ -18,6 +19,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import scribe_desktop.note_config as note_config_module  # noqa: E402
 from scribe_desktop.audio_capture import AudioDevice  # noqa: E402
 from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
 from scribe_desktop.enrolment import (  # noqa: E402
@@ -35,9 +37,12 @@ from scribe_desktop.note import (  # noqa: E402
     ProposalResolution,
     compose_draft,
     finalise_note,
+    manual_assertion_id,
     text_digest,
 )
 from scribe_desktop.note_config import (  # noqa: E402
+    LEARNED_SIDECAR_FILENAME,
+    SECTION_CUES_FILENAME,
     AutofillRule,
     NoteConfig,
     PrefillSeedAssertion,
@@ -45,6 +50,9 @@ from scribe_desktop.note_config import (  # noqa: E402
     SectionMapping,
     TemplateProfile,
     TemplateTarget,
+    append_user_cues,
+    load_learned_phrases,
+    load_note_config,
 )
 from scribe_desktop.secure_storage import SessionCrypto  # noqa: E402
 from scribe_desktop.session import (  # noqa: E402
@@ -59,6 +67,7 @@ from scribe_desktop.session_store import (  # noqa: E402
     AUDIO_FILENAME,
     KEY_FILENAME,
     SessionChunkStore,
+    StoreWriteError,
 )
 from scribe_desktop.transcription import (  # noqa: E402
     SPEAKER_1,
@@ -67,6 +76,7 @@ from scribe_desktop.transcription import (  # noqa: E402
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
+    is_number_token,
 )
 from scribe_desktop.ui import models  # noqa: E402
 
@@ -676,12 +686,41 @@ def _enrol(qapp: Any, screen: Any, capture: _FakeCapture) -> None:
     assert capture.calls, "the capture seam was never called"
 
 
+def _make_consent_stale(root: Path) -> Any:
+    """Re-save the stored profile with a ``consent-v1`` record (Task 5.0's
+    older-version case): the SAME key and the SAME vector, an older consent
+    text. Returns the profile as it now reads back from disk."""
+    from scribe_desktop.practitioner_profile import ConsentRecord, load_profile, save_profile
+
+    profile = load_profile(root=root)
+    assert profile is not None
+    save_profile(
+        profile.model_copy(
+            update={
+                "consent": ConsentRecord(
+                    accepted_at=profile.consent.accepted_at,
+                    consent_text_version="consent-v1",
+                    learning_opt_in=profile.consent.learning_opt_in,
+                )
+            }
+        ),
+        root=root,
+    )
+    stale = load_profile(root=root)
+    assert stale is not None
+    return stale
+
+
 class TestPractitionerScreen:
     def test_constructs_with_consent_text_verbatim_and_nothing_enabled(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path)
-        assert screen.consent_text_label.text() == models.CONSENT_TEXT_V1
+        from scribe_desktop.ui.practitioner import NO_LEARNED_PHRASES_TEXT
+
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
+        )
+        assert screen.consent_text_label.text() == models.CONSENT_TEXT_V2
         assert screen.consent_checkbox.text() == models.CONSENT_CHECKBOX_LABEL
         assert not screen.consent_checkbox.isChecked()
         assert not screen.learning_checkbox.isChecked()
@@ -692,7 +731,14 @@ class TestPractitionerScreen:
         assert not screen.record_button.isEnabled()  # consent not given yet
         assert not screen.stop_button.isVisibleTo(screen)
         assert not screen.delete_button.isEnabled()
-        assert not screen.learned_phrases_list.isEnabled()
+        # Nothing learned yet, nothing to delete, and no consent to confirm.
+        assert screen.recently_learned_list.count() == 0
+        assert screen.learned_phrases_list.count() == 0
+        assert screen.learned_phrases_note_label.text() == NO_LEARNED_PHRASES_TEXT
+        assert not screen.delete_recent_button.isEnabled()
+        assert not screen.delete_learned_button.isEnabled()
+        assert not screen.confirm_consent_button.isVisibleTo(screen)
+        assert not screen.consent_notice_label.isVisibleTo(screen)
         assert screen.profile_present is False
         assert screen.device_combo.count() == 2
         assert screen.selected_device() == (7, "Mic B")  # the default device
@@ -1146,6 +1192,408 @@ class TestPractitionerScreen:
         assert screen.enrolment_status_label.text() == ""
         assert controller.calls == []
         assert screen.profile_status_label.text() == "No voice profile yet."
+        screen.deleteLater()
+
+    # --- consent versions (Task 5.0) -------------------------------------
+
+    @windows_only
+    def test_a_current_consent_record_pre_ticks_with_nothing_to_confirm(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        capture = _FakeCapture()
+        screen = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        _enrol(qapp, screen, capture)  # saves a record for the CURRENT text
+        assert screen.consent_current is True
+        assert screen.consent_checkbox.isChecked()
+        assert not screen.consent_checkbox.isEnabled()  # withdrawal is Delete
+        assert not screen.consent_notice_label.isVisibleTo(screen)
+        assert screen.confirm_consent_button.isVisibleTo(screen)
+        assert not screen.confirm_consent_button.isEnabled()  # nothing to confirm
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_stale_consent_record_does_not_pre_tick_and_gates_record(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        capture = _FakeCapture()
+        first = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        first.learning_checkbox.setChecked(True)
+        _enrol(qapp, first, capture)
+        first.deleteLater()
+        stale = _make_consent_stale(tmp_path)
+        assert stale.consent.consent_text_version == "consent-v1"
+
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
+        )
+        assert screen.consent_current is False
+        assert not screen.consent_checkbox.isChecked()
+        assert screen.consent_checkbox.isEnabled()
+        assert screen.consent_notice_label.isVisibleTo(screen)
+        assert screen.consent_notice_label.text() == models.CONSENT_STALE_NOTICE
+        assert not screen.record_button.isEnabled()  # Record needs a fresh tick
+        assert screen.confirm_consent_button.isVisibleTo(screen)
+        assert not screen.confirm_consent_button.isEnabled()
+        assert screen.learning_checkbox.isChecked()  # the STORED choice, shown
+        screen.consent_checkbox.setChecked(True)
+        assert screen.record_button.isEnabled()
+        assert screen.confirm_consent_button.isEnabled()
+        screen.deleteLater()
+
+    @windows_only
+    def test_confirm_consent_re_saves_the_same_vector_without_re_recording(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture()
+        first = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        first.learning_checkbox.setChecked(True)
+        _enrol(qapp, first, capture)
+        first.deleteLater()
+        stale = _make_consent_stale(tmp_path)
+        key_before = (tmp_path / "key.dpapi").read_bytes()
+        second = _FakeCapture()
+        screen = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=second,
+            config_root=tmp_path / "config",
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.learning_checkbox.setChecked(False)
+        screen.on_confirm_consent()
+        stored = load_profile(root=tmp_path)
+        assert stored is not None
+        assert stored.consent.consent_text_version == models.CONSENT_TEXT_VERSION
+        assert stored.consent.learning_opt_in is False  # as ticked
+        assert stored.embedding == stale.embedding  # the SAME vector
+        assert stored.created_at == stale.created_at
+        assert screen.consent_checkbox.isChecked()
+        assert not screen.consent_checkbox.isEnabled()
+        assert not screen.consent_notice_label.isVisibleTo(screen)
+        assert screen.enrolment_status_label.text() == (
+            "Consent saved - your voice profile is unchanged."
+        )
+        assert second.calls == []  # no microphone, no re-record
+        assert (tmp_path / "key.dpapi").read_bytes() == key_before
+        screen.deleteLater()
+
+    @windows_only
+    def test_the_learning_opt_in_is_saved_by_confirm_consent(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import load_profile
+
+        capture = _FakeCapture()
+        screen = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        _enrol(qapp, screen, capture)  # current consent, opt-in OFF
+        assert not screen.confirm_consent_button.isEnabled()
+        before = load_profile(root=tmp_path)
+        assert before is not None and before.consent.learning_opt_in is False
+        screen.learning_checkbox.setChecked(True)
+        assert screen.confirm_consent_button.isEnabled()  # a change to save
+        screen.on_confirm_consent()
+        stored = load_profile(root=tmp_path)
+        assert stored is not None
+        assert stored.consent.learning_opt_in is True
+        assert stored.embedding == before.embedding
+        assert stored.consent.consent_text_version == models.CONSENT_TEXT_VERSION
+        assert not screen.confirm_consent_button.isEnabled()  # nothing left to save
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_record_found_stale_in_session_withdraws_its_own_tick_only(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        capture = _FakeCapture()
+        screen = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        _enrol(qapp, screen, capture)
+        assert screen.consent_checkbox.isChecked()
+        _make_consent_stale(tmp_path)
+        screen.refresh_profile_state()
+        # The tick came from a record that is no longer current: withdrawn.
+        assert not screen.consent_checkbox.isChecked()
+        assert screen.consent_notice_label.isVisibleTo(screen)
+        screen.consent_checkbox.setChecked(True)  # the practitioner ticks again
+        screen.refresh_profile_state()
+        assert screen.consent_checkbox.isChecked()  # the hand tick STANDS
+        assert screen.consent_notice_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_confirm_consent_is_inert_without_a_readable_profile(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "profile"
+        root.mkdir()
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), root, config_root=tmp_path / "config"
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.on_confirm_consent()
+        assert list(root.iterdir()) == []  # nothing written
+        assert screen.enrolment_status_label.text() == ""
+        screen.deleteLater()
+
+    @windows_only
+    def test_confirm_consent_is_inert_without_a_fresh_tick(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        capture = _FakeCapture()
+        first = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        _enrol(qapp, first, capture)
+        first.deleteLater()
+        _make_consent_stale(tmp_path)
+        blob_before = (tmp_path / "voice.enc").read_bytes()
+
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
+        )
+        assert not screen.consent_checkbox.isChecked()
+        screen.on_confirm_consent()
+        assert (tmp_path / "voice.enc").read_bytes() == blob_before
+        assert screen.consent_current is False
+        screen.deleteLater()
+
+    # --- learned phrases (Task 5.3) ---------------------------------------
+
+    def test_learned_phrases_are_listed_newest_first_and_deletable(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+
+        from scribe_desktop.ui.practitioner import NO_LEARNED_PHRASES_TEXT
+
+        root = tmp_path / "config"
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=root
+        )
+        assert screen.recently_learned_list.count() == 0
+        assert screen.learned_phrases_list.count() == 0
+        assert screen.learned_phrases_note_label.text() == NO_LEARNED_PHRASES_TEXT
+
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        append_user_cues(
+            [("management_plan", "book the follow up")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 16, tzinfo=UTC),
+        )
+        screen.refresh_learned_phrases()
+        assert screen.recently_learned_list.count() == 2
+        newest = screen.recently_learned_list.item(0).text()
+        assert newest == (
+            f"2026-09-16 - {models.section_title('management_plan')}: book the follow up"
+        )
+        assert screen.recently_learned_list.item(1).text() == (
+            f"2026-09-15 - {models.section_title('advice_home_exercise')}: wall slide"
+        )
+        assert [
+            screen.learned_phrases_list.item(index).text()
+            for index in range(screen.learned_phrases_list.count())
+        ] == [
+            f"{models.section_title('advice_home_exercise')}: wall slide",
+            f"{models.section_title('management_plan')}: book the follow up",
+        ]
+        assert screen.delete_recent_button.isEnabled()
+        assert screen.delete_learned_button.isEnabled()
+
+        assert screen.delete_learned_phrase("wall slide") is True
+        assert screen.recently_learned_list.count() == 1
+        assert screen.learned_phrases_list.count() == 1
+        assert screen.learned_phrases_note_label.text() == "Deleted 'wall slide'."
+        learned = load_learned_phrases(root)
+        assert [item.phrase for item in learned.recent] == ["book the follow up"]
+        assert learned.by_section == (("management_plan", ("book the follow up",)),)
+
+        # A selection-driven delete goes through the same one writer.
+        screen.learned_phrases_list.setCurrentRow(0)
+        phrase = screen.learned_phrases_list.item(0).data(Qt.ItemDataRole.UserRole)
+        assert phrase == "book the follow up"
+        screen.delete_learned_button.click()
+        assert screen.learned_phrases_list.count() == 0
+        assert load_learned_phrases(root) == ((), ())
+        screen.deleteLater()
+
+    def test_a_sidecar_entry_whose_phrase_is_gone_is_not_listed(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        (root / LEARNED_SIDECAR_FILENAME).write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "learned": {
+                        "wall slide": {
+                            "section": "advice_home_exercise",
+                            "learned_at": "2026-09-15T00:00:00+00:00",
+                        },
+                        "ghost phrase": {
+                            "section": "management_plan",
+                            "learned_at": "2026-09-16T00:00:00+00:00",
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=root
+        )
+        assert screen.recently_learned_list.count() == 1
+        assert "wall slide" in screen.recently_learned_list.item(0).text()
+        assert "ghost phrase" not in "\n".join(
+            screen.recently_learned_list.item(index).text()
+            for index in range(screen.recently_learned_list.count())
+        )
+        screen.deleteLater()
+
+    def test_a_malformed_cue_file_is_reported_and_disables_delete(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=root
+        )
+        assert screen.learned_phrases_list.count() == 1
+        (root / SECTION_CUES_FILENAME).write_text("{not json", encoding="utf-8")
+        screen.refresh_learned_phrases()
+        assert screen.learned_phrases_note_label.text().startswith(
+            "Learned phrases unavailable - NoteConfigInvalidError:"
+        )
+        assert screen.recently_learned_list.count() == 0
+        assert screen.learned_phrases_list.count() == 0
+        assert not screen.delete_recent_button.isEnabled()
+        assert not screen.delete_learned_button.isEnabled()
+        screen.deleteLater()
+
+    def test_a_raw_cleanup_error_on_delete_keeps_the_row_for_a_retry(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Peer round 37 PR-MED-025: a deletion whose sidecar write
+        double-faults reaches the tab's typed error branch (no slot exception),
+        the row stays, and the retry finishes the job."""
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=root
+        )
+        assert screen.learned_phrases_list.count() == 1
+        blocker = root / (LEARNED_SIDECAR_FILENAME + ".tmp")
+        blocker.mkdir()
+        assert screen.delete_learned_phrase("wall slide") is False
+        assert screen.learned_phrases_note_label.text().startswith(
+            "Could not delete the phrase - NoteConfigWriteError:"
+        )
+        assert screen.learned_phrases_list.count() == 1  # the row stays for a retry
+        blocker.rmdir()
+        assert screen.delete_learned_phrase("wall slide") is True
+        assert screen.learned_phrases_list.count() == 0
+        assert screen.recently_learned_list.count() == 0
+        assert load_learned_phrases(root) == ((), ())
+        screen.deleteLater()
+
+    @windows_only
+    def test_confirm_consent_reports_a_raw_writer_error_instead_of_raising(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-025's in-phase sibling: the profile writer's double fault
+        (a directory at `voice.enc.tmp`) is reported on the tab, not raised
+        from the slot; the stored record is unchanged."""
+        capture = _FakeCapture()
+        first = _practitioner_screen(
+            FakeController(),
+            FakeBackend(),
+            tmp_path,
+            capture=capture,
+            config_root=tmp_path / "config",
+        )
+        _enrol(qapp, first, capture)
+        first.deleteLater()
+        _make_consent_stale(tmp_path)
+        blob_before = (tmp_path / "voice.enc").read_bytes()
+        (tmp_path / "voice.enc.tmp").mkdir()
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
+        )
+        screen.consent_checkbox.setChecked(True)
+        screen.on_confirm_consent()  # must not raise
+        assert screen.enrolment_status_label.text().startswith("Could not save your consent - ")
+        assert (tmp_path / "voice.enc").read_bytes() == blob_before
+        assert screen.consent_current is False
+        screen.deleteLater()
+
+    def test_delete_selected_without_a_selection_asks_for_one(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=root,
+            learned_at=datetime(2026, 9, 15, tzinfo=UTC),
+        )
+        screen = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=root
+        )
+        screen._delete_selected(screen.learned_phrases_list)
+        assert "Select a phrase" in screen.learned_phrases_note_label.text()
+        assert load_learned_phrases(root).by_section == (
+            ("advice_home_exercise", ("wall slide",)),
+        )
         screen.deleteLater()
 
 
@@ -2820,6 +3268,924 @@ class TestNoteScreen:
 
 
 # ---------------------------------------------------------------------------
+# Review edits and consented phrase learning on the Note tab
+# (practitioner-profile plan Phase 5, D14 + D9 as amended — Tasks 5.1 / 5.1b /
+# 5.2). The fixture transcript extends `_NOTE_TURNS` with three lines the
+# shipped cues do NOT route (so the chooser has something to offer) and one
+# the `management_plan` cue does route and that carries a number.
+# ---------------------------------------------------------------------------
+
+_EDIT_TURNS: tuple[tuple[str, str], ...] = (
+    *_NOTE_TURNS,
+    ("I walked to the shop this morning", SPEAKER_1),  # 4: unrouted patient line
+    ("The knee felt steady on the stairs", SPEAKER_2),  # 5: unrouted, learnable
+    ("The plan is to review you in two weeks", SPEAKER_2),  # 6: routed, carries a number
+)
+_QUESTION_TURNS: tuple[tuple[str, str], ...] = (
+    *_EDIT_TURNS,
+    ("Do you feel pain here?", SPEAKER_2),  # 7: the clinician's QUESTION
+)
+_REFUSED_TURNS: tuple[tuple[str, str], ...] = (
+    *_NOTE_TURNS,
+    ("The dose is 500 mg tonight", SPEAKER_2),  # 4: a number in the phrase
+    ("The patient Margaret rested", SPEAKER_2),  # 5: a name in the phrase
+)
+_LEARNABLE_INDEX = 5  # `_EDIT_TURNS`' "The knee felt steady on the stairs"
+_LEARNABLE_PHRASE = "the knee felt steady"
+_PLAN_INDEX = 6  # `_EDIT_TURNS`' routed clinician line carrying "two"
+_DIAGNOSIS_INDEX = 2  # `_NOTE_TURNS`' routed clinician line
+_DIAGNOSIS_PHRASE = "the diagnosis is a"
+
+
+def _edit_config(section_cues: dict[str, tuple[str, ...]] | None = None) -> NoteConfig:
+    """`_note_config` plus cues. The LEARNER reads the config's cues (the
+    fourth clinician config file), which the note fixture leaves empty."""
+    base = _note_config()
+    return NoteConfig(
+        template_profiles=base.template_profiles,
+        autofill_rules=base.autofill_rules,
+        prefill_templates=base.prefill_templates,
+        section_cues=section_cues or {},
+    )
+
+
+def _edit_result(
+    turns: tuple[tuple[str, str], ...] = _EDIT_TURNS,
+    *,
+    clinician: str | None = SPEAKER_2,
+    config: NoteConfig | None = None,
+    route_by_config: bool = False,
+) -> models.NoteGenerationResult:
+    """`_note_result`'s shape over `turns`. `route_by_config` builds the
+    provider FROM the config's cues (Task 4.3's shipping wiring) instead of
+    the module defaults the note fixture composes with."""
+    document = _note_document(turns)
+    resolved = config if config is not None else _note_config()
+    provider = (
+        ExtractiveNoteProvider(cues=resolved.normalised_cues())
+        if route_by_config
+        else ExtractiveNoteProvider()
+    )
+    draft = compose_draft(document, resolved, provider, clinician_speaker=clinician)
+    return models.NoteGenerationResult(draft=draft, config=resolved, document=document)
+
+
+def _learning_on() -> models.LearningStatus:
+    return models.LearningStatus(True, None)
+
+
+def _provider_lines(screen: Any) -> dict[str, Any]:
+    """The draft's own (provider-routed) transcript assertions, by id."""
+    return {
+        assertion.assertion_id: assertion
+        for section in screen._draft.note_sections
+        for assertion in section.note_assertions
+    }
+
+
+def _note_assertion(screen: Any, assertion_id: str) -> Any:
+    note = screen.current_note()
+    assert note is not None
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            if assertion.assertion_id == assertion_id:
+                return assertion
+    return None
+
+
+def _warning_codes(screen: Any) -> set[str]:
+    note = screen.current_note()
+    assert note is not None
+    return {warning.note_warning_code for warning in note.note_warnings}
+
+
+def _eligible(screen: Any) -> dict[int, Any]:
+    return {choice.segment_index: choice for choice in screen.eligible_utterances()}
+
+
+def _lines_by_id(screen: Any) -> dict[str, Any]:
+    return {line.assertion_id: line for line in screen.editable_lines()}
+
+
+def _routed_line(screen: Any, segment_index: int) -> Any:
+    """The provider's line for `segment_index`, which the shipped cues must
+    have routed for the fixture to mean what the test says."""
+    line = next(
+        (item for item in screen.editable_lines() if item.segment_index == segment_index),
+        None,
+    )
+    assert line is not None, f"the shipped cues no longer route segment {segment_index}"
+    return line
+
+
+def _utterance_text(screen: Any, segment_index: int) -> str:
+    segment = screen._document.transcript_segments[segment_index]
+    return " ".join(word.word_text for word in segment.transcript_words)
+
+
+class TestNoteScreenEdits:
+    """D14's add / remove / move / undo and D9's consented phrase learning."""
+
+    def _screen(
+        self,
+        *,
+        config_root: Path,
+        result: models.NoteGenerationResult | None = None,
+        learning_status_provider: Callable[[], models.LearningStatus] | None = None,
+    ) -> tuple[Any, dict[str, list[Any]]]:
+        from scribe_desktop.ui.note import NoteScreen
+
+        record: dict[str, list[Any]] = {
+            "saved": [],
+            "abandoned": [],
+            "cancelled": [],
+            "states": [],
+        }
+        screen = NoteScreen(
+            config_root=config_root, learning_status_provider=learning_status_provider
+        )
+        screen.begin_review(
+            result if result is not None else _edit_result(),
+            on_save=lambda note: record["saved"].append(note),
+            on_abandon=lambda: record["abandoned"].append(True),
+            on_cancel=lambda: record["cancelled"].append(True),
+            on_state_changed=lambda state: record["states"].append(state),
+            template_profile_id="clinic-a",
+        )
+        return screen, record
+
+    def _ratify(self, screen: Any) -> None:
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        screen._acknowledge_all()
+
+    # --- the chooser and the add path (Task 5.1) --------------------------
+
+    def test_the_chooser_offers_exactly_the_lines_not_already_in_the_note(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        # The transcript panel stays display-only beside the edit group.
+        assert (
+            screen.transcript_view.textInteractionFlags()
+            == Qt.TextInteractionFlag.NoTextInteraction
+        )
+        assert screen.edit_group.isVisibleTo(screen)
+        document = screen._document
+        in_note = {
+            assertion.note_span.source_coords.segment_index
+            for assertion in _provider_lines(screen).values()
+        }
+        assert in_note, "the fixture must have routed something to exclude"
+        expected = [
+            index
+            for index in range(len(document.transcript_segments))
+            if index not in in_note
+        ]
+        offered = [
+            screen.utterance_combo.itemData(position)
+            for position in range(screen.utterance_combo.count())
+        ]
+        assert offered == expected
+        for position, index in enumerate(expected):
+            segment = document.transcript_segments[index]
+            label = screen.utterance_combo.itemText(position)
+            assert label.startswith(f"{index + 1}. {segment.speaker}: ")
+        # The section chooser follows the selected line's ownership rule.
+        first = _eligible(screen)[expected[0]]
+        sections = [
+            screen.section_combo.itemData(position)
+            for position in range(screen.section_combo.count())
+        ]
+        assert tuple(sections) == first.allowed_sections
+        screen.deleteLater()
+
+    def test_add_quotes_the_whole_utterance_and_clears_acknowledgements(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        document = screen._document
+        patient = next(
+            choice
+            for choice in screen.eligible_utterances()
+            if document.transcript_segments[choice.segment_index].speaker == SPEAKER_1
+        )
+        key = patient.allowed_sections[0]
+        self._ratify(screen)
+        assert models.summarise_warnings(screen.current_note().note_warnings).review
+        assert screen.save_button.isEnabled()
+
+        assert screen.add_line(patient.segment_index, key) is True
+        assert _utterance_text(screen, patient.segment_index) in screen.note_body.toPlainText()
+        manual_id = manual_assertion_id(patient.segment_index)
+        added = _note_assertion(screen, manual_id)
+        assert added is not None
+        assert added.section_key == key
+        assert added.provenance == "transcript"
+        words = document.transcript_segments[patient.segment_index].transcript_words
+        assert added.note_span.source_coords == (patient.segment_index, 0, len(words) - 1)
+        # Check 1 reconstructs it byte-identically.
+        assert not _warning_codes(screen) & {
+            "reconstruction_mismatch",
+            "source_coords_invalid",
+        }
+        assert patient.segment_index not in _eligible(screen)
+        assert _lines_by_id(screen)[manual_id].state == "added"
+        # THE content-change path: acknowledgements cleared, Save closed again.
+        assert screen.current_review_state().unacknowledged_reviews > 0
+        assert not screen.save_button.isEnabled()
+        screen.deleteLater()
+
+    def test_a_line_already_in_the_note_is_refused_unchanged(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        choice = screen.eligible_utterances()[0]
+        key = choice.allowed_sections[0]
+        assert screen.add_line(choice.segment_index, key) is True
+        body = screen.note_body.toPlainText()
+        lines = screen.editable_lines()
+        assert screen.add_line(choice.segment_index, key) is False
+        assert "already in the note" in screen.edit_status_label.text()
+        assert screen.note_body.toPlainText() == body
+        assert screen.editable_lines() == lines
+        screen.deleteLater()
+
+    def test_clinician_owned_sections_take_only_the_clinicians_statements(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, _record = self._screen(config_root=config_root)
+        document = screen._document
+        owned = "assessment"
+        assert owned in CLINICIAN_OWNED_SECTIONS
+        patient = next(
+            choice
+            for choice in screen.eligible_utterances()
+            if document.transcript_segments[choice.segment_index].speaker == SPEAKER_1
+        )
+        assert screen.add_line(patient.segment_index, owned) is False
+        assert models.section_title(owned) in screen.edit_status_label.text()
+        assert _note_assertion(screen, manual_assertion_id(patient.segment_index)) is None
+
+        # The confirmed clinician's own STATEMENT is admitted there...
+        statement = _LEARNABLE_INDEX
+        assert statement in _eligible(screen)
+        assert screen.add_line(statement, owned) is True
+        assert _note_assertion(screen, manual_assertion_id(statement)).section_key == owned
+        assert "role_unconfirmed" not in _warning_codes(screen)
+        screen.deleteLater()
+
+        # ...their QUESTION is not.
+        asking, _r = self._screen(
+            config_root=config_root, result=_edit_result(_QUESTION_TURNS)
+        )
+        question = len(_QUESTION_TURNS) - 1
+        assert question in _eligible(asking)
+        assert owned not in _eligible(asking)[question].allowed_sections
+        assert asking.add_line(question, owned) is False
+        assert models.section_title(owned) in asking.edit_status_label.text()
+        asking.deleteLater()
+
+    def test_an_unknown_or_textless_line_can_never_be_added(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, _record = self._screen(config_root=config_root)
+        assert screen.add_line(99, "presenting_complaint") is False
+        assert "not in the transcript" in screen.edit_status_label.text()
+        screen.deleteLater()
+
+        silent_turns = (*_EDIT_TURNS, ("", SPEAKER_1))
+        silent, _r = self._screen(
+            config_root=config_root, result=_edit_result(silent_turns)
+        )
+        empty_index = len(silent_turns) - 1
+        assert silent._document.transcript_segments[empty_index].transcript_words == ()
+        assert empty_index not in _eligible(silent)
+        assert empty_index not in [
+            silent.utterance_combo.itemData(position)
+            for position in range(silent.utterance_combo.count())
+        ]
+        silent.deleteLater()
+
+    # --- remove / undo / move (Task 5.1b) ---------------------------------
+
+    def test_removing_a_line_raises_an_acknowledgeable_omission_never_a_block(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _PLAN_INDEX)
+        assert line.state == "routed"
+        segment = screen._document.transcript_segments[_PLAN_INDEX]
+        assert any(is_number_token(word.word_text) for word in segment.transcript_words)
+        self._ratify(screen)
+        assert screen.save_button.isEnabled()
+        assert "high_risk_omission" not in _warning_codes(screen)
+
+        assert screen.remove_line(line.assertion_id) is True
+        assert _utterance_text(screen, _PLAN_INDEX) not in screen.note_body.toPlainText()
+        assert _lines_by_id(screen)[line.assertion_id].state == "removed"
+        assert "high_risk_omission" in _warning_codes(screen)
+        assert screen.current_review_state().blocking_errors == 0
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge_all()
+        assert screen.current_review_state().unacknowledged_reviews == 0
+        assert screen.save_button.isEnabled()
+        screen.deleteLater()
+
+    def test_undo_restores_a_removed_line(self, qapp: Any, tmp_path: Path) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.remove_line(line.assertion_id) is True
+        assert _utterance_text(screen, _DIAGNOSIS_INDEX) not in screen.note_body.toPlainText()
+        assert screen.undo_line(line.assertion_id) is True
+        assert _utterance_text(screen, _DIAGNOSIS_INDEX) in screen.note_body.toPlainText()
+        restored = _lines_by_id(screen)[line.assertion_id]
+        assert restored.state == "routed"
+        assert restored.moved_to is None
+        screen.deleteLater()
+
+    def test_move_subtracts_the_provider_line_and_re_adds_the_utterance(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        document = screen._document
+        line = next(
+            item
+            for item in screen.editable_lines()
+            if item.state == "routed"
+            and document.transcript_segments[item.segment_index].speaker == SPEAKER_1
+        )
+        target = line.allowed_sections[0]
+        manual_id = manual_assertion_id(line.segment_index)
+        assert screen.move_line(line.assertion_id, target) is True
+        assert _note_assertion(screen, line.assertion_id) is None
+        moved = _note_assertion(screen, manual_id)
+        assert moved is not None and moved.section_key == target
+        rows = [
+            item for item in screen.editable_lines() if item.segment_index == line.segment_index
+        ]
+        assert len(rows) == 1  # the re-added leg is not a second row
+        assert rows[0].assertion_id == line.assertion_id
+        assert rows[0].state == "moved"
+        assert rows[0].moved_to == target
+        assert line.segment_index not in _eligible(screen)
+
+        assert screen.undo_line(line.assertion_id) is True
+        assert _lines_by_id(screen)[line.assertion_id].state == "routed"
+        assert _note_assertion(screen, line.assertion_id) is not None
+        assert _note_assertion(screen, manual_id) is None
+        assert screen._manual == {}
+
+        # A section the ownership rule refuses changes nothing (patient line).
+        before = screen.editable_lines()
+        assert screen.move_line(line.assertion_id, "assessment") is False
+        assert screen.editable_lines() == before
+        assert _note_assertion(screen, line.assertion_id) is not None
+        screen.deleteLater()
+
+    def test_moving_an_added_line_changes_its_section_in_place(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        choice = screen.eligible_utterances()[0]
+        first = choice.allowed_sections[0]
+        second = next(key for key in choice.allowed_sections if key != first)
+        assert screen.add_line(choice.segment_index, first) is True
+        manual_id = manual_assertion_id(choice.segment_index)
+        assert screen.move_line(manual_id, second) is True
+        rows = [
+            item
+            for item in screen.editable_lines()
+            if item.segment_index == choice.segment_index
+        ]
+        assert len(rows) == 1
+        assert rows[0].assertion_id == manual_id
+        assert rows[0].state == "added"
+        assert rows[0].section_key == second
+        assert _note_assertion(screen, manual_id).section_key == second
+        assert list(screen._manual) == [manual_id]
+        screen.deleteLater()
+
+    def test_edits_are_frozen_after_save(self, qapp: Any, tmp_path: Path) -> None:
+        screen, record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        choice = screen.eligible_utterances()[0]
+        key = choice.allowed_sections[0]
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        for refused in (
+            lambda: screen.add_line(choice.segment_index, key),
+            lambda: screen.remove_line(line.assertion_id),
+            lambda: screen.move_line(line.assertion_id, key),
+            lambda: screen.undo_line(line.assertion_id),
+        ):
+            screen.edit_status_label.setText("")
+            assert refused() is False
+            assert "edits are closed" in screen.edit_status_label.text()
+        assert not screen.utterance_combo.isEnabled()
+        assert not screen.section_combo.isEnabled()
+        assert not screen.add_line_button.isEnabled()
+        screen.deleteLater()
+
+    def test_clear_empties_the_edit_controls_and_the_queue(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        assert screen.add_line(_LEARNABLE_INDEX, "presenting_complaint") is True
+        assert screen.learning_queue()
+        assert screen.utterance_combo.count() > 0
+        screen.clear()
+        assert screen.utterance_combo.count() == 0
+        assert screen.section_combo.count() == 0
+        assert screen.editable_lines() == ()
+        assert screen.learning_queue() == ()
+        assert screen.edit_status_label.text() == ""
+        screen.deleteLater()
+
+    # --- phrase learning (D9 as amended, Task 5.2) ------------------------
+
+    def test_a_patient_line_is_never_a_learning_candidate(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        document = screen._document
+        patient = next(
+            choice
+            for choice in screen.eligible_utterances()
+            if document.transcript_segments[choice.segment_index].speaker == SPEAKER_1
+        )
+        assert screen.add_line(patient.segment_index, patient.allowed_sections[0]) is True
+        assert screen.learning_queue() == ()
+        assert "Will learn" not in screen.edit_status_label.text()
+        # ...and the skip is SAID, never silent (live smoke 2026-09-17).
+        assert models.LEARNING_NOT_ATTRIBUTED_NOTE in screen.edit_status_label.text()
+        screen.deleteLater()
+
+    def test_a_clinician_line_queues_its_leading_phrase(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        assert _LEARNABLE_INDEX in _eligible(screen), "the fixture line must stay unrouted"
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.learning_queue() == ((key, _LEARNABLE_PHRASE),)
+        assert f"Will learn '{_LEARNABLE_PHRASE}'" in screen.edit_status_label.text()
+        assert models.section_title(key) in screen.edit_status_label.text()
+        screen.deleteLater()
+
+    def test_a_name_or_a_number_in_the_phrase_is_refused_by_the_filter(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        for index, refusal in ((4, "number"), (5, "name")):
+            screen, _record = self._screen(
+                config_root=config_root,
+                result=_edit_result(_REFUSED_TURNS),
+                learning_status_provider=_learning_on,
+            )
+            assert index in _eligible(screen)
+            key = _eligible(screen)[index].allowed_sections[0]
+            assert screen.add_line(index, key) is True
+            status = screen.edit_status_label.text()
+            assert "Not learned" in status
+            assert refusal in status
+            assert screen.learning_queue() == ()
+            screen.deleteLater()
+
+    def test_the_learning_line_reports_why_learning_is_off(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        stale, _record = self._screen(
+            config_root=config_root,
+            learning_status_provider=lambda: models.LearningStatus(
+                False, models.LEARNING_STALE_CONSENT_HINT
+            ),
+        )
+        assert stale.learning_label.text() == models.LEARNING_STALE_CONSENT_HINT
+        key = _eligible(stale)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert stale.add_line(_LEARNABLE_INDEX, key) is True
+        assert stale.learning_queue() == ()
+        assert models.LEARNING_STALE_CONSENT_HINT in stale.edit_status_label.text()
+        stale.deleteLater()
+
+        on, _r = self._screen(config_root=config_root, learning_status_provider=_learning_on)
+        assert on.learning_label.text() == models.LEARNING_ON_LINE
+        on.deleteLater()
+
+        # A screen built WITHOUT a provider never reads the profile store.
+        silent, _s = self._screen(config_root=config_root)
+        assert silent.learning_label.text() == models.LEARNING_NO_PROFILE_HINT
+        assert silent.add_line(_LEARNABLE_INDEX, key) is True
+        assert silent.learning_queue() == ()
+        assert models.LEARNING_NO_PROFILE_HINT in silent.edit_status_label.text()
+        silent.deleteLater()
+
+    def test_an_earlier_sections_cue_is_noted_never_silently_replaced(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-011: the learner says when an earlier section's cue would
+        still route lines like this one — it never deletes that cue."""
+        config = _edit_config({"presenting_complaint": ("on the stairs",)})
+        screen, _record = self._screen(
+            config_root=tmp_path / "config",
+            result=_edit_result(config=config, route_by_config=True),
+            learning_status_provider=_learning_on,
+        )
+        line = _routed_line(screen, _LEARNABLE_INDEX)
+        assert line.section_key == "presenting_complaint"  # the config cue routed it
+        assert screen.move_line(line.assertion_id, "management_plan") is True
+        status = screen.edit_status_label.text()
+        assert f"Will learn '{_LEARNABLE_PHRASE}'" in status
+        assert "still routes this line first" in status
+        assert models.section_title("presenting_complaint") in status
+        assert screen.learning_queue() == (("management_plan", _LEARNABLE_PHRASE),)
+        screen.deleteLater()
+
+    def test_phrases_are_written_only_on_save(self, qapp: Any, tmp_path: Path) -> None:
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert not config_root.exists()  # nothing is written before Save
+        refreshed: list[int] = []
+        screen.learned_phrases_changed.connect(lambda: refreshed.append(1))
+
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert (config_root / SECTION_CUES_FILENAME).exists()
+        assert (config_root / LEARNED_SIDECAR_FILENAME).exists()
+        cues = load_note_config(config_root).normalised_cues()
+        assert tuple(_LEARNABLE_PHRASE.split()) in cues[key]
+        learned = load_learned_phrases(config_root)
+        assert learned.recent[0].phrase == _LEARNABLE_PHRASE
+        assert learned.recent[0].section_key == key
+        assert "Learned 1" in screen.edit_status_label.text()
+        assert refreshed == [1]
+        assert screen.learning_queue() == ()
+        screen.deleteLater()
+
+    def test_an_undone_or_abandoned_add_teaches_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.undo_line(manual_assertion_id(_LEARNABLE_INDEX)) is True
+        assert screen.learning_queue() == ()
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert not config_root.exists()
+        screen.deleteLater()
+
+        cancelled, _r = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        assert cancelled.add_line(_LEARNABLE_INDEX, key) is True
+        cancelled.cancel_review()
+        assert cancelled.learning_queue() == ()
+        assert not config_root.exists()
+        cancelled.deleteLater()
+
+        abandoned, _a = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        assert abandoned.add_line(_LEARNABLE_INDEX, key) is True
+        abandoned.abandon()
+        assert abandoned.learning_queue() == ()
+        assert not config_root.exists()
+        abandoned.deleteLater()
+
+    def test_the_learning_status_is_re_read_at_save(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        enabled = {"on": True}
+
+        def provider() -> models.LearningStatus:
+            if enabled["on"]:
+                return models.LearningStatus(True, None)
+            return models.LearningStatus(False, models.LEARNING_OPTED_OUT_HINT)
+
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=provider
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.learning_queue()
+        enabled["on"] = False  # opted out mid-review
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert not config_root.exists()
+        status = screen.edit_status_label.text()
+        assert "Nothing learned" in status
+        assert models.LEARNING_OPTED_OUT_HINT in status
+        screen.deleteLater()
+
+    def test_a_learning_write_failure_is_reported_and_the_note_stays_saved(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        config_root.mkdir(parents=True)
+        blob = b"{not json"
+        (config_root / SECTION_CUES_FILENAME).write_bytes(blob)
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1  # the note is committed
+        assert not screen.save_button.isEnabled()  # saved
+        status = screen.edit_status_label.text()
+        assert "were not learned" in status
+        assert "NoteConfigInvalidError" in status
+        assert (config_root / SECTION_CUES_FILENAME).read_bytes() == blob
+        assert not (config_root / LEARNED_SIDECAR_FILENAME).exists()
+        screen.deleteLater()
+
+    def test_a_removal_teaches_nothing_but_a_moves_add_leg_queues(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.remove_line(line.assertion_id) is True
+        assert screen.learning_queue() == ()
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert not config_root.exists()
+        screen.deleteLater()
+
+        moved, _r = self._screen(
+            config_root=tmp_path / "moved", learning_status_provider=_learning_on
+        )
+        line = _routed_line(moved, _DIAGNOSIS_INDEX)
+        target = line.allowed_sections[0]
+        assert moved.move_line(line.assertion_id, target) is True
+        assert tuple(moved._learning_queue) == (manual_assertion_id(_DIAGNOSIS_INDEX),)
+        assert moved.learning_queue() == ((target, _DIAGNOSIS_PHRASE),)
+        moved.deleteLater()
+
+    # --- round 34 pins ----------------------------------------------------
+
+    def test_the_chooser_keeps_its_selection_across_a_refinalise(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 34 LOW-002: every re-finalise rebuilds the chooser; the
+        practitioner's current line and section are carried across by data."""
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        assert screen.utterance_combo.count() >= 2
+        screen.utterance_combo.setCurrentIndex(1)
+        chosen = screen.utterance_combo.currentData()
+        assert screen.section_combo.count() >= 2
+        screen.section_combo.setCurrentIndex(1)
+        chosen_section = screen.section_combo.currentData()
+        proposal = screen._draft.note_proposals[0]
+        screen.confirm_proposal(proposal.proposal_id)  # re-finalises the note
+        assert screen.utterance_combo.currentData() == chosen
+        assert screen.section_combo.currentData() == chosen_section
+        screen.deleteLater()
+
+    def test_the_learning_status_is_re_read_at_each_add(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 34 LOW-003: learning turned on mid-review (on the Practitioner
+        tab) applies to the next add — the gate and the line are re-read."""
+        enabled = {"on": False}
+
+        def provider() -> models.LearningStatus:
+            if enabled["on"]:
+                return models.LearningStatus(True, None)
+            return models.LearningStatus(False, models.LEARNING_OPTED_OUT_HINT)
+
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=provider
+        )
+        assert screen.learning_label.text() == models.LEARNING_OPTED_OUT_HINT
+        enabled["on"] = True
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.learning_queue() == ((key, _LEARNABLE_PHRASE),)
+        assert screen.learning_label.text() == models.learning_queued_line(1)
+        screen.deleteLater()
+
+    # --- live smoke 2026-09-17: the queue must name Save note on this tab -----
+
+    def test_the_learning_line_names_save_note_while_phrases_are_queued(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """The practitioner read the queued-phrase status as the outcome and
+        left the review by another exit; nothing is written on any exit but
+        Save note on this tab, so the line must say so while the queue is
+        non-empty, and stand down when it empties or the note is saved."""
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        assert screen.learning_label.text() == models.LEARNING_ON_LINE
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        line = screen.learning_label.text()
+        assert line == models.learning_queued_line(1)
+        assert "Save note on this tab" in line
+        assert "Cancel, Delete and Complete learn nothing" in line
+        assert "Save note on this tab" in screen.edit_status_label.text()
+        assert screen.undo_line(manual_assertion_id(_LEARNABLE_INDEX)) is True
+        assert screen.learning_label.text() == models.LEARNING_ON_LINE
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert screen.learning_label.text() == models.LEARNING_ON_LINE  # queue written
+        assert "Learned 1" in screen.edit_status_label.text()
+        # The tooltip sits on the button labelled "Save note", so it names
+        # what that button does with the queue, not the button itself.
+        assert "queued for learning are written here" in screen.save_button.toolTip()
+        assert "1 phrase queued" in models.learning_queued_line(1)
+        assert "2 phrases queued" in models.learning_queued_line(2)
+        screen.deleteLater()
+
+    def test_save_after_edits_that_queued_nothing_says_why(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Lines were added but nothing queued: Save says so instead of
+        staying silent — the off-reason when learning is off, the
+        ownership/filter reason when it is on. A review with no edit at all
+        reports nothing about learning."""
+        config_root = tmp_path / "config"
+        # Learning ON, but the only added line is the patient's.
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        document = screen._document
+        choice = next(
+            item
+            for item in screen.eligible_utterances()
+            if document.transcript_segments[item.segment_index].speaker == SPEAKER_1
+        )
+        assert screen.add_line(choice.segment_index, choice.allowed_sections[0]) is True
+        assert models.LEARNING_NOT_ATTRIBUTED_NOTE in screen.edit_status_label.text()
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        status = screen.edit_status_label.text()
+        assert status.startswith("Nothing learned from this note:")
+        assert "one of yours" in status
+        assert not config_root.exists()
+        screen.deleteLater()
+
+        # Learning OFF (opted out), a clinician line added.
+        off, record_off = self._screen(
+            config_root=config_root,
+            learning_status_provider=lambda: models.LearningStatus(
+                False, models.LEARNING_OPTED_OUT_HINT
+            ),
+        )
+        key = _eligible(off)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert off.add_line(_LEARNABLE_INDEX, key) is True
+        self._ratify(off)
+        off.save()
+        assert len(record_off["saved"]) == 1
+        status = off.edit_status_label.text()
+        assert status.startswith("Nothing learned from this note.")
+        assert models.LEARNING_OPTED_OUT_HINT in status
+        off.deleteLater()
+
+        # No edit at all: Save says nothing about learning.
+        plain, record_plain = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        self._ratify(plain)
+        plain.edit_status_label.setText("")
+        plain.save()
+        assert len(record_plain["saved"]) == 1
+        assert plain.edit_status_label.text() == ""
+        plain.deleteLater()
+
+    # --- peer round 36 pins -----------------------------------------------
+
+    def test_a_name_after_a_leading_filler_is_refused_by_the_learner(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-HIGH-008 (verified MED): the real segment-start status travels
+        with the candidate — a dropped leading filler cannot hand the opener
+        exemption to a capitalised name after it; at a true start the pinned
+        heuristic's admission of the same word stands."""
+        turns = (
+            *_NOTE_TURNS,
+            ("Um, Will needs the exercises", SPEAKER_2),  # 4: filler, then a name
+            ("Will needs the exercises", SPEAKER_2),  # 5: the same word at the start
+        )
+        screen, _record = self._screen(
+            config_root=tmp_path / "config",
+            result=_edit_result(turns),
+            learning_status_provider=_learning_on,
+        )
+        for index in (4, 5):
+            assert index in _eligible(screen), "the fixture lines must stay unrouted"
+        key = _eligible(screen)[4].allowed_sections[0]
+        assert screen.add_line(4, key) is True
+        status = screen.edit_status_label.text()
+        assert "Not learned" in status and "(name)" in status
+        assert screen.learning_queue() == ()
+        assert screen.add_line(5, key) is True
+        assert screen.learning_queue() == ((key, "will needs the exercises"),)
+        screen.deleteLater()
+
+    def test_a_committed_phrase_with_a_failed_date_record_is_reported_and_listed(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """PR-MED-023: a sidecar write that fails after the cue file was
+        replaced is reported as learned-without-a-date, and the tab is told to
+        refresh — never "were not learned"."""
+        config_root = tmp_path / "config"
+        real = note_config_module.atomic_write_bytes
+
+        def selective(path: Path, blob: bytes, *, error_label: str) -> None:
+            if path.name == LEARNED_SIDECAR_FILENAME:
+                raise StoreWriteError(f"failed writing {error_label}: disk full")
+            real(path, blob, error_label=error_label)
+
+        monkeypatch.setattr(note_config_module, "atomic_write_bytes", selective)
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        refreshed: list[int] = []
+        screen.learned_phrases_changed.connect(lambda: refreshed.append(1))
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        status = screen.edit_status_label.text()
+        assert "Learned 1" in status
+        assert "date record could not be written" in status
+        assert "were not learned" not in status
+        assert refreshed == [1]
+        learned = load_learned_phrases(config_root)
+        assert learned.by_section == ((key, (_LEARNABLE_PHRASE,)),)
+        assert learned.recent == ()
+        screen.deleteLater()
+
+    def test_save_never_raises_after_the_note_is_committed(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-025 through the REAL atomic writer: a sidecar write that
+        fails AND whose temp file cannot be unlinked (a directory planted at
+        the temp path) must still leave `save()` returning normally — the
+        note committed, the controls refreshed, the state emitted, the cue
+        reported as learned without a date, the tab told to refresh."""
+        config_root = tmp_path / "config"
+        config_root.mkdir(parents=True)
+        (config_root / (LEARNED_SIDECAR_FILENAME + ".tmp")).mkdir()
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        refreshed: list[int] = []
+        screen.learned_phrases_changed.connect(lambda: refreshed.append(1))
+        self._ratify(screen)
+        states_before = len(record["states"])
+        screen.save()  # must not raise
+        assert len(record["saved"]) == 1
+        assert not screen.save_button.isEnabled()  # controls updated after the write
+        assert len(record["states"]) > states_before
+        assert record["states"][-1].note_saved is True  # state emitted after the write
+        status = screen.edit_status_label.text()
+        assert "Learned 1" in status
+        assert "date record could not be written" in status
+        assert refreshed == [1]
+        cues = load_note_config(config_root).normalised_cues()
+        assert tuple(_LEARNABLE_PHRASE.split()) in cues[key]
+        screen.deleteLater()
+
+
+# ---------------------------------------------------------------------------
 # Transcript screen generation controls (Task 7.2 + 7.5).
 # ---------------------------------------------------------------------------
 
@@ -3088,12 +4454,65 @@ class TestNoteWiring:
             recovery_runner=lambda d: pytest.fail("not called"),
         )
 
+    def _rooted_window(self, tmp_path: Path, controller: FakeController) -> Any:
+        """A window whose profile AND config roots are both under `tmp_path`
+        (the PR-REG-005 rule: no test may reach the real stores)."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        return MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            profile_root=tmp_path / "profile",
+            config_root=tmp_path / "config",
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+
     def test_draft_ready_routes_to_note_tab(self, qapp: Any, tmp_path: Path) -> None:
         controller = FakeController()
         window = self._window(tmp_path, controller)
         window._on_draft_ready(_note_result())
         assert window.note_screen.current_note() is not None
         assert window.tabs.currentWidget() is window.note_screen
+        window.close()
+
+    def test_the_config_root_reaches_both_tabs_and_the_learning_provider(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Practitioner-profile plan Phase 5: the Note tab learns into the
+        given config root and reads the learning status from the given profile
+        root; the Practitioner tab lists the same config root's phrases."""
+        controller = FakeController()
+        window = self._rooted_window(tmp_path, controller)
+        config_root = tmp_path / "config"
+        assert window.note_screen._config_root == config_root
+        assert window.practitioner_screen._config_root == config_root
+        status = window.note_screen._read_learning_status()
+        assert status.enabled is False
+        assert status.reason == models.LEARNING_NO_PROFILE_HINT
+        assert window.practitioner_screen.recently_learned_list.count() == 0
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=config_root,
+            learned_at=datetime(2026, 9, 16, tzinfo=UTC),
+        )
+        window.note_screen.learned_phrases_changed.emit()
+        qapp.processEvents()
+        assert window.practitioner_screen.recently_learned_list.count() == 1
+        assert "wall slide" in window.practitioner_screen.recently_learned_list.item(0).text()
+        window.close()
+
+    def test_a_review_started_through_the_window_stays_off_the_real_stores(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        controller = FakeController()
+        window = self._rooted_window(tmp_path, controller)
+        window._on_draft_ready(_note_result())  # reads the learning status
+        assert window.note_screen.current_note() is not None
+        assert window.note_screen.learning_label.text() == models.LEARNING_NO_PROFILE_HINT
+        assert not (tmp_path / "config").exists()  # nothing written by a review
+        window.note_screen.clear()
         window.close()
 
     def test_new_live_transcript_clears_stale_note(self, qapp: Any, tmp_path: Path) -> None:

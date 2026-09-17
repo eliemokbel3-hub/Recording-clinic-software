@@ -10,14 +10,31 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
-from scribe_desktop.note import ExtractiveNoteProvider, NoteModelProvider
-from scribe_desktop.note_config import SECTION_CUES_FILENAME, NoteConfig
+from scribe_desktop.note import (
+    CANONICAL_SECTION_KEYS,
+    CLINICIAN_OWNED_SECTIONS,
+    ExtractiveNoteProvider,
+    NoteModelProvider,
+    admissible_sections,
+    compose_draft,
+    manual_assertion_id,
+    reconstruct_span_text,
+    whole_utterance_assertion,
+)
+from scribe_desktop.note_config import (
+    SECTION_CUES_FILENAME,
+    AutofillRule,
+    NoteConfig,
+    load_note_config,
+)
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
 from scribe_desktop.session_store import AUDIO_FILENAME, KEY_FILENAME, SessionChunkStore
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
+    SPEAKER_1,
     SPEAKER_2,
     TranscriptDocument,
     TranscriptSegment,
@@ -541,13 +558,29 @@ class TestPractitionerReportLines:
     def test_profile_line_enrolled(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from scribe_desktop.practitioner_profile import save_profile
+        from scribe_desktop.practitioner_profile import ConsentRecord, save_profile
         from scribe_desktop.speaker_embedding import shipped_embedder_identity
 
         model_id, model_sha256 = shipped_embedder_identity()
-        profile = _profile(model_id, model_sha256)
+        profile = _profile(model_id, model_sha256)  # `_profile` records consent-v1
         save_profile(profile, root=tmp_path)
         monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: True)
+        # Task 5.0: a readable record carrying an OLDER consent text still
+        # attributes; the line says so and points at the Practitioner tab.
+        assert models.voice_profile_report_line(profile_root=tmp_path) == (
+            f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {model_id})"
+            " - consent text updated, confirm it on the Practitioner tab"
+        )
+        current = profile.model_copy(
+            update={
+                "consent": ConsentRecord(
+                    accepted_at=profile.consent.accepted_at,
+                    consent_text_version=models.CONSENT_TEXT_VERSION,
+                    learning_opt_in=False,
+                )
+            }
+        )
+        save_profile(current, root=tmp_path)
         assert models.voice_profile_report_line(profile_root=tmp_path) == (
             f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {model_id})"
         )
@@ -573,22 +606,32 @@ class TestPractitionerReportLines:
     def test_consent_text_is_versioned(self) -> None:
         from scribe_desktop.practitioner_profile import ConsentRecord
 
-        assert models.CONSENT_TEXT_VERSION == "consent-v1"
-        assert models.CONSENT_TEXT_V1.endswith(f"Version {models.CONSENT_TEXT_VERSION}.")
-        # The version string the text carries is the one a profile records.
+        assert models.CONSENT_TEXT_VERSION == "consent-v2"
+        assert models.CONSENT_TEXT_V2.endswith("Version consent-v2.")
+        # v1 stays as HISTORY for the records that still carry it (Task 5.0),
+        # with its OWN literal version string.
+        assert models.CONSENT_TEXT_V1.endswith("Version consent-v1.")
+        # The version string the current text carries is the one a profile records.
         ConsentRecord(
             accepted_at=datetime.now(UTC),
             consent_text_version=models.CONSENT_TEXT_VERSION,
             learning_opt_in=False,
         )
+        # The v2 (auto-learn, review-later) promises, verbatim.
         for promise in (
             "never a recording",
             "plain text",
-            "refuses names and numbers",
+            "lines you add or move",
+            "Only your own lines are ever used",
+            "names, numbers, dates or medication names",
             "nothing leaves this computer",
-            "delete it",
+            "delete any learned phrase",
         ):
-            assert promise in models.CONSENT_TEXT_V1
+            assert promise in models.CONSENT_TEXT_V2
+        assert models.LEARNING_OPT_IN_LABEL == (
+            "Also learn my phrasing from lines I add or move during review "
+            "(saved when I save the note)"
+        )
 
 
 class TestAttributionInputs:
@@ -794,3 +837,329 @@ class TestProviderFromConfig:
         )
         assert isinstance(provider, ExtractiveNoteProvider)
         assert provider.provider_name == "extractive-v1"
+
+
+# ---------------------------------------------------------------------------
+# Phrase-learning status (practitioner-profile plan Phase 5, D9 as amended +
+# Task 5.0's consent-version check).
+# ---------------------------------------------------------------------------
+
+
+def _consent(version: str, *, learning_opt_in: bool) -> Any:
+    from scribe_desktop.practitioner_profile import ConsentRecord
+
+    return ConsentRecord(
+        accepted_at=datetime.now(UTC),
+        consent_text_version=version,
+        learning_opt_in=learning_opt_in,
+    )
+
+
+def _current_consent_profile(*, learning_opt_in: bool) -> Any:
+    """A readable profile whose consent record carries the CURRENT text."""
+    return _profile("mock-speaker-embedder-v1").model_copy(
+        update={
+            "consent": _consent(models.CONSENT_TEXT_VERSION, learning_opt_in=learning_opt_in)
+        }
+    )
+
+
+class TestLearningStatus:
+    """Learning is on ONLY for a readable profile carrying the CURRENT consent
+    version with the opt-in ticked; every other state names its own hint."""
+
+    def test_no_profile_is_off_and_points_at_the_practitioner_tab(
+        self, tmp_path: Path
+    ) -> None:
+        status = models.learning_status(profile_root=tmp_path)
+        assert status == models.LearningStatus(False, models.LEARNING_NO_PROFILE_HINT)
+        assert "Practitioner tab" in models.LEARNING_NO_PROFILE_HINT
+
+    def test_an_unusable_profile_names_only_its_structural_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.practitioner_profile import ProfileUnusableError
+
+        def load(**kwargs: Any) -> Any:
+            raise ProfileUnusableError("key", "detail never shown")
+
+        monkeypatch.setattr(models, "load_profile", load)
+        status = models.learning_status(profile_root=tmp_path)
+        assert status == models.LearningStatus(
+            False, models.LEARNING_UNUSABLE_HINT.format(reason="key")
+        )
+        assert "detail never shown" not in (status.reason or "")
+
+    def test_a_stale_consent_record_turns_learning_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stale = _profile("mock-speaker-embedder-v1")  # consent-v1
+        assert models.consent_is_current(stale) is False
+        monkeypatch.setattr(models, "load_profile", lambda **k: stale)
+        assert models.learning_status(profile_root=tmp_path) == models.LearningStatus(
+            False, models.LEARNING_STALE_CONSENT_HINT
+        )
+
+    def test_a_current_record_without_the_opt_in_is_off(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opted_out = _current_consent_profile(learning_opt_in=False)
+        assert models.consent_is_current(opted_out) is True
+        monkeypatch.setattr(models, "load_profile", lambda **k: opted_out)
+        assert models.learning_status(profile_root=tmp_path) == models.LearningStatus(
+            False, models.LEARNING_OPTED_OUT_HINT
+        )
+
+    def test_a_current_record_with_the_opt_in_is_on_with_no_hint(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        opted_in = _current_consent_profile(learning_opt_in=True)
+        monkeypatch.setattr(models, "load_profile", lambda **k: opted_in)
+        assert models.learning_status(profile_root=tmp_path) == models.LearningStatus(
+            True, None
+        )
+
+    def test_the_status_never_probes_or_loads_the_speaker_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Learning needs CONSENT, not the speaker model: a stale-model profile
+        still records what was agreed, so no model stat and no model load."""
+        monkeypatch.setattr(
+            models, "speaker_embedder_available", lambda *a, **k: pytest.fail("not probed")
+        )
+        monkeypatch.setattr(
+            models, "build_speaker_embedder", lambda *a, **k: pytest.fail("not loaded")
+        )
+        monkeypatch.setattr(
+            models, "load_profile", lambda **k: _current_consent_profile(learning_opt_in=True)
+        )
+        assert models.learning_status(profile_root=tmp_path).enabled is True
+
+
+# ---------------------------------------------------------------------------
+# Review-edit view models (practitioner-profile plan Phase 5, D14 — Tasks 5.1
+# and 5.1b): the working draft, the utterance chooser, the line editor.
+# ---------------------------------------------------------------------------
+
+_REVIEW_TURNS: tuple[tuple[str, str], ...] = (
+    ("My left knee is sore when I walk", SPEAKER_1),  # 0: routed (patient)
+    ("On examination the range of motion is limited", SPEAKER_2),  # 1: routed (clinician)
+    ("I walked to the shop this morning", SPEAKER_1),  # 2: unrouted patient line
+    ("Do you feel pain here?", SPEAKER_2),  # 3: unrouted clinician QUESTION
+    ("The knee felt steady on the stairs", SPEAKER_2),  # 4: unrouted clinician statement
+    ("", SPEAKER_1),  # 5: no words at all
+)
+
+
+def _review_words(text: str) -> tuple[TranscriptWord, ...]:
+    return tuple(
+        TranscriptWord(
+            word_text=token,
+            start_seconds=index * 0.3,
+            end_seconds=index * 0.3 + 0.25,
+            probability=0.9,
+            uncertain=False,
+        )
+        for index, token in enumerate(text.split())
+    )
+
+
+def _review_document() -> TranscriptDocument:
+    return TranscriptDocument(
+        session_id="f" * 32,
+        created_at=datetime(2026, 9, 16, 12, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=float(index * 10),
+                end_seconds=float(index * 10 + 5),
+                speaker=speaker,
+                transcript_words=_review_words(text),
+            )
+            for index, (text, speaker) in enumerate(_REVIEW_TURNS)
+        ),
+    )
+
+
+def _review_draft(tmp_path: Path) -> tuple[Any, TranscriptDocument]:
+    """A draft over `_REVIEW_TURNS` routed by the SHIPPED cues (the config the
+    loader resolves with no user files present), plus ONE autofill rule so the
+    draft carries a proposal the working draft must carry unchanged."""
+    document = _review_document()
+    shipped = load_note_config(tmp_path / "config")
+    config = NoteConfig(
+        template_profiles=shipped.template_profiles,
+        autofill_rules=(
+            AutofillRule(
+                rule_id="rule-rom",
+                section_key="objective_examination",
+                trigger_phrase="range of motion",
+                expansion=("Range of motion documented.",),
+            ),
+        ),
+        prefill_templates=shipped.prefill_templates,
+        section_cues=shipped.section_cues,
+    )
+    draft = compose_draft(
+        document,
+        config,
+        ExtractiveNoteProvider(cues=config.normalised_cues()),
+        "template-a",
+        clinician_speaker=SPEAKER_2,
+    )
+    assert draft.note_proposals, "the autofill rule must have fired"
+    return draft, document
+
+
+def _manual_line(document: TranscriptDocument, index: int, key: Any) -> Any:
+    """One whole utterance as the Note tab's manual addition (`m<segment>`)."""
+    segment = document.transcript_segments[index]
+    assertion = whole_utterance_assertion(
+        manual_assertion_id(index),
+        key,
+        segment_index=index,
+        speaker=segment.speaker,
+        words=segment.transcript_words,
+    )
+    assert assertion is not None
+    return assertion
+
+
+class TestReviewEditModels:
+    def test_a_removed_line_is_filtered_and_its_emptied_section_dropped(
+        self, tmp_path: Path
+    ) -> None:
+        draft, _document = _review_draft(tmp_path)
+        routed = {
+            assertion.assertion_id: section.section_key
+            for section in draft.note_sections
+            for assertion in section.note_assertions
+        }
+        assert "x0001" in routed, "the shipped cues must route the examination line"
+        working = models.working_draft(draft, removed={"x0001"}, additions=())
+        assert routed["x0001"] not in [s.section_key for s in working.note_sections]
+        assert all(
+            assertion.assertion_id != "x0001"
+            for section in working.note_sections
+            for assertion in section.note_assertions
+        )
+
+    def test_an_addition_lands_after_the_providers_lines_in_canonical_order(
+        self, tmp_path: Path
+    ) -> None:
+        draft, document = _review_draft(tmp_path)
+        assert [a.assertion_id for a in draft.note_sections[0].note_assertions] == ["x0000"]
+        same_section = _manual_line(document, 2, "presenting_complaint")
+        later_section = _manual_line(document, 4, "assessment")
+        working = models.working_draft(
+            draft, removed=(), additions=(later_section, same_section)
+        )
+        section = next(
+            s for s in working.note_sections if s.section_key == "presenting_complaint"
+        )
+        assert [a.assertion_id for a in section.note_assertions] == ["x0000", "m0002"]
+        keys = [s.section_key for s in working.note_sections]
+        assert keys == sorted(keys, key=CANONICAL_SECTION_KEYS.index)
+        # The proposals and the digests travel unchanged: the resolution
+        # evidence and the check targets keep matching.
+        assert working.note_proposals == draft.note_proposals
+        assert working.transcript_digest == draft.transcript_digest
+        assert working.config_digest == draft.config_digest
+        assert working.session_id == draft.session_id
+        assert working.template_profile_id == draft.template_profile_id
+        assert working.provider_name == draft.provider_name
+        assert working.clinician_speaker == draft.clinician_speaker
+
+    def test_a_duplicate_assertion_id_is_refused_by_the_draft_itself(
+        self, tmp_path: Path
+    ) -> None:
+        draft, document = _review_draft(tmp_path)
+        segment = document.transcript_segments[2]
+        clash = whole_utterance_assertion(
+            "x0000",  # the provider's own id for segment 0
+            "presenting_complaint",
+            segment_index=2,
+            speaker=segment.speaker,
+            words=segment.transcript_words,
+        )
+        assert clash is not None
+        with pytest.raises(ValidationError, match="duplicate assertion_id"):
+            models.working_draft(draft, removed=(), additions=(clash,))
+
+    def test_the_chooser_skips_the_note_and_the_textless_and_labels_each_line(
+        self, tmp_path: Path
+    ) -> None:
+        _draft, document = _review_draft(tmp_path)
+        choices = models.eligible_utterances(
+            document, clinician_speaker=SPEAKER_2, in_note={0, 1}
+        )
+        assert [choice.segment_index for choice in choices] == [2, 3, 4]
+        for choice in choices:
+            segment = document.transcript_segments[choice.segment_index]
+            assert choice.label.startswith(f"{choice.segment_index + 1}. {segment.speaker}: ")
+            assert choice.allowed_sections == admissible_sections(
+                CANONICAL_SECTION_KEYS,
+                speaker=segment.speaker,
+                clinician_speaker=SPEAKER_2,
+                text=reconstruct_span_text(segment.transcript_words),
+            )
+
+    def test_the_ownership_rule_shapes_the_sections_each_line_may_enter(
+        self, tmp_path: Path
+    ) -> None:
+        _draft, document = _review_draft(tmp_path)
+        by_index = {
+            choice.segment_index: choice
+            for choice in models.eligible_utterances(
+                document, clinician_speaker=SPEAKER_2, in_note=()
+            )
+        }
+        patient = by_index[2].allowed_sections
+        assert not set(patient) & CLINICIAN_OWNED_SECTIONS
+        assert len(patient) == len(CANONICAL_SECTION_KEYS) - len(CLINICIAN_OWNED_SECTIONS)
+        # The confirmed clinician's STATEMENT may enter all 17 sections...
+        assert by_index[4].allowed_sections == CANONICAL_SECTION_KEYS
+        # ...their QUESTION may not enter a clinician-owned one.
+        assert not set(by_index[3].allowed_sections) & CLINICIAN_OWNED_SECTIONS
+
+    def test_editable_lines_carry_their_edit_state(self, tmp_path: Path) -> None:
+        draft, document = _review_draft(tmp_path)
+        routed = models.editable_lines(draft, document, removed=set(), additions={})
+        assert routed
+        assert {line.state for line in routed} == {"routed"}
+        for line in routed:
+            assert line.label.startswith(f"{models.section_title(line.section_key)} - ")
+            assert line.section_key not in line.allowed_sections  # a Move needs elsewhere
+            assert line.moved_to is None
+
+        removed = models.editable_lines(draft, document, removed={"x0001"}, additions={})
+        subtracted = next(line for line in removed if line.assertion_id == "x0001")
+        assert subtracted.state == "removed"
+        assert subtracted.moved_to is None
+
+        moved_leg = _manual_line(document, 1, "assessment")
+        moved = models.editable_lines(
+            draft, document, removed={"x0001"}, additions={moved_leg.assertion_id: moved_leg}
+        )
+        rows = [line for line in moved if line.segment_index == 1]
+        assert len(rows) == 1  # the manual leg is NOT a second row
+        assert rows[0].assertion_id == "x0001"
+        assert rows[0].state == "moved"
+        assert rows[0].moved_to == "assessment"
+
+        added_leg = _manual_line(document, 2, "presenting_complaint")
+        added = models.editable_lines(
+            draft, document, removed=set(), additions={added_leg.assertion_id: added_leg}
+        )
+        row = next(line for line in added if line.assertion_id == "m0002")
+        assert row.state == "added"
+        assert row.moved_to is None
+        assert row.label.startswith(f"{models.section_title('presenting_complaint')} - ")
+
+    def test_the_omission_copy_names_a_line_the_clinician_removed(self) -> None:
+        """Task 5.1b: a REMOVED line raises `high_risk_omission` too, so the
+        acknowledgement copy must name that case."""
+        copy = models.WARNING_COPY["high_risk_omission"]
+        assert "a line you removed" in copy.clear_hint
+        assert copy.blocks is None  # review, never a block (D14)

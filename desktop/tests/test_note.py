@@ -61,14 +61,22 @@ from scribe_desktop.note import (
     SourceCoords,
     SpeakerRolePreselection,
     _parse_shipped_section_cues,
+    admissible_sections,
     content_tokens,
     digest_bytes,
+    first_matching_section,
     is_interrogative,
+    manual_assertion_id,
     normalise_token,
+    provider_assertion_id,
     reconstruct_span_text,
+    section_admits_utterance,
     speaker_role,
+    spoken_by_confirmed_clinician,
     text_digest,
+    whole_utterance_assertion,
 )
+from scribe_desktop.note_check import reconstruction_warnings
 from scribe_desktop.note_config import (
     NoteConfig,
     TemplateProfile,
@@ -1875,3 +1883,208 @@ def test_tripwire_drops_every_note_model_representation() -> None:
     finally:
         logger.filters.clear()
         logger.handlers.clear()
+
+
+# ---------------------------------------------------------------------------
+# Practitioner-profile plan Task 5.1 — THE ownership rule, the first-match
+# routing it gates, the two assertion-id schemes, and the whole-utterance
+# assertion builder the provider and the Note tab's review edits share.
+# ---------------------------------------------------------------------------
+
+# (speaker, clinician_speaker, question, admitted by a CLINICIAN-OWNED section)
+_OWNERSHIP_COMBOS = (
+    (SPEAKER_2, SPEAKER_2, False, True),
+    (SPEAKER_2, SPEAKER_2, True, False),
+    (SPEAKER_1, SPEAKER_2, False, False),
+    (SPEAKER_1, SPEAKER_2, True, False),
+    (SPEAKER_2, None, False, False),
+    (SPEAKER_2, None, True, False),
+)
+
+
+class TestOwnershipRule:
+    def test_only_the_confirmed_cluster_is_the_clinician(self) -> None:
+        assert spoken_by_confirmed_clinician(SPEAKER_2, SPEAKER_2) is True
+        assert spoken_by_confirmed_clinician(SPEAKER_1, SPEAKER_2) is False
+        assert spoken_by_confirmed_clinician(SPEAKER_2, None) is False
+
+    @pytest.mark.parametrize("section_key", CANONICAL_SECTION_KEYS)
+    def test_admission_for_every_canonical_section(self, section_key: NoteSectionKey) -> None:
+        owned = section_key in CLINICIAN_OWNED_SECTIONS
+        for speaker, clinician, question, owned_expected in _OWNERSHIP_COMBOS:
+            expected = owned_expected if owned else True
+            assert (
+                section_admits_utterance(
+                    section_key,
+                    speaker=speaker,
+                    clinician_speaker=clinician,
+                    question=question,
+                )
+                is expected
+            ), (section_key, speaker, clinician, question)
+
+    def test_a_clinician_statement_may_enter_every_section_in_canonical_order(self) -> None:
+        assert (
+            admissible_sections(
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_2,
+                clinician_speaker=SPEAKER_2,
+                text=CLINICIAN_DIAGNOSIS,
+            )
+            == CANONICAL_SECTION_KEYS
+        )
+
+    def test_the_owned_four_are_dropped_for_patients_questions_and_no_role(self) -> None:
+        expected = tuple(
+            key for key in CANONICAL_SECTION_KEYS if key not in CLINICIAN_OWNED_SECTIONS
+        )
+        assert len(expected) == len(CANONICAL_SECTION_KEYS) - len(CLINICIAN_OWNED_SECTIONS)
+        patient = admissible_sections(
+            CANONICAL_SECTION_KEYS,
+            speaker=SPEAKER_1,
+            clinician_speaker=SPEAKER_2,
+            text=CLINICIAN_DIAGNOSIS,
+        )
+        question = admissible_sections(
+            CANONICAL_SECTION_KEYS,
+            speaker=SPEAKER_2,
+            clinician_speaker=SPEAKER_2,
+            text="Do you feel pain here?",
+        )
+        unconfirmed = admissible_sections(
+            CANONICAL_SECTION_KEYS,
+            speaker=SPEAKER_2,
+            clinician_speaker=None,
+            text=CLINICIAN_DIAGNOSIS,
+        )
+        assert patient == expected
+        assert question == expected
+        assert unconfirmed == expected
+
+    def test_first_matching_section_agrees_with_the_provider_route(self) -> None:
+        provider = ExtractiveNoteProvider()
+        requests = (
+            _request(),
+            _request(clinician_speaker=None),
+            _request(document=_document(texts=((CLINICIAN_DIAGNOSIS, SPEAKER_1),))),
+        )
+        for request in requests:
+            for utterance in request.transcript_utterances:
+                assert first_matching_section(
+                    DEFAULT_SECTION_CUES,
+                    content_tokens(utterance.text),
+                    request.section_keys,
+                    speaker=utterance.speaker,
+                    clinician_speaker=request.clinician_speaker,
+                    question=is_interrogative(utterance.text),
+                ) == provider._route(request, utterance)
+
+    def test_a_clinician_owned_section_is_refused_for_the_patient(self) -> None:
+        tokens = content_tokens(CLINICIAN_DIAGNOSIS)
+        assert (
+            first_matching_section(
+                DEFAULT_SECTION_CUES,
+                tokens,
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_2,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            == "diagnosis"
+        )
+        assert (
+            first_matching_section(
+                DEFAULT_SECTION_CUES,
+                tokens,
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_1,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            is None
+        )
+
+    def test_empty_tokens_route_nowhere(self) -> None:
+        assert (
+            first_matching_section(
+                DEFAULT_SECTION_CUES,
+                (),
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_2,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            is None
+        )
+
+    def test_the_two_id_schemes_never_collide(self) -> None:
+        assert provider_assertion_id(3) == "x0003"
+        assert manual_assertion_id(3) == "m0003"
+        for index in range(5):
+            assert provider_assertion_id(index) != manual_assertion_id(index)
+
+    def test_the_provider_emits_its_own_id_scheme(self) -> None:
+        request = _request()
+        sections = ExtractiveNoteProvider().generate_sections(request)
+        emitted = [
+            assertion for section in sections for assertion in section.note_assertions
+        ]
+        assert emitted
+        for assertion in emitted:
+            coords = assertion.note_span.source_coords
+            assert coords is not None
+            # The id IS the provider scheme over the quoted segment — never
+            # the manual scheme, whatever order the sections render in.
+            assert assertion.assertion_id == provider_assertion_id(coords.segment_index)
+            assert assertion.assertion_id != manual_assertion_id(coords.segment_index)
+
+    def test_whole_utterance_assertion_refuses_an_empty_utterance(self) -> None:
+        blank = (
+            TranscriptWord(
+                word_text="   ",
+                start_seconds=0.0,
+                end_seconds=0.2,
+                probability=0.9,
+                uncertain=False,
+            ),
+        )
+        for words in ((), blank):
+            assert (
+                whole_utterance_assertion(
+                    provider_assertion_id(0),
+                    "objective_examination",
+                    segment_index=0,
+                    speaker=SPEAKER_2,
+                    words=words,
+                )
+                is None
+            )
+
+    def test_whole_utterance_assertion_reconstructs_exactly(self) -> None:
+        document = _document(texts=((CLINICIAN_EXAM, SPEAKER_2),))
+        words = document.transcript_segments[0].transcript_words
+        assertion = whole_utterance_assertion(
+            provider_assertion_id(0),
+            "objective_examination",
+            segment_index=0,
+            speaker=SPEAKER_2,
+            words=words,
+        )
+        assert assertion is not None
+        assert assertion.provenance == "transcript"
+        assert assertion.speaker == SPEAKER_2
+        assert assertion.note_span.source_coords == SourceCoords(0, 0, len(words) - 1)
+        assert reconstruct_span_text(words) == assertion.text
+        note = _note(
+            note_sections=(
+                GeneratedSection(
+                    section_key="objective_examination", note_assertions=(assertion,)
+                ),
+            )
+        )
+        errors = [
+            warning
+            for warning in reconstruction_warnings(note, document)
+            if warning.severity == "error"
+        ]
+        assert errors == []

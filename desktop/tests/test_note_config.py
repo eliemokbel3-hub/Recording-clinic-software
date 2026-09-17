@@ -21,7 +21,7 @@ import ast
 import json
 import re
 import tomllib
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib import resources
 from pathlib import Path
 from typing import Any, Final
@@ -45,18 +45,25 @@ from scribe_desktop.note_config import (
     _ALLOWED_IN_CLAIM_PUNCT,
     AUTOFILL_RULES_FILENAME,
     CONFIG_FILENAMES,
+    LEARNED_PHRASE_MAX_TOKENS,
+    LEARNED_PHRASE_MIN_TOKENS,
+    LEARNED_SIDECAR_FILENAME,
     MAX_CONFIG_LABEL_CHARS,
     MAX_TRIGGER_CHARS,
     PREFILL_TEMPLATES_FILENAME,
+    RECENTLY_LEARNED_LIMIT,
     SECTION_CUES_FILENAME,
     TEMPLATE_PROFILES_FILENAME,
     AutofillRule,
     AutofillRulesFile,
     BoundTemplateProfile,
+    LearnedPhrase,
+    LearnedPhrases,
     NoteConfig,
     NoteConfigError,
     NoteConfigInvalidError,
     NoteConfigUnreadableError,
+    NoteConfigWriteError,
     PrefillTemplate,
     PrefillTemplatesFile,
     SectionCuesFile,
@@ -64,12 +71,18 @@ from scribe_desktop.note_config import (
     TemplateProfilesFile,
     TemplateProfileUnboundError,
     _canonical_config,
+    append_user_cues,
     bind_template_profile,
     build_note_request,
     default_config_root,
+    delete_user_cue,
+    load_learned_phrases,
     load_note_config,
     mapping_drop_warnings,
+    propose_learning_phrase,
+    refuse_learning_candidate,
 )
+from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
     SPEAKER_1,
@@ -1691,3 +1704,763 @@ class TestShippedDefaultsPackaging:
         data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
         globs = data["tool"]["setuptools"]["package-data"]["scribe_desktop"]
         assert "config_defaults/*.json" in globs
+
+
+# ---------------------------------------------------------------------------
+# Practitioner-profile plan Phase 5 — consented phrase learning: the refusal
+# filter (THE enforcing control), the phrase proposer, and the only writer of
+# the user cue file plus its "recently learned" sidecar.
+# ---------------------------------------------------------------------------
+
+# Drug names WITHOUT a dose unit anywhere: each ends in one of the listed
+# medication suffixes, which is the only thing that refuses them.
+_MEDICATION_WORDS: Final[tuple[str, ...]] = (
+    "atorvastatin",
+    "amoxicillin",
+    "metoprolol",
+    "adalimumab",
+    "omeprazole",
+    "losartan",
+    "amlodipine",
+    "ramipril",
+    "imatinib",
+    "erythromycin",
+)
+
+# THE adversarial fixture: (id, tokens, first_in_segment, following, expected).
+_REFUSAL_CASES: Final[tuple[tuple[str, list[str], bool, tuple[str, ...], str | None], ...]] = (
+    # --- names -------------------------------------------------------------
+    ("name-mid-phrase", ["Tell", "Margaret", "to", "rest"], True, (), "name"),
+    ("name-sentence-initial", ["Margaret", "how", "is"], True, (), "name"),
+    ("name-title", ["the", "patient", "Mr", "Jones"], False, (), "name"),
+    ("common-starter-opens", ["The", "diagnosis", "is"], True, (), None),
+    ("common-starter-lowercase", ["the", "diagnosis", "is"], False, (), None),
+    # fail toward refusal: a segment-initial capitalised word outside the
+    # common-starter set is name-like (transcription.is_name_like_token,
+    # PR round 15)
+    ("residue-on-examination", ["On", "examination", "the", "range"], True, (), "name"),
+    # --- numbers -----------------------------------------------------------
+    ("number-digits", ["the", "dose", "is", "500"], True, (), "number"),
+    ("number-word", ["take", "two", "tablets"], False, (), "number"),
+    ("number-hyphenated", ["twenty-one", "days", "off"], False, (), "number"),
+    ("number-ordinal", ["the", "third", "visit"], False, (), "number"),
+    # --- dates -------------------------------------------------------------
+    ("date-slash", ["review", "on", "12/03"], False, (), "date"),
+    ("date-hyphen", ["review", "on", "12-03"], False, (), "date"),
+    ("date-dot", ["review", "on", "12.03"], False, (), "date"),
+    ("date-month", ["review", "in", "march"], False, (), "date"),
+    ("date-month-abbrev", ["back", "in", "sept"], False, (), "date"),
+    ("date-year-beats-number", ["since", "2024", "the"], False, (), "date"),
+    # --- medication with a unit -------------------------------------------
+    ("med-unit-in-candidate", ["paracetamol", "mg", "twice"], False, (), "medication"),
+    ("med-unit-in-window", ["the", "paracetamol", "dose"], False, ("500", "mg"), "medication"),
+    ("med-unit-past-window", ["the", "usual", "tablet"], False, ("at", "night", "mg"), None),
+    ("med-unit-mixed-case", ["the", "usual", "tablet"], False, ("10", "mL"), "medication"),
+    # --- the named anatomical exemptions and the suffix rule ---------------
+    ("exempt-spine", ["the", "lumbar", "spine"], False, (), None),
+    ("exempt-supine", ["lying", "supine", "today"], False, (), None),
+    ("suffix-alone-is-not-a-drug", ["the", "pine", "table"], False, (), None),
+    ("longer-than-the-suffix-is", ["the", "alpine", "route"], False, (), "medication"),
+    # --- benign phrases the practitioner is allowed to teach ---------------
+    ("benign-home-exercise", ["your", "home", "exercise", "is"], False, (), None),
+    ("benign-consistent-with", ["consistent", "with", "a", "sprain"], False, (), None),
+    ("benign-the-plan-is", ["The", "plan", "is", "to"], True, (), None),
+) + tuple(
+    (f"med-suffix-{drug}", ["continue", drug, "daily"], False, (), "medication")
+    for drug in _MEDICATION_WORDS
+)
+
+_REFUSAL_CLASSES: Final[frozenset[str | None]] = frozenset(
+    {"name", "number", "date", "medication", None}
+)
+
+# The one timestamp every learning write in this module records.
+_LEARNED_AT: Final = datetime(2026, 9, 16, 6, 0, tzinfo=UTC)
+
+
+def _fail_sidecar_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the ONE write path fail for the sidecar only (peer round 36
+    PR-MED-023 / PR-MED-024): the cue file is replaced, the sidecar is not."""
+    real = note_config_module.atomic_write_bytes
+
+    def selective(path: Path, blob: bytes, *, error_label: str) -> None:
+        if path.name == LEARNED_SIDECAR_FILENAME:
+            raise StoreWriteError(f"failed writing {error_label}: disk full")
+        real(path, blob, error_label=error_label)
+
+    monkeypatch.setattr(note_config_module, "atomic_write_bytes", selective)
+
+
+class TestRefusalFilter:
+    @pytest.mark.parametrize(
+        ("tokens", "first_in_segment", "following", "expected"),
+        [case[1:] for case in _REFUSAL_CASES],
+        ids=[case[0] for case in _REFUSAL_CASES],
+    )
+    def test_refusal_class(
+        self,
+        tokens: list[str],
+        first_in_segment: bool,
+        following: tuple[str, ...],
+        expected: str | None,
+    ) -> None:
+        assert (
+            refuse_learning_candidate(
+                tokens, first_in_segment=first_in_segment, following=following
+            )
+            == expected
+        )
+
+    def test_the_fixture_only_expects_the_four_classes_or_none(self) -> None:
+        for case in _REFUSAL_CASES:
+            assert case[4] in _REFUSAL_CLASSES, case[0]
+
+    def test_the_check_order_is_name_then_date_then_number_then_medication(self) -> None:
+        # A four-digit run is a YEAR before it is a number, and a d/d pair is a
+        # date before either; a bare three-digit run is only a number.
+        assert refuse_learning_candidate(["2024"], first_in_segment=False) == "date"
+        assert refuse_learning_candidate(["12/03"], first_in_segment=False) == "date"
+        assert refuse_learning_candidate(["500"], first_in_segment=False) == "number"
+
+
+class TestProposeLearningPhrase:
+    def test_leading_content_tokens_and_the_following_window(self) -> None:
+        candidate = propose_learning_phrase(
+            ["Your", "home", "exercise", "is", "the", "wall", "slide"]
+        )
+        assert candidate is not None
+        assert candidate.phrase == "your home exercise is"
+        assert candidate.source_words == ("Your", "home", "exercise", "is")
+        assert candidate.following == ("the", "wall")
+
+    def test_fillers_and_punctuation_only_words_do_not_count(self) -> None:
+        candidate = propose_learning_phrase(["um", "the", "-", "knee", "feels"])
+        assert candidate is not None
+        assert candidate.phrase == "the knee feels"
+        assert candidate.source_words == ("the", "knee", "feels")
+        assert candidate.following == ()
+
+    @pytest.mark.parametrize(
+        "word_texts",
+        [[], ["um", "knee"], ["-", "..."]],
+        ids=["empty", "one-content-word", "punctuation-only"],
+    )
+    def test_fewer_than_two_content_words_propose_nothing(self, word_texts: list[str]) -> None:
+        assert propose_learning_phrase(word_texts) is None
+
+    def test_exactly_the_minimum_proposes_a_phrase(self) -> None:
+        candidate = propose_learning_phrase(["wall", "slide"])
+        assert candidate is not None
+        assert candidate.phrase == "wall slide"
+        assert candidate.source_words == ("wall", "slide")
+        assert candidate.following == ()
+
+    def test_the_stored_phrase_is_normalised_not_the_source_words(self) -> None:
+        candidate = propose_learning_phrase(["Wall", "Slide,"])
+        assert candidate is not None
+        assert candidate.phrase == "wall slide"
+        assert candidate.source_words == ("Wall", "Slide,")
+
+    def test_the_token_bounds_and_the_cap(self) -> None:
+        assert LEARNED_PHRASE_MIN_TOKENS == 2
+        assert LEARNED_PHRASE_MAX_TOKENS == 4
+        candidate = propose_learning_phrase(
+            ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf"]
+        )
+        assert candidate is not None
+        assert candidate.phrase == "alpha bravo charlie delta"
+        assert len(candidate.source_words) == LEARNED_PHRASE_MAX_TOKENS
+        assert candidate.following == ("echo", "foxtrot")
+
+    def test_first_in_segment_follows_the_real_position(self) -> None:
+        """Peer round 36 PR-HIGH-008 (verified MED): the opener exemption
+        belongs to segment index 0 — a dropped leading filler must not hand
+        it to the next word."""
+        at_start = propose_learning_phrase(["Will", "needs", "the", "exercises"])
+        after_filler = propose_learning_phrase(["Um,", "Will", "needs", "the", "exercises"])
+        assert at_start is not None and after_filler is not None
+        assert at_start.first_in_segment is True
+        assert after_filler.first_in_segment is False
+        assert at_start.source_words == after_filler.source_words == (
+            "Will", "needs", "the", "exercises"
+        )
+
+    def test_a_name_after_a_leading_filler_is_refused_end_to_end(self) -> None:
+        """The composed regression: extraction → filter. "Will" is both a
+        common sentence opener and a name; after a filler it sits at
+        segment position 1, where the transcript marks it name-like, and the
+        filter must agree. At a true segment start the pinned heuristic's
+        opener admission stands (recorded at PR round 15)."""
+        after_filler = propose_learning_phrase(["Um,", "Will", "needs", "the", "exercises"])
+        assert after_filler is not None
+        assert (
+            refuse_learning_candidate(
+                after_filler.source_words,
+                first_in_segment=after_filler.first_in_segment,
+                following=after_filler.following,
+            )
+            == "name"
+        )
+        at_start = propose_learning_phrase(["Will", "needs", "the", "exercises"])
+        assert at_start is not None
+        assert (
+            refuse_learning_candidate(
+                at_start.source_words,
+                first_in_segment=at_start.first_in_segment,
+                following=at_start.following,
+            )
+            is None
+        )
+        # A genuine opener keeps its exemption only at the real start too.
+        benign = propose_learning_phrase(["Um,", "The", "knee", "felt", "steady"])
+        assert benign is not None
+        assert benign.first_in_segment is False
+        assert (
+            refuse_learning_candidate(
+                benign.source_words,
+                first_in_segment=benign.first_in_segment,
+                following=benign.following,
+            )
+            == "name"
+        )
+
+
+class TestAppendUserCues:
+    def test_a_first_append_creates_both_files_from_the_shipped_default(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert result.added == (("advice_home_exercise", "wall slide"),)
+        assert result.skipped == ()
+        assert (root / SECTION_CUES_FILENAME).is_file()
+        assert (root / LEARNED_SIDECAR_FILENAME).is_file()
+        cues = load_note_config(root).normalised_cues()
+        assert cues["advice_home_exercise"] == (
+            *DEFAULT_SECTION_CUES["advice_home_exercise"],
+            ("wall", "slide"),
+        )
+        for key in CANONICAL_SECTION_KEYS:
+            if key != "advice_home_exercise":
+                assert cues[key] == DEFAULT_SECTION_CUES[key], key
+
+    def test_the_stored_form_is_normalised(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("advice_home_exercise", "Wall  Slide,")],
+            config_root=root,
+            learned_at=_LEARNED_AT,
+        )
+        assert result.added == (("advice_home_exercise", "wall slide"),)
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") in cues["advice_home_exercise"]
+
+    def test_a_duplicate_under_normalisation_is_skipped_and_nothing_is_written(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("advice_home_exercise", "Home Exercise")],
+            config_root=root,
+            learned_at=_LEARNED_AT,
+        )
+        assert result.added == ()
+        assert result.skipped == (("advice_home_exercise", "Home Exercise", "duplicate"),)
+        assert not root.exists()
+
+    def test_a_cross_section_duplicate_is_skipped_too(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("diagnosis", "home exercise")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert result.added == ()
+        assert result.skipped == (("diagnosis", "home exercise", "duplicate"),)
+        assert not root.exists()
+
+    def test_the_same_phrase_twice_in_one_call_is_added_once(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("advice_home_exercise", "wall slide"), ("advice_home_exercise", "Wall slide")],
+            config_root=root,
+            learned_at=_LEARNED_AT,
+        )
+        assert result.added == (("advice_home_exercise", "wall slide"),)
+        assert result.skipped == (("advice_home_exercise", "Wall slide", "duplicate"),)
+        cues = load_note_config(root).normalised_cues()
+        assert cues["advice_home_exercise"].count(("wall", "slide")) == 1
+
+    @pytest.mark.parametrize("phrase", ["um", "..."], ids=["filler", "punctuation"])
+    def test_a_phrase_with_no_content_tokens_is_skipped_as_empty(
+        self, tmp_path: Path, phrase: str
+    ) -> None:
+        root = tmp_path / "config"
+        result = append_user_cues(
+            [("advice_home_exercise", phrase)], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert result.added == ()
+        assert result.skipped == (("advice_home_exercise", phrase, "empty"),)
+        assert not root.exists()
+
+    def test_a_second_append_keeps_the_first_phrase(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        later = datetime(2026, 9, 16, 7, 0, tzinfo=UTC)
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        result = append_user_cues(
+            [("treatment_performed", "ice pack")], config_root=root, learned_at=later
+        )
+        assert result.added == (("treatment_performed", "ice pack"),)
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") in cues["advice_home_exercise"]
+        assert ("ice", "pack") in cues["treatment_performed"]
+        assert load_learned_phrases(root).recent == (
+            LearnedPhrase("ice pack", "treatment_performed", later),
+            LearnedPhrase("wall slide", "advice_home_exercise", _LEARNED_AT),
+        )
+
+    def test_an_over_long_phrase_raises_and_writes_nothing(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        over_long = "aa " * 100
+        assert len(" ".join(over_long.split())) > MAX_TRIGGER_CHARS
+        with pytest.raises(NoteConfigInvalidError):
+            append_user_cues(
+                [("advice_home_exercise", over_long)],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert not (root / SECTION_CUES_FILENAME).exists()
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+
+    def test_a_validation_failure_leaves_existing_files_byte_identical(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        before = (root / SECTION_CUES_FILENAME).read_bytes()
+        sidecar_before = (root / LEARNED_SIDECAR_FILENAME).read_bytes()
+        with pytest.raises(NoteConfigInvalidError):
+            append_user_cues(
+                [("management_plan", "bb " * 100)],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert (root / SECTION_CUES_FILENAME).read_bytes() == before
+        assert (root / LEARNED_SIDECAR_FILENAME).read_bytes() == sidecar_before
+
+    def test_a_malformed_user_cue_file_raises_and_is_left_alone(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / SECTION_CUES_FILENAME).write_text("{not json", encoding="utf-8")
+        with pytest.raises(NoteConfigInvalidError, match=re.escape(SECTION_CUES_FILENAME)):
+            append_user_cues(
+                [("advice_home_exercise", "wall slide")],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert (root / SECTION_CUES_FILENAME).read_text(encoding="utf-8") == "{not json"
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+
+    def test_a_malformed_sidecar_raises_and_leaves_the_cue_file(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / SECTION_CUES_FILENAME).write_bytes(_shipped_cues_bytes())
+        (root / LEARNED_SIDECAR_FILENAME).write_text("{not json", encoding="utf-8")
+        before = (root / SECTION_CUES_FILENAME).read_bytes()
+        with pytest.raises(NoteConfigInvalidError, match=re.escape(LEARNED_SIDECAR_FILENAME)):
+            append_user_cues(
+                [("advice_home_exercise", "wall slide")],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert (root / SECTION_CUES_FILENAME).read_bytes() == before
+
+    def test_a_write_failure_is_typed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The atomic-write primitive's ``StoreWriteError`` surfaces as the
+        loader-family ``NoteConfigWriteError`` (the seam is the ONE write
+        path, ``_write_config_file``), and nothing is left behind: the
+        primitive never leaves a partial file, and the sidecar write is never
+        reached."""
+        root = tmp_path / "config"
+
+        def refuse(path: Path, blob: bytes, *, error_label: str) -> None:
+            raise StoreWriteError(f"failed writing {error_label}: disk full")
+
+        monkeypatch.setattr(note_config_module, "atomic_write_bytes", refuse)
+        with pytest.raises(NoteConfigWriteError, match=SECTION_CUES_FILENAME):
+            append_user_cues(
+                [("advice_home_exercise", "wall slide")],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert not (root / SECTION_CUES_FILENAME).exists()
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+
+    def test_a_config_root_that_is_a_file_cannot_be_written(self, tmp_path: Path) -> None:
+        """A FILE where the config directory belongs: whichever typed error
+        the read or the directory creation raises, it is a ``NoteConfigError``
+        and nothing is written."""
+        root = tmp_path / "config"
+        root.write_text("not a directory", encoding="utf-8")
+        with pytest.raises(NoteConfigError):
+            append_user_cues(
+                [("advice_home_exercise", "wall slide")],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert root.read_text(encoding="utf-8") == "not a directory"
+
+    def test_the_written_file_loads_and_moves_the_digest(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        shipped = load_note_config(tmp_path / "shipped").config_digest()
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert load_note_config(root).config_digest() != shipped
+
+    def test_a_sidecar_write_failure_after_the_cue_write_is_returned_not_raised(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Peer round 36 PR-MED-023: the phrase IS on disk, so the outcome
+        says so — learned, listed by section, no date."""
+        root = tmp_path / "config"
+        _fail_sidecar_writes(monkeypatch)
+        outcome = append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert outcome.added == (("advice_home_exercise", "wall slide"),)
+        assert outcome.skipped == ()
+        assert outcome.sidecar_error is not None
+        assert LEARNED_SIDECAR_FILENAME in outcome.sidecar_error
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") in cues["advice_home_exercise"]
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+        learned = load_learned_phrases(root)
+        assert learned.by_section == (("advice_home_exercise", ("wall slide",)),)
+        assert learned.recent == ()
+
+    def test_a_clean_append_reports_no_sidecar_error(self, tmp_path: Path) -> None:
+        outcome = append_user_cues(
+            [("advice_home_exercise", "wall slide")],
+            config_root=tmp_path / "config",
+            learned_at=_LEARNED_AT,
+        )
+        assert outcome.sidecar_error is None
+
+    def test_a_raw_cleanup_error_on_the_sidecar_still_returns_the_committed_outcome(
+        self, tmp_path: Path
+    ) -> None:
+        """Peer round 37 PR-MED-025, through the REAL atomic writer: a
+        directory planted at the sidecar's temp path makes the write fail AND
+        the cleanup unlink fail, so the writer surfaces a raw OSError; the
+        config boundary folds it, and the committed cue is reported."""
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / (LEARNED_SIDECAR_FILENAME + ".tmp")).mkdir()
+        outcome = append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert outcome.added == (("advice_home_exercise", "wall slide"),)
+        assert outcome.sidecar_error is not None
+        assert LEARNED_SIDECAR_FILENAME in outcome.sidecar_error
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") in cues["advice_home_exercise"]
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+        assert load_learned_phrases(root).by_section == (
+            ("advice_home_exercise", ("wall slide",)),
+        )
+
+    def test_a_raw_cleanup_error_on_the_cue_file_is_typed_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        root.mkdir(parents=True)
+        (root / (SECTION_CUES_FILENAME + ".tmp")).mkdir()
+        with pytest.raises(NoteConfigWriteError, match=re.escape(SECTION_CUES_FILENAME)):
+            append_user_cues(
+                [("advice_home_exercise", "wall slide")],
+                config_root=root,
+                learned_at=_LEARNED_AT,
+            )
+        assert not (root / SECTION_CUES_FILENAME).exists()
+        assert not (root / LEARNED_SIDECAR_FILENAME).exists()
+
+
+class TestLoadLearnedPhrases:
+    def test_no_user_file_means_nothing_learned_even_with_a_sidecar(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            LEARNED_SIDECAR_FILENAME,
+            {
+                "schema_version": 1,
+                "learned": {
+                    "wall slide": {
+                        "section": "advice_home_exercise",
+                        "learned_at": _LEARNED_AT.isoformat(),
+                    }
+                },
+            },
+        )
+        assert load_learned_phrases(root) == LearnedPhrases((), ())
+
+    def test_recent_is_newest_first_and_by_section_is_canonical(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        later = datetime(2026, 9, 16, 8, 0, tzinfo=UTC)
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        append_user_cues(
+            [("treatment_performed", "ice pack")], config_root=root, learned_at=later
+        )
+        learned = load_learned_phrases(root)
+        assert learned.recent == (
+            LearnedPhrase("ice pack", "treatment_performed", later),
+            LearnedPhrase("wall slide", "advice_home_exercise", _LEARNED_AT),
+        )
+        # Canonical order (treatment_performed precedes advice_home_exercise)
+        # and the SHIPPED phrases of both sections are absent.
+        assert learned.by_section == (
+            ("treatment_performed", ("ice pack",)),
+            ("advice_home_exercise", ("wall slide",)),
+        )
+
+    def test_a_sidecar_entry_absent_from_the_cue_file_is_dropped(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        _write_user_file(
+            root,
+            LEARNED_SIDECAR_FILENAME,
+            {
+                "schema_version": 1,
+                "learned": {
+                    "wall slide": {
+                        "section": "advice_home_exercise",
+                        "learned_at": _LEARNED_AT.isoformat(),
+                    },
+                    "ghost phrase": {
+                        "section": "management_plan",
+                        "learned_at": _LEARNED_AT.isoformat(),
+                    },
+                },
+            },
+        )
+        learned = load_learned_phrases(root)
+        assert [entry.phrase for entry in learned.recent] == ["wall slide"]
+
+    def test_recent_is_capped_at_the_limit(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        for index in range(RECENTLY_LEARNED_LIMIT + 1):
+            append_user_cues(
+                [("advice_home_exercise", f"learned phrase {index}")],
+                config_root=root,
+                learned_at=_LEARNED_AT + timedelta(minutes=index),
+            )
+        learned = load_learned_phrases(root)
+        assert len(learned.recent) == RECENTLY_LEARNED_LIMIT
+        assert [entry.phrase for entry in learned.recent] == [
+            f"learned phrase {index}" for index in range(RECENTLY_LEARNED_LIMIT, 0, -1)
+        ]
+        # The cap is on the RECENT list only; every learned phrase is listed.
+        assert learned.by_section == (
+            (
+                "advice_home_exercise",
+                tuple(
+                    f"learned phrase {index}"
+                    for index in range(RECENTLY_LEARNED_LIMIT + 1)
+                ),
+            ),
+        )
+
+    def test_a_shipped_phrase_moved_by_hand_is_never_listed_as_learned(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            SECTION_CUES_FILENAME,
+            {
+                "schema_version": 1,
+                "section_cues": {
+                    "assessment": ["home exercise"],
+                    "advice_home_exercise": ["wall slide"],
+                },
+            },
+        )
+        learned = load_learned_phrases(root)
+        assert learned.by_section == (("advice_home_exercise", ("wall slide",)),)
+        assert learned.recent == ()
+
+    def test_a_malformed_sidecar_raises_naming_the_sidecar(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        (root / LEARNED_SIDECAR_FILENAME).write_text("{not json", encoding="utf-8")
+        with pytest.raises(NoteConfigInvalidError, match=re.escape(LEARNED_SIDECAR_FILENAME)):
+            load_learned_phrases(root)
+
+
+class TestDeleteUserCue:
+    def test_no_user_file_returns_false_and_creates_nothing(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        assert delete_user_cue("wall slide", config_root=root) is False
+        assert not root.exists()
+
+    def test_a_learned_phrase_is_removed_from_both_files(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert delete_user_cue("wall slide", config_root=root) is True
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") not in cues["advice_home_exercise"]
+        assert cues["advice_home_exercise"] == DEFAULT_SECTION_CUES["advice_home_exercise"]
+        assert (root / SECTION_CUES_FILENAME).is_file()
+        assert (root / LEARNED_SIDECAR_FILENAME).is_file()
+        assert load_learned_phrases(root) == LearnedPhrases((), ())
+
+    def test_the_match_is_case_and_punctuation_insensitive(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert delete_user_cue("Wall Slide,", config_root=root) is True
+        cues = load_note_config(root).normalised_cues()
+        assert ("wall", "slide") not in cues["advice_home_exercise"]
+
+    def test_an_unknown_phrase_returns_false_and_writes_nothing(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        before = (root / SECTION_CUES_FILENAME).read_bytes()
+        sidecar_before = (root / LEARNED_SIDECAR_FILENAME).read_bytes()
+        assert delete_user_cue("never said this", config_root=root) is False
+        assert (root / SECTION_CUES_FILENAME).read_bytes() == before
+        assert (root / LEARNED_SIDECAR_FILENAME).read_bytes() == sidecar_before
+
+    def test_a_shipped_phrase_can_be_deleted_from_the_practitioners_own_file(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        assert delete_user_cue("home exercise", config_root=root) is True
+        config = load_note_config(root)
+        assert "advice_home_exercise" in config.section_cues
+        cues = config.normalised_cues()["advice_home_exercise"]
+        assert ("home", "exercise") not in cues
+        assert ("wall", "slide") in cues
+        assert load_learned_phrases(root).recent == (
+            LearnedPhrase("wall slide", "advice_home_exercise", _LEARNED_AT),
+        )
+
+    def test_a_failed_sidecar_write_is_repaired_by_the_retry(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Peer round 36 PR-MED-024: a delete whose sidecar write fails after
+        the cue was removed leaves the phrase in the sidecar; the retry must
+        remove it even though the cue is already gone."""
+        root = tmp_path / "config"
+        real = note_config_module.atomic_write_bytes
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        _fail_sidecar_writes(monkeypatch)
+        with pytest.raises(NoteConfigWriteError, match=re.escape(LEARNED_SIDECAR_FILENAME)):
+            delete_user_cue("wall slide", config_root=root)
+        # The cue is gone, the sidecar entry survived, the lists hide it.
+        assert ("wall", "slide") not in load_note_config(root).normalised_cues()[
+            "advice_home_exercise"
+        ]
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert "wall slide" in sidecar["learned"]
+        assert load_learned_phrases(root) == LearnedPhrases((), ())
+        # The retry finishes the job.
+        monkeypatch.setattr(note_config_module, "atomic_write_bytes", real)
+        assert delete_user_cue("wall slide", config_root=root) is True
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert sidecar["learned"] == {}
+        # And a third attempt is a true no-op.
+        before = (root / LEARNED_SIDECAR_FILENAME).read_bytes()
+        assert delete_user_cue("wall slide", config_root=root) is False
+        assert (root / LEARNED_SIDECAR_FILENAME).read_bytes() == before
+
+    def test_a_raw_cleanup_error_on_delete_is_typed_and_the_retry_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        """Peer round 37 PR-MED-025 through the REAL atomic writer on the
+        delete path: the cue is removed, the sidecar write double-faults, the
+        error is the config family (the tab's retryable branch), and the retry
+        finishes once the temp path is clear."""
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide")], config_root=root, learned_at=_LEARNED_AT
+        )
+        blocker = root / (LEARNED_SIDECAR_FILENAME + ".tmp")
+        blocker.mkdir()
+        with pytest.raises(NoteConfigWriteError, match=re.escape(LEARNED_SIDECAR_FILENAME)):
+            delete_user_cue("wall slide", config_root=root)
+        assert ("wall", "slide") not in load_note_config(root).normalised_cues()[
+            "advice_home_exercise"
+        ]
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert "wall slide" in sidecar["learned"]
+        blocker.rmdir()
+        assert delete_user_cue("wall slide", config_root=root) is True
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert sidecar["learned"] == {}
+
+    def test_a_later_delete_prunes_any_orphaned_sidecar_entry(self, tmp_path: Path) -> None:
+        root = tmp_path / "config"
+        append_user_cues(
+            [("advice_home_exercise", "wall slide"), ("treatment_performed", "ice pack")],
+            config_root=root,
+            learned_at=_LEARNED_AT,
+        )
+        payload = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        payload["learned"]["ghost phrase"] = {
+            "section": "management_plan",
+            "learned_at": _LEARNED_AT.isoformat(),
+        }
+        _write_user_file(root, LEARNED_SIDECAR_FILENAME, payload)
+        assert delete_user_cue("ice pack", config_root=root) is True
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert set(sidecar["learned"]) == {"wall slide"}
+        assert ("wall", "slide") in load_note_config(root).normalised_cues()[
+            "advice_home_exercise"
+        ]
+
+    def test_a_sidecar_only_phrase_is_deletable_without_a_user_file(
+        self, tmp_path: Path
+    ) -> None:
+        root = tmp_path / "config"
+        _write_user_file(
+            root,
+            LEARNED_SIDECAR_FILENAME,
+            {
+                "schema_version": 1,
+                "learned": {
+                    "wall slide": {
+                        "section": "advice_home_exercise",
+                        "learned_at": _LEARNED_AT.isoformat(),
+                    }
+                },
+            },
+        )
+        assert delete_user_cue("wall slide", config_root=root) is True
+        assert not (root / SECTION_CUES_FILENAME).exists()  # never created here
+        sidecar = json.loads((root / LEARNED_SIDECAR_FILENAME).read_text(encoding="utf-8"))
+        assert sidecar["learned"] == {}

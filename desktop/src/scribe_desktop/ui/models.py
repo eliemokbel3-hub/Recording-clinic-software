@@ -10,21 +10,26 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 
 from scribe_desktop.note import (
+    CANONICAL_SECTION_KEYS,
     CANONICAL_SECTIONS,
     ExtractiveNoteProvider,
     GeneratedNote,
+    GeneratedSection,
+    NoteAssertion,
     NoteDraft,
     NoteModelProvider,
     NoteProposal,
     NoteSectionKey,
     NoteWarning,
+    admissible_sections,
     compose_draft,
+    reconstruct_span_text,
 )
 from scribe_desktop.note_config import NoteConfig, load_note_config
 from scribe_desktop.practitioner_profile import (
@@ -610,10 +615,15 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "template has no field for it - carry it across by hand if it is "
         "needed, then acknowledge.",
     ),
+    # Practitioner-profile plan Task 5.1b: a line the clinician REMOVED during
+    # review raises this too (its words are no longer carried by any
+    # assertion) — the copy names that case so the acknowledgement reads
+    # right; review severity, never a block (D14).
     "high_risk_omission": WarningCopy(
         "A number, name or medication the clinician said is not in the note",
         None,
-        "Check the transcript beside the note, then acknowledge.",
+        "Check the transcript beside the note (a line you removed can raise this too), "
+        "then acknowledge.",
     ),
 }
 
@@ -783,6 +793,264 @@ class NoteGenerationResult:
     document: TranscriptDocument
 
 
+# --- review edits (practitioner-profile plan Phase 5, D14) ------------------
+
+
+def working_draft(
+    draft: NoteDraft,
+    *,
+    removed: Collection[str],
+    additions: Sequence[NoteAssertion],
+) -> NoteDraft:
+    """The draft the Note tab finalises: the generated draft with the
+    assertions in ``removed`` filtered out and ``additions`` appended to
+    their sections, sections in canonical order (D14). Every check then runs
+    over the EDITED note exactly as over the generated one — reconstruction,
+    contradiction, provenance, omission — because ``finalise_note`` takes a
+    draft and nothing else changes. The proposals travel unchanged, so the
+    resolution evidence keeps matching. Validated on construction: a
+    duplicate assertion id or a non-transcript addition is refused by
+    ``NoteDraft`` itself."""
+    grouped: dict[NoteSectionKey, list[NoteAssertion]] = {}
+    for section in draft.note_sections:
+        kept = [a for a in section.note_assertions if a.assertion_id not in removed]
+        if kept:
+            grouped[section.section_key] = kept
+    for assertion in additions:
+        grouped.setdefault(assertion.section_key, []).append(assertion)
+    return NoteDraft(
+        session_id=draft.session_id,
+        template_profile_id=draft.template_profile_id,
+        provider_name=draft.provider_name,
+        clinician_speaker=draft.clinician_speaker,
+        transcript_digest=draft.transcript_digest,
+        config_digest=draft.config_digest,
+        note_sections=tuple(
+            GeneratedSection(section_key=key, note_assertions=tuple(grouped[key]))
+            for key in CANONICAL_SECTION_KEYS
+            if key in grouped
+        ),
+        note_proposals=draft.note_proposals,
+    )
+
+
+def section_title(key: NoteSectionKey) -> str:
+    return _SECTION_TITLES[key]
+
+
+def _lead_words(text: str, *, max_chars: int = 60) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "..."
+
+
+@dataclass(frozen=True)
+class UtteranceChoice:
+    """One entry of the Note tab's utterance chooser (Task 5.1): the
+    segment, its display label (index, speaker label, first words — display
+    only, like the transcript panel) and the sections it may enter under the
+    ownership rule (``note.admissible_sections``, the router's own rule)."""
+
+    segment_index: int
+    label: str
+    allowed_sections: tuple[NoteSectionKey, ...]
+
+
+def eligible_utterances(
+    document: TranscriptDocument,
+    *,
+    clinician_speaker: str | None,
+    in_note: Collection[int],
+) -> tuple[UtteranceChoice, ...]:
+    """The utterances the clinician may ADD: every segment with quotable
+    text whose index is not already carried by the working note (a line
+    present anywhere in the note is refused — D14), in transcript order."""
+    choices: list[UtteranceChoice] = []
+    for index, segment in enumerate(document.transcript_segments):
+        if index in in_note:
+            continue
+        text = reconstruct_span_text(segment.transcript_words)
+        if not text:
+            continue
+        allowed = admissible_sections(
+            CANONICAL_SECTION_KEYS,
+            speaker=segment.speaker,
+            clinician_speaker=clinician_speaker,
+            text=text,
+        )
+        choices.append(
+            UtteranceChoice(index, f"{index + 1}. {segment.speaker}: {_lead_words(text)}", allowed)
+        )
+    return tuple(choices)
+
+
+LineState = Literal["routed", "removed", "moved", "added"]
+
+
+@dataclass(frozen=True)
+class EditableLine:
+    """One transcript-provenance line of the working note with its edit
+    state (Task 5.1b): ``routed`` (the provider's, in place), ``removed``
+    (the provider's, subtracted), ``moved`` (the provider's, subtracted and
+    re-added under ``moved_to``) or ``added`` (a manual addition with no
+    provider counterpart). ``allowed_sections`` are the sections a Move may
+    target — the ownership rule, minus the section it is in."""
+
+    assertion_id: str
+    segment_index: int
+    section_key: NoteSectionKey
+    label: str
+    state: LineState
+    moved_to: NoteSectionKey | None
+    allowed_sections: tuple[NoteSectionKey, ...]
+
+
+def editable_lines(
+    draft: NoteDraft,
+    document: TranscriptDocument,
+    *,
+    removed: Collection[str],
+    additions: Mapping[str, NoteAssertion],
+) -> tuple[EditableLine, ...]:
+    """The rows of the Note tab's line editor: the provider's transcript
+    lines in note order (each carrying its remove/move state) followed by
+    the manual additions that are not the re-added leg of a move."""
+    manual_by_segment: dict[int, NoteAssertion] = {}
+    for assertion in additions.values():
+        coords = assertion.note_span.source_coords
+        if coords is not None:
+            manual_by_segment[coords.segment_index] = assertion
+
+    def allowed_for(segment_index: int, current: NoteSectionKey) -> tuple[NoteSectionKey, ...]:
+        segment = document.transcript_segments[segment_index]
+        return tuple(
+            key
+            for key in admissible_sections(
+                CANONICAL_SECTION_KEYS,
+                speaker=segment.speaker,
+                clinician_speaker=draft.clinician_speaker,
+                text=reconstruct_span_text(segment.transcript_words),
+            )
+            if key != current
+        )
+
+    lines: list[EditableLine] = []
+    covered: set[int] = set()
+    for section in draft.note_sections:
+        for assertion in section.note_assertions:
+            coords = assertion.note_span.source_coords
+            if assertion.provenance != "transcript" or coords is None:
+                continue
+            if coords.segment_index >= len(document.transcript_segments):
+                continue  # Check 1's source_coords_invalid owns this line
+            segment_index = coords.segment_index
+            manual = manual_by_segment.get(segment_index)
+            state: LineState = "routed"
+            moved_to: NoteSectionKey | None = None
+            if assertion.assertion_id in removed:
+                if manual is not None:
+                    state, moved_to = "moved", manual.section_key
+                    covered.add(segment_index)
+                else:
+                    state = "removed"
+            lines.append(
+                EditableLine(
+                    assertion.assertion_id,
+                    segment_index,
+                    section.section_key,
+                    f"{section_title(section.section_key)} - {_lead_words(assertion.text)}",
+                    state,
+                    moved_to,
+                    allowed_for(segment_index, section.section_key),
+                )
+            )
+    for assertion in additions.values():
+        coords = assertion.note_span.source_coords
+        if coords is None or coords.segment_index in covered:
+            continue
+        if coords.segment_index >= len(document.transcript_segments):
+            continue
+        lines.append(
+            EditableLine(
+                assertion.assertion_id,
+                coords.segment_index,
+                assertion.section_key,
+                f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}",
+                "added",
+                None,
+                allowed_for(coords.segment_index, assertion.section_key),
+            )
+        )
+    return tuple(lines)
+
+
+# --- phrase learning status (practitioner-profile plan Task 5.2) -----------
+
+LEARNING_NO_PROFILE_HINT: Final = (
+    "Phrase learning is off: no voice profile - set one up on the Practitioner tab."
+)
+LEARNING_UNUSABLE_HINT: Final = (
+    "Phrase learning is off: your voice profile cannot be read ({reason}) - re-enrol or "
+    "delete it on the Practitioner tab."
+)
+LEARNING_STALE_CONSENT_HINT: Final = (
+    "Phrase learning is off until you confirm the updated consent text on the Practitioner "
+    "tab."
+)
+LEARNING_OPTED_OUT_HINT: Final = (
+    "Phrase learning is off - turn it on on the Practitioner tab."
+)
+LEARNING_ON_LINE: Final = (
+    "Phrase learning is on: lines you add or move are learned when you press Save note "
+    "on this tab."
+)
+# Shown on the Note tab's learning line while phrases are QUEUED (live smoke
+# 2026-09-17: the practitioner read the queue as done and left the review
+# without pressing Save note on this tab — nothing is written on any other
+# exit, by design, so the line must name the button and the tab).
+LEARNING_NOT_ATTRIBUTED_NOTE: Final = (
+    "Not learned: this line is not attributed to you - only your own lines are learned."
+)
+
+
+def learning_queued_line(count: int) -> str:
+    """The learning line while ``count`` phrases wait for Save: names the
+    exact control that writes them and where it is."""
+    noun = "phrase" if count == 1 else "phrases"
+    return (
+        f"Phrase learning is on: {count} {noun} queued - press Save note on this tab to "
+        "learn them (Cancel, Delete and Complete learn nothing)."
+    )
+
+
+@dataclass(frozen=True)
+class LearningStatus:
+    """Whether the Note tab may learn from this review: ``enabled`` only when
+    a READABLE profile carries the CURRENT consent version with the learning
+    opt-in ticked (D9 as amended; Task 5.0's version check). ``reason`` is
+    the one-line hint pointing at the Practitioner tab when it is off."""
+
+    enabled: bool
+    reason: str | None
+
+
+def learning_status(*, profile_root: Path | None = None) -> LearningStatus:
+    """One profile read (no embedder identity — learning needs consent, not
+    the speaker model; a stale-model profile still records what was agreed).
+    Safe on the GUI thread: a DPAPI unwrap and one decrypt."""
+    try:
+        profile = load_profile(root=profile_root)
+    except ProfileUnusableError as exc:
+        return LearningStatus(False, LEARNING_UNUSABLE_HINT.format(reason=exc.reason))
+    if profile is None:
+        return LearningStatus(False, LEARNING_NO_PROFILE_HINT)
+    if not consent_is_current(profile):
+        return LearningStatus(False, LEARNING_STALE_CONSENT_HINT)
+    if not profile.consent.learning_opt_in:
+        return LearningStatus(False, LEARNING_OPTED_OUT_HINT)
+    return LearningStatus(True, None)
+
+
 def _extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
     """The shipping provider built FROM the loaded config (practitioner-profile
     plan Task 4.3): the cues that route utterances are the config's own —
@@ -911,7 +1179,12 @@ def voice_profile_report_line(
     profile = readiness.profile
     if profile is None:
         return readiness.reason or ATTRIBUTION_DID_NOT_RUN_REASON
-    return f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {profile.model_id})"
+    line = f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {profile.model_id})"
+    if not consent_is_current(profile):
+        # Task 5.0: a readable record carrying an older consent text — the
+        # profile still attributes, the tab asks for a fresh tick.
+        line += " - consent text updated, confirm it on the Practitioner tab"
+    return line
 
 
 def models_ready() -> bool:
@@ -924,11 +1197,14 @@ def models_ready() -> bool:
 # Practitioner tab copy (practitioner-profile plan Tasks 0.2 / 3.1 / 3.2).
 # ---------------------------------------------------------------------------
 
-# Consent text v1 — RATIFIED by the practitioner 2026-09-05 (Task 0.2) and
-# shipped VERBATIM. The version string is stored in the profile's consent
-# record (``ConsentRecord.consent_text_version``); changing the text means a
-# new version and re-consent at the next enrolment.
-CONSENT_TEXT_VERSION: Final = "consent-v1"
+# Consent texts, each RATIFIED by the practitioner and shipped VERBATIM. The
+# CURRENT version's string is stored in the profile's consent record
+# (``ConsentRecord.consent_text_version``); a record carrying an OLDER version
+# is readable but NOT current — the Practitioner tab asks for a fresh tick and
+# phrase learning stays off until the practitioner re-consents (Task 5.0).
+# Earlier texts stay here as history for the records that carry them.
+CONSENT_TEXT_VERSION: Final = "consent-v2"
+# v1 — ratified 2026-09-05 (Task 0.2); the propose-then-approve terms.
 CONSENT_TEXT_V1: Final = (
     "This app can learn your voice and your phrasing to improve your notes. If you agree, "
     "it stores on this computer: a numeric fingerprint of your voice (never a recording), "
@@ -939,6 +1215,23 @@ CONSENT_TEXT_V1: Final = (
     "contains no patient information; keep phrases general. Nothing else about any patient "
     "is stored beyond their session, and nothing leaves this computer. You can re-record "
     "your voice, delete it, or delete any learned phrase at any time from this tab. "
+    "Version consent-v1."
+)
+# v2 — ratified 2026-09-16 (the auto-learn, review-later terms; D9 as amended).
+# The plan's blockquote emphasises "you" with markdown asterisks; the label is
+# plain text, so the word is shipped without the markup.
+CONSENT_TEXT_V2: Final = (
+    "This app can learn your voice and your phrasing to improve your notes. If you agree, "
+    "it stores on this computer: a numeric fingerprint of your voice (never a recording), "
+    "encrypted; and, if you also turn on phrase learning, short phrases taken from lines "
+    "you add or move while reviewing a note, saved automatically when you save the note "
+    "and kept as plain text in your own config file until you delete them. Only your own "
+    "lines are ever used — never a patient's. The app cannot tell whether a phrase names a "
+    "patient, so it refuses phrases containing names, numbers, dates or medication names, "
+    "and shows you everything it has learned on this tab so you can delete any of it. "
+    "Nothing else about any patient is stored beyond their session, and nothing leaves "
+    "this computer. You can re-record your voice, delete it, or delete any learned phrase "
+    "at any time from this tab. "
     f"Version {CONSENT_TEXT_VERSION}."
 )
 CONSENT_CHECKBOX_LABEL: Final = (
@@ -946,8 +1239,26 @@ CONSENT_CHECKBOX_LABEL: Final = (
 )
 # The second checkbox, off by default (Config / Environment / Deployment Impact).
 LEARNING_OPT_IN_LABEL: Final = (
-    "Also learn my phrasing from lines I add during review (asks each time)"
+    "Also learn my phrasing from lines I add or move during review (saved when I save "
+    "the note)"
 )
+# Shown on the Practitioner tab when a readable profile's consent record
+# carries an older text version (Task 5.0): the box is left unticked and
+# editable, Record needs a fresh tick, and learning is off until re-consent.
+CONSENT_STALE_NOTICE: Final = (
+    "The consent text has changed - please read it and tick again. Phrase learning stays "
+    "off until you confirm."
+)
+CONFIRM_CONSENT_BUTTON_LABEL: Final = "Confirm consent"
+
+
+def consent_is_current(profile: PractitionerProfile) -> bool:
+    """True when the profile's consent record carries the CURRENT text
+    version — the only record that pre-ticks the consent box or enables
+    phrase learning (Task 5.0)."""
+    return profile.consent.consent_text_version == CONSENT_TEXT_VERSION
+
+
 # D10: first run ASKS, never blocks — shown on the Practitioner tab, which the
 # main window selects at startup when no profile exists.
 FIRST_RUN_BANNER: Final = (
@@ -1142,13 +1453,22 @@ def build_recovery_runner(
 
 __all__ = [
     "ATTRIBUTION_DID_NOT_RUN_REASON",
+    "CONFIRM_CONSENT_BUTTON_LABEL",
     "CONSENT_CHECKBOX_LABEL",
     "CONSENT_MANUAL_REMINDER",
+    "CONSENT_STALE_NOTICE",
     "CONSENT_TEXT_V1",
+    "CONSENT_TEXT_V2",
     "CONSENT_TEXT_VERSION",
     "COPY_TO_CLINIKO_ENABLED",
     "FIRST_RUN_BANNER",
+    "LEARNING_NO_PROFILE_HINT",
+    "LEARNING_NOT_ATTRIBUTED_NOTE",
+    "LEARNING_ON_LINE",
+    "LEARNING_OPTED_OUT_HINT",
     "LEARNING_OPT_IN_LABEL",
+    "LEARNING_STALE_CONSENT_HINT",
+    "LEARNING_UNUSABLE_HINT",
     "PROFILE_NOT_ENROLLED_LINE",
     "PROFILE_REENROL_REASON",
     "PROFILE_UNUSABLE_REASON",
@@ -1158,6 +1478,8 @@ __all__ = [
     "AttributionInputs",
     "AttributionReadiness",
     "ControlSet",
+    "EditableLine",
+    "LearningStatus",
     "NoteGenerationResult",
     "NoteReviewState",
     "RecoverableSessionInfo",
@@ -1165,6 +1487,7 @@ __all__ = [
     "RenderedProposal",
     "RenderedSection",
     "SessionControllerLike",
+    "UtteranceChoice",
     "WarningCopy",
     "WarningGroup",
     "WarningSummary",
@@ -1175,19 +1498,26 @@ __all__ = [
     "build_transcriber",
     "complete_block_reason",
     "config_report_lines",
+    "consent_is_current",
     "controls_for_state",
     "default_sessions_root",
+    "editable_lines",
+    "eligible_utterances",
     "format_note_body",
     "format_timestamp",
     "format_transcript_text",
+    "learning_queued_line",
+    "learning_status",
     "list_recoverable_sessions",
     "model_report_lines",
     "models_ready",
     "provenance_label",
     "render_note_sections",
     "render_proposal",
+    "section_title",
     "speaker_model_report_line",
     "speaker_quotations",
     "summarise_warnings",
     "voice_profile_report_line",
+    "working_draft",
 ]

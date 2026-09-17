@@ -1,9 +1,10 @@
-"""The Practitioner tab: voice enrolment, consent, deletion (practitioner-
-profile plan Phase 3, Task 3.1).
+"""The Practitioner tab: voice enrolment, consent, deletion, learned phrases
+(practitioner-profile plan Phase 3, Task 3.1; Phase 5, Tasks 5.0 + 5.3).
 
-The tab shows consent text v1 VERBATIM (``models.CONSENT_TEXT_V1``) with the
-consent checkbox and the separate phrase-learning opt-in, a microphone pick,
-and a read-aloud of about a minute. That read-aloud is captured IN MEMORY by
+The tab shows the CURRENT consent text VERBATIM (``models.CONSENT_TEXT_V2``,
+version ``models.CONSENT_TEXT_VERSION``) with the consent checkbox and the
+separate phrase-learning opt-in, a microphone pick, and a read-aloud of about
+a minute. That read-aloud is captured IN MEMORY by
 ``enrolment.record_enrolment`` on a ``TaskThread`` (D8): no session is
 created, no store is touched, no file is ever written, and the PCM is dropped
 as soon as ``enrolment.enrol`` has turned it into one vector — the only thing
@@ -22,10 +23,28 @@ visible when the activity ends.
 so it is marshalled to the GUI thread through a Qt signal rather than
 touching a widget directly.
 
+Consent versions (Task 5.0). The consent box is pre-ticked ONLY from a
+READABLE profile whose consent record carries the CURRENT text version. A
+record carrying an older version (``consent-v1``) is readable but not
+current: the box stays unticked and editable, a one-line notice asks the
+practitioner to read the new text and tick again, Record needs that fresh
+tick, and phrase learning is treated as OFF until re-consent
+(``models.learning_status``). "Confirm consent" re-saves the SAME vector
+under the existing key with a current consent record — no re-recording —
+and the same action saves a changed learning opt-in; a re-record saves the
+opt-in too.
+
 Re-record replaces the profile under the existing key; Delete asks for
 confirmation and is KEY deletion (``delete_profile``: the key first, which is
-the cryptographic death of the blob). "Learned phrases" is a placeholder for
-Phase 5's propose-then-approve flow.
+the cryptographic death of the blob).
+
+Learned phrases (Task 5.3, D9 as amended). "Recently learned" lists the last
+``note_config.RECENTLY_LEARNED_LIMIT`` phrases the Note tab learned (the
+sidecar's entries that still exist in the cue file, with their section and
+date); "Learned phrases" lists every phrase in the user cue file the shipped
+default does not carry, by section. Delete on either removes the phrase from
+the cue file and the sidecar through ``note_config.delete_user_cue`` — the
+loader stays the cue file's only reader; this tab never parses it itself.
 
 Enrolment is disabled only when the SELECTED embedder or the VAD model is
 unavailable, and the message names ``scripts/setup-models.py`` (D16).
@@ -50,6 +69,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -65,9 +85,15 @@ from scribe_desktop.enrolment import (
     enrol,
     record_enrolment,
 )
+from scribe_desktop.note_config import (
+    NoteConfigError,
+    delete_user_cue,
+    load_learned_phrases,
+)
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
     PractitionerProfile,
+    ProfileError,
     delete_profile,
     save_profile,
 )
@@ -87,6 +113,7 @@ from scribe_desktop.ui.tasks import TaskThread
 _AVAILABILITY_POLL_MS: Final = 5000
 DEVICE_NAME_MAX_CHARS: Final = 200  # PractitionerProfile.device_name's bound
 UNKNOWN_DEVICE_NAME: Final = "unknown microphone"
+NO_LEARNED_PHRASES_TEXT: Final = "No learned phrases yet."
 
 CaptureFn = Callable[
     [CaptureBackend, int, Callable[[EnrolmentProgress], None], Callable[[], bool]], bytes
@@ -135,6 +162,7 @@ class PractitionerScreen(QWidget):
         backend: CaptureBackend,
         *,
         profile_root: Path | None = None,
+        config_root: Path | None = None,
         embedder_kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER,
         embedder_factory: Callable[[EmbedderKind], SpeakerEmbedder] = build_speaker_embedder,
         embedder_available: Callable[[EmbedderKind], bool] = speaker_embedder_available,
@@ -155,6 +183,7 @@ class PractitionerScreen(QWidget):
         # SYNCHRONOUSLY, before the worker can open the device.
         self._on_capture_start = on_capture_start
         self._profile_root = profile_root
+        self._config_root = config_root
         self._embedder_kind = embedder_kind
         self._embedder_factory = embedder_factory
         self._embedder_available = embedder_available
@@ -179,6 +208,8 @@ class PractitionerScreen(QWidget):
         self._available = False
         self._profile_present = False
         self._profile: PractitionerProfile | None = None
+        # Task 5.0: whether the READABLE profile's consent record is current.
+        self._consent_current = False
         self._device_names: dict[int, str] = {}
 
         # --- first-run banner (D10: first run ASKS, never blocks) -----------
@@ -197,26 +228,42 @@ class PractitionerScreen(QWidget):
         profile_layout.addWidget(self.profile_status_label)
         profile_box.setLayout(profile_layout)
 
-        # --- consent (v1 text VERBATIM) -------------------------------------
-        self.consent_text_label = QLabel(models.CONSENT_TEXT_V1)
+        # --- consent (the CURRENT text VERBATIM) -----------------------------
+        self.consent_text_label = QLabel(models.CONSENT_TEXT_V2)
         self.consent_text_label.setTextFormat(Qt.TextFormat.PlainText)
         self.consent_text_label.setWordWrap(True)
+        self.consent_notice_label = QLabel(models.CONSENT_STALE_NOTICE)
+        self.consent_notice_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.consent_notice_label.setWordWrap(True)
+        self.consent_notice_label.setStyleSheet("font-weight: bold;")
+        self.consent_notice_label.hide()
         self.consent_checkbox = QCheckBox(models.CONSENT_CHECKBOX_LABEL)
         self.consent_checkbox.setChecked(False)
         self.consent_checkbox.toggled.connect(lambda *_: self._update_controls())
         self.learning_checkbox = QCheckBox(models.LEARNING_OPT_IN_LABEL)
         self.learning_checkbox.setChecked(False)
+        self.learning_checkbox.toggled.connect(lambda *_: self._update_controls())
         self.learning_note_label = QLabel(
-            "Applies when you next record your voice (the saved choice stands until then)."
+            "Press Confirm consent to save this choice, or it is saved when you next "
+            "record your voice (the saved choice stands until then)."
         )
         self.learning_note_label.setWordWrap(True)
         self.learning_note_label.hide()
+        self.confirm_consent_button = QPushButton(models.CONFIRM_CONSENT_BUTTON_LABEL)
+        self.confirm_consent_button.setToolTip(
+            "Save your consent to the current text, and your phrase-learning choice, "
+            "without re-recording your voice."
+        )
+        self.confirm_consent_button.clicked.connect(self.on_confirm_consent)
+        self.confirm_consent_button.hide()
         consent_box = QGroupBox("Consent")
         consent_layout = QVBoxLayout()
         consent_layout.addWidget(self.consent_text_label)
+        consent_layout.addWidget(self.consent_notice_label)
         consent_layout.addWidget(self.consent_checkbox)
         consent_layout.addWidget(self.learning_checkbox)
         consent_layout.addWidget(self.learning_note_label)
+        consent_layout.addWidget(self.confirm_consent_button)
         consent_box.setLayout(consent_layout)
 
         # --- the read-aloud --------------------------------------------------
@@ -268,16 +315,33 @@ class PractitionerScreen(QWidget):
         self.delete_button = QPushButton("Delete voice profile")
         self.delete_button.clicked.connect(self.on_delete)
 
-        # --- learned phrases (Phase 5 placeholder) -----------------------------
-        self.learned_phrases_list = QListWidget()
-        self.learned_phrases_list.setEnabled(False)
-        self.learned_phrases_note_label = QLabel(
-            "No learned phrases yet. Phrase learning arrives with a later update."
+        # --- learned phrases (Task 5.3) -------------------------------------
+        # Both lists render the practitioner's OWN learned phrases (config
+        # plaintext), each item's data holding the stored phrase for Delete.
+        self.recently_learned_list = QListWidget()
+        self.delete_recent_button = QPushButton("Delete selected")
+        self.delete_recent_button.clicked.connect(
+            lambda *_: self._delete_selected(self.recently_learned_list)
         )
+        self.learned_phrases_list = QListWidget()
+        self.delete_learned_button = QPushButton("Delete selected")
+        self.delete_learned_button.clicked.connect(
+            lambda *_: self._delete_selected(self.learned_phrases_list)
+        )
+        # PLAIN TEXT: this label renders loader errors, which quote config text.
+        self.learned_phrases_note_label = QLabel(NO_LEARNED_PHRASES_TEXT)
+        self.learned_phrases_note_label.setTextFormat(Qt.TextFormat.PlainText)
         self.learned_phrases_note_label.setWordWrap(True)
         phrases_box = QGroupBox("Learned phrases")
         phrases_layout = QVBoxLayout()
+        phrases_layout.addWidget(
+            QLabel("Recently learned (phrases from lines you added or moved, newest first):")
+        )
+        phrases_layout.addWidget(self.recently_learned_list)
+        phrases_layout.addWidget(self.delete_recent_button)
+        phrases_layout.addWidget(QLabel("All learned phrases, by section:"))
         phrases_layout.addWidget(self.learned_phrases_list)
+        phrases_layout.addWidget(self.delete_learned_button)
         phrases_layout.addWidget(self.learned_phrases_note_label)
         phrases_box.setLayout(phrases_layout)
 
@@ -301,6 +365,7 @@ class PractitionerScreen(QWidget):
         self.refresh_devices()
         self.refresh_availability()
         self.refresh_profile_state()
+        self.refresh_learned_phrases()
 
     # --- text helpers --------------------------------------------------------
 
@@ -382,9 +447,13 @@ class PractitionerScreen(QWidget):
         """Re-read the profile store (one profile read, no model loaded) and
         re-render everything that depends on it."""
         previously_readable = self._profile is not None
+        previously_current = self._consent_current
         readiness = self._readiness_provider()
         self._profile_present = readiness.profile_present
         self._profile = readiness.profile
+        self._consent_current = (
+            readiness.profile is not None and models.consent_is_current(readiness.profile)
+        )
         if not readiness.profile_present:
             self.profile_status_label.setText("No voice profile yet.")
         elif readiness.profile is not None:
@@ -397,15 +466,25 @@ class PractitionerScreen(QWidget):
             self.profile_status_label.setText(
                 readiness.reason or models.ATTRIBUTION_DID_NOT_RUN_REASON
             )
+        self.consent_notice_label.setVisible(
+            self._profile is not None and not self._consent_current
+        )
         if readiness.profile_present:
             if self._profile is not None:
                 # A READABLE profile carries the consent record ticked when it
-                # was saved: that record is what pre-ticks the box (peer round
-                # 27 PR-HIGH-006). An unreadable blob is NOT evidence of
-                # consent — its box stays as it is (unticked on construction)
-                # and enabled, so recording over it needs a fresh tick; Delete
-                # stays available either way.
-                self.consent_checkbox.setChecked(True)
+                # was saved: that record pre-ticks the box ONLY when it is
+                # CURRENT (peer round 27 PR-HIGH-006; Task 5.0). An older
+                # version is not consent to the current text: the box is left
+                # editable for a fresh tick — and a tick that came from a
+                # record that was current is withdrawn when the record is
+                # found stale (a fresh tick the practitioner just made stands).
+                # An unreadable blob is NOT evidence of consent — its box stays
+                # as it is (unticked on construction) and enabled, so recording
+                # over it needs a fresh tick; Delete stays available either way.
+                if self._consent_current:
+                    self.consent_checkbox.setChecked(True)
+                elif previously_current:
+                    self.consent_checkbox.setChecked(False)
                 self.learning_checkbox.setChecked(self._profile.consent.learning_opt_in)
                 self.learning_note_label.show()
             else:
@@ -428,6 +507,12 @@ class PractitionerScreen(QWidget):
     @property
     def profile_present(self) -> bool:
         return self._profile_present
+
+    @property
+    def consent_current(self) -> bool:
+        """True when a readable profile's consent record carries the current
+        text version (Task 5.0)."""
+        return self._consent_current
 
     @property
     def is_busy(self) -> bool:
@@ -453,12 +538,30 @@ class PractitionerScreen(QWidget):
         self.delete_button.setEnabled(not busy and self._profile_present)
         self.device_combo.setEnabled(not busy)
         self.refresh_devices_button.setEnabled(not busy)
-        # Consent is fixed while a READABLE profile exists (withdrawal is
-        # Delete); an unreadable blob leaves it editable (PR-HIGH-006). The
-        # learning opt-in stays editable whenever idle — its value applies at
-        # the next (re-)record (PR-MED-021).
-        self.consent_checkbox.setEnabled(not busy and self._profile is None)
+        # Consent is fixed while a READABLE profile with a CURRENT record
+        # exists (withdrawal is Delete); an unreadable blob or a stale record
+        # leaves it editable (PR-HIGH-006; Task 5.0). The learning opt-in
+        # stays editable whenever idle — saved by Confirm consent or at the
+        # next (re-)record (PR-MED-021).
+        self.consent_checkbox.setEnabled(not busy and not self._consent_current)
         self.learning_checkbox.setEnabled(not busy)
+        profile = self._profile
+        self.confirm_consent_button.setVisible(profile is not None)
+        self.confirm_consent_button.setEnabled(
+            not busy
+            and profile is not None
+            and self.consent_checkbox.isChecked()
+            and (
+                not self._consent_current
+                or self.learning_checkbox.isChecked() != profile.consent.learning_opt_in
+            )
+        )
+        self.delete_recent_button.setEnabled(
+            not busy and self.recently_learned_list.count() > 0
+        )
+        self.delete_learned_button.setEnabled(
+            not busy and self.learned_phrases_list.count() > 0
+        )
 
     def _set_enrolment_status(self, message: str | None) -> None:
         if message is None:
@@ -467,6 +570,39 @@ class PractitionerScreen(QWidget):
         else:
             self.enrolment_status_label.setText(message)
             self.enrolment_status_label.show()
+
+    # --- re-consent without re-record (Task 5.0) ----------------------------------
+
+    def on_confirm_consent(self) -> None:
+        """Re-save the SAME vector under the existing key with a consent
+        record for the CURRENT text and the learning opt-in as ticked
+        (``save_profile`` replaces only ``voice.enc``). Needs a readable
+        profile and a ticked consent box; runs on the GUI thread (one small
+        atomic file replace, no microphone, no lease)."""
+        profile = self._profile
+        if self.is_busy or profile is None or not self.consent_checkbox.isChecked():
+            return
+        now = self._clock()
+        updated = profile.model_copy(
+            update={
+                "consent": ConsentRecord(
+                    accepted_at=now,
+                    consent_text_version=models.CONSENT_TEXT_VERSION,
+                    learning_opt_in=self.learning_checkbox.isChecked(),
+                )
+            }
+        )
+        try:
+            save_profile(updated, root=self._profile_root)
+        except (StoreWriteError, ProfileError, OSError) as exc:
+            # OSError too (peer round 37 PR-MED-025's in-phase sibling): the
+            # atomic writer's temp-file cleanup can surface a raw error in
+            # place of the typed one, and a GUI slot must not raise.
+            self._set_enrolment_status(f"Could not save your consent - {exc}")
+            self.refresh_profile_state()
+            return
+        self._set_enrolment_status("Consent saved - your voice profile is unchanged.")
+        self.refresh_profile_state()  # re-read from disk: the tick now comes from the record
 
     # --- enrolment ----------------------------------------------------------------
 
@@ -627,9 +763,75 @@ class PractitionerScreen(QWidget):
         self._set_enrolment_status("Voice profile deleted.")
         self.refresh_profile_state()
 
+    # --- learned phrases (Task 5.3) --------------------------------------------------
+
+    def refresh_learned_phrases(self) -> None:
+        """Re-read the user cue file and its sidecar through ``note_config``
+        and re-render both lists; a loader error is shown, never swallowed."""
+        self.recently_learned_list.clear()
+        self.learned_phrases_list.clear()
+        try:
+            learned = load_learned_phrases(self._config_root)
+        except NoteConfigError as exc:
+            self.learned_phrases_note_label.setText(
+                f"Learned phrases unavailable - {type(exc).__name__}: {exc}"
+            )
+            self._update_controls()
+            return
+        for item in learned.recent:
+            entry = QListWidgetItem(
+                f"{item.learned_at:%Y-%m-%d} - {models.section_title(item.section_key)}: "
+                f"{item.phrase}"
+            )
+            entry.setData(Qt.ItemDataRole.UserRole, item.phrase)
+            self.recently_learned_list.addItem(entry)
+        for key, phrases in learned.by_section:
+            for phrase in phrases:
+                entry = QListWidgetItem(f"{models.section_title(key)}: {phrase}")
+                entry.setData(Qt.ItemDataRole.UserRole, phrase)
+                self.learned_phrases_list.addItem(entry)
+        if learned.by_section:
+            self.learned_phrases_note_label.setText(
+                "Delete removes the phrase from your cue file; the shipped phrases are "
+                "not listed and stay."
+            )
+        else:
+            self.learned_phrases_note_label.setText(NO_LEARNED_PHRASES_TEXT)
+        self._update_controls()
+
+    def _delete_selected(self, widget: QListWidget) -> None:
+        if self.is_busy:
+            return
+        item = widget.currentItem()
+        if item is None:
+            self.learned_phrases_note_label.setText("Select a phrase to delete first.")
+            return
+        self.delete_learned_phrase(str(item.data(Qt.ItemDataRole.UserRole)))
+
+    def delete_learned_phrase(self, phrase: str) -> bool:
+        """Delete one learned phrase from the cue file and the sidecar
+        (``note_config.delete_user_cue``), then re-read both lists."""
+        try:
+            removed = delete_user_cue(phrase, config_root=self._config_root)
+        except NoteConfigError as exc:
+            # The lists are deliberately NOT refreshed here (peer round 36
+            # PR-MED-024): the row stays so Delete can be retried, and the
+            # retry removes whichever representation the failed attempt
+            # left behind.
+            self.learned_phrases_note_label.setText(
+                f"Could not delete the phrase - {type(exc).__name__}: {exc}"
+            )
+            self._update_controls()
+            return False
+        self.refresh_learned_phrases()
+        if removed:
+            self.learned_phrases_note_label.setText(f"Deleted '{phrase}'.")
+        return removed
+
 
 __all__ = [
     "DEVICE_NAME_MAX_CHARS",
+    "NO_LEARNED_PHRASES_TEXT",
     "UNKNOWN_DEVICE_NAME",
     "PractitionerScreen",
     "profile_device_name",

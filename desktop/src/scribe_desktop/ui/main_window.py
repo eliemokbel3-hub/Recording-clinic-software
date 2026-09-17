@@ -84,6 +84,7 @@ class MainWindow(QMainWindow):
         ] = models.build_transcriber,
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
         profile_root: Path | None = None,
+        config_root: Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Cliniko Scribe")
@@ -117,7 +118,15 @@ class MainWindow(QMainWindow):
         self.transcript_screen = TranscriptScreen(
             controller, recovery_busy_provider=self._recovery_in_flight
         )
-        self.note_screen = NoteScreen()
+        # Practitioner-profile plan Phase 5: the Note tab learns phrases into
+        # the user cue file under `config_root` (None = the default config
+        # root, exactly as the generator's loader resolves it) and reads the
+        # learning status — a readable profile, the current consent version,
+        # the opt-in — from the profile store at review start and at Save.
+        self.note_screen = NoteScreen(
+            config_root=config_root,
+            learning_status_provider=lambda: models.learning_status(profile_root=profile_root),
+        )
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
         # the profile store at construction (a stat and one profile read, no
         # model loaded) — `profile_root` is the test seam for the store.
@@ -125,9 +134,14 @@ class MainWindow(QMainWindow):
             controller,
             backend,
             profile_root=profile_root,
+            config_root=config_root,
             # D15 (peer round 27 PR-MED-022): the idle monitor is handed over
             # synchronously before the enrolment worker opens the device.
             on_capture_start=self.microphone_screen.stop_monitor,
+        )
+        # A phrase learned on Save shows up on the Practitioner tab at once.
+        self.note_screen.learned_phrases_changed.connect(
+            self.practitioner_screen.refresh_learned_phrases
         )
         self.status_panel = StatusPanel()
 

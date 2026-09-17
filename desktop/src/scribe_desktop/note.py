@@ -875,6 +875,123 @@ def is_interrogative(text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# THE ownership rule and the first-match routing it gates (practitioner-
+# profile plan Task 5.1): one implementation shared by
+# ``ExtractiveNoteProvider._route`` and the Note tab's review edits, so an
+# added or moved line can never land where routing would have refused it.
+# ---------------------------------------------------------------------------
+
+
+def spoken_by_confirmed_clinician(speaker: str, clinician_speaker: str | None) -> bool:
+    """True when ``speaker`` IS the confirmed clinician cluster. With no
+    confirmed role (``None``) nothing is the clinician's — the Critical
+    Constraint that leaves clinician-owned sections blank. The phrase learner
+    (practitioner-profile plan D9 as amended) uses this same test, so a line
+    another speaker said can never reach it."""
+    return clinician_speaker is not None and speaker == clinician_speaker
+
+
+def section_admits_utterance(
+    section_key: NoteSectionKey,
+    *,
+    speaker: str,
+    clinician_speaker: str | None,
+    question: bool,
+) -> bool:
+    """The ownership rule: a clinician-owned section admits only the
+    confirmed clinician's NON-question utterances; every other section admits
+    any utterance."""
+    if section_key not in CLINICIAN_OWNED_SECTIONS:
+        return True
+    return spoken_by_confirmed_clinician(speaker, clinician_speaker) and not question
+
+
+def admissible_sections(
+    section_keys: Sequence[NoteSectionKey],
+    *,
+    speaker: str,
+    clinician_speaker: str | None,
+    text: str,
+) -> tuple[NoteSectionKey, ...]:
+    """The sections (in the given order) an utterance may enter under the
+    ownership rule — the Note tab's section chooser for an add or a move."""
+    question = is_interrogative(text)
+    return tuple(
+        key
+        for key in section_keys
+        if section_admits_utterance(
+            key, speaker=speaker, clinician_speaker=clinician_speaker, question=question
+        )
+    )
+
+
+def first_matching_section(
+    cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
+    tokens: Sequence[str],
+    section_keys: Sequence[NoteSectionKey],
+    *,
+    speaker: str,
+    clinician_speaker: str | None,
+    question: bool,
+) -> NoteSectionKey | None:
+    """First-match routing: the first admissible section (in ``section_keys``
+    order) one of whose cues occurs as a contiguous run in ``tokens``, or
+    None. The provider routes with it; the learner dry-runs a proposed cue set
+    through it to say when an earlier section would still win."""
+    if not tokens:
+        return None
+    for key in section_keys:
+        if not section_admits_utterance(
+            key, speaker=speaker, clinician_speaker=clinician_speaker, question=question
+        ):
+            continue
+        if any(_contains_phrase(tokens, phrase) for phrase in cues.get(key, ())):
+            return key
+    return None
+
+
+def provider_assertion_id(segment_index: int) -> str:
+    """The extractive provider's id for the utterance at ``segment_index``."""
+    return f"x{segment_index:04d}"
+
+
+def manual_assertion_id(segment_index: int) -> str:
+    """The id of a line the clinician ADDED during review (practitioner-profile
+    plan D14) — a scheme distinct from the provider's, so the two can never
+    collide in one note and a review edit is recognisable by its id."""
+    return f"m{segment_index:04d}"
+
+
+def whole_utterance_assertion(
+    assertion_id: str,
+    section_key: NoteSectionKey,
+    *,
+    segment_index: int,
+    speaker: str,
+    words: Sequence[TranscriptWord],
+) -> NoteAssertion | None:
+    """One whole utterance as a ``transcript`` assertion with contiguous
+    coordinates over every word, built with the same reconstruction rule
+    Check 1 rebuilds by — so it reconstructs byte-identically. None for an
+    utterance with no words or no text once stripped (nothing to quote)."""
+    if not words:
+        return None
+    text = reconstruct_span_text(words)
+    if not text:
+        return None
+    return NoteAssertion(
+        assertion_id=assertion_id,
+        section_key=section_key,
+        speaker=speaker,
+        note_span=NoteSpan(
+            span_text=text,
+            provenance="transcript",
+            source_coords=SourceCoords(segment_index, 0, len(words) - 1),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Role PRESELECTION (plan Task 2.2) — a DEFAULT for the mandatory confirmation
 # in Task 7.5, never an authority.
 #
@@ -1055,20 +1172,14 @@ class ExtractiveNoteProvider:
         return "extractive-v1"
 
     def _route(self, request: NoteRequest, utterance: NoteUtterance) -> NoteSectionKey | None:
-        tokens = content_tokens(utterance.text)
-        if not tokens:
-            return None
-        is_clinician = (
-            request.clinician_speaker is not None
-            and utterance.speaker == request.clinician_speaker
+        return first_matching_section(
+            self._cues,
+            content_tokens(utterance.text),
+            request.section_keys,
+            speaker=utterance.speaker,
+            clinician_speaker=request.clinician_speaker,
+            question=is_interrogative(utterance.text),
         )
-        question = is_interrogative(utterance.text)
-        for key in request.section_keys:
-            if key in CLINICIAN_OWNED_SECTIONS and (not is_clinician or question):
-                continue
-            if any(_contains_phrase(tokens, phrase) for phrase in self._cues.get(key, ())):
-                return key
-        return None
 
     def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
         routed: dict[NoteSectionKey, list[NoteAssertion]] = {}
@@ -1079,19 +1190,15 @@ class ExtractiveNoteProvider:
             key = self._route(request, utterance)
             if key is None:
                 continue
-            text = reconstruct_span_text(words)
-            if not text:
-                continue
-            assertion = NoteAssertion(
-                assertion_id=f"x{utterance.segment_index:04d}",
-                section_key=key,
+            assertion = whole_utterance_assertion(
+                provider_assertion_id(utterance.segment_index),
+                key,
+                segment_index=utterance.segment_index,
                 speaker=utterance.speaker,
-                note_span=NoteSpan(
-                    span_text=text,
-                    provenance="transcript",
-                    source_coords=SourceCoords(utterance.segment_index, 0, len(words) - 1),
-                ),
+                words=words,
             )
+            if assertion is None:
+                continue
             routed.setdefault(key, []).append(assertion)
         return tuple(
             GeneratedSection(section_key=key, note_assertions=tuple(routed[key]))
@@ -1983,14 +2090,21 @@ __all__ = [
     "SourceCoords",
     "SpeakerEvidence",
     "SpeakerRolePreselection",
+    "admissible_sections",
     "compose_draft",
     "content_tokens",
     "digest_bytes",
     "finalise_note",
+    "first_matching_section",
     "is_interrogative",
+    "manual_assertion_id",
     "normalise_token",
+    "provider_assertion_id",
     "reconstruct_span_text",
+    "section_admits_utterance",
     "speaker_role",
+    "spoken_by_confirmed_clinician",
     "text_digest",
     "transcript_digest",
+    "whole_utterance_assertion",
 ]

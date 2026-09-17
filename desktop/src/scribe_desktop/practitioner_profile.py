@@ -125,7 +125,11 @@ _NO_INPUT_IN_ERRORS = ConfigDict(frozen=True, extra="forbid", hide_input_in_erro
 
 
 class ConsentRecord(BaseModel):
-    """What the practitioner agreed to, and when (consent text v1, Task 0.2)."""
+    """What the practitioner agreed to, and when: the ratified consent text's
+    version string (``consent-v1`` from Task 0.2; ``consent-v2`` from Task
+    5.0 — the CURRENT version is ``ui.models.CONSENT_TEXT_VERSION``, and a
+    record carrying an older one is readable but not current), the time, and
+    the phrase-learning opt-in as ticked when the record was saved."""
 
     model_config = _NO_INPUT_IN_ERRORS
 

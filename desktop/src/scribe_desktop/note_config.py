@@ -65,6 +65,15 @@ VERBATIM transcript utterance lands in which section.
 ``NoteConfig.normalised_cues()`` is the provider-shaped accessor, and the
 app builds its provider from it (``ui.models.build_note_generator``).
 
+Consented phrase learning (practitioner-profile plan Phase 5) makes the cue
+file the ONE config file the app writes itself: ``append_user_cues`` appends
+learned phrases (the Note tab's Save), ``delete_user_cue`` removes one (the
+Practitioner tab), both validating the exact bytes by this loader's rules
+before an atomic replace, with a sidecar ``section_cues.learned.json`` that
+records each learned phrase's section and date and that the loader never
+reads. ``refuse_learning_candidate`` is the enforcing content control; the
+block below states what it refuses and, plainly, what it cannot.
+
 ``config_digest`` (Task 3.2, "well-defined"): ``note.digest_bytes`` — the
 same ``"sha256-v1:<hex>"`` primitive as ``transcript_digest`` — over the
 RESOLVED config's canonical serialization (``model_dump_json()`` bytes of
@@ -105,12 +114,15 @@ Safety properties, structural as ever:
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import unicodedata
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Final, Literal, Self, final
+from typing import Annotated, Final, Literal, NamedTuple, Self, final
 
 from pydantic import (
     AfterValidator,
@@ -134,6 +146,7 @@ from scribe_desktop.note import (
     _ID_PATTERN,
     _PROFILE_ID_PATTERN,
     CANONICAL_SECTION_KEYS,
+    DEFAULT_SECTION_CUES,
     SECTION_CUES_FILENAME,
     GeneratedSection,
     NoteRequest,
@@ -142,8 +155,14 @@ from scribe_desktop.note import (
     _assemble_note_request,
     content_tokens,
     digest_bytes,
+    normalise_token,
 )
-from scribe_desktop.transcription import TranscriptDocument
+from scribe_desktop.session_store import StoreWriteError, atomic_write_bytes
+from scribe_desktop.transcription import (
+    TranscriptDocument,
+    is_name_like_token,
+    is_number_token,
+)
 
 CONFIG_DIRNAME: Final = "config"
 TEMPLATE_PROFILES_FILENAME: Final = "template_profiles.json"
@@ -230,6 +249,12 @@ class NoteConfigUnreadableError(NoteConfigError):
 class NoteConfigInvalidError(NoteConfigError):
     """A config file or the resolved config violates the schema. Nothing was
     applied: the loader returns a complete ``NoteConfig`` or nothing."""
+
+
+class NoteConfigWriteError(NoteConfigError):
+    """A learned-phrase write (practitioner-profile plan Phase 5) failed. Each
+    file is replaced atomically, so the file the message names holds either
+    its previous content or its new content, never a partial one."""
 
 
 class TemplateProfileUnboundError(NoteConfigError):
@@ -949,6 +974,442 @@ def load_note_config(config_root: Path | None = None) -> NoteConfig:
         )
     except ValidationError as exc:
         raise NoteConfigInvalidError(f"resolved note config is invalid: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Consented phrase learning (practitioner-profile plan Phase 5, D9 as
+# amended 2026-09-16): the refusal filter — THE enforcing control — the
+# phrase proposer, and the ONLY writer of the user cue file.
+#
+# What learning stores is a routing cue: the leading content tokens of a line
+# the practitioner ADDED or MOVED during review, appended to the section they
+# chose. The app cannot classify meaning, so the filter refuses a candidate
+# whose SOURCE tokens — the original-case transcript words, checked BEFORE
+# ``content_tokens`` lowercases them — are name-like, numeric, date-shaped or
+# medication-shaped; everything else is the practitioner's to review after
+# the fact on the Practitioner tab. The eligibility rule (the utterance is the
+# confirmed clinician's — ``note.spoken_by_confirmed_clinician``) is applied
+# by the Note tab BEFORE a candidate reaches this module; nothing here can
+# tell whose line it was, so the tab's test is the structural gate and this
+# filter the content gate. Residue, named: a benign-looking phrase that IS
+# patient-identifying in context passes the filter; a drug name without a
+# listed suffix and no unit within two tokens passes it too; a benign word
+# that ends in a listed suffix is refused (two anatomical words are exempted
+# by name — an exemption ADMITS, so a new form still fails toward refusal);
+# and the name heuristic at an utterance's first word exempts only the
+# transcript's listed common openers, so a line opening with any other
+# capitalised word ("On examination…") is refused and never teaches — the
+# safe direction, named because it narrows what learning can pick up.
+# ---------------------------------------------------------------------------
+
+LEARNED_SIDECAR_FILENAME: Final = "section_cues.learned.json"
+LEARNED_PHRASE_MIN_TOKENS: Final = 2
+LEARNED_PHRASE_MAX_TOKENS: Final = 4
+RECENTLY_LEARNED_LIMIT: Final = 20
+# The dose-unit rule looks this many raw words past the candidate's last word.
+_UNIT_WINDOW: Final = 2
+
+RefusalClass = Literal["name", "number", "date", "medication"]
+
+_DATE_NUMERIC_RE: Final = re.compile(r"\d{1,2}[/.\-]\d{1,2}")
+_YEAR_RE: Final = re.compile(r"\d{4}")
+_MONTH_NAMES: Final[frozenset[str]] = frozenset(
+    """
+    january february march april may june july august september october
+    november december jan feb mar apr jun jul aug sep sept oct nov dec
+    """.split()
+)
+_MEDICATION_SUFFIXES: Final[tuple[str, ...]] = (
+    "mab", "nib", "pril", "olol", "statin", "cillin", "mycin", "azole", "pine", "sartan",
+)
+# Anatomical words a physiotherapist says constantly that end in "-pine".
+# An exemption ADMITS a named form only; every other suffix match refuses.
+_MEDICATION_SUFFIX_EXEMPT: Final[frozenset[str]] = frozenset({"spine", "supine"})
+_DOSE_UNITS: Final[frozenset[str]] = frozenset({"mg", "mcg", "ml"})
+
+
+def _is_date_shaped(raw: str) -> bool:
+    """``12/03``, ``12-03``, ``12.03``, a four-digit run (a year), or a month
+    name / abbreviation (``May`` is a month here — fail toward refusal)."""
+    if _DATE_NUMERIC_RE.search(raw) or _YEAR_RE.search(raw):
+        return True
+    return normalise_token(raw) in _MONTH_NAMES
+
+
+def _is_medication_shaped(raw: str) -> bool:
+    """A dose unit, or an alphabetic word ending in a listed drug suffix and
+    longer than the suffix itself (bar the named anatomical exemptions)."""
+    token = normalise_token(raw)
+    if token in _DOSE_UNITS:
+        return True
+    if not token.isalpha() or token in _MEDICATION_SUFFIX_EXEMPT:
+        return False
+    return any(
+        token.endswith(suffix) and len(token) > len(suffix) for suffix in _MEDICATION_SUFFIXES
+    )
+
+
+def refuse_learning_candidate(
+    tokens: Sequence[str],
+    *,
+    first_in_segment: bool,
+    following: Sequence[str] = (),
+) -> RefusalClass | None:
+    """THE refusal filter (practitioner-profile plan Task 5.2; round 1
+    PR-HIGH-001 / round 2 PR-MED-016). ``tokens`` are the candidate's SOURCE
+    words in original case and original order — checked before any
+    normalisation, so a capitalised name is still capitalised here;
+    ``first_in_segment`` says whether ``tokens[0]`` opens its utterance (the
+    name heuristic exempts common sentence openers only in that position —
+    any other capitalised opener is refused as name-like, so such a line never
+    teaches; the safe direction, and a known narrowing);
+    ``following`` holds the raw words that follow the candidate in its
+    utterance, of which the first ``_UNIT_WINDOW`` are searched for a dose
+    unit. Returns the refusal class, or None when every token passes:
+
+    - ``name``: ``transcription.is_name_like_token`` on any token;
+    - ``date``: a ``d/d``, ``d-d``, ``d.d`` pair, a four-digit run, or a
+      month name;
+    - ``number``: ``transcription.is_number_token`` (digits, number words,
+      ordinals, hyphenated compounds);
+    - ``medication``: a listed drug suffix, or a dose unit anywhere in the
+      candidate or within ``_UNIT_WINDOW`` words after it.
+
+    Checked in that order; the first class hit is reported.
+    """
+    for index, raw in enumerate(tokens):
+        if is_name_like_token(raw, first_in_segment=first_in_segment and index == 0):
+            return "name"
+    for raw in tokens:
+        if _is_date_shaped(raw):
+            return "date"
+    for raw in tokens:
+        if is_number_token(raw):
+            return "number"
+    for raw in (*tokens, *following[:_UNIT_WINDOW]):
+        if _is_medication_shaped(raw):
+            return "medication"
+    return None
+
+
+class LearningCandidate(NamedTuple):
+    """What ``propose_learning_phrase`` derives from one utterance: the
+    phrase that would be stored (normalised), the raw words it came from
+    (for the refusal filter), whether the first of those raw words is the
+    utterance's REAL first word (peer round 36 PR-HIGH-008: the name
+    heuristic's opener exemption belongs to segment position 0 only — a
+    dropped leading filler must not move it onto the next word), and the raw
+    words that follow the candidate (for the dose-unit window)."""
+
+    phrase: str
+    source_words: tuple[str, ...]
+    first_in_segment: bool
+    following: tuple[str, ...]
+
+
+def propose_learning_phrase(word_texts: Sequence[str]) -> LearningCandidate | None:
+    """The candidate phrase for an utterance: its leading content tokens —
+    at most ``LEARNED_PHRASE_MAX_TOKENS``, and None when fewer than
+    ``LEARNED_PHRASE_MIN_TOKENS`` exist (nothing to route by). Each word is
+    admitted or dropped by ``content_tokens`` itself (punctuation-only and
+    disfluency words are skipped exactly as the router skips them), so the
+    stored phrase matches the way the router will read the next utterance.
+    ``first_in_segment`` is True only when the first chosen word sits at
+    index 0 of ``word_texts`` — the position the refusal filter's opener
+    exemption is defined for."""
+    chosen: list[tuple[int, str, str]] = []
+    for index, raw in enumerate(word_texts):
+        tokens = content_tokens(raw)
+        if not tokens:
+            continue
+        chosen.append((index, raw, tokens[0]))
+        if len(chosen) == LEARNED_PHRASE_MAX_TOKENS:
+            break
+    if len(chosen) < LEARNED_PHRASE_MIN_TOKENS:
+        return None
+    first_index = chosen[0][0]
+    last_index = chosen[-1][0]
+    return LearningCandidate(
+        phrase=" ".join(token for _, _, token in chosen),
+        source_words=tuple(raw for _, raw, _ in chosen),
+        first_in_segment=first_index == 0,
+        following=tuple(word_texts[last_index + 1 : last_index + 1 + _UNIT_WINDOW]),
+    )
+
+
+class LearnedEntry(BaseModel):
+    """One sidecar record: where a learned phrase went and when. A naive
+    ``learned_at`` (a hand-edited sidecar) is read as UTC so the newest-first
+    ordering never compares naive with aware stamps."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    section: NoteSectionKey
+    learned_at: datetime
+
+    @field_validator("learned_at")
+    @classmethod
+    def _learned_at_aware(cls, value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class LearnedSidecarFile(BaseModel):
+    """On-disk shape of ``section_cues.learned.json``: ``{"schema_version":
+    1, "learned": {<stored phrase>: {"section": ..., "learned_at": ...}}}``.
+    Written beside the user cue file by the learner and read ONLY by the
+    Practitioner tab's "Recently learned" list — never by the loader, so it
+    can never affect routing or the config digest."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    learned: Mapping[str, LearnedEntry] = {}
+
+
+class AppendedCues(NamedTuple):
+    """``append_user_cues``'s report: what was written and what was skipped
+    (``(section, phrase, reason)`` — ``duplicate`` or ``empty``).
+    ``sidecar_error`` is set when the cue file WAS replaced but the sidecar
+    write then failed (peer round 36 PR-MED-023): the phrases ARE learned
+    and listed under "Learned phrases", with no date under "Recently
+    learned" — reported, never raised, so the caller can say so."""
+
+    added: tuple[tuple[NoteSectionKey, str], ...]
+    skipped: tuple[tuple[NoteSectionKey, str, str], ...]
+    sidecar_error: str | None = None
+
+
+class LearnedPhrase(NamedTuple):
+    phrase: str
+    section_key: NoteSectionKey
+    learned_at: datetime
+
+
+class LearnedPhrases(NamedTuple):
+    """What the Practitioner tab lists (Task 5.3): the most recent
+    ``RECENTLY_LEARNED_LIMIT`` sidecar entries that still exist in the user
+    cue file, newest first, and every phrase in the user cue file that the
+    shipped default does not carry, grouped by section in canonical order."""
+
+    recent: tuple[LearnedPhrase, ...]
+    by_section: tuple[tuple[NoteSectionKey, tuple[str, ...]], ...]
+
+
+def _current_cues_file(root: Path) -> tuple[SectionCuesFile, str]:
+    blob, source = _read_config_blob(root, SECTION_CUES_FILENAME)
+    return _parse_config_blob(SectionCuesFile, blob, SECTION_CUES_FILENAME, source), source
+
+
+def _serialise_cues_file(cues: Mapping[NoteSectionKey, Sequence[str]]) -> bytes:
+    payload = {
+        "schema_version": 1,
+        "section_cues": {key: list(cues[key]) for key in CANONICAL_SECTION_KEYS if key in cues},
+    }
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _validate_cues_bytes(blob: bytes) -> None:
+    """The loader's two validations over the EXACT bytes about to be written
+    — the file model, then the resolved-config rule — so a failure leaves the
+    file on disk untouched."""
+    parsed = _parse_config_blob(SectionCuesFile, blob, SECTION_CUES_FILENAME, "learned")
+    try:
+        NoteConfig(section_cues=parsed.section_cues)
+    except ValidationError as exc:
+        raise NoteConfigInvalidError(
+            f"learned {SECTION_CUES_FILENAME} would not resolve: {exc}"
+        ) from exc
+
+
+def _read_sidecar(root: Path) -> dict[str, LearnedEntry]:
+    path = root / LEARNED_SIDECAR_FILENAME
+    try:
+        blob = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise NoteConfigUnreadableError(
+            f"user {LEARNED_SIDECAR_FILENAME} unreadable: {exc}"
+        ) from exc
+    parsed = _parse_config_blob(LearnedSidecarFile, blob, LEARNED_SIDECAR_FILENAME, "user")
+    return dict(parsed.learned)
+
+
+def _serialise_sidecar(entries: Mapping[str, LearnedEntry]) -> bytes:
+    payload = {
+        "schema_version": 1,
+        "learned": {
+            phrase: {"section": entry.section, "learned_at": entry.learned_at.isoformat()}
+            for phrase, entry in sorted(entries.items())
+        },
+    }
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _write_config_file(root: Path, filename: str, blob: bytes) -> None:
+    """The ONE write path into the config directory (the loader stays
+    read-only): the directory is created if absent, the file replaced
+    atomically (``session_store.atomic_write_bytes``: temp + fsync +
+    ``os.replace``), and EVERY failure is typed with the filename — the
+    writer's own ``StoreWriteError`` and any raw ``OSError`` that escapes it
+    (peer round 37 PR-MED-025: the writer's temp-file cleanup runs in an
+    unguarded ``finally``, so a write that fails AND a temp file that then
+    cannot be unlinked surfaces the cleanup's raw error in place of the
+    typed one; folded here, at this boundary, so a post-cue sidecar failure
+    of any shape reaches the committed-cue outcome and a deletion failure
+    reaches the tab's retryable branch). The file at ``path`` is never
+    partial either way (the writer replaces or leaves it)."""
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise NoteConfigWriteError(f"failed creating the config directory: {exc}") from exc
+    try:
+        atomic_write_bytes(root / filename, blob, error_label=f"config {filename}")
+    except StoreWriteError as exc:
+        raise NoteConfigWriteError(str(exc)) from exc
+    except OSError as exc:
+        raise NoteConfigWriteError(f"failed writing config {filename}: {exc}") from exc
+
+
+def append_user_cues(
+    pairs: Sequence[tuple[NoteSectionKey, str]],
+    *,
+    config_root: Path | None = None,
+    learned_at: datetime,
+) -> AppendedCues:
+    """Append learned phrases to the user ``section_cues.json`` (Task 5.2).
+
+    The file is read through the loader's own precedence — the user file, or
+    the shipped default when there is none, which then becomes the user file
+    with the phrases appended (D6: whole-file replacement, so the practitioner
+    keeps every shipped cue). Each phrase is stored NORMALISED (its content
+    tokens joined by single spaces); a phrase with no content tokens, or one
+    already present in ANY section under the loader's normalisation, is
+    skipped and reported. The exact bytes to be written are validated by the
+    loader's two rules BEFORE anything is written; a validation failure, an
+    unreadable or malformed file, or a failed CUE write raises typed with
+    nothing changed. The cue file is replaced atomically first, then the
+    sidecar (``learned_at`` recorded per phrase) — two atomic writes, not
+    one: a sidecar write that fails AFTER the cue file was replaced is
+    RETURNED as ``sidecar_error`` rather than raised (peer round 36
+    PR-MED-023), because the phrases are on disk — the tab lists them under
+    "Learned phrases" (derived from the cue file) but not under "Recently
+    learned". Nothing is written when no phrase is added."""
+    root = config_root if config_root is not None else default_config_root()
+    current, _source = _current_cues_file(root)
+    cues: dict[NoteSectionKey, list[str]] = {
+        key: list(phrases) for key, phrases in current.section_cues.items()
+    }
+    known: dict[tuple[str, ...], NoteSectionKey] = {
+        content_tokens(phrase): key for key, phrases in cues.items() for phrase in phrases
+    }
+    added: list[tuple[NoteSectionKey, str]] = []
+    skipped: list[tuple[NoteSectionKey, str, str]] = []
+    for section, phrase in pairs:
+        tokens = content_tokens(phrase)
+        if not tokens:
+            skipped.append((section, phrase, "empty"))
+            continue
+        if tokens in known:
+            skipped.append((section, phrase, "duplicate"))
+            continue
+        stored = " ".join(tokens)
+        cues.setdefault(section, []).append(stored)
+        known[tokens] = section
+        added.append((section, stored))
+    if not added:
+        return AppendedCues((), tuple(skipped))
+    blob = _serialise_cues_file(cues)
+    _validate_cues_bytes(blob)
+    sidecar = _read_sidecar(root)
+    for section, stored in added:
+        sidecar[stored] = LearnedEntry(section=section, learned_at=learned_at)
+    sidecar_blob = _serialise_sidecar(sidecar)
+    _write_config_file(root, SECTION_CUES_FILENAME, blob)
+    try:
+        _write_config_file(root, LEARNED_SIDECAR_FILENAME, sidecar_blob)
+    except NoteConfigWriteError as exc:
+        return AppendedCues(tuple(added), tuple(skipped), sidecar_error=str(exc))
+    return AppendedCues(tuple(added), tuple(skipped))
+
+
+def load_learned_phrases(config_root: Path | None = None) -> LearnedPhrases:
+    """What the Practitioner tab shows (Task 5.3). With no user cue file
+    nothing has been learned (the shipped default is in force) and any
+    sidecar is ignored. Otherwise "learned" is every user-file phrase whose
+    normalised form the shipped default carries in no section, grouped by
+    the section the cue file holds it in NOW; "recent" is the sidecar's
+    entries that still name such a phrase — an entry whose phrase is no
+    longer in the cue file is dropped on read — newest first, capped at
+    ``RECENTLY_LEARNED_LIMIT``. A malformed or unreadable cue file or
+    sidecar raises the loader's typed errors (loud, never a silent empty)."""
+    root = config_root if config_root is not None else default_config_root()
+    current, source = _current_cues_file(root)
+    if source != "user":
+        return LearnedPhrases((), ())
+    shipped = {tokens for phrases in DEFAULT_SECTION_CUES.values() for tokens in phrases}
+    learned: dict[tuple[str, ...], tuple[NoteSectionKey, str]] = {}
+    by_section: list[tuple[NoteSectionKey, tuple[str, ...]]] = []
+    for key in CANONICAL_SECTION_KEYS:
+        phrases = tuple(
+            phrase
+            for phrase in current.section_cues.get(key, ())
+            if content_tokens(phrase) not in shipped
+        )
+        for phrase in phrases:
+            learned[content_tokens(phrase)] = (key, phrase)
+        if phrases:
+            by_section.append((key, phrases))
+    recent: list[LearnedPhrase] = []
+    for phrase, entry in _read_sidecar(root).items():
+        hit = learned.get(content_tokens(phrase))
+        if hit is None:
+            continue
+        recent.append(LearnedPhrase(hit[1], hit[0], entry.learned_at))
+    recent.sort(key=lambda item: (item.learned_at, item.phrase), reverse=True)
+    return LearnedPhrases(tuple(recent[:RECENTLY_LEARNED_LIMIT]), tuple(by_section))
+
+
+def delete_user_cue(phrase: str, *, config_root: Path | None = None) -> bool:
+    """Remove ``phrase`` (matched under the loader's normalisation, from
+    whichever section holds it) from the user cue file AND from the sidecar
+    (Task 5.3), each representation on its own account (peer round 36
+    PR-MED-024): a matching sidecar entry is removed even when the cue is
+    already absent — so a retry after a cue-removed / sidecar-failed attempt
+    finishes the job — and every sidecar rewrite also prunes entries whose
+    phrase is no longer in the cue file, so no orphan outlives the next
+    delete. Returns True when the phrase was held by either representation
+    (the request did something); False, with nothing written unless an
+    orphan was pruned, when neither held it. The cue bytes are validated
+    before either atomic write, the cue file first; a user cue file is never
+    CREATED here; an emptied section keeps its key with an empty list, which
+    the loader reads as "no cues"."""
+    root = config_root if config_root is not None else default_config_root()
+    tokens = content_tokens(phrase)
+    current, source = _current_cues_file(root)
+    cues: dict[NoteSectionKey, list[str]] = {}
+    cue_changed = False
+    if source == "user":
+        for key, phrases in current.section_cues.items():
+            kept = [candidate for candidate in phrases if content_tokens(candidate) != tokens]
+            cue_changed = cue_changed or len(kept) != len(phrases)
+            cues[key] = kept
+    remaining = {content_tokens(kept) for phrases in cues.values() for kept in phrases}
+    sidecar = _read_sidecar(root)
+    matched_in_sidecar = any(content_tokens(stored) == tokens for stored in sidecar)
+    sidecar_kept = {
+        stored: entry
+        for stored, entry in sidecar.items()
+        if content_tokens(stored) != tokens and content_tokens(stored) in remaining
+    }
+    sidecar_changed = sidecar_kept.keys() != sidecar.keys()
+    if cue_changed:
+        blob = _serialise_cues_file(cues)
+        _validate_cues_bytes(blob)
+        _write_config_file(root, SECTION_CUES_FILENAME, blob)
+    if sidecar_changed:
+        _write_config_file(root, LEARNED_SIDECAR_FILENAME, _serialise_sidecar(sidecar_kept))
+    return cue_changed or matched_in_sidecar
 
 
 # ---------------------------------------------------------------------------
