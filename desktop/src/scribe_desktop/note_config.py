@@ -997,9 +997,16 @@ def load_note_config(config_root: Path | None = None) -> NoteConfig:
 # that ends in a listed suffix is refused (two anatomical words are exempted
 # by name — an exemption ADMITS, so a new form still fails toward refusal);
 # and the name heuristic at an utterance's first word exempts only the
-# transcript's listed common openers, so a line opening with any other
-# capitalised word ("On examination…") is refused and never teaches — the
-# safe direction, named because it narrows what learning can pick up.
+# transcript's listed common openers PLUS the learner's own fixed lists of
+# clinical / imperative openers (``LEARNING_OPENER_EXEMPTIONS``, Task 5.7,
+# practitioner-decided 2026-09-17) and of contracted starters
+# (``LEARNING_CONTRACTED_STARTERS``, Task 5.8, practitioner-decided
+# 2026-09-18) — both admit listed forms only, at the REAL first word only,
+# and only for the name class — so a line opening with any other
+# capitalised word ("Examination shows…") is still refused and never teaches —
+# the safe direction, named because it narrows what learning can pick up; an
+# exempted opener that IS a name in some clinic is learnable — the
+# review-later list is the control.
 # ---------------------------------------------------------------------------
 
 LEARNED_SIDECAR_FILENAME: Final = "section_cues.learned.json"
@@ -1026,6 +1033,47 @@ _MEDICATION_SUFFIXES: Final[tuple[str, ...]] = (
 # An exemption ADMITS a named form only; every other suffix match refuses.
 _MEDICATION_SUFFIX_EXEMPT: Final[frozenset[str]] = frozenset({"spine", "supine"})
 _DOSE_UNITS: Final[frozenset[str]] = frozenset({"mg", "mcg", "ml"})
+# Task 5.7 (practitioner-decided 2026-09-17, option (ii)): the common clinical
+# and imperative openers an instruction line starts with, exempt from the NAME
+# check at the utterance's REAL first word only — every other check still runs
+# on them. Listed forms only, no given-name homographs; a form not listed still
+# fails toward refusal. ``is_name_like_token`` and the transcript's own starter
+# set are untouched (the uncertainty marks are a different surface).
+LEARNING_OPENER_EXEMPTIONS: Final[frozenset[str]] = frozenset(
+    """
+    keep try avoid continue rest ice heat stretch apply hold repeat use start stop
+    your on for with at in before after
+    """.split()
+)
+# Task 5.8 (practitioner-decided 2026-09-18): the CONTRACTED forms of the
+# starters and auxiliaries the transcript heuristic already exempts — the
+# starter set holds ``we`` and ``let's`` but no other contraction, so a line
+# opening "We're …" / "I'll …" / "Don't …" was name-like at its real first
+# word. Same single site, same three bounds as the list above (real first
+# word, name class only, listed forms only); a form carrying an apostrophe is
+# never a given name. A typographic apostrophe (’) is folded to ' before the
+# lookup (``_opener_form``); an apostrophe-less lookalike ("Youre", "Ill")
+# still fails toward refusal ("Were" would not — it is itself a starter).
+LEARNING_CONTRACTED_STARTERS: Final[frozenset[str]] = frozenset(
+    """
+    we're we'll we've we'd i'm i'll i've i'd it's it'll that's there's here's he's he'll
+    she's she'll they're they'll they've you're you'll you've you'd what's who's where's
+    how's let's don't doesn't didn't can't couldn't won't wouldn't shouldn't isn't aren't
+    wasn't weren't haven't hasn't hadn't
+    """.split()
+)
+_TYPOGRAPHIC_APOSTROPHE: Final = "’"
+# The two lists as the filter consults them (one lookup at the real first word).
+_LEARNING_ADMITTED_OPENERS: Final[frozenset[str]] = (
+    LEARNING_OPENER_EXEMPTIONS | LEARNING_CONTRACTED_STARTERS
+)
+
+
+def _opener_form(raw: str) -> str:
+    """The form the two opener lists are keyed on: punctuation-stripped,
+    lower-cased (``normalise_token``), with a typographic apostrophe folded
+    to the plain one — the internal apostrophe itself is kept."""
+    return normalise_token(raw).replace(_TYPOGRAPHIC_APOSTROPHE, "'")
 
 
 def _is_date_shaped(raw: str) -> bool:
@@ -1060,14 +1108,17 @@ def refuse_learning_candidate(
     words in original case and original order — checked before any
     normalisation, so a capitalised name is still capitalised here;
     ``first_in_segment`` says whether ``tokens[0]`` opens its utterance (the
-    name heuristic exempts common sentence openers only in that position —
-    any other capitalised opener is refused as name-like, so such a line never
-    teaches; the safe direction, and a known narrowing);
-    ``following`` holds the raw words that follow the candidate in its
-    utterance, of which the first ``_UNIT_WINDOW`` are searched for a dose
-    unit. Returns the refusal class, or None when every token passes:
+    name heuristic exempts common sentence openers only in that position, and
+    the learner adds ``LEARNING_OPENER_EXEMPTIONS`` (Task 5.7) and
+    ``LEARNING_CONTRACTED_STARTERS`` (Task 5.8) there, keyed on
+    ``_opener_form``, for the name check only; any other capitalised opener is refused as
+    name-like, so such a line never teaches; the safe direction, and a known
+    narrowing); ``following`` holds the raw words that follow the candidate
+    in its utterance, of which the first ``_UNIT_WINDOW`` are searched for a
+    dose unit. Returns the refusal class, or None when every token passes:
 
-    - ``name``: ``transcription.is_name_like_token`` on any token;
+    - ``name``: ``transcription.is_name_like_token`` on any token (an
+      exempted opener at the real first word skips this check only);
     - ``date``: a ``d/d``, ``d-d``, ``d.d`` pair, a four-digit run, or a
       month name;
     - ``number``: ``transcription.is_number_token`` (digits, number words,
@@ -1078,7 +1129,10 @@ def refuse_learning_candidate(
     Checked in that order; the first class hit is reported.
     """
     for index, raw in enumerate(tokens):
-        if is_name_like_token(raw, first_in_segment=first_in_segment and index == 0):
+        at_real_start = first_in_segment and index == 0
+        if at_real_start and _opener_form(raw) in _LEARNING_ADMITTED_OPENERS:
+            continue  # Tasks 5.7 / 5.8: the name class only — the checks below still run
+        if is_name_like_token(raw, first_in_segment=at_real_start):
             return "name"
     for raw in tokens:
         if _is_date_shaped(raw):

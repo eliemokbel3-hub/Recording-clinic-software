@@ -594,6 +594,12 @@ class NoteScreen(QWidget):
         """What Save would learn, in queue order (a read-only view)."""
         return tuple(self._learning_queue.values())
 
+    def queued_learning_count(self) -> int:
+        """How many phrases Save note would write right now (Task 5.6: the
+        main window reads it BEFORE an exit clears this tab, to say what the
+        exit dropped)."""
+        return len(self._learning_queue)
+
     def _allowed_sections(self, segment_index: int) -> tuple[NoteSectionKey, ...]:
         draft, document = self._draft, self._document
         assert draft is not None and document is not None

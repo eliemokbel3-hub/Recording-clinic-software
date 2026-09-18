@@ -667,15 +667,31 @@ class TranscriptScreen(QWidget):
         regenerate. Reachable only after the draft is presented (the Note tab
         shows only once the compose worker has returned), so releasing the
         lease here is safe. Resets the note-review state so a stale note
-        cannot later re-enable Complete, and re-enables Generate."""
+        cannot later re-enable Complete, and re-enables Generate. Says so on
+        the status line (round 42 LOW-001): the "Note generated" line would
+        otherwise stand, stale, under Task 5.6's appended sentence."""
         self._release_lease()
         self._generation_result = None
         self._note_review_state = models.NoteReviewState()
+        self.message_label.setText(
+            "Note review cancelled - the transcript and key are kept; you can generate again."
+        )
         self._update_controls()
 
     def set_note_review_state(self, state: models.NoteReviewState) -> None:
         self._note_review_state = state
         self._update_controls()
+
+    def report_unlearned_phrases(self, count: int) -> None:
+        """Practitioner-profile plan Task 5.6: after a review left with
+        ``count`` phrases still queued (Cancel, Delete-and-complete,
+        Discard), append what was lost to the status line — after the exit's
+        own message, a line rather than a prompt. Zero appends nothing."""
+        if count <= 0:
+            return
+        sentence = models.unlearned_on_exit_line(count)
+        current = self.message_label.text()
+        self.message_label.setText(f"{current} {sentence}".strip())
 
     # --- Phase-2 custody actions -------------------------------------------
 

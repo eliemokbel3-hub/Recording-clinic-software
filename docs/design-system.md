@@ -72,7 +72,16 @@ view patterns · tokens · microcopy.
   nothing)": the live smoke of 2026-09-17 showed a queued phrase read as the outcome and
   the review left by another exit. On Save the same status line reports what was written,
   why the write failed, or — when lines were added but nothing queued — why nothing was
-  learned.
+  learned. And when a review IS left by another exit with phrases still queued (Cancel,
+  Delete-and-complete, Discard), the Transcript screen's status line — where the
+  practitioner lands — gains "N queued phrases were not learned - only Save note on the
+  Note tab learns them." after the exit's own message (plan Task 5.6; window close is
+  exempt by practitioner decision: it already drops the whole unsaved draft). The "Not
+  learned … (name)" note does not fire for a line opening with one of the practitioner's
+  listed clinical openers ("Keep …", "Try …", "Ice …" — `LEARNING_OPENER_EXEMPTIONS`,
+  Task 5.7) or with a listed contracted starter ("We're …", "I'll …", "Don't …" —
+  `LEARNING_CONTRACTED_STARTERS`, Task 5.8); any other capitalised opener still does,
+  and the transcript panel's own `[We're?]` mark is a different surface and stays.
 - **What the app learned is listed where it can be deleted.** The Practitioner tab
   shows "Recently learned" (the last 20 phrases with section and date, newest first)
   and every learned phrase by section, each with a one-click Delete; the empty state

@@ -1023,6 +1023,19 @@ def learning_queued_line(count: int) -> str:
     )
 
 
+def unlearned_on_exit_line(count: int) -> str:
+    """The sentence the Transcript screen appends after a review left with
+    ``count`` phrases still queued (practitioner-profile plan Task 5.6): the
+    queue is written by Save note only, so every other exit drops it — said
+    once, where the practitioner lands, never a modal."""
+    if count == 1:
+        return "1 queued phrase was not learned - only Save note on the Note tab learns them."
+    return (
+        f"{count} queued phrases were not learned - only Save note on the Note tab learns "
+        "them."
+    )
+
+
 @dataclass(frozen=True)
 class LearningStatus:
     """Whether the Note tab may learn from this review: ``enabled`` only when
@@ -1518,6 +1531,7 @@ __all__ = [
     "speaker_model_report_line",
     "speaker_quotations",
     "summarise_warnings",
+    "unlearned_on_exit_line",
     "voice_profile_report_line",
     "working_draft",
 ]

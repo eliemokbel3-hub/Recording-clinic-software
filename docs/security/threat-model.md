@@ -245,10 +245,23 @@ note inherit exactly that posture.
    a named form only, so an unforeseen form still fails toward refusal). One
    more limit runs the SAFE way and is named because it narrows what learning
    can pick up: the name heuristic is the transcript's pinned one, which at an
-   utterance's first word exempts only the common sentence openers it lists,
-   so a practitioner line opening with any other capitalised word ("On
-   examination…", "Your home exercise…") is refused as name-like and never
-   teaches — visible as a "not learned" note, a refusal rather than a leak. The
+   utterance's first word exempts only the common sentence openers it lists —
+   plus, since the practitioner's decision of 2026-09-17 (Task 5.7), the
+   learner's own fixed list of clinical and imperative openers
+   (`note_config.LEARNING_OPENER_EXEMPTIONS`: keep, try, avoid, continue,
+   rest, ice, heat, stretch, apply, hold, repeat, use, start, stop, your, on,
+   for, with, at, in, before, after) and, since 2026-09-18 (Task 5.8), its
+   list of contracted starters (`note_config.LEARNING_CONTRACTED_STARTERS`:
+   we're, we'll, i'll, it's, that's, don't, can't … — the contracted forms
+   of the starters and auxiliaries the transcript heuristic already exempts;
+   a form carrying an apostrophe is never a given name; a typographic
+   apostrophe is folded to the plain one before the lookup), both applied at
+   the REAL first word only and
+   to the name check only (a dose or a number after an exempted opener is
+   still refused); an exemption admits listed forms only, so a practitioner
+   line opening with any other capitalised word ("Examination shows…",
+   "Margaret…") is still refused as name-like and never teaches — visible as
+   a "not learned" note, a refusal rather than a leak. The
    compensating control is the after-the-fact review: every learned phrase is
    listed on the Practitioner tab by section, the twenty most recent with
    their date as well (the sidecar's entries; a phrase whose sidecar write
@@ -625,7 +638,13 @@ boundary 2: the defended adversary is outside the user's Windows session.
     and the sidecar. Retention: until deleted (retention schedule), outside
     the 24 h rule like the rest of config. Residuals, named: the refusal
     filter is shape-only (surface 1's honest limit) — the practitioner's
-    review is the control for meaning; the cue file and the sidecar are two
+    review is the control for meaning; the opener exemptions (Task 5.7's
+    clinical openers and Task 5.8's contracted starters, both
+    practitioner-decided) admit listed forms only at the real first word,
+    so an exempted opener that IS a name in some clinic ("Rest", "Hold") is
+    learnable — the review-later list is the control (the contracted forms
+    carry an apostrophe and add no such homograph); the cue file and the
+    sidecar are two
     atomic writes, not one — on learning, a sidecar write that fails after
     the cue file was replaced is REPORTED on the Note tab (the phrase is
     learned, listed under "Learned phrases" without a date), never raised as

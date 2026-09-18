@@ -378,7 +378,12 @@ class MainWindow(QMainWindow):
         # Non-destructive cancel/regenerate (round 35 PR-MED-003): drop the
         # in-memory draft, release the lease, keep transcript + key, and
         # return to the Transcript screen with Generate available again.
+        # Practitioner-profile plan Task 5.6: the learning queue dies with the
+        # draft (the Note tab clears after this callback), so read it FIRST
+        # and say what was lost on the screen the practitioner lands on.
+        queued = self.note_screen.queued_learning_count()
         self.transcript_screen.cancel_note_review()
+        self.transcript_screen.report_unlearned_phrases(queued)
         self.tabs.setCurrentWidget(self.transcript_screen)
 
     def _on_generation_active(self, active: object) -> None:
@@ -396,7 +401,14 @@ class MainWindow(QMainWindow):
             self.note_screen.clear()
 
     def _on_transcript_closed(self, _outcome: str) -> None:
+        # Practitioner-profile plan Task 5.6: Delete-note-and-complete and
+        # Discard reach here with the review's learning queue still live —
+        # read it before the clear, then append what was lost to the
+        # Transcript screen's own closing message. A saved note has an empty
+        # queue, so Complete after Save reports nothing.
+        queued = self.note_screen.queued_learning_count()
         self.note_screen.clear()
+        self.transcript_screen.report_unlearned_phrases(queued)
         self.session_screen.refresh()
         # PR round 20 (PR-HIGH-009): release ONLY the checkout owned by the
         # transcript that just closed — never an unscoped clear.
@@ -410,4 +422,9 @@ class MainWindow(QMainWindow):
             self.recovery_screen.release_checkout(source)
         else:
             self.recovery_screen.refresh()
-        self.tabs.setCurrentWidget(self.session_screen)
+        # Peer round 44 PR-MED-026: a terminal exit that dropped queued
+        # phrases stays on the Transcript screen so the appended sentence is
+        # actually seen; every other close (ordinary Complete, Complete after
+        # Save, an empty queue) lands on the Session screen as before.
+        landing = self.transcript_screen if queued > 0 else self.session_screen
+        self.tabs.setCurrentWidget(landing)

@@ -48,6 +48,8 @@ from scribe_desktop.note_config import (
     LEARNED_PHRASE_MAX_TOKENS,
     LEARNED_PHRASE_MIN_TOKENS,
     LEARNED_SIDECAR_FILENAME,
+    LEARNING_CONTRACTED_STARTERS,
+    LEARNING_OPENER_EXEMPTIONS,
     MAX_CONFIG_LABEL_CHARS,
     MAX_TRIGGER_CHARS,
     PREFILL_TEMPLATES_FILENAME,
@@ -85,10 +87,13 @@ from scribe_desktop.note_config import (
 from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
+    _COMMON_SEGMENT_STARTERS,
     SPEAKER_1,
     TranscriptDocument,
     TranscriptSegment,
     TranscriptWord,
+    is_name_like_token,
+    is_number_token,
 )
 
 # ---------------------------------------------------------------------------
@@ -1736,9 +1741,13 @@ _REFUSAL_CASES: Final[tuple[tuple[str, list[str], bool, tuple[str, ...], str | N
     ("common-starter-opens", ["The", "diagnosis", "is"], True, (), None),
     ("common-starter-lowercase", ["the", "diagnosis", "is"], False, (), None),
     # fail toward refusal: a segment-initial capitalised word outside the
-    # common-starter set is name-like (transcription.is_name_like_token,
-    # PR round 15)
-    ("residue-on-examination", ["On", "examination", "the", "range"], True, (), "name"),
+    # common-starter set AND outside the learner's opener exemptions is
+    # name-like (transcription.is_name_like_token, PR round 15) — the residue
+    # the exemption narrows but keeps ("Examination" is unlisted)
+    ("residue-examination-shows", ["Examination", "shows", "the", "range"], True, (), "name"),
+    # Task 5.7: a listed opener at the REAL first word is admitted (the
+    # round-15 residue case, re-pinned as the practitioner's exemption)
+    ("admitted-opener-on-examination", ["On", "examination", "the", "range"], True, (), None),
     # --- numbers -----------------------------------------------------------
     ("number-digits", ["the", "dose", "is", "500"], True, (), "number"),
     ("number-word", ["take", "two", "tablets"], False, (), "number"),
@@ -1821,6 +1830,180 @@ class TestRefusalFilter:
         assert refuse_learning_candidate(["2024"], first_in_segment=False) == "date"
         assert refuse_learning_candidate(["12/03"], first_in_segment=False) == "date"
         assert refuse_learning_candidate(["500"], first_in_segment=False) == "number"
+
+    # --- Task 5.7: the practitioner's opener exemptions (2026-09-17) ---------
+
+    @pytest.mark.parametrize("opener", sorted(LEARNING_OPENER_EXEMPTIONS))
+    def test_an_exempted_opener_passes_the_name_check_at_the_real_start(
+        self, opener: str
+    ) -> None:
+        tokens = [opener.capitalize(), "the", "knee", "moving"]
+        assert refuse_learning_candidate(tokens, first_in_segment=True) is None
+
+    @pytest.mark.parametrize("opener", sorted(LEARNING_OPENER_EXEMPTIONS))
+    def test_an_exempted_opener_is_still_refused_off_the_real_start(
+        self, opener: str
+    ) -> None:
+        capitalised = opener.capitalize()
+        # Candidate index 0 but NOT the segment's first word (a filler before it).
+        assert (
+            refuse_learning_candidate([capitalised, "the", "knee"], first_in_segment=False)
+            == "name"
+        )
+        # Mid-candidate, at the real start of the segment.
+        assert (
+            refuse_learning_candidate(["the", capitalised, "knee"], first_in_segment=True)
+            == "name"
+        )
+
+    def test_an_unlisted_capitalised_opener_is_still_refused(self) -> None:
+        assert refuse_learning_candidate(["Margaret", "how", "is"], first_in_segment=True) == "name"
+        assert (
+            refuse_learning_candidate(["Take", "the", "tablets"], first_in_segment=True) == "name"
+        )
+        assert "take" not in LEARNING_OPENER_EXEMPTIONS
+
+    def test_an_exempted_opener_does_not_skip_the_other_checks(self) -> None:
+        assert refuse_learning_candidate(["Use", "two", "tablets"], first_in_segment=True) == (
+            "number"
+        )
+        assert (
+            refuse_learning_candidate(
+                ["Use", "the", "gel"], first_in_segment=True, following=("5", "mg")
+            )
+            == "medication"
+        )
+        assert refuse_learning_candidate(["Apply", "on", "12/03"], first_in_segment=True) == (
+            "date"
+        )
+        assert (
+            refuse_learning_candidate(["Continue", "the", "atorvastatin"], first_in_segment=True)
+            == "medication"
+        )
+
+    def test_the_exemption_list_holds_no_number_word_and_no_name_homograph(self) -> None:
+        assert LEARNING_OPENER_EXEMPTIONS == frozenset(
+            """
+            keep try avoid continue rest ice heat stretch apply hold repeat use start stop
+            your on for with at in before after
+            """.split()
+        )
+        for word in LEARNING_OPENER_EXEMPTIONS:
+            assert not is_number_token(word), word
+            assert word == word.lower() and word.isalpha(), word
+            # Not one of the transcript's own starters: the pinned heuristic
+            # still marks each as name-like at a segment start, so the list
+            # ADDS to those starters rather than restating them.
+            assert is_name_like_token(word.capitalize(), first_in_segment=True), word
+
+    # --- the practitioner's 2026-09-18 re-smoke: a contracted starter -------
+
+    def test_the_practitioners_contracted_starter_line_is_admitted(self) -> None:
+        """The live refusal of the 2026-09-18 re-smoke ("Moved to History of
+        presenting complaint … Not learned: contains a name/number/date/
+        medication (name)." on the practitioner's own line), with the exact
+        words — now ADMITTED (Task 5.8). The uncertainty marks are
+        display-only, so the filter sees the raw ``We're``; the punctuation
+        strip trims only the ENDS, so the apostrophe survives; ``we`` is a
+        transcript starter but ``we're`` is not, so the pinned round-15
+        heuristic still marks it name-like at a segment start (the transcript
+        surface, untouched) — the learner's contracted-starter list admits it
+        at the real first word for the name check only."""
+        words = (
+            "We're going to do a bit of a treatment, work through some of the muscles, "
+            "do a bit of an assessment as well, obviously."
+        ).split()
+        candidate = propose_learning_phrase(words)
+        assert candidate is not None
+        assert candidate.source_words == ("We're", "going", "to", "do")
+        assert candidate.first_in_segment is True
+        assert candidate.following == ("a", "bit")
+        assert "we" in _COMMON_SEGMENT_STARTERS
+        assert "we're" not in _COMMON_SEGMENT_STARTERS
+        assert "we're" not in LEARNING_OPENER_EXEMPTIONS
+        assert "we're" in LEARNING_CONTRACTED_STARTERS
+        assert is_name_like_token("We're", first_in_segment=True)  # the transcript's mark
+        assert (
+            refuse_learning_candidate(
+                candidate.source_words,
+                first_in_segment=candidate.first_in_segment,
+                following=candidate.following,
+            )
+            is None
+        )
+        assert candidate.phrase == "we're going to do"
+
+    # --- Task 5.8: the contracted starters (practitioner-decided 2026-09-18) --
+
+    @pytest.mark.parametrize("form", sorted(LEARNING_CONTRACTED_STARTERS))
+    def test_a_contracted_starter_passes_the_name_check_at_the_real_start(
+        self, form: str
+    ) -> None:
+        tokens = [form.capitalize(), "give", "the", "knee"]
+        assert refuse_learning_candidate(tokens, first_in_segment=True) is None
+
+    @pytest.mark.parametrize("form", sorted(LEARNING_CONTRACTED_STARTERS))
+    def test_a_contracted_starter_is_still_refused_off_the_real_start(
+        self, form: str
+    ) -> None:
+        capitalised = form.capitalize()
+        assert (
+            refuse_learning_candidate([capitalised, "give", "the"], first_in_segment=False)
+            == "name"
+        )
+        assert (
+            refuse_learning_candidate(["the", capitalised, "knee"], first_in_segment=True)
+            == "name"
+        )
+
+    def test_a_typographic_apostrophe_is_folded_before_the_lookup(self) -> None:
+        curly = "We’re"
+        assert curly not in LEARNING_CONTRACTED_STARTERS
+        assert refuse_learning_candidate([curly, "going", "to"], first_in_segment=True) is None
+        assert refuse_learning_candidate(["Don’t", "rush", "it"], first_in_segment=True) is None
+
+    def test_an_apostrophe_less_lookalike_is_still_refused(self) -> None:
+        # ("Were" is itself a transcript starter — the auxiliary — so the
+        # lookalikes here are forms no list and no starter set holds.)
+        assert refuse_learning_candidate(["Youre", "going", "to"], first_in_segment=True) == "name"
+        assert refuse_learning_candidate(["Ill", "give", "the"], first_in_segment=True) == "name"
+        assert refuse_learning_candidate(["Dont", "rush", "it"], first_in_segment=True) == "name"
+
+    def test_a_contracted_starter_does_not_skip_the_other_checks(self) -> None:
+        assert refuse_learning_candidate(["We'll", "take", "two"], first_in_segment=True) == (
+            "number"
+        )
+        assert refuse_learning_candidate(["It's", "due", "12/03"], first_in_segment=True) == (
+            "date"
+        )
+        assert (
+            refuse_learning_candidate(
+                ["I'll", "add", "the"], first_in_segment=True, following=("500", "mg")
+            )
+            == "medication"
+        )
+        named = ["We're", "seeing", "Margaret"]
+        assert refuse_learning_candidate(named, first_in_segment=True) == "name"
+
+    def test_the_contracted_list_is_the_practitioners_and_holds_no_number_word(self) -> None:
+        assert LEARNING_CONTRACTED_STARTERS == frozenset(
+            """
+            we're we'll we've we'd i'm i'll i've i'd it's it'll that's there's here's he's
+            he'll she's she'll they're they'll they've you're you'll you've you'd what's
+            who's where's how's let's don't doesn't didn't can't couldn't won't wouldn't
+            shouldn't isn't aren't wasn't weren't haven't hasn't hadn't
+            """.split()
+        )
+        assert LEARNING_CONTRACTED_STARTERS.isdisjoint(LEARNING_OPENER_EXEMPTIONS)
+        for form in LEARNING_CONTRACTED_STARTERS:
+            assert not is_number_token(form), form
+            assert form == form.lower() and "'" in form, form
+            stem, _apostrophe, _suffix = form.partition("'")
+            assert stem.isalpha(), form
+        # Only ``let's`` was already a transcript starter; every other form
+        # was name-like at a segment start, so the list ADDS to the pinned set.
+        already = {f for f in LEARNING_CONTRACTED_STARTERS if f in _COMMON_SEGMENT_STARTERS}
+        assert already == {"let's"}
 
 
 class TestProposeLearningPhrase:

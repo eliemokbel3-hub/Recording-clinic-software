@@ -4604,6 +4604,158 @@ class TestNoteWiring:
         assert window.tabs.currentWidget() is window.note_screen
         return window, controller
 
+    def _rooted_review_with_queue(self, qapp: Any, tmp_path: Path) -> tuple[Any, Any]:
+        """Task 5.6: a review reached through the window's own wiring (the
+        ``_generate_through_window`` route over a ROOTED window so a Save can
+        never touch the real stores), learning on, and ONE of the confirmed
+        clinician's unrouted lines added — one phrase queued. Returns the
+        window and the added line's choice."""
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        window = self._rooted_window(tmp_path, controller)
+        result = _note_result()
+        window.transcript_screen._config_loader = _note_config
+        window.transcript_screen._note_generator_factory = (
+            lambda **_kwargs: lambda _directory, _crypto: result
+        )
+        window.session_screen.transcript_ready.emit(_note_document())
+        qapp.processEvents()
+        window.transcript_screen.set_role(SPEAKER_2)
+        window.transcript_screen.set_profile("clinic-a")
+        window.transcript_screen.generate()
+        assert _process_until(qapp, lambda: window.note_screen.current_note() is not None)
+        note_screen = window.note_screen
+        note_screen._learning_status_provider = lambda: models.LearningStatus(True, None)
+        note_screen._refresh_learning_status()
+        document = note_screen._document
+        choice = next(
+            item
+            for item in note_screen.eligible_utterances()
+            if document.transcript_segments[item.segment_index].speaker == SPEAKER_2
+        )
+        assert note_screen.add_line(choice.segment_index, choice.allowed_sections[0]) is True
+        assert note_screen.queued_learning_count() == 1
+        return window, choice
+
+    def test_cancel_with_a_queued_phrase_says_what_was_lost(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 5.6, surface 1: Cancel review and regenerate — the Transcript
+        screen (where the practitioner lands) says the queued phrase was not
+        learned and names Save note."""
+        window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
+        window.note_screen.cancel_review()
+        assert window.tabs.currentWidget() is window.transcript_screen
+        message = window.transcript_screen.message_label.text()
+        # Round 42 LOW-001: Cancel's own line first, never the stale
+        # "Note generated" line under the appended sentence.
+        assert message.startswith("Note review cancelled")
+        assert "Note generated" not in message
+        assert message.endswith(models.unlearned_on_exit_line(1))
+        assert "1 queued phrase was not learned" in message
+        assert "only Save note on the Note tab learns them" in message
+        assert window.note_screen.queued_learning_count() == 0  # the tab cleared after
+        assert not (tmp_path / "config").exists()  # nothing was written
+        window.close()
+
+    def test_delete_and_complete_with_a_queued_phrase_says_what_was_lost(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 5.6, surface 2: Delete note and complete without one — the
+        sentence follows the completion message."""
+        window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
+        window.note_screen.abandon()
+        # Peer round 44 PR-MED-026: the sentence is VISIBLE — the window stays
+        # on the Transcript screen instead of moving to the Session screen.
+        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.transcript_screen.message_label.text() == (
+            "Session completed without a note (transcript verified, key destroyed). "
+            + models.unlearned_on_exit_line(1)
+        )
+        assert window.note_screen.current_note() is None
+        assert not (tmp_path / "config").exists()
+        window.close()
+
+    def test_discard_with_a_queued_phrase_says_what_was_lost(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 5.6, surface 3: Discard over a live review (the practitioner
+        folded it in) — the sentence follows the discard message."""
+        window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
+        window.transcript_screen.on_discard()
+        assert window.tabs.currentWidget() is window.transcript_screen  # round 44 PR-MED-026
+        assert window.transcript_screen.message_label.text() == (
+            "Session discarded (audio cryptographically deleted). "
+            + models.unlearned_on_exit_line(1)
+        )
+        assert window.note_screen.current_note() is None
+        window.close()
+
+    def test_two_queued_phrases_are_counted(self, qapp: Any, tmp_path: Path) -> None:
+        """The count is the live queue's: an add AND a move (the routed
+        diagnosis line, re-routed) make two, and the sentence pluralises."""
+        window, _first = self._rooted_review_with_queue(qapp, tmp_path)
+        note_screen = window.note_screen
+        line = _routed_line(note_screen, _DIAGNOSIS_INDEX)
+        assert note_screen.move_line(line.assertion_id, line.allowed_sections[0]) is True
+        assert note_screen.queued_learning_count() == 2
+        note_screen.cancel_review()
+        assert window.transcript_screen.message_label.text().endswith(
+            models.unlearned_on_exit_line(2)
+        )
+        assert "2 queued phrases were not learned" in models.unlearned_on_exit_line(2)
+        window.close()
+
+    def test_exits_with_an_empty_queue_report_nothing_about_learning(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Each exit with nothing queued shows only its own message; the
+        queue read is the LIVE one, so an undone add reports nothing."""
+        window, choice = self._rooted_review_with_queue(qapp, tmp_path)
+        assert window.note_screen.undo_line(manual_assertion_id(choice.segment_index)) is True
+        assert window.note_screen.queued_learning_count() == 0
+        window.note_screen.cancel_review()
+        assert "not learned" not in window.transcript_screen.message_label.text()
+        window.close()
+
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        window.note_screen.abandon()
+        message = window.transcript_screen.message_label.text()
+        assert message == (
+            "Session completed without a note (transcript verified, key destroyed)."
+        )
+        # Round 44 PR-MED-026: an empty-queue close keeps the pre-existing
+        # landing on the Session screen.
+        assert window.tabs.currentWidget() is window.session_screen
+        window.close()
+
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        window.transcript_screen.on_discard()
+        assert window.transcript_screen.message_label.text() == (
+            "Session discarded (audio cryptographically deleted)."
+        )
+        assert window.tabs.currentWidget() is window.session_screen
+        window.close()
+
+    def test_a_saved_note_then_cancel_reports_nothing(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Save note writes the queue (and empties it); a later Cancel has
+        nothing to report."""
+        window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
+        self._fake_write_note(monkeypatch)
+        note_screen = window.note_screen
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        assert note_screen.queued_learning_count() == 0
+        assert "Learned 1" in note_screen.edit_status_label.text()
+        assert (tmp_path / "config" / SECTION_CUES_FILENAME).exists()
+        note_screen.cancel_review()
+        assert "not learned" not in window.transcript_screen.message_label.text()
+        window.close()
+
     def _fake_write_note(self, monkeypatch: Any) -> list[str]:
         """Fake the on-disk note write so a caller's ``NoteScreen.save`` can
         travel the window's own route - ``MainWindow._on_note_save`` ->
