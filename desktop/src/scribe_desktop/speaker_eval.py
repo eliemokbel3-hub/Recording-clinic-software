@@ -160,7 +160,11 @@ _SHARE_EPSILON: Final = 1e-9
 BEFORE: Final = "before"
 AFTER: Final = "after"
 ENROLLED: Final = "enrolled"
-# The synthetic in-memory profile's fixed fields (never persisted).
+# The synthetic in-memory profile's fixed fields (never persisted). The consent
+# version is a placeholder that satisfies the record's pattern: attribution never
+# reads the consent record, so this value is NOT kept in step with the app's
+# current text version (``ui.models.CONSENT_TEXT_VERSION``) and means nothing
+# here (round 51 LOW-003).
 HARNESS_DEVICE_NAME: Final = "measurement harness (in-memory profile, never saved)"
 HARNESS_CONSENT_VERSION: Final = "consent-v1"
 # Store chunking for the temporary session (1 s of PCM, the test-suite shape).

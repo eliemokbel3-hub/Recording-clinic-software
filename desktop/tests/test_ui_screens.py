@@ -511,6 +511,64 @@ class TestMicrophoneScreen:
         assert "Whisper model" in text and "VAD model" in text
         screen.deleteLater()
 
+    def test_model_status_poll_does_not_read_the_profile(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 51 MED-001: the 5 s model-status poll (`refresh_model_status`,
+        also what a finished benchmark calls) re-renders the model-FILE lines
+        from stats and the CACHED profile line; only `refresh_profile_line`
+        (construction via `refresh_devices`, a device refresh, the Practitioner
+        tab's `profile_changed`) reads the profile — EXCEPT that a poll which
+        finds the speaker model's presence flipped since the last read re-reads
+        once (peer round 55 PR-REG-006: the line's text folds that stat in, so
+        the report must not keep saying the model is absent after
+        setup-models ran); steady presence still reads nothing."""
+        from scribe_desktop.ui.microphone import MicrophoneScreen
+
+        reads: list[Path | None] = []
+        real = models.attribution_readiness
+        present = {"value": False}
+
+        def counted(*, profile_root: Path | None = None, kind: Any = None) -> Any:
+            reads.append(profile_root)
+            return real(profile_root=profile_root) if kind is None else real(
+                profile_root=profile_root, kind=kind
+            )
+
+        monkeypatch.setattr(models, "attribution_readiness", counted)
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda *a: present["value"])
+        screen = MicrophoneScreen(
+            FakeController(), FakeBackend(), benchmark_runner=list, profile_root=tmp_path
+        )
+        assert reads == [tmp_path]  # construction: exactly one read, off the default store
+        screen.refresh_model_status()
+        screen.refresh_model_status()
+        screen._on_benchmark_done([])
+        assert reads == [tmp_path]  # the poll's slot and a finished benchmark read nothing
+        lines = screen.model_status_label.text().split("\n")
+        assert len(lines) == 4
+        assert "MISSING" in lines[2]
+        assert lines[3] == models.PROFILE_NOT_ENROLLED_LINE
+        screen.refresh_profile_line()
+        assert reads == [tmp_path, tmp_path]
+        screen.refresh_devices()
+        assert reads == [tmp_path, tmp_path, tmp_path]
+        # The model file appears (setup-models ran): the next poll re-reads ONCE ...
+        present["value"] = True
+        screen.refresh_model_status()
+        assert len(reads) == 4
+        assert "installed" in screen.model_status_label.text().split("\n")[2]
+        # ... and steady presence reads nothing again; a removal is a transition too.
+        screen.refresh_model_status()
+        screen.refresh_model_status()
+        assert len(reads) == 4
+        present["value"] = False
+        screen.refresh_model_status()
+        assert len(reads) == 5
+        screen.refresh_model_status()
+        assert len(reads) == 5
+        screen.deleteLater()
+
     def test_benchmark_failure_threshold_shows_warning(
         self, qapp: Any, tmp_path: Path
     ) -> None:
@@ -667,6 +725,9 @@ def _practitioner_screen(
 
     kwargs: dict[str, Any] = {
         "profile_root": tmp_path,
+        # Peer round 55 PR-LOW-041: the tab reads its cue file at construction,
+        # so the helper roots that under tmp_path too (overrides still win).
+        "config_root": tmp_path / "config",
         "embedder_factory": lambda kind: _StubEmbedder(),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
@@ -742,6 +803,27 @@ class TestPractitionerScreen:
         assert screen.profile_present is False
         assert screen.device_combo.count() == 2
         assert screen.selected_device() == (7, "Mic B")  # the default device
+        screen.deleteLater()
+
+    def test_helper_built_tab_never_reads_the_default_stores(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Peer round 55 PR-LOW-041 (the PR-REG-005 class, completed): a tab
+        built by the test helper reaches neither the default profile root nor
+        the default config root — at construction (the learned-phrase read),
+        on a profile re-read and on a learned-phrase refresh."""
+        from scribe_desktop import note_config, practitioner_profile
+        from scribe_desktop.ui.practitioner import NO_LEARNED_PHRASES_TEXT
+
+        def forbidden() -> Path:
+            raise AssertionError("a default store root must not be consulted")
+
+        monkeypatch.setattr(practitioner_profile, "default_profile_root", forbidden)
+        monkeypatch.setattr(note_config, "default_config_root", forbidden)
+        screen = _practitioner_screen(FakeController(), FakeBackend(), tmp_path)
+        screen.refresh_profile_state()
+        screen.refresh_learned_phrases()
+        assert screen.learned_phrases_note_label.text() == NO_LEARNED_PHRASES_TEXT
         screen.deleteLater()
 
     def test_record_enables_only_with_consent_and_availability(
@@ -2036,6 +2118,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2064,6 +2147,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2087,6 +2171,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2114,6 +2199,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2171,6 +2257,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2202,6 +2289,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2303,6 +2391,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2324,6 +2413,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("must never unwrap"),
         )
@@ -2350,6 +2440,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2381,6 +2472,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2415,6 +2507,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2440,6 +2533,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2473,6 +2567,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2500,6 +2595,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2528,6 +2624,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2573,6 +2670,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2601,6 +2699,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2623,6 +2722,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2648,6 +2748,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2672,6 +2773,7 @@ class TestMainWindow:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -2686,25 +2788,30 @@ class TestMainWindow:
         """Peer round 27 PR-REG-005: with `profile_root` supplied, neither the
         microphone screen's report (construction, a device refresh, the timer
         refresh) nor the Practitioner tab's re-read reaches the default
-        store."""
-        from scribe_desktop import practitioner_profile
+        store. Round 51 LOW-001: the same holds for the config store — the
+        Practitioner tab's learned-phrase read never reaches the default
+        config root either."""
+        from scribe_desktop import note_config, practitioner_profile
         from scribe_desktop.ui.main_window import MainWindow
 
         def forbidden() -> Path:
             raise AssertionError("the default profile root must not be consulted")
 
         monkeypatch.setattr(practitioner_profile, "default_profile_root", forbidden)
+        monkeypatch.setattr(note_config, "default_config_root", forbidden)
         window = MainWindow(
             FakeController(),
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
         window.microphone_screen.refresh_model_status()
         window.microphone_screen.refresh_devices()
         window.practitioner_screen.refresh_profile_state()
+        window.practitioner_screen.refresh_learned_phrases()
         assert "Voice profile: not enrolled" in window.microphone_screen.model_status_label.text()
         window.close()
 
@@ -4450,6 +4557,7 @@ class TestNoteWiring:
             FakeBackend(),
             sessions_root=tmp_path,
             profile_root=tmp_path,
+            config_root=tmp_path / "config",
             benchmark_runner=list,
             recovery_runner=lambda d: pytest.fail("not called"),
         )
@@ -4501,6 +4609,54 @@ class TestNoteWiring:
         qapp.processEvents()
         assert window.practitioner_screen.recently_learned_list.count() == 1
         assert "wall slide" in window.practitioner_screen.recently_learned_list.item(0).text()
+        window.close()
+
+    @windows_only
+    def test_a_profile_change_on_the_tab_refreshes_the_microphone_report_line(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 51 MED-001: the microphone screen's voice-profile line is
+        re-read when the Practitioner tab reports a profile change
+        (`profile_changed` → `refresh_profile_line`), so it never depends on
+        the 5 s poll — which no longer reads the profile."""
+        from scribe_desktop.practitioner_profile import (
+            ConsentRecord,
+            PractitionerProfile,
+            save_profile,
+        )
+        from scribe_desktop.speaker_embedding import ONNX_MODEL_ID, SPEAKER_MODEL_SHA256
+
+        # The enrolled line needs the model FILE present; this host may not have it.
+        monkeypatch.setattr(models, "speaker_embedder_available", lambda kind=None: True)
+        controller = FakeController()
+        window = self._rooted_window(tmp_path, controller)
+        label = window.microphone_screen.model_status_label
+        assert models.PROFILE_NOT_ENROLLED_LINE in label.text()
+        now = datetime(2026, 9, 18, 6, 0, tzinfo=UTC)
+        save_profile(
+            PractitionerProfile(
+                model_id=ONNX_MODEL_ID,
+                model_sha256=SPEAKER_MODEL_SHA256,
+                embedding=(0.6, 0.8),
+                embedding_dim=2,
+                created_at=now,
+                enrolment_speech_seconds=31.0,
+                device_name="Mic",
+                consent=ConsentRecord(
+                    accepted_at=now,
+                    consent_text_version=models.CONSENT_TEXT_VERSION,
+                    learning_opt_in=False,
+                ),
+            ),
+            root=tmp_path / "profile",
+        )
+        # The poll alone would not show it (the line is cached) ...
+        window.microphone_screen.refresh_model_status()
+        assert models.PROFILE_NOT_ENROLLED_LINE in label.text()
+        # ... the tab's re-read does, through the signal.
+        window.practitioner_screen.refresh_profile_state()
+        qapp.processEvents()
+        assert "Voice profile: enrolled 2026-09-18" in label.text()
         window.close()
 
     def test_a_review_started_through_the_window_stays_off_the_real_stores(

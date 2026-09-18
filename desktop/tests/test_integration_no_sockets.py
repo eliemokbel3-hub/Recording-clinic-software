@@ -209,10 +209,15 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "import tempfile, time\n"
         "from pathlib import Path\n"
         "app = QApplication([])\n"
-        "root = Path(tempfile.mkdtemp()) / 'sessions'\n"
+        # Peer round 55 PR-LOW-041: every store root under the temp parent, so
+        # the child never unwraps the developer's real profile or reads their
+        # real config (the PR-REG-005 class).
+        "base = Path(tempfile.mkdtemp())\n"
+        "root = base / 'sessions'\n"
         "backend = MockCaptureBackend()\n"
         "controller = SessionController(backend, sessions_root=root)\n"
-        "w = MainWindow(controller, backend, sessions_root=root)\n"
+        "w = MainWindow(controller, backend, sessions_root=root,\n"
+        "               profile_root=base / 'profile', config_root=base / 'config')\n"
         "w.status_panel.on_self_test()\n"
         "print('READY', flush=True)\n"
         "time.sleep(5)\n"

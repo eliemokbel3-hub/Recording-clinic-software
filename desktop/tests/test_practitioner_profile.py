@@ -140,6 +140,18 @@ class TestModel:
         with pytest.raises(ValidationError):
             _consent(patient="never")
 
+    def test_made_by_compares_the_whole_embedder_identity(self) -> None:
+        """Round 53 SIMP-001: the ONE definition of "this profile was made by
+        this embedder" — id, digest AND dimension must all agree (D16); the
+        pipeline's refusal and the composition layer's fallback both read it."""
+        from scribe_desktop.speaker_embedding import MockSpeakerEmbedder
+
+        embedder = MockSpeakerEmbedder(embedding_dim=2)
+        assert _profile().made_by(embedder) is True
+        assert _profile(model_id="another-embedder-v1").made_by(embedder) is False
+        assert _profile(model_sha256="a" * 64).made_by(embedder) is False
+        assert _profile(embedding=(0.6, 0.8, 0.0), embedding_dim=3).made_by(embedder) is False
+
 
 # --- the log tripwire (Critical Constraint: never logged) ------------------------
 

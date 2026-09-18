@@ -1116,23 +1116,17 @@ def build_note_generator(
 # ---------------------------------------------------------------------------
 
 
-def model_report_lines(
-    *, profile_root: Path | None = None, kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER
-) -> list[str]:
-    """Model-readiness lines for the microphone screen's report panel.
+def model_file_report_lines(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> list[str]:
+    """The three model-FILE lines of the microphone screen's report panel,
+    from stats alone — the whisper snapshot, the VAD model and the speaker
+    model — so the screen may recompute them on its 5 s poll (round 51
+    MED-001: the poll must never read the profile; that line is
+    ``voice_profile_report_line``'s, taken separately).
 
     Step 13 fallback policy: when the default (medium) snapshot is absent
     but the fallback (small) is present, the pipeline degrades to the
     fallback and this report says so VISIBLY — the clinician must never
     discover the quality difference by surprise.
-
-    Practitioner-profile plan D2 (Task 3.2, the surface Task 0.6 deferred
-    to): two further lines name the speaker model's presence and the voice
-    profile's state, so a consultation that will run WITHOUT attribution is
-    visible before it is recorded — the same shape as the whisper fallback
-    line. Both come from stats and one profile read (``attribution_readiness``:
-    no model is loaded on the GUI thread); the profile line renders a date
-    and a model id, never a field of the profile.
     """
     resolved = resolve_whisper_model()
     missing = "MISSING - run scripts/setup-models.py"
@@ -1151,6 +1145,31 @@ def model_report_lines(
         whisper_line,
         "VAD model (silero): " + ("ready" if vad_ready else missing),
         speaker_model_report_line(kind),
+    ]
+
+
+def model_report_lines(
+    *, profile_root: Path | None = None, kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER
+) -> list[str]:
+    """Every line of the microphone screen's report panel: the three
+    model-file lines plus the voice profile's state.
+
+    Practitioner-profile plan D2 (Task 3.2, the surface Task 0.6 deferred
+    to): two further lines name the speaker model's presence and the voice
+    profile's state, so a consultation that will run WITHOUT attribution is
+    visible before it is recorded — the same shape as the whisper fallback
+    line. The file lines come from stats; the profile line costs ONE profile
+    read (``attribution_readiness``: a DPAPI unwrap and a decrypt, no model
+    loaded on the GUI thread), which is why the microphone screen takes it
+    through ``voice_profile_report_line`` only at construction, on a device
+    refresh, when the Practitioner tab changes the profile and — because the
+    line's text folds the speaker model's presence in — when that presence
+    flips between two polls (peer round 55 PR-REG-006); otherwise the poll
+    re-renders the file lines alone (round 51 MED-001). The profile line
+    renders a date and a model id, never a field of the profile.
+    """
+    return [
+        *model_file_report_lines(kind),
         voice_profile_report_line(profile_root=profile_root, kind=kind),
     ]
 
@@ -1385,11 +1404,7 @@ def attribution_inputs(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> Attribu
         embedder = build_speaker_embedder(kind)
     except SpeakerModelError:
         return None, None
-    if (
-        profile.model_id != embedder.model_id
-        or profile.model_sha256 != embedder.model_sha256
-        or profile.embedding_dim != embedder.embedding_dim
-    ):
+    if not profile.made_by(embedder):
         return None, None
     return embedder, profile
 
@@ -1522,12 +1537,17 @@ __all__ = [
     "learning_queued_line",
     "learning_status",
     "list_recoverable_sessions",
+    "model_file_report_lines",
     "model_report_lines",
     "models_ready",
     "provenance_label",
     "render_note_sections",
     "render_proposal",
     "section_title",
+    # Re-exported (like ``default_sessions_root``): the microphone screen reads
+    # the speaker-model stat THROUGH this module so one monkeypatch reaches its
+    # transition check and the readiness probe alike (peer round 55 PR-REG-006).
+    "speaker_embedder_available",
     "speaker_model_report_line",
     "speaker_quotations",
     "summarise_warnings",

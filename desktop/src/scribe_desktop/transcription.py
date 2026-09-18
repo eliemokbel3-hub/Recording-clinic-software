@@ -1134,11 +1134,7 @@ def transcribe_session(
     if (
         speaker_embedder is not None
         and enrolled_profile is not None
-        and (
-            enrolled_profile.model_id != speaker_embedder.model_id
-            or enrolled_profile.model_sha256 != speaker_embedder.model_sha256
-            or enrolled_profile.embedding_dim != speaker_embedder.embedding_dim
-        )
+        and not enrolled_profile.made_by(speaker_embedder)
     ):
         raise ValueError("the enrolled profile was made by a different speaker embedder")
     attributing = speaker_embedder is not None and enrolled_profile is not None

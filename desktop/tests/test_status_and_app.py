@@ -69,6 +69,7 @@ def test_window_offscreen_smoke(tmp_path) -> None:
         backend,
         sessions_root=tmp_path / "sessions",
         profile_root=tmp_path / "profile",
+        config_root=tmp_path / "config",  # peer round 55 PR-LOW-041: off the real config
     )
     panel = window.status_panel
     assert "Registration:" in panel.registration_label.text()

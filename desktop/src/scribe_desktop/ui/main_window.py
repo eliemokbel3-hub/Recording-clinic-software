@@ -143,6 +143,13 @@ class MainWindow(QMainWindow):
         self.note_screen.learned_phrases_changed.connect(
             self.practitioner_screen.refresh_learned_phrases
         )
+        # The microphone screen's voice-profile report line is re-read when
+        # the Practitioner tab changes the profile — not on the screen's 5 s
+        # model-file poll, which must never decrypt the profile (round 51
+        # MED-001).
+        self.practitioner_screen.profile_changed.connect(
+            self.microphone_screen.refresh_profile_line
+        )
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()

@@ -583,7 +583,10 @@ boundary 2: the defended adversary is outside the user's Windows session.
    `setup-models.py`, D16); the profile's consent record stores the ratified
    text's version, the acceptance time and the learning opt-in as ticked when
    it was saved, so a later text is a new version; while a READABLE profile
-   whose record carries the CURRENT version exists, that record is what
+   whose record carries the CURRENT version exists — readable AGAINST THE
+   SHIPPED EMBEDDER'S IDENTITY with the model file present, which is what the
+   tab's readiness probe (`attribution_readiness`) establishes, not merely
+   decryptable — that record is what
    pre-ticks the box, shown ticked and disabled (`consent_is_current`) —
    withdrawing consent IS Delete, which asks for confirmation and runs
    `delete_profile` (key first); a readable record carrying an OLDER version
@@ -605,7 +608,15 @@ boundary 2: the defended adversary is outside the user's Windows session.
    the version string and time, not a copy of the text; a re-consent needs
    the profile to be READABLE against the shipped embedder's identity (the
    tab's readiness probe), so a profile made by another model or with the
-   model file absent is re-enrolled rather than re-consented; a Delete that
+   model file absent is re-enrolled rather than re-consented — and while
+   that is so the tab shows the D2 fallback line in place of the record,
+   neither the stored consent tick nor the learning opt-in, so the opt-in
+   cannot be changed there, while the LAST SAVED opt-in stays in force for
+   the Note tab (`ui.models.learning_status` reads the record without the
+   identity check: learning needs consent, not the speaker model) until the
+   profile is re-enrolled or deleted — Delete withdraws it (round 51
+   LOW-002; decoupling the tab's consent display from attribution usability
+   is the recorded hardening); a Delete that
    races a transcription's profile read has two
    outcomes and neither is a wrong attribution — a read that reaches the key
    after it is gone fails typed (`load_profile`: blob, then key, then

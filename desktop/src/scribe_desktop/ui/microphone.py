@@ -68,6 +68,16 @@ class MicrophoneScreen(QWidget):
         # line reads the profile store; this is the test seam for it (peer
         # round 27 PR-REG-005 — tests must never read the default store).
         self._profile_root = profile_root
+        # The voice-profile report line as LAST READ (`refresh_profile_line`)
+        # and the speaker model's presence AT that read: the 5 s model-status
+        # poll re-renders the line without decrypting the profile again
+        # (round 51 MED-001) unless the model's presence has flipped since —
+        # the line's text folds that stat in (a present profile with the model
+        # absent reads "the speaker model is not installed"), so a transition
+        # is the ONE event that re-reads it from the poll (peer round 55
+        # PR-REG-006: the report must not stay stale after setup-models ran).
+        self._profile_line = ""
+        self._profile_line_model_present: bool | None = None
         self._benchmark_runner = (
             benchmark_runner if benchmark_runner is not None else _default_benchmark_runner
         )
@@ -147,8 +157,10 @@ class MicrophoneScreen(QWidget):
         self._model_status_timer.timeout.connect(self.refresh_model_status)
         self._model_status_timer.start()
 
+        # `refresh_devices` re-reads the profile line and re-renders the
+        # whole report (construction is one of the profile line's three
+        # read points; the poll is not one of them).
         self.refresh_devices()
-        self.refresh_model_status()
 
     # --- devices ------------------------------------------------------------
 
@@ -161,8 +173,9 @@ class MicrophoneScreen(QWidget):
         self._failed_device_id = None
         self._monitor_open_error = None
         # Refreshing is also the moment models may have appeared on disk
-        # (smoke round 21: the report label must never go permanently stale).
-        self.refresh_model_status()
+        # (smoke round 21: the report label must never go permanently stale)
+        # and one of the profile line's read points (round 51 MED-001).
+        self.refresh_profile_line()
         current = self.selected_device_id()
         self.device_combo.clear()
         try:
@@ -285,9 +298,33 @@ class MicrophoneScreen(QWidget):
     # --- benchmark / model report panel ---------------------------------------
 
     def refresh_model_status(self) -> None:
+        """Render the report: the three model-FILE lines recomputed from
+        stats (what the 5 s poll and a finished benchmark call) plus the
+        voice-profile line as last read by ``refresh_profile_line``. The poll
+        reads the profile ONLY when the speaker model's presence (a stat)
+        differs from its presence at the last read — one read per install or
+        removal, zero while it is unchanged (round 51 MED-001 as amended by
+        peer round 55 PR-REG-006)."""
+        present = models.speaker_embedder_available()
+        if self._profile_line_model_present is not None and (
+            present != self._profile_line_model_present
+        ):
+            self.refresh_profile_line()  # a presence transition: re-read, then render
+            return
         self.model_status_label.setText(
-            "\n".join(models.model_report_lines(profile_root=self._profile_root))
+            "\n".join([*models.model_file_report_lines(), self._profile_line])
         )
+
+    def refresh_profile_line(self) -> None:
+        """ONE profile read (a stat, a DPAPI unwrap and a decrypt on the GUI
+        thread — D2, no model loaded) and a re-render of the whole report.
+        Called at construction, on a device refresh, when the Practitioner
+        tab reports a profile change (``PractitionerScreen.profile_changed``,
+        wired by the main window) and, from the poll, only on a speaker-model
+        presence transition (``refresh_model_status``)."""
+        self._profile_line_model_present = models.speaker_embedder_available()
+        self._profile_line = models.voice_profile_report_line(profile_root=self._profile_root)
+        self.refresh_model_status()
 
     def on_run_benchmark(self) -> None:
         if self._benchmark_task is not None and self._benchmark_task.isRunning():

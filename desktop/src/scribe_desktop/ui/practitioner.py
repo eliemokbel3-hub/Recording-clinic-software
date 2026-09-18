@@ -155,6 +155,11 @@ class PractitionerScreen(QWidget):
     # Emitted from the CAPTURE WORKER thread; delivered queued to the GUI slot
     # (`record_enrolment` calls `on_progress` on the thread it runs on).
     _progress_reported = Signal(object)
+    # Emitted on the GUI thread whenever this tab re-reads the profile store
+    # (after a save, a re-consent, a delete, a failed attempt — every
+    # `refresh_profile_state`), so the microphone screen's voice-profile
+    # report line is re-read THEN and not on its 5 s poll (round 51 MED-001).
+    profile_changed = Signal()
 
     def __init__(
         self,
@@ -503,6 +508,7 @@ class PractitionerScreen(QWidget):
             self.learning_note_label.hide()
             self.record_button.setText("Record my voice (about a minute)")
         self._update_controls()
+        self.profile_changed.emit()
 
     @property
     def profile_present(self) -> bool:

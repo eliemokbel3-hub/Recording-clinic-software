@@ -633,6 +633,34 @@ class TestPractitionerReportLines:
             "(saved when I save the note)"
         )
 
+    def test_the_current_consent_text_is_the_ratified_text_verbatim(self) -> None:
+        """Round 54 SEC-001: "a changed text is a new version" has no
+        structural enforcement — a record's `consent_text_version` is a string
+        compared with `CONSENT_TEXT_VERSION`, so an edit to `CONSENT_TEXT_V2`
+        that kept the version string would count every existing v2 record as
+        consent to words the practitioner never saw. This pin holds the
+        ratified text (plan `Consent text v2`, 2026-09-16) verbatim beside the
+        version: to change the text, ratify a v3, add `CONSENT_TEXT_V3`, bump
+        `CONSENT_TEXT_VERSION` and pin the new text here — never edit v2."""
+        ratified_v2 = (
+            "This app can learn your voice and your phrasing to improve your notes. If you "
+            "agree, it stores on this computer: a numeric fingerprint of your voice (never a "
+            "recording), encrypted; and, if you also turn on phrase learning, short phrases "
+            "taken from lines you add or move while reviewing a note, saved automatically "
+            "when you save the note and kept as plain text in your own config file until you "
+            "delete them. Only your own lines are ever used — never a patient's. The app "
+            "cannot tell whether a phrase names a patient, so it refuses phrases containing "
+            "names, numbers, dates or medication names, and shows you everything it has "
+            "learned on this tab so you can delete any of it. Nothing else about any patient "
+            "is stored beyond their session, and nothing leaves this computer. You can "
+            "re-record your voice, delete it, or delete any learned phrase at any time from "
+            "this tab. Version consent-v2."
+        )
+        assert models.CONSENT_TEXT_V2 == ratified_v2
+        assert models.CONSENT_TEXT_VERSION == "consent-v2"
+        # The version a record stores is the one the shipped text ends with.
+        assert models.CONSENT_TEXT_V2.endswith(f"Version {models.CONSENT_TEXT_VERSION}.")
+
 
 class TestAttributionInputs:
     def _ready(self, profile: Any) -> Any:

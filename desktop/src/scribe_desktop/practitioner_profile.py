@@ -62,7 +62,7 @@ import math
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -77,6 +77,9 @@ from scribe_desktop.session_store import (
     unwrap_key_from_file,
     wrap_key_to_file,
 )
+
+if TYPE_CHECKING:
+    from scribe_desktop.speaker_embedding import SpeakerEmbedder
 
 PROFILE_BLOB_FILENAME: Final = "voice.enc"
 PROFILE_KEY_DESCRIPTION: Final = "ClinikoScribe practitioner profile key"
@@ -201,6 +204,20 @@ class PractitionerProfile(BaseModel):
                 f"{self.embedding_dim}"
             )
         return self
+
+    def made_by(self, embedder: SpeakerEmbedder) -> bool:
+        """True when this profile records exactly the identity ``embedder``
+        reports — ``model_id``, ``model_sha256`` AND ``embedding_dim`` (D16:
+        a profile is usable only with the embedder that produced it). THE one
+        definition of that agreement: the pipeline refuses a profile that is
+        not ``made_by`` the embedder it is given, and the composition layer
+        applies no profile that is not ``made_by`` the embedder it built
+        (round 53 SIMP-001 — one invariant, one site)."""
+        return (
+            self.model_id == embedder.model_id
+            and self.model_sha256 == embedder.model_sha256
+            and self.embedding_dim == embedder.embedding_dim
+        )
 
     def to_bytes(self) -> bytes:
         """Canonical JSON bytes — the plaintext ``voice.enc`` encrypts."""

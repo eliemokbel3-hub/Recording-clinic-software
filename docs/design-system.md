@@ -49,8 +49,12 @@ view patterns · tokens · microcopy.
   (`ui/models.py` `CONSENT_TEXT_V2`, the current version); the action is disabled, not
   error-handled, until the box is ticked, and withdrawing consent is the visible Delete,
   not an un-tick (`ui/practitioner.py`). Only a READABLE profile's own consent record,
-  carrying the CURRENT text version, pre-ticks the box; a stored blob the app cannot
-  read never does — presence is not consent — and a record for an OLDER text leaves the
+  carrying the CURRENT text version, pre-ticks the box — readable against the shipped
+  speaker model's identity with the model file present (the tab's readiness probe); with
+  the model absent or the profile made by another model the tab shows the fallback line
+  and the record is neither shown nor changeable there (re-enrol or Delete) — a stored
+  blob the app cannot read never does — presence is not consent — and a record for an
+  OLDER text leaves the
   box unticked with a one-line notice asking for a fresh tick (`CONSENT_STALE_NOTICE`),
   with "Confirm consent" saving the new consent (and the learning opt-in) without a
   re-record.

@@ -228,8 +228,14 @@ in-process and adds no network surface and no new logging channel.
     `voice.enc`, no microphone, no lease; Delete (confirmed) unlinks the
     key first, then the blob. Read back by flow 7 (attribution, inside the
     transcription worker), by the readiness probe that renders the tab's
-    status and the microphone screen's report lines (a stat and one profile
-    read on the GUI thread; no model is loaded there), and by the Note tab's
+    status and the microphone screen's voice-profile report line (a stat and
+    one profile read on the GUI thread; no model is loaded there — the tab
+    reads at construction and after each of its own actions, the microphone
+    screen at construction, on a device refresh, when the tab reports a
+    change and, from its 5 s model-file poll, only when the speaker model's
+    presence has flipped since the last read — the line names that presence,
+    so an install or removal is one re-read, a steady poll none), and by the
+    Note tab's
     learning-status read (flow 13). Nothing about the
     profile is logged (flow 2's tripwire markers), and no audio from this flow
     touches disk (the non-flow below).
