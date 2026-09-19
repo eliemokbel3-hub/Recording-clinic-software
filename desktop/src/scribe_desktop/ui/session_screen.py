@@ -28,6 +28,20 @@ class SessionScreen(QWidget):
     # Emitted with the TranscriptDocument once a live session reaches
     # queued (the main window routes it to the inspection view).
     transcript_ready = Signal(object)
+    # Note-learning plan C8: the live transcription outcome the transcriber
+    # callable reports from the PROCESSING thread ("assembled from the live
+    # transcription", or the named fallback reason). A queued signal — the
+    # slot runs on the GUI thread and the text joins the completion message.
+    live_status = Signal(str)
+    # Note-learning plan Task 1.4: a successful Discard from THIS screen —
+    # the main window clears the Transcript screen's live view on it (the
+    # Transcript screen's own Discard already clears itself).
+    session_discarded = Signal()
+    # Round 7 LOW-003: a SUCCESSFUL Start from this screen — the main window
+    # opens the Transcript screen's live view on it (never inside the worker
+    # factory, which `start()` calls before the device is even opened: a
+    # failed Start must not leave the live header up with no session).
+    session_started = Signal()
 
     def __init__(
         self,
@@ -46,6 +60,8 @@ class SessionScreen(QWidget):
         self._task: TaskThread | None = None
         self._transcribing = False
         self._last_state = controller.state
+        self._live_status: str | None = None
+        self.live_status.connect(self._on_live_status)
 
         self.state_label = QLabel()
         self.message_label = QLabel()
@@ -140,6 +156,16 @@ class SessionScreen(QWidget):
     def _show_message(self, text: str) -> None:
         self.message_label.setText(text)
 
+    def report_live_status(self, text: str) -> None:
+        """Thread-safe: called by the transcriber callable on the processing
+        thread; the queued ``live_status`` signal delivers it to the slot."""
+        self.live_status.emit(text)
+
+    def _on_live_status(self, text: str) -> None:
+        self._live_status = text
+        if self._transcribing:
+            self.progress_label.setText(f"Transcribing locally... {text}")
+
     # --- controls ---------------------------------------------------------------
 
     def on_start(self) -> None:
@@ -149,6 +175,7 @@ class SessionScreen(QWidget):
             return
         try:
             self._controller.start(device_id)
+            self.session_started.emit()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
             self._show_message(f"Start failed: {type(exc).__name__}: {exc}")
@@ -190,6 +217,7 @@ class SessionScreen(QWidget):
     def on_discard(self) -> None:
         try:
             self._controller.discard()
+            self.session_discarded.emit()
             self._show_message("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
             self._show_message(f"Discard failed: {type(exc).__name__}: {exc}")
@@ -201,6 +229,7 @@ class SessionScreen(QWidget):
         if self._task is not None and self._task.isRunning():
             return
         self._transcribing = True
+        self._live_status = None
         self.progress_label.setText("Transcribing locally... this can take a while.")
         self.progress_label.show()
         self.progress_bar.show()
@@ -238,7 +267,10 @@ class SessionScreen(QWidget):
 
     def _on_transcribed(self, document: object) -> None:
         self._end_transcription()
-        self._show_message("Transcription complete - review the transcript.")
+        message = "Transcription complete - review the transcript."
+        if self._live_status is not None:
+            message = f"{message} {self._live_status}"
+        self._show_message(message)
         self.refresh()
         assert isinstance(document, TranscriptDocument)
         self.transcript_ready.emit(document)

@@ -6,6 +6,9 @@ Measures, per candidate model in the local cache:
   - RTF = transcription seconds / audio seconds
   - peak process memory (each model runs in a fresh subprocess so the
     Windows peak-working-set counter is per-model, not cumulative)
+  - live window latency: how long one live-transcription window of
+    LIVE_WINDOW_SECONDS takes at the measured RTF, and whether the live
+    worker keeps up on this machine
 
 Threshold policy (plan: "RTF < 1.0 required with margin; warning on failure —
 never cloud fallback"): RTF <= RTF_MARGIN is OK, RTF < RTF_REQUIRED is a
@@ -38,6 +41,12 @@ from typing import Final
 # leaves headroom for clinic machines slower than the dev machine.
 RTF_REQUIRED = 1.0
 RTF_MARGIN = 0.75
+
+# Note-learning plan Task 1.6: the live worker transcribes one window of this
+# many seconds at a time; the panel projects each model's measured RTF onto
+# it. Kept here (not imported) because transcription imports this module —
+# tests pin it equal to transcription.TRANSCRIBE_WINDOW_SECONDS.
+LIVE_WINDOW_SECONDS = 30.0
 
 # Offline kill-switches (plan Design Decision "Runtime offline enforcement").
 OFFLINE_ENV: dict[str, str] = {
@@ -175,6 +184,27 @@ def classify_rtf(rtf: float) -> str:
     return "fail"
 
 
+def live_window_latency(result: BenchmarkResult) -> float:
+    """Seconds one live window of LIVE_WINDOW_SECONDS takes to transcribe."""
+    return LIVE_WINDOW_SECONDS * result.rtf
+
+
+def live_window_speed(result: BenchmarkResult) -> float:
+    """Window seconds divided by the seconds spent transcribing that window."""
+    if result.rtf <= 0:
+        raise ValueError("rtf must be positive to project a live window speed")
+    return LIVE_WINDOW_SECONDS / live_window_latency(result)
+
+
+def live_keeps_up(result: BenchmarkResult) -> bool:
+    """Whether the live worker keeps up (same threshold policy as the RTF status).
+
+    Within the required bar the worker keeps up; at or above real time it would
+    fall behind and stop itself, and the recording is transcribed after Finish.
+    """
+    return result.status != "fail"
+
+
 def threshold_report(results: list[BenchmarkResult]) -> list[str]:
     """Human-readable threshold report. Never suggests any cloud fallback."""
     lines = [
@@ -188,6 +218,24 @@ def threshold_report(results: list[BenchmarkResult]) -> list[str]:
             f"{r.audio_seconds:>8.1f} {r.peak_memory_bytes / 2**20:>9.1f} "
             f"{r.word_count:>6}  {r.status.upper()}"
         )
+    for r in results:
+        if r.rtf <= 0:
+            # Round 7 LOW-004: not a measurement (wall-clock over positive
+            # audio cannot be zero); say so rather than fail the whole panel.
+            lines.append(f"{r.model_name}: live window latency not measurable (RTF 0)")
+            continue
+        head = (
+            f"{r.model_name}: live window latency {live_window_latency(r):.1f} s "
+            f"per {LIVE_WINDOW_SECONDS:.0f} s window "
+            f"({live_window_speed(r):.2f}x real time)"
+        )
+        if live_keeps_up(r):
+            lines.append(f"{head} - live transcription keeps up on this machine")
+        else:
+            lines.append(
+                f"{head} - live transcription would fall behind here; "
+                "the recording is transcribed after Finish instead"
+            )
     for r in results:
         if r.status == "fail":
             lines.append(

@@ -70,8 +70,10 @@ from scribe_desktop.session_store import (  # noqa: E402
     StoreWriteError,
 )
 from scribe_desktop.transcription import (  # noqa: E402
+    LIVE_SPEAKER_PENDING,
     SPEAKER_1,
     SPEAKER_2,
+    LiveTranscriber,
     RecoveryOutcome,
     TranscriptDocument,
     TranscriptSegment,
@@ -279,6 +281,17 @@ class FakeController:
     def set_enrolment_blocker(self, blocker: Callable[[], str | None] | None) -> None:
         self.calls.append(("set_enrolment_blocker",))
         self.blocker = blocker
+
+    # Note-learning plan D2: the live worker handover (None = batch as today)
+    # and the factory registration.
+
+    def claim_live_transcriber(self) -> Any:
+        self.calls.append(("claim_live_transcriber",))
+        return None
+
+    def set_live_transcriber_factory(self, factory: Callable[[], Any] | None) -> None:
+        self.calls.append(("set_live_transcriber_factory",))
+        self.live_transcriber_factory = factory
 
     # Task 6.3: the lease + the lease-aware recovered-custody coordinator.
 
@@ -1765,6 +1778,42 @@ class TestSessionScreen:
         assert not screen.progress_bar.isVisibleTo(screen)
         screen.deleteLater()
 
+    def test_start_emits_session_started_only_on_success(self, qapp: Any) -> None:
+        """Round 7 LOW-003: the live view opens on a successful Start only."""
+        controller = FakeController()
+        screen = _session_screen(controller)
+        started: list[int] = []
+        screen.session_started.connect(lambda: started.append(1))
+        screen.on_start()
+        assert started == [1]
+
+        def failing_start(device_id: int) -> Any:
+            raise RuntimeError("no device")
+
+        controller.start = failing_start  # type: ignore[method-assign]
+        controller.state_value = SessionState.IDLE
+        screen.on_start()
+        assert started == [1]  # not emitted on the failed Start
+        assert "Start failed" in screen.message_label.text()
+        screen.deleteLater()
+
+    def test_live_status_reaches_the_progress_and_completion_messages(self, qapp: Any) -> None:
+        """Note-learning plan C8: the live outcome reported from the
+        processing thread joins the progress line while transcribing and the
+        completion message afterwards; the queued signal marshals it."""
+        controller = FakeController()
+        screen = _session_screen(controller)
+        screen.report_live_status("Live line.")  # the thread-safe entry point
+        assert _process_until(qapp, lambda: screen._live_status == "Live line.")
+        screen._transcribing = True
+        screen._live_status = None
+        screen._on_live_status("Live transcription could not keep up; batch instead.")
+        assert "could not keep up" in screen.progress_label.text()
+        screen._on_transcribed(_document())
+        assert screen.message_label.text().startswith("Transcription complete")
+        assert "could not keep up" in screen.message_label.text()
+        screen.deleteLater()
+
     def test_transcription_failure_reports_recoverable(self, qapp: Any) -> None:
         controller = FakeController()
 
@@ -1816,6 +1865,19 @@ class TestSessionScreen:
         assert ("discard",) in controller.calls
         assert "cryptographically deleted" in screen.message_label.text()
         assert screen.start_button.isEnabled()
+        screen.deleteLater()
+
+    def test_discard_emits_session_discarded(self, qapp: Any) -> None:
+        """Note-learning plan Task 1.4: a successful Discard announces itself
+        so the Transcript screen's live view can be cleared."""
+        controller = FakeController()
+        screen = _session_screen(controller)
+        emitted: list[int] = []
+        screen.session_discarded.connect(lambda: emitted.append(1))
+        screen.on_start()
+        screen.on_discard()
+        assert emitted == [1]
+        assert ("discard",) in controller.calls
         screen.deleteLater()
 
 
@@ -2019,6 +2081,35 @@ class TestRecoveryScreen:
 # ---------------------------------------------------------------------------
 
 
+def _live_segments(start: float, text: str, uncertain_word: str) -> tuple[TranscriptSegment, ...]:
+    """One live window's worth of segments, as the live worker posts them:
+    the speaker label is always LIVE_SPEAKER_PENDING (the speaker pass runs
+    only at the drain)."""
+    return (
+        TranscriptSegment(
+            start_seconds=start,
+            end_seconds=start + 2.0,
+            speaker=LIVE_SPEAKER_PENDING,
+            transcript_words=(
+                TranscriptWord(
+                    word_text=text,
+                    start_seconds=start,
+                    end_seconds=start + 0.5,
+                    probability=0.95,
+                    uncertain=False,
+                ),
+                TranscriptWord(
+                    word_text=uncertain_word,
+                    start_seconds=start + 0.6,
+                    end_seconds=start + 1.0,
+                    probability=0.30,
+                    uncertain=True,
+                ),
+            ),
+        ),
+    )
+
+
 class TestTranscriptScreen:
     def test_renders_marks_and_speakers_and_completes(self, qapp: Any) -> None:
         from scribe_desktop.ui.transcript import TranscriptScreen
@@ -2108,6 +2199,89 @@ class TestTranscriptScreen:
         assert screen.transcript_view.toPlainText() == ""
         screen.deleteLater()
 
+    def test_live_view_appends_posted_windows_without_speakers(self, qapp: Any) -> None:
+        """Note-learning plan Task 1.4 (Flow 1): the live view appends each
+        posted window's lines under its header — timestamps and [word?] marks,
+        never a speaker (the label is LIVE_SPEAKER_PENDING) — and the worker's
+        post crosses threads through the queued signal."""
+        from PySide6.QtCore import Qt
+
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        screen.begin_live_view()
+        assert screen.live_header_label.isVisibleTo(screen)
+        assert screen.live_header_label.text() == models.LIVE_TRANSCRIPT_HEADER
+        assert screen.transcript_view.toPlainText() == ""
+        assert screen.transcript_view.placeholderText() == (
+            models.LIVE_TRANSCRIPT_PLACEHOLDER
+        )
+        # The live view is the SAME display-only box (plan C2).
+        assert screen.transcript_view.textInteractionFlags() == (
+            Qt.TextInteractionFlag.NoTextInteraction
+        )
+        poster = threading.Thread(
+            target=screen.post_live_window,
+            args=(_live_segments(0.0, "Hello", "Margaret"),),
+        )
+        poster.start()
+        poster.join()
+        assert _process_until(qapp, lambda: screen.transcript_view.toPlainText() != "")
+        text = screen.transcript_view.toPlainText()
+        assert text == "[00:00-00:02] Hello [Margaret?]"
+        assert "pending" not in text
+        assert "speaker_" not in text
+        screen.post_live_window(_live_segments(30.0, "Yes", "Ibuprofen"))
+        assert _process_until(
+            qapp, lambda: "Yes" in screen.transcript_view.toPlainText()
+        )
+        assert screen.transcript_view.toPlainText().splitlines() == [
+            "[00:00-00:02] Hello [Margaret?]",
+            "[00:30-00:32] Yes [Ibuprofen?]",
+        ]
+        screen.deleteLater()
+
+    def test_final_document_replaces_the_live_view_wholesale(self, qapp: Any) -> None:
+        """Task 1.4 / C2: at queued the final document overwrites the live
+        lines and the header goes away."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        screen.begin_live_view()
+        screen.post_live_window(_live_segments(0.0, "Hello", "Margaret"))
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() != ""
+        document = _document()
+        screen.show_document(
+            document, on_complete=lambda: None, on_discard=lambda: None
+        )
+        assert not screen.live_header_label.isVisibleTo(screen)
+        assert screen.transcript_view.toPlainText() == (
+            models.format_transcript_text(document)
+        )
+        assert screen._live_active is False
+        screen.deleteLater()
+
+    def test_clear_live_view_drops_the_lines_and_late_posts_are_ignored(
+        self, qapp: Any
+    ) -> None:
+        """Task 1.4: Discard during a recording clears the live view, and a
+        post that arrives after it closed is DROPPED."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        screen.begin_live_view()
+        screen.post_live_window(_live_segments(0.0, "Hello", "Margaret"))
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() != ""
+        screen.clear_live_view()
+        assert screen.transcript_view.toPlainText() == ""
+        assert not screen.live_header_label.isVisibleTo(screen)
+        screen.post_live_window(_live_segments(30.0, "Yes", "Ibuprofen"))
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() == ""
+        screen.deleteLater()
+
 
 # ---------------------------------------------------------------------------
 # Main window wiring.
@@ -2163,6 +2337,39 @@ class TestMainWindow:
         # Complete routes to the controller (live custody path).
         window.transcript_screen.on_complete()
         assert ("complete",) in controller.calls
+        window.close()
+
+    def test_live_transcriber_factory_registered_and_opens_the_live_view(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Note-learning plan Task 1.4: the window registers the live worker's
+        factory with the controller; the factory ONLY builds (round 7
+        LOW-003: a failed Start must not open the view), the Session screen's
+        successful Start opens the live view, and its Discard closes it
+        again. The worker itself is never started here."""
+        from scribe_desktop.ui.main_window import MainWindow
+
+        controller = FakeController()
+        window = MainWindow(
+            controller,
+            FakeBackend(),
+            sessions_root=tmp_path,
+            profile_root=tmp_path,
+            config_root=tmp_path / "config",
+            benchmark_runner=list,
+            recovery_runner=lambda d: pytest.fail("not called"),
+        )
+        assert ("set_live_transcriber_factory",) in controller.calls
+        factory = controller.live_transcriber_factory
+        assert callable(factory)
+        worker = factory()
+        assert isinstance(worker, LiveTranscriber)
+        header = window.transcript_screen.live_header_label
+        assert not header.isVisibleTo(window.transcript_screen)  # building opens nothing
+        window.session_screen.session_started.emit()
+        assert header.isVisibleTo(window.transcript_screen)
+        window.session_screen.session_discarded.emit()
+        assert not header.isVisibleTo(window.transcript_screen)
         window.close()
 
     def test_close_refused_while_transcribing(self, qapp: Any, tmp_path: Path) -> None:

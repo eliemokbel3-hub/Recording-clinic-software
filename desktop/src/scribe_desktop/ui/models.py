@@ -69,14 +69,20 @@ from scribe_desktop.speaker_embedding import (
 from scribe_desktop.speech import SileroVad, vad_model_available
 from scribe_desktop.transcription import (
     DEFAULT_WHISPER_MODEL,
+    LiveFailureKind,
+    LiveTranscriber,
+    LiveTranscriptionError,
+    LiveTranscriptionFailed,
     RecoveryOutcome,
     TranscriptDocument,
+    TranscriptSegment,
     WhisperSpeechProvider,
     read_transcript,
     recover_session_transcription,
     resolve_whisper_model,
     transcribe_session,
     whisper_model_available,
+    write_transcript,
 )
 
 # Single-sourced session-id format (round 42 LOW-010).
@@ -86,6 +92,14 @@ _SESSION_ID_RE = re.compile(SESSION_ID_PATTERN)
 # store carries no complete Finish footer.
 UNFINISHED_STORE_WARNING = (
     "Warning: recording did not finish cleanly; the tail may be missing."
+)
+
+# Note-learning plan Task 1.4 (Flow 1): the live view's header and its empty
+# state. The header is shown ONLY while a recording is in flight — the final
+# document replaces the live lines wholesale at queued.
+LIVE_TRANSCRIPT_HEADER: Final = "Live — updates while recording"
+LIVE_TRANSCRIPT_PLACEHOLDER: Final = (
+    "Live transcription appears here as the consultation is recorded."
 )
 
 
@@ -122,6 +136,15 @@ class SessionControllerLike(Protocol):
     def discard(self) -> RecordingSession: ...
 
     def active_session_ids(self) -> frozenset[str]: ...
+
+    # Note-learning plan D2: the live worker's ownership handover to the
+    # processing callable (inside ``transcribe``), and the factory the main
+    # window registers once the live view exists.
+    def claim_live_transcriber(self) -> LiveTranscriber | None: ...
+
+    def set_live_transcriber_factory(
+        self, factory: Callable[[], LiveTranscriber] | None
+    ) -> None: ...
 
     # Practitioner-profile plan D15: True while the voice-enrolment activity
     # is held — the microphone screen keeps its idle monitor closed meanwhile.
@@ -304,23 +327,43 @@ def format_timestamp(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
+def _segment_span(segment: TranscriptSegment) -> str:
+    """The ``[mm:ss-mm:ss]`` span — ONE implementation, shared by the final
+    document rendering and the live view (Task 1.4), so the two can never
+    drift apart."""
+    return (
+        f"[{format_timestamp(segment.start_seconds)}"
+        f"-{format_timestamp(segment.end_seconds)}]"
+    )
+
+
+def _segment_words(segment: TranscriptSegment) -> str:
+    """The segment's words with the ``[word?]`` uncertainty marks — the same
+    one implementation for both renderings."""
+    return " ".join(
+        f"[{word.word_text}?]" if word.uncertain else word.word_text
+        for word in segment.transcript_words
+    )
+
+
 def format_transcript_text(document: TranscriptDocument) -> str:
     """Render a transcript for the inspection view: speaker labels visible
     on every segment, uncertain words marked as ``[word?]``."""
     lines: list[str] = []
     for segment in document.transcript_segments:
-        span = (
-            f"[{format_timestamp(segment.start_seconds)}"
-            f"-{format_timestamp(segment.end_seconds)}]"
-        )
-        words = " ".join(
-            f"[{word.word_text}?]" if word.uncertain else word.word_text
-            for word in segment.transcript_words
-        )
-        lines.append(f"{span} {segment.speaker}: {words}")
+        lines.append(f"{_segment_span(segment)} {segment.speaker}: {_segment_words(segment)}")
     if not lines:
         return "(no speech detected)"
     return "\n".join(lines)
+
+
+def format_live_segments(segments: Sequence[TranscriptSegment]) -> list[str]:
+    """Render ONE live window's segments for the append-only live view
+    (Task 1.4): the same span and ``[word?]`` marks as the final rendering,
+    but NO speaker label — every live-posted segment carries
+    ``LIVE_SPEAKER_PENDING`` because the speaker pass runs only at the drain,
+    so a cluster name here would be a claim the app has not made yet."""
+    return [f"{_segment_span(segment)} {_segment_words(segment)}" for segment in segments]
 
 
 def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> dict[str, str]:
@@ -1461,11 +1504,102 @@ def attribution_inputs(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> Attribu
 # Pipeline factories (constructed lazily, inside the worker thread).
 # ---------------------------------------------------------------------------
 
+# Note-learning plan C8: every live fallback names its reason on screen.
+# Keyed by the worker's failure kind; the detail is appended in parentheses
+# by the transcriber callable (an exception type and message from a stage
+# function — never transcript text).
+LIVE_FALLBACK_STATUS: Final[dict[LiveFailureKind, str]] = {
+    LiveFailureKind.MODEL_LOAD: (
+        "The live transcription model failed to load; "
+        "transcribing after the recording instead."
+    ),
+    LiveFailureKind.FELL_BEHIND: (
+        "Live transcription could not keep up; transcribing after the recording instead."
+    ),
+    LiveFailureKind.WORKER_ERROR: (
+        "Live transcription stopped; transcribing after the recording instead."
+    ),
+}
+LIVE_ASSEMBLED_STATUS: Final = "Transcript assembled from the live transcription."
+
+LiveTranscriberSource = Callable[[], LiveTranscriber | None]
+
+
+def build_live_transcriber(
+    *,
+    on_window: Callable[[tuple[TranscriptSegment, ...]], None] | None,
+    model_name: str | None = None,
+    attribution: Callable[[], AttributionInputs] = attribution_inputs,
+) -> LiveTranscriber:
+    """The live worker ``SessionController.start`` attaches (note-learning
+    plan D1–D3). Its VAD, Whisper provider and attribution inputs are built
+    by the factories BELOW on the worker's own thread at start — the same
+    call-time model resolution as ``build_transcriber`` — so the GUI thread
+    never blocks on a model load and a load failure becomes the worker's
+    ``model_load`` reason, never an exception at Start. ``on_window`` is
+    invoked on the worker thread with each transcribed window's segments
+    (the Transcript screen marshals it to the GUI thread).
+    """
+
+    def provider() -> WhisperSpeechProvider:
+        name = model_name if model_name is not None else resolve_whisper_model()
+        return WhisperSpeechProvider(model_name=name)
+
+    def vad() -> Callable[[bytes], float]:
+        return SileroVad().frame_probability
+
+    return LiveTranscriber(
+        provider_factory=provider,
+        vad_factory=vad,
+        attribution_factory=attribution,
+        on_window=on_window,
+    )
+
+
+def _live_transcript(
+    worker: LiveTranscriber,
+    session_dir: Path,
+    crypto: SessionCrypto,
+    on_status: Callable[[str], None] | None,
+) -> TranscriptDocument | None:
+    """Drain the claimed live worker on the processing thread and write the
+    assembled document (D2). ``None`` means the batch closure must run: the
+    worker failed (its C8 reason reported) or its drain/assembly raised a
+    live-path error. The worker is stopped on every exit — its models were
+    released when its thread exited (D3), and ``stop`` confirms the buffers
+    are gone — BEFORE the caller constructs the batch provider, so two
+    models are never resident. A store write failure propagates exactly as
+    it would from the batch path."""
+    try:
+        try:
+            result = worker.drain()
+            header = read_store_header(session_dir / AUDIO_FILENAME)
+            document = result.assemble(header.session_id)
+        except LiveTranscriptionFailed as exc:
+            if on_status is not None:
+                on_status(f"{LIVE_FALLBACK_STATUS[exc.failure.kind]} ({exc.failure.detail})")
+            return None
+        except (LiveTranscriptionError, ValueError) as exc:
+            if on_status is not None:
+                on_status(
+                    f"{LIVE_FALLBACK_STATUS[LiveFailureKind.WORKER_ERROR]} "
+                    f"({type(exc).__name__}: {exc})"
+                )
+            return None
+    finally:
+        worker.stop()
+    write_transcript(session_dir, crypto, document)
+    if on_status is not None:
+        on_status(LIVE_ASSEMBLED_STATUS)
+    return document
+
 
 def build_transcriber(
     model_name: str | None = None,
     *,
     attribution: Callable[[], AttributionInputs] = attribution_inputs,
+    live_source: LiveTranscriberSource | None = None,
+    on_status: Callable[[str], None] | None = None,
 ) -> Callable[[Path, SessionCrypto], TranscriptDocument]:
     """A ``SessionController.transcribe`` transcriber over the real ML stack.
 
@@ -1477,9 +1611,23 @@ def build_transcriber(
     ``attribution`` (default ``attribution_inputs``) resolves the speaker
     embedder and the enrolled profile inside the same call — both entry
     points pass them (D3), or ``(None, None)`` for the visible D2 fallback.
+
+    Note-learning plan Task 1.3: ``live_source`` (the controller's
+    ``claim_live_transcriber``, called INSIDE the run so the ``transcribing``
+    guard already covers Discard) hands over the sealed live worker; the
+    callable drains it here on the processing thread, assembles through
+    ``assemble_transcript`` and writes ``transcript.enc`` once. Any live
+    failure reports its C8 line through ``on_status`` (processing thread —
+    the screen marshals it) and runs the batch closure below unchanged.
+    ``SessionController.transcribe``'s signature is untouched.
     """
 
     def transcriber(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocument:
+        worker = live_source() if live_source is not None else None
+        if worker is not None:
+            document = _live_transcript(worker, session_dir, crypto, on_status)
+            if document is not None:
+                return document
         name = model_name if model_name is not None else resolve_whisper_model()
         vad = SileroVad()
         provider = WhisperSpeechProvider(model_name=name)
@@ -1544,6 +1692,11 @@ __all__ = [
     "LEARNING_ON_LINE",
     "LEARNING_OPTED_OUT_HINT",
     "LEARNING_OPT_IN_LABEL",
+    "LIVE_ASSEMBLED_STATUS",
+    "LIVE_FALLBACK_STATUS",
+    "LIVE_TRANSCRIPT_HEADER",
+    "LIVE_TRANSCRIPT_PLACEHOLDER",
+    "LiveTranscriberSource",
     "LEARNING_STALE_CONSENT_HINT",
     "LEARNING_UNUSABLE_HINT",
     "PROFILE_NOT_ENROLLED_LINE",
@@ -1571,6 +1724,7 @@ __all__ = [
     "attribution_inputs",
     "attribution_readiness",
     "build_note_generator",
+    "build_live_transcriber",
     "build_recovery_runner",
     "build_transcriber",
     "complete_block_reason",
@@ -1580,6 +1734,7 @@ __all__ = [
     "default_sessions_root",
     "editable_lines",
     "eligible_utterances",
+    "format_live_segments",
     "format_note_body",
     "format_timestamp",
     "format_transcript_text",

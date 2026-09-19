@@ -60,9 +60,14 @@ byte for byte.
 
 from __future__ import annotations
 
+import enum
 import math
+import queue
 import re
-from collections.abc import Iterable, Iterator, Sequence
+import threading
+import time
+from collections import deque
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -102,7 +107,14 @@ from scribe_desktop.session_store import (
 from scribe_desktop.speaker_embedding import ATTRIBUTION_THRESHOLD, FRAME_LENGTH, SpeakerEmbedder
 from scribe_desktop.speech import (
     BYTES_PER_SAMPLE,
+    END_THRESHOLD,
+    FRAME_BYTES,
+    FRAME_SECONDS,
+    MIN_SILENCE_SECONDS,
+    MIN_SPEECH_SECONDS,
+    PAD_SECONDS,
     SAMPLE_RATE,
+    START_THRESHOLD,
     FrameProbabilityFn,
     SpeechError,
     SpeechProvider,
@@ -1096,6 +1108,66 @@ def read_transcript(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocum
 # ---------------------------------------------------------------------------
 
 
+MarkedSegment = tuple[SpeechSegment, tuple[TranscriptWord, ...]]
+
+
+def assemble_transcript(
+    *,
+    session_id: str,
+    model_name: str,
+    marked_segments: Sequence[MarkedSegment],
+    embeddings: Sequence[Any],
+    similarities: Sequence[float | None],
+    saw_empty_segment: bool,
+    attributing: bool,
+    speaker_model_id: str | None,
+    np: Any,
+) -> TranscriptDocument:
+    """The speaker pass and document build shared by BOTH transcription
+    drivers (note-learning plan Task 1.0, codex PR-MED-005): the batch
+    ``transcribe_session`` below and the live ``LiveTranscriber`` drain.
+    Extracted verbatim from the batch tail — the per-window loop collects
+    the inputs, this decides the labels and builds the artefact; the caller
+    writes it. ``np`` is the numpy module the caller already imported for
+    the embeddings, or ``None`` when the batch loop skipped them (fewer than
+    two segments and no profile); ``speaker_model_id`` is the embedder's id
+    whenever one was supplied (recorded on the document only when a cluster
+    is actually enrolled).
+
+    Degenerate-case policy mirrors ``label_speakers`` — change together
+    (round 42 LOW-011). With a profile applied the SAME degenerate cases
+    still yield a single ``speaker_1`` cluster; only the non-degenerate
+    clustering is replaced by D13's attribution. ``created_at`` is the wall
+    clock, so two documents assembled from equal inputs are equal up to it.
+    """
+    has_text = [words_have_text(words) for _, words in marked_segments]
+    if np is None or saw_empty_segment or len(embeddings) < 2:
+        speakers = [SPEAKER_1] * len(marked_segments)
+    elif attributing:
+        speakers = attribute_speakers(similarities, embeddings, has_text, np)
+    else:
+        speakers = _cluster_embeddings(list(embeddings), np)
+    enrolled = enrolled_cluster(speakers, similarities, has_text) if attributing else None
+    return TranscriptDocument(
+        session_id=session_id,
+        created_at=datetime.now(UTC),
+        model_name=model_name,
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=segment.start_seconds,
+                end_seconds=segment.end_seconds,
+                speaker=speaker,
+                transcript_words=words,
+            )
+            for (segment, words), speaker in zip(marked_segments, speakers, strict=True)
+        ),
+        enrolled_speaker=enrolled[0] if enrolled is not None else None,
+        enrolment_similarity=enrolled[1] if enrolled is not None else None,
+        speaker_model_id=speaker_model_id if enrolled is not None else None,
+    )
+
+
 def transcribe_session(
     session_dir: Path,
     crypto: SessionCrypto,
@@ -1172,7 +1244,7 @@ def transcribe_session(
         if attributing and enrolled_profile is not None
         else None
     )
-    marked_segments: list[tuple[SpeechSegment, tuple[TranscriptWord, ...]]] = []
+    marked_segments: list[MarkedSegment] = []
     embeddings: list[Any] = []
     similarities: list[float | None] = []
     saw_empty_segment = False
@@ -1234,39 +1306,16 @@ def transcribe_session(
                         else None
                     )
 
-    # Degenerate-case policy mirrors label_speakers — change together
-    # (round 42 LOW-011). With a profile applied the SAME degenerate cases
-    # still yield a single ``speaker_1`` cluster; only the non-degenerate
-    # clustering is replaced by D13's attribution.
-    has_text = [words_have_text(words) for _, words in marked_segments]
-    if np is None or saw_empty_segment or len(embeddings) < 2:
-        speakers = [SPEAKER_1] * len(segments)
-    elif attributing:
-        speakers = attribute_speakers(similarities, embeddings, has_text, np)
-    else:
-        speakers = _cluster_embeddings(embeddings, np)
-    enrolled = enrolled_cluster(speakers, similarities, has_text) if attributing else None
-    document = TranscriptDocument(
+    document = assemble_transcript(
         session_id=header.session_id,
-        created_at=datetime.now(UTC),
         model_name=model_name or getattr(provider, "model_name", type(provider).__name__),
-        sample_rate=SAMPLE_RATE,
-        transcript_segments=tuple(
-            TranscriptSegment(
-                start_seconds=segment.start_seconds,
-                end_seconds=segment.end_seconds,
-                speaker=speaker,
-                transcript_words=words,
-            )
-            for (segment, words), speaker in zip(marked_segments, speakers, strict=True)
-        ),
-        enrolled_speaker=enrolled[0] if enrolled is not None else None,
-        enrolment_similarity=enrolled[1] if enrolled is not None else None,
-        speaker_model_id=(
-            speaker_embedder.model_id
-            if enrolled is not None and speaker_embedder is not None
-            else None
-        ),
+        marked_segments=marked_segments,
+        embeddings=embeddings,
+        similarities=similarities,
+        saw_empty_segment=saw_empty_segment,
+        attributing=attributing,
+        speaker_model_id=speaker_embedder.model_id if speaker_embedder is not None else None,
+        np=np,
     )
     write_transcript(session_dir, crypto, document)
     return document
@@ -1326,11 +1375,942 @@ def recover_session_transcription(
     return RecoveryOutcome(document=document, crypto=crypto, store_finished=store_finished)
 
 
+# ---------------------------------------------------------------------------
+# Live transcription (note-learning plan Phase 1, D1–D3).
+#
+# The live worker is a DRIVER over plaintext PCM fed by a tee wrapped around
+# the capture sink BEFORE encryption. It runs the same stage functions as
+# ``transcribe_session`` one window at a time — the streaming segmenter
+# below replicates ``speech.segment_probabilities`` frame by frame, the
+# packer replicates ``pack_transcription_windows`` greedily, and the per-
+# window work (provider, ``assign_words_to_segments``, ``mark_words``, the
+# spectral embedding and the enrolment cosine) is the batch loop's, so the
+# drained ``LiveResult`` assembles through ``assemble_transcript`` into the
+# same document the batch path would produce for the same segments. It never
+# holds ``SessionCrypto``, never reads the store and never writes a file
+# (D1); the provider, VAD and embedder are constructed on ITS thread at
+# start and released on exit, before any batch fallback builds its own (D3).
+# ---------------------------------------------------------------------------
+
+# D2 bounds. An open VAD span is force-closed once its padded length would
+# reach LIVE_MAX_SEGMENT_SECONDS, at the lowest-probability frame of its last
+# LIVE_CUT_SEARCH_SECONDS (the halves are separate, unpadded at the cut, so
+# ``pack_transcription_windows`` never sees an oversized live segment).
+LIVE_MAX_SEGMENT_SECONDS = 30.0
+LIVE_CUT_SEARCH_SECONDS = 5.0
+# Plaintext PCM queued by the tee but not yet consumed by the worker — model
+# load included — is capped at this many windows' worth of audio; more than
+# LIVE_MAX_WINDOWS_BEHIND packed-but-untranscribed windows waiting behind the
+# one in progress stops the worker too ("could not keep up").
+LIVE_MAX_QUEUED_WINDOWS = 3
+LIVE_MAX_WINDOWS_BEHIND = 2
+LIVE_QUEUE_CAP_BYTES = int(
+    LIVE_MAX_QUEUED_WINDOWS * TRANSCRIBE_WINDOW_SECONDS * SAMPLE_RATE
+) * BYTES_PER_SAMPLE
+# ``stop()`` joins the worker for at most this long; a timeout is REPORTED
+# (the caller never counts the buffers as cleared) — the daemon thread drops
+# them itself when its blocked provider call returns.
+LIVE_STOP_TIMEOUT_SECONDS = 10.0
+# The label a live-posted segment carries: the speaker pass runs only at the
+# drain, so a live view must render this as "no speaker yet", never as a
+# cluster. The final document replaces every live segment wholesale.
+LIVE_SPEAKER_PENDING = "pending"
+
+
+class LiveFailureKind(enum.StrEnum):
+    """Why live mode switched itself off (C8: every fallback names its reason)."""
+
+    MODEL_LOAD = "model_load"
+    FELL_BEHIND = "fell_behind"
+    WORKER_ERROR = "worker_error"
+
+
+@dataclass(frozen=True)
+class LiveFailure:
+    """The first failure a ``LiveTranscriber`` recorded. ``detail`` is the
+    exception's type and message (or a fixed phrase) for the status line —
+    never transcript text, which no stage function puts in an exception."""
+
+    kind: LiveFailureKind
+    detail: str
+
+
+class LiveTranscriptionError(TranscriptionError):
+    """Misuse of the live worker (a programming error, not a fallback)."""
+
+
+class LiveTranscriptionFailed(LiveTranscriptionError):
+    """``drain()`` found the worker failed: the caller runs the batch path."""
+
+    def __init__(self, failure: LiveFailure) -> None:
+        super().__init__(f"{failure.kind.value}: {failure.detail}")
+        self.failure = failure
+
+
+class LiveSegmenter:
+    """Streaming replica of ``speech.segment_probabilities`` with carried
+    state (note-learning plan Task 1.1, D2).
+
+    Same hysteresis, minimum-speech filter, padding, clamping and merge rule
+    as the batch segmenter, applied one probability at a time: ``push``
+    returns the segments RELEASED by that frame and ``finish`` the remainder,
+    and for any probability sequence without a forced close the concatenated
+    releases equal ``segment_probabilities`` over the same sequence (the VAD
+    determinism pin). A padded segment is held until no later span could
+    merge into it: while a span is OPEN whose padded start lies inside the
+    held end (it merges when it closes), and until the earliest padded start
+    of a future span exceeds that end. With the shipped parameters the
+    minimum silence (0.35 s) exceeds twice the padding (0.2 s), so no merge
+    is reachable and a release lags the batch decision by zero frames; the
+    hold matters only under a configuration where padded spans touch. The
+    forced close below bounds the RAW open span, so under such a
+    configuration a merged live segment can exceed the bound by the held
+    part (unreachable with the shipped parameters).
+
+    The one deliberate departure is the D2 forced close: an open span whose
+    padded length would reach ``max_segment_seconds`` is cut at the lowest-
+    probability frame of its last ``cut_search_seconds`` (the FIRST minimum on
+    a tie). The cut is a hard boundary — neither half is padded at it and the
+    second half never merges back — so the batch path, which keeps the whole
+    span, differs from the live path exactly there and nowhere else. A second
+    half shorter than the minimum speech length at the end of the audio is
+    dropped by the same filter that drops any short raw span (residue: up to
+    ``min_speech_seconds`` of tail speech after a cut is not transcribed
+    live; the batch fallback would keep it).
+    """
+
+    def __init__(
+        self,
+        *,
+        frame_seconds: float = FRAME_SECONDS,
+        start_threshold: float = START_THRESHOLD,
+        end_threshold: float = END_THRESHOLD,
+        min_speech_seconds: float = MIN_SPEECH_SECONDS,
+        min_silence_seconds: float = MIN_SILENCE_SECONDS,
+        pad_seconds: float = PAD_SECONDS,
+        max_segment_seconds: float = LIVE_MAX_SEGMENT_SECONDS,
+        cut_search_seconds: float = LIVE_CUT_SEARCH_SECONDS,
+    ) -> None:
+        if not 0.0 < end_threshold <= start_threshold <= 1.0:
+            raise ValueError("thresholds must satisfy 0 < end <= start <= 1")
+        if frame_seconds <= 0:
+            raise ValueError("frame_seconds must be positive")
+        if not 0.0 < cut_search_seconds < max_segment_seconds:
+            raise ValueError("cut_search_seconds must lie inside max_segment_seconds")
+        self._frame_seconds = frame_seconds
+        self._start_threshold = start_threshold
+        self._end_threshold = end_threshold
+        self._min_speech_seconds = min_speech_seconds
+        self._min_silence_frames = max(1, round(min_silence_seconds / frame_seconds))
+        self._pad_seconds = pad_seconds
+        self._max_segment_seconds = max_segment_seconds
+        self._cut_search_frames = max(1, round(cut_search_seconds / frame_seconds))
+        self._total_frames = 0
+        self._in_speech = False
+        self._start_frame = 0
+        self._hard_start = False
+        self._silence_run = 0
+        self._recent: deque[tuple[int, float]] = deque(maxlen=self._cut_search_frames)
+        self._pending: SpeechSegment | None = None
+        self._pending_hard_end = False
+        self._finished = False
+
+    @property
+    def total_frames(self) -> int:
+        return self._total_frames
+
+    @property
+    def retention_floor_seconds(self) -> float:
+        """A lower bound on the start of every segment not yet released — the
+        earliest audio the caller must still hold: a held (pending) segment,
+        the open span's padded start, or the earliest padded start a future
+        span could have. Used both for PCM retention and by the window packer
+        to decide when no future segment can join its open window."""
+        floor = max(0.0, self._total_frames * self._frame_seconds - self._pad_seconds)
+        if self._pending is not None:
+            floor = min(floor, self._pending.start_seconds)
+        if self._in_speech:
+            lead = 0.0 if self._hard_start else self._pad_seconds
+            floor = min(floor, max(0.0, self._start_frame * self._frame_seconds - lead))
+        return floor
+
+    def push(self, probability: float) -> list[SpeechSegment]:
+        """Consume one frame's speech probability; return released segments."""
+        if self._finished:
+            raise LiveTranscriptionError("segmenter already finished")
+        index = self._total_frames
+        self._total_frames = index + 1
+        released: list[SpeechSegment] = []
+        if not self._in_speech:
+            if probability >= self._start_threshold:
+                self._in_speech = True
+                self._start_frame = index
+                self._hard_start = False
+                self._silence_run = 0
+                self._recent.clear()
+        elif probability < self._end_threshold:
+            self._silence_run += 1
+            if self._silence_run >= self._min_silence_frames:
+                released.extend(
+                    self._close(self._start_frame, index + 1 - self._silence_run, hard_end=False)
+                )
+                self._in_speech = False
+        else:
+            self._silence_run = 0
+        if self._in_speech:
+            self._recent.append((index, probability))
+            released.extend(self._maybe_cut(index))
+        released.extend(self._release_pending(final=False))
+        return released
+
+    def finish(self) -> list[SpeechSegment]:
+        """End of audio: close an open span and release the remainder."""
+        if self._finished:
+            raise LiveTranscriptionError("segmenter already finished")
+        self._finished = True
+        released: list[SpeechSegment] = []
+        if self._in_speech:
+            last = self._total_frames - self._silence_run
+            released.extend(self._close(self._start_frame, last, hard_end=False))
+            self._in_speech = False
+        released.extend(self._release_pending(final=True))
+        return released
+
+    def _maybe_cut(self, index: int) -> list[SpeechSegment]:
+        span_frames = index + 1 - self._start_frame
+        lead = 0.0 if self._hard_start else self._pad_seconds
+        if span_frames * self._frame_seconds + lead < self._max_segment_seconds:
+            return []
+        cut_frame, _probability = min(self._recent, key=lambda entry: entry[1])
+        cut_frame = max(cut_frame, self._start_frame + 1)
+        released = self._close(self._start_frame, cut_frame, hard_end=True)
+        kept = [entry for entry in self._recent if entry[0] >= cut_frame]
+        self._start_frame = cut_frame
+        self._hard_start = True
+        self._recent = deque(kept, maxlen=self._cut_search_frames)
+        run = 0
+        for _index, probability in reversed(kept):
+            if probability >= self._end_threshold:
+                break
+            run += 1
+        self._silence_run = run
+        return released
+
+    def _close(self, first: int, last: int, *, hard_end: bool) -> list[SpeechSegment]:
+        """Close the raw span ``[first, last)`` of the CURRENT open span (its
+        start kind is ``self._hard_start``); returns anything released."""
+        start_raw = first * self._frame_seconds
+        end_raw = last * self._frame_seconds
+        if end_raw - start_raw < self._min_speech_seconds:
+            return []
+        lead = 0.0 if self._hard_start else self._pad_seconds
+        start = max(0.0, start_raw - lead)
+        end = end_raw if hard_end else end_raw + self._pad_seconds
+        released: list[SpeechSegment] = []
+        if self._pending is not None:
+            mergeable = (
+                not self._hard_start
+                and not self._pending_hard_end
+                and start <= self._pending.end_seconds
+            )
+            if mergeable:
+                start = self._pending.start_seconds
+            else:
+                released.append(self._pending)
+        self._pending = SpeechSegment(start_seconds=start, end_seconds=end)
+        self._pending_hard_end = hard_end
+        return released
+
+    def _release_pending(self, *, final: bool) -> list[SpeechSegment]:
+        pending = self._pending
+        if pending is None:
+            return []
+        if final:
+            total_seconds = self._total_frames * self._frame_seconds
+            self._pending = None
+            return [
+                SpeechSegment(
+                    start_seconds=pending.start_seconds,
+                    end_seconds=min(total_seconds, pending.end_seconds),
+                )
+            ]
+        if self._pending_hard_end:
+            self._pending = None
+            return [pending]
+        if self._in_speech and not self._hard_start:
+            # The OPEN span merges into the pending segment when it closes
+            # if its padded start lies inside the pending end — hold until
+            # it closes (the batch pass sees both before deciding).
+            open_start = max(0.0, self._start_frame * self._frame_seconds - self._pad_seconds)
+            if open_start <= pending.end_seconds:
+                return []
+        earliest_next_start = max(
+            0.0, self._total_frames * self._frame_seconds - self._pad_seconds
+        )
+        if earliest_next_start > pending.end_seconds:
+            self._pending = None
+            return [pending]
+        return []
+
+
+class _LiveWindows:
+    """Incremental ``pack_transcription_windows``: the same greedy predicate
+    applied as segments arrive, plus an early flush when the segmenter's
+    retention floor proves that no future segment could join the open
+    window. Produces the partition the batch packer would over the same
+    segment list."""
+
+    def __init__(self, *, window_seconds: float, max_gap_seconds: float) -> None:
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
+        if max_gap_seconds < 0:
+            raise ValueError("max_gap_seconds must be non-negative")
+        self._window_seconds = window_seconds
+        self._max_gap_seconds = max_gap_seconds
+        self._open: list[SpeechSegment] = []
+        self.ready: deque[list[SpeechSegment]] = deque()
+
+    def add(self, segment: SpeechSegment) -> None:
+        if self._open:
+            fits = segment.end_seconds - self._open[0].start_seconds <= self._window_seconds
+            gap = segment.start_seconds - self._open[-1].end_seconds
+            if not fits or gap > self._max_gap_seconds:
+                self.ready.append(self._open)
+                self._open = []
+        self._open.append(segment)
+
+    def tick(self, next_start_lower_bound: float) -> None:
+        """Flush the open window once no segment starting at or after
+        ``next_start_lower_bound`` (and ending after it) could join it."""
+        if not self._open:
+            return
+        # Strict on both: a future segment ends AFTER the bound, so its
+        # ``end - first.start`` exceeds the bound's — the batch predicate
+        # (``<= window_seconds``) then fails for certain, never on a tie.
+        cannot_fit = next_start_lower_bound - self._open[0].start_seconds > self._window_seconds
+        gap_too_big = next_start_lower_bound - self._open[-1].end_seconds > self._max_gap_seconds
+        if cannot_fit or gap_too_big:
+            self.ready.append(self._open)
+            self._open = []
+
+    def flush(self) -> None:
+        if self._open:
+            self.ready.append(self._open)
+            self._open = []
+
+    @property
+    def retention_floor_seconds(self) -> float | None:
+        if self.ready:
+            return self.ready[0][0].start_seconds
+        if self._open:
+            return self._open[0].start_seconds
+        return None
+
+    def clear(self) -> None:
+        self._open = []
+        self.ready.clear()
+
+
+@dataclass(frozen=True)
+class LiveResult:
+    """Everything the drained live worker hands the processing thread: the
+    batch loop's per-segment products, assembled into the document by
+    ``assemble`` (= ``assemble_transcript``). ``window_timings`` pairs each
+    window's audio seconds with the provider's wall seconds for the benchmark
+    panel's live-latency line — numbers only, no text."""
+
+    model_name: str
+    marked_segments: tuple[MarkedSegment, ...]
+    embeddings: tuple[Any, ...]
+    similarities: tuple[float | None, ...]
+    saw_empty_segment: bool
+    attributing: bool
+    speaker_model_id: str | None
+    np: Any
+    window_timings: tuple[tuple[float, float], ...]
+
+    def assemble(self, session_id: str) -> TranscriptDocument:
+        return assemble_transcript(
+            session_id=session_id,
+            model_name=self.model_name,
+            marked_segments=self.marked_segments,
+            embeddings=self.embeddings,
+            similarities=self.similarities,
+            saw_empty_segment=self.saw_empty_segment,
+            attributing=self.attributing,
+            speaker_model_id=self.speaker_model_id,
+            np=self.np,
+        )
+
+
+class _LiveSeal:
+    __slots__ = ()
+
+
+class _LiveWake:
+    """Queue sentinel that only wakes the worker (stop or failure)."""
+
+    __slots__ = ()
+
+
+AttributionFactory = Callable[[], tuple[SpeakerEmbedder | None, PractitionerProfile | None]]
+LiveWindowCallback = Callable[[tuple[TranscriptSegment, ...]], None]
+
+
+def _no_attribution() -> tuple[SpeakerEmbedder | None, PractitionerProfile | None]:
+    return None, None
+
+
+class LiveTranscriber:
+    """The queue-fed live transcription worker (note-learning plan Task 1.1).
+
+    Lifecycle: ``start()`` spawns the worker thread, which constructs the VAD,
+    the provider and the attribution inputs on ITSELF (D3) — the capture sink
+    may already be feeding, and the queue cap covers that period. ``feed``
+    (the tee, capture writer thread) never raises: any error flips the worker
+    to failed. ``pause``/``resume`` gate feeding — audio arriving while paused
+    is a broken control ordering and fails the worker rather than misaligning
+    the timeline. ``seal`` is cheap (a sentinel) and is all ``finish()`` does
+    on the GUI thread; ``drain`` (the processing thread) waits for the worker
+    to transcribe the tail and returns the ``LiveResult``, or raises
+    ``LiveTranscriptionFailed`` with the reason for the batch fallback.
+    ``stop`` abandons: it joins for a bounded time and reports whether the
+    buffers are confirmed cleared. After ``stop`` returns no live-view update
+    is delivered (``on_window`` runs under the post lock ``stop`` takes).
+
+    The worker holds no ``SessionCrypto``, no store handle and no path (D1,
+    C7); its plaintext is the retention buffer (the open window plus the
+    open span, dropped per window), the queued chunks (capped) and the
+    per-segment products the result carries. Nothing here logs.
+    """
+
+    def __init__(
+        self,
+        *,
+        provider_factory: Callable[[], SpeechProvider],
+        vad_factory: Callable[[], FrameProbabilityFn],
+        attribution_factory: AttributionFactory = _no_attribution,
+        on_window: LiveWindowCallback | None = None,
+        model_name: str = "",
+        uncertainty_threshold: float = UNCERTAINTY_THRESHOLD,
+        window_seconds: float = TRANSCRIBE_WINDOW_SECONDS,
+        max_gap_seconds: float = TRANSCRIBE_WINDOW_MAX_GAP_SECONDS,
+        max_segment_seconds: float = LIVE_MAX_SEGMENT_SECONDS,
+        queue_cap_bytes: int = LIVE_QUEUE_CAP_BYTES,
+        max_windows_behind: int = LIVE_MAX_WINDOWS_BEHIND,
+        stop_timeout: float = LIVE_STOP_TIMEOUT_SECONDS,
+    ) -> None:
+        if queue_cap_bytes <= 0 or max_windows_behind < 0 or stop_timeout <= 0:
+            raise ValueError(
+                "queue_cap_bytes and stop_timeout must be positive; max_windows_behind >= 0"
+            )
+        self._stop_timeout = stop_timeout
+        self._provider_factory = provider_factory
+        self._vad_factory = vad_factory
+        self._attribution_factory = attribution_factory
+        self._on_window = on_window
+        self._model_name = model_name
+        self._uncertainty_threshold = uncertainty_threshold
+        self._segmenter = LiveSegmenter(max_segment_seconds=max_segment_seconds)
+        self._windows = _LiveWindows(
+            window_seconds=window_seconds, max_gap_seconds=max_gap_seconds
+        )
+        self._queue_cap_bytes = queue_cap_bytes
+        self._max_windows_behind = max_windows_behind
+
+        self._queue: queue.Queue[bytes | _LiveSeal | _LiveWake] = queue.Queue()
+        self._account_lock = threading.Lock()
+        self._queued_bytes = 0
+        self._state_lock = threading.Lock()
+        self._post_lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self._thread: threading.Thread | None = None
+        self._failure: LiveFailure | None = None
+        self._paused = False
+        self._sealed = False
+        self._stop_requested = False
+        self._seal_seen = False
+
+        # Worker-thread state (touched by the caller only after a join).
+        self._vad: FrameProbabilityFn | None = None
+        self._provider: SpeechProvider | None = None
+        self._embedder: SpeakerEmbedder | None = None
+        self._reference_unit: Any = None
+        self._np: Any = None
+        self._resolved_model_name = ""
+        self._pcm = bytearray()
+        self._origin_bytes = 0
+        self._audio_bytes = 0
+        self._framed_bytes = 0
+        self._marked: list[MarkedSegment] = []
+        self._embeddings: list[Any] = []
+        self._similarities: list[float | None] = []
+        self._saw_empty_segment = False
+        self._window_timings: list[tuple[float, float]] = []
+        self._result: LiveResult | None = None
+
+    # --- observers ---------------------------------------------------------
+
+    @property
+    def failed_reason(self) -> LiveFailure | None:
+        return self._failure
+
+    @property
+    def sealed(self) -> bool:
+        return self._sealed
+
+    @property
+    def stopped(self) -> bool:
+        return self._stop_requested
+
+    @property
+    def paused(self) -> bool:
+        return self._paused
+
+    @property
+    def running(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    @property
+    def models_loaded(self) -> bool:
+        """True while the worker holds its provider (D3: released on exit,
+        before any batch fallback constructs its own)."""
+        return self._provider is not None
+
+    @property
+    def buffers_cleared(self) -> bool:
+        """Inspected, not flagged: no queued chunk, no retained PCM, no
+        per-segment product and no undrained result. Meaningful once the
+        worker thread has exited (``stop`` returned True, or ``drain``)."""
+        with self._queue.mutex:
+            queued_pcm = any(isinstance(item, bytes) for item in self._queue.queue)
+        return (
+            not queued_pcm
+            and not self._pcm
+            and not self._marked
+            and not self._embeddings
+            and not self._similarities
+            and self._windows.retention_floor_seconds is None
+            and self._result is None
+        )
+
+    # --- controls (any thread) ----------------------------------------------
+
+    def start(self) -> None:
+        with self._state_lock:
+            if self._thread is not None:
+                raise LiveTranscriptionError("live transcriber already started")
+            thread = threading.Thread(
+                target=self._run, name="scribe-live-transcriber", daemon=True
+            )
+            self._thread = thread
+        thread.start()
+
+    def feed(self, data: bytes) -> None:
+        """Hand one captured chunk to the worker. NEVER raises (the capture
+        sink's exception path fails the whole session); every error flips
+        this worker to failed instead."""
+        try:
+            if self._failure is not None or self._stop_requested or self._sealed:
+                return
+            if self._thread is None:
+                self._fail(LiveFailureKind.WORKER_ERROR, "audio arrived before start")
+                return
+            if self._paused:
+                self._fail(LiveFailureKind.WORKER_ERROR, "audio arrived while paused")
+                return
+            with self._account_lock:
+                total = self._queued_bytes + len(data)
+                if total > self._queue_cap_bytes:
+                    over = True
+                else:
+                    over = False
+                    self._queued_bytes = total
+            if over:
+                self._fail(
+                    LiveFailureKind.FELL_BEHIND,
+                    "queued audio exceeded the live transcription cap",
+                )
+                return
+            self._queue.put(bytes(data))
+        except Exception as exc:  # noqa: BLE001 - the tee must never raise
+            self._fail(LiveFailureKind.WORKER_ERROR, f"{type(exc).__name__}: {exc}")
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
+
+    def fail(self, detail: str) -> None:
+        """Flip the worker to failed (``worker_error``) from any thread
+        WITHOUT joining it — the tee's last resort. Never raises."""
+        try:
+            self._fail(LiveFailureKind.WORKER_ERROR, detail)
+        except Exception:  # noqa: BLE001, S110 - a failure record must not raise
+            pass
+
+    def seal(self) -> None:
+        """No more input. Cheap: the tail is transcribed on the worker and
+        collected by ``drain`` — never on the caller's thread."""
+        with self._state_lock:
+            if self._sealed:
+                return
+            self._sealed = True
+        self._queue.put(_LiveSeal())
+
+    def drain(self) -> LiveResult:
+        """Wait for the sealed worker to finish its tail and take its result.
+        Raises ``LiveTranscriptionFailed`` when the worker failed (or was
+        stopped) — the caller then runs the batch path with the reason."""
+        if not self._sealed:
+            raise LiveTranscriptionError("drain() requires seal() first")
+        thread = self._thread
+        if thread is not None:
+            thread.join()
+        failure = self._failure
+        if failure is not None:
+            raise LiveTranscriptionFailed(failure)
+        result = self._result
+        self._result = None
+        if result is None:
+            raise LiveTranscriptionFailed(
+                LiveFailure(LiveFailureKind.WORKER_ERROR, "the live worker produced no result")
+            )
+        return result
+
+    def stop(self, timeout: float | None = None) -> bool:
+        """Abandon: stop the worker, join it for at most ``timeout`` seconds
+        (default: the constructor's ``stop_timeout``) and drop every buffer.
+        Returns True only when the thread has exited and the buffers are
+        CONFIRMED cleared; False on a join timeout (a reported failure — the
+        worker clears them itself when its blocked call returns).
+        Idempotent; concurrent callers serialize."""
+        with self._stop_lock:
+            with self._post_lock:
+                self._stop_requested = True
+            self._queue.put(_LiveWake())
+            thread = self._thread
+            if thread is not None:
+                thread.join(timeout=self._stop_timeout if timeout is None else timeout)
+                if thread.is_alive():
+                    return False
+            self._result = None
+            self._clear_buffers()
+            return self.buffers_cleared
+
+    # --- failure -----------------------------------------------------------
+
+    def _fail(self, kind: LiveFailureKind, detail: str) -> None:
+        with self._state_lock:
+            if self._failure is not None:
+                return
+            self._failure = LiveFailure(kind, detail)
+        self._queue.put(_LiveWake())
+
+    # --- worker thread -------------------------------------------------------
+
+    def _run(self) -> None:
+        try:
+            if not self._load_models():
+                return
+            while self._failure is None and not self._stop_requested:
+                if not self._handle(self._queue.get()):
+                    return
+                if not self._drain_queue():
+                    return
+                if not self._process_ready():
+                    return
+                if self._seal_seen:
+                    self._result = self._build_result()
+                    return
+        except Exception as exc:  # noqa: BLE001 - surfaced through failed_reason
+            self._fail(LiveFailureKind.WORKER_ERROR, f"{type(exc).__name__}: {exc}")
+        finally:
+            self._exit_cleanup()
+
+    def _load_models(self) -> bool:
+        try:
+            vad = self._vad_factory()
+            provider = self._provider_factory()
+            embedder, profile = self._attribution_factory()
+            np = _numpy()  # the embedding stack is part of the live load
+        except Exception as exc:  # noqa: BLE001 - the C8 model-load reason
+            self._fail(LiveFailureKind.MODEL_LOAD, f"{type(exc).__name__}: {exc}")
+            return False
+        if (embedder is None) != (profile is None):
+            raise ValueError("speaker_embedder and enrolled_profile must be supplied together")
+        if embedder is not None and profile is not None and not profile.made_by(embedder):
+            raise ValueError("the enrolled profile was made by a different speaker embedder")
+        self._vad = vad
+        self._provider = provider
+        self._embedder = embedder
+        self._np = np
+        self._reference_unit = (
+            _unit_vector(profile.embedding, self._np) if profile is not None else None
+        )
+        self._resolved_model_name = self._model_name or getattr(
+            provider, "model_name", type(provider).__name__
+        )
+        self._reset_vad()
+        return self._failure is None and not self._stop_requested
+
+    def _reset_vad(self) -> None:
+        owner = getattr(self._vad, "__self__", None)
+        reset = getattr(owner, "reset", None)
+        if callable(reset):
+            reset()
+
+    def _handle(self, item: bytes | _LiveSeal | _LiveWake) -> bool:
+        """One queue item; False when the worker must exit."""
+        if self._failure is not None or self._stop_requested:
+            return False
+        if isinstance(item, _LiveWake):
+            return True
+        if isinstance(item, _LiveSeal):
+            if not self._seal_seen:
+                self._seal_seen = True
+                self._finalise_segments()
+            return True
+        with self._account_lock:
+            self._queued_bytes -= len(item)
+        if self._seal_seen:
+            return True  # never fed after seal; defensive
+        self._ingest(item)
+        return True
+
+    def _drain_queue(self) -> bool:
+        """Ingest queued items until the queue is empty OR a window is ready
+        (peer round 10 PR-LOW-022): a ready window is handed to
+        ``_process_ready`` BEFORE more chunks are ingested, so the retention
+        floor never sits on a deferred window while later audio piles up
+        behind it — the retained plaintext is at most the window in
+        progress, the open span and one chunk, whatever the producer's pace
+        (``_process_ready`` re-drains after every window)."""
+        while True:
+            if self._windows.ready:
+                return self._failure is None and not self._stop_requested
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                return self._failure is None and not self._stop_requested
+            if not self._handle(item):
+                return False
+
+    def _process_ready(self) -> bool:
+        while self._windows.ready:
+            if self._failure is not None or self._stop_requested:
+                return False
+            group = self._windows.ready.popleft()
+            behind = len(self._windows.ready)  # waiting behind the one in progress
+            # ``_sealed`` (requested), not ``_seal_seen`` (peer round 10
+            # PR-LOW-023): once Finish sealed, every remaining queued chunk
+            # is a finite tail already bounded by the queue cap — it drains
+            # in full and never counts as falling behind.
+            if not self._sealed and behind > self._max_windows_behind:
+                self._fail(
+                    LiveFailureKind.FELL_BEHIND,
+                    f"live transcription fell {behind} windows behind",
+                )
+                return False
+            self._transcribe_window(group)
+            self._trim()
+            if not self._drain_queue():
+                return False
+        return True
+
+    def _ingest(self, data: bytes) -> None:
+        self._pcm.extend(data)
+        self._audio_bytes += len(data)
+        while self._audio_bytes - self._framed_bytes >= FRAME_BYTES:
+            lo = self._framed_bytes - self._origin_bytes
+            self._framed_bytes += FRAME_BYTES
+            self._push_frame(bytes(self._pcm[lo : lo + FRAME_BYTES]))
+        self._trim()
+        # Peer round 9 PR-MED-018 / round 10 PR-LOW-022+023: the same
+        # windows-behind rule as the pop-time check, evaluated per ingested
+        # chunk. With ``_drain_queue`` yielding at the first ready window this
+        # is a DEFENSIVE bound — it can fire only when a single ingested chunk
+        # closes more than ``max_windows_behind + 1`` windows (an oversized
+        # chunk; the capture worker's are one second) — and it honours a
+        # requested seal like the pop-time check (a sealed tail drains in
+        # full). In practice a provider slower than the feed trips the
+        # queue cap in ``feed`` instead.
+        behind = len(self._windows.ready) - 1
+        if not self._sealed and behind > self._max_windows_behind:
+            self._fail(
+                LiveFailureKind.FELL_BEHIND,
+                f"live transcription fell {behind} windows behind",
+            )
+
+    def _push_frame(self, frame: bytes) -> None:
+        assert self._vad is not None
+        for segment in self._segmenter.push(self._vad(frame)):
+            self._windows.add(segment)
+        self._windows.tick(self._segmenter.retention_floor_seconds)
+
+    def _finalise_segments(self) -> None:
+        remainder = self._audio_bytes - self._framed_bytes
+        if remainder > 0:
+            lo = self._framed_bytes - self._origin_bytes
+            tail = bytes(self._pcm[lo : lo + remainder])
+            self._framed_bytes = self._audio_bytes
+            self._push_frame(tail + b"\0" * (FRAME_BYTES - remainder))
+        for segment in self._segmenter.finish():
+            self._windows.add(segment)
+        self._windows.flush()
+
+    def _trim(self) -> None:
+        floor = self._segmenter.retention_floor_seconds
+        window_floor = self._windows.retention_floor_seconds
+        if window_floor is not None:
+            floor = min(floor, window_floor)
+        floor_bytes = int(floor * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        drop = min(floor_bytes - self._origin_bytes, len(self._pcm))
+        if drop > 0:
+            del self._pcm[:drop]
+            self._origin_bytes += drop
+
+    def _slice(self, start_bytes: int, end_bytes: int) -> bytes:
+        if start_bytes < self._origin_bytes:
+            raise LiveTranscriptionError("live PCM retention floor moved past a window")
+        lo = start_bytes - self._origin_bytes
+        hi = min(end_bytes, self._audio_bytes) - self._origin_bytes
+        return bytes(self._pcm[lo:hi]) if hi > lo else b""
+
+    def _transcribe_window(self, group: list[SpeechSegment]) -> None:
+        """The batch loop's per-window body over the retained PCM."""
+        assert self._provider is not None
+        np = self._np
+        window = SpeechSegment(
+            start_seconds=group[0].start_seconds, end_seconds=group[-1].end_seconds
+        )
+        window_byte_start = int(window.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        window_byte_end = int(window.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        window_pcm = self._slice(window_byte_start, window_byte_end)
+        started = time.perf_counter()
+        raw_words = self._provider.transcribe_segment(window_pcm, SAMPLE_RATE)
+        self._window_timings.append(
+            (window.duration_seconds, time.perf_counter() - started)
+        )
+        per_segment_words = assign_words_to_segments(
+            raw_words, group, window_start_seconds=window.start_seconds
+        )
+        posted: list[TranscriptSegment] = []
+        for segment, seg_words in zip(group, per_segment_words, strict=True):
+            words = mark_words(
+                seg_words,
+                threshold=self._uncertainty_threshold,
+                offset_seconds=window.start_seconds,
+            )
+            self._marked.append((segment, words))
+            lo = int(segment.start_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE - window_byte_start
+            hi = int(segment.end_seconds * SAMPLE_RATE) * BYTES_PER_SAMPLE - window_byte_start
+            segment_pcm = window_pcm[lo:hi]
+            if segment_pcm:
+                self._embeddings.append(_segment_embedding(segment_pcm, np))
+            else:
+                self._saw_empty_segment = True
+            if self._embedder is not None and self._reference_unit is not None:
+                self._similarities.append(
+                    _cosine(self._embedder.embed(segment_pcm), self._reference_unit, np)
+                    if len(segment_pcm) >= MIN_ATTRIBUTION_PCM_BYTES
+                    else None
+                )
+            posted.append(
+                TranscriptSegment(
+                    start_seconds=segment.start_seconds,
+                    end_seconds=segment.end_seconds,
+                    speaker=LIVE_SPEAKER_PENDING,
+                    transcript_words=words,
+                )
+            )
+        self._post(tuple(posted))
+
+    def _post(self, segments: tuple[TranscriptSegment, ...]) -> None:
+        if self._on_window is None:
+            return
+        with self._post_lock:
+            if self._stop_requested:
+                return  # a late update after stop() is dropped
+            self._on_window(segments)
+
+    def _build_result(self) -> LiveResult:
+        result = LiveResult(
+            model_name=self._resolved_model_name,
+            marked_segments=tuple(self._marked),
+            embeddings=tuple(self._embeddings),
+            similarities=tuple(self._similarities),
+            saw_empty_segment=self._saw_empty_segment,
+            attributing=self._embedder is not None,
+            speaker_model_id=self._embedder.model_id if self._embedder is not None else None,
+            np=self._np,
+            window_timings=tuple(self._window_timings),
+        )
+        self._marked.clear()
+        self._embeddings.clear()
+        self._similarities.clear()
+        return result
+
+    def _exit_cleanup(self) -> None:
+        try:
+            self._reset_vad()
+        except Exception:  # noqa: BLE001, S110 - releasing anyway
+            pass
+        self._vad = None
+        self._provider = None
+        self._embedder = None
+        self._reference_unit = None
+        self._pcm = bytearray()
+        self._windows.clear()
+        with self._account_lock:
+            self._queued_bytes = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                break
+        if self._failure is not None or self._stop_requested:
+            self._result = None
+            self._clear_buffers()
+
+    def _clear_buffers(self) -> None:
+        self._pcm = bytearray()
+        self._marked.clear()
+        self._embeddings.clear()
+        self._similarities.clear()
+        self._window_timings.clear()
+        self._windows.clear()
+        with self._account_lock:
+            self._queued_bytes = 0
+        while True:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                return
+
+
 __all__ = [
     "CLINICAL_INITIAL_PROMPT",
     "DEFAULT_WHISPER_MODEL",
     "FALLBACK_WHISPER_MODEL",
+    "LIVE_CUT_SEARCH_SECONDS",
+    "LIVE_MAX_QUEUED_WINDOWS",
+    "LIVE_MAX_SEGMENT_SECONDS",
+    "LIVE_MAX_WINDOWS_BEHIND",
+    "LIVE_QUEUE_CAP_BYTES",
+    "LIVE_SPEAKER_PENDING",
+    "LIVE_STOP_TIMEOUT_SECONDS",
+    "LiveFailure",
+    "LiveFailureKind",
+    "LiveResult",
+    "LiveSegmenter",
+    "LiveTranscriber",
+    "LiveTranscriptionError",
+    "LiveTranscriptionFailed",
     "MIN_ATTRIBUTION_PCM_BYTES",
+    "MarkedSegment",
     "SPEAKER_1",
     "SPEAKER_2",
     "SPEAKER_3",
@@ -1344,6 +2324,7 @@ __all__ = [
     "TranscriptionError",
     "TranscriptionModelError",
     "WhisperSpeechProvider",
+    "assemble_transcript",
     "assign_words_to_segments",
     "attribute_speakers",
     "default_whisper_model_dir",

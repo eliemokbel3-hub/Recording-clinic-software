@@ -127,6 +127,12 @@ view patterns · tokens · microcopy.
   button-enabled flag cannot prevent a worker/GUI interleaving. Always offer a
   non-destructive escape (Cancel review and regenerate — keeps the queued transcript and
   key) alongside any destructive one (Delete note and complete without one).
+- **Live transcript is an append-only display under a header.** While recording, the
+  Transcript tab shows the header `Live — updates while recording` and appends each
+  transcribed window's lines (timestamps and `[word?]` marks, no speaker — attribution
+  runs only when the recording ends) into the SAME non-interactive box; Discard clears it
+  and the final transcript replaces it wholesale (`ui/transcript.py`, `ui/models.py`
+  `format_live_segments`; note-learning plan Task 1.4).
 
 ## Clinical-content rules (non-negotiable)
 The two clinical surfaces are deliberately ASYMMETRIC, and the rationale drives every

@@ -67,6 +67,16 @@ from scribe_desktop.session_store import (
     discard_session,
     wrap_key_to_file,
 )
+from scribe_desktop.transcription import LiveTranscriber
+
+# Note-learning plan D2: how long an IN-LOCK stop of the live worker waits
+# for its thread (``_fail_locked`` / retirement — paths that do NOT destroy
+# the key). Short on purpose: the controller lock is the GUI's state-poll
+# lock, and a worker blocked in a provider call cannot be interrupted. A
+# timeout leaves the worker ATTACHED (never counted as cleared) so a later
+# Discard retries with the full ``LIVE_STOP_TIMEOUT_SECONDS`` OUTSIDE the
+# lock before the key is destroyed.
+_LIVE_STOP_LOCKED_TIMEOUT_S: Final = 1.0
 
 
 class SessionState(enum.StrEnum):
@@ -106,6 +116,37 @@ TERMINAL_STATES: frozenset[SessionState] = frozenset(
 
 def _new_session_id() -> str:
     return uuid.uuid4().hex
+
+
+def _tee_sink(
+    store: SessionChunkStore, live_worker: LiveTranscriber | None
+) -> Callable[[bytes], int]:
+    """The capture sink (note-learning plan D1): the store's encrypting
+    write FIRST — the system of record, whose failure fails the session
+    exactly as today — then the SAME plaintext chunk to the live worker.
+    Two exception paths, deliberately different: the STORE's exception
+    (disk full) propagates out of the sink exactly as before the tee
+    existed — ``CaptureWorker._fail`` → ``_on_capture_failure`` → FAILED;
+    the WORKER's never does: ``feed`` fails the worker itself on any error,
+    and should it raise regardless, the worker is failed here (a chunk it
+    did not see would misalign its timeline, so it must not run on) and the
+    exception stops at this boundary. The store method is resolved PER CALL
+    (never a method bound at Start), so a store whose ``append_chunk`` is
+    replaced after Start — the disk-full test seam — still fails the
+    session. Callers: only ``CaptureWorker`` (its chunk loop and its two
+    flush sites)."""
+    if live_worker is None:
+        return lambda data: store.append_chunk(data)
+
+    def sink(data: bytes) -> int:
+        written = store.append_chunk(data)  # propagates: the session fails
+        try:
+            live_worker.feed(data)
+        except Exception as exc:  # noqa: BLE001 - the tee boundary
+            live_worker.fail(f"{type(exc).__name__}: {exc}")
+        return written
+
+    return sink
 
 
 def _utc_now() -> datetime:
@@ -256,6 +297,14 @@ class _LiveSession:
     # (both would race on the shared transcript temp path and a late writer
     # could mutate transcript.enc after Complete's verify).
     transcribing: bool = False
+    # Note-learning plan D2: the live transcription worker, on its OWN handle
+    # (never the ``transcribing`` flag). "Attached" means the controller owns
+    # its cleanup: whichever path leaves it here — a failure, retirement on
+    # start(), a Discard before the transcriber callable claims it — stops
+    # it and confirms its buffers cleared before any key destruction. The
+    # processing callable claims it through ``claim_live_transcriber`` under
+    # the ``transcribing`` guard, after which the callable owns it.
+    live_transcriber: LiveTranscriber | None = None
 
 
 class SessionController:
@@ -288,10 +337,16 @@ class SessionController:
         *,
         sessions_root: Path | None = None,
         logger: logging.Logger | None = None,
+        live_transcriber_factory: Callable[[], LiveTranscriber] | None = None,
     ) -> None:
         self._backend = backend
         self._root = sessions_root if sessions_root is not None else default_sessions_root()
         self._logger = logger
+        # Note-learning plan D1/D2: builds the live worker at start(); None
+        # keeps today's batch-only behaviour. Settable after construction
+        # (``set_live_transcriber_factory``) because the live view it posts
+        # to is built after the controller (``app.main`` → ``MainWindow``).
+        self._live_transcriber_factory = live_transcriber_factory
         self._lock = threading.RLock()
         self._live: _LiveSession | None = None
         # Task 6.3: the ONE in-flight note-generation lease. While held,
@@ -393,27 +448,41 @@ class SessionController:
             except OSError as exc:
                 raise StoreWriteError(f"failed creating session directory: {exc}") from exc
             store: SessionChunkStore | None = None
+            live_worker: LiveTranscriber | None = None
             try:
                 wrap_key_to_file(crypto, directory)  # key BEFORE first chunk
                 store = SessionChunkStore.create(
                     directory / AUDIO_FILENAME, crypto, session.session_id
                 )
                 chunk_store = store
+                if self._live_transcriber_factory is not None:
+                    # D1: the live worker is fed by a tee AFTER the store's
+                    # encrypting write; it holds no crypto and no store handle.
+                    # Started BEFORE the capture worker so the first chunk
+                    # finds it running (a feed before start fails it).
+                    live_worker = self._live_transcriber_factory()
+                    live_worker.start()
                 worker = CaptureWorker(
                     self._backend,
                     device_id,
-                    lambda data: chunk_store.append_chunk(data),
+                    _tee_sink(chunk_store, live_worker),
                     on_failure=self._on_capture_failure,
                 )
                 worker.start()
             except Exception:
                 # Nothing recoverable exists yet — clean up completely
                 # (key first) rather than leaving an empty orphan.
+                if live_worker is not None:
+                    # Under the lock: the short bound (nothing was fed yet, the
+                    # worker holds no plaintext; a load still in flight clears
+                    # itself on exit).
+                    live_worker.stop(timeout=_LIVE_STOP_LOCKED_TIMEOUT_S)
                 if store is not None:
                     store.close()
                 discard_session(directory, crypto)
                 raise
             live = _LiveSession(session, directory, crypto, store, worker)
+            live.live_transcriber = live_worker
             self._live = live
             self._transition_locked(live, SessionState.RECORDING)
             return live.session
@@ -425,8 +494,13 @@ class SessionController:
         with self._lock:
             live = self._require_state(SessionState.RECORDING)
             worker = live.worker
+            live_worker = live.live_transcriber
         if worker is not None:
             worker.pause()  # OUTSIDE the lock: barrier wait must not block callbacks
+        if live_worker is not None:
+            # D2: gate feeding only AFTER the capture barrier — every chunk
+            # enqueued before the pause has passed through the tee.
+            live_worker.pause()
         with self._lock:
             # PR-HIGH-001: operate on the SNAPSHOT taken under the first
             # lock — never re-fetch self._live, which a concurrent start()
@@ -440,6 +514,8 @@ class SessionController:
         with self._lock:
             self._refuse_while_enrolling("resume")
             live = self._require_state(SessionState.PAUSED)
+            if live.live_transcriber is not None:
+                live.live_transcriber.resume()  # BEFORE capture resumes (D2 gate)
             if live.worker is not None:
                 live.worker.resume()
             self._transition_locked(live, SessionState.RECORDING)
@@ -478,12 +554,44 @@ class SessionController:
                 if live.store is not None:
                     live.store.finish()
             except StoreWriteError:
-                self._fail_locked(live)
+                self._fail_locked(live)  # stops an attached live worker too
                 return live.session
             finally:
                 live.store = None
+            if live.live_transcriber is not None:
+                # D2: seal only — one queue sentinel, no drain here. The tail
+                # is transcribed by the worker and collected on the processing
+                # thread by the transcriber callable (``claim_live_transcriber``).
+                live.live_transcriber.seal()
             self._transition_locked(live, SessionState.PROCESSING)
             return live.session
+
+    def claim_live_transcriber(self) -> LiveTranscriber | None:
+        """Hand the sealed live worker to the transcriber callable (note-
+        learning plan Task 1.3). Legal ONLY inside a ``transcribe()`` run —
+        the session is PROCESSING with the ``transcribing`` flag set, so
+        Discard is already refused for the whole run (round 42 MED-003) and
+        no controller path can stop the worker underneath its owner. Detaches
+        it: from here the callable owns its drain, its release and its stop.
+        ``None`` when the session runs without a live worker (batch as today).
+        Any other state is a misuse and raises."""
+        with self._lock:
+            live = self._require_state(SessionState.PROCESSING)
+            if not live.transcribing:
+                raise SessionActivityError(
+                    "the live transcriber can be claimed only inside a transcription run"
+                )
+            worker = live.live_transcriber
+            live.live_transcriber = None
+            return worker
+
+    def set_live_transcriber_factory(
+        self, factory: Callable[[], LiveTranscriber] | None
+    ) -> None:
+        """Register (or clear) the live-worker factory ``start()`` uses. Takes
+        effect from the NEXT start; an active session keeps its worker."""
+        with self._lock:
+            self._live_transcriber_factory = factory
 
     def transcribe(
         self, transcriber: Callable[[Path, SessionCrypto], object]
@@ -597,6 +705,13 @@ class SessionController:
                     "a discard is completing; the session cannot be completed"
                 )
             live = self._require_state(SessionState.QUEUED)
+            # Round 7 MED-001: a live worker still attached at QUEUED (a
+            # transcriber callable that never claimed it — not the shipped
+            # one) holds plaintext products; stop it BEFORE the key goes —
+            # and (peer round 9 PR-MED-017) refuse, staying QUEUED, when it
+            # cannot be confirmed cleared.
+            if not self._stop_live_locked(live):
+                self._refuse_uncleared_live("complete")
             complete_session(live.directory, live.crypto)  # raises -> stays queued
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -632,6 +747,8 @@ class SessionController:
                     "a discard is completing; the session cannot be completed"
                 )
             live = self._require_state(SessionState.QUEUED)
+            if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
+                self._refuse_uncleared_live("complete-without-note")  # lease kept
             complete_session(live.directory, live.crypto, delete_note=True)  # raises -> lease kept
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -659,6 +776,8 @@ class SessionController:
                     "a discard is completing; the session cannot be completed"
                 )
             live = self._require_state(SessionState.QUEUED)
+            if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
+                self._refuse_uncleared_live("complete")
             complete_session(live.directory, live.crypto, delete_note=True)
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -692,6 +811,18 @@ class SessionController:
                     "transcription in progress; wait for it to finish or fail"
                 )
             worker = live.worker
+            # Note-learning plan D2 (attached-worker ownership): a live worker
+            # still attached here is UNCLAIMED — RECORDING, PAUSED, FAILED, or
+            # PROCESSING before the callable claimed it (the ``transcribing``
+            # guard above refuses the claimed case). It is stopped and joined
+            # in the unlocked window below, beside the capture worker's stop
+            # and under this discard's custody reservation, and its buffers
+            # are confirmed cleared BEFORE ``discard_session`` destroys the
+            # key. Outside the lock deliberately: the join is bounded by
+            # ``LIVE_STOP_TIMEOUT_SECONDS`` and the controller lock is the
+            # GUI's state-poll lock; the worker never calls back into the
+            # controller, so either placement is deadlock-free.
+            live_worker = live.live_transcriber
             session_id = live.session.session_id
             # Round 27 PR-MED-001 (target-aware since round 30): RESERVE the
             # custody transition BEFORE the lock is released. The entry-time
@@ -713,7 +844,30 @@ class SessionController:
         try:
             if worker is not None:
                 worker.stop(flush=False)  # OUTSIDE the lock; buffered audio dropped
+            live_cleared = True
+            if live_worker is not None:
+                # Plaintext buffers dropped BEFORE the key goes (C7). A join
+                # timeout is REPORTED below and REFUSES the deletion (peer
+                # round 9 PR-MED-017): the key stays, the session is routed to
+                # FAILED (its capture worker is already stopped, so RECORDING
+                # / PAUSED would be a lie; FAILED keeps key + chunks and Discard
+                # legal), and the next Discard retries the idempotent stop.
+                live_cleared = live_worker.stop()
             with self._lock:
+                if live_worker is not None:
+                    self._record_live_stop_locked(live, live_worker, live_cleared)
+                    if not live_cleared and live.session.state != SessionState.DISCARDED:
+                        live.worker = None
+                        if live.session.state in (
+                            SessionState.RECORDING,
+                            SessionState.PAUSED,
+                            SessionState.PROCESSING,
+                        ):
+                            if live.store is not None:
+                                live.store.close()
+                                live.store = None
+                            self._transition_locked(live, SessionState.FAILED)
+                        self._refuse_uncleared_live("discard")
                 # PR-HIGH-001: operate on the SNAPSHOT taken under the first
                 # lock. Re-fetching self._live here allowed a concurrent start()
                 # (legal for a queued/failed session) to install a NEW recording
@@ -1039,11 +1193,60 @@ class SessionController:
             )
 
     def _fail_locked(self, live: _LiveSession) -> None:
-        """Route to failed (RECOVERABLE): stop writing, keep key + chunks."""
+        """Route to failed (RECOVERABLE): stop writing, keep key + chunks.
+        An attached live worker is stopped too (D2 ownership) — the failed
+        session's plaintext must not keep being transcribed; the key is NOT
+        destroyed here, so the short in-lock bound is enough and a timeout
+        leaves it attached for Discard to retry (the ONE caller of the stop
+        helper that may ignore its verdict: no custody is destroyed here)."""
         if live.store is not None:
             live.store.close()
             live.store = None
+        self._stop_live_locked(live)
         self._transition_locked(live, SessionState.FAILED)
+
+    def _stop_live_locked(self, live: _LiveSession) -> bool:
+        """Call under ``self._lock``: stop an attached live worker with the
+        short in-lock bound; detach it only when its buffers are CONFIRMED
+        cleared. Returns True when nothing uncleared remains attached (no
+        worker, or cleared); False on a timeout, which keeps it attached —
+        every caller that would destroy custody next REFUSES on False
+        (peer round 9 PR-MED-017: fail closed, never "the key still goes")."""
+        worker = live.live_transcriber
+        if worker is None:
+            return True
+        cleared = worker.stop(timeout=_LIVE_STOP_LOCKED_TIMEOUT_S)
+        self._record_live_stop_locked(live, worker, cleared)
+        return cleared
+
+    def _record_live_stop_locked(
+        self, live: _LiveSession, worker: LiveTranscriber, cleared: bool
+    ) -> None:
+        """Call under ``self._lock``. Detach a cleared worker; keep an
+        uncleared one attached and log the timeout (no clinical content —
+        the session id and state only)."""
+        if cleared:
+            if live.live_transcriber is worker:
+                live.live_transcriber = None
+            return
+        if self._logger is not None:
+            log_event(
+                self._logger,
+                "live_transcriber_stop_timeout",
+                session_id=live.session.session_id,
+                session_state=live.session.state.value,
+            )
+
+    def _refuse_uncleared_live(self, operation: str) -> None:
+        """The PR-MED-017 refusal: a destructive custody step must not run
+        while a live worker may still hold plaintext. The worker is stopping
+        (its stop flag is set) and clears itself when its blocked provider
+        call returns; the caller keeps the key and the handle so the same
+        action can be retried and then succeeds."""
+        raise SessionActivityError(
+            f"{operation} refused: the live transcriber has not stopped yet; "
+            "the session is kept - try again in a moment"
+        )
 
     def _retire_locked(self, live: _LiveSession) -> None:
         """Drop the in-memory handle to a non-active session. On-disk state
@@ -1054,6 +1257,13 @@ class SessionController:
         # crypto a generation worker may hold, so the guard lives HERE too
         # rather than only on the callers that exist today.
         self._refuse_while_generating("session retirement")
+        # D2 ownership: a worker still attached to a retired session (its
+        # transcriber callable never ran or never claimed it) is stopped here
+        # FIRST; an uncleared one REFUSES the retirement (peer round 9
+        # PR-MED-017) — the handle and the in-memory crypto stay, the caller
+        # (start) raises, and the next start retries the idempotent stop.
+        if not self._stop_live_locked(live):
+            self._refuse_uncleared_live("start")
         if live.worker is not None:
             live.worker.stop(flush=False)
             live.worker = None

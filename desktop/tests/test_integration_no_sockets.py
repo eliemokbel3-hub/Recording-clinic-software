@@ -27,7 +27,15 @@ test covers the recorder mid-capture and mid-transcription):
 - transcription must SUCCEED with the Python socket layer stubbed to fail
   before any ML import (plan: Runtime offline enforcement — env
   kill-switches are the primary control; the stub proves behaviour when
-  the Python network stack is hard-down).
+  the Python network stack is hard-down);
+- (note-learning plan Task 1.5) the LIVE path: a recorder whose live worker
+  transcribes windows during capture is polled across that work, its
+  processing callable drains the worker without building a batch model,
+  and Complete follows; the crash-sim also runs with a live worker attached
+  at the kill, recovering through the unchanged batch path. The live leg is
+  mock-ML by design: the worker drives the SAME provider class the real-ML
+  leg already proves socketless, so a second real-ML leg would only re-run
+  that proof.
 
 Honest limits, recorded deliberately: polling samples the OS socket table,
 so a sufficiently short-lived connection could in principle dodge a poll
@@ -354,11 +362,14 @@ def _write_child(tmp_path: Path, name: str, code: str) -> Path:
 
 
 def _spawn_child(
-    script: Path, sessions_root: Path, stderr_path: Path
+    script: Path,
+    sessions_root: Path,
+    stderr_path: Path,
+    extra_args: tuple[str, ...] = (),
 ) -> tuple[subprocess.Popen[bytes], _PipeReader]:
     with stderr_path.open("wb") as stderr:
         proc = subprocess.Popen(
-            [sys.executable, str(script), str(sessions_root)],
+            [sys.executable, str(script), str(sessions_root), *extra_args],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=stderr,
@@ -553,6 +564,243 @@ def test_recorder_no_sockets_during_capture_and_transcription(tmp_path: Path) ->
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=15)  # PR round 30: reap before tmp_path cleanup
+
+
+# Child (note-learning plan Task 1.5): the LIVE path — a live worker attached
+# by the controller's factory transcribes a window WHILE chunks stream through
+# the tee (gated inside that provider call so the parent's polls provably
+# overlap live inference), then Finish seals, the processing callable drains
+# the worker (gated inside the tail window's call; no batch model may be
+# built: both composition-layer model classes are replaced with raisers) and
+# writes the transcript, and Complete runs the binding custody ordering.
+# Mock provider + amplitude VAD; numpy only (the worker embeds every segment).
+_LIVE_CAPTURE_CHILD = '''
+import math
+import struct
+import sys
+import threading
+import time
+from pathlib import Path
+
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+
+apply_offline_env()
+assert_offline_env()
+print("OFFLINE-OK", flush=True)
+
+from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.session import SessionController
+from scribe_desktop.session_store import (
+    KEY_FILENAME,
+    TRANSCRIPT_FILENAME,
+    unwrap_key_from_file,
+)
+from scribe_desktop.speech import SAMPLE_RATE, MockSpeechProvider
+from scribe_desktop.transcription import LiveTranscriber, read_transcript
+from scribe_desktop.ui import models
+
+root = Path(sys.argv[1])
+count = int(0.05 * SAMPLE_RATE)
+loud = struct.pack(
+    "<%dh" % count,
+    *(
+        int(0.5 * 32767 * math.sin(2 * math.pi * 440.0 * i / SAMPLE_RATE))
+        for i in range(count)
+    ),
+)
+quiet = bytes(count * 2)
+
+
+def amplitude_vad(frame):
+    samples = struct.unpack("<%dh" % (len(frame) // 2), frame)
+    return 0.95 if max(abs(s) for s in samples) > 1000 else 0.02
+
+
+posted = []
+
+
+class GatedLiveProvider:
+    """Delegates to MockSpeechProvider, but blocks INSIDE the live worker's
+    provider call: the first call (the window transcribed DURING capture)
+    until the parent's mid-inference polls are done, the second (the tail
+    window drained after Finish) until the parent's drain polls are done.
+    Both reads happen on the WORKER thread while the main thread is not
+    reading stdin (it reads FINISH only after LIVE-POSTED, and CONTINUE only
+    after the drain returned), so the two readers never overlap."""
+
+    def __init__(self):
+        self._inner = MockSpeechProvider()
+        self.calls = 0
+
+    def transcribe_segment(self, pcm, sample_rate):
+        self.calls += 1
+        if self.calls == 1:
+            print("MID-LIVE-TRANSCRIBE", flush=True)
+            line = sys.stdin.readline()
+            assert line.strip() == "GO", "parent gate broken: %r" % line
+        elif self.calls == 2:
+            print("MID-LIVE-DRAIN", flush=True)
+            line = sys.stdin.readline()
+            assert line.strip() == "GO2", "parent gate broken: %r" % line
+        return self._inner.transcribe_segment(pcm, sample_rate)
+
+
+gated = GatedLiveProvider()
+
+
+def live_factory():
+    return LiveTranscriber(
+        provider_factory=lambda: gated,
+        vad_factory=lambda: amplitude_vad,
+        on_window=posted.append,
+    )
+
+
+backend = MockCaptureBackend()
+controller = SessionController(
+    backend, sessions_root=root, live_transcriber_factory=live_factory
+)
+session = controller.start(0)
+stop = threading.Event()
+second_utterance = threading.Event()
+tone_blocks_fed = [0]
+
+
+def feed():
+    i = 0
+    while not stop.is_set():
+        # 0.6 s of tone then silence: ONE speech segment, transcribed LIVE
+        # once the silence proves its window complete (~4 s of audio in).
+        # After the first window posted, a CONTINUOUS tone: an utterance
+        # still open at Finish, so the drain has a tail window to transcribe.
+        if second_utterance.is_set():
+            backend.feed(loud)
+            tone_blocks_fed[0] += 1
+        else:
+            backend.feed(loud if i < 12 else quiet)
+        i += 1
+        time.sleep(0.02)
+
+
+feeder = threading.Thread(target=feed, daemon=True)
+feeder.start()
+print("CAPTURING %s" % session.session_id, flush=True)
+deadline = time.monotonic() + 60
+while not posted:
+    assert time.monotonic() < deadline, "the live worker posted no window"
+    time.sleep(0.02)
+second_utterance.set()
+# Deterministic tail: LIVE-POSTED (and so the parent's FINISH) is announced
+# only once the open second utterance holds a full second of tone (20 blocks
+# of 50 ms) — well past the segmenter's 0.25 s minimum speech length — so the
+# seal's close of that span ALWAYS yields a segment, a tail window and the
+# second (gated) provider call, whatever the parent's round-trip timing.
+while tone_blocks_fed[0] < 20:
+    assert time.monotonic() < deadline, "the second utterance was never fed"
+    time.sleep(0.02)
+print("LIVE-POSTED", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "FINISH", "parent gate broken: %r" % line
+stop.set()
+feeder.join(timeout=10.0)
+controller.finish()
+print("TRANSCRIBING", flush=True)
+
+
+class _NoBatchModel:
+    def __init__(self, *args, **kwargs):
+        raise AssertionError("the batch fallback must not build a model on the live path")
+
+
+models.SileroVad = _NoBatchModel
+models.WhisperSpeechProvider = _NoBatchModel
+statuses = []
+controller.transcribe(
+    models.build_transcriber(
+        attribution=lambda: (None, None),
+        live_source=controller.claim_live_transcriber,
+        on_status=statuses.append,
+    )
+)
+assert statuses == [models.LIVE_ASSEMBLED_STATUS], statuses
+assert gated.calls == 2, gated.calls  # one live window, one drained tail window
+session_dir = root / session.session_id
+recovered = unwrap_key_from_file(session_dir)
+document = read_transcript(session_dir, recovered)
+assert len(document.transcript_segments) == 2, "one live segment + the drained tail"
+assert len(document.transcript_segments) == sum(len(w) for w in posted)
+assert (session_dir / KEY_FILENAME).is_file()
+print("TRANSCRIBED", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
+completed = controller.complete()
+assert completed.state.value == "written"
+assert not (session_dir / KEY_FILENAME).exists(), "Complete must delete key custody"
+assert (session_dir / TRANSCRIPT_FILENAME).is_file(), "transcript artifact must remain"
+print("COMPLETED-OK", flush=True)
+'''
+
+
+def test_recorder_no_sockets_during_live_transcription(tmp_path: Path) -> None:
+    """Note-learning plan Task 1.5: the recorder keeps ZERO sockets while the
+    LIVE worker is provably INSIDE a provider call during capture (the child
+    blocks there on a gate while the parent polls and chunks keep arriving),
+    while the processing callable drains the sealed tail — provably inside
+    the tail window's provider call, no batch model built — and through
+    Complete (peer round 9 PR-LOW-021: every poll overlaps the phase it
+    claims to observe, on the batch leg's gate pattern)."""
+    pytest.importorskip("numpy")  # the live worker embeds every segment
+    script = _write_child(tmp_path, "live_capture_child.py", _LIVE_CAPTURE_CHILD)
+    root = tmp_path / "sessions"
+    stderr_path = tmp_path / "child-stderr.txt"
+    proc, reader = _spawn_child(script, root, stderr_path)
+    try:
+        _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 60)
+        capturing = _await_marker(reader, proc, stderr_path, "CAPTURING", 60)
+        session_id = capturing.split()[1]
+        assert (root / session_id / KEY_FILENAME).is_file()
+        ps = psutil.Process(proc.pid)
+        audio_path = root / session_id / AUDIO_FILENAME
+        # The child's live worker is blocked INSIDE its first provider call
+        # (a window transcribed DURING capture) until GO: the polls below
+        # overlap live inference, and the store must keep growing across them.
+        _await_marker(reader, proc, stderr_path, "MID-LIVE-TRANSCRIBE", 60)
+        size_before = audio_path.stat().st_size if audio_path.exists() else 0
+        _poll_no_connections(
+            proc, ps, reader, stderr_path, "recorder mid-capture inside live inference", polls=10
+        )
+        size_after = audio_path.stat().st_size if audio_path.exists() else 0
+        if size_after <= size_before:
+            raise _child_failure(
+                "no chunks were appended during the live inference poll window",
+                reader,
+                stderr_path,
+            )
+        _send(proc, reader, stderr_path, b"GO")
+        _await_marker(reader, proc, stderr_path, "LIVE-POSTED", 60)
+        _send(proc, reader, stderr_path, b"FINISH")
+        _await_marker(reader, proc, stderr_path, "TRANSCRIBING", 60)
+        # The sealed tail: the worker is blocked inside the tail window's
+        # provider call until GO2 while the processing callable waits in
+        # drain() — the polls overlap the drain.
+        _await_marker(reader, proc, stderr_path, "MID-LIVE-DRAIN", 60)
+        _poll_no_connections(
+            proc, ps, reader, stderr_path, "recorder inside the live tail drain", polls=10
+        )
+        _send(proc, reader, stderr_path, b"GO2")
+        _await_marker(reader, proc, stderr_path, "TRANSCRIBED", 60)
+        assert_no_connections(ps, "recorder after the live drain")
+        _send(proc, reader, stderr_path, b"CONTINUE")
+        _await_marker(reader, proc, stderr_path, "COMPLETED-OK", 60)
+        try:
+            assert_no_connections(ps, "recorder after Complete (live leg)")
+        except psutil.NoSuchProcess:
+            pass  # an exited process holds no sockets
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
 
 
 # Child: the REAL local ML stack under the same phase gates. The parent
@@ -759,8 +1007,25 @@ loud = struct.pack(
     ),
 )
 
+live_factory = None
+if len(sys.argv) > 2 and sys.argv[2] == "live":
+    # Note-learning plan Task 1.5: a live worker is attached at the crash.
+    from scribe_desktop.speech import MockSpeechProvider
+    from scribe_desktop.transcription import LiveTranscriber
+
+    def amplitude_vad(frame):
+        samples = struct.unpack("<%dh" % (len(frame) // 2), frame)
+        return 0.95 if max(abs(s) for s in samples) > 1000 else 0.02
+
+    def live_factory():
+        return LiveTranscriber(
+            provider_factory=MockSpeechProvider, vad_factory=lambda: amplitude_vad
+        )
+
 backend = MockCaptureBackend()
-controller = SessionController(backend, sessions_root=root)
+controller = SessionController(
+    backend, sessions_root=root, live_transcriber_factory=live_factory
+)
 session = controller.start(0)
 print("RECORDING %s" % session.session_id, flush=True)
 while True:
@@ -769,17 +1034,26 @@ while True:
 '''
 
 
+@pytest.mark.parametrize("with_live_worker", [False, True])
 def test_crash_kill_mid_recording_then_recover_transcribe_complete(
-    tmp_path: Path,
+    tmp_path: Path, with_live_worker: bool
 ) -> None:
     """Plan Step 13 crash-sim, END-TO-END: hard-kill a real recorder process
     mid-recording, then (as the restarted process) recover the session via
     DPAPI unwrap, re-transcribe the durable chunks, verify the transcript
-    decrypts, and drive the binding Complete custody ordering."""
+    decrypts, and drive the binding Complete custody ordering.
+
+    Note-learning plan Task 1.5: with a LIVE worker attached at the crash the
+    recovery path is the UNCHANGED batch one — the worker's in-memory state
+    died with the process and nothing of it exists on disk."""
+    if with_live_worker:
+        pytest.importorskip("numpy")
     script = _write_child(tmp_path, "crash_recorder_child.py", _CRASH_RECORDER_CHILD)
     root = tmp_path / "sessions"
     stderr_path = tmp_path / "child-stderr.txt"
-    proc, reader = _spawn_child(script, root, stderr_path)
+    proc, reader = _spawn_child(
+        script, root, stderr_path, extra_args=("live",) if with_live_worker else ()
+    )
     try:
         recording = _await_marker(reader, proc, stderr_path, "RECORDING", 60)
         session_id = recording.split()[1]

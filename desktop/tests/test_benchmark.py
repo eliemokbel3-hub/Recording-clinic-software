@@ -14,6 +14,7 @@ import pytest
 
 from scribe_desktop import benchmark
 from scribe_desktop.benchmark import (
+    LIVE_WINDOW_SECONDS,
     OFFLINE_ENV,
     RTF_MARGIN,
     RTF_REQUIRED,
@@ -24,6 +25,9 @@ from scribe_desktop.benchmark import (
     classify_rtf,
     compute_rtf,
     list_whisper_candidates,
+    live_keeps_up,
+    live_window_latency,
+    live_window_speed,
     threshold_report,
 )
 
@@ -98,6 +102,60 @@ class TestThresholdReport:
     def test_all_ok_report_has_no_warnings(self) -> None:
         text = "\n".join(threshold_report([_result(0.3, "small")]))
         assert "WARNING" not in text and "NOTE" not in text
+
+
+class TestLiveWindowLatency:
+    """Task 1.6: the panel projects each model's RTF onto one live window."""
+
+    def test_latency_and_speed_for_a_fast_model(self) -> None:
+        result = _result(0.5)
+        assert live_window_latency(result) == pytest.approx(15.0)
+        assert live_window_speed(result) == pytest.approx(2.0)
+
+    def test_latency_and_speed_for_a_slow_model(self) -> None:
+        result = _result(1.2)
+        assert live_window_latency(result) == pytest.approx(36.0)
+        assert live_window_speed(result) == pytest.approx(30.0 / 36.0)
+
+    def test_speed_rejects_zero_rtf(self) -> None:
+        with pytest.raises(ValueError):
+            live_window_speed(_result(0.0))
+
+    @pytest.mark.parametrize(
+        ("rtf", "expected"),
+        [(0.5, True), (0.9, True), (1.0, False), (1.2, False)],
+    )
+    def test_live_keeps_up_follows_the_rtf_bar(self, rtf: float, expected: bool) -> None:
+        assert live_keeps_up(_result(rtf)) is expected
+
+    def test_report_has_one_live_line_per_result(self) -> None:
+        lines = threshold_report([_result(0.5, "small"), _result(1.2, "medium")])
+        live_lines = [line for line in lines if "live window latency" in line]
+        assert len(live_lines) == 2
+        assert live_lines[0] == (
+            "small: live window latency 15.0 s per 30 s window (2.00x real time) "
+            "- live transcription keeps up on this machine"
+        )
+        assert live_lines[1] == (
+            "medium: live window latency 36.0 s per 30 s window (0.83x real time) "
+            "- live transcription would fall behind here; the recording is "
+            "transcribed after Finish instead"
+        )
+
+    def test_report_names_an_unmeasurable_zero_rtf_instead_of_failing(self) -> None:
+        """Round 7 LOW-004: a zero RTF is not a measurement; the panel says so
+        for that model and still renders every other line."""
+        lines = threshold_report([_result(0.0, "small"), _result(0.5, "medium")])
+        assert "small: live window latency not measurable (RTF 0)" in lines
+        assert any(line.startswith("medium: live window latency 15.0 s") for line in lines)
+
+    def test_window_seconds_pinned_to_the_live_transcriber(self) -> None:
+        # Imported HERE only: benchmark.py must not import transcription
+        # (transcription imports benchmark - that would be a cycle).
+        from scribe_desktop import transcription
+
+        assert LIVE_WINDOW_SECONDS == transcription.TRANSCRIBE_WINDOW_SECONDS
+        assert LIVE_WINDOW_SECONDS == transcription.LIVE_MAX_SEGMENT_SECONDS
 
 
 class TestOfflineEnv:

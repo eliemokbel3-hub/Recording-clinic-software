@@ -60,7 +60,11 @@ from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_co
 from scribe_desktop.note_fill import detect_prefill_candidates
 from scribe_desktop.session import GenerationLease
 from scribe_desktop.session_store import write_note
-from scribe_desktop.transcription import TranscriptDocument, segment_has_text
+from scribe_desktop.transcription import (
+    TranscriptDocument,
+    TranscriptSegment,
+    segment_has_text,
+)
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
 
@@ -85,6 +89,11 @@ class TranscriptScreen(QWidget):
     # main window can keep view swaps unreachable during generation (the
     # Task 6.3 residue guard).
     generation_active_changed = Signal(bool)
+    # Note-learning plan Task 1.4: one live window's segments
+    # (``tuple[TranscriptSegment, ...]``), emitted by ``post_live_window``
+    # from the LIVE WORKER's thread. A queued delivery — the slot runs on the
+    # GUI thread, which is the only thread that may touch the view.
+    live_window = Signal(object)
 
     def __init__(
         self,
@@ -133,11 +142,22 @@ class TranscriptScreen(QWidget):
         self._role_buttons: dict[str, QRadioButton] = {}
         self._role_group: QButtonGroup | None = None
         self._task: TaskThread | None = None
+        # Task 1.4: True between `begin_live_view` and `end_live_view` — a
+        # window posted outside that span is DROPPED (a late worker post must
+        # never append to a cleared or final view).
+        self._live_active: bool = False
+        self.live_window.connect(self._on_live_window)
 
         self.warning_label = QLabel()
         self.warning_label.setStyleSheet("color: #b00020; font-weight: bold;")
         self.warning_label.setWordWrap(True)
         self.warning_label.hide()
+
+        # Task 1.4 (Flow 1): the live view's header, above the SAME
+        # display-only transcript box. Shown only while recording.
+        self.live_header_label = QLabel(models.LIVE_TRANSCRIPT_HEADER)
+        self.live_header_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.live_header_label.hide()
 
         self.transcript_view = QPlainTextEdit()
         self.transcript_view.setReadOnly(True)
@@ -243,6 +263,7 @@ class TranscriptScreen(QWidget):
 
         layout = QVBoxLayout()
         layout.addWidget(self.warning_label)
+        layout.addWidget(self.live_header_label)
         layout.addWidget(self.transcript_view)
         layout.addWidget(self.legend_label)
         layout.addWidget(self.attribution_status_label)
@@ -251,6 +272,50 @@ class TranscriptScreen(QWidget):
         layout.addWidget(self.message_label)
         self.setLayout(layout)
         self._update_controls()
+
+    # --- Task 1.4: the live view -------------------------------------------
+
+    def post_live_window(self, segments: tuple[TranscriptSegment, ...]) -> None:
+        """Thread-safe entry point: the LIVE WORKER calls this from its own
+        thread. It only emits ``live_window`` — it must never touch a widget
+        (Qt widgets belong to the GUI thread); the slot does the rendering."""
+        self.live_window.emit(segments)
+
+    def begin_live_view(self) -> None:
+        """GUI thread, at Start: drop whatever the view held (its document,
+        custody callbacks and generation controls) and open the empty live
+        view under its header. The view stays ``NoTextInteraction`` — the
+        display-only rule is the same surface, live or final."""
+        self._clear()
+        self._live_active = True
+        self.transcript_view.setPlaceholderText(models.LIVE_TRANSCRIPT_PLACEHOLDER)
+        self.transcript_view.setPlainText("")
+        self.live_header_label.show()
+        self.message_label.setText("")
+
+    def _on_live_window(self, payload: object) -> None:
+        """GUI thread: append one window's lines. A post that arrives after
+        the live view closed (Discard, or the final document) is DROPPED."""
+        if not self._live_active:
+            return
+        assert isinstance(payload, tuple)
+        for line in models.format_live_segments(payload):
+            self.transcript_view.appendPlainText(line)
+
+    def end_live_view(self) -> None:
+        """Close the live view (idempotent): no further post is rendered and
+        the header goes away. The lines themselves stay — the final document
+        overwrites them wholesale."""
+        self._live_active = False
+        self.live_header_label.hide()
+        self.transcript_view.setPlaceholderText("No transcript loaded.")
+
+    def clear_live_view(self) -> None:
+        """Discard DURING a recording (the Session screen's Discard): close
+        the live view and drop its lines. The Transcript screen's own Discard
+        already clears through ``_clear``."""
+        self.end_live_view()
+        self._clear()
 
     # --- loading -----------------------------------------------------------
 
@@ -272,6 +337,10 @@ class TranscriptScreen(QWidget):
         sessions share this one view. ``can_generate`` shows the Task 7.5
         generation controls — LIVE sessions only (the scoped generation op
         needs a QUEUED controller session)."""
+        # Task 1.4: the final document REPLACES the live lines wholesale —
+        # close the live view first so the header is gone and no in-flight
+        # post can append after `setPlainText` below.
+        self.end_live_view()
         self._reset_generation_state()
         self._on_complete = on_complete
         self._on_discard = on_discard
@@ -473,6 +542,9 @@ class TranscriptScreen(QWidget):
     def _clear(self) -> None:
         self._on_complete = None
         self._on_discard = None
+        # Task 1.4 (idempotent): Complete/Discard of a queued session must
+        # never leave the live header behind.
+        self.end_live_view()
         self.transcript_view.setPlainText("")
         self.warning_label.hide()
         self.attribution_status_label.hide()

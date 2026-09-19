@@ -126,6 +126,36 @@ class TestFormatTranscript:
     def test_empty_document_renders_placeholder(self) -> None:
         assert models.format_transcript_text(_document(())) == "(no speech detected)"
 
+    def test_format_live_segments_matches_the_document_rendering_minus_speakers(
+        self,
+    ) -> None:
+        """Note-learning plan Task 1.4: the live view shares the span and
+        [word?] rendering with the final document (one private helper each)
+        and differs ONLY by dropping the speaker label."""
+        segments = (
+            TranscriptSegment(
+                start_seconds=0.0,
+                end_seconds=61.0,
+                speaker="speaker_1",
+                transcript_words=(
+                    _word("Hello"),
+                    _word("Margaret", uncertain=True),
+                ),
+            ),
+            TranscriptSegment(
+                start_seconds=62.0,
+                end_seconds=65.0,
+                speaker="speaker_1",
+                transcript_words=(_word("Yes"),),
+            ),
+        )
+        document_lines = models.format_transcript_text(_document(segments)).splitlines()
+        live_lines = models.format_live_segments(segments)
+        assert live_lines == [line.replace(" speaker_1:", "") for line in document_lines]
+        assert live_lines[0] == "[00:00-01:01] Hello [Margaret?]"
+        # The shared helpers left the document rendering byte-identical.
+        assert models.format_transcript_text(_document(())) == "(no speech detected)"
+
     def test_timestamp_formatting(self) -> None:
         assert models.format_timestamp(0.0) == "00:00"
         assert models.format_timestamp(59.9) == "00:59"

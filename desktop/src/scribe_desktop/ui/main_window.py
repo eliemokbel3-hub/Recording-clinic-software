@@ -28,7 +28,11 @@ from scribe_desktop.session import (
     SessionState,
 )
 from scribe_desktop.status import read_registration_status, run_self_test
-from scribe_desktop.transcription import RecoveryOutcome, TranscriptDocument
+from scribe_desktop.transcription import (
+    LiveTranscriber,
+    RecoveryOutcome,
+    TranscriptDocument,
+)
 from scribe_desktop.ui import models
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
@@ -81,7 +85,8 @@ class MainWindow(QMainWindow):
         benchmark_runner: Callable[[], list[BenchmarkResult]] | None = None,
         transcriber_factory: Callable[
             [], Callable[[Path, SessionCrypto], TranscriptDocument]
-        ] = models.build_transcriber,
+        ]
+        | None = None,
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
         profile_root: Path | None = None,
         config_root: Path | None = None,
@@ -108,7 +113,11 @@ class MainWindow(QMainWindow):
         self.session_screen = SessionScreen(
             controller,
             device_provider=self.microphone_screen.selected_device_id,
-            transcriber_factory=transcriber_factory,
+            transcriber_factory=(
+                transcriber_factory
+                if transcriber_factory is not None
+                else self._live_aware_transcriber
+            ),
         )
         self.recovery_screen = RecoveryScreen(
             sessions_root,
@@ -167,6 +176,16 @@ class MainWindow(QMainWindow):
         # consults this blocker; the reverse refusal (the benchmark while
         # enrolling) lives in `MicrophoneScreen.on_run_benchmark`.
         controller.set_enrolment_blocker(self._enrolment_blocker)
+        # Note-learning plan Task 1.4: the live worker's factory, registered here
+        # because the live view is a screen this window owns.
+        controller.set_live_transcriber_factory(self._build_live_transcriber)
+        # The live view opens on a SUCCESSFUL Start (round 7 LOW-003) and
+        # closes on the Session screen's Discard. `session_started` is emitted
+        # synchronously inside `on_start`, before the GUI thread returns to
+        # its event loop, so it always precedes the delivery of the worker's
+        # first queued `live_window` post.
+        self.session_screen.session_started.connect(self.transcript_screen.begin_live_view)
+        self.session_screen.session_discarded.connect(self.transcript_screen.clear_live_view)
         # D10: first run asks, never blocks — with no profile the tab is
         # selected and its banner shown; every other screen works as today.
         if not self.practitioner_screen.profile_present:
@@ -187,6 +206,23 @@ class MainWindow(QMainWindow):
         )
 
     # --- routing -----------------------------------------------------------
+
+    def _live_aware_transcriber(self) -> Callable[[Path, SessionCrypto], TranscriptDocument]:
+        """The default transcriber factory (note-learning plan Task 1.3):
+        the real ML stack, claiming the sealed live worker from the
+        controller INSIDE the run and reporting the live outcome to the
+        Session screen. Built per Finish, so the controller is consulted at
+        run time, never at construction."""
+        return models.build_transcriber(
+            live_source=self._controller.claim_live_transcriber,
+            on_status=self.session_screen.report_live_status,
+        )
+
+    def _build_live_transcriber(self) -> LiveTranscriber:
+        """The controller calls this on the GUI thread inside ``start()``:
+        build the worker whose posts the Transcript screen renders. It only
+        builds — the view opens on ``session_started`` (round 7 LOW-003)."""
+        return models.build_live_transcriber(on_window=self.transcript_screen.post_live_window)
 
     def _enrolment_blocker(self) -> str | None:
         """The activity `begin_enrolment` cannot see for itself (D15): a
