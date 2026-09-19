@@ -95,10 +95,12 @@ What each check claims — and, recorded with equal care, what it does NOT:
   re-verified against the transcript with ``note_fill``'s OWN matcher, the
   single matching source, so a legitimately-fired rule can never be flagged
   absent by a divergent re-implementation), ``clinician_asserted`` (review,
-  unsuppressible — every non-``transcript`` assertion draws it, a typed
-  ``clinician`` line included; the note-learning plan's D5 exemption for
-  ``decided_by="config"`` lines is its Task 2.4, not built here;
-  acknowledgement being the exit), ``mapping_drop`` (review, NOT error —
+  unsuppressible — every non-``transcript`` assertion the CLINICIAN decided
+  draws it, a typed ``clinician`` line included; a line the practitioner's
+  own config pre-filled, ``decided_by="config"``, is exempt because the
+  counted Save that shows it marked is its acknowledgement — the
+  note-learning plan's D5, Task 2.4; acknowledgement being the exit for the
+  rest), ``mapping_drop`` (review, NOT error —
   emitted by ``note_config.mapping_drop_warnings``, the single source; an
   error grade would be unclearable and deadlock Complete), and
   ``role_unconfirmed`` (error — a clinician-owned section populated without
@@ -1330,18 +1332,24 @@ def provenance_warnings(
         for assertion in section.note_assertions:
             if assertion.provenance == "transcript":
                 continue
-            # Every authored line draws the review — autofill, prefill and a
-            # typed ``clinician`` line (schema v2) alike. The note-learning
-            # plan's D5 exemption for ``decided_by="config"`` lines is its
-            # Task 2.4; nothing here reads ``decided_by`` yet.
-            warnings.append(
-                NoteWarning(
-                    note_warning_code="clinician_asserted",
-                    severity="review",
-                    section_key=section.section_key,
-                    assertion_id=assertion.assertion_id,
+            decision = assertion.confirmation
+            if decision is None or decision.decided_by != "config":
+                # Every authored line the CLINICIAN decided draws the review —
+                # autofill, prefill and a typed ``clinician`` line alike. A
+                # line the practitioner's OWN config pre-filled
+                # (``decided_by="config"``, note-learning plan D5 / Task 2.4)
+                # is exempt: the counted Save that shows it marked is its
+                # acknowledgement, and the type already pins the decision's
+                # digest to the assertion's. Every other check below and in
+                # this module still runs on it.
+                warnings.append(
+                    NoteWarning(
+                        note_warning_code="clinician_asserted",
+                        severity="review",
+                        section_key=section.section_key,
+                        assertion_id=assertion.assertion_id,
+                    )
                 )
-            )
             if assertion.provenance != "autofill":
                 continue
             rule = _rule_for_assertion(resolved, assertion, note.session_id)

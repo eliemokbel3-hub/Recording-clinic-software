@@ -117,6 +117,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import unicodedata
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -1283,6 +1284,25 @@ RECENTLY_LEARNED_LIMIT: Final = 20
 # (``decided_by="config"``) after this many unchanged confirmations; a Remove
 # resets the count. The counting itself is that plan's Phase 2.
 LEARNED_RULE_AUTO_CONFIRM_AFTER: Final = 3
+# Learned RULES (note-learning-and-styles plan Phase 2, D5 / D11). A rule
+# learned from a typed edit is an ordinary ``AutofillRule`` in the user
+# ``autofill_rules.json`` whose id carries this prefix — the ONE way a learned
+# rule is told from a hand-authored one — with its metadata in a sidecar the
+# loader never reads. A trigger is the practitioner's OWN utterance reduced to
+# at most this many content tokens (and at least ``LEARNED_PHRASE_MIN_TOKENS``,
+# as a cue phrase is: one token would fire on almost every consultation).
+LEARNED_RULES_SIDECAR_FILENAME: Final = "autofill_rules.learned.json"
+LEARNED_RULE_ID_PREFIX: Final = "learned-"
+LEARNED_TRIGGER_MAX_TOKENS: Final = 6
+# Trailing discourse tokens dropped from the END of an utterance before its
+# trigger is taken (a heuristic on what is learned, NOT a control: the
+# review-later list with delete is the control). Listed forms only; a form
+# not listed simply stays in the trigger.
+_TRIGGER_TRAILING_DISCOURSE: Final[frozenset[str]] = frozenset(
+    {"now", "ok", "okay", "then", "alright", "right", "there", "yeah", "please"}
+)
+# Crockford base32 — the ULID alphabet (no I, L, O, U).
+_ULID_ALPHABET: Final = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 # The dose-unit rule looks this many raw words past the candidate's last word.
 _UNIT_WINDOW: Final = 2
 
@@ -1765,6 +1785,544 @@ def delete_user_cue(phrase: str, *, config_root: Path | None = None) -> bool:
     if sidecar_changed:
         _write_config_file(root, LEARNED_SIDECAR_FILENAME, _serialise_sidecar(sidecar_kept))
     return cue_changed or matched_in_sidecar
+
+
+# ---------------------------------------------------------------------------
+# Learned RULES (note-learning-and-styles plan Phase 2, Task 2.2; D5, D11).
+#
+# A rule learned from a typed edit is an ORDINARY ``AutofillRule`` in the
+# user ``autofill_rules.json`` — the loader, the emitter and Check 3 treat it
+# exactly as a hand-authored rule — recognisable only by its
+# ``LEARNED_RULE_ID_PREFIX`` id, with its metadata (learned date, confirmation
+# count, the auto-confirm flag, the wording history) in the sidecar
+# ``autofill_rules.learned.json`` that the loader never reads. Every write
+# here follows the cue learner's discipline: the candidate is validated as an
+# ``AutofillRule`` and the EXACT bytes to be written are validated by the
+# loader's own rules BEFORE anything is written (C6 — a bad candidate can
+# never reach disk and loading can never break), one active expansion per
+# normalised trigger is kept by the duplicate check here and by the loader's
+# validator, and nothing is written except on the Note tab's Save.
+# ---------------------------------------------------------------------------
+
+
+def propose_rule_trigger(word_texts: Sequence[str]) -> LearningCandidate | None:
+    """The trigger candidate for the practitioner's utterance behind a typed
+    edit (D11): its LAST content tokens — at most
+    ``LEARNED_TRIGGER_MAX_TOKENS`` once trailing discourse tokens
+    (``_TRIGGER_TRAILING_DISCOURSE``) are dropped — and None when fewer than
+    ``LEARNED_PHRASE_MIN_TOKENS`` remain. The tail rather than the head
+    because clinical speech carries its discourse at the front ("ok we'll put
+    a crack into the neck now" -> "put a crack into the neck"), and the
+    router matches a trigger as a contiguous run ANYWHERE in a segment, so a
+    tail trigger fires on the next such utterance however it opens. Same
+    admission as ``propose_learning_phrase``: each word is admitted or dropped
+    by ``content_tokens`` itself; ``first_in_segment`` is True only when the
+    first chosen word is the utterance's real first word (the refusal
+    filter's opener exemption is defined for that position only);
+    ``following`` holds the raw words after the last chosen one (the
+    dose-unit window). A heuristic on WHAT is learned, never a control: the
+    refusal filter admits or refuses the words, and the review-later list
+    with delete is the control over what stays."""
+    chosen: list[tuple[int, str, str]] = []
+    for index, raw in enumerate(word_texts):
+        tokens = content_tokens(raw)
+        if tokens:
+            chosen.append((index, raw, tokens[0]))
+    while chosen and chosen[-1][2] in _TRIGGER_TRAILING_DISCOURSE:
+        chosen.pop()
+    chosen = chosen[-LEARNED_TRIGGER_MAX_TOKENS:]
+    if len(chosen) < LEARNED_PHRASE_MIN_TOKENS:
+        return None
+    first_index = chosen[0][0]
+    last_index = chosen[-1][0]
+    return LearningCandidate(
+        phrase=" ".join(token for _, _, token in chosen),
+        source_words=tuple(raw for _, raw, _ in chosen),
+        first_in_segment=first_index == 0,
+        following=tuple(word_texts[last_index + 1 : last_index + 1 + _UNIT_WINDOW]),
+    )
+
+
+def new_learned_rule_id(*, now: datetime | None = None) -> str:
+    """``learned-<ULID>``: the prefix that marks a learned rule plus a
+    26-character Crockford-base32 ULID (48-bit millisecond timestamp, 80
+    random bits) — inside ``_ID_PATTERN`` and sortable by learning time."""
+    stamp = now if now is not None else datetime.now(UTC)
+    value = (int(stamp.timestamp() * 1000) << 80) | int.from_bytes(secrets.token_bytes(10), "big")
+    chars: list[str] = []
+    for _ in range(26):
+        chars.append(_ULID_ALPHABET[value & 31])
+        value >>= 5
+    return LEARNED_RULE_ID_PREFIX + "".join(reversed(chars))
+
+
+def is_learned_rule_id(rule_id: str) -> bool:
+    """The ONE test that tells a learned rule from a hand-authored one."""
+    return rule_id.startswith(LEARNED_RULE_ID_PREFIX)
+
+
+class LearnedRuleHistoryEntry(BaseModel):
+    """One in-place correction of a learned rule's wording (D5): when, and
+    the expansion it replaced."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    replaced_at: datetime
+    previous_expansion: tuple[str, ...] = Field(min_length=1)
+
+    @field_validator("replaced_at")
+    @classmethod
+    def _replaced_at_aware(cls, value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class LearnedRuleEntry(BaseModel):
+    """One learned rule's sidecar record: when it was learned, where its
+    trigger came from, how many UNCHANGED confirmations it has, whether its
+    lines now arrive pre-filled, and every wording it has had before."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    learned_at: datetime
+    trigger_source: Literal["typed_edit"] = "typed_edit"
+    confirmations: int = Field(default=0, ge=0)
+    auto_confirmed: bool = False
+    history: tuple[LearnedRuleHistoryEntry, ...] = ()
+
+    @field_validator("learned_at")
+    @classmethod
+    def _learned_at_aware(cls, value: datetime) -> datetime:
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
+class LearnedRulesSidecarFile(BaseModel):
+    """On-disk shape of ``autofill_rules.learned.json``: ``{"schema_version":
+    1, "entries": {<rule_id>: LearnedRuleEntry}}``. Written by the learner,
+    read by the emitter (auto-confirm state) and the Practitioner tab — never
+    by the loader, so it can never affect the config digest."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    entries: Mapping[str, LearnedRuleEntry] = {}
+
+
+class LearnedRuleCandidate(NamedTuple):
+    """What the Note tab queues from one typed edit: the section, the trigger
+    (the utterance's tail, normalised — ``propose_rule_trigger``) and the
+    wording the practitioner typed. ``typed_wording`` is a tripwire
+    signature: a rendering of this tuple never reaches a log line (C9)."""
+
+    section_key: NoteSectionKey
+    trigger_phrase: str
+    typed_wording: str
+
+
+class LearnedRule(NamedTuple):
+    """One learned rule as the Practitioner tab lists it. ``learned_at`` is
+    None for a rule whose sidecar record is missing (it is listed, undated,
+    and can be deleted); such a rule never auto-confirms — the safe direction."""
+
+    rule_id: str
+    section_key: NoteSectionKey
+    trigger_phrase: str
+    typed_wording: tuple[str, ...]
+    learned_at: datetime | None
+    confirmations: int
+    auto_confirmed: bool
+
+
+class LearnedRules(NamedTuple):
+    """The most recent ``RECENTLY_LEARNED_LIMIT`` learned rules, newest
+    first, and every learned rule grouped by section in canonical order."""
+
+    recent: tuple[LearnedRule, ...]
+    by_section: tuple[tuple[NoteSectionKey, tuple[LearnedRule, ...]], ...]
+
+
+class AppendedRules(NamedTuple):
+    """``append_learned_rules``'s report: what was written, what was skipped
+    (``(candidate, reason)`` — ``duplicate`` for a trigger already held by a
+    rule, or ``invalid: <why>`` when the candidate is not a valid rule) and,
+    as for cues, a sidecar write that failed AFTER the rules file was
+    replaced (the rules ARE learned; listed undated)."""
+
+    added: tuple[LearnedRule, ...]
+    skipped: tuple[tuple[LearnedRuleCandidate, str], ...]
+    sidecar_error: str | None = None
+
+
+class ReplacedRule(NamedTuple):
+    """``replace_learned_rule_wording``'s report. ``replaced`` False with a
+    ``reason`` when nothing was written: the id is not a learned rule in the
+    user file, or the wording is not a valid single assertion."""
+
+    replaced: bool
+    reason: str | None = None
+    rules_file_error: str | None = None
+
+
+RuleOutcome = Literal["confirmed", "removed"]
+
+
+class RuleOutcomeReport(NamedTuple):
+    """``record_rule_outcomes``'s report: the rules that just crossed the
+    auto-confirm threshold, the ones reset to proposing, and — peer round 14
+    PR-LOW-024 — EVERY rule whose record was written (an ordinary 0→1 or
+    1→2 increment included), so a caller that refreshes a listing refreshes
+    on what was persisted, not only on the two events."""
+
+    auto_confirmed: tuple[str, ...]
+    demoted: tuple[str, ...]
+    updated: tuple[str, ...] = ()
+
+
+def _current_rules_file(root: Path) -> tuple[AutofillRulesFile, str]:
+    blob, source = _read_config_blob(root, AUTOFILL_RULES_FILENAME)
+    return _parse_config_blob(AutofillRulesFile, blob, AUTOFILL_RULES_FILENAME, source), source
+
+
+def _serialise_rules_file(rules: Sequence[AutofillRule]) -> bytes:
+    payload = {
+        "schema_version": 1,
+        "autofill_rules": [rule.model_dump(mode="json") for rule in rules],
+    }
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _validate_rules_bytes(blob: bytes) -> None:
+    """The loader's two validations over the EXACT bytes about to be written
+    — the file model, then the resolved-config rule (one rule per normalised
+    trigger) — so a failure leaves the file on disk untouched."""
+    parsed = _parse_config_blob(AutofillRulesFile, blob, AUTOFILL_RULES_FILENAME, "learned")
+    try:
+        NoteConfig(autofill_rules=parsed.autofill_rules)
+    except ValidationError as exc:
+        raise NoteConfigInvalidError(
+            f"learned {AUTOFILL_RULES_FILENAME} would not resolve: {exc}"
+        ) from exc
+
+
+def _read_rules_sidecar(root: Path) -> dict[str, LearnedRuleEntry]:
+    path = root / LEARNED_RULES_SIDECAR_FILENAME
+    try:
+        blob = path.read_bytes()
+    except FileNotFoundError:
+        return {}
+    except OSError as exc:
+        raise NoteConfigUnreadableError(
+            f"user {LEARNED_RULES_SIDECAR_FILENAME} unreadable: {exc}"
+        ) from exc
+    parsed = _parse_config_blob(
+        LearnedRulesSidecarFile, blob, LEARNED_RULES_SIDECAR_FILENAME, "user"
+    )
+    return dict(parsed.entries)
+
+
+def _serialise_rules_sidecar(entries: Mapping[str, LearnedRuleEntry]) -> bytes:
+    payload = {
+        "schema_version": 1,
+        "entries": {
+            rule_id: entry.model_dump(mode="json") for rule_id, entry in sorted(entries.items())
+        },
+    }
+    return (json.dumps(payload, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def _first_error_message(exc: ValidationError) -> str:
+    errors = exc.errors()
+    return str(errors[0]["msg"]) if errors else str(exc)
+
+
+def _build_learned_rule(
+    rule_id: str, section_key: NoteSectionKey, trigger_phrase: str, typed_wording: str
+) -> AutofillRule | str:
+    """The validated ``AutofillRule`` a learned rule is, or the reason it is
+    not one — the typed wording is one expansion entry, so it must be one
+    atomic assertion under the same authoring rules a hand-written entry
+    meets (a bare string; the ``single_claim`` override is a statement an
+    author writes in the file, never something this app grants itself)."""
+    try:
+        return AutofillRule(
+            rule_id=rule_id,
+            section_key=section_key,
+            trigger_phrase=trigger_phrase,
+            expansion=(typed_wording,),
+        )
+    except ValidationError as exc:
+        return _first_error_message(exc)
+
+
+def _listed(rule: AutofillRule, entry: LearnedRuleEntry | None) -> LearnedRule:
+    return LearnedRule(
+        rule_id=rule.rule_id,
+        section_key=rule.section_key,
+        trigger_phrase=rule.trigger_phrase,
+        typed_wording=rule.expansion_texts(),
+        learned_at=entry.learned_at if entry is not None else None,
+        confirmations=entry.confirmations if entry is not None else 0,
+        auto_confirmed=entry.auto_confirmed if entry is not None else False,
+    )
+
+
+def append_learned_rules(
+    candidates: Sequence[LearnedRuleCandidate],
+    *,
+    config_root: Path | None = None,
+    learned_at: datetime,
+) -> AppendedRules:
+    """Append learned rules to the user ``autofill_rules.json`` (Task 2.2),
+    mirroring ``append_user_cues``: the file is read through the loader's
+    own precedence (the user file, or the shipped default — empty — which
+    then becomes the user file); each candidate is validated as an
+    ``AutofillRule`` under a fresh ``learned-<ulid>`` id and checked against
+    the triggers ALREADY held (``known``, under the loader's normalisation)
+    BEFORE anything is written — an invalid candidate or a duplicate trigger
+    is skipped and reported, never written and never a second rule under one
+    trigger (D5); the exact bytes are validated by the loader's rules; the
+    rules file is replaced atomically first, then the sidecar — a sidecar
+    failure after the rules write is RETURNED as ``sidecar_error``, because
+    the rules are on disk. Nothing is written when no rule is added."""
+    root = config_root if config_root is not None else default_config_root()
+    current, _source = _current_rules_file(root)
+    rules = list(current.autofill_rules)
+    known: dict[tuple[str, ...], str] = {
+        content_tokens(rule.trigger_phrase): rule.rule_id for rule in rules
+    }
+    ids = {rule.rule_id for rule in rules}
+    added: list[LearnedRule] = []
+    skipped: list[tuple[LearnedRuleCandidate, str]] = []
+    for candidate in candidates:
+        tokens = content_tokens(candidate.trigger_phrase)
+        if tokens in known:
+            skipped.append((candidate, "duplicate"))
+            continue
+        rule_id = new_learned_rule_id(now=learned_at)
+        while rule_id in ids:  # 80 random bits: a formality, kept for honesty
+            rule_id = new_learned_rule_id(now=learned_at)
+        built = _build_learned_rule(
+            rule_id, candidate.section_key, candidate.trigger_phrase, candidate.typed_wording
+        )
+        if isinstance(built, str):
+            skipped.append((candidate, f"invalid: {built}"))
+            continue
+        rules.append(built)
+        known[tokens] = rule_id
+        ids.add(rule_id)
+        added.append(_listed(built, LearnedRuleEntry(learned_at=learned_at)))
+    if not added:
+        return AppendedRules((), tuple(skipped))
+    blob = _serialise_rules_file(rules)
+    _validate_rules_bytes(blob)
+    sidecar = _read_rules_sidecar(root)
+    for rule in added:
+        sidecar[rule.rule_id] = LearnedRuleEntry(learned_at=learned_at)
+    sidecar_blob = _serialise_rules_sidecar(sidecar)
+    _write_config_file(root, AUTOFILL_RULES_FILENAME, blob)
+    try:
+        _write_config_file(root, LEARNED_RULES_SIDECAR_FILENAME, sidecar_blob)
+    except NoteConfigWriteError as exc:
+        return AppendedRules(tuple(added), tuple(skipped), sidecar_error=str(exc))
+    return AppendedRules(tuple(added), tuple(skipped))
+
+
+def replace_learned_rule_wording(
+    rule_id: str,
+    typed_wording: str,
+    *,
+    config_root: Path | None = None,
+    replaced_at: datetime,
+) -> ReplacedRule:
+    """Replace a learned rule's expansion IN PLACE (D5): same id, same
+    trigger and section, the new wording as its one entry, the count reset
+    to 0 and ``auto_confirmed`` cleared, the previous wording kept in the
+    sidecar's history — so exactly one active expansion per trigger survives
+    a correction. Only a learned rule (by id prefix) present in the USER
+    file is replaced; a hand-authored rule's line edited on the Note tab is a
+    typed line and changes no config. The wording is validated as a rule
+    entry and the exact bytes by the loader's rules before any write. Write
+    ORDER is the safe one: the sidecar (count reset) first, then the rules
+    file — a rules write that fails leaves the OLD wording with a reset
+    count (more confirmation, never less), reported as ``rules_file_error``
+    with ``replaced`` False; a sidecar write that fails writes nothing.
+    Residue of that order, named (peer round 14 PR-LOW-024): after a failed
+    rules write the sidecar's ``history`` already carries an entry whose
+    ``previous_expansion`` is the wording STILL in force — a record of a
+    replacement that did not land; the loader never reads the sidecar, so
+    nothing routes or pre-fills differently, and the tab lists the rule at
+    count 0 with its old wording (a retry of the edit lands the new one)."""
+    if not is_learned_rule_id(rule_id):
+        return ReplacedRule(False, reason="not a learned rule")
+    root = config_root if config_root is not None else default_config_root()
+    current, source = _current_rules_file(root)
+    rules = list(current.autofill_rules)
+    position = next((i for i, rule in enumerate(rules) if rule.rule_id == rule_id), None)
+    if source != "user" or position is None:
+        return ReplacedRule(False, reason="not a learned rule in your rules file")
+    previous = rules[position]
+    built = _build_learned_rule(
+        rule_id, previous.section_key, previous.trigger_phrase, typed_wording
+    )
+    if isinstance(built, str):
+        return ReplacedRule(False, reason=f"invalid: {built}")
+    rules[position] = built
+    blob = _serialise_rules_file(rules)
+    _validate_rules_bytes(blob)
+    sidecar = _read_rules_sidecar(root)
+    entry = sidecar.get(rule_id)
+    sidecar[rule_id] = LearnedRuleEntry(
+        learned_at=entry.learned_at if entry is not None else replaced_at,
+        confirmations=0,
+        auto_confirmed=False,
+        history=(
+            *(entry.history if entry is not None else ()),
+            LearnedRuleHistoryEntry(
+                replaced_at=replaced_at, previous_expansion=previous.expansion_texts()
+            ),
+        ),
+    )
+    _write_config_file(root, LEARNED_RULES_SIDECAR_FILENAME, _serialise_rules_sidecar(sidecar))
+    try:
+        _write_config_file(root, AUTOFILL_RULES_FILENAME, blob)
+    except NoteConfigWriteError as exc:
+        return ReplacedRule(
+            False, reason="the rules file could not be written", rules_file_error=str(exc)
+        )
+    return ReplacedRule(True)
+
+
+def load_learned_rule_entries(config_root: Path | None = None) -> dict[str, LearnedRuleEntry]:
+    """The sidecar's entries by rule id — what the emitter reads to decide
+    whether a learned rule's lines arrive pre-filled (``auto_confirmed``) and
+    with what count (D5). Absent = nothing learned = ``{}``; a malformed or
+    unreadable sidecar raises the loader's typed errors (the caller decides
+    what that means for generation — the safe reading is "every learned rule
+    proposes"). Never consulted by ``load_note_config``."""
+    root = config_root if config_root is not None else default_config_root()
+    return _read_rules_sidecar(root)
+
+
+def load_learned_rules(config_root: Path | None = None) -> LearnedRules:
+    """What the Practitioner tab lists (Task 2.5): every learned rule (by id
+    prefix) in the USER rules file with its sidecar record — count,
+    auto-confirm flag, learned date — grouped by section in canonical
+    order, and the most recent ``RECENTLY_LEARNED_LIMIT`` of them newest
+    first. With no user rules file nothing has been learned and any sidecar
+    is ignored; a sidecar entry whose rule is no longer in the file is
+    dropped on read. A malformed or unreadable file or sidecar raises."""
+    root = config_root if config_root is not None else default_config_root()
+    current, source = _current_rules_file(root)
+    if source != "user":
+        return LearnedRules((), ())
+    sidecar = _read_rules_sidecar(root)
+    learned = [
+        _listed(rule, sidecar.get(rule.rule_id))
+        for rule in current.autofill_rules
+        if is_learned_rule_id(rule.rule_id)
+    ]
+    dated = [(rule.learned_at, rule) for rule in learned if rule.learned_at is not None]
+    dated.sort(key=lambda item: (item[0], item[1].rule_id), reverse=True)
+    recent = tuple(rule for _, rule in dated[:RECENTLY_LEARNED_LIMIT])
+    by_section = tuple(
+        (key, tuple(rule for rule in learned if rule.section_key == key))
+        for key in CANONICAL_SECTION_KEYS
+        if any(rule.section_key == key for rule in learned)
+    )
+    return LearnedRules(recent, by_section)
+
+
+def delete_learned_rule(rule_id: str, *, config_root: Path | None = None) -> bool:
+    """Remove the learned rule ``rule_id`` from the user rules file AND from
+    the sidecar (Task 2.5), each representation on its own account exactly
+    as ``delete_user_cue`` does: a matching sidecar entry goes even when the
+    rule is already absent, every sidecar rewrite prunes entries whose rule
+    is no longer in the file, the rules bytes are validated before either
+    atomic write (rules file first), and a user rules file is never CREATED
+    here. Only a learned rule's id is honoured — a hand-authored rule is
+    the practitioner's file to edit, not this tab's. Returns True when
+    either representation held it."""
+    if not is_learned_rule_id(rule_id):
+        return False
+    root = config_root if config_root is not None else default_config_root()
+    current, source = _current_rules_file(root)
+    kept: list[AutofillRule] = []
+    rules_changed = False
+    if source == "user":
+        kept = [rule for rule in current.autofill_rules if rule.rule_id != rule_id]
+        rules_changed = len(kept) != len(current.autofill_rules)
+    remaining = {rule.rule_id for rule in kept}
+    sidecar = _read_rules_sidecar(root)
+    matched_in_sidecar = rule_id in sidecar
+    sidecar_kept = {
+        stored: entry
+        for stored, entry in sidecar.items()
+        if stored != rule_id and stored in remaining
+    }
+    sidecar_changed = sidecar_kept.keys() != sidecar.keys()
+    if rules_changed:
+        blob = _serialise_rules_file(kept)
+        _validate_rules_bytes(blob)
+        _write_config_file(root, AUTOFILL_RULES_FILENAME, blob)
+    if sidecar_changed:
+        _write_config_file(
+            root, LEARNED_RULES_SIDECAR_FILENAME, _serialise_rules_sidecar(sidecar_kept)
+        )
+    return rules_changed or matched_in_sidecar
+
+
+def record_rule_outcomes(
+    outcomes: Mapping[str, RuleOutcome], *, config_root: Path | None = None
+) -> RuleOutcomeReport:
+    """Count one Save's outcomes for learned rules (D5): ``confirmed`` — the
+    rule's line was confirmed, or arrived pre-filled and stood unedited at
+    Save — adds one and sets ``auto_confirmed`` once the count reaches
+    ``LEARNED_RULE_AUTO_CONFIRM_AFTER``; ``removed`` — the line was removed
+    or declined — resets the count to 0 and clears the flag, demoting the
+    rule to proposing (never deleting it — the plan's Excluded item). Writes
+    the SIDECAR only, once, so the rules file and the config digest never
+    move here. An outcome for an id that is not a learned rule in the user
+    file, or whose sidecar record is missing, counts nothing (residue,
+    named: a rule that lost its record never auto-confirms — the safe
+    direction; delete and re-learn restores it)."""
+    root = config_root if config_root is not None else default_config_root()
+    if not outcomes:
+        return RuleOutcomeReport((), ())
+    current, source = _current_rules_file(root)
+    present = (
+        {rule.rule_id for rule in current.autofill_rules if is_learned_rule_id(rule.rule_id)}
+        if source == "user"
+        else set()
+    )
+    sidecar = _read_rules_sidecar(root)
+    promoted: list[str] = []
+    demoted: list[str] = []
+    updated: list[str] = []
+    for rule_id, outcome in outcomes.items():
+        entry = sidecar.get(rule_id)
+        if rule_id not in present or entry is None:
+            continue
+        if outcome == "confirmed":
+            count = entry.confirmations + 1
+            auto = count >= LEARNED_RULE_AUTO_CONFIRM_AFTER
+            if auto and not entry.auto_confirmed:
+                promoted.append(rule_id)
+        else:
+            count, auto = 0, False
+            if entry.auto_confirmed or entry.confirmations:
+                demoted.append(rule_id)
+        if (count, auto) == (entry.confirmations, entry.auto_confirmed):
+            continue  # round 12 LOW-001: a no-op outcome rewrites nothing
+        sidecar[rule_id] = LearnedRuleEntry(
+            learned_at=entry.learned_at,
+            trigger_source=entry.trigger_source,
+            confirmations=count,
+            auto_confirmed=auto,
+            history=entry.history,
+        )
+        updated.append(rule_id)
+    if updated:
+        _write_config_file(root, LEARNED_RULES_SIDECAR_FILENAME, _serialise_rules_sidecar(sidecar))
+    return RuleOutcomeReport(tuple(promoted), tuple(demoted), tuple(updated))
 
 
 # ---------------------------------------------------------------------------

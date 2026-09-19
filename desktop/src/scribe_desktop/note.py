@@ -86,7 +86,7 @@ if TYPE_CHECKING:
     # (note_config imports this module). The pipeline functions below import
     # it at CALL time instead — the same deferred-import convention
     # session_store uses for this module.
-    from scribe_desktop.note_config import NoteConfig
+    from scribe_desktop.note_config import LearnedRuleEntry, NoteConfig
 
 # ---------------------------------------------------------------------------
 # The canonical section set (17, stable keys) — plan Schema / Data Changes.
@@ -1988,6 +1988,14 @@ class NoteDraft(BaseModel):
     config_digest: str
     note_sections: tuple[GeneratedSection, ...] = ()
     note_proposals: tuple[NoteProposal, ...] = ()
+    # Note-learning plan Phase 2 (D4, D5): the decisions the practitioner's
+    # OWN config made, MINTED AT THE EMITTER (``note_fill.config_decisions``)
+    # and carried with the draft — one per proposal that arrives pre-filled,
+    # ``decided_by="config"`` under this draft's digest. The review surface
+    # passes them to ``finalise_note`` as the counted Save's ratification;
+    # ``finalise_note`` accepts a config decision ONLY when it is one of
+    # these, so no review surface can mint one of its own.
+    config_decisions: tuple[ProposalResolution, ...] = ()
 
     @model_validator(mode="after")
     def _check_draft(self) -> Self:
@@ -1997,6 +2005,31 @@ class NoteDraft(BaseModel):
         ):
             if not _DIGEST_RE.match(value):
                 raise ValueError(f"{label} must match {DIGEST_PATTERN}")
+        by_proposal = {proposal.proposal_id: proposal for proposal in self.note_proposals}
+        decided: set[str] = set()
+        for decision in self.config_decisions:
+            proposal = by_proposal.get(decision.proposal_id)
+            if proposal is None:
+                raise ValueError(
+                    f"config decision names a proposal the draft never emitted: "
+                    f"{decision.proposal_id}"
+                )
+            if decision.proposal_id in decided:
+                raise ValueError(f"duplicate config decision for {decision.proposal_id}")
+            decided.add(decision.proposal_id)
+            confirmation = decision.confirmation
+            if confirmation.decided_by != "config":
+                raise ValueError("a draft carries config decisions only, never clinician ones")
+            if confirmation.note_confirmation != "confirmed":
+                raise ValueError("a config decision pre-fills a line; it cannot decline one")
+            if confirmation.config_digest != self.config_digest:
+                raise ValueError(
+                    "a config decision must be minted under the draft's own config_digest"
+                )
+            if decision.shown_text_digest != proposal.shown_text_digest:
+                raise ValueError(
+                    "a config decision must name the digest of the text its proposal inserts"
+                )
         seen_keys: list[int] = []
         assertion_ids: set[str] = set()
         for section in self.note_sections:
@@ -2061,8 +2094,18 @@ def compose_draft(
     *,
     clinician_speaker: str | None = None,
     prefill_id: str | None = None,
+    learned_rules: Mapping[str, LearnedRuleEntry] | None = None,
+    decided_at: datetime | None = None,
 ) -> NoteDraft:
     """Stage one of Flow 1: compose the base note and its proposals.
+
+    Note-learning plan Phase 2 (D5): the emitters also MINT the config
+    decisions (``note_fill.config_decisions``) for the proposals that arrive
+    pre-filled — every hand-authored rule and prefill entry, and every
+    learned rule whose sidecar record (``learned_rules``, keyed by rule id;
+    None or absent = "not auto-confirmed", so the rule proposes) says
+    ``auto_confirmed`` — stamped ``decided_at`` (now by default) and carried
+    on the draft for the review surface's counted Save.
 
     Runs NO checks — checking before the clinician has confirmed each
     proposal was the original pipeline-ordering defect (compose -> confirm ->
@@ -2086,7 +2129,11 @@ def compose_draft(
     fabricated evidence looks. The refusal is typed ``ProviderOutputError``.
     """
     from scribe_desktop.note_config import build_note_request
-    from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
+    from scribe_desktop.note_fill import (
+        autofill_proposals,
+        config_decisions,
+        prefill_proposals,
+    )
 
     request = build_note_request(
         document, config, template_profile_id, clinician_speaker=clinician_speaker
@@ -2097,6 +2144,11 @@ def compose_draft(
         *autofill_proposals(document, config),
         *prefill_proposals(document, config, prefill_id),
     )
+    decisions = config_decisions(
+        proposals,
+        learned=learned_rules if learned_rules is not None else {},
+        decided_at=decided_at if decided_at is not None else datetime.now(UTC),
+    )
     return NoteDraft(
         session_id=request.session_id,
         template_profile_id=request.template_profile_id,
@@ -2106,6 +2158,7 @@ def compose_draft(
         config_digest=request.config_digest,
         note_sections=sections,
         note_proposals=proposals,
+        config_decisions=decisions,
     )
 
 
@@ -2188,7 +2241,11 @@ def finalise_note(
     below — one emitted proposal, one confirmed resolution — and a typed line
     reaches it only with the decision that names it. A resolution's decision
     may be ``decided_by="config"`` (D5): the assertion built from it carries
-    that decision, and the type pins its digest to the assertion's.
+    that decision, and the type pins its digest to the assertion's — and
+    (Phase 2) such a resolution is accepted ONLY when it is, field for
+    field, one the draft carries in ``config_decisions``: the emitter mints
+    config decisions, the review surface can only pass them on or replace
+    them with the clinician's own.
     """
     from scribe_desktop.note_check import check_note
 
@@ -2219,6 +2276,7 @@ def finalise_note(
             raise ProposalEvidenceError(
                 f"resolution names a proposal the draft never emitted: {proposal_id}"
             )
+    minted = {decision.proposal_id: decision for decision in draft.config_decisions}
     pending: list[NoteProposal] = []
     confirmed: list[NoteAssertion] = []
     for proposal in draft.note_proposals:
@@ -2226,6 +2284,13 @@ def finalise_note(
         if resolution is None:
             pending.append(proposal)
             continue
+        if resolution.confirmation.decided_by == "config" and (
+            minted.get(proposal.proposal_id) != resolution
+        ):
+            raise ProposalEvidenceError(
+                f"the config decision for proposal {proposal.proposal_id} is not the one "
+                "the emitter minted for this draft"
+            )
         # Decision-AGNOSTIC (round 25 LOW-001): a decline recorded against
         # text the UI never displayed is not a resolution either — treating
         # it as one would let a rendering bug silently drop a proposal the

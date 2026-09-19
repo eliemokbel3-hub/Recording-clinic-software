@@ -296,14 +296,29 @@ in-process and adds no network surface and no new logging channel.
     provider to transcript provenance; `write_note` verifies a typed line's
     `shown_text_digest` and `config_digest`; and `note_config.
     refuse_typed_wording` (numbers, dates, medication tokens; NO name
-    heuristic) with `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3`. Nothing calls either
-    yet. PLANNED; enforced from Phase 2: the Note tab's Edit control that
-    produces the typed line, the Save-time writer that appends the rule to
-    `%LOCALAPPDATA%\ClinikoScribe\config\autofill_rules.json` with its
-    `autofill_rules.learned.json` sidecar (atomic replaces, as flow 13 does for
-    cues), and the emitter that pre-fills a learned rule's wording with a
-    `decided_by="config"` decision. Nothing in this flow is logged: typed
-    wording is note-model text and carries the note tripwire markers (flow 2).
+    heuristic) with `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3`. Phase 2 BUILT the
+    flow: the Note tab's Edit control (`ui/note.py` `edit_line`) produces the
+    typed line over a note line or proposal (in memory, beside the draft — the
+    same review-window plaintext as the rest of the tab); when the replaced
+    line is the confirmed clinician's own utterance the trigger (its tail
+    through `refuse_learning_candidate`) and the typed wording (through
+    `refuse_typed_wording`) are QUEUED in memory and written by the Save-time
+    writer `append_learned_rules` — and only by it — into
+    `%LOCALAPPDATA%\ClinikoScribe\config\autofill_rules.json` with the metadata
+    sidecar `autofill_rules.learned.json` (two atomic replaces, rules file first,
+    as flow 13 does for cues; every candidate validated as an `AutofillRule` and
+    duplicate-checked before any write); an edit over a LEARNED rule's own line
+    queues an in-place wording replacement instead (`replace_learned_rule_wording`,
+    sidecar first); each Save also counts the learned rules whose lines stood
+    (`record_rule_outcomes`, the sidecar only). Next generation,
+    `note_fill.config_decisions` reads the sidecar (fail-safe: an unreadable
+    sidecar means every learned rule proposes) and pre-fills an auto-confirmed
+    learned rule's wording with a `decided_by="config"` decision carried on the
+    draft. The Practitioner tab reads both files (`load_learned_rules`) and
+    deletes through `delete_learned_rule`. Nothing in this flow is logged: typed
+    wording is note-model text and carries the note tripwire markers (flow 2),
+    and the learned-rule carriers' `typed_wording` / `previous_expansion` are
+    registered markers too. No network, no new channel.
 
 16. **Sample notes → learner → `style\style.enc` (note-learning-and-styles plan,
     D9, D10; in-process, zero network).** Phase 0 BUILT the destination:

@@ -203,14 +203,26 @@ note inherit exactly that posture.
    explicit per-assertion clinician confirmation of the exact shown wording, and
    config text rejects Unicode line/paragraph separators and bidirectional
    format controls so the confirmed wording cannot differ from what was
-   digested. Amendment (note-learning-and-styles plan, D5 — planned; enforced
-   from Phase 2): lines the practitioner's OWN config pre-fills will carry
-   `decided_by="config"` on their `ConfirmationDecision` with the digest they
-   were minted under (the type already refuses a config decision without it —
-   `note.py`'s `_check_decider` — and pins that digest to the assertion's own),
-   and will be ratified by one counted Save that shows them marked, while
-   model-derived proposals keep per-line confirmation; until Phase 2 lands,
-   every authored line still needs its per-assertion click.
+   digested. Amendment (note-learning-and-styles plan, D5 — BUILT in its Phase
+   2): lines the practitioner's OWN config pre-fills — every hand-authored
+   autofill and prefill entry, and a learned rule once its sidecar record says
+   `auto_confirmed` — carry `decided_by="config"` on their
+   `ConfirmationDecision` with the digest they were minted under (the type
+   refuses a config decision without it — `note.py`'s `_check_decider` — and
+   pins that digest to the assertion's own). The decision is MINTED at the
+   emitter (`note_fill.config_decisions`), carried on the draft
+   (`NoteDraft.config_decisions`, validated against the draft's own proposals
+   and digest), and `finalise_note` accepts a config decision only when it is
+   field-for-field one the draft carries — so the review surface can pass a
+   config decision on or replace it with the clinician's own decline (Remove),
+   never mint one. They are ratified by one counted Save whose button says how
+   many pre-filled lines it confirms, rendered with the distinct
+   `pre-filled by your config` mark by the one rendering path; a proposal the
+   config did NOT decide (a learned rule under its threshold) keeps its
+   per-line row and blocks Save until decided. `clinician_asserted` is not
+   drawn for a config-decided line (the counted Save is its acknowledgement);
+   every other check runs on it unchanged — `autofill_trigger_absent` still
+   blocks a pre-filled autofill line whose trigger the transcript never spoke.
    **The app itself now writes ONE of these files (practitioner-profile plan
    Phase 5, D9 as amended 2026-09-16 — auto-learn, review later).** When a
    note is SAVED, `note_config.append_user_cues` appends learned phrases to
@@ -715,38 +727,71 @@ these stubs are finalised at that plan's Phase H (task H3).
     `write_note` verifies a typed line's `shown_text_digest` and `config_digest`
     exactly as it does every other authored line (C3). Typed wording is note-model
     text and carries the existing note tripwire markers, so it is not logged (C9).
-    The Edit control that would create such a line is planned; enforced from
-    Phase 2.
-13. **Learned rules — trigger and wording admission (D5, D11; C5, C6).** Built:
-    `note_config.refuse_typed_wording(text)`, the narrower filter for
-    PRACTITIONER-TYPED text — it shares the number, date and medication token
-    classifiers with `refuse_learning_candidate` and runs NO name heuristic
-    (D11, practitioner decision 2026-09-18; consent v3 states that names in the
-    practitioner's own typed shorthand are the practitioner's responsibility) —
-    and the threshold `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3` (D5). Nothing CALLS
-    the filter yet. Planned; enforced from Phase 2: the Save-time writer into
-    `autofill_rules.json`, the duplicate check against the loader's `known`
-    triggers before any write, the `autofill_rules.learned.json` sidecar,
-    in-place correction of a learned rule's wording, and the Practitioner tab's
-    review-later list with delete (C6 — written only on an explicit Save and
-    validated before the write). Residue, identical to the transcript filter's:
-    a drug name with no listed suffix and no dose unit passes a SHAPE filter —
-    the review-later list is the control (C5: all three admission paths refuse,
-    none edits).
-14. **Save-as-ratification and config decisions (D5; C3).** Built: the decision
-    type. `ConfirmationDecision.decided_by` is `clinician` (default, so v1 notes
-    read) or `config`, a `config` decision WITHOUT a `config_digest` is
-    unrepresentable — `note.py`'s `_check_decider` validator refuses it — and the
-    digest it carries must equal the assertion's own, so a config-decided line
-    cannot name a config it was not minted under. Planned; enforced from Phase 2:
-    the emitter that mints those decisions, the distinct mark on pre-filled
-    lines, the counted Save label ("Save — confirms the N pre-filled lines
-    shown"), Save still refused while any MODEL-derived proposal is pending, and
-    the `clinician_asserted` exemption for `decided_by="config"` assertions
-    (that plan's Task 2.4). Today `note_check.provenance_warnings` emits
-    `clinician_asserted` for EVERY authored line, typed ones included, and
-    nothing there reads `decided_by` — so every authored line still needs its
-    per-assertion click (C3).
+    The Edit control is BUILT (Phase 2, `ui/note.py` `edit_line`): it types only
+    OVER a line or proposal — the typed line inherits that target's section,
+    records it in `replaces`, and subtracts it (a provider line to the removed
+    set, a manual line set aside, a proposal declined at finalisation) — and its
+    text is admitted by `ui.models.check_typed_text` (non-blank, bounded, the
+    ONE config-text control-character validator, because the same words may
+    become a learned rule's wording); the refusal filters are NOT applied to
+    the note line itself — they decide what is LEARNED, never what the
+    clinician may write in their own note. A typed line still draws
+    `clinician_asserted`. Undo restores the replaced line; edits freeze at Save.
+13. **Learned rules — trigger and wording admission (D5, D11; C5, C6).** BUILT
+    (Phase 2). Admission, three refusals and no edit (C5): the trigger is the
+    practitioner's OWN utterance (`spoken_by_confirmed_clinician` on the segment
+    the typed line replaced — another speaker's line, or a hand-authored config
+    line with no utterance behind it, teaches nothing) reduced by
+    `note_config.propose_rule_trigger` to its last ≤ 6 content tokens (a
+    heuristic on WHAT is learned, not a control) and passed through THE refusal
+    filter `refuse_learning_candidate` with its real position context; the
+    wording is the typed text through `refuse_typed_wording` — the narrower
+    filter for PRACTITIONER-TYPED text, sharing the number, date and medication
+    classifiers and running NO name heuristic (D11, practitioner decision
+    2026-09-18; consent v3 says so). Writing (C6): `append_learned_rules` runs
+    ONLY from the Note tab's Save (Cancel, Discard, Delete-and-complete and Undo
+    write nothing and the exit notice names the dropped rules), validates each
+    candidate as an `AutofillRule` under a fresh `learned-<ulid>` id and checks
+    its trigger against every trigger the file already holds BEFORE any write
+    (an invalid or duplicate candidate is skipped and reported, never written),
+    validates the exact bytes by the loader's own rules, then replaces
+    `autofill_rules.json` atomically and writes the metadata sidecar
+    `autofill_rules.learned.json` (never read by the loader, so it can never
+    move the digest); `replace_learned_rule_wording` corrects a learned rule's
+    wording IN PLACE (same id, same trigger, count reset, previous wording in
+    the sidecar's history — the sidecar's reset written FIRST, so a failed rules
+    write leaves the old wording needing its confirmations again, never a new
+    wording that pre-fills unconfirmed); `record_rule_outcomes` writes the
+    sidecar only (auto-confirm at exactly `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3`
+    unchanged confirmations; Remove or decline resets to 0 and never deletes);
+    the Practitioner tab's "Learned shorthand" lists every learned rule with
+    its count and pre-filled state and deletes through `delete_learned_rule`
+    (rules file first, then the sidecar; a hand-authored rule is never deleted
+    there). Residue, identical to the transcript filter's: a drug name with no
+    listed suffix and no dose unit passes a SHAPE filter — the review-later list
+    is the control; a rule whose sidecar record was lost never auto-confirms
+    (the safe direction). `typed_wording` and `previous_expansion` are tripwire
+    markers (C9).
+14. **Save-as-ratification and config decisions (D5; C3).** BUILT (Phase 2).
+    The decision type: `ConfirmationDecision.decided_by` is `clinician`
+    (default, so v1 notes read) or `config`, a `config` decision WITHOUT a
+    `config_digest` is unrepresentable — `note.py`'s `_check_decider` validator
+    refuses it — and the digest it carries must equal the assertion's own, so a
+    config-decided line cannot name a config it was not minted under. The
+    minting and the gate are as boundary 2's amendment above states:
+    `note_fill.config_decisions` mints, `NoteDraft.config_decisions` carries,
+    `finalise_note` accepts only a carried decision; the Note tab shows
+    pre-filled lines marked with no confirm/decline row, offers Remove (the
+    clinician's decline, recorded at Save) and Edit, labels the Save button with
+    the count it confirms, and stays refused while any proposal the config did
+    NOT decide is pending or any review warning is unacknowledged;
+    `note_check.provenance_warnings` draws no `clinician_asserted` for a
+    `decided_by="config"` assertion and every other warning unchanged. Residue,
+    stated: the shown-text digest of a pre-filled line is the proposal's own —
+    the line is rendered from the assertion's `span_text`, which IS the
+    proposal's excerpt, by the one rendering path, so the two cannot name
+    different words except through that path itself (the proposal-row read-back
+    defence belongs to lines that have a row).
 15. **The style profile and its exemplars (D9, D10; C5, C6, C9).** Built: the
     store and the model. The learned style has its OWN root
     `%LOCALAPPDATA%\ClinikoScribe\style\` (`practitioner_profile.

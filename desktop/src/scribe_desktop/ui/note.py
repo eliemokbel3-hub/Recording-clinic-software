@@ -32,7 +32,8 @@ one whole utterance as a ``transcript``-provenance assertion with contiguous
 coordinates (Check 1 reconstructs it byte-identically) under the router's
 own ownership rule (``note.admissible_sections`` — a clinician-owned section
 admits only the confirmed clinician's non-question lines), an utterance
-already anywhere in the note is refused, and there is no free-text editing.
+already anywhere in the note is refused, and there is no free-text AREA —
+typing happens only OVER a line (the Edit control below).
 Every edit goes through the one content-change path — acknowledgements
 cleared, the note un-saved, re-finalised over the WORKING draft
 (``models.working_draft``) — so every check runs on the edited note and a
@@ -54,6 +55,35 @@ Save (``note_config.append_user_cues``): an add undone before Save, a
 removal, a move's remove leg and a cancelled or abandoned review teach
 nothing. The learning status is re-read at Save, so a profile deleted or
 opted out mid-review writes nothing.
+
+Typed edits, shorthand learning and Save-as-ratification (note-learning-and-
+styles plan Phase 2, Tasks 2.1 / 2.3 / 2.4; D4, D5, D11). Edit on a note line
+or a proposal opens an inline single-line editor; committing it produces a
+``clinician`` assertion — the typed text, the clinician's own decision naming
+the line, ``replaces`` recording the line or proposal it stands in for — and
+subtracts what it replaced (a provider line goes to ``_removed``, a manual
+line is set aside, a proposal is declined at finalisation); Undo restores it.
+When the replaced line is one of the practitioner's OWN utterances
+(``spoken_by_confirmed_clinician``) the edit is a shorthand candidate: the
+utterance's tail becomes the trigger through THE refusal filter
+(``propose_rule_trigger`` + ``refuse_learning_candidate``), the typed text the
+wording through ``refuse_typed_wording`` (numbers, dates, medications; no
+name heuristic — the practitioner's own words), and the pair is QUEUED; an
+edit of a LEARNED rule's own line queues an in-place wording replacement
+instead. Like phrases, rules are written ONLY on Save
+(``append_learned_rules`` / ``replace_learned_rule_wording`` /
+``record_rule_outcomes``); Cancel, Discard and Delete write nothing and the
+exit notice names what was dropped. Lines the practitioner's own config
+PRE-FILLED arrive with the emitter's ``decided_by="config"`` decision on the
+draft (``NoteDraft.config_decisions``): they render marked, have no
+confirm/decline row, and the Save button says how many it confirms; Remove
+replaces the config decision with the clinician's decline (and demotes a
+learned rule's count at Save), Edit replaces it with a typed line; an
+unchanged pre-filled line counts as one confirmation at Save. Save stays
+refused while any proposal the config did NOT decide is pending, and while
+any review warning is unacknowledged — ``clinician_asserted`` is not drawn
+for a config-decided line (the counted Save is its acknowledgement), every
+other warning keeps its gate.
 
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is
@@ -81,6 +111,7 @@ from pathlib import Path
 from typing import Literal
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -89,6 +120,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QLineEdit,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -103,7 +135,9 @@ from scribe_desktop.note import (
     GeneratedNote,
     NoteAssertion,
     NoteDraft,
+    NoteProposal,
     NoteSectionKey,
+    NoteSpan,
     ProposalResolution,
     admissible_sections,
     content_tokens,
@@ -117,11 +151,19 @@ from scribe_desktop.note import (
     whole_utterance_assertion,
 )
 from scribe_desktop.note_config import (
+    LearnedRuleCandidate,
     NoteConfig,
     NoteConfigError,
+    RuleOutcome,
+    append_learned_rules,
     append_user_cues,
+    is_learned_rule_id,
     propose_learning_phrase,
+    propose_rule_trigger,
+    record_rule_outcomes,
     refuse_learning_candidate,
+    refuse_typed_wording,
+    replace_learned_rule_wording,
 )
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
@@ -137,6 +179,21 @@ def _clear_layout(layout: QLayout) -> None:
         if widget is not None:
             widget.setParent(None)
             widget.deleteLater()
+
+
+class _LineEditor(QLineEdit):
+    """The inline single-line editor a row shows while the clinician types
+    over that line (note-learning plan Task 2.1). Enter applies it (the
+    inherited ``returnPressed``); Escape cancels — the one key the base class
+    does not already report, so it is the only reason this subclass exists."""
+
+    escape_pressed = Signal()
+
+    def keyPressEvent(self, event: QKeyEvent, /) -> None:
+        if event.key() == Qt.Key.Key_Escape:
+            self.escape_pressed.emit()
+            return
+        super().keyPressEvent(event)
 
 
 class NoteScreen(QWidget):
@@ -187,6 +244,26 @@ class NoteScreen(QWidget):
         self._learning_queue: dict[str, tuple[NoteSectionKey, str]] = {}
         self._working: NoteDraft | None = None
         self._line_widgets: list[QWidget] = []
+        # Typed edits (note-learning plan Task 2.1) and shorthand learning
+        # (Task 2.3): typed lines by id (``t<n>``), each typed id -> the id it
+        # replaced, the manual assertion a typed line displaced (restored on
+        # Undo), the proposal ids a typed line stands in for (declined at
+        # finalisation), the queued rule candidates and the queued in-place
+        # wording replacements — both keyed by typed id, written on Save only.
+        self._typed: dict[str, NoteAssertion] = {}
+        self._replaced: dict[str, str] = {}
+        self._replaced_manual: dict[str, NoteAssertion] = {}
+        self._edited_proposals: dict[str, str] = {}
+        self._rule_queue: dict[str, LearnedRuleCandidate] = {}
+        self._rule_replacements: dict[str, tuple[str, str]] = {}
+        self._typed_counter = 0
+        # The inline editor (Task 2.1): the request — the id being typed over
+        # and the text the field opens with — survives a row rebuild and is
+        # what renders the field; the live widget does not (the rows are
+        # recreated on every re-finalise, so an open editor is simply dropped
+        # and rebuilt from the request).
+        self._editor_request: tuple[str, str] | None = None
+        self._editor: tuple[str, QLineEdit] | None = None
 
         # --- Task 7.6: the transcript, always beside the note --------------
         self.transcript_view = QPlainTextEdit()
@@ -216,7 +293,7 @@ class NoteScreen(QWidget):
         add_row.addWidget(QLabel("to:"))
         add_row.addWidget(self.section_combo, stretch=1)
         add_row.addWidget(self.add_line_button)
-        self.lines_header = QLabel("Lines in the note - remove, move or undo:")
+        self.lines_header = QLabel("Lines in the note - remove, move, edit or undo:")
         self._lines_box = QVBoxLayout()
         lines_scroll = QScrollArea()
         lines_scroll.setWidgetResizable(True)
@@ -242,6 +319,10 @@ class NoteScreen(QWidget):
 
         # --- the note review side -----------------------------------------
         self.info_label = QLabel()
+        # PLAIN TEXT (round 12 MED-003): beside the config report this label
+        # shows the generation notes, which quote a loader error's detail —
+        # user-authored config text — exactly as the message label does.
+        self.info_label.setTextFormat(Qt.TextFormat.PlainText)
         self.info_label.setWordWrap(True)
 
         # Task 7.7 (round 45 MED-001): the consent Critical Constraint's third
@@ -274,12 +355,14 @@ class NoteScreen(QWidget):
         self.proposals_header.hide()
         self._proposals_box = QVBoxLayout()
 
-        self.save_button = QPushButton("Save note")
+        self.save_button = QPushButton(models.SAVE_BUTTON_LABEL)
         self.save_button.setToolTip(
             "Verify and store the note for this session. Enabled once every "
             "proposed line is confirmed or declined, every review warning is "
-            "acknowledged, and no blocking warning remains. Phrases queued for "
-            "learning are written here and nowhere else."
+            "acknowledged, and no blocking warning remains. Lines pre-filled by "
+            "your config are confirmed by this Save (the button counts them). "
+            "Phrases and shorthand rules queued for learning are written here and "
+            "nowhere else."
         )
         self.save_button.clicked.connect(self.save)
         self.cancel_button = QPushButton("Cancel review and regenerate")
@@ -373,9 +456,12 @@ class NoteScreen(QWidget):
         self._refresh_learning_status()
 
         self.transcript_view.setPlainText(models.format_transcript_text(result.document))
+        # The config report, then any generation note (C8: a fallback names
+        # its reason on screen — today the unreadable learned-shorthand
+        # record that made every learned rule propose; round 12 MED-003).
         self.info_label.setText(
             "  ".join(
-                models.config_report_lines(result.config, template_profile_id)
+                (*models.config_report_lines(result.config, template_profile_id), *result.notes)
             )
         )
         self._build_proposal_rows()
@@ -405,6 +491,15 @@ class NoteScreen(QWidget):
         self._removed.clear()
         self._manual.clear()
         self._learning_queue.clear()
+        self._typed.clear()
+        self._replaced.clear()
+        self._replaced_manual.clear()
+        self._edited_proposals.clear()
+        self._rule_queue.clear()
+        self._rule_replacements.clear()
+        self._typed_counter = 0
+        self._editor_request = None
+        self._editor = None
         self._working = None
         self.transcript_view.setPlainText("")
         self.note_body.setPlainText("")
@@ -449,16 +544,32 @@ class NoteScreen(QWidget):
             self.learning_label.setText("")  # a cleared tab shows no stale status
         elif not status.enabled:
             self.learning_label.setText(status.reason or "")
-        elif self._learning_queue and not self._note_saved:
-            self.learning_label.setText(models.learning_queued_line(len(self._learning_queue)))
+        elif (self._learning_queue or self._queued_rules()) and not self._note_saved:
+            self.learning_label.setText(
+                models.learning_queued_line(len(self._learning_queue), self._queued_rules())
+            )
         else:
             self.learning_label.setText(models.LEARNING_ON_LINE)
 
+    def _queued_rules(self) -> int:
+        return len(self._rule_queue) + len(self._rule_replacements)
+
     # --- proposal rows -----------------------------------------------------
+
+    def _prefilled_ids(self) -> frozenset[str]:
+        """The proposals the practitioner's own config decided (D5): no
+        confirm/decline row — they are in the note, marked, until Removed."""
+        draft = self._draft
+        if draft is None:
+            return frozenset()
+        return frozenset(decision.proposal_id for decision in draft.config_decisions)
 
     def _build_proposal_rows(self) -> None:
         assert self._draft is not None
+        prefilled = self._prefilled_ids()
         for proposal in self._draft.note_proposals:
+            if proposal.proposal_id in prefilled:
+                continue  # a pre-filled line: in the note, marked; Remove/Edit below
             rendered = models.render_proposal(proposal)
             row = QFrame()
             row.setFrameShape(QFrame.Shape.StyledPanel)
@@ -491,15 +602,29 @@ class NoteScreen(QWidget):
             retract.clicked.connect(
                 lambda _=False, pid=proposal.proposal_id: self.retract_proposal(pid)
             )
+            # Task 2.1: type over the proposal instead of deciding it — the
+            # editor opens on the text this row RENDERED.
+            edit = QPushButton("Edit")
+            edit.setToolTip(
+                "Replace this proposed line with your own wording. Undo returns it here."
+            )
+            edit.clicked.connect(
+                lambda _=False, pid=proposal.proposal_id, text=rendered.excerpt: self.open_editor(
+                    pid, text
+                )
+            )
             actions = QHBoxLayout()
             actions.addWidget(confirm)
             actions.addWidget(decline)
             actions.addWidget(retract)
+            actions.addWidget(edit)
             actions.addStretch(1)
             row_layout.addLayout(actions)
-            self._proposal_buttons.extend((confirm, decline, retract))
+            self._proposal_buttons.extend((confirm, decline, retract, edit))
             self._proposals_box.addWidget(row)
-        self.proposals_header.setVisible(bool(self._draft.note_proposals))
+        self.proposals_header.setVisible(
+            any(p.proposal_id not in prefilled for p in self._draft.note_proposals)
+        )
 
     # --- resolution / acknowledgement --------------------------------------
 
@@ -519,8 +644,8 @@ class NoteScreen(QWidget):
     def _set_resolution(
         self, proposal_id: str, decision: Literal["confirmed", "declined"]
     ) -> None:
-        if proposal_id not in self._rendered_excerpt:
-            return
+        if proposal_id not in self._rendered_excerpt or proposal_id in self._edited_proposals:
+            return  # no row (pre-filled), or replaced by a typed line (Undo first)
         self._resolutions[proposal_id] = decision
         self._after_content_change()
 
@@ -567,9 +692,16 @@ class NoteScreen(QWidget):
             for assertion in section.note_assertions:
                 coords = assertion.note_span.source_coords
                 # Quoted lines only: a typed ``clinician`` line (schema v2)
-                # carries no coordinates and marks no segment as present.
+                # carries no coordinates and marks no segment as present...
                 if assertion.provenance == "transcript" and coords is not None:
                     present.add(coords.segment_index)
+        # ...except through the line it REPLACED (Task 2.1): the utterance a
+        # typed line stands in for is still spoken for, so the chooser does
+        # not offer it again.
+        for replaced_id in self._replaced.values():
+            segment_index = self._segment_of(replaced_id)
+            if segment_index is not None:
+                present.add(segment_index)
         return present
 
     def eligible_utterances(self) -> tuple[models.UtteranceChoice, ...]:
@@ -588,19 +720,49 @@ class NoteScreen(QWidget):
         draft, document = self._draft, self._document
         if draft is None or document is None:
             return ()
+        additions = {**self._manual, **self._replaced_manual}
+        replaced = {target: typed_id for typed_id, target in self._replaced.items()}
         return models.editable_lines(
-            draft, document, removed=self._removed, additions=self._manual
+            draft, document, removed=self._removed, additions=additions, replaced=replaced
         )
+
+    def typed_lines(self) -> tuple[models.TypedLine, ...]:
+        """The typed rows of the line editor (Task 2.1), in edit order."""
+        return models.typed_lines(self._typed)
+
+    def prefilled_lines(self) -> tuple[models.PrefilledLine, ...]:
+        """The pre-filled rows of the line editor (D5): one per config
+        decision the draft carries, with its Remove / Edit state."""
+        draft = self._draft
+        if draft is None:
+            return ()
+        replaced = {target: typed_id for typed_id, target in self._replaced.items()}
+        return models.prefilled_lines(draft, removed=self._removed, replaced=replaced)
 
     def learning_queue(self) -> tuple[tuple[NoteSectionKey, str], ...]:
         """What Save would learn, in queue order (a read-only view)."""
         return tuple(self._learning_queue.values())
+
+    def rule_queue(self) -> tuple[LearnedRuleCandidate, ...]:
+        """The shorthand rules Save would write, in edit order (read-only)."""
+        return tuple(self._rule_queue.values())
+
+    def rule_replacement_queue(self) -> tuple[tuple[str, str], ...]:
+        """The learned rules whose wording Save would replace in place —
+        ``(rule_id, typed wording)`` — in edit order (read-only)."""
+        return tuple(self._rule_replacements.values())
 
     def queued_learning_count(self) -> int:
         """How many phrases Save note would write right now (Task 5.6: the
         main window reads it BEFORE an exit clears this tab, to say what the
         exit dropped)."""
         return len(self._learning_queue)
+
+    def queued_rule_count(self) -> int:
+        """How many shorthand rules (new or corrected) Save note would write
+        right now — read by the main window before an exit clears this tab,
+        exactly as ``queued_learning_count`` is (Task 2.3)."""
+        return self._queued_rules()
 
     def _allowed_sections(self, segment_index: int) -> tuple[NoteSectionKey, ...]:
         draft, document = self._draft, self._document
@@ -658,14 +820,28 @@ class NoteScreen(QWidget):
         return True
 
     def remove_line(self, assertion_id: str) -> bool:
-        """Subtract a provider-routed line (D14). Reversible with ``undo_line``
-        until Save; any omission warning it raises is acknowledgeable."""
+        """Subtract a provider-routed line (D14) or a line the practitioner's
+        config PRE-FILLED (D5: the config decision is replaced by the
+        clinician's decline at Save, and a learned rule's count is reset —
+        the rule itself is never deleted here). Reversible with
+        ``undo_line`` until Save; any omission warning it raises is
+        acknowledgeable. A typed line's Remove is its Undo."""
         if not self._edits_open:
             self._set_edit_status("The note is saved - edits are closed.")
             return False
-        if assertion_id in self._manual:
+        if assertion_id in self._manual or assertion_id in self._typed:
             return self.undo_line(assertion_id)
-        if not self._provider_line_exists(assertion_id) or assertion_id in self._removed:
+        if assertion_id in self._removed or assertion_id in self._replaced.values():
+            return False
+        if assertion_id in self._prefilled_ids():
+            self._removed.add(assertion_id)
+            self._set_edit_status(
+                "Pre-filled line removed - Save will record that you declined it. "
+                "Undo restores it until Save."
+            )
+            self._after_content_change()
+            return True
+        if not self._provider_line_exists(assertion_id):
             return False
         self._removed.add(assertion_id)
         self._set_edit_status("Line removed. Undo restores it until Save.")
@@ -722,7 +898,16 @@ class NoteScreen(QWidget):
             self._set_edit_status("The note is saved - edits are closed.")
             return False
         changed = False
-        if assertion_id in self._manual:
+        if assertion_id in self._typed:
+            self._undo_typed(assertion_id)
+            changed = True
+        elif assertion_id in self._replaced.values():
+            # Undo on the REPLACED line undoes the typed line that stands in
+            # for it (Task 2.1): one edit, one undo, whichever row is used.
+            typed_id = next(t for t, target in self._replaced.items() if target == assertion_id)
+            self._undo_typed(typed_id)
+            changed = True
+        elif assertion_id in self._manual:
             del self._manual[assertion_id]
             self._learning_queue.pop(assertion_id, None)
             changed = True
@@ -740,6 +925,279 @@ class NoteScreen(QWidget):
         self._set_edit_status("Undone.")
         self._after_content_change()
         return True
+
+    # --- typed edits (note-learning plan Task 2.1) ------------------------------
+
+    def _next_typed_id(self) -> str:
+        """``t<n>`` — a third id scheme beside the provider's ``x<segment>``
+        and the manual ``m<segment>``, so a typed line can never collide with
+        a quoted one in one note and is recognisable by its id."""
+        self._typed_counter += 1
+        return f"t{self._typed_counter:04d}"
+
+    def _proposal(self, proposal_id: str) -> NoteProposal | None:
+        draft = self._draft
+        if draft is None:
+            return None
+        return next((p for p in draft.note_proposals if p.proposal_id == proposal_id), None)
+
+    def _edit_target_section(self, target_id: str) -> NoteSectionKey | None:
+        """The section a typed line inherits from what it replaces: a
+        provider line still in the note, a manual line, a proposal (pending,
+        decided or pre-filled — but not one already replaced) — or None when
+        ``target_id`` is none of these."""
+        draft = self._draft
+        if draft is None:
+            return None
+        if target_id in self._replaced.values():
+            return None
+        manual = self._manual.get(target_id)
+        if manual is not None:
+            return manual.section_key
+        if target_id not in self._removed:
+            for section in draft.note_sections:
+                for assertion in section.note_assertions:
+                    if assertion.assertion_id == target_id:
+                        return section.section_key
+        proposal = self._proposal(target_id)
+        if proposal is not None and target_id not in self._removed:
+            return proposal.section_key
+        return None
+
+    def edit_line(self, target_id: str, text: str) -> bool:
+        """Type ``text`` over the line or proposal ``target_id`` (Task 2.1):
+        the result is a ``clinician`` assertion in the target's section —
+        typed text as its span, the clinician's own decision naming it,
+        ``replaces`` = ``target_id`` — and the target is subtracted (a
+        provider line to ``_removed``, a manual line set aside, a proposal
+        declined at finalisation, a pre-filled line likewise). Editing a
+        TYPED line again replaces its wording in place, keeping what it
+        replaced. Refused, with the reason on the status line and nothing
+        changed: after Save, for an unknown or already-replaced target, and
+        for text ``models.check_typed_text`` refuses. Returns whether the
+        edit was applied. Shorthand learning is considered afterwards
+        (``_consider_rule_learning``): a candidate is QUEUED, never written."""
+        if not self._edits_open:
+            self._set_edit_status("The note is saved - edits are closed.")
+            return False
+        draft = self._draft
+        assert draft is not None
+        reason = models.check_typed_text(text)
+        if reason is not None:
+            self._set_edit_status(reason)
+            return False
+        wording = text.strip()
+        if target_id in self._typed:
+            return self._retype(target_id, wording)
+        section_key = self._edit_target_section(target_id)
+        if section_key is None:
+            self._set_edit_status("That line cannot be edited here.")
+            return False
+        typed_id = self._next_typed_id()
+        typed = self._typed_assertion(typed_id, section_key, wording, replaces=target_id)
+        manual = self._manual.pop(target_id, None)
+        if manual is not None:
+            self._replaced_manual[typed_id] = manual
+        elif self._proposal(target_id) is not None:
+            self._edited_proposals[target_id] = typed_id
+        else:
+            self._removed.add(target_id)
+        self._typed[typed_id] = typed
+        self._replaced[typed_id] = target_id
+        self._set_edit_status(
+            f"Line replaced with your wording in {models.section_title(section_key)}. "
+            "Undo restores the original until Save."
+        )
+        self._consider_rule_learning(typed_id)
+        self._after_content_change()
+        return True
+
+    # --- the inline editor (Task 2.1) --------------------------------------
+
+    def open_editor(self, target_id: str, current_text: str) -> None:
+        """Open the one-line editor over the line or proposal ``target_id``,
+        prefilled with ``current_text``. Refused after Save like every other
+        edit. Only ONE editor is open at a time: opening another replaces it
+        (the request is single-valued and the rows are rebuilt here)."""
+        if not self._edits_open:
+            self._set_edit_status("The note is saved - edits are closed.")
+            return
+        self._editor_request = (target_id, current_text)
+        self._rebuild_edit_controls()
+
+    def commit_editor(self) -> bool:
+        """Apply the open editor's text over its target (``edit_line``). On
+        success the row rebuild inside ``_after_content_change`` closes the
+        editor; on refusal it stays open, carrying what was typed, with the
+        reason on the status line. Returns what ``edit_line`` returned."""
+        editor = self._editor
+        request = self._editor_request
+        if editor is None or request is None:
+            return False
+        target_id = request[0]
+        text = editor[1].text()
+        self._editor_request = None
+        if self.edit_line(target_id, text):
+            return True
+        self._editor_request = (target_id, text)
+        return False
+
+    def cancel_editor(self) -> None:
+        """Close the editor, changing nothing: no content changed, so the
+        note is neither re-finalised nor un-acknowledged."""
+        self._editor_request = None
+        self._rebuild_edit_controls()
+        self._update_controls()
+
+    def _retype(self, typed_id: str, wording: str) -> bool:
+        previous = self._typed[typed_id]
+        if previous.text == wording:
+            self._set_edit_status("The wording is unchanged.")
+            return False
+        self._typed[typed_id] = self._typed_assertion(
+            typed_id, previous.section_key, wording, replaces=previous.replaces
+        )
+        self._set_edit_status("Wording updated. Undo restores the original line until Save.")
+        self._consider_rule_learning(typed_id)
+        self._after_content_change()
+        return True
+
+    def _typed_assertion(
+        self, typed_id: str, section_key: NoteSectionKey, wording: str, *, replaces: str | None
+    ) -> NoteAssertion:
+        draft = self._draft
+        assert draft is not None
+        return NoteAssertion(
+            assertion_id=typed_id,
+            section_key=section_key,
+            note_span=NoteSpan(span_text=wording, provenance="clinician"),
+            shown_text_digest=text_digest(wording),
+            config_digest=draft.config_digest,
+            confirmation=ConfirmationDecision(
+                proposal_id=typed_id,
+                note_confirmation="confirmed",
+                decided_at=datetime.now(UTC),
+            ),
+            replaces=replaces,
+        )
+
+    def _undo_typed(self, typed_id: str) -> None:
+        """Drop the typed line and restore what it replaced; its queued rule
+        or wording replacement dies with it (nothing is written before Save)."""
+        del self._typed[typed_id]
+        target = self._replaced.pop(typed_id)
+        self._rule_queue.pop(typed_id, None)
+        self._rule_replacements.pop(typed_id, None)
+        manual = self._replaced_manual.pop(typed_id, None)
+        if manual is not None:
+            self._manual[manual.assertion_id] = manual
+        elif self._edited_proposals.get(target) == typed_id:
+            del self._edited_proposals[target]
+        else:
+            self._removed.discard(target)
+
+    # --- shorthand learning (note-learning plan Task 2.3; D5, D11) -----------------
+
+    def _consider_rule_learning(self, typed_id: str) -> None:
+        """Queue the shorthand this typed edit teaches, or say why not. The
+        source is what the line REPLACED: one of the practitioner's OWN
+        utterances (the ownership test, first and silently for another
+        speaker's line) yields a new rule — trigger from the utterance's
+        tail through THE refusal filter, wording through
+        ``refuse_typed_wording`` — and a LEARNED rule's own line (proposed or
+        pre-filled) yields an in-place wording replacement (D5). A
+        hand-authored config line has no utterance to learn from (the
+        plan's Excluded item) and teaches nothing. Every queue entry is keyed
+        by the typed id, so Undo drops it, and nothing is written here."""
+        self._rule_queue.pop(typed_id, None)
+        self._rule_replacements.pop(typed_id, None)
+        draft, document, config = self._draft, self._document, self._config
+        typed = self._typed[typed_id]
+        target = typed.replaces
+        if draft is None or document is None or config is None or target is None:
+            return
+        proposal = self._proposal(target)
+        if proposal is not None:
+            if proposal.provenance != "autofill" or not is_learned_rule_id(proposal.rule_id):
+                self._append_edit_status(
+                    "Not learned: this line came from your own config, not from a line you said."
+                )
+                return
+            status = self._refresh_learning_status()
+            if not status.enabled:
+                self._append_edit_status(status.reason or "")
+                return
+            refusal = refuse_typed_wording(typed.text)
+            if refusal is not None:
+                self._append_edit_status(
+                    f"Shorthand not updated: the wording contains a number/date/medication "
+                    f"({refusal})."
+                )
+                return
+            self._rule_replacements[typed_id] = (proposal.rule_id, typed.text)
+            self._append_edit_status(
+                "Will update this learned shorthand rule's wording to your line when you "
+                "press Save note on this tab (it will propose again until confirmed 3 times)."
+            )
+            return
+        segment_index = self._segment_of(target)
+        if segment_index is None:
+            return
+        segment = document.transcript_segments[segment_index]
+        if not spoken_by_confirmed_clinician(segment.speaker, draft.clinician_speaker):
+            self._append_edit_status(models.LEARNING_NOT_ATTRIBUTED_NOTE)
+            return
+        status = self._refresh_learning_status()
+        if not status.enabled:
+            self._append_edit_status(status.reason or "")
+            return
+        words = [word.word_text for word in segment.transcript_words]
+        candidate = propose_rule_trigger(words)
+        if candidate is None:
+            self._append_edit_status("Not learned: the line is too short to make a trigger.")
+            return
+        refusal = refuse_learning_candidate(
+            candidate.source_words,
+            first_in_segment=candidate.first_in_segment,
+            following=candidate.following,
+        )
+        if refusal is not None:
+            self._append_edit_status(
+                f"Not learned: the trigger contains a name/number/date/medication ({refusal})."
+            )
+            return
+        wording_refusal = refuse_typed_wording(typed.text)
+        if wording_refusal is not None:
+            self._append_edit_status(
+                f"Not learned: the typed wording contains a number/date/medication "
+                f"({wording_refusal})."
+            )
+            return
+        trigger_tokens = tuple(candidate.phrase.split(" "))
+        for rule in config.autofill_rules:
+            if content_tokens(rule.trigger_phrase) != trigger_tokens:
+                continue
+            if is_learned_rule_id(rule.rule_id):
+                # The same utterance was learned before: D5 — replace that
+                # rule's wording in place, never a second rule under one trigger.
+                self._rule_replacements[typed_id] = (rule.rule_id, typed.text)
+                self._append_edit_status(
+                    f"Will update the learned shorthand for '{candidate.phrase}' to your "
+                    "wording when you press Save note on this tab."
+                )
+            else:
+                self._append_edit_status(
+                    f"Not learned: '{candidate.phrase}' is already a trigger in your rules "
+                    "file."
+                )
+            return
+        self._rule_queue[typed_id] = LearnedRuleCandidate(
+            typed.section_key, candidate.phrase, typed.text
+        )
+        self._append_edit_status(
+            f"Will learn shorthand: '{candidate.phrase}' -> '{typed.text}' for "
+            f"{models.section_title(typed.section_key)} when you press Save note on this tab."
+        )
 
     def _provider_line_exists(self, assertion_id: str) -> bool:
         draft = self._draft
@@ -759,6 +1217,11 @@ class NoteScreen(QWidget):
         if draft is None:
             return None
         manual = self._manual.get(assertion_id)
+        if manual is None:
+            manual = next(
+                (a for a in self._replaced_manual.values() if a.assertion_id == assertion_id),
+                None,
+            )
         if manual is not None and manual.note_span.source_coords is not None:
             return manual.note_span.source_coords.segment_index
         for section in draft.note_sections:
@@ -912,14 +1375,35 @@ class NoteScreen(QWidget):
         self._refresh_section_combo()
         _clear_layout(self._lines_box)
         self._line_widgets.clear()
+        # Every row widget dies here, the open editor's field with them; the
+        # REQUEST survives and re-renders the field in whichever row now
+        # carries its target (Task 2.1).
+        self._editor = None
+        request = self._editor_request
+        edited_id = request[0] if request is not None else None
         for line in self.editable_lines():
             row = QWidget()
             row_layout = QHBoxLayout(row)
+            if request is not None and line.assertion_id == edited_id:
+                self._build_editor_row(row_layout, request)
+                self._lines_box.addWidget(row)
+                continue
             label = QLabel(line.label)
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setWordWrap(True)
             row_layout.addWidget(label, stretch=1)
-            if line.state in ("routed", "added"):
+            if line.state == "replaced":
+                # Typed over (Task 2.1): one undo, from either row.
+                replaced_label = QLabel("(replaced by your typed line)")
+                replaced_label.setTextFormat(Qt.TextFormat.PlainText)
+                row_layout.addWidget(replaced_label)
+                undo = QPushButton("Undo")
+                undo.clicked.connect(
+                    lambda _=False, aid=line.assertion_id: self.undo_line(aid)
+                )
+                row_layout.addWidget(undo)
+                self._line_widgets.append(undo)
+            elif line.state in ("routed", "added"):
                 if line.state == "routed":
                     remove = QPushButton("Remove line")
                     remove.clicked.connect(
@@ -945,6 +1429,18 @@ class NoteScreen(QWidget):
                     row_layout.addWidget(target)
                     row_layout.addWidget(move)
                     self._line_widgets.extend((target, move))
+                edit = QPushButton("Edit")
+                edit.setToolTip(
+                    "Replace this line with your own wording. Undo restores it until Save."
+                )
+                # The FULL text of the line, not the row's truncated label.
+                edit.clicked.connect(
+                    lambda _=False, aid=line.assertion_id: self.open_editor(
+                        aid, self._line_text(aid)
+                    )
+                )
+                row_layout.addWidget(edit)
+                self._line_widgets.append(edit)
             else:
                 state = (
                     "(removed)"
@@ -960,6 +1456,125 @@ class NoteScreen(QWidget):
                 row_layout.addWidget(undo)
                 self._line_widgets.append(undo)
             self._lines_box.addWidget(row)
+        for prefilled in self.prefilled_lines():
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            if request is not None and prefilled.proposal_id == edited_id:
+                self._build_editor_row(row_layout, request)
+                self._lines_box.addWidget(row)
+                continue
+            # ``label`` already carries the pre-filled mark (D5).
+            label = QLabel(prefilled.label)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            row_layout.addWidget(label, stretch=1)
+            if prefilled.state == "prefilled":
+                remove = QPushButton("Remove line")
+                remove.setToolTip(
+                    "Save will record that you declined this pre-filled line."
+                )
+                remove.clicked.connect(
+                    lambda _=False, pid=prefilled.proposal_id: self.remove_line(pid)
+                )
+                edit = QPushButton("Edit")
+                edit.setToolTip(
+                    "Replace this pre-filled line with your own wording."
+                )
+                edit.clicked.connect(
+                    lambda _=False, pid=prefilled.proposal_id, text=prefilled.text: (
+                        self.open_editor(pid, text)
+                    )
+                )
+                row_layout.addWidget(remove)
+                row_layout.addWidget(edit)
+                self._line_widgets.extend((remove, edit))
+            else:
+                state_text = (
+                    "(removed - Save records your decline)"
+                    if prefilled.state == "removed"
+                    else "(replaced by your typed line)"
+                )
+                state_label = QLabel(state_text)
+                state_label.setTextFormat(Qt.TextFormat.PlainText)
+                row_layout.addWidget(state_label)
+                undo = QPushButton("Undo")
+                undo.clicked.connect(
+                    lambda _=False, pid=prefilled.proposal_id: self.undo_line(pid)
+                )
+                row_layout.addWidget(undo)
+                self._line_widgets.append(undo)
+            self._lines_box.addWidget(row)
+        for typed in self.typed_lines():
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            if request is not None and typed.assertion_id == edited_id:
+                self._build_editor_row(row_layout, request)
+                self._lines_box.addWidget(row)
+                continue
+            label = QLabel(f"{typed.label} [typed]")
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            row_layout.addWidget(label, stretch=1)
+            edit = QPushButton("Edit")
+            edit.setToolTip("Change your wording.")
+            edit.clicked.connect(
+                lambda _=False, aid=typed.assertion_id, text=typed.text: self.open_editor(
+                    aid, text
+                )
+            )
+            undo = QPushButton("Undo")
+            undo.setToolTip("Restores the line this replaced")
+            undo.clicked.connect(
+                lambda _=False, aid=typed.assertion_id: self.undo_line(aid)
+            )
+            row_layout.addWidget(edit)
+            row_layout.addWidget(undo)
+            self._line_widgets.extend((edit, undo))
+            self._lines_box.addWidget(row)
+        if request is not None and self._editor is None:
+            # The target has no row of its own — a proposal still awaiting a
+            # decision, whose row sits in the proposals panel (which is built
+            # once, at ``begin_review``). Its editor opens here, where every
+            # other edit is made.
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            heading = QLabel("Your wording for the proposed line:")
+            heading.setTextFormat(Qt.TextFormat.PlainText)
+            row_layout.addWidget(heading)
+            self._build_editor_row(row_layout, request)
+            self._lines_box.addWidget(row)
+
+    def _line_text(self, assertion_id: str) -> str:
+        """The FULL text of a line in the working note — what the editor
+        opens with, since a row's label is truncated to its leading words."""
+        working = self._working
+        if working is None:
+            return ""
+        for section in working.note_sections:
+            for assertion in section.note_assertions:
+                if assertion.assertion_id == assertion_id:
+                    return assertion.text
+        return ""
+
+    def _build_editor_row(self, row_layout: QHBoxLayout, request: tuple[str, str]) -> None:
+        """Render the open editor INSIDE ``row_layout``, in place of the
+        row's label and buttons: the field, Apply and Cancel. Every widget
+        joins ``_line_widgets``, so Save freezes them with the rest."""
+        target_id, current_text = request
+        editor = _LineEditor()
+        editor.setText(current_text)
+        editor.setToolTip("Type this line's wording. Enter applies it, Escape cancels.")
+        editor.returnPressed.connect(self.commit_editor)
+        editor.escape_pressed.connect(self.cancel_editor)
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(lambda _=False: self.commit_editor())
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(lambda _=False: self.cancel_editor())
+        row_layout.addWidget(editor, stretch=1)
+        row_layout.addWidget(apply_button)
+        row_layout.addWidget(cancel_button)
+        self._line_widgets.extend((editor, apply_button, cancel_button))
+        self._editor = (target_id, editor)
 
     def _refresh_section_combo(self) -> None:
         selected = self.section_combo.currentData()
@@ -984,25 +1599,46 @@ class NoteScreen(QWidget):
 
     # --- finalisation ------------------------------------------------------
 
+    def _clinician_resolution(
+        self, proposal: NoteProposal, decision: Literal["confirmed", "declined"]
+    ) -> ProposalResolution:
+        # The digest of what the row RENDERED for a proposal with a row; a
+        # pre-filled line has no row and its decline names the text the
+        # note body showed — the proposal's own excerpt, rendered by the one
+        # rendering path (the same residue ``config_decisions`` states).
+        rendered = self._rendered_excerpt.get(proposal.proposal_id, proposal.note_excerpt)
+        return ProposalResolution(
+            shown_text_digest=text_digest(rendered),
+            confirmation=ConfirmationDecision(
+                proposal_id=proposal.proposal_id,
+                note_confirmation=decision,
+                decided_at=datetime.now(UTC),
+            ),
+        )
+
     def _build_resolutions(self) -> list[ProposalResolution]:
+        """One resolution per decided proposal, the clinician's decision
+        first (D5): a proposal replaced by a typed line or Removed is
+        DECLINED by the clinician; a clicked decision stands; otherwise a
+        config decision the emitter minted is passed on unchanged (the
+        counted Save ratifies it); anything else is pending."""
         draft = self._draft
         assert draft is not None
+        minted = {decision.proposal_id: decision for decision in draft.config_decisions}
         resolutions: list[ProposalResolution] = []
         for proposal in draft.note_proposals:
-            decision = self._resolutions.get(proposal.proposal_id)
-            if decision is None:
-                continue  # pending -> finalise_note flags unconfirmed_proposal
-            rendered = self._rendered_excerpt[proposal.proposal_id]
-            resolutions.append(
-                ProposalResolution(
-                    shown_text_digest=text_digest(rendered),
-                    confirmation=ConfirmationDecision(
-                        proposal_id=proposal.proposal_id,
-                        note_confirmation=decision,
-                        decided_at=datetime.now(UTC),
-                    ),
-                )
-            )
+            pid = proposal.proposal_id
+            if pid in self._edited_proposals or pid in self._removed:
+                resolutions.append(self._clinician_resolution(proposal, "declined"))
+                continue
+            decision = self._resolutions.get(pid)
+            if decision is not None:
+                resolutions.append(self._clinician_resolution(proposal, decision))
+                continue
+            config_decision = minted.get(pid)
+            if config_decision is not None:
+                resolutions.append(config_decision)
+            # else pending -> finalise_note flags unconfirmed_proposal
         return resolutions
 
     def _refinalise(self) -> None:
@@ -1010,9 +1646,12 @@ class NoteScreen(QWidget):
         if draft is None or document is None or config is None:
             return
         # D14: the WORKING draft — removed lines filtered out, additions
-        # appended — is what every check runs over.
+        # (quoted manual lines and typed lines) appended — is what every
+        # check runs over.
         self._working = models.working_draft(
-            draft, removed=self._removed, additions=tuple(self._manual.values())
+            draft,
+            removed=self._removed,
+            additions=(*self._manual.values(), *self._typed.values()),
         )
         self._note = finalise_note(self._working, self._build_resolutions(), document, config)
         self.note_body.setPlainText(models.format_note_body(self._note))
@@ -1024,6 +1663,11 @@ class NoteScreen(QWidget):
 
     def _refresh_proposal_states(self) -> None:
         for proposal_id, label in self._state_labels.items():
+            if proposal_id in self._edited_proposals:
+                # Task 2.1: a typed line stands in for it — the decision
+                # controls are inert until that line is undone.
+                label.setText("Replaced by your typed line - Undo it to decide again.")
+                continue
             decision = self._resolutions.get(proposal_id)
             if decision == "confirmed":
                 label.setText("Confirmed - will be inserted.")
@@ -1092,12 +1736,143 @@ class NoteScreen(QWidget):
             "Transcript screen."
         )
         # D9 as amended: phrases are written ONLY here, after the note is
-        # committed; a learning failure never un-saves the note.
+        # committed; a learning failure never un-saves the note. Shorthand
+        # rules and their counts follow (Task 2.3; C6), the same way.
         learned = self._write_learned_phrases()
-        if learned is not None:
-            self._set_edit_status(learned)
+        rules = self._write_learned_rules()
+        reported = " ".join(part for part in (learned, rules) if part is not None)
+        if reported:
+            self._set_edit_status(reported)
         self._update_controls()
         self._emit_state()
+
+    def _learned_rule_outcomes(self) -> dict[str, RuleOutcome]:
+        """What this Save says about each LEARNED rule whose line was in
+        play (D5): ``confirmed`` when its proposed line was confirmed by
+        click, or its pre-filled line stood unedited; ``removed`` when the
+        line was declined, Removed or replaced by a typed line — and
+        ``removed`` wins for a rule with lines in both states."""
+        draft = self._draft
+        if draft is None:
+            return {}
+        prefilled = self._prefilled_ids()
+        outcomes: dict[str, RuleOutcome] = {}
+        for proposal in draft.note_proposals:
+            if proposal.provenance != "autofill" or not is_learned_rule_id(proposal.rule_id):
+                continue
+            pid = proposal.proposal_id
+            if pid in self._edited_proposals or pid in self._removed:
+                outcome: RuleOutcome | None = "removed"
+            elif pid in prefilled:
+                outcome = "confirmed"
+            else:
+                clicked = self._resolutions.get(pid)
+                outcome = (
+                    "confirmed" if clicked == "confirmed" else "removed" if clicked else None
+                )
+            if outcome is None:
+                continue
+            if outcomes.get(proposal.rule_id) != "removed":
+                outcomes[proposal.rule_id] = outcome
+        return outcomes
+
+    def _write_learned_rules(self) -> str | None:
+        """Save-time write of the shorthand queue, the in-place wording
+        replacements and the confirmation counts (the ONLY write; C6). Same
+        gate as phrases: the learning status re-read now decides, so a
+        profile deleted or opted out mid-review writes nothing. Returns the
+        status-line text or None when this review touched no learned rule."""
+        queued = list(self._rule_queue.values())
+        replacements = list(self._rule_replacements.values())
+        self._rule_queue.clear()
+        self._rule_replacements.clear()
+        outcomes = self._learned_rule_outcomes()
+        if not queued and not replacements and not outcomes:
+            return None
+        status = self._refresh_learning_status()
+        parts: list[str] = []
+        changed = False
+        now = datetime.now(UTC)
+        if not status.enabled:
+            # Learning off (round 12 MED-002): nothing NEW is learned and no
+            # rule is PROMOTED — but a Remove still DEMOTES, because the
+            # practitioner's own removal of a pre-filled line is the safe
+            # direction whatever the consent state, and the line would
+            # otherwise pre-fill again next time.
+            if queued or replacements:
+                parts.append(f"Shorthand not learned. {status.reason or ''}".strip())
+            outcomes = {rid: o for rid, o in outcomes.items() if o == "removed"}
+            queued, replacements = [], []
+        # Counts FIRST (round 12 MED-001): a confirmation counts for the
+        # wording that was actually shown; a correction below then resets
+        # the rule to 0, so a new wording never inherits the old one's count.
+        if outcomes:
+            try:
+                report = record_rule_outcomes(outcomes, config_root=self._config_root)
+            except NoteConfigError as exc:
+                parts.append(f"Shorthand counts were not updated - {type(exc).__name__}: {exc}")
+            else:
+                # Any persisted count (an ordinary 0→1 included) refreshes
+                # the tab's "(confirmed N of 3)" text (peer round 14
+                # PR-LOW-024), not only a promotion or demotion.
+                changed = bool(report.updated)
+                if report.auto_confirmed:
+                    parts.append(
+                        f"{len(report.auto_confirmed)} learned shorthand will now arrive "
+                        "pre-filled (confirmed 3 times)."
+                    )
+                if report.demoted:
+                    parts.append(
+                        f"{len(report.demoted)} learned shorthand will propose again "
+                        "(removed or declined)."
+                    )
+        if queued:
+            try:
+                outcome = append_learned_rules(
+                    queued, config_root=self._config_root, learned_at=now
+                )
+            except NoteConfigError as exc:
+                parts.append(f"Shorthand was not learned - {type(exc).__name__}: {exc}")
+            else:
+                if outcome.added:
+                    listed = "; ".join(
+                        f"'{rule.trigger_phrase}' -> '{rule.typed_wording[0]}' for "
+                        f"{models.section_title(rule.section_key)}"
+                        for rule in outcome.added
+                    )
+                    parts.append(f"Learned {len(outcome.added)} shorthand: {listed}.")
+                    changed = True
+                    if outcome.sidecar_error is not None:
+                        parts.append(
+                            "The date record could not be written, so they appear under "
+                            f"Learned shorthand without a date ({outcome.sidecar_error})."
+                        )
+                for candidate, reason in outcome.skipped:
+                    parts.append(
+                        f"Shorthand '{candidate.trigger_phrase}' was not learned ({reason})."
+                    )
+        for rule_id, wording in replacements:
+            try:
+                replaced = replace_learned_rule_wording(
+                    rule_id, wording, config_root=self._config_root, replaced_at=now
+                )
+            except NoteConfigError as exc:
+                parts.append(f"Shorthand was not updated - {type(exc).__name__}: {exc}")
+                continue
+            if replaced.replaced:
+                parts.append(f"Updated a learned shorthand rule's wording to '{wording}'.")
+                changed = True
+            else:
+                detail = replaced.rules_file_error or replaced.reason or "unknown"
+                parts.append(f"Shorthand wording was not updated ({detail}).")
+                # A rules write that failed AFTER the sidecar's reset landed
+                # still changed what the tab lists (PR-LOW-024).
+                changed = changed or replaced.rules_file_error is not None
+        if changed:
+            self.learned_phrases_changed.emit()
+        if parts:
+            parts.append("Review learned shorthand on the Practitioner tab.")
+        return " ".join(parts) if parts else None
 
     def abandon(self) -> None:
         """The explicit delete-note-and-complete-without-one exit (Task 7.1).
@@ -1175,10 +1950,9 @@ class NoteScreen(QWidget):
         if draft is None or note is None:
             return models.NoteReviewState()
         summary = models.summarise_warnings(note.note_warnings)
+        decided = set(self._resolutions) | self._prefilled_ids() | set(self._edited_proposals)
         pending = sum(
-            1
-            for proposal in draft.note_proposals
-            if proposal.proposal_id not in self._resolutions
+            1 for proposal in draft.note_proposals if proposal.proposal_id not in decided
         )
         unacknowledged = sum(
             1 for group in summary.review if group.code not in self._acknowledged
@@ -1210,6 +1984,13 @@ class NoteScreen(QWidget):
             and state.unacknowledged_reviews == 0
         )
         self.save_button.setEnabled(save_ready)
+        # D5: the button SAYS how many pre-filled lines this Save confirms —
+        # the ones still in the note (not Removed, not replaced by a typed
+        # line); after Save it reads plainly again.
+        standing = sum(1 for line in self.prefilled_lines() if line.state == "prefilled")
+        self.save_button.setText(
+            models.save_button_label(0 if self._note_saved else standing)
+        )
         self.abandon_button.setEnabled(self._on_abandon is not None)
         # Cancel/regenerate is a PRE-commit escape: available while a draft is
         # under review and not yet saved (round 35 PR-MED-003).

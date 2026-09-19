@@ -172,6 +172,17 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"exemplar_text"',
     "'exemplar_text'",
     "exemplar_text=",
+    # Note-learning-and-styles plan Phase 2 (D5, D11; C9): wording the
+    # practitioner TYPED over a note line travels outside the note models as
+    # a learned-rule candidate / listing (``typed_wording``) and, once a rule's
+    # wording is corrected, in the sidecar's history (``previous_expansion``).
+    # Both names are distinctive so a rendering of either is dropped.
+    '"typed_wording"',
+    "'typed_wording'",
+    "typed_wording=",
+    '"previous_expansion"',
+    "'previous_expansion'",
+    "previous_expansion=",
 )
 
 # THE production log format — one string, used to build every handler's

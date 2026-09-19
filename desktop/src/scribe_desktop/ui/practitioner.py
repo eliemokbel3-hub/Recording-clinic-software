@@ -46,6 +46,13 @@ default does not carry, by section. Delete on either removes the phrase from
 the cue file and the sidecar through ``note_config.delete_user_cue`` — the
 loader stays the cue file's only reader; this tab never parses it itself.
 
+Learned shorthand (note-learning plan Task 2.5) is the same shape one level
+down: "Recently learned" and "All learned shorthand" list every learned rule
+in the user rules file (``note_config.load_learned_rules``) with its trigger,
+the wording it expands to and whether it still proposes or now arrives
+pre-filled, and Delete removes the rule from the rules file and its sidecar
+through ``note_config.delete_learned_rule``.
+
 Enrolment is disabled only when the SELECTED embedder or the VAD model is
 unavailable, and the message names ``scripts/setup-models.py`` (D16).
 
@@ -77,6 +84,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop import note_config
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.enrolment import (
     DEFAULT_TARGET_SPEECH_SECONDS,
@@ -86,9 +94,11 @@ from scribe_desktop.enrolment import (
     record_enrolment,
 )
 from scribe_desktop.note_config import (
+    LEARNED_RULE_AUTO_CONFIRM_AFTER,
     NoteConfigError,
     delete_user_cue,
     load_learned_phrases,
+    load_learned_rules,
 )
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
@@ -114,6 +124,7 @@ _AVAILABILITY_POLL_MS: Final = 5000
 DEVICE_NAME_MAX_CHARS: Final = 200  # PractitionerProfile.device_name's bound
 UNKNOWN_DEVICE_NAME: Final = "unknown microphone"
 NO_LEARNED_PHRASES_TEXT: Final = "No learned phrases yet."
+NO_LEARNED_RULES_TEXT: Final = "No learned shorthand yet."
 
 CaptureFn = Callable[
     [CaptureBackend, int, Callable[[EnrolmentProgress], None], Callable[[], bool]], bytes
@@ -149,6 +160,14 @@ def profile_device_name(name: str) -> str:
     )
     cleaned = cleaned.strip()[:DEVICE_NAME_MAX_CHARS]
     return cleaned if cleaned else UNKNOWN_DEVICE_NAME
+
+
+def _rule_flag(rule: note_config.LearnedRule) -> str:
+    """What a listed learned rule's line says about its state: pre-filled
+    (auto-confirmed, D5) or how far its confirmations have got."""
+    if rule.auto_confirmed:
+        return " (pre-filled)"
+    return f" (confirmed {rule.confirmations} of {LEARNED_RULE_AUTO_CONFIRM_AFTER})"
 
 
 class PractitionerScreen(QWidget):
@@ -350,6 +369,36 @@ class PractitionerScreen(QWidget):
         phrases_layout.addWidget(self.learned_phrases_note_label)
         phrases_box.setLayout(phrases_layout)
 
+        # --- learned shorthand (note-learning plan Task 2.5) -----------------
+        # Both lists render the practitioner's OWN learned rules (config
+        # plaintext), each item's data holding the rule id for Delete.
+        self.recently_learned_rules_list = QListWidget()
+        self.delete_recent_rule_button = QPushButton("Delete selected")
+        self.delete_recent_rule_button.clicked.connect(
+            lambda *_: self._delete_selected_rule(self.recently_learned_rules_list)
+        )
+        self.learned_rules_list = QListWidget()
+        self.delete_learned_rule_button = QPushButton("Delete selected")
+        self.delete_learned_rule_button.clicked.connect(
+            lambda *_: self._delete_selected_rule(self.learned_rules_list)
+        )
+        # PLAIN TEXT: this label renders loader errors, which quote config text.
+        self.learned_rules_note_label = QLabel(NO_LEARNED_RULES_TEXT)
+        self.learned_rules_note_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.learned_rules_note_label.setWordWrap(True)
+        rules_box = QGroupBox("Learned shorthand")
+        rules_layout = QVBoxLayout()
+        rules_layout.addWidget(
+            QLabel("Recently learned (shorthand from lines you typed over, newest first):")
+        )
+        rules_layout.addWidget(self.recently_learned_rules_list)
+        rules_layout.addWidget(self.delete_recent_rule_button)
+        rules_layout.addWidget(QLabel("All learned shorthand, by section:"))
+        rules_layout.addWidget(self.learned_rules_list)
+        rules_layout.addWidget(self.delete_learned_rule_button)
+        rules_layout.addWidget(self.learned_rules_note_label)
+        rules_box.setLayout(rules_layout)
+
         layout = QVBoxLayout()
         layout.addWidget(self.banner_label)
         layout.addWidget(profile_box)
@@ -357,6 +406,7 @@ class PractitionerScreen(QWidget):
         layout.addWidget(record_box)
         layout.addWidget(self.delete_button)
         layout.addWidget(phrases_box)
+        layout.addWidget(rules_box)
         layout.addStretch(1)
         self.setLayout(layout)
 
@@ -371,6 +421,7 @@ class PractitionerScreen(QWidget):
         self.refresh_availability()
         self.refresh_profile_state()
         self.refresh_learned_phrases()
+        self.refresh_learned_rules()
 
     # --- text helpers --------------------------------------------------------
 
@@ -567,6 +618,12 @@ class PractitionerScreen(QWidget):
         )
         self.delete_learned_button.setEnabled(
             not busy and self.learned_phrases_list.count() > 0
+        )
+        self.delete_recent_rule_button.setEnabled(
+            not busy and self.recently_learned_rules_list.count() > 0
+        )
+        self.delete_learned_rule_button.setEnabled(
+            not busy and self.learned_rules_list.count() > 0
         )
 
     def _set_enrolment_status(self, message: str | None) -> None:
@@ -834,10 +891,81 @@ class PractitionerScreen(QWidget):
             self.learned_phrases_note_label.setText(f"Deleted '{phrase}'.")
         return removed
 
+    # --- learned shorthand (note-learning plan Task 2.5) -----------------------------
+
+    def refresh_learned_rules(self) -> None:
+        """Re-read the user rules file and its sidecar through ``note_config``
+        and re-render both lists; a loader error is shown, never swallowed."""
+        self.recently_learned_rules_list.clear()
+        self.learned_rules_list.clear()
+        try:
+            learned = load_learned_rules(self._config_root)
+        except NoteConfigError as exc:
+            self.learned_rules_note_label.setText(
+                f"Learned shorthand unavailable - {type(exc).__name__}: {exc}"
+            )
+            self._update_controls()
+            return
+        for rule in learned.recent:
+            wording = " | ".join(rule.typed_wording)
+            entry = QListWidgetItem(
+                f"{rule.learned_at:%Y-%m-%d} - {models.section_title(rule.section_key)}: "
+                f"'{rule.trigger_phrase}' -> '{wording}'{_rule_flag(rule)}"
+            )
+            entry.setData(Qt.ItemDataRole.UserRole, rule.rule_id)
+            self.recently_learned_rules_list.addItem(entry)
+        for key, rules in learned.by_section:
+            for rule in rules:
+                wording = " | ".join(rule.typed_wording)
+                entry = QListWidgetItem(
+                    f"{models.section_title(key)}: "
+                    f"'{rule.trigger_phrase}' -> '{wording}'{_rule_flag(rule)}"
+                )
+                entry.setData(Qt.ItemDataRole.UserRole, rule.rule_id)
+                self.learned_rules_list.addItem(entry)
+        if learned.by_section:
+            self.learned_rules_note_label.setText(
+                "Delete removes the rule from your rules file; its lines then never "
+                "propose or pre-fill again."
+            )
+        else:
+            self.learned_rules_note_label.setText(NO_LEARNED_RULES_TEXT)
+        self._update_controls()
+
+    def _delete_selected_rule(self, widget: QListWidget) -> None:
+        if self.is_busy:
+            return
+        item = widget.currentItem()
+        if item is None:
+            self.learned_rules_note_label.setText("Select a shorthand rule to delete first.")
+            return
+        self.delete_learned_rule(str(item.data(Qt.ItemDataRole.UserRole)))
+
+    def delete_learned_rule(self, rule_id: str) -> bool:
+        """Delete one learned rule from the rules file and the sidecar
+        (``note_config.delete_learned_rule``), then re-read both lists."""
+        try:
+            removed = note_config.delete_learned_rule(rule_id, config_root=self._config_root)
+        except NoteConfigError as exc:
+            # The lists are deliberately NOT refreshed here, for the same
+            # reason as the phrases (peer round 36 PR-MED-024): the row stays
+            # so Delete can be retried, and the retry removes whichever
+            # representation the failed attempt left behind.
+            self.learned_rules_note_label.setText(
+                f"Could not delete the shorthand - {type(exc).__name__}: {exc}"
+            )
+            self._update_controls()
+            return False
+        self.refresh_learned_rules()
+        if removed:
+            self.learned_rules_note_label.setText(f"Deleted shorthand rule '{rule_id}'.")
+        return removed
+
 
 __all__ = [
     "DEVICE_NAME_MAX_CHARS",
     "NO_LEARNED_PHRASES_TEXT",
+    "NO_LEARNED_RULES_TEXT",
     "UNKNOWN_DEVICE_NAME",
     "PractitionerScreen",
     "profile_device_name",

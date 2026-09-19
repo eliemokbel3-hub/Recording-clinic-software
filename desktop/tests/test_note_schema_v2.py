@@ -218,6 +218,7 @@ def _draft(
     *,
     clinician_speaker: str | None = SPEAKER_2,
     proposals: tuple[NoteProposal, ...] = (),
+    config_decisions: tuple[ProposalResolution, ...] = (),
 ) -> NoteDraft:
     """The WORKING draft the Note tab finalises: the provider's quoted lines
     plus the typed line as a base-section addition (``ui.models.working_draft``
@@ -232,6 +233,7 @@ def _draft(
         config_digest=CONFIG_DIGEST,
         note_sections=_sections(assertions),
         note_proposals=proposals,
+        config_decisions=config_decisions,
     )
 
 
@@ -360,7 +362,10 @@ class TestConfirmationDecisionV2:
 
     def test_a_config_decided_resolution_passes_finalise_note(self) -> None:
         """The task's Done-when: a ``decided_by="config"`` line flows through
-        the resolution loop into the note carrying its decision and count."""
+        the resolution loop into the note carrying its decision and count.
+        Since Phase 2 the decision must be one the DRAFT carries (minted at
+        the emitter): a draft cannot carry one under another digest, and a
+        resolution the draft does not carry is refused."""
         proposal = NoteProposal(
             proposal_id="autofill-1",
             section_key="advice_home_exercise",
@@ -369,22 +374,23 @@ class TestConfirmationDecisionV2:
             rule_id="rule-ice",
             config_digest=CONFIG_DIGEST,
         )
-        draft = _draft(None, proposals=(proposal,))
 
-        def resolution(decision_digest: str) -> ProposalResolution:
+        def resolution(decision_digest: str, decided_at: datetime = _NOW) -> ProposalResolution:
             return ProposalResolution(
                 shown_text_digest=proposal.shown_text_digest,
                 confirmation=ConfirmationDecision(
                     proposal_id=proposal.proposal_id,
                     note_confirmation="confirmed",
-                    decided_at=_NOW,
+                    decided_at=decided_at,
                     decided_by="config",
                     config_digest=decision_digest,
                     confirmation_count=3,
                 ),
             )
 
-        note = finalise_note(draft, [resolution(CONFIG_DIGEST)], _document(), _CONFIG)
+        minted = resolution(CONFIG_DIGEST)
+        draft = _draft(None, proposals=(proposal,), config_decisions=(minted,))
+        note = finalise_note(draft, [minted], _document(), _CONFIG)
         [landed] = [
             a
             for s in note.note_sections
@@ -398,8 +404,11 @@ class TestConfirmationDecisionV2:
         # The hand-made proposal id resolves to no rule of this config, so
         # Check 3 fails closed — a warning riding the note, not a refusal.
         assert "autofill_trigger_absent" in _codes(note.blocking_warnings())
-        with pytest.raises(ValidationError, match="config decision's config_digest"):
-            finalise_note(draft, [resolution(_OTHER_DIGEST)], _document(), _CONFIG)
+        with pytest.raises(ValidationError, match="draft's own config_digest"):
+            _draft(None, proposals=(proposal,), config_decisions=(resolution(_OTHER_DIGEST),))
+        not_minted = resolution(CONFIG_DIGEST, decided_at=_NOW.replace(minute=1))
+        with pytest.raises(ProposalEvidenceError, match="not the one the emitter minted"):
+            finalise_note(draft, [not_minted], _document(), _CONFIG)
 
 
 # ---------------------------------------------------------------------------

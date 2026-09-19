@@ -41,18 +41,25 @@ from scribe_desktop.note import (  # noqa: E402
     text_digest,
 )
 from scribe_desktop.note_config import (  # noqa: E402
+    AUTOFILL_RULES_FILENAME,
+    LEARNED_RULE_AUTO_CONFIRM_AFTER,
     LEARNED_SIDECAR_FILENAME,
     SECTION_CUES_FILENAME,
     AutofillRule,
+    LearnedRuleCandidate,
     NoteConfig,
     PrefillSeedAssertion,
     PrefillTemplate,
     SectionMapping,
     TemplateProfile,
     TemplateTarget,
+    append_learned_rules,
     append_user_cues,
     load_learned_phrases,
+    load_learned_rule_entries,
+    load_learned_rules,
     load_note_config,
+    record_rule_outcomes,
 )
 from scribe_desktop.secure_storage import SessionCrypto  # noqa: E402
 from scribe_desktop.session import (  # noqa: E402
@@ -3051,11 +3058,16 @@ def _note_config() -> NoteConfig:
         ),
         intentionally_unmapped=("consent",),
     )
+    # Note-learning plan D5 (Phase 2): a HAND-authored rule now PRE-FILLS its
+    # line (no confirm/decline row), so the fixture's autofill rule carries a
+    # LEARNED id with no sidecar record — the one shape that still PROPOSES —
+    # to keep the per-line confirm/decline/retract path under test. The
+    # prefill seed pre-fills, as every hand-authored entry does now.
     return NoteConfig(
         template_profiles=(profile,),
         autofill_rules=(
             AutofillRule(
-                rule_id="rule-ice",
+                rule_id=_LEARNED_RULE_ID,
                 section_key="advice_home_exercise",
                 trigger_phrase="ice pack",
                 expansion=("Ice pack use explained.",),
@@ -3073,6 +3085,27 @@ def _note_config() -> NoteConfig:
                 ),
             ),
         ),
+    )
+
+
+_LEARNED_RULE_ID = "learned-01J8ZK3Q9W4E5R6T7Y8U9I0O1P"
+
+
+def _hand_authored_config() -> NoteConfig:
+    """`_note_config` with a HAND-authored autofill rule: under D5 both its
+    line and the prefill seed arrive pre-filled (config-decided)."""
+    base = _note_config()
+    return NoteConfig(
+        template_profiles=base.template_profiles,
+        autofill_rules=(
+            AutofillRule(
+                rule_id="rule-ice",
+                section_key="advice_home_exercise",
+                trigger_phrase="ice pack",
+                expansion=("Ice pack use explained.",),
+            ),
+        ),
+        prefill_templates=base.prefill_templates,
     )
 
 
@@ -4553,6 +4586,668 @@ class TestNoteScreenEdits:
         cues = load_note_config(config_root).normalised_cues()
         assert tuple(_LEARNABLE_PHRASE.split()) in cues[key]
         screen.deleteLater()
+
+
+# ---------------------------------------------------------------------------
+# Typed edits, shorthand learning and Save-as-ratification on the Note tab
+# (note-learning-and-styles plan Phase 2, Tasks 2.1 / 2.3 / 2.4; D4, D5, D11).
+# The widget rows and the inline editor are pinned in test_ui_note_editor.py;
+# here the screen's edit / undo / queue / Save contract is driven directly.
+# ---------------------------------------------------------------------------
+
+_TYPED = "Mild knee sprain"
+# `_EDIT_TURNS`' diagnosis line, "The diagnosis is a mild knee sprain": its
+# trigger is the tail after the dropped opener.
+_DIAGNOSIS_TRIGGER = "diagnosis is a mild knee sprain"
+
+
+def _rooted_learned_result(
+    config_root: Path,
+    *,
+    confirmations: int,
+    turns: tuple[tuple[str, str], ...] = _EDIT_TURNS,
+) -> tuple[models.NoteGenerationResult, str]:
+    """A result whose config is the REAL loaded config under ``config_root``
+    holding one learned rule ("ice pack" -> "Ice pack use explained.") with
+    ``confirmations`` recorded, composed with the sidecar's entries — so the
+    rule pre-fills once auto-confirmed and Save's outcomes find it on disk.
+    A second call over the same root reuses the rule already there (with
+    whatever count it has by then) instead of appending a duplicate."""
+    existing = load_learned_rules(config_root).recent
+    if existing:
+        rule_id = existing[0].rule_id
+    else:
+        [added] = append_learned_rules(
+            [LearnedRuleCandidate("advice_home_exercise", "ice pack", "Ice pack use explained.")],
+            config_root=config_root,
+            learned_at=datetime(2026, 9, 18, tzinfo=UTC),
+        ).added
+        rule_id = added.rule_id
+    for _ in range(confirmations):
+        record_rule_outcomes({rule_id: "confirmed"}, config_root=config_root)
+    config = load_note_config(config_root)
+    document = _note_document(turns)
+    draft = compose_draft(
+        document,
+        config,
+        ExtractiveNoteProvider(),
+        clinician_speaker=SPEAKER_2,
+        learned_rules=load_learned_rule_entries(config_root),
+    )
+    return models.NoteGenerationResult(draft=draft, config=config, document=document), rule_id
+
+
+class TestNoteScreenTypedEdits:
+    def _screen(
+        self,
+        *,
+        config_root: Path,
+        result: models.NoteGenerationResult | None = None,
+        learning_status_provider: Callable[[], models.LearningStatus] | None = None,
+    ) -> tuple[Any, dict[str, list[Any]]]:
+        from scribe_desktop.ui.note import NoteScreen
+
+        record: dict[str, list[Any]] = {"saved": [], "abandoned": [], "cancelled": []}
+        screen = NoteScreen(
+            config_root=config_root, learning_status_provider=learning_status_provider
+        )
+        screen.begin_review(
+            result if result is not None else _edit_result(),
+            on_save=lambda note: record["saved"].append(note),
+            on_abandon=lambda: record["abandoned"].append(True),
+            on_cancel=lambda: record["cancelled"].append(True),
+            template_profile_id="clinic-a",
+        )
+        return screen, record
+
+    def _ratify(self, screen: Any) -> None:
+        for proposal in screen._draft.note_proposals:
+            if proposal.proposal_id not in screen._prefilled_ids():
+                screen.confirm_proposal(proposal.proposal_id)
+        screen._acknowledge_all()
+
+    # --- Task 2.1: the typed line end to end ------------------------------------
+
+    def test_an_edit_produces_a_clinician_line_through_finalise_and_write(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.session_store import read_note, write_note
+        from scribe_desktop.transcription import write_transcript
+
+        screen, record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        original = _note_assertion(screen, line.assertion_id)
+        assert screen.edit_line(line.assertion_id, f"  {_TYPED}  ") is True
+        typed = _note_assertion(screen, "t0001")
+        assert typed is not None
+        assert typed.provenance == "clinician"
+        assert typed.text == _TYPED
+        assert typed.section_key == original.section_key
+        assert typed.replaces == line.assertion_id
+        assert typed.confirmation is not None and typed.confirmation.decided_by == "clinician"
+        assert typed.confirmation.proposal_id == "t0001"
+        assert _note_assertion(screen, line.assertion_id) is None
+        assert f"  - {_TYPED}  [{models.provenance_label('clinician')}]" in (
+            screen.note_body.toPlainText()
+        )
+        row = _lines_by_id(screen)[line.assertion_id]
+        assert row.state == "replaced" and row.replaced_by == "t0001"
+        [typed_row] = screen.typed_lines()
+        assert (typed_row.assertion_id, typed_row.replaces) == ("t0001", line.assertion_id)
+        # The replaced utterance is still spoken for: the chooser omits it.
+        assert _DIAGNOSIS_INDEX not in _eligible(screen)
+        # A typed line draws the clinician_asserted review like any authored line.
+        assert "clinician_asserted" in _warning_codes(screen)
+        assert screen.current_review_state().unacknowledged_reviews > 0
+        self._ratify(screen)
+        screen.save()
+        [saved] = record["saved"]
+        assert isinstance(saved, GeneratedNote)
+        landed = next(
+            a for s in saved.note_sections for a in s.note_assertions if a.assertion_id == "t0001"
+        )
+        assert landed.provenance == "clinician" and landed.replaces == line.assertion_id
+        session_dir = tmp_path / _NOTE_SESSION_ID
+        session_dir.mkdir()
+        crypto = SessionCrypto()
+        write_transcript(session_dir, crypto, screen._document)
+        write_note(session_dir, crypto, saved, screen._config)
+        assert read_note(session_dir, crypto) == saved
+        screen.deleteLater()
+
+    def test_undo_restores_the_replaced_line_from_either_row(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        body = screen.note_body.toPlainText()
+        # Typed ids are NEVER reused within a review (the counter only climbs):
+        # an undone id must not resolve to a later line. So the first edit is
+        # t0001 and, once undone, the next is t0002.
+        for expected_id, undo_by in (("t0001", "typed"), ("t0002", "replaced")):
+            assert screen.edit_line(line.assertion_id, _TYPED) is True
+            [typed_row] = screen.typed_lines()
+            assert typed_row.assertion_id == expected_id
+            undo_id = typed_row.assertion_id if undo_by == "typed" else line.assertion_id
+            assert screen.undo_line(undo_id) is True
+            assert screen.typed_lines() == ()
+            assert screen.undo_line(expected_id) is False  # gone, not reusable
+            assert screen.edit_line(expected_id, "anything") is False
+            assert _note_assertion(screen, line.assertion_id) is not None
+            assert _lines_by_id(screen)[line.assertion_id].state == "routed"
+            assert screen.note_body.toPlainText() == body
+        # Retyping keeps the id and what it replaced; an unchanged retype is refused.
+        assert screen.edit_line(line.assertion_id, _TYPED) is True
+        [typed_row] = screen.typed_lines()
+        typed_id = typed_row.assertion_id
+        assert typed_id == "t0003"
+        assert screen.edit_line(typed_id, _TYPED) is False
+        assert "unchanged" in screen.edit_status_label.text()
+        assert screen.edit_line(typed_id, "Knee sprain, mild") is True
+        assert _note_assertion(screen, typed_id).text == "Knee sprain, mild"
+        assert _note_assertion(screen, typed_id).replaces == line.assertion_id
+        assert [row.assertion_id for row in screen.typed_lines()] == [typed_id]
+        screen.deleteLater()
+
+    def test_an_edit_of_a_manual_line_sets_it_aside_and_undo_brings_it_back(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        document = screen._document
+        patient = next(
+            choice
+            for choice in screen.eligible_utterances()
+            if document.transcript_segments[choice.segment_index].speaker == SPEAKER_1
+        )
+        key = patient.allowed_sections[0]
+        assert screen.add_line(patient.segment_index, key) is True
+        manual_id = manual_assertion_id(patient.segment_index)
+        assert screen.edit_line(manual_id, "Walked to the shop") is True
+        assert _note_assertion(screen, manual_id) is None
+        assert _note_assertion(screen, "t0001").replaces == manual_id
+        assert _lines_by_id(screen)[manual_id].state == "replaced"
+        assert patient.segment_index not in _eligible(screen)
+        # A patient's line teaches nothing, and the skip is SAID.
+        assert screen.rule_queue() == ()
+        assert models.LEARNING_NOT_ATTRIBUTED_NOTE in screen.edit_status_label.text()
+        assert screen.undo_line("t0001") is True
+        assert _note_assertion(screen, manual_id) is not None
+        assert _lines_by_id(screen)[manual_id].state == "added"
+        screen.deleteLater()
+
+    def test_edits_refuse_bad_text_and_freeze_after_save(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, record = self._screen(config_root=tmp_path / "config")
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        for bad in ("", "   ", "Mild​sprain", "x" * 20_001):
+            assert screen.edit_line(line.assertion_id, bad) is False
+            assert screen.typed_lines() == ()
+        assert screen.edit_line("nobody", _TYPED) is False
+        assert "cannot be edited" in screen.edit_status_label.text()
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert screen.edit_line(line.assertion_id, _TYPED) is False
+        assert "edits are closed" in screen.edit_status_label.text()
+        screen.deleteLater()
+
+    # --- Task 2.3: shorthand learning, written only on Save ------------------------
+
+    def test_a_typed_edit_over_the_practitioners_line_queues_a_rule_written_on_save(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.edit_line(line.assertion_id, _TYPED) is True
+        assert screen.rule_queue() == (
+            LearnedRuleCandidate(line.section_key, _DIAGNOSIS_TRIGGER, _TYPED),
+        )
+        status = screen.edit_status_label.text()
+        assert f"Will learn shorthand: '{_DIAGNOSIS_TRIGGER}' -> '{_TYPED}'" in status
+        assert "Save note on this tab" in status
+        assert screen.learning_label.text() == models.learning_queued_line(0, 1)
+        assert screen.queued_rule_count() == 1
+        assert not config_root.exists()  # nothing before Save
+        refreshed: list[int] = []
+        screen.learned_phrases_changed.connect(lambda: refreshed.append(1))
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        [learned] = load_learned_rules(config_root).recent
+        assert learned.trigger_phrase == _DIAGNOSIS_TRIGGER
+        assert learned.typed_wording == (_TYPED,)
+        assert learned.section_key == line.section_key
+        assert learned.confirmations == 0 and learned.auto_confirmed is False
+        assert "Learned 1 shorthand" in screen.edit_status_label.text()
+        assert "Practitioner tab" in screen.edit_status_label.text()
+        assert refreshed == [1]
+        assert screen.rule_queue() == () and screen.queued_rule_count() == 0
+        assert screen.learning_label.text() == models.LEARNING_ON_LINE
+        screen.deleteLater()
+
+    def test_cancel_delete_discard_and_undo_write_no_rule(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        for leave in ("cancel", "abandon", "clear", "undo"):
+            screen, record = self._screen(
+                config_root=config_root, learning_status_provider=_learning_on
+            )
+            line = _routed_line(screen, _DIAGNOSIS_INDEX)
+            assert screen.edit_line(line.assertion_id, _TYPED) is True
+            assert screen.queued_rule_count() == 1
+            if leave == "cancel":
+                screen.cancel_review()
+                assert record["cancelled"] == [True]
+            elif leave == "abandon":
+                screen.abandon()
+                assert record["abandoned"] == [True]
+            elif leave == "clear":
+                screen.clear()
+            else:
+                assert screen.undo_line("t0001") is True
+                self._ratify(screen)
+                screen.save()
+                assert len(record["saved"]) == 1
+            assert screen.rule_queue() == ()
+            assert screen.queued_rule_count() == 0
+            assert not config_root.exists(), leave
+            screen.deleteLater()
+
+    def test_the_filters_refuse_and_the_status_names_the_class(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        # The typed wording carries a number: the line stands, nothing is learned.
+        assert screen.edit_line(line.assertion_id, "Sprain grade 2") is True
+        assert _note_assertion(screen, "t0001").text == "Sprain grade 2"
+        assert screen.rule_queue() == ()
+        status = screen.edit_status_label.text()
+        assert "Not learned: the typed wording contains" in status and "(number)" in status
+        assert screen.undo_line("t0001") is True
+        # The utterance carries a number: the trigger is refused by THE filter.
+        plan = _routed_line(screen, _PLAN_INDEX)
+        assert screen.edit_line(plan.assertion_id, "Review in a fortnight") is True
+        assert screen.rule_queue() == ()
+        status = screen.edit_status_label.text()
+        assert "Not learned: the trigger contains" in status and "(number)" in status
+        screen.deleteLater()
+
+    def test_learning_off_or_a_config_line_teaches_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        off, _r = self._screen(
+            config_root=tmp_path / "config",
+            learning_status_provider=lambda: models.LearningStatus(
+                False, models.LEARNING_OPTED_OUT_HINT
+            ),
+        )
+        line = _routed_line(off, _DIAGNOSIS_INDEX)
+        assert off.edit_line(line.assertion_id, _TYPED) is True
+        assert off.rule_queue() == ()
+        assert models.LEARNING_OPTED_OUT_HINT in off.edit_status_label.text()
+        off.deleteLater()
+        # A hand-authored pre-filled line (the prefill seed) has no utterance
+        # behind it.
+        on, _r = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        [knee] = [row for row in on.prefilled_lines() if "Knee effusion" in row.text]
+        assert on.edit_line(knee.proposal_id, "Knee effusion absent") is True
+        assert on.rule_queue() == () and on.rule_replacement_queue() == ()
+        assert "came from your own config" in on.edit_status_label.text()
+        on.deleteLater()
+
+    # --- Task 2.4: pre-filled lines and the counted Save --------------------------
+
+    def test_a_pre_filled_note_is_ratified_by_the_counted_save_while_a_review_gates(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, record = self._screen(
+            config_root=tmp_path / "config", result=_edit_result(config=_hand_authored_config())
+        )
+        draft = screen._draft
+        assert len(draft.config_decisions) == 2  # the hand rule and the prefill
+        assert screen._rendered_excerpt == {}  # no confirm/decline rows
+        assert not screen.proposals_header.isVisibleTo(screen)
+        rows = screen.prefilled_lines()
+        assert [row.state for row in rows] == ["prefilled", "prefilled"]
+        assert all(models.PREFILLED_MARK in row.label for row in rows)
+        assert all(row.learned is False for row in rows)
+        body = screen.note_body.toPlainText()
+        assert f"[{models.PREFILLED_MARK} - autofill (clinician-authored)]" in body
+        assert f"[{models.PREFILLED_MARK} - prefill (clinician-authored)]" in body
+        assert screen.current_review_state().unconfirmed_proposals == 0
+        assert "clinician_asserted" not in _warning_codes(screen)
+        assert screen.save_button.text() == "Save - confirms the 2 pre-filled lines shown"
+        # An UNRELATED review warning still gates: remove the routed line that
+        # carries a number -> high_risk_omission, Save closed until acknowledged.
+        plan = _routed_line(screen, _PLAN_INDEX)
+        assert screen.remove_line(plan.assertion_id) is True
+        assert "high_risk_omission" in _warning_codes(screen)
+        assert not screen.save_button.isEnabled()
+        screen.save()
+        assert record["saved"] == []
+        screen._acknowledge_all()
+        assert screen.save_button.isEnabled()
+        screen.save()
+        [saved] = record["saved"]
+        prefilled = [
+            a for s in saved.note_sections for a in s.note_assertions if models.is_prefilled(a)
+        ]
+        assert len(prefilled) == 2
+        assert all(a.confirmation.decided_by == "config" for a in prefilled)
+        assert screen.save_button.text() == models.SAVE_BUTTON_LABEL
+        screen.deleteLater()
+
+    def test_save_is_refused_while_a_proposal_the_config_did_not_decide_is_pending(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, record = self._screen(config_root=tmp_path / "config")
+        [pending] = [
+            p for p in screen._draft.note_proposals if p.rule_id == _LEARNED_RULE_ID
+        ]
+        assert pending.proposal_id in screen._rendered_excerpt  # it has a row
+        assert screen.current_review_state().unconfirmed_proposals == 1
+        assert screen.save_button.text() == "Save - confirms the 1 pre-filled line shown"
+        screen._acknowledge_all()
+        assert not screen.save_button.isEnabled()
+        screen.save()
+        assert record["saved"] == []
+        assert "Confirm every proposed line" in screen.message_label.text()
+        screen.confirm_proposal(pending.proposal_id)
+        screen._acknowledge_all()
+        assert screen.save_button.isEnabled()
+        screen.save()
+        assert len(record["saved"]) == 1
+        screen.deleteLater()
+
+    def test_remove_of_a_pre_filled_learned_line_declines_it_and_demotes_the_rule(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(
+            config_root, confirmations=LEARNED_RULE_AUTO_CONFIRM_AFTER
+        )
+        assert load_learned_rule_entries(config_root)[rule_id].auto_confirmed is True
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        # The shipped defaults hold no rules or prefills, so the learned rule
+        # is the ONE pre-filled line under this root.
+        [learned_row] = screen.prefilled_lines()
+        assert learned_row.learned and learned_row.state == "prefilled"
+        assert screen.save_button.text() == "Save - confirms the 1 pre-filled line shown"
+        assert screen.remove_line(learned_row.proposal_id) is True
+        assert "Save will record that you declined it" in screen.edit_status_label.text()
+        [learned_row] = screen.prefilled_lines()
+        assert learned_row.state == "removed"
+        assert screen.save_button.text() == models.SAVE_BUTTON_LABEL
+        assert "Ice pack use explained." not in screen.note_body.toPlainText()
+        assert screen.current_review_state().unconfirmed_proposals == 0
+        self._ratify(screen)
+        screen.save()
+        [saved] = record["saved"]
+        ids = {a.assertion_id for s in saved.note_sections for a in s.note_assertions}
+        assert learned_row.proposal_id not in ids
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        assert "will propose again" in screen.edit_status_label.text()
+        # The rule itself is never deleted: it PROPOSES next time.
+        assert [r.rule_id for r in load_learned_rules(config_root).recent] == [rule_id]
+        screen.deleteLater()
+
+    def test_an_unchanged_pre_filled_line_and_a_confirmed_proposal_each_count_once(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(config_root, confirmations=0)
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        assert proposal.proposal_id in screen._rendered_excerpt  # proposes: count 0
+        self._ratify(screen)  # confirms it by click
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert load_learned_rule_entries(config_root)[rule_id].confirmations == 1
+        screen.deleteLater()
+        # Two more: the third crosses the threshold and Save says so.
+        for expected in (2, 3):
+            result, _ = _rooted_learned_result(config_root, confirmations=0)  # re-reads
+            again, record = self._screen(
+                config_root=config_root, result=result, learning_status_provider=_learning_on
+            )
+            self._ratify(again)
+            again.save()
+            entry = load_learned_rule_entries(config_root)[rule_id]
+            assert entry.confirmations == expected
+            assert entry.auto_confirmed is (expected == LEARNED_RULE_AUTO_CONFIRM_AFTER)
+            if entry.auto_confirmed:
+                assert "will now arrive pre-filled" in again.edit_status_label.text()
+            again.deleteLater()
+        # Now it arrives PRE-FILLED and an unchanged line counts a fourth.
+        result, _ = _rooted_learned_result(config_root, confirmations=0)
+        prefilled, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        assert [row.learned for row in prefilled.prefilled_lines()].count(True) == 1
+        self._ratify(prefilled)
+        prefilled.save()
+        assert load_learned_rule_entries(config_root)[rule_id].confirmations == 4
+        prefilled.deleteLater()
+
+    def test_editing_a_learned_rules_line_replaces_its_wording_in_place_on_save(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(config_root, confirmations=2)
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        assert screen.edit_line(proposal.proposal_id, "Ice applied") is True
+        assert screen.rule_replacement_queue() == ((rule_id, "Ice applied"),)
+        assert screen.rule_queue() == ()
+        assert "Will update this learned shorthand rule's wording" in (
+            screen.edit_status_label.text()
+        )
+        assert screen.current_review_state().unconfirmed_proposals == 0
+        assert screen.learning_label.text() == models.learning_queued_line(0, 1)
+        # A click on the replaced proposal is ignored until Undo.
+        screen.confirm_proposal(proposal.proposal_id)
+        assert proposal.proposal_id not in screen._resolutions
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        [rule] = [r for r in load_note_config(config_root).autofill_rules if r.rule_id == rule_id]
+        assert rule.expansion_texts() == ("Ice applied",)
+        assert rule.trigger_phrase == "ice pack"
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        assert [h.previous_expansion for h in entry.history] == [("Ice pack use explained.",)]
+        assert "Updated a learned shorthand rule's wording" in screen.edit_status_label.text()
+        screen.deleteLater()
+
+    def test_a_removed_pre_filled_learned_line_demotes_even_with_learning_off(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 12 MED-002: with learning OFF at Save nothing new is learned
+        and nothing is promoted, but the practitioner's Remove still resets
+        the rule — otherwise it would pre-fill again on the next note."""
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(
+            config_root, confirmations=LEARNED_RULE_AUTO_CONFIRM_AFTER
+        )
+        off = lambda: models.LearningStatus(False, models.LEARNING_OPTED_OUT_HINT)  # noqa: E731
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=off
+        )
+        [learned_row] = screen.prefilled_lines()
+        assert screen.remove_line(learned_row.proposal_id) is True
+        # A typed edit elsewhere queues nothing under learning-off...
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.edit_line(line.assertion_id, _TYPED) is True
+        assert screen.rule_queue() == ()
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        assert "will propose again" in screen.edit_status_label.text()
+        screen.deleteLater()
+        # ...and an unchanged pre-filled line does NOT count (no promotion off-consent).
+        result, _ = _rooted_learned_result(config_root, confirmations=2)
+        on_the_edge, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=off
+        )
+        self._ratify(on_the_edge)
+        on_the_edge.save()
+        assert len(record["saved"]) == 1
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (2, False)
+        on_the_edge.deleteLater()
+
+    def test_a_correction_never_inherits_the_old_wordings_confirmation(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 12 MED-001: counts are recorded BEFORE in-place corrections,
+        so a new wording starts at 0 even when the old wording's proposal was
+        confirmed by click in the same review."""
+        config_root = tmp_path / "config"
+        # An extra clinician turn whose tail IS the learned trigger ("ok" is
+        # trailing discourse): typing over it corrects that rule in place.
+        turns = (*_EDIT_TURNS, ("Ice pack ok", SPEAKER_2))
+        result, rule_id = _rooted_learned_result(config_root, confirmations=1, turns=turns)
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        screen.confirm_proposal(proposal.proposal_id)  # the OLD wording, confirmed
+        ice_index = len(turns) - 1
+        if ice_index in _eligible(screen):  # unrouted by the shipped cues: add it first
+            key = _eligible(screen)[ice_index].allowed_sections[0]
+            assert screen.add_line(ice_index, key) is True
+            target_id = manual_assertion_id(ice_index)
+        else:
+            target_id = _routed_line(screen, ice_index).assertion_id
+        assert screen.edit_line(target_id, "Ice applied") is True
+        assert screen.rule_replacement_queue() == ((rule_id, "Ice applied"),)
+        assert "Will update the learned shorthand for 'ice pack'" in (
+            screen.edit_status_label.text()
+        )
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        assert [h.previous_expansion for h in entry.history] == [("Ice pack use explained.",)]
+        screen.deleteLater()
+
+    def test_a_generation_note_is_shown_beside_the_config_report(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 12 MED-003 (C8): the generator's note about an unreadable
+        learned-shorthand record reaches the Note tab, as plain text."""
+        from PySide6.QtCore import Qt
+
+        base = _edit_result()
+        noted = models.NoteGenerationResult(
+            draft=base.draft, config=base.config, document=base.document,
+            notes=(models.LEARNED_RULES_UNREADABLE_NOTE.format(reason="<b>x</b>"),),
+        )
+        screen, _record = self._screen(config_root=tmp_path / "config", result=noted)
+        assert screen.info_label.textFormat() == Qt.TextFormat.PlainText
+        text = screen.info_label.text()
+        assert "Autofill rules: 1" in text
+        assert "could not be read (<b>x</b>)" in text
+        screen.deleteLater()
+
+    def test_every_persisted_count_refreshes_the_connected_practitioner_tab(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Peer round 14 PR-LOW-024: a Save that only moves a learned rule's
+        count 0→1 or 1→2 still refreshes the Practitioner tab's "Learned
+        shorthand" lists through the connected signal — no manual refresh —
+        and so does a correction whose sidecar reset landed but whose
+        rules-file write failed."""
+        config_root = tmp_path / "config"
+        practitioner = _practitioner_screen(
+            FakeController(), FakeBackend(), tmp_path, config_root=config_root
+        )
+
+        def listed() -> str:
+            assert practitioner.learned_rules_list.count() == 1
+            return str(practitioner.learned_rules_list.item(0).text())
+
+        for expected in (1, 2):
+            result, rule_id = _rooted_learned_result(config_root, confirmations=0)
+            practitioner.refresh_learned_rules()  # the tab as it stood before this Save
+            assert f"(confirmed {expected - 1} of 3)" in listed()
+            screen, record = self._screen(
+                config_root=config_root, result=result, learning_status_provider=_learning_on
+            )
+            # The main window's wiring (`learned_phrases_changed` -> the tab's
+            # refresh), connected here the same way.
+            screen.learned_phrases_changed.connect(practitioner.refresh_learned_rules)
+            self._ratify(screen)  # confirms the learned proposal by click
+            screen.save()
+            assert len(record["saved"]) == 1
+            assert load_learned_rule_entries(config_root)[rule_id].confirmations == expected
+            assert f"(confirmed {expected} of 3)" in listed()
+            screen.deleteLater()
+        # A correction whose sidecar reset lands but whose rules write fails:
+        # the tab shows the reset count, not the stale one.
+        result, rule_id = _rooted_learned_result(config_root, confirmations=0)
+        screen, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        screen.learned_phrases_changed.connect(practitioner.refresh_learned_rules)
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        assert screen.edit_line(proposal.proposal_id, "Ice applied") is True
+        assert screen.rule_replacement_queue() == ((rule_id, "Ice applied"),)
+        real = note_config_module.atomic_write_bytes
+
+        def rules_write_fails(path: Path, blob: bytes, *, error_label: str) -> None:
+            if path.name == AUTOFILL_RULES_FILENAME:
+                raise StoreWriteError(f"failed writing {error_label}: disk full")
+            real(path, blob, error_label=error_label)
+
+        monkeypatch.setattr(note_config_module, "atomic_write_bytes", rules_write_fails)
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert "Shorthand wording was not updated" in screen.edit_status_label.text()
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        assert "(confirmed 0 of 3)" in listed()
+        assert "'Ice pack use explained.'" in listed()  # the old wording still in force
+        screen.deleteLater()
+        practitioner.deleteLater()
+
+    def test_the_exit_and_queue_lines_name_rules(self) -> None:
+        assert models.unlearned_on_exit_line(0, 1) == (
+            "1 queued shorthand rule was not learned - only Save note on the Note tab "
+            "learns them."
+        )
+        assert models.unlearned_on_exit_line(2, 1).startswith(
+            "2 queued phrases and 1 queued shorthand rule were not learned"
+        )
+        assert models.unlearned_on_exit_line(1) == (
+            "1 queued phrase was not learned - only Save note on the Note tab learns them."
+        )
+        assert "1 phrase and 2 shorthand rules queued" in models.learning_queued_line(1, 2)
+        assert models.save_button_label(0) == models.SAVE_BUTTON_LABEL == "Save note"
+        assert models.save_button_label(1) == "Save - confirms the 1 pre-filled line shown"
 
 
 # ---------------------------------------------------------------------------

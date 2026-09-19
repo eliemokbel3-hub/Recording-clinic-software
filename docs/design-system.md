@@ -58,13 +58,21 @@ view patterns · tokens · microcopy.
   box unticked with a one-line notice asking for a fresh tick (`CONSENT_STALE_NOTICE`),
   with "Confirm consent" saving the new consent (and the learning opt-in) without a
   re-record.
-- **Edits that subtract or re-route, never free text.** The Note tab's "Edit the note"
-  group (`ui/note.py`) offers Add line / Remove line / Move / Undo over whole transcript
-  utterances: a chooser lists only the lines not already in the note, a section chooser
-  lists only the sections that line may enter (the router's own ownership rule), and
-  every edit re-finalises the note with acknowledgements cleared. There is no text
-  field — an assertion is a quoted utterance or nothing — and the transcript panel stays
-  a non-interactive text box; edits freeze at Save like proposal decisions.
+- **Edits over whole lines, with typing only OVER a line.** The Note tab's "Edit the note"
+  group offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
+  transcript utterances under the router's ownership rule as before; Edit opens a one-line
+  inline editor in the row (Enter applies, Escape cancels) and replaces that line or
+  proposal with the clinician's own wording as a `clinician`-provenance line labelled
+  `typed (clinician-authored)`, Undo restoring the original; there is still no free-text
+  area — a typed line always stands in for a specific line, records what it replaced, and
+  carries the clinician's own decision; the transcript panel stays a non-interactive text
+  box; edits freeze at Save.
+- **Pre-filled lines are marked, counted and ratified by one Save.** A line the
+  practitioner's own config pre-filled renders with `[pre-filled by your config - …]` in
+  the note body and in the line editor, has no confirm/decline row, offers Remove and Edit,
+  and the Save button reads `Save - confirms the N pre-filled lines shown` while any stand
+  (plain `Save note` otherwise); Remove is recorded as the clinician's decline at Save and
+  demotes a learned rule to proposing (`ui/note.py`, `ui/models.py`; note-learning plan D5).
 - **Say what was learned, and what was not, on the spot — and name the control that
   writes it.** After an add or a move the edit group's status line says either "Will
   learn '<phrase>' for <section> when you press Save note on this tab", "Not learned:
@@ -171,3 +179,7 @@ Cliniko, and only once the shipping gate allows.
   cares about ("recording did not finish cleanly; the tail may be missing") rather than
   the internal cause (a missing store footer).
 - Destructive actions are named for what they do — Complete and Discard, not OK/Cancel.
+- A typed line's learning status names the trigger and the wording: "Will learn shorthand:
+  '<trigger>' -> '<wording>' for <Section> when you press Save note on this tab"; a
+  not-learned reason names the class ("the trigger contains a name/number/date/medication
+  (<class>)", "the typed wording contains a number/date/medication (<class>)").

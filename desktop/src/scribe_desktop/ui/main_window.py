@@ -148,9 +148,14 @@ class MainWindow(QMainWindow):
             # synchronously before the enrolment worker opens the device.
             on_capture_start=self.microphone_screen.stop_monitor,
         )
-        # A phrase learned on Save shows up on the Practitioner tab at once.
+        # A phrase learned on Save shows up on the Practitioner tab at once —
+        # and so does a learned shorthand rule (note-learning plan Task 2.5:
+        # the Note tab emits this same signal when rules change).
         self.note_screen.learned_phrases_changed.connect(
             self.practitioner_screen.refresh_learned_phrases
+        )
+        self.note_screen.learned_phrases_changed.connect(
+            self.practitioner_screen.refresh_learned_rules
         )
         # The microphone screen's voice-profile report line is re-read when
         # the Practitioner tab changes the profile — not on the screen's 5 s
@@ -425,8 +430,9 @@ class MainWindow(QMainWindow):
         # draft (the Note tab clears after this callback), so read it FIRST
         # and say what was lost on the screen the practitioner lands on.
         queued = self.note_screen.queued_learning_count()
+        rules = self.note_screen.queued_rule_count()
         self.transcript_screen.cancel_note_review()
-        self.transcript_screen.report_unlearned_phrases(queued)
+        self.transcript_screen.report_unlearned_phrases(queued, rules)
         self.tabs.setCurrentWidget(self.transcript_screen)
 
     def _on_generation_active(self, active: object) -> None:
@@ -450,8 +456,9 @@ class MainWindow(QMainWindow):
         # Transcript screen's own closing message. A saved note has an empty
         # queue, so Complete after Save reports nothing.
         queued = self.note_screen.queued_learning_count()
+        rules = self.note_screen.queued_rule_count()
         self.note_screen.clear()
-        self.transcript_screen.report_unlearned_phrases(queued)
+        self.transcript_screen.report_unlearned_phrases(queued, rules)
         self.session_screen.refresh()
         # PR round 20 (PR-HIGH-009): release ONLY the checkout owned by the
         # transcript that just closed — never an unscoped clear.
@@ -469,5 +476,5 @@ class MainWindow(QMainWindow):
         # phrases stays on the Transcript screen so the appended sentence is
         # actually seen; every other close (ordinary Complete, Complete after
         # Save, an empty queue) lands on the Session screen as before.
-        landing = self.transcript_screen if queued > 0 else self.session_screen
+        landing = self.transcript_screen if queued + rules > 0 else self.session_screen
         self.tabs.setCurrentWidget(landing)

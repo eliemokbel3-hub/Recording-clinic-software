@@ -66,17 +66,26 @@ identifies the config content that actually authored the text.
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Final, NamedTuple
 
-from scribe_desktop.note import NoteProposal, content_tokens
+from scribe_desktop.note import (
+    ConfirmationDecision,
+    NoteProposal,
+    ProposalResolution,
+    content_tokens,
+)
 from scribe_desktop.note_config import (
     # Package-private by name, shared deliberately (the note.py convention):
     # the generation-boundary canonicaliser is THE answer to forged or
     # validator-skipping configs, and proposals must stamp the same digest
     # the boundary would derive.
+    LearnedRuleEntry,
     NoteConfig,
     PrefillTemplate,
     _canonical_config,
+    is_learned_rule_id,
 )
 from scribe_desktop.transcription import TranscriptDocument
 
@@ -316,3 +325,63 @@ def prefill_proposals(
         )
         for entry_index, seed in enumerate(selected.seed_assertions)
     )
+
+
+# ---------------------------------------------------------------------------
+# Save-as-ratification (note-learning-and-styles plan Phase 2, Task 2.4; D5).
+# ---------------------------------------------------------------------------
+
+
+def _arrives_prefilled(proposal: NoteProposal, learned: Mapping[str, LearnedRuleEntry]) -> bool:
+    """The D5 rule: a prefill seed and a hand-authored autofill rule are the
+    practitioner's OWN config and pre-fill; a LEARNED rule (by id prefix)
+    pre-fills only once its sidecar record says ``auto_confirmed`` — with no
+    record, or one that says otherwise, it proposes."""
+    if proposal.provenance == "prefill" or not is_learned_rule_id(proposal.rule_id):
+        return True
+    entry = learned.get(proposal.rule_id)
+    return entry is not None and entry.auto_confirmed
+
+
+def config_decisions(
+    proposals: Sequence[NoteProposal],
+    *,
+    learned: Mapping[str, LearnedRuleEntry],
+    decided_at: datetime,
+) -> tuple[ProposalResolution, ...]:
+    """MINT the config decisions for the proposals that arrive pre-filled
+    (D4: minted at the emitter, never by the review surface — and
+    ``finalise_note`` accepts a config decision only when the draft carries
+    it). One ``ProposalResolution`` per pre-filled proposal: ``confirmed``,
+    ``decided_by="config"``, the proposal's own ``config_digest`` (the type
+    then pins it to the assertion's) and, for a learned rule, its
+    ``confirmation_count`` at minting — the auto-confirm evidence.
+
+    The ``shown_text_digest`` is the proposal's own: a pre-filled line is
+    rendered from the assertion's ``span_text``, which IS ``note_excerpt``,
+    by the one rendering path, so the digest minted here and the text shown
+    cannot name different words except through that path itself (stated
+    residue; the proposal-row read-back defence belongs to lines that have
+    a row). Nothing is written here and nothing enters a note: a decision is
+    evidence the counted Save ratifies, and Remove replaces it with the
+    clinician's own.
+    """
+    decisions: list[ProposalResolution] = []
+    for proposal in proposals:
+        if not _arrives_prefilled(proposal, learned):
+            continue
+        entry = learned.get(proposal.rule_id) if proposal.provenance == "autofill" else None
+        decisions.append(
+            ProposalResolution(
+                shown_text_digest=proposal.shown_text_digest,
+                confirmation=ConfirmationDecision(
+                    proposal_id=proposal.proposal_id,
+                    note_confirmation="confirmed",
+                    decided_at=decided_at,
+                    decided_by="config",
+                    config_digest=proposal.config_digest,
+                    confirmation_count=entry.confirmations if entry is not None else None,
+                ),
+            )
+        )
+    return tuple(decisions)

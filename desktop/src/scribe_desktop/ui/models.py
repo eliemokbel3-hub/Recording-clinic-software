@@ -18,6 +18,7 @@ from typing import Final, Literal, Protocol
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     CANONICAL_SECTIONS,
+    MAX_ASSERTION_CHARS,
     ExtractiveNoteProvider,
     GeneratedNote,
     GeneratedSection,
@@ -31,7 +32,19 @@ from scribe_desktop.note import (
     compose_draft,
     reconstruct_span_text,
 )
-from scribe_desktop.note_config import NoteConfig, StyleProfile, load_note_config
+from scribe_desktop.note_config import (
+    # ``_no_control_chars`` is package-private by name, shared deliberately
+    # (the note.py convention): ONE config-text validator, applied here to
+    # typed wording that may become config.
+    LearnedRuleEntry,
+    NoteConfig,
+    NoteConfigError,
+    StyleProfile,
+    _no_control_chars,
+    is_learned_rule_id,
+    load_learned_rule_entries,
+    load_note_config,
+)
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
     PractitionerProfile,
@@ -466,15 +479,38 @@ def provenance_label(provenance: str) -> str:
     return _PROVENANCE_LABELS.get(provenance, provenance)
 
 
+# Note-learning plan D5: the DISTINCT mark a line pre-filled by the
+# practitioner's own config carries wherever it is rendered — the note body,
+# the line editor — so the counted Save's label and the marked lines agree.
+PREFILLED_MARK: Final = "pre-filled by your config"
+
+
+def is_prefilled(assertion: NoteAssertion) -> bool:
+    """True for a line the practitioner's OWN config decided
+    (``decided_by="config"``) — the lines the counted Save ratifies."""
+    decision = assertion.confirmation
+    return decision is not None and decision.decided_by == "config"
+
+
+def assertion_label(assertion: NoteAssertion) -> str:
+    """The bracketed label a rendered line carries: its provenance label,
+    prefixed by ``PREFILLED_MARK`` when the line arrived pre-filled."""
+    label = provenance_label(assertion.provenance)
+    return f"{PREFILLED_MARK} - {label}" if is_prefilled(assertion) else label
+
+
 @dataclass(frozen=True)
 class RenderedAssertion:
     """One assertion rendered as ONE bullet — never assembled prose (plan
-    Critical Constraint: assertions render on hard boundaries)."""
+    Critical Constraint: assertions render on hard boundaries).
+    ``provenance_label`` already carries the pre-filled mark when
+    ``prefilled`` is True (``assertion_label``)."""
 
     assertion_id: str
     provenance: str
     provenance_label: str
     text: str
+    prefilled: bool = False
 
 
 @dataclass(frozen=True)
@@ -515,8 +551,9 @@ def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
                     RenderedAssertion(
                         assertion_id=assertion.assertion_id,
                         provenance=assertion.provenance,
-                        provenance_label=provenance_label(assertion.provenance),
+                        provenance_label=assertion_label(assertion),
                         text=assertion.text,
+                        prefilled=is_prefilled(assertion),
                     )
                     for assertion in section.note_assertions
                 ),
@@ -840,6 +877,11 @@ class NoteGenerationResult:
     draft: NoteDraft
     config: NoteConfig
     document: TranscriptDocument
+    # Note-learning plan Phase 2: one-line notes about how the draft was
+    # composed that the Note tab shows beside the config report (today: a
+    # learned-rule sidecar that could not be read, so every learned rule
+    # proposed). Display text; never clinical content.
+    notes: tuple[str, ...] = ()
 
 
 # --- review edits (practitioner-profile plan Phase 5, D14) ------------------
@@ -856,11 +898,12 @@ def working_draft(
     their sections, sections in canonical order (D14). Every check then runs
     over the EDITED note exactly as over the generated one — reconstruction,
     contradiction, provenance, omission — because ``finalise_note`` takes a
-    draft and nothing else changes. The proposals travel unchanged, so the
-    resolution evidence keeps matching. Validated on construction: a
-    duplicate assertion id or a rule-authored (autofill / prefill) addition
-    is refused by ``NoteDraft`` itself; a quoted line and a typed
-    ``clinician`` line (schema v2, D4) are the admitted additions."""
+    draft and nothing else changes. The proposals AND the config decisions
+    the emitter minted travel unchanged, so the resolution evidence keeps
+    matching. Validated on construction: a duplicate assertion id or a
+    rule-authored (autofill / prefill) addition is refused by ``NoteDraft``
+    itself; a quoted line and a typed ``clinician`` line (schema v2, D4) are
+    the admitted additions."""
     grouped: dict[NoteSectionKey, list[NoteAssertion]] = {}
     for section in draft.note_sections:
         kept = [a for a in section.note_assertions if a.assertion_id not in removed]
@@ -881,6 +924,7 @@ def working_draft(
             if key in grouped
         ),
         note_proposals=draft.note_proposals,
+        config_decisions=draft.config_decisions,
     )
 
 
@@ -934,7 +978,7 @@ def eligible_utterances(
     return tuple(choices)
 
 
-LineState = Literal["routed", "removed", "moved", "added"]
+LineState = Literal["routed", "removed", "moved", "added", "replaced"]
 
 
 @dataclass(frozen=True)
@@ -942,9 +986,11 @@ class EditableLine:
     """One transcript-provenance line of the working note with its edit
     state (Task 5.1b): ``routed`` (the provider's, in place), ``removed``
     (the provider's, subtracted), ``moved`` (the provider's, subtracted and
-    re-added under ``moved_to``) or ``added`` (a manual addition with no
-    provider counterpart). ``allowed_sections`` are the sections a Move may
-    target — the ownership rule, minus the section it is in."""
+    re-added under ``moved_to``), ``added`` (a manual addition with no
+    provider counterpart) or ``replaced`` (subtracted in favour of the typed
+    line ``replaced_by`` — note-learning plan Task 2.1). ``allowed_sections``
+    are the sections a Move may target — the ownership rule, minus the
+    section it is in."""
 
     assertion_id: str
     segment_index: int
@@ -953,6 +999,7 @@ class EditableLine:
     state: LineState
     moved_to: NoteSectionKey | None
     allowed_sections: tuple[NoteSectionKey, ...]
+    replaced_by: str | None = None
 
 
 def editable_lines(
@@ -961,10 +1008,14 @@ def editable_lines(
     *,
     removed: Collection[str],
     additions: Mapping[str, NoteAssertion],
+    replaced: Mapping[str, str] = {},
 ) -> tuple[EditableLine, ...]:
     """The rows of the Note tab's line editor: the provider's transcript
     lines in note order (each carrying its remove/move state) followed by
-    the manual additions that are not the re-added leg of a move."""
+    the manual additions that are not the re-added leg of a move. A line in
+    ``replaced`` (its id -> the typed line's id) renders as ``replaced``
+    whether it is a provider line in ``removed`` or a manual addition still
+    listed in ``additions``."""
     manual_by_segment: dict[int, NoteAssertion] = {}
     for assertion in additions.values():
         coords = assertion.note_span.source_coords
@@ -1000,7 +1051,10 @@ def editable_lines(
             manual = manual_by_segment.get(segment_index)
             state: LineState = "routed"
             moved_to: NoteSectionKey | None = None
-            if assertion.assertion_id in removed:
+            replaced_by = replaced.get(assertion.assertion_id)
+            if replaced_by is not None:
+                state = "replaced"
+            elif assertion.assertion_id in removed:
                 if manual is not None:
                     state, moved_to = "moved", manual.section_key
                     covered.add(segment_index)
@@ -1015,28 +1069,129 @@ def editable_lines(
                     state,
                     moved_to,
                     allowed_for(segment_index, section.section_key),
+                    replaced_by,
                 )
             )
     for assertion in additions.values():
         coords = assertion.note_span.source_coords
         if coords is None or coords.segment_index in covered:
             # No coordinates = a typed ``clinician`` addition (schema v2):
-            # no row here, its own row is the note-learning plan's Task 2.1.
+            # no row here — ``typed_lines`` lists it (Task 2.1).
             continue
         if coords.segment_index >= len(document.transcript_segments):
             continue
+        replaced_by = replaced.get(assertion.assertion_id)
         lines.append(
             EditableLine(
                 assertion.assertion_id,
                 coords.segment_index,
                 assertion.section_key,
                 f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}",
-                "added",
+                "replaced" if replaced_by is not None else "added",
                 None,
                 allowed_for(coords.segment_index, assertion.section_key),
+                replaced_by,
             )
         )
     return tuple(lines)
+
+
+@dataclass(frozen=True)
+class TypedLine:
+    """One typed ``clinician`` line of the working note (note-learning plan
+    Task 2.1): what it says, where it sits and what it replaced — a provider
+    or manual transcript line, a proposal, or nothing (``replaces`` None
+    is unreachable through the Note tab, which types only OVER a line)."""
+
+    assertion_id: str
+    section_key: NoteSectionKey
+    text: str
+    label: str
+    replaces: str | None
+
+
+def typed_lines(additions: Mapping[str, NoteAssertion]) -> tuple[TypedLine, ...]:
+    """The typed rows of the line editor, in insertion order: every
+    coordinate-free ``clinician`` addition."""
+    return tuple(
+        TypedLine(
+            assertion.assertion_id,
+            assertion.section_key,
+            assertion.text,
+            f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}",
+            assertion.replaces,
+        )
+        for assertion in additions.values()
+        if assertion.provenance == "clinician"
+    )
+
+
+PrefilledState = Literal["prefilled", "removed", "replaced"]
+
+
+@dataclass(frozen=True)
+class PrefilledLine:
+    """One line the practitioner's OWN config pre-filled (note-learning plan
+    D5, Task 2.4): the proposal the emitter minted a config decision for,
+    with its review state — ``prefilled`` (in the note, marked), ``removed``
+    (the clinician's Remove: declined at Save, the rule demoted) or
+    ``replaced`` (edited into the typed line ``replaced_by``). ``learned``
+    says whether Remove or Edit reaches a learned rule's count or wording."""
+
+    proposal_id: str
+    section_key: NoteSectionKey
+    text: str
+    label: str
+    state: PrefilledState
+    learned: bool
+    replaced_by: str | None = None
+
+
+def prefilled_lines(
+    draft: NoteDraft,
+    *,
+    removed: Collection[str],
+    replaced: Mapping[str, str],
+) -> tuple[PrefilledLine, ...]:
+    """The pre-filled rows of the line editor, in proposal order: one per
+    config decision the draft carries."""
+    decided = {decision.proposal_id for decision in draft.config_decisions}
+    lines: list[PrefilledLine] = []
+    for proposal in draft.note_proposals:
+        if proposal.proposal_id not in decided:
+            continue
+        replaced_by = replaced.get(proposal.proposal_id)
+        state: PrefilledState = "prefilled"
+        if replaced_by is not None:
+            state = "replaced"
+        elif proposal.proposal_id in removed:
+            state = "removed"
+        lines.append(
+            PrefilledLine(
+                proposal.proposal_id,
+                proposal.section_key,
+                proposal.note_excerpt,
+                f"{section_title(proposal.section_key)} - "
+                f"{_lead_words(proposal.note_excerpt)} [{PREFILLED_MARK}]",
+                state,
+                proposal.provenance == "autofill" and is_learned_rule_id(proposal.rule_id),
+                replaced_by,
+            )
+        )
+    return tuple(lines)
+
+
+SAVE_BUTTON_LABEL: Final = "Save note"
+
+
+def save_button_label(prefilled_count: int) -> str:
+    """The Save button's text (D5): with pre-filled lines in the note the
+    button SAYS it confirms them, counted, so one Save is a visible act of
+    ratification; with none it is the plain ``SAVE_BUTTON_LABEL``."""
+    if prefilled_count <= 0:
+        return SAVE_BUTTON_LABEL
+    noun = "line" if prefilled_count == 1 else "lines"
+    return f"Save - confirms the {prefilled_count} pre-filled {noun} shown"
 
 
 # --- phrase learning status (practitioner-profile plan Task 5.2) -----------
@@ -1056,8 +1211,8 @@ LEARNING_OPTED_OUT_HINT: Final = (
     "Phrase learning is off - turn it on on the Practitioner tab."
 )
 LEARNING_ON_LINE: Final = (
-    "Phrase learning is on: lines you add or move are learned when you press Save note "
-    "on this tab."
+    "Phrase learning is on: lines you add or move, and shorthand you type over your own "
+    "lines, are learned when you press Save note on this tab."
 )
 # Shown on the Note tab's learning line while phrases are QUEUED (live smoke
 # 2026-09-17: the practitioner read the queue as done and left the review
@@ -1068,27 +1223,62 @@ LEARNING_NOT_ATTRIBUTED_NOTE: Final = (
 )
 
 
-def learning_queued_line(count: int) -> str:
-    """The learning line while ``count`` phrases wait for Save: names the
-    exact control that writes them and where it is."""
-    noun = "phrase" if count == 1 else "phrases"
+def _queued_nouns(phrases: int, rules: int, *, queued_first: bool) -> str:
+    """``"1 phrase queued"`` / ``"1 queued phrase"``, ``"2 phrases and 1
+    shorthand rule queued"`` — the queued phrases (cue learning) and the
+    queued shorthand rules (note-learning plan Phase 2), named separately so
+    the practitioner knows what Save writes."""
+    counted: list[tuple[int, str]] = []
+    if phrases:
+        counted.append((phrases, "phrase" if phrases == 1 else "phrases"))
+    if rules:
+        counted.append((rules, "shorthand rule" if rules == 1 else "shorthand rules"))
+    if queued_first:
+        return " and ".join(f"{count} queued {noun}" for count, noun in counted)
+    return " and ".join(f"{count} {noun}" for count, noun in counted) + " queued"
+
+
+def learning_queued_line(count: int, rules: int = 0) -> str:
+    """The learning line while ``count`` phrases and ``rules`` shorthand
+    rules wait for Save: names the exact control that writes them and where
+    it is."""
+    nouns = _queued_nouns(count, rules, queued_first=False)
     return (
-        f"Phrase learning is on: {count} {noun} queued - press Save note on this tab to "
-        "learn them (Cancel, Delete and Complete learn nothing)."
+        f"Phrase learning is on: {nouns} - press Save note on this tab to learn them "
+        "(Cancel, Delete and Complete learn nothing)."
     )
 
 
-def unlearned_on_exit_line(count: int) -> str:
+def unlearned_on_exit_line(count: int, rules: int = 0) -> str:
     """The sentence the Transcript screen appends after a review left with
-    ``count`` phrases still queued (practitioner-profile plan Task 5.6): the
+    ``count`` phrases (and ``rules`` shorthand rules) still queued
+    (practitioner-profile plan Task 5.6; note-learning plan Task 2.3): the
     queue is written by Save note only, so every other exit drops it — said
     once, where the practitioner lands, never a modal."""
-    if count == 1:
-        return "1 queued phrase was not learned - only Save note on the Note tab learns them."
-    return (
-        f"{count} queued phrases were not learned - only Save note on the Note tab learns "
-        "them."
-    )
+    verb = "was" if count + rules == 1 else "were"
+    nouns = _queued_nouns(count, rules, queued_first=True)
+    return f"{nouns} {verb} not learned - only Save note on the Note tab learns them."
+
+
+def check_typed_text(text: str) -> str | None:
+    """Why ``text`` may not be typed over a note line (note-learning plan
+    Task 2.1), or None when it may: blank, over ``MAX_ASSERTION_CHARS``, or
+    carrying a control / layout / invisible-format character — the ONE
+    config-text validator (``note_config._no_control_chars``), because the
+    same words may become a learned rule's wording and must be exactly what
+    is shown. The refusal filters (names, numbers, dates, medications) are
+    NOT applied here: they decide what is LEARNED, never what the clinician
+    may write in their own note."""
+    stripped = text.strip()
+    if not stripped:
+        return "Type the line's wording first."
+    if len(stripped) > MAX_ASSERTION_CHARS:
+        return f"The line is too long (over {MAX_ASSERTION_CHARS} characters)."
+    try:
+        _no_control_chars(stripped)
+    except ValueError:
+        return "The line carries a hidden control or layout character - retype it."
+    return None
 
 
 @dataclass(frozen=True)
@@ -1153,6 +1343,7 @@ def build_note_generator(
     def generator(session_dir: Path, crypto: SessionCrypto) -> NoteGenerationResult:
         document = read_transcript(session_dir, crypto)
         config = load_note_config(config_root)
+        learned, notes = learned_rule_states(config_root)
         draft = compose_draft(
             document,
             config,
@@ -1160,10 +1351,32 @@ def build_note_generator(
             template_profile_id=template_profile_id,
             clinician_speaker=clinician_speaker,
             prefill_id=prefill_id,
+            learned_rules=learned,
         )
-        return NoteGenerationResult(draft=draft, config=config, document=document)
+        return NoteGenerationResult(draft=draft, config=config, document=document, notes=notes)
 
     return generator
+
+
+LEARNED_RULES_UNREADABLE_NOTE: Final = (
+    "The learned-shorthand record could not be read ({reason}), so every learned rule "
+    "is proposed for confirmation this time; check it on the Practitioner tab."
+)
+
+
+def learned_rule_states(
+    config_root: Path | None,
+) -> tuple[dict[str, LearnedRuleEntry], tuple[str, ...]]:
+    """The learned-rule sidecar for the emitter (note-learning plan D5), read
+    fail-SAFE: a malformed or unreadable sidecar yields no entries — so every
+    learned rule proposes and needs its click, never the reverse — plus the
+    one-line note the Note tab shows. The config itself still loads loudly
+    through ``load_note_config``; only the metadata sidecar is soft here."""
+    try:
+        return load_learned_rule_entries(config_root), ()
+    except NoteConfigError as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        return {}, (LEARNED_RULES_UNREADABLE_NOTE.format(reason=reason),)
 
 
 # ---------------------------------------------------------------------------
@@ -1699,9 +1912,12 @@ __all__ = [
     "LiveTranscriberSource",
     "LEARNING_STALE_CONSENT_HINT",
     "LEARNING_UNUSABLE_HINT",
+    "LEARNED_RULES_UNREADABLE_NOTE",
+    "PREFILLED_MARK",
     "PROFILE_NOT_ENROLLED_LINE",
     "PROFILE_REENROL_REASON",
     "PROFILE_UNUSABLE_REASON",
+    "SAVE_BUTTON_LABEL",
     "SPEAKER_MODEL_MISSING_REASON",
     "UNFINISHED_STORE_WARNING",
     "WARNING_COPY",
@@ -1712,21 +1928,26 @@ __all__ = [
     "LearningStatus",
     "NoteGenerationResult",
     "NoteReviewState",
+    "PrefilledLine",
+    "PrefilledState",
     "RecoverableSessionInfo",
     "RenderedAssertion",
     "RenderedProposal",
     "RenderedSection",
     "SessionControllerLike",
+    "TypedLine",
     "UtteranceChoice",
     "WarningCopy",
     "WarningGroup",
     "WarningSummary",
+    "assertion_label",
     "attribution_inputs",
     "attribution_readiness",
     "build_note_generator",
     "build_live_transcriber",
     "build_recovery_runner",
     "build_transcriber",
+    "check_typed_text",
     "complete_block_reason",
     "config_report_lines",
     "consent_is_current",
@@ -1738,15 +1959,19 @@ __all__ = [
     "format_note_body",
     "format_timestamp",
     "format_transcript_text",
+    "is_prefilled",
+    "learned_rule_states",
     "learning_queued_line",
     "learning_status",
     "list_recoverable_sessions",
     "model_file_report_lines",
     "model_report_lines",
     "models_ready",
+    "prefilled_lines",
     "provenance_label",
     "render_note_sections",
     "render_proposal",
+    "save_button_label",
     "section_title",
     # Re-exported (like ``default_sessions_root``): the microphone screen reads
     # the speaker-model stat THROUGH this module so one monkeypatch reaches its
@@ -1755,6 +1980,7 @@ __all__ = [
     "speaker_model_report_line",
     "speaker_quotations",
     "summarise_warnings",
+    "typed_lines",
     "unlearned_on_exit_line",
     "voice_profile_report_line",
     "working_draft",

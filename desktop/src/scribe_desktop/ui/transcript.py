@@ -754,14 +754,15 @@ class TranscriptScreen(QWidget):
         self._note_review_state = state
         self._update_controls()
 
-    def report_unlearned_phrases(self, count: int) -> None:
+    def report_unlearned_phrases(self, count: int, rules: int = 0) -> None:
         """Practitioner-profile plan Task 5.6: after a review left with
-        ``count`` phrases still queued (Cancel, Delete-and-complete,
+        ``count`` phrases (and, note-learning plan Task 2.3, ``rules``
+        shorthand rules) still queued (Cancel, Delete-and-complete,
         Discard), append what was lost to the status line — after the exit's
         own message, a line rather than a prompt. Zero appends nothing."""
-        if count <= 0:
+        if count + rules <= 0:
             return
-        sentence = models.unlearned_on_exit_line(count)
+        sentence = models.unlearned_on_exit_line(count, rules)
         current = self.message_label.text()
         self.message_label.setText(f"{current} {sentence}".strip())
 
