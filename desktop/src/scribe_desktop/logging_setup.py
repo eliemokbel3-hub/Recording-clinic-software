@@ -139,6 +139,17 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"transcript_utterances"',
     "'transcript_utterances'",
     "transcript_utterances=",
+    # Note-learning-and-styles plan Phase 0 (schema v2, D7): a section's
+    # prose rendering is clinical text. ``StyleRendering`` carries
+    # ``prose_text`` (its only content field) and the note carries them
+    # under ``style_renderings``; both are registered so a bare rendering's
+    # repr is dropped like every other note model's.
+    '"style_renderings"',
+    "'style_renderings'",
+    "style_renderings=",
+    '"prose_text"',
+    "'prose_text'",
+    "prose_text=",
     # Practitioner-profile plan Phase 1 (D5): the voice-profile markers. A
     # repr, model_dump or JSON of a ``PractitionerProfile`` carries
     # ``embedding`` (the biometric vector) and ``enrolment_speech_seconds``;
@@ -154,6 +165,13 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"consent_text_version"',
     "'consent_text_version'",
     "consent_text_version=",
+    # Note-learning-and-styles plan Phase 0 (D9/D10): a ``StyleExemplar`` is
+    # a sentence from the practitioner's own past notes; its one content
+    # field is ``exemplar_text`` so a bare exemplar's rendering is dropped
+    # (a whole ``StyleProfile`` already carries ``consent_text_version``).
+    '"exemplar_text"',
+    "'exemplar_text'",
+    "exemplar_text=",
 )
 
 # THE production log format — one string, used to build every handler's

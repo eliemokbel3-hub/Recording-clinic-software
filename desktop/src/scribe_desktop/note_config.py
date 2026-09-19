@@ -151,12 +151,14 @@ from scribe_desktop.note import (
     GeneratedSection,
     NoteRequest,
     NoteSectionKey,
+    NoteStyle,
     NoteWarning,
     _assemble_note_request,
     content_tokens,
     digest_bytes,
     normalise_token,
 )
+from scribe_desktop.practitioner_profile import ConsentRecord
 from scribe_desktop.session_store import StoreWriteError, atomic_write_bytes
 from scribe_desktop.transcription import (
     TranscriptDocument,
@@ -176,6 +178,18 @@ CONFIG_FILENAMES: Final[tuple[str, ...]] = (
     # ``note`` because that module derives its default cues from the file.
     SECTION_CUES_FILENAME,
 )
+# The practitioner's display settings (note-learning-and-styles plan Phase 0
+# Task 0.3, D7): a fifth file in the config directory that is NOT part of
+# ``NoteConfig`` and NOT in the config digest — the writing style changes how
+# a finalised note is RENDERED, never what it asserts, and the note records
+# the style it was rendered under itself (``GeneratedNote.style``).
+PRACTITIONER_SETTINGS_FILENAME: Final = "practitioner_settings.json"
+DEFAULT_NOTE_STYLE: Final[NoteStyle] = "clean"
+# The two SHIPPED vocabularies (D6, D10): package data only, never a user
+# file and never in the digest — a controlled clinical-abbreviation list that
+# admits auto-extracted shorthand, and Check 5's connective allow-list.
+CLINICAL_ABBREVIATIONS_FILENAME: Final = "clinical_abbreviations.json"
+PROSE_CONNECTIVES_FILENAME: Final = "prose_connectives.json"
 
 # Shipped defaults travel INSIDE the package (Task 3.3): package data under
 # ``scribe_desktop/config_defaults/`` (``note._DEFAULTS_RESOURCE_DIR``, the
@@ -977,6 +991,258 @@ def load_note_config(config_root: Path | None = None) -> NoteConfig:
 
 
 # ---------------------------------------------------------------------------
+# Practitioner settings (note-learning-and-styles plan Phase 0 Task 0.3).
+# ---------------------------------------------------------------------------
+
+
+class PractitionerSettings(BaseModel):
+    """On-disk shape of ``practitioner_settings.json``:
+    ``{"schema_version": 1, "note_style": "verbatim|clean|own_voice|narrative"}``.
+    Absent file = the defaults (``clean`` after this plan; ``verbatim``
+    stays selectable). Hand-editable like the other config files, so an
+    unknown version or style fails loudly rather than parsing as a default.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    note_style: NoteStyle = DEFAULT_NOTE_STYLE
+
+    def to_bytes(self) -> bytes:
+        return (self.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+
+def load_practitioner_settings(config_root: Path | None = None) -> PractitionerSettings:
+    """The settings file, or the defaults when it does not exist. An
+    existing-but-unreadable file raises ``NoteConfigUnreadableError`` and a
+    malformed one ``NoteConfigInvalidError`` (naming what to fix) — never a
+    silent fallback to defaults the practitioner did not choose."""
+    root = config_root if config_root is not None else default_config_root()
+    path = root / PRACTITIONER_SETTINGS_FILENAME
+    try:
+        blob = path.read_bytes()
+    except FileNotFoundError:
+        return PractitionerSettings()
+    except OSError as exc:
+        raise NoteConfigUnreadableError(
+            f"user config {PRACTITIONER_SETTINGS_FILENAME} unreadable: {exc}"
+        ) from exc
+    return _parse_config_blob(PractitionerSettings, blob, PRACTITIONER_SETTINGS_FILENAME, "user")
+
+
+def save_practitioner_settings(
+    settings: PractitionerSettings, *, config_root: Path | None = None
+) -> Path:
+    """Replace the settings file atomically (``_write_config_file`` — the one
+    write path into the config directory); ``NoteConfigWriteError`` on any
+    failure, the file never partial."""
+    root = config_root if config_root is not None else default_config_root()
+    _write_config_file(root, PRACTITIONER_SETTINGS_FILENAME, settings.to_bytes())
+    return root / PRACTITIONER_SETTINGS_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# The learned style (note-learning-and-styles plan Phase 0 Task 0.3; D9, D10).
+#
+# The MODEL lives here beside the other clinician-config shapes because it
+# names canonical section keys; its CUSTODY (a DPAPI-wrapped store under its
+# own root and key) is ``practitioner_profile.save_style_profile`` /
+# ``load_style_profile`` / ``delete_style_profile``, which import this model
+# at call time. Validation errors render WITHOUT their input
+# (``hide_input_in_errors``): the exemplars are sentences from the
+# practitioner's own past notes and must never reach a rendered error.
+# ---------------------------------------------------------------------------
+
+# D10: at most this many reviewed exemplar sentences; 1–5 notes per run.
+MAX_STYLE_EXEMPLARS: Final = 30
+MAX_SAMPLE_NOTES: Final = 5
+MAX_SHORTHAND_TOKEN_CHARS: Final = 32
+_MAX_SHORTHAND_ENTRIES: Final = 500
+_MAX_EXEMPLAR_CHARS: Final = 1_000
+
+_STYLE_MODEL_CONFIG = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
+
+StylePerson = Literal["first", "third", "mixed", "unknown"]
+StyleTense = Literal["past", "present", "mixed", "unknown"]
+
+
+def _one_word(token: str) -> str:
+    """A shorthand token is ONE printable word: no whitespace inside it, and
+    the config text rule (no control or format characters) on top."""
+    _no_control_chars(token)
+    if any(ch.isspace() for ch in token):
+        raise ValueError("a shorthand token must be one word")
+    return token
+
+
+_ShorthandToken = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=MAX_SHORTHAND_TOKEN_CHARS),
+    AfterValidator(_one_word),
+]
+_ExemplarText = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=_MAX_EXEMPLAR_CHARS),
+    AfterValidator(_no_control_chars),
+]
+
+
+class StyleMeasures(BaseModel):
+    """How the practitioner writes, as numbers and two closed labels — no
+    text (the plan's ``measures``). Derived by Phase 3's learner; the model
+    only bounds the shape."""
+
+    model_config = _STYLE_MODEL_CONFIG
+
+    mean_sentence_words: float = Field(ge=0.0, allow_inf_nan=False)
+    abbreviation_ratio: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    person: StylePerson
+    tense: StyleTense
+
+
+class StyleExemplar(BaseModel):
+    """One sentence from the practitioner's own past notes, kept ONLY because
+    it passed the refusal filter unchanged and was shown for review (D10).
+    ``exemplar_text`` is deliberately distinctive: it is a tripwire signature
+    in ``logging_setup``."""
+
+    model_config = _STYLE_MODEL_CONFIG
+
+    section_key: NoteSectionKey
+    exemplar_text: _ExemplarText
+
+
+class StyleProfile(BaseModel):
+    """The learned style's content (plan Schema / Data Changes, D9): what
+    Phase 3's learner derives from 1–5 uploaded notes — the section order and
+    headings the practitioner uses, their shorthand tokens, the measures, up
+    to ``MAX_STYLE_EXEMPLARS`` reviewed exemplar sentences — plus its OWN
+    ``ConsentRecord`` (sample learning needs no voice profile) and how many
+    notes it was learned from. The uploaded notes themselves are never
+    stored (D9). ``frozen`` refuses attribute reassignment; ``heading_labels``
+    is a plain mapping like ``NoteConfig.section_cues`` (the same named
+    residue: no shipped path mutates it in place)."""
+
+    model_config = _STYLE_MODEL_CONFIG
+
+    schema_version: Literal[1] = 1
+    learned_at: datetime
+    consent: ConsentRecord
+    section_order: tuple[NoteSectionKey, ...] = ()
+    heading_labels: Mapping[NoteSectionKey, _LabelText] = {}
+    shorthand: tuple[_ShorthandToken, ...] = Field(default=(), max_length=_MAX_SHORTHAND_ENTRIES)
+    measures: StyleMeasures
+    exemplars: tuple[StyleExemplar, ...] = Field(default=(), max_length=MAX_STYLE_EXEMPLARS)
+    source_count: int = Field(ge=1, le=MAX_SAMPLE_NOTES)
+
+    @field_validator("learned_at")
+    @classmethod
+    def _learned_at_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("learned_at must be timezone-aware")
+        return value
+
+    @field_validator("section_order")
+    @classmethod
+    def _sections_unique(cls, value: tuple[NoteSectionKey, ...]) -> tuple[NoteSectionKey, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("section_order must not repeat a section")
+        return value
+
+    @field_validator("shorthand")
+    @classmethod
+    def _shorthand_unique(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("shorthand must not repeat a token")
+        return value
+
+    def to_bytes(self) -> bytes:
+        """Canonical JSON bytes — the plaintext ``style.enc`` encrypts."""
+        return self.model_dump_json().encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, blob: bytes) -> StyleProfile:
+        return cls.model_validate_json(blob)
+
+
+# ---------------------------------------------------------------------------
+# The two shipped vocabularies (D6, D10) — package data, read at import under
+# the SAME shape-and-completeness rule as ``note``'s packaged section cues: a
+# malformed, emptied or key-missing packaged file refuses loudly
+# (``RuntimeError`` — a broken install, not a runtime state), so an emptied
+# vocabulary can never import as "admit nothing" / "allow nothing" while
+# every status line reads healthy. Content rules, stated exactly: every entry
+# is ONE word (no whitespace) of printable text with no control or format
+# character; no exact duplicate; the connective list is lower-case (Check 5
+# compares case-insensitively and the list must not hide a mixed-case twin).
+# Neither list is a user file: a practitioner's shorthand is learned INTO the
+# style profile, and the allow-list is the checker's, not the clinician's.
+# ---------------------------------------------------------------------------
+
+
+def _parse_shipped_vocabulary(
+    payload: object, *, filename: str, key: str, lower_case: bool
+) -> tuple[str, ...]:
+    """The packaged vocabulary's shape + completeness rule (comment above),
+    over an already-decoded payload so a test can drive every refusal
+    without touching the packaged file."""
+    entries = payload.get(key) if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise RuntimeError(
+            f"shipped {filename} is malformed (broken install): no {key} list"
+        )
+    if not entries:
+        raise RuntimeError(
+            f"shipped {filename} is incomplete (broken install): the {key} list is empty"
+        )
+    seen: set[str] = set()
+    for position, entry in enumerate(entries, start=1):
+        if not isinstance(entry, str):
+            raise RuntimeError(
+                f"shipped {filename} is malformed (broken install): entry {position} is "
+                "not a string"
+            )
+        try:
+            _one_word(entry)
+        except ValueError as exc:
+            raise RuntimeError(
+                f"shipped {filename} is malformed (broken install): entry {position}: {exc}"
+            ) from exc
+        if lower_case and entry != entry.lower():
+            raise RuntimeError(
+                f"shipped {filename} is malformed (broken install): entry {position} is "
+                "not lower-case"
+            )
+        if entry in seen:
+            raise RuntimeError(
+                f"shipped {filename} is malformed (broken install): entry {position} is "
+                "a duplicate"
+            )
+        seen.add(entry)
+    return tuple(entries)
+
+
+def _load_shipped_vocabulary(filename: str, key: str, *, lower_case: bool) -> tuple[str, ...]:
+    resource = resources.files("scribe_desktop") / _DEFAULTS_RESOURCE_DIR / filename
+    try:
+        payload = json.loads(resource.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"shipped {filename} unreadable (broken install): {exc}") from exc
+    return _parse_shipped_vocabulary(payload, filename=filename, key=key, lower_case=lower_case)
+
+
+# Case-preserving: "Cx" and "ROM" are matched as written (Task 3.3 decides
+# its lookup rule over this tuple).
+CLINICAL_ABBREVIATIONS: Final[tuple[str, ...]] = _load_shipped_vocabulary(
+    CLINICAL_ABBREVIATIONS_FILENAME, "abbreviations", lower_case=False
+)
+# Check 5's connective allow-list (D6), lower-case single words.
+PROSE_CONNECTIVES: Final[tuple[str, ...]] = _load_shipped_vocabulary(
+    PROSE_CONNECTIVES_FILENAME, "connectives", lower_case=True
+)
+
+
+# ---------------------------------------------------------------------------
 # Consented phrase learning (practitioner-profile plan Phase 5, D9 as
 # amended 2026-09-16): the refusal filter — THE enforcing control — the
 # phrase proposer, and the ONLY writer of the user cue file.
@@ -1013,6 +1279,10 @@ LEARNED_SIDECAR_FILENAME: Final = "section_cues.learned.json"
 LEARNED_PHRASE_MIN_TOKENS: Final = 2
 LEARNED_PHRASE_MAX_TOKENS: Final = 4
 RECENTLY_LEARNED_LIMIT: Final = 20
+# Note-learning-and-styles plan D5: a learned rule's lines arrive PRE-FILLED
+# (``decided_by="config"``) after this many unchanged confirmations; a Remove
+# resets the count. The counting itself is that plan's Phase 2.
+LEARNED_RULE_AUTO_CONFIRM_AFTER: Final = 3
 # The dose-unit rule looks this many raw words past the candidate's last word.
 _UNIT_WINDOW: Final = 2
 
@@ -1141,6 +1411,37 @@ def refuse_learning_candidate(
         if is_number_token(raw):
             return "number"
     for raw in (*tokens, *following[:_UNIT_WINDOW]):
+        if _is_medication_shaped(raw):
+            return "medication"
+    return None
+
+
+def refuse_typed_wording(text: str) -> RefusalClass | None:
+    """The SECOND, narrower filter (note-learning-and-styles plan Phase 0
+    Task 0.4; D11): for text the PRACTITIONER TYPED over a note line — the
+    wording a learned rule will insert — and for nothing else. It shares the
+    date, number and medication classifiers with ``refuse_learning_candidate``
+    (``_is_date_shaped``, ``transcription.is_number_token``,
+    ``_is_medication_shaped``, over the raw whitespace-split words) and
+    deliberately runs NO name heuristic: typed shorthand such as "HVLA Cx"
+    is capitalised by convention, and the practitioner is responsible for
+    names in their own shorthand (practitioner decision 2026-09-18; consent
+    v3 says so in as many words). Transcript-derived text — rule TRIGGERS,
+    cue phrases, exemplars — never comes here: it keeps the full filter.
+    Returns the first class hit in the order date, number, medication, or
+    None when every word passes (blank text has nothing to refuse — the
+    review surface refuses an empty edit itself). Residue, the transcript
+    filter's own for these three classes: a drug name without a listed
+    suffix and no dose unit passes; the review-later list is the control.
+    """
+    words = text.split()
+    for raw in words:
+        if _is_date_shaped(raw):
+            return "date"
+    for raw in words:
+        if is_number_token(raw):
+            return "number"
+    for raw in words:
         if _is_medication_shaped(raw):
             return "medication"
     return None

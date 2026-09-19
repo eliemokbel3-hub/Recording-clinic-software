@@ -95,7 +95,9 @@ What each check claims — and, recorded with equal care, what it does NOT:
   re-verified against the transcript with ``note_fill``'s OWN matcher, the
   single matching source, so a legitimately-fired rule can never be flagged
   absent by a divergent re-implementation), ``clinician_asserted`` (review,
-  unsuppressible — every non-``transcript`` assertion draws it,
+  unsuppressible — every non-``transcript`` assertion draws it, a typed
+  ``clinician`` line included; the note-learning plan's D5 exemption for
+  ``decided_by="config"`` lines is its Task 2.4, not built here;
   acknowledgement being the exit), ``mapping_drop`` (review, NOT error —
   emitted by ``note_config.mapping_drop_warnings``, the single source; an
   error grade would be unclearable and deadlock Complete), and
@@ -434,6 +436,8 @@ def reconstruction_warnings(
     for section in note.note_sections:
         for assertion in section.note_assertions:
             if assertion.provenance != "transcript":
+                # Nothing to rebuild: autofill, prefill and a typed
+                # ``clinician`` line (schema v2) carry no coordinates.
                 continue
             coords = _resolved_coords(assertion)
             words = _words_for_coords(document, coords)
@@ -1077,6 +1081,8 @@ def _structured_authored(
         for assertion in section.note_assertions:
             if assertion.provenance == "transcript":
                 continue
+            # Authored text — autofill, prefill and a typed ``clinician``
+            # line (schema v2) alike — is checked against the quoted evidence.
             claims = _consolidated(
                 _claims_from_tokens(
                     _tokens_from_text(assertion.text),
@@ -1099,7 +1105,7 @@ def _structured_quoted(
     for section in note.note_sections:
         for assertion in section.note_assertions:
             if assertion.provenance != "transcript":
-                continue
+                continue  # quoted evidence only; a typed line is authored
             coords = _resolved_coords(assertion)
             words = _words_for_coords(document, coords)
             if words is None or reconstruct_span_text(words) != assertion.text:
@@ -1324,6 +1330,10 @@ def provenance_warnings(
         for assertion in section.note_assertions:
             if assertion.provenance == "transcript":
                 continue
+            # Every authored line draws the review — autofill, prefill and a
+            # typed ``clinician`` line (schema v2) alike. The note-learning
+            # plan's D5 exemption for ``decided_by="config"`` lines is its
+            # Task 2.4; nothing here reads ``decided_by`` yet.
             warnings.append(
                 NoteWarning(
                     note_warning_code="clinician_asserted",
@@ -1362,6 +1372,10 @@ def provenance_warnings(
             continue
         for assertion in section.note_assertions:
             if assertion.provenance != "transcript":
+                # No source segment to attribute: an authored line — a typed
+                # ``clinician`` line included (schema v2) — is the
+                # clinician's by construction, and the section-level check
+                # above already requires the confirmed role.
                 continue
             coords = _resolved_coords(assertion)
             words = _words_for_coords(document, coords)
@@ -1413,6 +1427,8 @@ def omission_warnings(
     for section in note.note_sections:
         for assertion in section.note_assertions:
             if assertion.provenance != "transcript":
+                # Coverage is coordinate CARRIAGE: a typed ``clinician`` line
+                # (schema v2) that mentions the same number covers nothing.
                 continue
             coords = _resolved_coords(assertion)
             if _words_for_coords(document, coords) is None:

@@ -606,42 +606,110 @@ class TestPractitionerReportLines:
     def test_consent_text_is_versioned(self) -> None:
         from scribe_desktop.practitioner_profile import ConsentRecord
 
-        assert models.CONSENT_TEXT_VERSION == "consent-v2"
-        assert models.CONSENT_TEXT_V2.endswith("Version consent-v2.")
-        # v1 stays as HISTORY for the records that still carry it (Task 5.0),
-        # with its OWN literal version string.
+        assert models.CONSENT_TEXT_VERSION == "consent-v3"
+        assert models.CONSENT_TEXT_V3.endswith("Version consent-v3.")
+        # v1 and v2 stay as HISTORY for the records that still carry them
+        # (Task 5.0; note-learning plan D12), each with its OWN literal
+        # version string — never the mutable constant.
         assert models.CONSENT_TEXT_V1.endswith("Version consent-v1.")
+        assert models.CONSENT_TEXT_V2.endswith("Version consent-v2.")
         # The version string the current text carries is the one a profile records.
         ConsentRecord(
             accepted_at=datetime.now(UTC),
             consent_text_version=models.CONSENT_TEXT_VERSION,
             learning_opt_in=False,
         )
-        # The v2 (auto-learn, review-later) promises, verbatim.
+        # The v3 promises by data class (D12), verbatim: the fingerprint; the
+        # learned phrases and rules with BOTH filters named honestly; the
+        # learned style and its reviewed exemplars; Save as ratification.
         for promise in (
             "never a recording",
             "plain text",
             "lines you add or move",
+            "wording you type over a note line",
             "Only your own lines are ever used",
-            "names, numbers, dates or medication names",
-            "nothing leaves this computer",
-            "delete any learned phrase",
+            "the shape of words, not their meaning",
+            "a name, a number, a date or a medication name",
+            "refused only for numbers, dates and medication names",
+            "up to 30 example sentences",
+            "passes the same check unchanged",
+            "read, never copied",
+            "saving the note confirms them",
+            "nothing leaves it",
+            "any phrase or rule, or the learned style",
         ):
-            assert promise in models.CONSENT_TEXT_V2
+            assert promise in models.CONSENT_TEXT_V3
+        # The v2 promises this plan withdrew are NOT in v3 (D12: rewritten,
+        # not appended) — v3 must not promise what typed shorthand and the
+        # style store no longer keep true.
+        assert "Nothing else about any patient is stored" not in models.CONSENT_TEXT_V3
+        assert "refuses phrases containing names" not in models.CONSENT_TEXT_V3
         assert models.LEARNING_OPT_IN_LABEL == (
-            "Also learn my phrasing from lines I add or move during review "
-            "(saved when I save the note)"
+            "Also learn my phrasing and shorthand from lines I add, move or edit during "
+            "review (saved when I save the note)"
         )
+
+    def test_consent_is_current_reads_either_stores_record(self) -> None:
+        """Note-learning plan D9: the style store carries its OWN consent
+        record, so `consent_is_current` takes a profile OR a bare record; an
+        older version — v1 or v2 — is readable but not current on either."""
+        from scribe_desktop.practitioner_profile import ConsentRecord
+
+        current = ConsentRecord(
+            accepted_at=datetime.now(UTC),
+            consent_text_version=models.CONSENT_TEXT_VERSION,
+            learning_opt_in=True,
+        )
+        assert models.consent_is_current(current) is True
+        for older in ("consent-v1", "consent-v2"):
+            record = ConsentRecord(
+                accepted_at=datetime.now(UTC), consent_text_version=older, learning_opt_in=True
+            )
+            assert models.consent_is_current(record) is False
+            # A v2 profile — every record saved before this plan — reads but re-asks.
+            assert (
+                models.consent_is_current(_profile("m").model_copy(update={"consent": record}))
+                is False
+            )
 
     def test_the_current_consent_text_is_the_ratified_text_verbatim(self) -> None:
         """Round 54 SEC-001: "a changed text is a new version" has no
         structural enforcement — a record's `consent_text_version` is a string
-        compared with `CONSENT_TEXT_VERSION`, so an edit to `CONSENT_TEXT_V2`
-        that kept the version string would count every existing v2 record as
+        compared with `CONSENT_TEXT_VERSION`, so an edit to the current text
+        that kept the version string would count every existing record as
         consent to words the practitioner never saw. This pin holds the
-        ratified text (plan `Consent text v2`, 2026-09-16) verbatim beside the
-        version: to change the text, ratify a v3, add `CONSENT_TEXT_V3`, bump
-        `CONSENT_TEXT_VERSION` and pin the new text here — never edit v2."""
+        current text (v3, note-learning plan Phase 0 / D12) verbatim beside
+        the version, and v2 (ratified 2026-09-16) verbatim as history: to
+        change the text, ratify a v4, add `CONSENT_TEXT_V4`, bump
+        `CONSENT_TEXT_VERSION` and pin the new text here — never edit v3."""
+        ratified_v3 = (
+            "This app can learn your voice, your phrasing and your note style to improve "
+            "your notes. Everything it learns is stored on this computer only, and nothing "
+            "leaves it. If you agree, it stores: (1) A numeric fingerprint of your voice "
+            "(never a recording), encrypted. (2) If you also turn on learning: short "
+            "phrases from lines you add or move while reviewing a note, and shorthand rules "
+            "made from wording you type over a note line, both saved automatically when "
+            "you save the note and kept as plain text in your own config files until you "
+            "delete them. Only your own lines are ever used — never a patient's. The app "
+            "checks the shape of words, not their meaning: a phrase or rule trigger taken "
+            "from what you said is refused if it looks like it contains a name, a number, "
+            "a date or a medication name; wording you type yourself is refused only for "
+            "numbers, dates and medication names, so keeping patient names out of your own "
+            "shorthand is up to you. (3) If you choose to teach the app your note style "
+            "from past notes you upload: what it derives from them — your section order "
+            "and headings, your shorthand, a few measures of how you write, and up to 30 "
+            "example sentences, each kept only when it passes the same check unchanged and "
+            "is shown to you first — stored encrypted until you delete it. The notes you "
+            "upload are read, never copied, and are deleted only if you say so. Lines the "
+            "app pre-fills from your own rules are marked in the note, and saving the note "
+            "confirms them. Everything learned is shown on this tab so you can delete any "
+            "of it — your voice, any phrase or rule, or the learned style — at any time. "
+            "Version consent-v3."
+        )
+        assert models.CONSENT_TEXT_V3 == ratified_v3
+        assert models.CONSENT_TEXT_VERSION == "consent-v3"
+        # The version a record stores is the one the shipped text ends with.
+        assert models.CONSENT_TEXT_V3.endswith(f"Version {models.CONSENT_TEXT_VERSION}.")
         ratified_v2 = (
             "This app can learn your voice and your phrasing to improve your notes. If you "
             "agree, it stores on this computer: a numeric fingerprint of your voice (never a "
@@ -657,9 +725,9 @@ class TestPractitionerReportLines:
             "this tab. Version consent-v2."
         )
         assert models.CONSENT_TEXT_V2 == ratified_v2
-        assert models.CONSENT_TEXT_VERSION == "consent-v2"
-        # The version a record stores is the one the shipped text ends with.
-        assert models.CONSENT_TEXT_V2.endswith(f"Version {models.CONSENT_TEXT_VERSION}.")
+        # History carries its own literal, never the current version.
+        assert models.CONSENT_TEXT_V2.endswith("Version consent-v2.")
+        assert models.CONSENT_TEXT_V2 != models.CONSENT_TEXT_V3
 
 
 class TestAttributionInputs:

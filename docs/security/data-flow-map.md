@@ -271,6 +271,59 @@ in-process and adds no network surface and no new logging channel.
     review, as config plaintext, by their consent (text v2); nothing here is
     logged (the phrase is shown on the local UI only).
 
+14. **Capture → live transcription worker → live view (note-learning-and-styles
+    plan, D1–D3; PLANNED; enforced from Phase 1 — no such flow exists today,
+    transcription runs only in the batch stage, flow 7).** Flows 14–16 and the
+    two note-learning non-flows below are Phase 0 stubs, finalised at that
+    plan's Phase H (task H3). What it will be: a
+    tee wrapped around the capture sink hands the worker plaintext PCM BEFORE
+    encryption, so the worker never holds `SessionCrypto`, never reads the
+    encrypted store and never writes a file; VAD segments and their embeddings
+    stay in process memory for the session and the PCM is dropped per ~30 s
+    window; the live view is the display-only transcript widget. Finish seals
+    capture as today and the TAIL DRAIN (the last open segment and any queued
+    windows) runs on the existing processing thread, never on the GUI thread;
+    Discard stops and joins the worker and confirms its buffers are cleared
+    BEFORE the session key is destroyed. A load failure, a stalled worker or a
+    drain error falls back to the batch stage with its reason on screen. Zero
+    network, no new logging channel.
+
+15. **Typed edit → typed line → (on Save) learned rule (note-learning-and-styles
+    plan, D4, D5, D11; in-process, zero network).** Phase 0 BUILT the carriers:
+    a `clinician`-provenance assertion in `note.py` whose span text is the typed
+    text, with `proposal_id = None`, its decision naming the line itself and an
+    optional `replaces`; `compose_draft`'s `_confine_provider_output` keeps a
+    provider to transcript provenance; `write_note` verifies a typed line's
+    `shown_text_digest` and `config_digest`; and `note_config.
+    refuse_typed_wording` (numbers, dates, medication tokens; NO name
+    heuristic) with `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3`. Nothing calls either
+    yet. PLANNED; enforced from Phase 2: the Note tab's Edit control that
+    produces the typed line, the Save-time writer that appends the rule to
+    `%LOCALAPPDATA%\ClinikoScribe\config\autofill_rules.json` with its
+    `autofill_rules.learned.json` sidecar (atomic replaces, as flow 13 does for
+    cues), and the emitter that pre-fills a learned rule's wording with a
+    `decided_by="config"` decision. Nothing in this flow is logged: typed
+    wording is note-model text and carries the note tripwire markers (flow 2).
+
+16. **Sample notes → learner → `style\style.enc` (note-learning-and-styles plan,
+    D9, D10; in-process, zero network).** Phase 0 BUILT the destination:
+    `%LOCALAPPDATA%\ClinikoScribe\style\key.dpapi` (DPAPI-wrapped, current-user,
+    with the style-specific description the unwrap verifies) and `style.enc`
+    (AES-256-GCM under that key, its own AAD), written and read by
+    `practitioner_profile.save_style_profile` / `load_style_profile` and removed
+    key-first by `delete_style_profile`, independently of the voice profile
+    (flow 12); the session, voice and style keys cannot open each other's store.
+    NOTHING writes it today. PLANNED; enforced from Phase 3: reading 1–5 chosen
+    notes into memory (never copied, never moved), the learner deriving section
+    order, headings, shorthand, measures and up to 30 exemplar sentences that
+    passed the refusal filter unchanged, the practitioner's review step before
+    any save, the consent record (text v3) written into the blob at that Save,
+    the separate explicit confirmation — naming the paths, unticked by default —
+    for deleting the originals, and the Practitioner tab's learned-style list
+    with per-exemplar delete and "Delete learned style". The prose stage (Phase
+    4) reads the style profile and confirmed assertion text only, never the
+    transcript — planned.
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -287,6 +340,15 @@ in-process and adds no network surface and no new logging channel.
   shape-filtered against names, numbers, dates and medication names — but
   the filter cannot judge meaning, so a learned phrase is reviewable and
   deletable on the Practitioner tab rather than guaranteed non-clinical.
+  Since the note-learning-and-styles plan's Phase 0 there is a SECOND encrypted
+  practitioner store beside the voice profile: `style\style.enc` under its own
+  DPAPI-wrapped key (`practitioner_profile.save_style_profile`; the session,
+  voice and style keys cannot open each other's store). It will hold what Phase
+  3's learner derives from the practitioner's OWN past notes — headings,
+  shorthand, measures and up to 30 practitioner-reviewed exemplar sentences that
+  passed the shape filter unchanged — under the practitioner's consent (text
+  v3), never under a session key and never a copy of an uploaded note; today
+  nothing writes it.
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the
@@ -324,6 +386,21 @@ in-process and adds no network surface and no new logging channel.
   Phase 5.
 - Log/temp locations are user-local; exclusion from OneDrive/backup sweep is
   a Phase 6 task (`PLAN.md`), noted in the retention schedule.
+- No uploaded sample note on disk (note-learning-and-styles plan, D9; PLANNED;
+  enforced from Phase 3 — nothing reads a sample note today). What it will hold:
+  the 1–5 notes the practitioner chooses are read into memory, never copied and
+  never moved, and only the derived style profile is written (flow 16);
+  deletion of the originals is a separate explicit confirmation naming the
+  paths, unticked by default.
+- No transcript text to the language model (note-learning-and-styles plan, D6,
+  D8; PLANNED; enforced from Phase 4 — there is no language model today). What
+  it will hold: the prose stage's input is confirmed assertion text grouped by
+  section plus the style profile (or a fixed narrative instruction), never the
+  transcript and never a pending proposal; the prebuilt CPU wheel fetch is the
+  second sanctioned network step beside `setup-models.py` (flow 9) and is
+  recorded here when Phase 4 lands, and the enforcing control for the runtime's
+  offline posture is the no-sockets integration test extended over a prose
+  generation, not `assert_offline_env`.
 
 ## Phase 5 preview (locked topology — pipe deferred)
 

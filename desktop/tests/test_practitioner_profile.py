@@ -14,6 +14,7 @@ import json
 import logging
 import sys
 import traceback
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -520,6 +521,47 @@ class TestLoadUnusableStates:
         rendered = _rendered(exc.value)
         assert "ValidationError" not in rendered  # not chained, not in the context
         assert not any(marker in rendered for marker in _SECRET_MARKERS), rendered
+
+    @pytest.mark.parametrize(
+        ("mutate", "expected_location"),
+        [
+            pytest.param(
+                lambda payload: payload.update({"Zebra-secret": 1}),
+                "<field>",
+                id="unknown-top-level-field",
+            ),
+            pytest.param(
+                lambda payload: payload["consent"].update({"Zebra-secret": True}),
+                "consent.<field>",
+                id="unknown-nested-field",
+            ),
+        ],
+    )
+    def test_a_malformed_blob_renders_no_unknown_field_name(
+        self, tmp_path: Path, mutate: Callable[[dict[str, Any]], None], expected_location: str
+    ) -> None:
+        """Codex PR-MED-016 (note-learning plan Phase 0): an ``extra="forbid"``
+        refusal carries the unknown field NAME in its location, which
+        ``hide_input_in_errors`` does not hide — the loader renders locations
+        through the model's declared field names, so the message, the
+        traceback and the chain carry ``<field>`` for a name outside that
+        vocabulary (the sentinels here); an unknown field spelled like a
+        declared name renders as that name (codex PR-LOW-019 — a vocabulary
+        bound, not a positional one)."""
+        root = self._saved(tmp_path)
+        crypto = unwrap_key_from_file(root, description=PROFILE_KEY_DESCRIPTION)
+        payload = _profile().model_dump(mode="json")
+        mutate(payload)
+        (root / PROFILE_BLOB_FILENAME).write_bytes(
+            crypto.encrypt(json.dumps(payload).encode(), PROFILE_AAD)
+        )
+        with pytest.raises(ProfileUnusableError) as exc:
+            load_profile(root=root)
+        assert exc.value.reason == "malformed"
+        assert expected_location in str(exc.value)
+        assert "Zebra" not in str(exc.value)
+        assert "Zebra" not in _rendered(exc.value)
+        assert exc.value.__cause__ is None and exc.value.__suppress_context__
 
     def test_model_mismatch_is_unusable_model(self, tmp_path: Path) -> None:
         root = self._saved(tmp_path)

@@ -42,6 +42,7 @@ from scribe_desktop.note import (
     NoteSpan,
     ProposalEvidenceError,
     ProposalResolution,
+    ProviderOutputError,
     compose_draft,
     finalise_note,
     text_digest,
@@ -440,19 +441,42 @@ class _SmugglingProvider:
 
 
 class TestProviderBoundaryConfinement:
-    """Round 28 PR-MED-001: provider base sections are transcript-provenance
-    ONLY — a non-transcript assertion, however complete its fabricated
-    evidence, is refused at compose (the draft validator) and again at
-    finalisation (against validator-skipping drafts), so it can never reach
-    a writable note."""
+    """Round 28 PR-MED-001: provider output is transcript-provenance ONLY —
+    a non-transcript assertion, however complete its fabricated evidence,
+    is refused at compose (the ingestion check on the provider's output —
+    since schema v2 the draft base also admits the clinician's TYPED lines,
+    so the draft validator can no longer be the provider control) and a
+    rule-authored base assertion is refused again at finalisation (against
+    validator-skipping drafts), so neither can reach a writable note."""
 
     def test_compose_refuses_a_smuggling_provider(self) -> None:
-        with pytest.raises(ValidationError, match="transcript-provenance"):
+        with pytest.raises(ProviderOutputError, match="transcript-provenance"):
             compose_draft(
                 _document(),
                 PIPELINE_CONFIG,
                 _SmugglingProvider(),
                 clinician_speaker=SPEAKER_2,
+            )
+
+    def test_the_draft_type_still_refuses_a_rule_authored_base_line(self) -> None:
+        """The type-level leg the smuggling test used to pin: an autofill
+        assertion in a base section is refused by ``NoteDraft`` itself."""
+        good = _draft()
+        with pytest.raises(ValidationError, match="transcript-provenance"):
+            NoteDraft(
+                session_id=good.session_id,
+                template_profile_id=good.template_profile_id,
+                provider_name=good.provider_name,
+                clinician_speaker=good.clinician_speaker,
+                transcript_digest=good.transcript_digest,
+                config_digest=good.config_digest,
+                note_sections=(
+                    GeneratedSection(
+                        section_key="objective_examination",
+                        note_assertions=(_smuggled_assertion(good.config_digest),),
+                    ),
+                ),
+                note_proposals=(),
             )
 
     def test_finalise_refuses_a_validator_skipping_draft(self) -> None:

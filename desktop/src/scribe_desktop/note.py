@@ -24,6 +24,18 @@ caller behaves (plan Key Design Decisions):
   re-VERIFIED against the text inside ``write_note`` — Task 6.2 — which is
   why construction requires the record's PRESENCE but does not itself
   recompute the match: the defence-in-depth check must stay testable.)
+- Schema v2 (note-learning-and-styles plan, Phase 0 Task 0.2; D4, D5, D7).
+  A ``clinician`` assertion is text the clinician TYPED over a note line:
+  it carries the same digests and a decision that names the line itself
+  (``decided_by="clinician"``; no ``proposal_id`` — nothing proposed it) and
+  may record the id of the line it ``replaces``. A line the practitioner's
+  OWN config pre-filled keeps its ``autofill``/``prefill`` provenance (the
+  text's origin is unchanged) and its decision records
+  ``decided_by="config"`` with the digest it was minted under — a config
+  decision without that digest is unrepresentable. The note records its
+  writing ``style`` and per-section ``style_renderings``; every v2 field
+  defaults to the v1 shape, so a v1 ``note.enc`` reads unchanged and a note
+  that declares version 1 cannot carry v2 content.
 - Provenance proves ATTRIBUTION, never truth. Trigger presence, role
   attribution and provenance say nothing about whether a claim is true of
   this encounter; only explicit per-assertion confirmation does.
@@ -181,6 +193,10 @@ _PROFILE_ID_PATTERN: Final = r"^[a-z0-9][a-z0-9_-]{0,63}$"
 # an artifact sanity bound, not a content policy — per-field config limits
 # are Task 3.2's.
 MAX_ASSERTION_CHARS: Final = 20_000
+# Artifact bound on one section's prose rendering (schema v2, D7): a section
+# re-phrases several assertions, so it is allowed more than one; the same
+# sanity-not-policy caveat applies.
+MAX_SECTION_PROSE_CHARS: Final = 40_000
 
 
 def digest_bytes(blob: bytes) -> str:
@@ -317,19 +333,37 @@ class SourceCoords(NamedTuple):
     last_word_index: int
 
 
+# The provenance set (schema v2, D4). ``clinician`` is text the clinician
+# TYPED over a note line — neither quoted (no coordinates) nor proposed (no
+# rule, no proposal id). A line the practitioner's config PRE-FILLED is NOT a
+# provenance of its own: the text still originates in a rule or template, so
+# it keeps ``autofill`` / ``prefill`` and the DECISION says ``config`` (D5).
+NoteProvenance = Literal["transcript", "autofill", "prefill", "clinician"]
+# Who made the recorded decision: the clinician on screen (a per-line
+# confirm, or a typed line) or the practitioner's own config, ratified by the
+# Save that shows the pre-filled lines (D5).
+DecidedBy = Literal["clinician", "config"]
+# What a draft's BASE sections may hold (D4): quoted lines from the provider
+# and the clinician's typed lines from the review surface. Rule-authored
+# ``autofill``/``prefill`` text enters solely as proposals, never as base.
+DRAFT_BASE_PROVENANCES: Final[frozenset[str]] = frozenset({"transcript", "clinician"})
+
+
 class NoteSpan(BaseModel):
     """A single stretch of note text plus where it came from.
 
     ``provenance`` proves attribution, not truth. ``transcript`` spans carry
     coordinates and are verified by exact reconstruction (Check 1);
     ``autofill`` / ``prefill`` spans are clinician-authored boilerplate and
-    are carried by explicit per-assertion confirmation alone.
+    ``clinician`` spans are text the clinician typed (schema v2, D4) — none
+    of the three carries coordinates, and each is carried by its recorded
+    decision alone.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     span_text: str = Field(min_length=1, max_length=MAX_ASSERTION_CHARS)
-    provenance: Literal["transcript", "autofill", "prefill"]
+    provenance: NoteProvenance
     source_coords: SourceCoords | None = None
 
     @model_validator(mode="after")
@@ -345,16 +379,24 @@ class NoteSpan(BaseModel):
             if coords.last_word_index < coords.first_word_index:
                 raise ValueError("source_coords must satisfy first_word_index <= last_word_index")
         elif self.source_coords is not None:
+            # autofill, prefill AND clinician: typed text quotes nothing.
             raise ValueError(f"a {self.provenance} span must not carry source_coords")
         return self
 
 
 class ConfirmationDecision(BaseModel):
-    """The clinician's recorded decision on one proposal.
+    """The recorded decision on one proposal — or, for a typed line, on the
+    line itself (``proposal_id`` then names the assertion: nothing proposed
+    it, and the id says what was decided).
 
     Evidence carried by the artifact, not a caller convention: from
     ``note.enc`` alone it is reconstructible that a human was shown this
-    exact text and confirmed it.
+    exact text and confirmed it — or (schema v2, D5) that the practitioner's
+    OWN config pre-filled it under ``config_digest`` and the counted Save
+    ratified it. ``decided_by`` defaults to ``clinician`` so every v1 record
+    reads; a ``config`` decision MUST carry the digest it was minted under
+    and MAY carry the rule's ``confirmation_count`` (D5's auto-confirm
+    evidence); a clinician decision carries neither.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -362,6 +404,23 @@ class ConfirmationDecision(BaseModel):
     proposal_id: str = Field(pattern=_ID_PATTERN)
     note_confirmation: Literal["confirmed", "declined"]
     decided_at: datetime
+    decided_by: DecidedBy = "clinician"
+    config_digest: str | None = None
+    confirmation_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _check_decider(self) -> Self:
+        if self.decided_by == "config":
+            if self.config_digest is None or not _DIGEST_RE.match(self.config_digest):
+                raise ValueError(
+                    f"a config decision requires a config_digest matching {DIGEST_PATTERN}"
+                )
+            return self
+        if self.config_digest is not None or self.confirmation_count is not None:
+            raise ValueError(
+                "a clinician decision carries no config_digest or confirmation_count"
+            )
+        return self
 
 
 class NoteAssertion(BaseModel):
@@ -383,9 +442,12 @@ class NoteAssertion(BaseModel):
     shown_text_digest: str | None = None
     config_digest: str | None = None
     confirmation: ConfirmationDecision | None = None
+    # ``clinician`` provenance only (schema v2, D4): the id of the note line
+    # or proposal this typed text replaced, when it replaced one.
+    replaces: str | None = Field(default=None, pattern=_ID_PATTERN)
 
     @property
-    def provenance(self) -> Literal["transcript", "autofill", "prefill"]:
+    def provenance(self) -> NoteProvenance:
         return self.note_span.provenance
 
     @property
@@ -400,22 +462,60 @@ class NoteAssertion(BaseModel):
                 raise ValueError(
                     "a transcript assertion carries no proposal/confirmation evidence"
                 )
+            if self.replaces is not None:
+                raise ValueError("a transcript assertion replaces nothing")
             return self
-        if any(field is None for field in evidence) or self.confirmation is None:
-            raise ValueError(
-                f"a {self.provenance} assertion requires proposal_id, shown_text_digest, "
-                "config_digest and a ConfirmationDecision"
-            )
+        confirmation = self.confirmation
+        if self.provenance == "clinician":
+            # D4: typed text. No proposal existed, so the decision names the
+            # line itself; the digests are the same evidence every authored
+            # line carries and ``write_note`` verifies them the same way.
+            if self.proposal_id is not None:
+                raise ValueError(
+                    "a clinician assertion carries no proposal_id: nothing proposed it"
+                )
+            if self.shown_text_digest is None or self.config_digest is None or confirmation is None:
+                raise ValueError(
+                    "a clinician assertion requires shown_text_digest, config_digest and a "
+                    "ConfirmationDecision"
+                )
+            if confirmation.decided_by != "clinician":
+                raise ValueError("a typed line is decided by the clinician, never by config")
+            if confirmation.proposal_id != self.assertion_id:
+                raise ValueError(
+                    "a clinician assertion's decision must name the assertion itself"
+                )
+            if self.replaces == self.assertion_id:
+                raise ValueError("an assertion cannot replace itself")
+        else:
+            if any(field is None for field in evidence) or confirmation is None:
+                raise ValueError(
+                    f"a {self.provenance} assertion requires proposal_id, shown_text_digest, "
+                    "config_digest and a ConfirmationDecision"
+                )
+            if confirmation.proposal_id != self.proposal_id:
+                raise ValueError(
+                    "confirmation.proposal_id does not match the assertion's proposal_id"
+                )
+            if self.replaces is not None:
+                raise ValueError(f"a {self.provenance} assertion replaces nothing")
+            # D5: a config decision is evidence about ONE config — the one the
+            # pre-filled line was minted under, which is this assertion's.
+            if (
+                confirmation.decided_by == "config"
+                and confirmation.config_digest != self.config_digest
+            ):
+                raise ValueError(
+                    "a config decision's config_digest must be the assertion's config_digest"
+                )
         for label, value in (
             ("shown_text_digest", self.shown_text_digest),
             ("config_digest", self.config_digest),
         ):
             if value is None or not _DIGEST_RE.match(value):
                 raise ValueError(f"{label} must match {DIGEST_PATTERN}")
-        if self.confirmation.note_confirmation != "confirmed":
+        if confirmation.note_confirmation != "confirmed":
             raise ValueError("a declined proposal must never become an assertion")
-        if self.confirmation.proposal_id != self.proposal_id:
-            raise ValueError("confirmation.proposal_id does not match the assertion's proposal_id")
         return self
 
 
@@ -426,7 +526,9 @@ class NoteProposal(BaseModel):
     in a ``GeneratedSection``, so unconfirmed content cannot reach the saved
     note. One proposal per ATOMIC assertion — a three-claim expansion is
     three proposals, because confirming a block is not evidence about each
-    claim inside it.
+    claim inside it. A typed ``clinician`` line is never a proposal (D4):
+    nothing proposed it, so it enters the draft base carrying its own
+    decision instead.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -506,12 +608,57 @@ class GeneratedSection(BaseModel):
         return self
 
 
+# The writing styles (schema v2, D7): ``verbatim`` and ``clean`` are
+# deterministic renderings of the assertions; ``own_voice`` and ``narrative``
+# are prose from the local language model, gated by Check 5 (Phase 4).
+NoteStyle = Literal["verbatim", "clean", "own_voice", "narrative"]
+StyleVerdict = Literal["passed", "failed"]
+
+# Bumped by schema v2 (note-learning-and-styles plan, Phase 0). Readers accept
+# both versions; a note that declares 1 must be v1-SHAPED (the validator
+# below refuses v2 content under a v1 label), and an unknown version is
+# refused outright rather than read on a guess.
+NOTE_SCHEMA_VERSION: Final = 2
+
+
+class StyleRendering(BaseModel):
+    """One section's prose rendering (schema v2, D7): the prose the local
+    language model produced for the CONFIRMED assertions of ``section_key``,
+    the digest of the exact assertion texts it was given (``input_digest`` —
+    the binding the rendering path checks before showing it, so a rendering
+    whose inputs no longer match the section is stale and never displayed),
+    and the Check 5 fidelity verdict. A ``failed`` rendering carries NO prose:
+    the text the gate refused is not persisted (C4), and the section falls
+    back to ``clean`` (Phase 4 wires the fallback and its warning). The field
+    name ``prose_text`` is deliberately distinctive — it is a tripwire
+    signature in ``logging_setup``.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    section_key: NoteSectionKey
+    prose_text: str = Field(max_length=MAX_SECTION_PROSE_CHARS)
+    input_digest: str
+    verdict: StyleVerdict
+
+    @model_validator(mode="after")
+    def _check_rendering(self) -> Self:
+        if not _DIGEST_RE.match(self.input_digest):
+            raise ValueError(f"input_digest must match {DIGEST_PATTERN}")
+        if self.verdict == "passed":
+            if not self.prose_text.strip():
+                raise ValueError("a passed rendering must carry prose")
+        elif self.prose_text:
+            raise ValueError("a failed rendering carries no prose: refused text is not kept")
+        return self
+
+
 class GeneratedNote(BaseModel):
     """The complete note artifact stored in ``note.enc``."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: int = 1
+    schema_version: Literal[1, 2] = NOTE_SCHEMA_VERSION
     session_id: str = Field(pattern=SESSION_ID_PATTERN)
     created_at: datetime
     template_profile_id: str = Field(pattern=_PROFILE_ID_PATTERN)
@@ -523,6 +670,22 @@ class GeneratedNote(BaseModel):
     config_digest: str
     note_sections: tuple[GeneratedSection, ...] = ()
     note_warnings: tuple[NoteWarning, ...] = ()
+    # Schema v2 (D7): the writing style the note was rendered under and its
+    # per-section prose. The defaults ARE the v1 shape.
+    style: NoteStyle = "verbatim"
+    style_renderings: tuple[StyleRendering, ...] = ()
+
+    def _carries_v2_content(self) -> bool:
+        if self.style != "verbatim" or self.style_renderings:
+            return True
+        for section in self.note_sections:
+            for assertion in section.note_assertions:
+                decision = assertion.confirmation
+                if assertion.provenance == "clinician" or (
+                    decision is not None and decision.decided_by == "config"
+                ):
+                    return True
+        return False
 
     @model_validator(mode="after")
     def _check_note(self) -> Self:
@@ -534,11 +697,13 @@ class GeneratedNote(BaseModel):
                 raise ValueError(f"{label} must match {DIGEST_PATTERN}")
         seen_keys: list[int] = []
         assertion_ids: set[str] = set()
+        populated: set[NoteSectionKey] = set()
         for section in self.note_sections:
             index = SECTION_INDEX[section.section_key]
             if seen_keys and index <= seen_keys[-1]:
                 raise ValueError("note_sections must be unique and in canonical order")
             seen_keys.append(index)
+            populated.add(section.section_key)
             for assertion in section.note_assertions:
                 if assertion.assertion_id in assertion_ids:
                     raise ValueError(f"duplicate assertion_id: {assertion.assertion_id}")
@@ -546,6 +711,22 @@ class GeneratedNote(BaseModel):
         for warning in self.note_warnings:
             if warning.assertion_id is not None and warning.assertion_id not in assertion_ids:
                 raise ValueError(f"warning references unknown assertion: {warning.assertion_id}")
+        rendered: list[int] = []
+        for rendering in self.style_renderings:
+            index = SECTION_INDEX[rendering.section_key]
+            if rendered and index <= rendered[-1]:
+                raise ValueError("style_renderings must be unique and in canonical order")
+            rendered.append(index)
+            if rendering.section_key not in populated:
+                raise ValueError(
+                    f"style rendering for {rendering.section_key} names a section the note "
+                    "does not populate"
+                )
+        if self.schema_version == 1 and self._carries_v2_content():
+            raise ValueError(
+                "a schema-version-1 note cannot carry schema-version-2 content "
+                "(a typed line, a config decision, a style or a rendering)"
+            )
         return self
 
     def blocking_warnings(self) -> tuple[NoteWarning, ...]:
@@ -1754,23 +1935,36 @@ class ProposalEvidenceError(NotePipelineError):
     text the proposal would insert."""
 
 
+class ProviderOutputError(NotePipelineError):
+    """A provider returned an assertion that is not transcript-provenance —
+    fabricated evidence about a decision nobody made (round 28 PR-MED-001,
+    enforced at ingestion since schema v2)."""
+
+
 class NoteDraft(BaseModel):
     """Stage-one output: the base note plus its proposals, UNCHECKED.
 
     In-memory hand-off between ``compose_draft`` and ``finalise_note`` only —
     never persisted, never rendered as prose.
 
-    The confinement this type ENFORCES (round 28 PR-MED-001): base sections
-    hold TRANSCRIPT-provenance assertions ONLY. A provider-returned
-    ``autofill``/``prefill`` assertion is refused by the validator however
-    complete its evidence fields look — confirmation evidence is a record of
-    a CLINICIAN decision, and provider output must never bypass the
-    proposal-resolution loop that creates one. ``finalise_note``
-    re-establishes the same confinement, so a validator-skipping
-    (``model_construct``) draft cannot bypass it either. Every
-    non-``transcript`` assertion in a final note therefore originates in
-    ``finalise_note``'s resolution loop: one emitted proposal, one confirmed
-    resolution, digest-verified.
+    The confinement this type ENFORCES (round 28 PR-MED-001, widened by
+    schema v2 D4): base sections hold ``DRAFT_BASE_PROVENANCES`` only —
+    TRANSCRIPT-provenance assertions and the clinician's typed ``clinician``
+    lines. A rule-authored ``autofill``/``prefill`` assertion is refused by
+    the validator however complete its evidence fields look — confirmation
+    evidence is a record of a CLINICIAN decision, and provider output must
+    never bypass the proposal-resolution loop that creates one.
+    ``finalise_note`` re-establishes the same confinement, so a
+    validator-skipping (``model_construct``) draft cannot bypass it either.
+    Because a typed line is admitted here, this validator is no longer the
+    control for what a PROVIDER returns: ``compose_draft`` confines the
+    provider's output to transcript-provenance at ingestion, before any
+    draft exists, and a typed line enters only afterwards through the review
+    surface (``ui.models.working_draft``). Every ``autofill``/``prefill``
+    assertion in a final note therefore originates in ``finalise_note``'s
+    resolution loop: one emitted proposal, one confirmed resolution,
+    digest-verified; every ``clinician`` assertion carries the decision that
+    names it.
 
     Residue, named rather than implied: ``GeneratedSection`` itself stays
     BROAD — final notes legitimately hold composed clinician-authored
@@ -1811,12 +2005,14 @@ class NoteDraft(BaseModel):
                 raise ValueError("note_sections must be unique and in canonical order")
             seen_keys.append(index)
             for assertion in section.note_assertions:
-                # Round 28 PR-MED-001: the provider-boundary confinement.
-                if assertion.note_span.provenance != "transcript":
+                # Round 28 PR-MED-001, widened by D4: quoted lines and typed
+                # clinician lines only; rule-authored text is a proposal.
+                if assertion.note_span.provenance not in DRAFT_BASE_PROVENANCES:
                     raise ValueError(
                         "a draft base section may hold transcript-provenance "
-                        "assertions only; clinician-authored content enters "
-                        f"solely as proposals (assertion {assertion.assertion_id})"
+                        "assertions and typed clinician lines only; rule-authored "
+                        f"content enters solely as proposals (assertion "
+                        f"{assertion.assertion_id})"
                     )
                 if assertion.assertion_id in assertion_ids:
                     raise ValueError(f"duplicate assertion_id: {assertion.assertion_id}")
@@ -1881,12 +2077,13 @@ def compose_draft(
     ``PrefillSelectionAmbiguousError`` propagates as the chooser case and
     ``UnknownPrefillError`` as a caller bug (``note_fill`` semantics).
 
-    Provider output is CONFINED at ingestion (round 28 PR-MED-001): the
-    returned sections become ``NoteDraft.note_sections``, whose validator
-    refuses any non-``transcript`` assertion — a provider cannot smuggle
-    clinician-authored content past the proposal-resolution loop, however
-    complete the fabricated evidence looks. The refusal is the type's own
-    ``ValidationError``, consistent with this module's structural refusals.
+    Provider output is CONFINED at ingestion (round 28 PR-MED-001; since
+    schema v2 the check is ``_confine_provider_output``, run on the returned
+    sections BEFORE any draft exists): a provider returns
+    transcript-provenance assertions only, so it cannot smuggle
+    clinician-authored content — a rule-authored line OR a fabricated typed
+    line — past the proposal-resolution loop, however complete the
+    fabricated evidence looks. The refusal is typed ``ProviderOutputError``.
     """
     from scribe_desktop.note_config import build_note_request
     from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
@@ -1895,6 +2092,7 @@ def compose_draft(
         document, config, template_profile_id, clinician_speaker=clinician_speaker
     )
     sections = provider.generate_sections(request)
+    _confine_provider_output(sections)
     proposals = (
         *autofill_proposals(document, config),
         *prefill_proposals(document, config, prefill_id),
@@ -1909,6 +2107,22 @@ def compose_draft(
         note_sections=sections,
         note_proposals=proposals,
     )
+
+
+def _confine_provider_output(sections: Sequence[GeneratedSection]) -> None:
+    """THE provider boundary (round 28 PR-MED-001, moved here by schema v2
+    D4): a provider returns QUOTED lines only. The draft base also admits
+    the clinician's typed lines — added by the review surface AFTER
+    composition — so the draft validator can no longer tell a provider's
+    smuggled ``clinician`` line from a typed one; this check runs on the
+    provider's output itself, before a draft exists, and is the control."""
+    for section in sections:
+        for assertion in section.note_assertions:
+            if assertion.note_span.provenance != "transcript":
+                raise ProviderOutputError(
+                    "a provider may return transcript-provenance assertions only; "
+                    f"assertion {assertion.assertion_id} is {assertion.provenance}"
+                )
 
 
 def _merge_confirmed(
@@ -1965,22 +2179,33 @@ def finalise_note(
     ``check_note``'s digest gate (``CheckTargetMismatchError``), deliberately
     not re-verified here — one gate, one owner.
 
-    The provider-boundary confinement is RE-ESTABLISHED here (round 28
-    PR-MED-001): a draft base assertion that is not transcript-provenance is
-    refused even when the draft skipped validation
-    (``NoteDraft.model_construct``), so the only route by which a
-    non-``transcript`` assertion reaches the assembled note is the
-    resolution loop below — one emitted proposal, one confirmed resolution.
+    The base confinement is RE-ESTABLISHED here (round 28 PR-MED-001, widened
+    by schema v2 D4): a draft base assertion outside
+    ``DRAFT_BASE_PROVENANCES`` is refused even when the draft skipped
+    validation (``NoteDraft.model_construct``), and a typed ``clinician``
+    line must carry a clinician decision, so the only route by which a
+    rule-authored assertion reaches the assembled note is the resolution loop
+    below — one emitted proposal, one confirmed resolution — and a typed line
+    reaches it only with the decision that names it. A resolution's decision
+    may be ``decided_by="config"`` (D5): the assertion built from it carries
+    that decision, and the type pins its digest to the assertion's.
     """
     from scribe_desktop.note_check import check_note
 
     for section in draft.note_sections:
         for assertion in section.note_assertions:
-            if assertion.note_span.provenance != "transcript":
+            if assertion.note_span.provenance not in DRAFT_BASE_PROVENANCES:
                 raise ProposalEvidenceError(
                     f"draft base assertion {assertion.assertion_id} is not "
-                    "transcript-provenance; clinician-authored content enters a "
-                    "note only through the proposal-resolution loop"
+                    "transcript-provenance or a typed clinician line; rule-authored "
+                    "content enters a note only through the proposal-resolution loop"
+                )
+            decision = assertion.confirmation
+            if assertion.note_span.provenance == "clinician" and (
+                decision is None or decision.decided_by != "clinician"
+            ):
+                raise ProposalEvidenceError(
+                    f"typed line {assertion.assertion_id} carries no clinician decision"
                 )
     by_id: dict[str, ProposalResolution] = {}
     for supplied in resolutions:
@@ -2061,13 +2286,17 @@ __all__ = [
     "DEFAULT_SECTION_CUES",
     "DIGEST_ALGORITHM",
     "DIGEST_PATTERN",
+    "DRAFT_BASE_PROVENANCES",
     "MAX_ASSERTION_CHARS",
+    "MAX_SECTION_PROSE_CHARS",
     "MOCK_BEHAVIOURS",
+    "NOTE_SCHEMA_VERSION",
     "NOTE_WARNING_SEVERITY",
     "SECTION_CUES_FILENAME",
     "SECTION_INDEX",
     "CanonicalSection",
     "ConfirmationDecision",
+    "DecidedBy",
     "ExtractiveNoteProvider",
     "GeneratedNote",
     "GeneratedSection",
@@ -2078,18 +2307,23 @@ __all__ = [
     "NoteModelProvider",
     "NotePipelineError",
     "NoteProposal",
+    "NoteProvenance",
     "NoteProviderError",
     "NoteSectionKey",
     "NoteSpan",
+    "NoteStyle",
     "NoteUtterance",
     "NoteWarning",
     "NoteWarningSeverity",
     "ProposalEvidenceError",
     "ProposalResolution",
+    "ProviderOutputError",
     "SectionOwner",
     "SourceCoords",
     "SpeakerEvidence",
     "SpeakerRolePreselection",
+    "StyleRendering",
+    "StyleVerdict",
     "admissible_sections",
     "compose_draft",
     "content_tokens",

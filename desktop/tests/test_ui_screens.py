@@ -747,10 +747,11 @@ def _enrol(qapp: Any, screen: Any, capture: _FakeCapture) -> None:
     assert capture.calls, "the capture seam was never called"
 
 
-def _make_consent_stale(root: Path) -> Any:
-    """Re-save the stored profile with a ``consent-v1`` record (Task 5.0's
-    older-version case): the SAME key and the SAME vector, an older consent
-    text. Returns the profile as it now reads back from disk."""
+def _make_consent_stale(root: Path, version: str = "consent-v1") -> Any:
+    """Re-save the stored profile with an OLDER consent record (Task 5.0's
+    older-version case; ``consent-v2`` since the note-learning plan's consent
+    v3): the SAME key and the SAME vector, an older consent text. Returns the
+    profile as it now reads back from disk."""
     from scribe_desktop.practitioner_profile import ConsentRecord, load_profile, save_profile
 
     profile = load_profile(root=root)
@@ -760,7 +761,7 @@ def _make_consent_stale(root: Path) -> Any:
             update={
                 "consent": ConsentRecord(
                     accepted_at=profile.consent.accepted_at,
-                    consent_text_version="consent-v1",
+                    consent_text_version=version,
                     learning_opt_in=profile.consent.learning_opt_in,
                 )
             }
@@ -781,7 +782,7 @@ class TestPractitionerScreen:
         screen = _practitioner_screen(
             FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
         )
-        assert screen.consent_text_label.text() == models.CONSENT_TEXT_V2
+        assert screen.consent_text_label.text() == models.CONSENT_TEXT_V3
         assert screen.consent_checkbox.text() == models.CONSENT_CHECKBOX_LABEL
         assert not screen.consent_checkbox.isChecked()
         assert not screen.learning_checkbox.isChecked()
@@ -1300,9 +1301,12 @@ class TestPractitionerScreen:
         screen.deleteLater()
 
     @windows_only
+    @pytest.mark.parametrize("older_version", ["consent-v1", "consent-v2"])
     def test_a_stale_consent_record_does_not_pre_tick_and_gates_record(
-        self, qapp: Any, tmp_path: Path
+        self, qapp: Any, tmp_path: Path, older_version: str
     ) -> None:
+        """Every OLDER version re-asks (note-learning plan Task 0.1: a v2
+        record reads but is not current, so the tab asks again)."""
         capture = _FakeCapture()
         first = _practitioner_screen(
             FakeController(),
@@ -1314,8 +1318,9 @@ class TestPractitionerScreen:
         first.learning_checkbox.setChecked(True)
         _enrol(qapp, first, capture)
         first.deleteLater()
-        stale = _make_consent_stale(tmp_path)
-        assert stale.consent.consent_text_version == "consent-v1"
+        stale = _make_consent_stale(tmp_path, older_version)
+        assert stale.consent.consent_text_version == older_version
+        assert not models.consent_is_current(stale)
 
         screen = _practitioner_screen(
             FakeController(), FakeBackend(), tmp_path, config_root=tmp_path / "config"
@@ -2964,6 +2969,12 @@ class TestNoteViewModels:
         assert models.provenance_label("transcript") == "from transcript"
         assert "clinician-authored" in models.provenance_label("autofill")
         assert "clinician-authored" in models.provenance_label("prefill")
+        # Note-learning plan schema v2 (D4): a typed line is named as typed
+        # and as the clinician's — never mistaken for a quote or a rule.
+        typed = models.provenance_label("clinician")
+        assert "typed" in typed
+        assert "clinician-authored" in typed
+        assert len({models.provenance_label(p) for p in ("transcript", "clinician")}) == 2
 
     def test_summarise_warnings_splits_and_groups(self) -> None:
         result = _note_result()
@@ -3094,6 +3105,51 @@ class TestNoteScreen:
     def _confirm_all(self, screen: Any) -> None:
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
+
+    def test_a_typed_line_is_neither_a_quoted_segment_nor_a_provider_line(
+        self, qapp: Any
+    ) -> None:
+        """Note-learning plan Task 0.2, the two `ui/note.py` provenance
+        branches (`_segments_in_note`, `_provider_line_exists`): a typed
+        ``clinician`` line in the working note quotes no segment — so it never
+        marks an utterance as present — and is never taken for a provider
+        line; it renders through the one rendering path under its own label.
+        The Edit control that creates such a line is Task 2.1's; here the
+        line is placed directly in the manual-additions map."""
+        from scribe_desktop.note import (
+            ConfirmationDecision,
+            NoteAssertion,
+            NoteSpan,
+            text_digest,
+        )
+
+        screen, _record = self._screen()
+        before = screen._segments_in_note()
+        assert before  # the provider quoted something
+        provider_line = screen._draft.note_sections[0].note_assertions[0].assertion_id
+        text = "Cervical HVLA performed"
+        typed = NoteAssertion(
+            assertion_id="typed-1",
+            section_key="treatment_performed",
+            note_span=NoteSpan(span_text=text, provenance="clinician"),
+            shown_text_digest=text_digest(text),
+            config_digest=screen._draft.config_digest,
+            confirmation=ConfirmationDecision(
+                proposal_id="typed-1",
+                note_confirmation="confirmed",
+                decided_at=datetime.now(UTC),
+            ),
+        )
+        screen._manual["typed-1"] = typed
+        screen._refinalise()
+        assert screen._segments_in_note() == before
+        assert not screen._provider_line_exists("typed-1")
+        assert screen._provider_line_exists(provider_line)
+        body = screen.note_body.toPlainText()
+        assert f"  - {text}  [{models.provenance_label('clinician')}]" in body
+        # The typed line is not a movable/removable transcript row.
+        assert "typed-1" not in {line.assertion_id for line in screen.editable_lines()}
+        screen.deleteLater()
 
     def test_consent_manual_reminder_is_always_rendered(self, qapp: Any) -> None:
         """Task 7.7 / round 45 MED-001 — the consent Critical Constraint's

@@ -566,6 +566,8 @@ class NoteScreen(QWidget):
         for section in working.note_sections:
             for assertion in section.note_assertions:
                 coords = assertion.note_span.source_coords
+                # Quoted lines only: a typed ``clinician`` line (schema v2)
+                # carries no coordinates and marks no segment as present.
                 if assertion.provenance == "transcript" and coords is not None:
                     present.add(coords.segment_index)
         return present
@@ -743,6 +745,8 @@ class NoteScreen(QWidget):
         draft = self._draft
         if draft is None:
             return False
+        # A provider line is a quoted line; a typed ``clinician`` line
+        # (schema v2) is never the provider's.
         return any(
             assertion.assertion_id == assertion_id and assertion.provenance == "transcript"
             for section in draft.note_sections

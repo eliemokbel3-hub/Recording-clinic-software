@@ -797,7 +797,8 @@ def write_note(
       non-``transcript`` assertion's ``shown_text_digest`` must be the
       digest of its exact text, and its ``config_digest`` must be the
       note's own — confirmation evidence under a different config backs a
-      different proposal;
+      different proposal. A typed ``clinician`` line (schema v2) carries the
+      same two digests and is verified identically;
     - ``transcript_digest`` is re-verified against the decrypted ON-DISK
       transcript and ``session_id`` against the store identity, so a note
       describing a superseded transcript or another session never lands;
@@ -816,6 +817,7 @@ def write_note(
         for assertion in section.note_assertions:
             if assertion.note_span.provenance == "transcript":
                 continue
+            # autofill, prefill and typed ``clinician`` lines alike.
             if (
                 assertion.shown_text_digest is None
                 or text_digest(assertion.note_span.span_text) != assertion.shown_text_digest

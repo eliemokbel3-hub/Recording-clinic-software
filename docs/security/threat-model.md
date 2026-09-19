@@ -203,7 +203,14 @@ note inherit exactly that posture.
    explicit per-assertion clinician confirmation of the exact shown wording, and
    config text rejects Unicode line/paragraph separators and bidirectional
    format controls so the confirmed wording cannot differ from what was
-   digested.
+   digested. Amendment (note-learning-and-styles plan, D5 — planned; enforced
+   from Phase 2): lines the practitioner's OWN config pre-fills will carry
+   `decided_by="config"` on their `ConfirmationDecision` with the digest they
+   were minted under (the type already refuses a config decision without it —
+   `note.py`'s `_check_decider` — and pins that digest to the assertion's own),
+   and will be ratified by one counted Save that shows them marked, while
+   model-derived proposals keep per-line confirmation; until Phase 2 lands,
+   every authored line still needs its per-assertion click.
    **The app itself now writes ONE of these files (practitioner-profile plan
    Phase 5, D9 as amended 2026-09-16 — auto-learn, review later).** When a
    note is SAVED, `note_config.append_user_cues` appends learned phrases to
@@ -669,6 +676,136 @@ boundary 2: the defended adversary is outside the user's Windows session.
     same-user boundary applies to the plaintext exactly as to the other
     config files.
 
+## Note learning and styles — Phase 0 stubs (surfaces 11–17; finalised at that plan's Phase H)
+
+The note-learning-and-styles plan adds live transcription during recording,
+practitioner-typed edits that can become learned rules, a learned writing style
+derived from the practitioner's own past notes, and a local language model that
+renders prose; boundary 2 is unchanged — the defended adversary is still outside
+the user's Windows session and every new artefact inherits exactly that posture.
+Only that plan's PHASE 0 is built (the contracts: consent v3, note schema v2,
+the style store and its model, the settings file, the two shipped vocabularies
+and the typed-wording filter), so each surface below states what is enforced
+TODAY with its symbol and marks everything else "planned; enforced from Phase N";
+these stubs are finalised at that plan's Phase H (task H3).
+
+11. **Live transcription worker (D1–D3; C2, C7, C8, C9).** Planned; enforced
+    from Phase 1 — none of it exists today, transcription runs only in the batch
+    stage. What it will hold: the worker is fed plaintext PCM by a tee placed
+    around the capture sink BEFORE encryption, so it never holds `SessionCrypto`,
+    never reads the session store and never writes a file (C7); its per-window
+    PCM, segments and embeddings stay in process memory and the PCM is dropped
+    per window; Discard stops and joins the worker and confirms its buffers are
+    cleared BEFORE the session key is destroyed (C7, D2); every failure — model
+    load, "could not keep up", a tee error — names its reason on screen and the
+    consultation falls back to the batch stage (C8); the live view is the same
+    display-only transcript widget under the same `NoTextInteraction` rule and
+    is cleared on Discard (C2); and no live segment reaches a log line (C9).
+12. **Typed edits — the `clinician` provenance (D4; C3, C9).** The TYPE is
+    built. In `note.py` a `clinician` assertion's typed text IS its span text
+    (no second field, so the digested wording and the carried wording cannot
+    name different words), its `proposal_id` is `None`, its decision names the
+    line itself, and an optional `replaces` records the assertion it supersedes;
+    `DRAFT_BASE_PROVENANCES = {transcript, clinician}` admits typed lines into a
+    draft's base while `finalise_note` still refuses rule-authored base lines
+    and requires a clinician decision on every typed one; the provider boundary
+    moved to `compose_draft`'s `_confine_provider_output`, which admits
+    transcript provenance only and raises `ProviderOutputError`, so a provider
+    cannot fabricate a typed line with complete-looking evidence; and
+    `write_note` verifies a typed line's `shown_text_digest` and `config_digest`
+    exactly as it does every other authored line (C3). Typed wording is note-model
+    text and carries the existing note tripwire markers, so it is not logged (C9).
+    The Edit control that would create such a line is planned; enforced from
+    Phase 2.
+13. **Learned rules — trigger and wording admission (D5, D11; C5, C6).** Built:
+    `note_config.refuse_typed_wording(text)`, the narrower filter for
+    PRACTITIONER-TYPED text — it shares the number, date and medication token
+    classifiers with `refuse_learning_candidate` and runs NO name heuristic
+    (D11, practitioner decision 2026-09-18; consent v3 states that names in the
+    practitioner's own typed shorthand are the practitioner's responsibility) —
+    and the threshold `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3` (D5). Nothing CALLS
+    the filter yet. Planned; enforced from Phase 2: the Save-time writer into
+    `autofill_rules.json`, the duplicate check against the loader's `known`
+    triggers before any write, the `autofill_rules.learned.json` sidecar,
+    in-place correction of a learned rule's wording, and the Practitioner tab's
+    review-later list with delete (C6 — written only on an explicit Save and
+    validated before the write). Residue, identical to the transcript filter's:
+    a drug name with no listed suffix and no dose unit passes a SHAPE filter —
+    the review-later list is the control (C5: all three admission paths refuse,
+    none edits).
+14. **Save-as-ratification and config decisions (D5; C3).** Built: the decision
+    type. `ConfirmationDecision.decided_by` is `clinician` (default, so v1 notes
+    read) or `config`, a `config` decision WITHOUT a `config_digest` is
+    unrepresentable — `note.py`'s `_check_decider` validator refuses it — and the
+    digest it carries must equal the assertion's own, so a config-decided line
+    cannot name a config it was not minted under. Planned; enforced from Phase 2:
+    the emitter that mints those decisions, the distinct mark on pre-filled
+    lines, the counted Save label ("Save — confirms the N pre-filled lines
+    shown"), Save still refused while any MODEL-derived proposal is pending, and
+    the `clinician_asserted` exemption for `decided_by="config"` assertions
+    (that plan's Task 2.4). Today `note_check.provenance_warnings` emits
+    `clinician_asserted` for EVERY authored line, typed ones included, and
+    nothing there reads `decided_by` — so every authored line still needs its
+    per-assertion click (C3).
+15. **The style profile and its exemplars (D9, D10; C5, C6, C9).** Built: the
+    store and the model. The learned style has its OWN root
+    `%LOCALAPPDATA%\ClinikoScribe\style\` (`practitioner_profile.
+    default_style_root`, a sibling of `profile\`), its own `key.dpapi` wrapped
+    with the DISTINCT `STYLE_KEY_DESCRIPTION` that
+    `session_store.unwrap_key_from_file` verifies before any decryption, and
+    `style.enc` under `STYLE_AAD`, which refuses a blob of another purpose even
+    under the right key — so the session, voice and style keys cannot open each
+    other's store (pinned by
+    `desktop/tests/test_style_profile.py::TestThreeKeyIsolation`);
+    `save_style_profile` / `load_style_profile` / `style_profile_present` /
+    `delete_style_profile` (key-first, idempotent, INDEPENDENT of
+    `delete_profile`) share ONE custody implementation with the voice store
+    (`_SealedStore`, `_seal`, `_open`, `_unlink_store`). The model
+    `note_config.StyleProfile` carries its OWN `ConsentRecord`, at most
+    `MAX_STYLE_EXEMPLARS = 30` `StyleExemplar`s from at most
+    `MAX_SAMPLE_NOTES = 5` sources, hides its input in validation errors
+    (`hide_input_in_errors`), and `exemplar_text` is a registered log tripwire
+    signature (C9). NOTHING writes the store today: the learner, the
+    review-before-save step, per-exemplar delete and the tab's "Delete learned
+    style" are planned; enforced from Phase 3 (C6). Auto-extracted shorthand
+    will be admitted only from the shipped controlled vocabulary
+    `config_defaults/clinical_abbreviations.json`
+    (`note_config.CLINICAL_ABBREVIATIONS`, built and load-guarded), with
+    tick-to-keep for unrecognised tokens (planned, D10). Residue: an exemplar
+    that passes the SHAPE filter unchanged (C5) may still be patient-identifying
+    in context — the practitioner's review and one-click delete are the control
+    (an Accepted Assumption of that plan).
+16. **Sample-note ingest (D9; C6).** Planned; enforced from Phase 3 — nothing
+    reads a sample note today. What it will hold: the chosen files are read into
+    memory only, never copied and never moved; `.docx` is parsed through
+    `python-docx`, a Phase 3 dependency; the learner's output is validated and
+    written only on an explicit Save (C6); and deleting the originals is a
+    SEPARATE explicit confirmation that names the paths, unticked by default, so
+    no ingest path can remove the practitioner's own files as a side effect.
+17. **The local language model and Check 5 (D6, D7, D8; C1, C4, C8).** Built:
+    the carrier types. `note.py`'s `StyleRendering(section_key, prose_text,
+    input_digest, verdict)` binds a rendering to the digest of its inputs and a
+    validator refuses prose on a `failed` verdict (C4); `prose_text` and
+    `style_renderings` are registered log tripwire signatures (C9);
+    `note_config.PractitionerSettings` (`practitioner_settings.json`, default
+    `clean`) holds the display setting outside `NoteConfig` and outside the
+    config digest; and Check 5's connective allow-list ships as
+    `config_defaults/prose_connectives.json` (`note_config.PROSE_CONNECTIVES`,
+    refused at import by `_parse_shipped_vocabulary` if the packaged file is
+    emptied, malformed or key-missing). Planned; enforced from Phase 4: the
+    runtime installed ONLY as a prebuilt CPU wheel pinned by version AND SHA-256
+    (`--require-hashes`, never a source build) — a second sanctioned network
+    fetch beside `setup-models.py` — the ~2.5 GB instruct model pinned by
+    SHA-256 and loaded from the local path only (C1), the prompt builder typed
+    to refuse a `TranscriptDocument` (C4 — the model never sees transcript
+    text), Check 5 as a fidelity GATE and not a certificate (a passing rendering
+    is still read and ratified by the practitioner's Save), Save unavailable
+    while a rendering is in flight, a stale rendering never shown, and every
+    fallback named on screen (C8). The honest limit recorded in D8:
+    `assert_offline_env` is NOT an enforcing control for this runtime — neither
+    candidate reads a kill-switch variable — so the enforcing control will be
+    the no-sockets integration test extended over a prose generation.
+
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -687,4 +824,5 @@ Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
 deferred from Phase 2); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
 Cliniko keys are first stored (Phase 4); or the software is installed on the
-second clinic machine (Phase 7).
+second clinic machine (Phase 7); or the local language model lands
+(note-learning-and-styles plan Phase 4).

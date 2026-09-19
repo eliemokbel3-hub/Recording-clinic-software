@@ -1,7 +1,7 @@
 """The Practitioner tab: voice enrolment, consent, deletion, learned phrases
 (practitioner-profile plan Phase 3, Task 3.1; Phase 5, Tasks 5.0 + 5.3).
 
-The tab shows the CURRENT consent text VERBATIM (``models.CONSENT_TEXT_V2``,
+The tab shows the CURRENT consent text VERBATIM (``models.CONSENT_TEXT_V3``,
 version ``models.CONSENT_TEXT_VERSION``) with the consent checkbox and the
 separate phrase-learning opt-in, a microphone pick, and a read-aloud of about
 a minute. That read-aloud is captured IN MEMORY by
@@ -25,8 +25,8 @@ touching a widget directly.
 
 Consent versions (Task 5.0). The consent box is pre-ticked ONLY from a
 READABLE profile whose consent record carries the CURRENT text version. A
-record carrying an older version (``consent-v1``) is readable but not
-current: the box stays unticked and editable, a one-line notice asks the
+record carrying an older version (``consent-v1``, ``consent-v2``) is readable
+but not current: the box stays unticked and editable, a one-line notice asks the
 practitioner to read the new text and tick again, Record needs that fresh
 tick, and phrase learning is treated as OFF until re-consent
 (``models.learning_status``). "Confirm consent" re-saves the SAME vector
@@ -234,7 +234,7 @@ class PractitionerScreen(QWidget):
         profile_box.setLayout(profile_layout)
 
         # --- consent (the CURRENT text VERBATIM) -----------------------------
-        self.consent_text_label = QLabel(models.CONSENT_TEXT_V2)
+        self.consent_text_label = QLabel(models.CONSENT_TEXT_V3)
         self.consent_text_label.setTextFormat(Qt.TextFormat.PlainText)
         self.consent_text_label.setWordWrap(True)
         self.consent_notice_label = QLabel(models.CONSENT_STALE_NOTICE)

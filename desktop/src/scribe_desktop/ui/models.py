@@ -31,8 +31,9 @@ from scribe_desktop.note import (
     compose_draft,
     reconstruct_span_text,
 )
-from scribe_desktop.note_config import NoteConfig, load_note_config
+from scribe_desktop.note_config import NoteConfig, StyleProfile, load_note_config
 from scribe_desktop.practitioner_profile import (
+    ConsentRecord,
     PractitionerProfile,
     ProfileUnusableError,
     load_profile,
@@ -408,13 +409,16 @@ _PROVENANCE_LABELS: Final[Mapping[str, str]] = {
     "transcript": "from transcript",
     "autofill": "autofill (clinician-authored)",
     "prefill": "prefill (clinician-authored)",
+    # Note-learning plan schema v2 (D4): text the clinician typed over a line.
+    "clinician": "typed (clinician-authored)",
 }
 
 
 def provenance_label(provenance: str) -> str:
     """Human label distinguishing a line's provenance (Task 7.1: provenance
     visibly distinguished). Autofill and prefill are clinician-authored
-    boilerplate; transcript lines are quoted speech verified by reconstruction.
+    boilerplate; a ``clinician`` line is text the clinician typed (schema
+    v2); transcript lines are quoted speech verified by reconstruction.
     """
     return _PROVENANCE_LABELS.get(provenance, provenance)
 
@@ -596,8 +600,10 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Check the side against the transcript beside the note, then acknowledge.",
     ),
+    # Schema v2 (note-learning plan D4): a typed ``clinician`` line draws this
+    # review too, so the title names all three authored provenances.
     "clinician_asserted": WarningCopy(
-        "A clinician-authored line was added (autofill or prefill)",
+        "A clinician-authored line was added (autofill, prefill or typed)",
         None,
         "Confirm the wording is right for this patient, then acknowledge.",
     ),
@@ -809,8 +815,9 @@ def working_draft(
     contradiction, provenance, omission — because ``finalise_note`` takes a
     draft and nothing else changes. The proposals travel unchanged, so the
     resolution evidence keeps matching. Validated on construction: a
-    duplicate assertion id or a non-transcript addition is refused by
-    ``NoteDraft`` itself."""
+    duplicate assertion id or a rule-authored (autofill / prefill) addition
+    is refused by ``NoteDraft`` itself; a quoted line and a typed
+    ``clinician`` line (schema v2, D4) are the admitted additions."""
     grouped: dict[NoteSectionKey, list[NoteAssertion]] = {}
     for section in draft.note_sections:
         kept = [a for a in section.note_assertions if a.assertion_id not in removed]
@@ -940,6 +947,9 @@ def editable_lines(
         for assertion in section.note_assertions:
             coords = assertion.note_span.source_coords
             if assertion.provenance != "transcript" or coords is None:
+                # Not a quoted line: a typed ``clinician`` line (schema v2)
+                # has no segment to move or remove by — its own row is the
+                # note-learning plan's Task 2.1.
                 continue
             if coords.segment_index >= len(document.transcript_segments):
                 continue  # Check 1's source_coords_invalid owns this line
@@ -967,6 +977,8 @@ def editable_lines(
     for assertion in additions.values():
         coords = assertion.note_span.source_coords
         if coords is None or coords.segment_index in covered:
+            # No coordinates = a typed ``clinician`` addition (schema v2):
+            # no row here, its own row is the note-learning plan's Task 2.1.
             continue
         if coords.segment_index >= len(document.transcript_segments):
             continue
@@ -1235,7 +1247,7 @@ def models_ready() -> bool:
 # is readable but NOT current — the Practitioner tab asks for a fresh tick and
 # phrase learning stays off until the practitioner re-consents (Task 5.0).
 # Earlier texts stay here as history for the records that carry them.
-CONSENT_TEXT_VERSION: Final = "consent-v2"
+CONSENT_TEXT_VERSION: Final = "consent-v3"
 # v1 — ratified 2026-09-05 (Task 0.2); the propose-then-approve terms.
 CONSENT_TEXT_V1: Final = (
     "This app can learn your voice and your phrasing to improve your notes. If you agree, "
@@ -1264,15 +1276,47 @@ CONSENT_TEXT_V2: Final = (
     "Nothing else about any patient is stored beyond their session, and nothing leaves "
     "this computer. You can re-record your voice, delete it, or delete any learned phrase "
     "at any time from this tab. "
-    f"Version {CONSENT_TEXT_VERSION}."
+    "Version consent-v2."
+)
+# v3 — the note-learning-and-styles plan (Phase 0, D12): REWRITTEN by data
+# class rather than appended, because v2's "refuses phrases containing names,
+# numbers, dates or medication names" and "Nothing else about any patient is
+# stored beyond their session" both stop being true once typed shorthand (a
+# narrower filter, no name check), learned rules, the learned style and its
+# exemplar sentences exist. Each earlier text carries its OWN literal version
+# string so history never interpolates the mutable constant above.
+CONSENT_TEXT_V3: Final = (
+    "This app can learn your voice, your phrasing and your note style to improve your "
+    "notes. Everything it learns is stored on this computer only, and nothing leaves it. "
+    "If you agree, it stores: (1) A numeric fingerprint of your voice (never a "
+    "recording), encrypted. (2) If you also turn on learning: short phrases from lines "
+    "you add or move while reviewing a note, and shorthand rules made from wording you "
+    "type over a note line, both saved automatically when you save the note and kept as "
+    "plain text in your own config files until you delete them. Only your own lines are "
+    "ever used — never a patient's. The app checks the shape of words, not their meaning: "
+    "a phrase or rule trigger taken from what you said is refused if it looks like it "
+    "contains a name, a number, a date or a medication name; wording you type yourself "
+    "is refused only for numbers, dates and medication names, so keeping patient names "
+    "out of your own shorthand is up to you. (3) If you choose to teach the app your "
+    "note style from past notes you upload: what it derives from them — your section "
+    "order and headings, your shorthand, a few measures of how you write, and up to 30 "
+    "example sentences, each kept only when it passes the same check unchanged and is "
+    "shown to you first — stored encrypted until you delete it. The notes you upload are "
+    "read, never copied, and are deleted only if you say so. Lines the app pre-fills "
+    "from your own rules are marked in the note, and saving the note confirms them. "
+    "Everything learned is shown on this tab so you can delete any of it — your voice, "
+    "any phrase or rule, or the learned style — at any time. "
+    "Version consent-v3."
 )
 CONSENT_CHECKBOX_LABEL: Final = (
     "I agree - store an encrypted fingerprint of my voice on this computer"
 )
 # The second checkbox, off by default (Config / Environment / Deployment Impact).
+# Consent v3 widens what the opt-in covers to the shorthand rules learned from
+# typed edits (the same Save, the same review-later list).
 LEARNING_OPT_IN_LABEL: Final = (
-    "Also learn my phrasing from lines I add or move during review (saved when I save "
-    "the note)"
+    "Also learn my phrasing and shorthand from lines I add, move or edit during review "
+    "(saved when I save the note)"
 )
 # Shown on the Practitioner tab when a readable profile's consent record
 # carries an older text version (Task 5.0): the box is left unticked and
@@ -1284,11 +1328,15 @@ CONSENT_STALE_NOTICE: Final = (
 CONFIRM_CONSENT_BUTTON_LABEL: Final = "Confirm consent"
 
 
-def consent_is_current(profile: PractitionerProfile) -> bool:
-    """True when the profile's consent record carries the CURRENT text
-    version — the only record that pre-ticks the consent box or enables
-    phrase learning (Task 5.0)."""
-    return profile.consent.consent_text_version == CONSENT_TEXT_VERSION
+def consent_is_current(record: PractitionerProfile | StyleProfile | ConsentRecord) -> bool:
+    """True when the consent record carries the CURRENT text version — the
+    only record that pre-ticks the consent box or enables learning (Task
+    5.0). Accepts the voice profile, the style profile (note-learning plan
+    D9: sample learning at first run needs no voice profile, so the style
+    store carries its own record) or a bare ``ConsentRecord``; a record
+    carrying an older version is readable but not current on either side."""
+    consent = record if isinstance(record, ConsentRecord) else record.consent
+    return consent.consent_text_version == CONSENT_TEXT_VERSION
 
 
 # D10: first run ASKS, never blocks — shown on the Practitioner tab, which the
@@ -1487,6 +1535,7 @@ __all__ = [
     "CONSENT_STALE_NOTICE",
     "CONSENT_TEXT_V1",
     "CONSENT_TEXT_V2",
+    "CONSENT_TEXT_V3",
     "CONSENT_TEXT_VERSION",
     "COPY_TO_CLINIKO_ENABLED",
     "FIRST_RUN_BANNER",
