@@ -17,8 +17,9 @@ from typing import Final, Literal, Protocol
 
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
-    CANONICAL_SECTIONS,
     MAX_ASSERTION_CHARS,
+    PREFILLED_MARK,
+    SECTION_TITLES,
     ExtractiveNoteProvider,
     GeneratedNote,
     GeneratedSection,
@@ -27,29 +28,40 @@ from scribe_desktop.note import (
     NoteModelProvider,
     NoteProposal,
     NoteSectionKey,
+    NoteStyle,
     NoteWarning,
     admissible_sections,
+    assertion_label,
     compose_draft,
+    is_prefilled,
+    provenance_label,
     reconstruct_span_text,
+    render_note,
 )
 from scribe_desktop.note_config import (
     # ``_no_control_chars`` is package-private by name, shared deliberately
     # (the note.py convention): ONE config-text validator, applied here to
     # typed wording that may become config.
+    DEFAULT_NOTE_STYLE,
     LearnedRuleEntry,
     NoteConfig,
     NoteConfigError,
+    PractitionerSettings,
     StyleProfile,
     _no_control_chars,
     is_learned_rule_id,
     load_learned_rule_entries,
     load_note_config,
+    load_practitioner_settings,
+    save_practitioner_settings,
 )
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
     PractitionerProfile,
     ProfileUnusableError,
     load_profile,
+    load_style_profile,
+    style_profile_present,
 )
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -457,46 +469,12 @@ CONSENT_MANUAL_REMINDER: Final[str] = (
     "note below, quoting what was said - that is not the attestation.)"
 )
 
-_SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = {
-    section.key: section.title for section in CANONICAL_SECTIONS
-}
-
-_PROVENANCE_LABELS: Final[Mapping[str, str]] = {
-    "transcript": "from transcript",
-    "autofill": "autofill (clinician-authored)",
-    "prefill": "prefill (clinician-authored)",
-    # Note-learning plan schema v2 (D4): text the clinician typed over a line.
-    "clinician": "typed (clinician-authored)",
-}
-
-
-def provenance_label(provenance: str) -> str:
-    """Human label distinguishing a line's provenance (Task 7.1: provenance
-    visibly distinguished). Autofill and prefill are clinician-authored
-    boilerplate; a ``clinician`` line is text the clinician typed (schema
-    v2); transcript lines are quoted speech verified by reconstruction.
-    """
-    return _PROVENANCE_LABELS.get(provenance, provenance)
-
-
-# Note-learning plan D5: the DISTINCT mark a line pre-filled by the
-# practitioner's own config carries wherever it is rendered — the note body,
-# the line editor — so the counted Save's label and the marked lines agree.
-PREFILLED_MARK: Final = "pre-filled by your config"
-
-
-def is_prefilled(assertion: NoteAssertion) -> bool:
-    """True for a line the practitioner's OWN config decided
-    (``decided_by="config"``) — the lines the counted Save ratifies."""
-    decision = assertion.confirmation
-    return decision is not None and decision.decided_by == "config"
-
-
-def assertion_label(assertion: NoteAssertion) -> str:
-    """The bracketed label a rendered line carries: its provenance label,
-    prefixed by ``PREFILLED_MARK`` when the line arrived pre-filled."""
-    label = provenance_label(assertion.provenance)
-    return f"{PREFILLED_MARK} - {label}" if is_prefilled(assertion) else label
+# The section titles, the provenance labels, the D5 pre-filled mark and the
+# rendering itself live in ``note`` since the note-learning plan's Phase 3
+# (Task 3.2: ONE rendering path shared by display, ``note.enc`` reload and
+# Copy); this module re-exports them so the screens and tests keep one
+# import surface.
+_SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = SECTION_TITLES
 
 
 @dataclass(frozen=True)
@@ -521,19 +499,13 @@ class RenderedSection:
 
 
 def format_note_body(note: GeneratedNote) -> str:
-    """The composed note as display text — canonical sections, each assertion
-    ONE bullet with a provenance tag. This is the copyable surface (gated on
-    the 9.1 shipping decision); it is display text only, never persisted or
-    logged here."""
-    blocks: list[str] = []
-    for section in render_note_sections(note):
-        lines = [f"{section.title}:"]
-        for assertion in section.assertions:
-            lines.append(f"  - {assertion.text}  [{assertion.provenance_label}]")
-        blocks.append("\n".join(lines))
-    if not blocks:
-        return "(no note content)"
-    return "\n\n".join(blocks)
+    """The composed note as display text under the note's OWN ``style`` —
+    ``note.render_note(note, note.style)``, THE one rendering path (D7):
+    the Note tab's body, a reloaded ``note.enc`` and Copy all read this, so
+    display, reload and Copy cannot disagree. This is the copyable surface
+    (gated on the 9.1 shipping decision); it is display text only, never
+    persisted or logged here."""
+    return render_note(note, note.style)
 
 
 def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
@@ -1601,6 +1573,180 @@ FIRST_RUN_BANNER: Final = (
     "Set up your voice profile so the app always knows which words are yours - you can "
     "still record without it."
 )
+# Note-learning plan Flow 4 (Task 3.4): the banner's second line, shown with
+# the first while no learned style exists either — optional, never blocking.
+FIRST_RUN_STYLE_LINE: Final = (
+    "Optional: teach the scribe your note style from 1-5 past notes."
+)
+
+
+def first_run_banner_text(*, style_present: bool) -> str:
+    """The first-run banner: the voice-profile line, plus the sample-note
+    line while no learned style exists (``style_profile_present`` — a stat,
+    never a decrypt)."""
+    if style_present:
+        return FIRST_RUN_BANNER
+    return f"{FIRST_RUN_BANNER}\n{FIRST_RUN_STYLE_LINE}"
+
+
+# ---------------------------------------------------------------------------
+# Writing styles (note-learning plan D7; Phase 3 Tasks 3.1 / 3.2 / 3.5).
+# ---------------------------------------------------------------------------
+
+NOTE_STYLES: Final[tuple[NoteStyle, ...]] = ("verbatim", "clean", "own_voice", "narrative")
+STYLE_LABELS: Final[Mapping[NoteStyle, str]] = {
+    "verbatim": "Verbatim",
+    "clean": "Clean clinical",
+    "own_voice": "Own voice",
+    "narrative": "Narrative",
+}
+# C8: every disabled option and every fallback names its reason on screen.
+LANGUAGE_MODEL_ABSENT_REASON: Final = (
+    "needs the local language model, which is not installed (it arrives with a later "
+    "update)"
+)
+STYLE_PROFILE_EMPTY_REASON: Final = (
+    "needs a learned style - teach the scribe your note style below first"
+)
+STYLE_SETTING_UNREADABLE_LINE: Final = (
+    "Writing style setting unreadable ({reason}) - notes are shown as Clean clinical until "
+    "it is fixed or deleted."
+)
+
+
+def language_model_available() -> bool:
+    """Whether the local language model the two prose styles need is
+    installed. ALWAYS False until the plan's Phase 4 ships
+    ``language_model.py`` and its pinned model: the prose styles stay
+    disabled with ``LANGUAGE_MODEL_ABSENT_REASON`` (C8), and a note whose
+    setting names one renders as ``clean`` (``render_note``)."""
+    return False
+
+
+@dataclass(frozen=True)
+class StyleOption:
+    """One "Writing style" radio: the style, its label, whether it can be
+    chosen now and — when it cannot — the reason line (C8)."""
+
+    style: NoteStyle
+    label: str
+    enabled: bool
+    reason: str | None
+
+
+def style_options(
+    *,
+    style_root: Path | None = None,
+    model_available: Callable[[], bool] = language_model_available,
+    style_present: Callable[[Path | None], bool] | None = None,
+) -> tuple[StyleOption, ...]:
+    """The four options in display order (Flow 3). ``verbatim`` and
+    ``clean`` are always available; ``own_voice`` and ``narrative`` need the
+    language model, and ``own_voice`` also a non-empty style profile —
+    presence by STAT (``style_profile_present``), never a decrypt, so the
+    tab may recompute this freely."""
+    present = (
+        style_present(style_root)
+        if style_present is not None
+        else style_profile_present(root=style_root)
+    )
+    model = model_available()
+    options: list[StyleOption] = []
+    for style in NOTE_STYLES:
+        reasons: list[str] = []
+        if style in ("own_voice", "narrative") and not model:
+            reasons.append(LANGUAGE_MODEL_ABSENT_REASON)
+        if style == "own_voice" and not present:
+            reasons.append(STYLE_PROFILE_EMPTY_REASON)
+        reason = None if not reasons else f"{STYLE_LABELS[style]} {'; '.join(reasons)}."
+        options.append(StyleOption(style, STYLE_LABELS[style], not reasons, reason))
+    return tuple(options)
+
+
+def style_fallback_line(style: NoteStyle) -> str | None:
+    """The Note tab's C8 line for a note whose chosen style is a prose style
+    while no language model exists: it renders as ``clean`` and says so.
+    None for the two deterministic styles."""
+    if style in ("verbatim", "clean"):
+        return None
+    return (
+        f"Writing style '{STYLE_LABELS[style]}' {LANGUAGE_MODEL_ABSENT_REASON} - this note "
+        "is shown as Clean clinical."
+    )
+
+
+@dataclass(frozen=True)
+class NoteStyleChoice:
+    """What the Note tab renders under: the style from
+    ``practitioner_settings.json`` (or the default when the file is absent)
+    and, when the file could not be read, the one-line reason."""
+
+    style: NoteStyle
+    reason: str | None
+
+
+def read_note_style(config_root: Path | None = None) -> NoteStyleChoice:
+    """The saved writing style. An unreadable or malformed settings file is
+    a typed error from the loader; here it becomes the DEFAULT style plus a
+    reason line for the tab (C8) — the note still renders, and the setting
+    is never silently rewritten."""
+    try:
+        settings = load_practitioner_settings(config_root)
+    except NoteConfigError as exc:
+        reason = STYLE_SETTING_UNREADABLE_LINE.format(reason=f"{type(exc).__name__}: {exc}")
+        return NoteStyleChoice(DEFAULT_NOTE_STYLE, reason)
+    return NoteStyleChoice(settings.note_style, None)
+
+
+def save_note_style(style: NoteStyle, *, config_root: Path | None = None) -> Path:
+    """Persist the writing style (``save_practitioner_settings``, atomic);
+    the loader's typed errors propagate to the tab, which shows them."""
+    settings = PractitionerSettings(note_style=style)
+    return save_practitioner_settings(settings, config_root=config_root)
+
+
+STYLE_NOT_LEARNED_LINE: Final = (
+    "Learned style: none yet - teach the scribe your note style from 1-5 past notes."
+)
+STYLE_UNUSABLE_LINE: Final = (
+    "Learned style: cannot be read ({reason}) - delete it and learn again."
+)
+
+
+def style_profile_report_line(*, style_root: Path | None = None) -> str:
+    """The learned style's state in one line (Task 3.5): not learned,
+    learned (its date, source count and exemplar count — never a field's
+    text), or unusable naming why. ONE style-store read (a DPAPI unwrap and
+    a decrypt on the GUI thread) — the Practitioner tab takes that read
+    itself (``refresh_style_profile_state``, at construction and on its own
+    learn / remove / delete events ONLY) and renders the line from the
+    loaded profile through ``style_profile_line``; no poll reads the STYLE
+    store (round 51 MED-001: the microphone screen's 5 s poll renders
+    ``model_file_report_lines``, stats alone, re-reading the voice profile
+    only on a speaker-model presence transition — round 55 PR-REG-006; the
+    Practitioner tab's 5 s availability poll reads no store)."""
+    try:
+        profile = load_style_profile(root=style_root)
+    except ProfileUnusableError as exc:
+        return STYLE_UNUSABLE_LINE.format(reason=exc.reason)
+    return style_profile_line(profile)
+
+
+def style_profile_line(profile: StyleProfile | None) -> str:
+    """The line for an already-loaded profile (None = not learned): a date,
+    a source count and an exemplar count, never a field's text."""
+    if profile is None:
+        return STYLE_NOT_LEARNED_LINE
+    notes = "note" if profile.source_count == 1 else "notes"
+    count = len(profile.exemplars)
+    sentences = "sentence" if count == 1 else "sentences"
+    line = (
+        f"Learned style: learned {profile.learned_at:%Y-%m-%d} from {profile.source_count} "
+        f"{notes}, {count} example {sentences}"
+    )
+    if not consent_is_current(profile):
+        line += " - consent text updated, confirm it on this tab"
+    return line
 
 
 # ---------------------------------------------------------------------------
@@ -1900,6 +2046,24 @@ __all__ = [
     "CONSENT_TEXT_VERSION",
     "COPY_TO_CLINIKO_ENABLED",
     "FIRST_RUN_BANNER",
+    "FIRST_RUN_STYLE_LINE",
+    "LANGUAGE_MODEL_ABSENT_REASON",
+    "NOTE_STYLES",
+    "STYLE_LABELS",
+    "STYLE_NOT_LEARNED_LINE",
+    "STYLE_PROFILE_EMPTY_REASON",
+    "STYLE_SETTING_UNREADABLE_LINE",
+    "STYLE_UNUSABLE_LINE",
+    "NoteStyleChoice",
+    "StyleOption",
+    "first_run_banner_text",
+    "language_model_available",
+    "read_note_style",
+    "save_note_style",
+    "style_fallback_line",
+    "style_options",
+    "style_profile_line",
+    "style_profile_report_line",
     "LEARNING_NO_PROFILE_HINT",
     "LEARNING_NOT_ATTRIBUTED_NOTE",
     "LEARNING_ON_LINE",

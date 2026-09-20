@@ -277,10 +277,23 @@ note inherit exactly that posture.
    apostrophe is folded to the plain one before the lookup), both applied at
    the REAL first word only and
    to the name check only (a dose or a number after an exempted opener is
-   still refused); an exemption admits listed forms only, so a practitioner
-   line opening with any other capitalised word ("Examination shows…",
-   "Margaret…") is still refused as name-like and never teaches — visible as
-   a "not learned" note, a refusal rather than a leak. The
+   still refused); since the note-learning plan's Task 3.7 (2026-09-19) the
+   same single site carries two further admissions of the name check, both
+   fail-closed: (a) a token that is EXACTLY (case-preserving) one of the
+   shipped clinical abbreviations (`note_config.CLINICAL_ABBREVIATIONS` —
+   `HVLA`, `Cx`, `NAD` …; the list holds no given name, pinned) is never
+   name-like at any position, and (b) a capitalised REAL-first word is
+   admitted when its lowercase form is in the caller's `known_common`
+   evidence — which only the sample-note learner supplies (the words seen in
+   lowercase anywhere in the chosen notes); the two Note-tab callers pass no
+   evidence, so rule (b) never reaches the transcript-derived paths (pinned
+   on the source) and a name opening an utterance is still refused there,
+   while rule (a) applies to them like every caller — a listed abbreviation
+   is admitted at any position on all three paths. An exemption admits
+   listed forms only, so a practitioner line opening with any other
+   capitalised word ("Examination
+   shows…", "Margaret…") is still refused as name-like and never teaches —
+   visible as a "not learned" note, a refusal rather than a leak. The
    compensating control is the after-the-fact review: every learned phrase is
    listed on the Practitioner tab by section, the twenty most recent with
    their date as well (the sidecar's entries; a phrase whose sidecar write
@@ -673,7 +686,17 @@ boundary 2: the defended adversary is outside the user's Windows session.
     practitioner-decided) admit listed forms only at the real first word,
     so an exempted opener that IS a name in some clinic ("Rest", "Hold") is
     learnable — the review-later list is the control (the contracted forms
-    carry an apostrophe and add no such homograph); the cue file and the
+    carry an apostrophe and add no such homograph); the note-learning plan's
+    Task 3.7 admissions (surface 1 of the Phase 3A section) reach this
+    surface through rule (a) only — a shipped abbreviation is never
+    name-like at any position, and the shipped list holds no given name —
+    because rule (b) needs evidence the Note tab never supplies, so what
+    this surface learns from a transcript widened by exactly the shipped
+    abbreviations and by nothing else; on the sample-note path (surface 15 of
+    the note-learning section) rule (b) admits a name the practitioner ALSO
+    wrote in lowercase somewhere in their chosen notes — the review of each
+    exemplar before Save and its one-click delete are the control; the cue
+    file and the
     sidecar are two
     atomic writes, not one — on learning, a sidecar write that fails after
     the cue file was replaced is REPORTED on the Note tab (the phrase is
@@ -810,23 +833,100 @@ these stubs are finalised at that plan's Phase H (task H3).
     `MAX_STYLE_EXEMPLARS = 30` `StyleExemplar`s from at most
     `MAX_SAMPLE_NOTES = 5` sources, hides its input in validation errors
     (`hide_input_in_errors`), and `exemplar_text` is a registered log tripwire
-    signature (C9). NOTHING writes the store today: the learner, the
-    review-before-save step, per-exemplar delete and the tab's "Delete learned
-    style" are planned; enforced from Phase 3 (C6). Auto-extracted shorthand
-    will be admitted only from the shipped controlled vocabulary
-    `config_defaults/clinical_abbreviations.json`
-    (`note_config.CLINICAL_ABBREVIATIONS`, built and load-guarded), with
-    tick-to-keep for unrecognised tokens (planned, D10). Residue: an exemplar
+    signature (C9). BUILT (Phase 3), the write paths: the store is written by
+    the Practitioner tab's "Learn from my notes" Save after the review —
+    `ui/style_review.StyleReviewDialog` returns the ticked tokens and the
+    exemplars left in place, `sample_notes.build_style_profile` assembles them
+    and `practitioner_profile.save_style_profile` seals them under the style
+    key (an existing key reused) — and by the "Learned style" group's per-item
+    Remove, which re-saves the same profile minus one exemplar or one shorthand
+    token under that same key; nothing else writes it, and a cancelled review
+    writes nothing (C6). The review may only REMOVE: `build_style_profile`
+    raises `SampleNoteError` on a token the draft did not list as unrecognised
+    or on an exemplar that is not one of the draft's own, so the review screen
+    has no path that adds or edits text
+    (`tests/test_sample_notes.py::TestBuildStyleProfile`). Auto-extracted
+    shorthand is admitted by EXACT case-preserving membership of the shipped
+    controlled vocabulary `config_defaults/clinical_abbreviations.json`
+    (`note_config.CLINICAL_ABBREVIATIONS`, built and load-guarded); an
+    abbreviation-SHAPED token that is NOT in it is listed as unrecognised and
+    saved only when the practitioner ticks it — those rows are UNTICKED by
+    default (`tests/test_ui_style_review.py`), so the default answer to the
+    review is the smaller profile (D10). Deletion: the per-exemplar and
+    per-token Removes above, plus the group's "Delete learned style" behind a
+    confirmation dialog, which runs `delete_style_profile` key-first and is
+    INDEPENDENT of the voice profile (neither Delete removes the other, and it
+    works with no voice profile at all). Reading is bounded to ONE decrypt:
+    `refresh_style_profile_state` is the tab's only caller of
+    `load_style_profile` — at construction and after a learn, a remove or a
+    delete — and the summary line (`ui/models.style_profile_line`: a date and
+    two counts, never a field's text) and both "Learned style" lists render
+    from that one in-memory copy; no 5 s poll ever opens the STYLE store, and
+    in steady state neither poll opens any store (the tab's
+    `refresh_availability` and the microphone screen's `refresh_model_status`
+    render stats — round 51 MED-001; the microphone poll re-reads the VOICE
+    profile once when the speaker model's presence flips, round 55
+    PR-REG-006), pinned by
+    `tests/test_ui_learn_style.py::TestPollNeverDecrypts`, which holds that
+    model presence steady and counts the `_open` primitive across both
+    polls. The `ConsentRecord` sealed into the
+    blob is the practitioner's own tick on the tab under consent text v3, taken
+    at the Save that wrote it and re-checked at click time; sample learning
+    needs NO voice profile and reads none (D9). Residue: an exemplar
     that passes the SHAPE filter unchanged (C5) may still be patient-identifying
     in context — the practitioner's review and one-click delete are the control
-    (an Accepted Assumption of that plan).
-16. **Sample-note ingest (D9; C6).** Planned; enforced from Phase 3 — nothing
-    reads a sample note today. What it will hold: the chosen files are read into
-    memory only, never copied and never moved; `.docx` is parsed through
-    `python-docx`, a Phase 3 dependency; the learner's output is validated and
-    written only on an explicit Save (C6); and deleting the originals is a
-    SEPARATE explicit confirmation that names the paths, unticked by default, so
-    no ingest path can remove the practitioner's own files as a side effect.
+    (an Accepted Assumption of that plan); and the filter's Task 3.7 admissions
+    (surface 1 of the Phase 3A section) mean a name the practitioner also wrote
+    in lowercase in their chosen notes can pass as an exemplar — the review
+    screen and the one-click delete are the control.
+16. **Sample-note ingest (D9; C6).** Built (Phase 3):
+    `sample_notes.read_sample_note` takes a chosen file or pasted text and
+    reads it into memory only — a `Path` must carry a `.txt` or `.docx` suffix
+    (`SAMPLE_NOTE_SUFFIXES`; a `.pdf` is refused by name, "paste the text
+    instead") and is bounded by `MAX_SAMPLE_NOTE_BYTES` (2 MiB, a stat before
+    the read) and `MAX_SAMPLE_NOTE_CHARS` (200 000); a `.txt` is ONE
+    `read_bytes` decoded utf-8-sig then cp1252, a `.docx` is opened through
+    `python-docx` 1.2.0 (a pinned base dependency in `pyproject.toml`).
+    The module never writes, copies, moves or renames — pinned by a before/after
+    snapshot of the whole temporary tree
+    (`tests/test_sample_notes.py::TestReadSampleNote::
+    test_a_txt_file_is_read_into_memory_and_the_tree_is_untouched`) — and
+    `SampleNote.sample_text` is `repr=False` and a registered log tripwire
+    marker beside `recognised_shorthand` and `unrecognised_shorthand` (C9).
+    `learn_style_profile` is pure over the texts it is handed: it reads
+    nothing and writes nothing, and its draft reaches disk only through the
+    review's Save (C6, surface 15). Deleting the originals is a SEPARATE
+    explicit confirmation AFTER that save — `ui/style_review.
+    DeleteOriginalsDialog` names the paths with "Delete these files now"
+    UNTICKED by default, and only an accepted-and-ticked dialog calls
+    `delete_sample_files`, which unlinks EXACTLY the listed paths, refuses a
+    directory (never walks one) and reports every other failure per path
+    (`tests/test_sample_notes.py::TestDeleteSampleFiles::
+    test_exactly_the_listed_paths_go`) — so no ingest path removes the
+    practitioner's own files as a side effect. Residue: the reader trusts the
+    file's suffix and its size, not its content — a mis-chosen `.txt` that is
+    not a note is learned from like any other and reviewed like any other; the
+    plaintext has THREE lifetimes (peer round 18 PR-LOW-029): the review
+    dialog's draft and rows are released on every exit of its runner
+    (`ui/style_review._dispose`); the tab's handler drops the read texts after
+    the learner and the draft after the profile is built but holds the pasted
+    source string until it returns (through the save and the delete-originals
+    dialog); and the paste box keeps its text on Cancel or a failed Save so the
+    practitioner can retry — cleared only by a successful Save (pinned in
+    `tests/test_ui_learn_style.py`) — with the same best-effort in-memory
+    residual as every other plaintext in this app. The `.docx` reader's memory
+    bound is its OWN (PR-LOW-027, PR-LOW-031): every member is inflated by
+    this module through a capped read request (never unbounded; the stdlib
+    hands the decompressor `max(MAX_DOCX_MEMBER_BYTES + 1, 4096)` as
+    `max_length`, so the allowance per call is the cap plus its sentinel
+    byte, 8 MiB + 1 in production; the RETURNED bytes are bounded by the
+    declared size and CRC, the total by the accumulated-payload check ≤
+    `MAX_DOCX_DECLARED_BYTES`; STORED / DEFLATED only, encrypted parts refused
+    by their flag bit, corrupt DEFLATE data refused by name) and python-docx
+    parses a bounded in-memory re-zip, never the chosen file — the declared
+    sizes are a first refusal, not the ceiling; residue: the decompressor's
+    window and the re-zip buffer during the parse, and python-docx's XML parse
+    of a member bounded only by that member's cap.
 17. **The local language model and Check 5 (D6, D7, D8; C1, C4, C8).** Built:
     the carrier types. `note.py`'s `StyleRendering(section_key, prose_text,
     input_digest, verdict)` binds a rendering to the digest of its inputs and a
@@ -834,7 +934,16 @@ these stubs are finalised at that plan's Phase H (task H3).
     `style_renderings` are registered log tripwire signatures (C9);
     `note_config.PractitionerSettings` (`practitioner_settings.json`, default
     `clean`) holds the display setting outside `NoteConfig` and outside the
-    config digest; and Check 5's connective allow-list ships as
+    config digest, and since Phase 3 the Practitioner tab's "Writing style"
+    group writes it the moment a radio is picked (`ui/models.save_note_style`);
+    `note.render_note(note, style)` is the ONE rendering path the display, the
+    note artifact and Copy all go through (D7, `ui/models.format_note_body`),
+    and with no rendering present it renders a prose style as `clean` per
+    section — which is every note in this phase, since
+    `ui/models.language_model_available()` is False until Phase 4, so the two
+    prose radios stay disabled with their reason on screen and a saved-but-
+    unavailable style is shown selected-and-disabled beside
+    `style_fallback_line` (C8); and Check 5's connective allow-list ships as
     `config_defaults/prose_connectives.json` (`note_config.PROSE_CONNECTIVES`,
     refused at import by `_parse_shipped_vocabulary` if the packaged file is
     emptied, malformed or key-missing). Planned; enforced from Phase 4: the

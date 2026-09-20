@@ -138,6 +138,7 @@ from scribe_desktop.note import (
     NoteProposal,
     NoteSectionKey,
     NoteSpan,
+    NoteStyle,
     ProposalResolution,
     admissible_sections,
     content_tokens,
@@ -211,6 +212,7 @@ class NoteScreen(QWidget):
         *,
         config_root: Path | None = None,
         learning_status_provider: Callable[[], models.LearningStatus] | None = None,
+        note_style_provider: Callable[[], models.NoteStyleChoice] | None = None,
     ) -> None:
         super().__init__(parent)
         self._draft: NoteDraft | None = None
@@ -239,6 +241,16 @@ class NoteScreen(QWidget):
         self._config_root = config_root
         self._learning_status_provider = learning_status_provider
         self._learning = models.LearningStatus(False, models.LEARNING_NO_PROFILE_HINT)
+        # Writing style (note-learning plan D7, Task 3.2): read ONCE per
+        # review from `practitioner_settings.json` under `config_root` (the
+        # main window's provider, whose absent-file default is `clean`) and
+        # stamped on every finalised note, so the body the tab shows, the
+        # `note.enc` it saves and Copy all render alike. A screen built
+        # WITHOUT a provider renders `verbatim` — the note schema's own
+        # default, so the Phase 3A body pins keep their meaning; the shipped
+        # window always supplies the provider.
+        self._note_style_provider = note_style_provider
+        self._note_style: NoteStyle = "verbatim"
         self._removed: set[str] = set()
         self._manual: dict[str, NoteAssertion] = {}
         self._learning_queue: dict[str, tuple[NoteSectionKey, str]] = {}
@@ -454,14 +466,24 @@ class NoteScreen(QWidget):
         self._on_cancel = on_cancel
         self._on_state_changed = on_state_changed
         self._refresh_learning_status()
+        style_choice = self._read_note_style()
+        self._note_style = style_choice.style
 
         self.transcript_view.setPlainText(models.format_transcript_text(result.document))
         # The config report, then any generation note (C8: a fallback names
-        # its reason on screen — today the unreadable learned-shorthand
-        # record that made every learned rule propose; round 12 MED-003).
+        # its reason on screen — the unreadable learned-shorthand record
+        # that made every learned rule propose (round 12 MED-003), an
+        # unreadable style setting, or a prose style chosen while no
+        # language model exists (Task 3.2: rendered as Clean clinical).
+        notes = [*result.notes]
+        if style_choice.reason is not None:
+            notes.append(style_choice.reason)
+        fallback = models.style_fallback_line(style_choice.style)
+        if fallback is not None:
+            notes.append(fallback)
         self.info_label.setText(
             "  ".join(
-                (*models.config_report_lines(result.config, template_profile_id), *result.notes)
+                (*models.config_report_lines(result.config, template_profile_id), *notes)
             )
         )
         self._build_proposal_rows()
@@ -525,6 +547,17 @@ class NoteScreen(QWidget):
         if provider is None:
             return models.LearningStatus(False, models.LEARNING_NO_PROFILE_HINT)
         return provider()
+
+    def _read_note_style(self) -> models.NoteStyleChoice:
+        provider = self._note_style_provider
+        if provider is None:
+            return models.NoteStyleChoice("verbatim", None)
+        return provider()
+
+    @property
+    def note_style(self) -> NoteStyle:
+        """The writing style this review renders under (read at ``begin_review``)."""
+        return self._note_style
 
     def _refresh_learning_status(self) -> models.LearningStatus:
         """Re-read the learning gate and show it. Called at review start, at
@@ -1653,7 +1686,11 @@ class NoteScreen(QWidget):
             removed=self._removed,
             additions=(*self._manual.values(), *self._typed.values()),
         )
-        self._note = finalise_note(self._working, self._build_resolutions(), document, config)
+        note = finalise_note(self._working, self._build_resolutions(), document, config)
+        # D7: the note records the style it is rendered under; `model_copy`
+        # changes that one field on the frozen model (no rendering exists
+        # yet — Phase 4 adds the prose stage after this point).
+        self._note = note.model_copy(update={"style": self._note_style})
         self.note_body.setPlainText(models.format_note_body(self._note))
         self._refresh_proposal_states()
         self._refresh_warnings()

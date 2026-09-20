@@ -119,7 +119,7 @@ import os
 import re
 import secrets
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
@@ -158,6 +158,7 @@ from scribe_desktop.note import (
     content_tokens,
     digest_bytes,
     normalise_token,
+    strip_token_punctuation,
 )
 from scribe_desktop.practitioner_profile import ConsentRecord
 from scribe_desktop.session_store import StoreWriteError, atomic_write_bytes
@@ -1241,6 +1242,9 @@ CLINICAL_ABBREVIATIONS: Final[tuple[str, ...]] = _load_shipped_vocabulary(
 PROSE_CONNECTIVES: Final[tuple[str, ...]] = _load_shipped_vocabulary(
     PROSE_CONNECTIVES_FILENAME, "connectives", lower_case=True
 )
+# The abbreviations as a set for the refusal filter's rule (a) (Task 3.7):
+# exact, case-preserving membership.
+_CLINICAL_ABBREVIATION_SET: Final[frozenset[str]] = frozenset(CLINICAL_ABBREVIATIONS)
 
 
 # ---------------------------------------------------------------------------
@@ -1392,23 +1396,41 @@ def refuse_learning_candidate(
     *,
     first_in_segment: bool,
     following: Sequence[str] = (),
+    known_common: Collection[str] = (),
 ) -> RefusalClass | None:
     """THE refusal filter (practitioner-profile plan Task 5.2; round 1
     PR-HIGH-001 / round 2 PR-MED-016). ``tokens`` are the candidate's SOURCE
     words in original case and original order — checked before any
     normalisation, so a capitalised name is still capitalised here;
-    ``first_in_segment`` says whether ``tokens[0]`` opens its utterance (the
-    name heuristic exempts common sentence openers only in that position, and
-    the learner adds ``LEARNING_OPENER_EXEMPTIONS`` (Task 5.7) and
-    ``LEARNING_CONTRACTED_STARTERS`` (Task 5.8) there, keyed on
-    ``_opener_form``, for the name check only; any other capitalised opener is refused as
-    name-like, so such a line never teaches; the safe direction, and a known
-    narrowing); ``following`` holds the raw words that follow the candidate
-    in its utterance, of which the first ``_UNIT_WINDOW`` are searched for a
-    dose unit. Returns the refusal class, or None when every token passes:
+    ``first_in_segment`` says whether ``tokens[0]`` opens its utterance;
+    ``following`` holds the raw words that follow the candidate in its
+    utterance, of which the first ``_UNIT_WINDOW`` are searched for a dose
+    unit; ``known_common`` (note-learning plan Task 3.7) is the CALLER's
+    evidence — lower-cased words it has seen in lowercase elsewhere in the
+    same source — and defaults to none. Returns the refusal class, or None
+    when every token passes:
 
-    - ``name``: ``transcription.is_name_like_token`` on any token (an
-      exempted opener at the real first word skips this check only);
+    - ``name``: ``transcription.is_name_like_token`` on any token, with
+      exactly these admissions, each skipping THIS check only (the checks
+      below still run on the admitted word): at the REAL first word
+      (``first_in_segment`` and index 0), the transcript heuristic's own
+      common sentence openers, the learner's ``LEARNING_OPENER_EXEMPTIONS``
+      (Task 5.7) and ``LEARNING_CONTRACTED_STARTERS`` (Task 5.8), keyed on
+      ``_opener_form``, and — Task 3.7 rule (b) — a token whose
+      ``normalise_token`` form is in ``known_common``; at ANY position —
+      Task 3.7 rule (a) — a token whose punctuation-stripped form is
+      EXACTLY (case-preserving) in the shipped ``CLINICAL_ABBREVIATIONS``
+      (the list holds no given name; ``AS`` is admitted, ``As`` is not).
+      Every other capitalised opener, and every capitalised word after the
+      first that is not a listed abbreviation, is refused as name-like and
+      never teaches — the safe direction. Bounds, stated: rule (b) admits
+      only what the caller has evidence for, so the Note tab's two callers,
+      which pass nothing, are unaffected by it (rule (a) applies to them
+      like every caller), and a name that opens an utterance ("Margaret,
+      how is …") stays refused there; on the sample-note path a name the
+      practitioner ALSO wrote in lowercase somewhere in the chosen notes
+      is admitted — the review of
+      each exemplar and its one-click delete are the control;
     - ``date``: a ``d/d``, ``d-d``, ``d.d`` pair, a four-digit run, or a
       month name;
     - ``number``: ``transcription.is_number_token`` (digits, number words,
@@ -1422,6 +1444,10 @@ def refuse_learning_candidate(
         at_real_start = first_in_segment and index == 0
         if at_real_start and _opener_form(raw) in _LEARNING_ADMITTED_OPENERS:
             continue  # Tasks 5.7 / 5.8: the name class only — the checks below still run
+        if strip_token_punctuation(raw) in _CLINICAL_ABBREVIATION_SET:
+            continue  # Task 3.7 (a): a shipped abbreviation, at any position
+        if at_real_start and normalise_token(raw) in known_common:
+            continue  # Task 3.7 (b): the caller's lowercase evidence, real first word only
         if is_name_like_token(raw, first_in_segment=at_real_start):
             return "name"
     for raw in tokens:

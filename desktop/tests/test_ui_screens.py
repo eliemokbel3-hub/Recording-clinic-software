@@ -31,6 +31,7 @@ from scribe_desktop.note import (  # noqa: E402
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
     NOTE_WARNING_SEVERITY,
+    SECTION_TITLES,
     ConfirmationDecision,
     ExtractiveNoteProvider,
     GeneratedNote,
@@ -38,6 +39,7 @@ from scribe_desktop.note import (  # noqa: E402
     compose_draft,
     finalise_note,
     manual_assertion_id,
+    render_note,
     text_digest,
 )
 from scribe_desktop.note_config import (  # noqa: E402
@@ -746,8 +748,11 @@ def _practitioner_screen(
     kwargs: dict[str, Any] = {
         "profile_root": tmp_path,
         # Peer round 55 PR-LOW-041: the tab reads its cue file at construction,
-        # so the helper roots that under tmp_path too (overrides still win).
+        # so the helper roots that under tmp_path too (overrides still win) —
+        # and, since the note-learning plan's Phase 3, the learned-style
+        # store it stats for the writing-style options.
         "config_root": tmp_path / "config",
+        "style_root": tmp_path / "style",
         "embedder_factory": lambda kind: _StubEmbedder(),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
@@ -881,7 +886,7 @@ class TestPractitionerScreen:
         assert not screen.banner_label.isVisibleTo(screen)
         screen.show_first_run_banner()
         assert screen.banner_label.isVisibleTo(screen)
-        assert screen.banner_label.text() == models.FIRST_RUN_BANNER
+        assert screen.banner_label.text() == models.first_run_banner_text(style_present=False)
         screen.deleteLater()
 
     @windows_only
@@ -2850,7 +2855,10 @@ class TestMainWindow:
         screen = window.practitioner_screen
         assert window.tabs.currentWidget() is screen
         assert screen.banner_label.isVisibleTo(screen)
-        assert screen.banner_label.text() == models.FIRST_RUN_BANNER
+        # Note-learning plan Task 3.4: with no learned style either, the
+        # banner carries the optional sample-note line.
+        assert screen.banner_label.text() == models.first_run_banner_text(style_present=False)
+        assert models.FIRST_RUN_STYLE_LINE in screen.banner_label.text()
         window.close()
 
     @windows_only
@@ -3345,6 +3353,51 @@ class TestNoteScreen:
     def _confirm_all(self, screen: Any) -> None:
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
+
+    def test_the_review_renders_under_the_saved_writing_style(self, qapp: Any) -> None:
+        """Note-learning plan Task 3.2 (D7): the style the provider reads at
+        review start is stamped on every finalised note and the body is THE
+        one rendering path under it; a prose style with no language model
+        renders as Clean clinical and the info line says so (C8); an
+        unreadable setting names itself; a screen built without a provider
+        renders ``verbatim`` (the schema's own default)."""
+        from scribe_desktop.note import render_note
+        from scribe_desktop.ui.note import NoteScreen
+
+        plain, _record = self._screen()
+        assert plain.note_style == "verbatim" and plain._note.style == "verbatim"
+        assert plain.note_body.toPlainText() == render_note(plain._note, "verbatim")
+        plain.deleteLater()
+
+        def _screen_for(choice: models.NoteStyleChoice) -> Any:
+            screen = NoteScreen(note_style_provider=lambda: choice)
+            screen.begin_review(
+                _note_result(),
+                on_save=lambda note: None,
+                on_abandon=lambda: None,
+                template_profile_id="clinic-a",
+            )
+            return screen
+
+        clean = _screen_for(models.NoteStyleChoice("clean", None))
+        assert clean.note_style == "clean" and clean._note.style == "clean"
+        assert clean.note_body.toPlainText() == render_note(clean._note, "clean")
+        assert clean.note_body.toPlainText() == models.format_note_body(clean._note)
+        assert "Clean clinical" not in clean.info_label.text()
+        clean.deleteLater()
+
+        prose = _screen_for(models.NoteStyleChoice("own_voice", None))
+        assert prose._note.style == "own_voice"
+        assert prose.note_body.toPlainText() == render_note(prose._note, "clean")
+        fallback = models.style_fallback_line("own_voice")
+        assert fallback is not None and fallback in prose.info_label.text()
+        prose.deleteLater()
+
+        reason = models.STYLE_SETTING_UNREADABLE_LINE.format(reason="boom")
+        unreadable = _screen_for(models.NoteStyleChoice("clean", reason))
+        assert reason in unreadable.info_label.text()
+        assert unreadable._note.style == "clean"
+        unreadable.deleteLater()
 
     def test_a_typed_line_is_neither_a_quoted_segment_nor_a_provider_line(
         self, qapp: Any
@@ -6027,9 +6080,12 @@ class TestNoteWiring:
         while a proposal is pending, a review warning is unacknowledged, or the
         note is unsaved - on the button route AND the direct-call route - and
         once ratified the Copy click delivers EXACTLY ``format_note_body`` of
-        the note under review: the confirmed proposal's text is in it, and
-        every line is a section title or a provenance-tagged bullet, so no raw
-        transcript line can ride along."""
+        the note under review — since the note-learning plan's Task 3.2 the
+        ONE rendering path under the note's own style, which for a window
+        with no settings file is the shipped default ``clean`` — and every
+        line is a section title or the confirmed text of one of the ratified
+        note's own assertions (a pre-filled line carrying its D5 mark), so no
+        raw transcript line the note does not hold can ride along."""
         monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
         window, _controller = self._generate_through_window(qapp, tmp_path)
         note_screen = window.note_screen
@@ -6050,13 +6106,22 @@ class TestNoteWiring:
         note_screen.copy_button.click()
         note = note_screen.current_note()
         assert note is not None
+        assert note.style == "clean"  # the shipped default reached the note
         expected = models.format_note_body(note)
+        assert expected == render_note(note, "clean")
         assert payloads == [expected]
         assert "Ice pack use explained." in expected  # the ratified proposal
+        titles = set(SECTION_TITLES.values())
+        ratified: set[str] = set()
+        for section in note.note_sections:
+            for assertion in section.note_assertions:
+                ratified.add(assertion.text)
+                if models.is_prefilled(assertion):
+                    ratified.add(f"{assertion.text}  [{models.PREFILLED_MARK}]")
         for line in expected.splitlines():
             if not line:
                 continue
-            assert line.endswith(":") or (line.startswith("  - ") and line.endswith("]"))
+            assert line in titles or line in ratified, line
         note_screen._copy_note()
         assert payloads == [expected, expected]  # the direct route agrees
         window.close()

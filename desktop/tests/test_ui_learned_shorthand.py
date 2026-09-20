@@ -83,6 +83,7 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
     kwargs: dict[str, Any] = {
         "profile_root": tmp_path / "profile",
         "config_root": tmp_path / "config",
+        "style_root": tmp_path / "style",
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(

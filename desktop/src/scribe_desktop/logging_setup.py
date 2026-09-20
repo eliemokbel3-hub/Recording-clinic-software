@@ -183,6 +183,22 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"previous_expansion"',
     "'previous_expansion'",
     "previous_expansion=",
+    # Note-learning-and-styles plan Phase 3 (D9; C9): a sample note read
+    # into memory travels as ``sample_notes.SampleNote.sample_text`` (a
+    # pasted note or a file's text), and the review-screen carrier lists
+    # the learner's shorthand under ``recognised_shorthand`` /
+    # ``unrecognised_shorthand``; all three names are distinctive so a
+    # rendering of the sample or the draft is dropped (an exemplar is
+    # already caught by ``exemplar_text``).
+    '"sample_text"',
+    "'sample_text'",
+    "sample_text=",
+    '"recognised_shorthand"',
+    "'recognised_shorthand'",
+    "recognised_shorthand=",
+    '"unrecognised_shorthand"',
+    "'unrecognised_shorthand'",
+    "unrecognised_shorthand=",
 )
 
 # THE production log format — one string, used to build every handler's

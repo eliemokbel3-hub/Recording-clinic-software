@@ -230,6 +230,17 @@ _FILLER_TOKENS: Final[frozenset[str]] = frozenset(
 )
 
 
+def strip_token_punctuation(token: str) -> str:
+    """The ONE punctuation rule, case PRESERVED: leading and trailing
+    punctuation stripped, nothing else changed — ``normalise_token`` is this
+    plus lower-casing. For the callers that must keep the original case
+    (the refusal filter's vocabulary check, the sample-note learner's
+    shorthand split) so no second punctuation rule can appear beside
+    ``transcription._STRIP_PUNCT_RE``. Returns "" for a token that is
+    entirely punctuation."""
+    return _STRIP_PUNCT_RE.sub("", token)
+
+
 def normalise_token(token: str) -> str:
     """Normalise one token: strip leading/trailing punctuation, lowercase.
 
@@ -237,7 +248,7 @@ def normalise_token(token: str) -> str:
     note-side normalisation can never drift apart. Returns "" for a token
     that is entirely punctuation.
     """
-    return _STRIP_PUNCT_RE.sub("", token).lower()
+    return strip_token_punctuation(token).lower()
 
 
 def content_tokens(text: str) -> tuple[str, ...]:
@@ -739,6 +750,147 @@ class GeneratedNote(BaseModel):
     @classmethod
     def from_bytes(cls, blob: bytes) -> GeneratedNote:
         return cls.model_validate_json(blob)
+
+
+# ---------------------------------------------------------------------------
+# Rendering (note-learning-and-styles plan D7; Phase 3 Task 3.2).
+#
+# ONE rendering path: ``render_note(note, style)`` is what the Note tab
+# displays, what Copy copies and what a reloaded ``note.enc`` shows again —
+# ``ui.models.format_note_body`` is ``render_note(note, note.style)`` and
+# nothing else renders a note body. ``verbatim`` and ``clean`` are
+# deterministic over the assertions (no substitution, no model); the two
+# prose styles read the note's ``style_renderings`` and fall back to
+# ``clean`` PER SECTION whenever a section has no rendering, a ``failed``
+# one, or one whose ``input_digest`` no longer matches the section's
+# confirmed texts — a stale rendering is never shown, persisted or copied.
+# ---------------------------------------------------------------------------
+
+SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = {
+    section.key: section.title for section in CANONICAL_SECTIONS
+}
+
+PROVENANCE_LABELS: Final[Mapping[str, str]] = {
+    "transcript": "from transcript",
+    "autofill": "autofill (clinician-authored)",
+    "prefill": "prefill (clinician-authored)",
+    # Schema v2 (D4): text the clinician typed over a line.
+    "clinician": "typed (clinician-authored)",
+}
+
+# D5: the DISTINCT mark a line pre-filled by the practitioner's own config
+# carries wherever it is rendered — every style's note body and the line
+# editor — so the counted Save's label and the marked lines agree.
+PREFILLED_MARK: Final = "pre-filled by your config"
+NO_NOTE_CONTENT: Final = "(no note content)"
+
+
+def provenance_label(provenance: str) -> str:
+    """Human label distinguishing a line's provenance (Phase 3A Task 7.1:
+    provenance visibly distinguished). Autofill and prefill are
+    clinician-authored boilerplate; a ``clinician`` line is text the
+    clinician typed (schema v2); transcript lines are quoted speech verified
+    by reconstruction."""
+    return PROVENANCE_LABELS.get(provenance, provenance)
+
+
+def is_prefilled(assertion: NoteAssertion) -> bool:
+    """True for a line the practitioner's OWN config decided
+    (``decided_by="config"``) — the lines the counted Save ratifies."""
+    decision = assertion.confirmation
+    return decision is not None and decision.decided_by == "config"
+
+
+def assertion_label(assertion: NoteAssertion) -> str:
+    """The bracketed label a rendered line carries: its provenance label,
+    prefixed by ``PREFILLED_MARK`` when the line arrived pre-filled."""
+    label = provenance_label(assertion.provenance)
+    return f"{PREFILLED_MARK} - {label}" if is_prefilled(assertion) else label
+
+
+def section_input_digest(section: GeneratedSection) -> str:
+    """THE binding between a section's confirmed assertion texts and a prose
+    rendering (D7): the digest of the exact texts, in order, joined by
+    newlines. Phase 4's prose stage stamps this on each ``StyleRendering``
+    it produces; ``usable_rendering`` recomputes it before any prose is
+    shown, so an edit to any line of the section (a different text, an
+    added or removed line, a re-ordering) invalidates the rendering."""
+    return text_digest("\n".join(assertion.text for assertion in section.note_assertions))
+
+
+def usable_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
+    """The section's prose rendering, or None when the note carries none for
+    it, the verdict is ``failed`` (no prose — C4) or its ``input_digest``
+    differs from ``section_input_digest(section)`` (stale — D7)."""
+    for rendering in note.style_renderings:
+        if rendering.section_key != section.section_key:
+            continue
+        if rendering.verdict != "passed":
+            return None
+        if rendering.input_digest != section_input_digest(section):
+            return None
+        return rendering
+    return None
+
+
+def _verbatim_block(section: GeneratedSection) -> str:
+    """Today's rendering, byte for byte: the title with a colon, then each
+    assertion as ONE bullet with its provenance tag (never assembled
+    prose — plan Critical Constraint: assertions render on hard
+    boundaries)."""
+    lines = [f"{SECTION_TITLES[section.section_key]}:"]
+    for assertion in section.note_assertions:
+        lines.append(f"  - {assertion.text}  [{assertion_label(assertion)}]")
+    return "\n".join(lines)
+
+
+def _clean_lines(section: GeneratedSection) -> list[str]:
+    """One terse line per assertion, in the note's order: the confirmed
+    text exactly as confirmed — no substitution, no bullet, no provenance
+    tag (the line editor keeps the per-line provenance; the tag is review
+    apparatus, not clinical content). A pre-filled line keeps its D5 mark."""
+    lines: list[str] = []
+    for assertion in section.note_assertions:
+        text = assertion.text
+        if is_prefilled(assertion):
+            text = f"{text}  [{PREFILLED_MARK}]"
+        lines.append(text)
+    return lines
+
+
+def _clean_block(section: GeneratedSection) -> str:
+    return "\n".join([SECTION_TITLES[section.section_key], *_clean_lines(section)])
+
+
+def _prose_block(note: GeneratedNote, section: GeneratedSection) -> str:
+    rendering = usable_rendering(note, section)
+    if rendering is None:
+        return _clean_block(section)
+    return "\n".join([SECTION_TITLES[section.section_key], rendering.prose_text])
+
+
+def render_note(note: GeneratedNote, style: NoteStyle) -> str:
+    """The note body under ``style`` — display text only, never logged here.
+
+    ``verbatim``: the Phase 3A rendering unchanged (``_verbatim_block``).
+    ``clean``: title, then one terse line per assertion (``_clean_lines``).
+    ``own_voice`` / ``narrative``: per section, the usable prose rendering
+    (``usable_rendering``) or else that section's ``clean`` block — so a
+    note that carries no renderings (no language model — Phase 4) renders
+    exactly as ``clean``. Sections are the note's own, already unique and
+    in canonical order (``GeneratedNote`` validator); an empty note renders
+    ``NO_NOTE_CONTENT``."""
+    blocks: list[str] = []
+    for section in note.note_sections:
+        if style == "verbatim":
+            blocks.append(_verbatim_block(section))
+        elif style == "clean":
+            blocks.append(_clean_block(section))
+        else:
+            blocks.append(_prose_block(note, section))
+    if not blocks:
+        return NO_NOTE_CONTENT
+    return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------------------
@@ -2357,8 +2509,12 @@ __all__ = [
     "MOCK_BEHAVIOURS",
     "NOTE_SCHEMA_VERSION",
     "NOTE_WARNING_SEVERITY",
+    "NO_NOTE_CONTENT",
+    "PREFILLED_MARK",
+    "PROVENANCE_LABELS",
     "SECTION_CUES_FILENAME",
     "SECTION_INDEX",
+    "SECTION_TITLES",
     "CanonicalSection",
     "ConfirmationDecision",
     "DecidedBy",
@@ -2390,20 +2546,27 @@ __all__ = [
     "StyleRendering",
     "StyleVerdict",
     "admissible_sections",
+    "assertion_label",
     "compose_draft",
     "content_tokens",
     "digest_bytes",
     "finalise_note",
     "first_matching_section",
     "is_interrogative",
+    "is_prefilled",
     "manual_assertion_id",
     "normalise_token",
+    "provenance_label",
     "provider_assertion_id",
     "reconstruct_span_text",
+    "render_note",
     "section_admits_utterance",
+    "section_input_digest",
     "speaker_role",
     "spoken_by_confirmed_clinician",
+    "strip_token_punctuation",
     "text_digest",
     "transcript_digest",
+    "usable_rendering",
     "whole_utterance_assertion",
 ]

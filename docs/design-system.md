@@ -98,6 +98,33 @@ view patterns · tokens · microcopy.
   shows "Recently learned" (the last 20 phrases with section and date, newest first)
   and every learned phrase by section, each with a one-click Delete; the empty state
   says "No learned phrases yet." rather than hiding the lists (`ui/practitioner.py`).
+- **A choice the app cannot honour yet is shown disabled with its reason, never
+  hidden.** The Practitioner tab's "Writing style" radios list all four styles
+  (Verbatim, Clean clinical, Own voice, Narrative); Own voice and Narrative are disabled
+  with a one-line reason under the group — the local language model is not installed,
+  and Own voice also needs a learned style — rather than omitted, and a saved style that
+  is currently unavailable stays selected-but-disabled with the line saying notes are
+  shown as Clean clinical until then; the choice is saved the moment a radio is picked
+  and the status line says so (`ui/practitioner.py`, `ui/models.py` `style_options` /
+  `read_note_style`; note-learning plan Flow 3, C8).
+- **Learning from your own notes shows what will be kept before anything is saved,
+  and asks about the originals separately.** The Practitioner tab's "Learn from my
+  notes" group takes up to five `.txt`/`.docx` files or one pasted note, reads them
+  (never copies them), and opens a review dialog listing the section headings found,
+  the recognised shorthand, the unrecognised abbreviations as tick-to-keep rows
+  (unticked by default) and the example sentences that passed the check unchanged
+  with per-sentence remove; only that dialog's Save writes the learned style, under
+  the consent box ticked above it — no voice profile needed. A SECOND dialog then
+  lists the file paths with "Delete these files now" unticked by default; leaving it
+  unticked keeps the files (`ui/style_review.py`, `ui/practitioner.py`; note-learning
+  plan Flow 4, D9, D10).
+- **What the app learned from your notes is listed where it can be removed, one item
+  or all of it.** The "Learned style" group shows a one-line summary (learned date,
+  source count, sentence count — never the text in the summary), the kept example
+  sentences by section and the kept shorthand, each with Remove, and a confirmed
+  "Delete learned style" that removes the whole store and leaves the voice profile
+  alone; the summary and lists refresh after a learn, a remove or a delete, never on
+  a timer (`ui/practitioner.py`).
 - **A confirmation line replaces a choice the app made for you, with a one-click way
   back.** When the clinician role is auto-confirmed from the voice profile, the manual
   radios are replaced by ONE plain-text line stating what was decided and the evidence
@@ -183,3 +210,9 @@ Cliniko, and only once the shipping gate allows.
   '<trigger>' -> '<wording>' for <Section> when you press Save note on this tab"; a
   not-learned reason names the class ("the trigger contains a name/number/date/medication
   (<class>)", "the typed wording contains a number/date/medication (<class>)").
+- A learning outcome names what was kept and what happened to the sources: "Learned
+  style saved from 2 notes: 5 example sentence(s), 4 shorthand token(s). The original
+  notes were kept." / "… Deleted 2 original file(s)."
+- A disabled writing style names what it needs: "Own voice needs the local language
+  model, which is not installed (it arrives with a later update); needs a learned style -
+  teach the scribe your note style below first." — the reason, then the remedy.

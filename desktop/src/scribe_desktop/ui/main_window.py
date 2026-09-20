@@ -90,6 +90,7 @@ class MainWindow(QMainWindow):
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
         profile_root: Path | None = None,
         config_root: Path | None = None,
+        style_root: Path | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Cliniko Scribe")
@@ -132,18 +133,24 @@ class MainWindow(QMainWindow):
         # root, exactly as the generator's loader resolves it) and reads the
         # learning status — a readable profile, the current consent version,
         # the opt-in — from the profile store at review start and at Save.
+        # Note-learning plan Task 3.2: the writing style is read from
+        # `practitioner_settings.json` under the same config root at every
+        # review start and stamped on the finalised note (D7).
         self.note_screen = NoteScreen(
             config_root=config_root,
             learning_status_provider=lambda: models.learning_status(profile_root=profile_root),
+            note_style_provider=lambda: models.read_note_style(config_root),
         )
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
         # the profile store at construction (a stat and one profile read, no
-        # model loaded) — `profile_root` is the test seam for the store.
+        # model loaded) — `profile_root` is the test seam for the store, and
+        # `style_root` the learned-style store's (note-learning plan Phase 3).
         self.practitioner_screen = PractitionerScreen(
             controller,
             backend,
             profile_root=profile_root,
             config_root=config_root,
+            style_root=style_root,
             # D15 (peer round 27 PR-MED-022): the idle monitor is handed over
             # synchronously before the enrolment worker opens the device.
             on_capture_start=self.microphone_screen.stop_monitor,

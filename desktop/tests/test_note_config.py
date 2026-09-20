@@ -44,6 +44,7 @@ from scribe_desktop.note import (
 from scribe_desktop.note_config import (
     _ALLOWED_IN_CLAIM_PUNCT,
     AUTOFILL_RULES_FILENAME,
+    CLINICAL_ABBREVIATIONS,
     CONFIG_FILENAMES,
     LEARNED_PHRASE_MAX_TOKENS,
     LEARNED_PHRASE_MIN_TOKENS,
@@ -1879,6 +1880,149 @@ class TestRefusalFilter:
         assert (
             refuse_learning_candidate(["Continue", "the", "atorvastatin"], first_in_segment=True)
             == "medication"
+        )
+
+    # --- note-learning plan Task 3.7: the two evidence-aware admissions ------
+
+    @pytest.mark.parametrize(
+        ("tokens", "first_in_segment"),
+        [
+            (["HVLA", "applied", "today"], True),  # the real first word
+            (["HVLA", "applied", "today"], False),  # index 0 after a filler
+            (["the", "Cx", "spine", "today"], True),  # mid-candidate
+            (["applied", "to", "the", "Cx"], False),  # last, off the real start
+            (["NAD,", "on", "palpation"], True),  # punctuation stripped first
+        ],
+        ids=["real-start", "after-filler", "mid", "last", "punctuated"],
+    )
+    def test_a_vocabulary_token_is_never_name_like_at_any_position(
+        self, tokens: list[str], first_in_segment: bool
+    ) -> None:
+        assert refuse_learning_candidate(tokens, first_in_segment=first_in_segment) is None
+
+    def test_an_unlisted_all_caps_token_is_still_refused_at_every_position(self) -> None:
+        assert "QWERTY" not in CLINICAL_ABBREVIATIONS
+        assert refuse_learning_candidate(["QWERTY", "protocol"], first_in_segment=True) == "name"
+        assert refuse_learning_candidate(["the", "QWERTY", "protocol"], first_in_segment=True) == (
+            "name"
+        )
+
+    def test_the_vocabulary_match_is_exact_and_case_preserving(self) -> None:
+        # "AS" (ankylosing spondylitis) is listed; "As" / "as" are the word.
+        assert "AS" in CLINICAL_ABBREVIATIONS
+        assert refuse_learning_candidate(["the", "AS", "patient"], first_in_segment=True) is None
+        assert refuse_learning_candidate(["the", "As", "patient"], first_in_segment=True) == "name"
+        assert refuse_learning_candidate(["as", "before"], first_in_segment=True) is None
+        assert refuse_learning_candidate(["the", "hvla", "step"], first_in_segment=True) is None
+        assert refuse_learning_candidate(["the", "Hvla", "step"], first_in_segment=True) == "name"
+
+    def test_the_vocabulary_holds_no_given_name_shaped_entry(self) -> None:
+        """Rule (a) admits every listed entry at every position, so the list
+        must not carry a capitalised ordinary word that could be a name: every
+        entry is either not a single Capitalised-lowercase word, or one of
+        the short anatomical / clinical stems the list deliberately holds."""
+        stems = {
+            "Abd", "Add", "Ant", "Bilat", "Delts", "Dist", "Elev", "Ext", "Ev", "Flex",
+            "Gastroc", "Glut", "Hams", "Inv", "Lat", "Lats", "Manip", "Med", "Mob",
+            "Pecs", "Post", "Pron", "Prox", "Quads", "Rot", "Sup", "Traps",
+        }
+        for entry in CLINICAL_ABBREVIATIONS:
+            titlecase = entry[0].isupper() and entry[1:].isalpha() and entry[1:].islower()
+            x_form = entry.endswith("x") and len(entry) <= 3  # Cx, Rx, Hx … — never a name
+            assert not titlecase or x_form or entry in stems, entry
+
+    def test_a_capitalised_real_first_word_passes_only_with_lowercase_evidence(
+        self,
+    ) -> None:
+        tokens = ["Review", "in", "a", "week"]
+        assert refuse_learning_candidate(tokens, first_in_segment=True) == "name"
+        assert (
+            refuse_learning_candidate(tokens, first_in_segment=True, known_common={"review"})
+            is None
+        )
+        # Evidence for another word is no evidence for this one.
+        assert (
+            refuse_learning_candidate(tokens, first_in_segment=True, known_common={"neck"})
+            == "name"
+        )
+        # The evidence is matched on the normalised form (punctuation, case).
+        assert (
+            refuse_learning_candidate(
+                ["Review,", "then", "rest"], first_in_segment=True, known_common={"review"}
+            )
+            is None
+        )
+
+    def test_evidence_never_admits_a_word_off_the_real_first_position(self) -> None:
+        evidence = {"review"}
+        # Mid-candidate at the real start.
+        assert (
+            refuse_learning_candidate(
+                ["the", "Review", "date"], first_in_segment=True, known_common=evidence
+            )
+            == "name"
+        )
+        # Index 0 but after a dropped filler (not the segment's first word).
+        assert (
+            refuse_learning_candidate(
+                ["Review", "in", "a", "week"], first_in_segment=False, known_common=evidence
+            )
+            == "name"
+        )
+
+    def test_an_admitted_word_still_runs_the_other_checks(self) -> None:
+        assert (
+            refuse_learning_candidate(
+                ["Neck", "pain", "for", "three", "days"],
+                first_in_segment=True,
+                known_common={"neck"},
+            )
+            == "number"
+        )
+        assert (
+            refuse_learning_candidate(
+                ["Review", "on", "12/03"], first_in_segment=True, known_common={"review"}
+            )
+            == "date"
+        )
+        assert (
+            refuse_learning_candidate(
+                ["Cx", "gel", "applied"], first_in_segment=True, following=("5", "mg")
+            )
+            == "medication"
+        )
+
+    def test_the_transcript_callers_pass_no_evidence_and_are_unchanged(self) -> None:
+        """The two Note-tab call sites pass no ``known_common`` (pinned on the
+        source), so rule (b) never reaches the transcript-derived paths: the
+        round-36 filler fixture and the utterance-opening name are refused
+        exactly as before Task 3.7 (rule (a)'s vocabulary admission applies to
+        them like every caller and is pinned above)."""
+        import inspect
+
+        from scribe_desktop.ui import note as note_screen_module
+
+        source = inspect.getsource(note_screen_module)
+        assert source.count("refuse_learning_candidate(") == 2
+        assert "known_common" not in source
+        after_filler = propose_learning_phrase(["Um,", "Will", "needs", "the", "exercises"])
+        assert after_filler is not None
+        assert (
+            refuse_learning_candidate(
+                after_filler.source_words,
+                first_in_segment=after_filler.first_in_segment,
+                following=after_filler.following,
+            )
+            == "name"
+        )
+        assert refuse_learning_candidate(["Margaret", "how", "is"], first_in_segment=True) == "name"
+        # The "Margaret" utterance is refused even when the learner's evidence
+        # holds every OTHER word of it: only the word's own lowercase form counts.
+        assert (
+            refuse_learning_candidate(
+                ["Margaret", "how", "is"], first_in_segment=True, known_common={"how", "is"}
+            )
+            == "name"
         )
 
     def test_the_exemption_list_holds_no_number_word_and_no_name_homograph(self) -> None:

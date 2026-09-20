@@ -53,6 +53,52 @@ the wording it expands to and whether it still proposes or now arrives
 pre-filled, and Delete removes the rule from the rules file and its sidecar
 through ``note_config.delete_learned_rule``.
 
+Writing style (note-learning plan Task 3.1). The "Writing style" group picks
+how the note BODY reads on the Note tab; the choice is saved the moment a
+radio is picked, into ``practitioner_settings.json`` through
+``models.save_note_style`` (``note_config.PRACTITIONER_SETTINGS_FILENAME``,
+never part of the config digest). All four styles are LISTED: Verbatim and
+Clean clinical need no model and are always available; Own voice and
+Narrative are disabled with a one-line reason under the group until the
+local language model ships (the plan's Phase 4), and Own voice also until a
+style has been learned (C8 — a choice the app cannot honour yet is shown
+disabled with its reason, never hidden). A saved style that is currently
+unavailable stays SELECTED and disabled, with the Clean-clinical fallback
+line (``models.style_fallback_line``) on the status line, and an unreadable
+settings file shows its own line rather than silently rewriting the setting.
+Option availability is ``models.style_options``, which STATS the learned-style
+store — it never decrypts it.
+
+Learning from past notes (note-learning plan Tasks 3.4–3.6; D9, D10; C5,
+C6). The "Learn from my notes" group takes one to five of the practitioner's
+own notes (files chosen through a picker, or one pasted note) and, on the
+GUI thread, reads them INTO MEMORY (``sample_notes.read_sample_note`` —
+never copied, never moved), derives a draft (``learn_style_profile``: the
+exemplar sentences are the ones THE refusal filter passed unchanged) and
+shows it for review (``ui.style_review.run_style_review``: unrecognised
+shorthand unticked by default, per-sentence remove). ONLY the review's Save
+writes anything: ``sample_notes.build_style_profile`` (the review may only
+remove) with the style store's OWN ``ConsentRecord`` — the consent box above
+must be ticked, and NO voice profile is needed — then
+``practitioner_profile.save_style_profile``. Deleting the originals is a
+SEPARATE confirmation after the save (``run_delete_originals``: the paths
+listed, the box unticked by default), and only then are exactly those paths
+unlinked (``delete_sample_files``). The consent box is pre-ticked from the
+VOICE profile's record only (PR-HIGH-006); a style record alone never
+pre-ticks it — the practitioner ticks again to learn again, which costs a
+click and leaks nothing.
+
+The learned-style line (Task 3.5) and the "Learned style" group (Task 3.6)
+are rendered from ONE decrypt of the style store
+(``refresh_style_profile_state``), taken at construction and after a learn,
+a per-item remove or a delete — NEVER from the 5 s availability poll, which
+reads no store (round 51 MED-001; the microphone screen's poll renders stats
+too, re-reading the VOICE profile only on a speaker-model presence
+transition — round 55 PR-REG-006 — and never the style store). Remove on
+either list rewrites the store; "Delete learned style" is key-first through
+``delete_style_profile``, independent of the voice profile, and every style
+change re-computes the writing-style options (``refresh_style_options``).
+
 Enrolment is disabled only when the SELECTED embedder or the VAD model is
 unavailable, and the message names ``scripts/setup-models.py`` (D16).
 
@@ -63,23 +109,27 @@ its creation date and the embedder's ``model_id``.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
+    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
@@ -93,9 +143,13 @@ from scribe_desktop.enrolment import (
     enrol,
     record_enrolment,
 )
+from scribe_desktop.note import NoteStyle
 from scribe_desktop.note_config import (
+    DEFAULT_NOTE_STYLE,
     LEARNED_RULE_AUTO_CONFIRM_AFTER,
+    MAX_SAMPLE_NOTES,
     NoteConfigError,
+    StyleProfile,
     delete_user_cue,
     load_learned_phrases,
     load_learned_rules,
@@ -104,8 +158,22 @@ from scribe_desktop.practitioner_profile import (
     ConsentRecord,
     PractitionerProfile,
     ProfileError,
+    ProfileUnusableError,
     delete_profile,
+    delete_style_profile,
+    load_style_profile,
     save_profile,
+    save_style_profile,
+    style_profile_present,
+)
+from scribe_desktop.sample_notes import (
+    SampleNote,
+    SampleNoteError,
+    StyleProfileDraft,
+    build_style_profile,
+    delete_sample_files,
+    learn_style_profile,
+    read_sample_note,
 )
 from scribe_desktop.session import EnrolmentLease, SessionActivityError
 from scribe_desktop.session_store import StoreWriteError
@@ -118,6 +186,11 @@ from scribe_desktop.speaker_embedding import (
 )
 from scribe_desktop.speech import vad_model_available
 from scribe_desktop.ui import models
+from scribe_desktop.ui.style_review import (
+    StyleReviewChoice,
+    run_delete_originals,
+    run_style_review,
+)
 from scribe_desktop.ui.tasks import TaskThread
 
 _AVAILABILITY_POLL_MS: Final = 5000
@@ -125,11 +198,28 @@ DEVICE_NAME_MAX_CHARS: Final = 200  # PractitionerProfile.device_name's bound
 UNKNOWN_DEVICE_NAME: Final = "unknown microphone"
 NO_LEARNED_PHRASES_TEXT: Final = "No learned phrases yet."
 NO_LEARNED_RULES_TEXT: Final = "No learned shorthand yet."
+# Note-learning plan Task 3.4: the "Learn from my notes" group's copy.
+LEARN_INTRO_TEXT: Final = (
+    f"Teach the scribe your note style from 1-{MAX_SAMPLE_NOTES} of your own past notes "
+    "(.txt or .docx), or paste one note below. The notes are read, never copied; what "
+    "would be kept is shown for review before anything is saved, and you are asked "
+    "separately whether to delete the original files afterwards."
+)
+LEARN_CONSENT_GATE_TEXT: Final = (
+    "Tick the consent box above to learn from your notes (no voice profile is needed)."
+)
+LEARN_NOTHING_CHOSEN_TEXT: Final = f"Choose 1-{MAX_SAMPLE_NOTES} notes or paste one first."
+LEARN_CANCELLED_TEXT: Final = "Nothing was saved - the review was cancelled."
+NO_LEARNED_STYLE_TEXT: Final = "No learned style yet."
+SAMPLE_NOTE_FILTER: Final = "Notes (*.txt *.docx)"
 
 CaptureFn = Callable[
     [CaptureBackend, int, Callable[[EnrolmentProgress], None], Callable[[], bool]], bytes
 ]
 EmbedFn = Callable[[bytes, SpeakerEmbedder], tuple[Any, float]]
+LearnerFn = Callable[[Sequence[SampleNote]], StyleProfileDraft]
+ReviewRunner = Callable[[StyleProfileDraft, QWidget], StyleReviewChoice | None]
+DeleteOriginalsRunner = Callable[[Sequence[Path], QWidget], bool]
 
 
 def _default_capture(
@@ -187,6 +277,8 @@ class PractitionerScreen(QWidget):
         *,
         profile_root: Path | None = None,
         config_root: Path | None = None,
+        style_root: Path | None = None,
+        style_options_provider: Callable[[], tuple[models.StyleOption, ...]] | None = None,
         embedder_kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER,
         embedder_factory: Callable[[EmbedderKind], SpeakerEmbedder] = build_speaker_embedder,
         embedder_available: Callable[[EmbedderKind], bool] = speaker_embedder_available,
@@ -197,6 +289,11 @@ class PractitionerScreen(QWidget):
         confirm_delete: Callable[[], bool] | None = None,
         clock: Callable[[], datetime] = _utc_now,
         on_capture_start: Callable[[], None] | None = None,
+        file_picker: Callable[[], Sequence[Path]] | None = None,
+        learner: LearnerFn = learn_style_profile,
+        review_runner: ReviewRunner = run_style_review,
+        delete_originals_runner: DeleteOriginalsRunner = run_delete_originals,
+        confirm_delete_style: Callable[[], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -208,6 +305,14 @@ class PractitionerScreen(QWidget):
         self._on_capture_start = on_capture_start
         self._profile_root = profile_root
         self._config_root = config_root
+        # The learned-style store root: `models.style_options` STATS it for
+        # the Own-voice option (`style_profile_present`), it never decrypts it.
+        self._style_root = style_root
+        self._style_options_provider: Callable[[], tuple[models.StyleOption, ...]] = (
+            style_options_provider
+            if style_options_provider is not None
+            else (lambda: models.style_options(style_root=style_root))
+        )
         self._embedder_kind = embedder_kind
         self._embedder_factory = embedder_factory
         self._embedder_available = embedder_available
@@ -225,6 +330,22 @@ class PractitionerScreen(QWidget):
         )
         self._confirm_delete = confirm_delete if confirm_delete is not None else self._ask_delete
         self._clock = clock
+        # Task 3.4 / 3.6 seams: the file picker (a modal dialog in the app),
+        # the learner (pure over the read notes), the two Flow-4 dialogs and
+        # the delete-style confirmation.
+        self._file_picker = file_picker if file_picker is not None else self._pick_files
+        self._learner = learner
+        self._review_runner = review_runner
+        self._delete_originals_runner = delete_originals_runner
+        self._confirm_delete_style = (
+            confirm_delete_style if confirm_delete_style is not None else self._ask_delete_style
+        )
+        self._sample_files: list[Path] = []
+        # The learned style as last READ from its store (one decrypt per
+        # learn / remove / delete event, never per poll); None when absent or
+        # unusable — `_style_present` (a stat) still enables Delete then.
+        self._style_profile: StyleProfile | None = None
+        self._style_present = False
 
         self._task: TaskThread | None = None
         self._lease: EnrolmentLease | None = None
@@ -235,6 +356,10 @@ class PractitionerScreen(QWidget):
         # Task 5.0: whether the READABLE profile's consent record is current.
         self._consent_current = False
         self._device_names: dict[int, str] = {}
+        # Task 3.1: the style as it stands ON DISK (never a pending pick), and
+        # which styles may be chosen right now.
+        self._saved_style: NoteStyle = DEFAULT_NOTE_STYLE
+        self._style_enabled: dict[NoteStyle, bool] = {}
 
         # --- first-run banner (D10: first run ASKS, never blocks) -----------
         self.banner_label = QLabel()
@@ -339,6 +464,43 @@ class PractitionerScreen(QWidget):
         self.delete_button = QPushButton("Delete voice profile")
         self.delete_button.clicked.connect(self.on_delete)
 
+        # --- writing style (note-learning plan Task 3.1) ---------------------
+        # All four styles are listed; the ones that cannot be honoured yet are
+        # disabled with their reason under the group (C8), never hidden.
+        self.style_button_group = QButtonGroup(self)
+        self.style_button_group.setExclusive(True)
+        self.style_radios: dict[NoteStyle, QRadioButton] = {}
+        style_box = QGroupBox("Writing style")
+        style_layout = QVBoxLayout()
+        style_layout.addWidget(
+            QLabel(
+                "How the note body reads on the Note tab (Verbatim and Clean clinical "
+                "need no model):"
+            )
+        )
+        for style in models.NOTE_STYLES:
+            radio = QRadioButton(models.STYLE_LABELS[style])
+            radio.toggled.connect(
+                lambda checked, style=style: (
+                    self.on_style_selected(style) if checked else None
+                )
+            )
+            self.style_button_group.addButton(radio)
+            self.style_radios[style] = radio
+            style_layout.addWidget(radio)
+        # PLAIN TEXT: both labels render loader errors, which quote config text.
+        self.style_reason_label = QLabel()
+        self.style_reason_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.style_reason_label.setWordWrap(True)
+        self.style_reason_label.hide()
+        self.style_status_label = QLabel()
+        self.style_status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.style_status_label.setWordWrap(True)
+        self.style_status_label.hide()
+        style_layout.addWidget(self.style_reason_label)
+        style_layout.addWidget(self.style_status_label)
+        style_box.setLayout(style_layout)
+
         # --- learned phrases (Task 5.3) -------------------------------------
         # Both lists render the practitioner's OWN learned phrases (config
         # plaintext), each item's data holding the stored phrase for Delete.
@@ -399,12 +561,81 @@ class PractitionerScreen(QWidget):
         rules_layout.addWidget(self.learned_rules_note_label)
         rules_box.setLayout(rules_layout)
 
+        # --- learn from my notes (note-learning plan Task 3.4) ---------------
+        # PLAIN TEXT throughout: the status lines quote file names and reader
+        # errors; nothing here renders a note's text (the review dialog does).
+        self.learn_intro_label = QLabel(LEARN_INTRO_TEXT)
+        self.learn_intro_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.learn_intro_label.setWordWrap(True)
+        self.choose_files_button = QPushButton(f"Choose notes (up to {MAX_SAMPLE_NOTES})")
+        self.choose_files_button.clicked.connect(self.on_choose_files)
+        self.sample_files_list = QListWidget()
+        self.remove_file_button = QPushButton("Remove selected")
+        self.remove_file_button.clicked.connect(self._remove_selected_file)
+        self.paste_box = QPlainTextEdit()
+        self.paste_box.setPlaceholderText("Or paste one note here")
+        self.paste_box.textChanged.connect(self._update_controls)
+        self.learn_button = QPushButton("Learn from these notes")
+        self.learn_button.clicked.connect(self.on_learn_from_notes)
+        self.learn_gate_label = QLabel(LEARN_CONSENT_GATE_TEXT)
+        self.learn_gate_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.learn_gate_label.setWordWrap(True)
+        self.learn_status_label = QLabel()
+        self.learn_status_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.learn_status_label.setWordWrap(True)
+        self.learn_status_label.hide()
+        learn_box = QGroupBox("Learn from my notes")
+        learn_layout = QVBoxLayout()
+        learn_layout.addWidget(self.learn_intro_label)
+        learn_layout.addWidget(self.choose_files_button)
+        learn_layout.addWidget(self.sample_files_list)
+        learn_layout.addWidget(self.remove_file_button)
+        learn_layout.addWidget(self.paste_box)
+        learn_layout.addWidget(self.learn_gate_label)
+        learn_layout.addWidget(self.learn_button)
+        learn_layout.addWidget(self.learn_status_label)
+        learn_box.setLayout(learn_layout)
+
+        # --- learned style (note-learning plan Tasks 3.5 + 3.6) --------------
+        # The lists render the practitioner's OWN example sentences and
+        # shorthand (decrypted style-store content), each item's data holding
+        # the exemplar's index / the token for Remove.
+        self.style_line_label = QLabel(models.STYLE_NOT_LEARNED_LINE)
+        self.style_line_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.style_line_label.setWordWrap(True)
+        self.learned_exemplars_list = QListWidget()
+        self.remove_exemplar_button = QPushButton("Remove selected sentence")
+        self.remove_exemplar_button.clicked.connect(self._remove_selected_exemplar)
+        self.learned_shorthand_list = QListWidget()
+        self.remove_shorthand_button = QPushButton("Remove selected shorthand")
+        self.remove_shorthand_button.clicked.connect(self._remove_selected_shorthand)
+        self.delete_style_button = QPushButton("Delete learned style")
+        self.delete_style_button.clicked.connect(self.on_delete_style)
+        self.learned_style_note_label = QLabel(NO_LEARNED_STYLE_TEXT)
+        self.learned_style_note_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.learned_style_note_label.setWordWrap(True)
+        learned_style_box = QGroupBox("Learned style")
+        learned_style_layout = QVBoxLayout()
+        learned_style_layout.addWidget(self.style_line_label)
+        learned_style_layout.addWidget(QLabel("Example sentences kept (by section):"))
+        learned_style_layout.addWidget(self.learned_exemplars_list)
+        learned_style_layout.addWidget(self.remove_exemplar_button)
+        learned_style_layout.addWidget(QLabel("Shorthand kept:"))
+        learned_style_layout.addWidget(self.learned_shorthand_list)
+        learned_style_layout.addWidget(self.remove_shorthand_button)
+        learned_style_layout.addWidget(self.delete_style_button)
+        learned_style_layout.addWidget(self.learned_style_note_label)
+        learned_style_box.setLayout(learned_style_layout)
+
         layout = QVBoxLayout()
         layout.addWidget(self.banner_label)
         layout.addWidget(profile_box)
         layout.addWidget(consent_box)
         layout.addWidget(record_box)
         layout.addWidget(self.delete_button)
+        layout.addWidget(style_box)
+        layout.addWidget(learn_box)
+        layout.addWidget(learned_style_box)
         layout.addWidget(phrases_box)
         layout.addWidget(rules_box)
         layout.addStretch(1)
@@ -420,6 +651,8 @@ class PractitionerScreen(QWidget):
         self.refresh_devices()
         self.refresh_availability()
         self.refresh_profile_state()
+        self.refresh_style_profile_state()  # one style-store read; before the options
+        self.refresh_style_setting()
         self.refresh_learned_phrases()
         self.refresh_learned_rules()
 
@@ -577,7 +810,10 @@ class PractitionerScreen(QWidget):
         return self._task is not None and self._task.isRunning()
 
     def show_first_run_banner(self) -> None:
-        self.banner_label.setText(models.FIRST_RUN_BANNER)
+        """The first-run banner (D10): the voice-profile line, plus the
+        sample-note line while no learned style exists (Task 3.4, Flow 4 —
+        optional, never blocking). Presence is a stat."""
+        self.banner_label.setText(models.first_run_banner_text(style_present=self._style_present))
         self.banner_label.show()
 
     # --- enablement --------------------------------------------------------------
@@ -625,6 +861,26 @@ class PractitionerScreen(QWidget):
         self.delete_learned_rule_button.setEnabled(
             not busy and self.learned_rules_list.count() > 0
         )
+        for style, radio in self.style_radios.items():
+            radio.setEnabled(not busy and self._style_enabled.get(style, False))
+        # Task 3.4: the consent gate is the SAME box the voice enrolment uses
+        # (the v3 text covers the learned style); the button also needs
+        # something to learn from, within the cap.
+        consented = self.consent_checkbox.isChecked()
+        chosen = len(self._sample_files) + (1 if self.paste_box.toPlainText().strip() else 0)
+        self.learn_gate_label.setVisible(not consented)
+        self.choose_files_button.setEnabled(not busy and len(self._sample_files) < MAX_SAMPLE_NOTES)
+        self.remove_file_button.setEnabled(not busy and self.sample_files_list.count() > 0)
+        self.learn_button.setEnabled(not busy and consented and 1 <= chosen <= MAX_SAMPLE_NOTES)
+        # Task 3.6: Remove needs a READABLE profile; Delete needs only presence.
+        readable = self._style_profile is not None
+        self.remove_exemplar_button.setEnabled(
+            not busy and readable and self.learned_exemplars_list.count() > 0
+        )
+        self.remove_shorthand_button.setEnabled(
+            not busy and readable and self.learned_shorthand_list.count() > 0
+        )
+        self.delete_style_button.setEnabled(not busy and self._style_present)
 
     def _set_enrolment_status(self, message: str | None) -> None:
         if message is None:
@@ -825,6 +1081,349 @@ class PractitionerScreen(QWidget):
         self.learning_checkbox.setChecked(False)
         self._set_enrolment_status("Voice profile deleted.")
         self.refresh_profile_state()
+
+    # --- learn from my notes (note-learning plan Task 3.4) ---------------------------
+
+    def _pick_files(self) -> Sequence[Path]:
+        names, _filter = QFileDialog.getOpenFileNames(
+            self, "Choose your past notes", "", SAMPLE_NOTE_FILTER
+        )
+        return tuple(Path(name) for name in names)
+
+    def _set_learn_status(self, text: str | None) -> None:
+        self.learn_status_label.setText(text or "")
+        self.learn_status_label.setVisible(bool(text))
+
+    def _render_sample_files(self) -> None:
+        self.sample_files_list.clear()
+        for path in self._sample_files:
+            item = QListWidgetItem(str(path))
+            item.setData(Qt.ItemDataRole.UserRole, str(path))
+            self.sample_files_list.addItem(item)
+        self._update_controls()
+
+    def on_choose_files(self) -> None:
+        """Add the picked files to the list, up to the cap — the extras are
+        refused by name in the status line, never silently dropped."""
+        if self.is_busy:
+            return
+        added: list[Path] = []
+        refused: list[Path] = []
+        for path in self._file_picker():
+            if path in self._sample_files or path in added:
+                continue
+            if len(self._sample_files) + len(added) >= MAX_SAMPLE_NOTES:
+                refused.append(path)
+                continue
+            added.append(path)
+        self._sample_files.extend(added)
+        self._render_sample_files()
+        if refused:
+            names = ", ".join(path.name for path in refused)
+            self._set_learn_status(
+                f"Not added (the limit is {MAX_SAMPLE_NOTES} notes at a time): {names}"
+            )
+        elif added:
+            self._set_learn_status(None)
+
+    def _remove_selected_file(self) -> None:
+        item = self.sample_files_list.currentItem()
+        if self.is_busy or item is None:
+            return
+        chosen = Path(str(item.data(Qt.ItemDataRole.UserRole)))
+        self._sample_files = [path for path in self._sample_files if path != chosen]
+        self._render_sample_files()
+
+    def sample_files(self) -> tuple[Path, ...]:
+        return tuple(self._sample_files)
+
+    def on_learn_from_notes(self) -> None:
+        """Flow 4, on the GUI thread: read → learn → review → (Save) write the
+        style store under its OWN consent record → (separate confirmation)
+        delete the originals. Every gate is re-checked here at click time;
+        every failure names itself on the status line and writes nothing."""
+        if self.is_busy:
+            return
+        if not self.consent_checkbox.isChecked():
+            self._set_learn_status(LEARN_CONSENT_GATE_TEXT)
+            return
+        notes: list[SampleNote] = []
+        try:
+            for path in self._sample_files:
+                notes.append(read_sample_note(path))
+            pasted = self.paste_box.toPlainText()
+            if pasted.strip():
+                notes.append(read_sample_note(pasted))
+        except SampleNoteError as exc:
+            self._set_learn_status(f"Could not read your notes - {exc}")
+            return
+        if not notes:
+            self._set_learn_status(LEARN_NOTHING_CHOSEN_TEXT)
+            return
+        if len(notes) > MAX_SAMPLE_NOTES:
+            self._set_learn_status(
+                f"Learn from at most {MAX_SAMPLE_NOTES} notes at a time ({len(notes)} chosen)."
+            )
+            return
+        try:
+            draft = self._learner(notes)
+        except SampleNoteError as exc:
+            self._set_learn_status(f"Could not learn from your notes - {exc}")
+            return
+        # Drops the read SampleNote list; the pasted source stays in `pasted`
+        # until this handler returns and in the paste box until a successful
+        # Save (the three lifetimes in `ui/style_review`'s docstring).
+        del notes
+        choice = self._review_runner(draft, self)
+        if choice is None:
+            self._set_learn_status(LEARN_CANCELLED_TEXT)
+            return
+        now = self._clock()
+        consent = ConsentRecord(
+            accepted_at=now,
+            consent_text_version=models.CONSENT_TEXT_VERSION,
+            learning_opt_in=self.learning_checkbox.isChecked(),
+        )
+        try:
+            profile = build_style_profile(
+                draft,
+                kept_unrecognised=choice.kept_unrecognised,
+                kept_exemplars=choice.kept_exemplars,
+                consent=consent,
+                learned_at=now,
+            )
+        except SampleNoteError as exc:
+            self._set_learn_status(f"Could not save the learned style - {exc}")
+            return
+        # PR-MED-019: the draft (every candidate sentence, the removed ones
+        # included) and the choice are dropped here; what this handler still
+        # holds is the ratified profile, the paths the next dialog needs and
+        # `pasted` (until the return — the three lifetimes in
+        # `ui/style_review`'s docstring).
+        source_paths = draft.source_paths
+        del draft, choice
+        try:
+            save_style_profile(profile, root=self._style_root)
+        except (StoreWriteError, ProfileError, OSError) as exc:
+            self._set_learn_status(f"Could not save the learned style - {exc}")
+            self.refresh_style_profile_state()
+            return
+        self._sample_files.clear()
+        self.paste_box.clear()
+        self._render_sample_files()
+        self.refresh_style_profile_state()  # re-read from disk: the line proves the save
+        notes_word = "note" if profile.source_count == 1 else "notes"
+        summary = (
+            f"Learned style saved from {profile.source_count} {notes_word}: "
+            f"{len(profile.exemplars)} example sentence(s), "
+            f"{len(profile.shorthand)} shorthand token(s)."
+        )
+        summary += self._offer_to_delete_originals(source_paths)
+        self._set_learn_status(summary)
+
+    def _offer_to_delete_originals(self, paths: Sequence[Path]) -> str:
+        """D9: a SEPARATE explicit confirmation naming the paths, unticked by
+        default; only a ticked-and-confirmed dialog unlinks them, and then
+        exactly those paths. Returns the sentence for the status line."""
+        if not paths:
+            return ""
+        if not self._delete_originals_runner(paths, self):
+            return " The original notes were kept."
+        report = delete_sample_files(paths)
+        text = f" Deleted {len(report.deleted)} original file(s)."
+        if report.failed:
+            failures = "; ".join(f"{path.name}: {why}" for path, why in report.failed)
+            text += f" Not deleted - {failures}."
+        return text
+
+    # --- learned style (note-learning plan Tasks 3.5 + 3.6) -------------------------
+
+    def _ask_delete_style(self) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                "Delete learned style",
+                "Delete the learned style? Own voice becomes unavailable until you learn "
+                "again; your voice profile is not affected.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            == QMessageBox.StandardButton.Yes
+        )
+
+    def refresh_style_profile_state(self) -> None:
+        """ONE style-store read (a stat, then a DPAPI unwrap and a decrypt on
+        the GUI thread) and a re-render of the learned-style line and both
+        lists. Called at construction and after a learn, a remove or a delete
+        — never from a poll (round 51 MED-001). An unusable store shows its
+        line and keeps Delete available."""
+        self._style_present = style_profile_present(root=self._style_root)
+        try:
+            self._style_profile = load_style_profile(root=self._style_root)
+        except ProfileUnusableError as exc:
+            self._style_profile = None
+            line = models.STYLE_UNUSABLE_LINE.format(reason=exc.reason)
+        else:
+            line = models.style_profile_line(self._style_profile)
+        self.style_line_label.setText(line)
+        self.learned_exemplars_list.clear()
+        self.learned_shorthand_list.clear()
+        profile = self._style_profile
+        if profile is not None:
+            for index, exemplar in enumerate(profile.exemplars):
+                item = QListWidgetItem(
+                    f"{models.section_title(exemplar.section_key)}: {exemplar.exemplar_text}"
+                )
+                item.setData(Qt.ItemDataRole.UserRole, index)
+                self.learned_exemplars_list.addItem(item)
+            for token in profile.shorthand:
+                item = QListWidgetItem(token)
+                item.setData(Qt.ItemDataRole.UserRole, token)
+                self.learned_shorthand_list.addItem(item)
+            self.learned_style_note_label.setText(
+                "Remove rewrites the learned style without that item; Delete learned style "
+                "removes the whole store (your voice profile is not affected)."
+            )
+        elif not self._style_present:
+            self.learned_style_note_label.setText(NO_LEARNED_STYLE_TEXT)
+        else:
+            self.learned_style_note_label.setText(
+                "The learned style cannot be read - delete it and learn again."
+            )
+        if self.banner_label.isVisibleTo(self):
+            self.show_first_run_banner()  # the second line follows the store
+        self.refresh_style_options()  # -> _update_controls
+
+    @property
+    def style_profile(self) -> StyleProfile | None:
+        """The learned style as last read (None when absent or unusable)."""
+        return self._style_profile
+
+    def _rewrite_style_profile(self, updated: StyleProfile, done: str) -> bool:
+        """Replace the store with ``updated`` (the existing key kept) and
+        re-read it; a failed write leaves the lists as they were so Remove can
+        be retried, and names the failure."""
+        try:
+            save_style_profile(updated, root=self._style_root)
+        except (StoreWriteError, ProfileError, OSError) as exc:
+            self.learned_style_note_label.setText(f"Could not update the learned style - {exc}")
+            return False
+        self.refresh_style_profile_state()
+        self.learned_style_note_label.setText(done)
+        return True
+
+    def _remove_selected_exemplar(self) -> None:
+        profile = self._style_profile
+        item = self.learned_exemplars_list.currentItem()
+        if self.is_busy or profile is None or item is None:
+            return
+        index = int(item.data(Qt.ItemDataRole.UserRole))
+        kept = tuple(e for i, e in enumerate(profile.exemplars) if i != index)
+        self._rewrite_style_profile(
+            profile.model_copy(update={"exemplars": kept}), "Removed the sentence."
+        )
+
+    def _remove_selected_shorthand(self) -> None:
+        profile = self._style_profile
+        item = self.learned_shorthand_list.currentItem()
+        if self.is_busy or profile is None or item is None:
+            return
+        token = str(item.data(Qt.ItemDataRole.UserRole))
+        kept = tuple(t for t in profile.shorthand if t != token)
+        self._rewrite_style_profile(
+            profile.model_copy(update={"shorthand": kept}), f"Removed '{token}'."
+        )
+
+    def on_delete_style(self) -> None:
+        """Key-first deletion of the learned style (``delete_style_profile``),
+        independent of the voice profile; the in-memory copy goes with it."""
+        if self.is_busy or not self._style_present:
+            return
+        if not self._confirm_delete_style():
+            return
+        try:
+            delete_style_profile(root=self._style_root)
+        except StoreWriteError as exc:
+            # Re-read FIRST (the store may be half-gone), then the C8 line —
+            # the refresh renders the group's help text, which must not
+            # overwrite the failure message; Delete stays offered by stat.
+            self.refresh_style_profile_state()
+            self.learned_style_note_label.setText(f"Could not delete the learned style - {exc}")
+            return
+        self._style_profile = None
+        self.refresh_style_profile_state()
+        self.learned_style_note_label.setText("Learned style deleted.")
+
+    # --- writing style (note-learning plan Task 3.1) ---------------------------------
+
+    def refresh_style_setting(self) -> None:
+        """Re-read the saved writing style (``practitioner_settings.json``)
+        and check its radio WITHOUT saving it back; an unreadable file becomes
+        the default style plus the reason line (C8), never a rewrite."""
+        choice = models.read_note_style(self._config_root)
+        self._saved_style = choice.style
+        self._check_style_radio(choice.style)
+        self._set_style_status(choice.reason)
+        self.refresh_style_options()
+
+    def refresh_style_options(self) -> None:
+        """Re-compute which styles may be chosen (``models.style_options`` — a
+        STAT of the learned-style store, never a decrypt) and render the
+        reasons of the ones that may not. Public: a later leg calls it when
+        the learned style changes."""
+        options = self._style_options_provider()
+        reasons: list[str] = []
+        for option in options:
+            self._style_enabled[option.style] = option.enabled
+            if not option.enabled and option.reason is not None:
+                reasons.append(option.reason)
+        self.style_reason_label.setText("\n".join(reasons))
+        self.style_reason_label.setVisible(bool(reasons))
+        checked = next(
+            (style for style, radio in self.style_radios.items() if radio.isChecked()), None
+        )
+        if checked is not None and not self._style_enabled.get(checked, False):
+            # A SAVED style the app cannot honour yet stays selected-but-
+            # disabled and says how the note is rendered meanwhile (C8).
+            fallback = models.style_fallback_line(checked)
+            if fallback is not None and fallback not in self.style_status_label.text():
+                current = self.style_status_label.text()
+                self._set_style_status(f"{current}\n{fallback}" if current else fallback)
+        self._update_controls()
+
+    def on_style_selected(self, style: NoteStyle) -> None:
+        """Save the picked style at once (D7). A failed write leaves the
+        setting as it is on disk: the radio goes back to the saved style and
+        the status line names the failure."""
+        if style == self._saved_style:
+            return
+        try:
+            models.save_note_style(style, config_root=self._config_root)
+        except NoteConfigError as exc:
+            self._set_style_status(
+                f"Could not save the writing style - {type(exc).__name__}: {exc}"
+            )
+            self._check_style_radio(self._saved_style)
+            return
+        self._saved_style = style
+        self._set_style_status(f"Writing style saved: {models.STYLE_LABELS[style]}.")
+
+    def _check_style_radio(self, style: NoteStyle) -> None:
+        """Check one radio without firing ``on_style_selected``: the style is
+        being READ (from disk, or restored after a failed write), not picked."""
+        radio = self.style_radios.get(style)
+        if radio is None:
+            return
+        blocked = [(each, each.blockSignals(True)) for each in self.style_radios.values()]
+        try:
+            radio.setChecked(True)
+        finally:
+            for each, was_blocked in blocked:
+                each.blockSignals(was_blocked)
+
+    def _set_style_status(self, text: str | None) -> None:
+        self.style_status_label.setText(text or "")
+        self.style_status_label.setVisible(bool(text))
 
     # --- learned phrases (Task 5.3) --------------------------------------------------
 

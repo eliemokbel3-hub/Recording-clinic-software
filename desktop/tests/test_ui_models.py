@@ -1289,3 +1289,117 @@ class TestReviewEditModels:
         copy = models.WARNING_COPY["high_risk_omission"]
         assert "a line you removed" in copy.clear_hint
         assert copy.blocks is None  # review, never a block (D14)
+
+
+# ---------------------------------------------------------------------------
+# Writing styles (note-learning plan D7; Phase 3 Task 3.1): which of the four
+# styles may be chosen and why not, the fallback line for a style the app
+# cannot honour yet, and the saved setting. The availability seams
+# (`model_available`, `style_present`) are always passed: these tests never
+# stat the default learned-style store.
+# ---------------------------------------------------------------------------
+
+
+class TestStyleOptions:
+    @staticmethod
+    def _options(*, model: bool, present: bool) -> dict[str, models.StyleOption]:
+        return {
+            option.style: option
+            for option in models.style_options(
+                model_available=lambda: model, style_present=lambda root: present
+            )
+        }
+
+    def test_the_options_are_the_four_styles_in_order_with_their_labels(self) -> None:
+        options = models.style_options(
+            model_available=lambda: False, style_present=lambda root: False
+        )
+        assert tuple(option.style for option in options) == models.NOTE_STYLES
+        assert tuple(option.label for option in options) == tuple(
+            models.STYLE_LABELS[style] for style in models.NOTE_STYLES
+        )
+
+    def test_no_model_and_no_learned_style_disables_both_prose_styles(self) -> None:
+        options = self._options(model=False, present=False)
+        assert tuple(options[style].enabled for style in models.NOTE_STYLES) == (
+            True,
+            True,
+            False,
+            False,
+        )
+        assert options["verbatim"].reason is None
+        assert options["clean"].reason is None
+        own_voice = options["own_voice"].reason or ""
+        assert models.LANGUAGE_MODEL_ABSENT_REASON in own_voice
+        assert models.STYLE_PROFILE_EMPTY_REASON in own_voice
+        narrative = options["narrative"].reason or ""
+        assert models.LANGUAGE_MODEL_ABSENT_REASON in narrative
+        assert models.STYLE_PROFILE_EMPTY_REASON not in narrative
+
+    def test_a_learned_style_without_the_model_leaves_only_the_model_clause(self) -> None:
+        options = self._options(model=False, present=True)
+        assert tuple(options[style].enabled for style in models.NOTE_STYLES) == (
+            True,
+            True,
+            False,
+            False,
+        )
+        own_voice = options["own_voice"].reason or ""
+        assert models.LANGUAGE_MODEL_ABSENT_REASON in own_voice
+        assert models.STYLE_PROFILE_EMPTY_REASON not in own_voice
+
+    def test_the_model_without_a_learned_style_disables_own_voice_alone(self) -> None:
+        options = self._options(model=True, present=False)
+        assert tuple(options[style].enabled for style in models.NOTE_STYLES) == (
+            True,
+            True,
+            False,
+            True,
+        )
+        assert options["own_voice"].reason == (
+            f"{models.STYLE_LABELS['own_voice']} {models.STYLE_PROFILE_EMPTY_REASON}."
+        )
+        assert options["narrative"].reason is None
+
+    def test_with_both_every_style_is_available_and_no_reason_is_shown(self) -> None:
+        options = self._options(model=True, present=True)
+        assert all(options[style].enabled for style in models.NOTE_STYLES)
+        assert all(options[style].reason is None for style in models.NOTE_STYLES)
+
+    def test_only_a_prose_style_has_a_fallback_line(self) -> None:
+        assert models.style_fallback_line("verbatim") is None
+        assert models.style_fallback_line("clean") is None
+        for style in ("own_voice", "narrative"):
+            line = models.style_fallback_line(style) or ""
+            assert models.STYLE_LABELS[style] in line
+            assert models.LANGUAGE_MODEL_ABSENT_REASON in line
+
+    def test_the_saved_style_round_trips_and_an_unreadable_file_names_itself(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.note_config import (
+            DEFAULT_NOTE_STYLE,
+            PRACTITIONER_SETTINGS_FILENAME,
+        )
+
+        assert models.read_note_style(tmp_path) == models.NoteStyleChoice(
+            DEFAULT_NOTE_STYLE, None
+        )
+
+        path = models.save_note_style("narrative", config_root=tmp_path)
+        assert path.exists()
+        assert models.read_note_style(tmp_path) == models.NoteStyleChoice("narrative", None)
+
+        (tmp_path / PRACTITIONER_SETTINGS_FILENAME).write_text("{not json", encoding="utf-8")
+        choice = models.read_note_style(tmp_path)
+        assert choice.style == DEFAULT_NOTE_STYLE
+        assert (choice.reason or "").startswith("Writing style setting unreadable")
+
+    def test_the_first_run_banner_asks_for_a_style_only_while_none_is_learned(self) -> None:
+        assert models.first_run_banner_text(style_present=True) == models.FIRST_RUN_BANNER
+        assert models.first_run_banner_text(style_present=False) == (
+            f"{models.FIRST_RUN_BANNER}\n{models.FIRST_RUN_STYLE_LINE}"
+        )
+
+    def test_the_language_model_is_absent_until_the_plans_phase_4(self) -> None:
+        assert models.language_model_available() is False

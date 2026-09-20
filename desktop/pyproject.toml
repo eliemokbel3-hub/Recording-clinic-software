@@ -17,6 +17,11 @@ dependencies = [
     # Phase 2: DPAPI key custody (win32crypt.CryptProtectData) — user-approved
     # dependency in the hardened Phase 2 plan.
     'pywin32>=306; sys_platform == "win32"',
+    # Note-learning-and-styles plan Phase 3 (Task 3.3): reading a .docx sample
+    # note into memory (`sample_notes.read_sample_note`). BASE, not `[ml]` —
+    # the installer ships it; pinned exactly (practitioner-authorised
+    # 2026-09-19). Read-only use: the module never writes a document.
+    "python-docx==1.2.0",
 ]
 
 [project.optional-dependencies]
@@ -97,6 +102,9 @@ module = [
     "faster_whisper.*",
     "onnxruntime",
     "onnxruntime.*",
+    # python-docx ships no stubs (note-learning plan Task 3.3).
+    "docx",
+    "docx.*",
 ]
 ignore_missing_imports = true
 

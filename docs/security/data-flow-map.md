@@ -328,14 +328,35 @@ in-process and adds no network surface and no new logging channel.
     `practitioner_profile.save_style_profile` / `load_style_profile` and removed
     key-first by `delete_style_profile`, independently of the voice profile
     (flow 12); the session, voice and style keys cannot open each other's store.
-    NOTHING writes it today. PLANNED; enforced from Phase 3: reading 1–5 chosen
-    notes into memory (never copied, never moved), the learner deriving section
-    order, headings, shorthand, measures and up to 30 exemplar sentences that
-    passed the refusal filter unchanged, the practitioner's review step before
-    any save, the consent record (text v3) written into the blob at that Save,
-    the separate explicit confirmation — naming the paths, unticked by default —
-    for deleting the originals, and the Practitioner tab's learned-style list
-    with per-exemplar delete and "Delete learned style". The prose stage (Phase
+    Phase 3 BUILT the flow into it. The Practitioner tab's "Learn from my
+    notes" group reads 1–5 chosen `.txt`/`.docx` files and/or one pasted note
+    through `sample_notes.read_sample_note` — into memory only, never copied
+    and never moved (a whole-tree before/after snapshot test pins it) — and
+    `learn_style_profile`, pure over those texts, derives the section order and
+    headings, the shorthand split by exact membership of
+    `note_config.CLINICAL_ABBREVIATIONS`, simple count measures and up to
+    `MAX_STYLE_EXEMPLARS = 30` exemplar sentences, each one passed UNCHANGED to
+    `refuse_learning_candidate` and dropped whole on any refusal class.
+    `ui/style_review.run_style_review` then shows the draft for review
+    (unrecognised abbreviations as tick-to-keep rows, unticked by default;
+    per-sentence remove) and only its Save writes: `build_style_profile` —
+    which refuses anything the draft did not itself list, so the review can
+    only remove — plus a fresh `ConsentRecord` under text v3 from the tab's
+    consent tick (no voice profile needed or read), sealed by
+    `save_style_profile` under the style key. AFTER a successful save, and only
+    when files were the source, a SEPARATE confirmation names the paths with
+    "Delete these files now" unticked by default
+    (`ui/style_review.DeleteOriginalsDialog`); a ticked, accepted dialog calls
+    `delete_sample_files`, which unlinks exactly those paths and reports every
+    failure. The tab's learned-style summary and lists come from ONE decrypt
+    (`refresh_style_profile_state` → `load_style_profile`, re-run after a learn,
+    a remove or a delete and on no timer), each per-item Remove re-saves the
+    profile under the same key, and "Delete learned style" removes the store
+    key-first through `delete_style_profile`, independently of the voice
+    profile. Nothing in this flow is logged (`sample_text`,
+    `recognised_shorthand`, `unrecognised_shorthand` and `exemplar_text` are
+    registered tripwire markers and none of these modules holds a logger).
+    No network, no new channel. The prose stage (Phase
     4) reads the style profile and confirmed assertion text only, never the
     transcript — planned.
 
@@ -358,12 +379,13 @@ in-process and adds no network surface and no new logging channel.
   Since the note-learning-and-styles plan's Phase 0 there is a SECOND encrypted
   practitioner store beside the voice profile: `style\style.enc` under its own
   DPAPI-wrapped key (`practitioner_profile.save_style_profile`; the session,
-  voice and style keys cannot open each other's store). It will hold what Phase
-  3's learner derives from the practitioner's OWN past notes — headings,
-  shorthand, measures and up to 30 practitioner-reviewed exemplar sentences that
-  passed the shape filter unchanged — under the practitioner's consent (text
-  v3), never under a session key and never a copy of an uploaded note; today
-  nothing writes it.
+  voice and style keys cannot open each other's store). Since Phase 3 it holds
+  what the learner derived from the practitioner's OWN chosen past notes —
+  headings, shorthand, measures and up to 30 practitioner-reviewed exemplar
+  sentences that passed the shape filter unchanged — under the practitioner's
+  consent (text v3), never under a session key and never a copy of a chosen
+  note; it is written only by the Practitioner tab's Save after the review, and
+  by that tab's per-item Remove re-saving the same profile (flow 16).
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the
@@ -378,10 +400,15 @@ in-process and adds no network surface and no new logging channel.
   (`note_sections`/`note_assertions`/`note_spans`/`span_text`/`note_excerpt`/
   `note_warnings`/`note_warning_code`/`note_confirmation`), and — since the
   practitioner-profile plan's Phase 1 — the voice-profile markers
-  (`embedding`/`enrolment_speech_seconds`/`consent_text_version`), so a stray
-  repr or `model_dump` of a note model or of the practitioner's profile is
+  (`embedding`/`enrolment_speech_seconds`/`consent_text_version`), and — since
+  the note-learning-and-styles plan — the learned-style markers `exemplar_text`
+  (Phase 0) with `sample_text`, `recognised_shorthand` and
+  `unrecognised_shorthand` beside it (Phase 3, flow 16), so a stray
+  repr or `model_dump` of a note model, of the practitioner's profile or of a
+  sample note or style draft is
   dropped by the last-line filter. Neither the note pipeline nor the profile
-  path opens a logging channel. The Phase-2 attribution fields on the
+  path opens a logging channel, and none of `sample_notes.py`,
+  `ui/style_review.py` or the Practitioner tab holds a logger. The Phase-2 attribution fields on the
   transcript (`enrolled_speaker` / `enrolment_similarity` /
   `speaker_model_id`) are a cluster label, a number and a model name — no
   content, so they register no marker; a transcript repr is still caught by
@@ -401,12 +428,17 @@ in-process and adds no network surface and no new logging channel.
   Phase 5.
 - Log/temp locations are user-local; exclusion from OneDrive/backup sweep is
   a Phase 6 task (`PLAN.md`), noted in the retention schedule.
-- No uploaded sample note on disk (note-learning-and-styles plan, D9; PLANNED;
-  enforced from Phase 3 — nothing reads a sample note today). What it will hold:
-  the 1–5 notes the practitioner chooses are read into memory, never copied and
-  never moved, and only the derived style profile is written (flow 16);
-  deletion of the originals is a separate explicit confirmation naming the
-  paths, unticked by default.
+- No uploaded sample note on disk (note-learning-and-styles plan, D9; BUILT,
+  Phase 3): the 1–5 notes the practitioner chooses are read into memory by
+  `sample_notes.read_sample_note`, never copied and never moved — pinned by a
+  before/after snapshot of the whole temporary tree
+  (`tests/test_sample_notes.py::TestReadSampleNote::
+  test_a_txt_file_is_read_into_memory_and_the_tree_is_untouched`) — and only
+  the derived, reviewed style profile is written (flow 16). Deletion of the
+  originals is a separate explicit confirmation naming the paths, unticked by
+  default, and unlinks exactly the listed paths through
+  `sample_notes.delete_sample_files` (a directory is refused, never walked;
+  `TestDeleteSampleFiles::test_exactly_the_listed_paths_go`).
 - No transcript text to the language model (note-learning-and-styles plan, D6,
   D8; PLANNED; enforced from Phase 4 — there is no language model today). What
   it will hold: the prose stage's input is confirmed assertion text grouped by
