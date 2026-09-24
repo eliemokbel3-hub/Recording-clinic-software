@@ -199,6 +199,14 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"unrecognised_shorthand"',
     "'unrecognised_shorthand'",
     "unrecognised_shorthand=",
+    # Note-learning-and-styles plan Phase 4 (D6; C9): the prose stage's
+    # input carries a finalised note's confirmed texts by section as
+    # ``prose_style.ProseInput.section_texts``; the name is distinctive so a
+    # rendering of the input is dropped (a rendering's own text is already
+    # caught by ``prose_text``, a note's by ``note_sections``).
+    '"section_texts"',
+    "'section_texts'",
+    "section_texts=",
 )
 
 # THE production log format — one string, used to build every handler's

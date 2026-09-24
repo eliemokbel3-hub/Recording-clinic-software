@@ -329,6 +329,12 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # Check 4 — scoped omission (Task 5.4). Review, never error: a heuristic
     # must not be able to block Complete on a false positive.
     "high_risk_omission": "review",
+    # Check 5 — prose fidelity (note-learning-and-styles plan Task 4.2, D6):
+    # a section whose language-model prose failed the fidelity gate is shown
+    # as `clean` (its confirmed lines, unchanged) and says so. Review, never
+    # error: the fallback IS the safe rendering, and the practitioner
+    # acknowledges that the section reads as Clean clinical.
+    "style_fallback": "review",
 }
 
 
@@ -808,29 +814,100 @@ def assertion_label(assertion: NoteAssertion) -> str:
     return f"{PREFILLED_MARK} - {label}" if is_prefilled(assertion) else label
 
 
+def input_texts_digest(texts: Sequence[str]) -> str:
+    """The digest ``section_input_digest`` is built on, over the texts
+    themselves: the exact texts, in order, joined by newlines. The prose
+    stage (Phase 4) stamps this on the ``StyleRendering`` it produces from
+    exactly those texts, so the two sides of the binding share ONE
+    implementation."""
+    return text_digest("\n".join(texts))
+
+
 def section_input_digest(section: GeneratedSection) -> str:
     """THE binding between a section's confirmed assertion texts and a prose
-    rendering (D7): the digest of the exact texts, in order, joined by
-    newlines. Phase 4's prose stage stamps this on each ``StyleRendering``
+    rendering (D7): ``input_texts_digest`` over the section's texts in
+    order. Phase 4's prose stage stamps this on each ``StyleRendering``
     it produces; ``usable_rendering`` recomputes it before any prose is
     shown, so an edit to any line of the section (a different text, an
     added or removed line, a re-ordering) invalidates the rendering."""
-    return text_digest("\n".join(assertion.text for assertion in section.note_assertions))
+    return input_texts_digest([assertion.text for assertion in section.note_assertions])
+
+
+def bound_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
+    """The section's rendering — ``passed`` OR ``failed`` — when the note
+    carries one whose ``input_digest`` is ``section_input_digest(section)``
+    now; None otherwise. The prose stage asks this to know which sections
+    still need the model (a bound ``failed`` verdict is an answer too: the
+    same lines are never asked twice in one review)."""
+    for rendering in note.style_renderings:
+        if rendering.section_key != section.section_key:
+            continue
+        if rendering.input_digest != section_input_digest(section):
+            return None
+        return rendering
+    return None
 
 
 def usable_rendering(note: GeneratedNote, section: GeneratedSection) -> StyleRendering | None:
     """The section's prose rendering, or None when the note carries none for
     it, the verdict is ``failed`` (no prose — C4) or its ``input_digest``
     differs from ``section_input_digest(section)`` (stale — D7)."""
-    for rendering in note.style_renderings:
-        if rendering.section_key != section.section_key:
+    rendering = bound_rendering(note, section)
+    if rendering is None or rendering.verdict != "passed":
+        return None
+    return rendering
+
+
+def note_input_digest(note: GeneratedNote) -> str:
+    """ONE digest over everything the prose stage renders from — every
+    populated section's key and ``section_input_digest`` in order — so a
+    rendering job can be bound to the note it was started for and a result
+    for a note that has since changed is recognised (Phase 4, D7)."""
+    parts = [
+        f"{section.section_key}\n{section_input_digest(section)}"
+        for section in note.note_sections
+        if section.note_assertions
+    ]
+    return text_digest("\n\n".join(parts))
+
+
+def attach_style_renderings(
+    note: GeneratedNote, renderings: Sequence[StyleRendering]
+) -> GeneratedNote:
+    """The note with ``renderings`` bound to its sections (Phase 4, D7): a
+    rendering is kept ONLY when the note populates its section and its
+    ``input_digest`` is that section's ``section_input_digest`` NOW — a
+    stale rendering is dropped here, never carried into ``note.enc``; for
+    one section the LAST rendering given wins (a caller passes the note's
+    still-valid renderings first, then the stage's new ones). The
+    ``style_fallback`` review warnings are DERIVED here from the kept
+    ``failed`` renderings — one per section — replacing any the note held,
+    so the note's warnings and its renderings cannot disagree (Check 5's
+    verdict is carried by the failed rendering; ``note_check`` judges, this
+    re-emits the carriage). The result is rebuilt through the full
+    validators (the ``note.enc`` round trip), never an unvalidated copy."""
+    sections = {section.section_key: section for section in note.note_sections}
+    chosen: dict[NoteSectionKey, StyleRendering] = {}
+    for rendering in renderings:
+        section = sections.get(rendering.section_key)
+        if section is None or rendering.input_digest != section_input_digest(section):
             continue
-        if rendering.verdict != "passed":
-            return None
-        if rendering.input_digest != section_input_digest(section):
-            return None
-        return rendering
-    return None
+        chosen[rendering.section_key] = rendering
+    kept = tuple(chosen[key] for key in CANONICAL_SECTION_KEYS if key in chosen)
+    others = tuple(w for w in note.note_warnings if w.note_warning_code != "style_fallback")
+    fallbacks = tuple(
+        NoteWarning(
+            note_warning_code="style_fallback",
+            severity="review",
+            section_key=rendering.section_key,
+        )
+        for rendering in kept
+        if rendering.verdict == "failed"
+    )
+    updated = note.model_copy(
+        update={"style_renderings": kept, "note_warnings": (*others, *fallbacks)}
+    )
+    return GeneratedNote.from_bytes(updated.to_bytes())
 
 
 def _verbatim_block(section: GeneratedSection) -> str:
@@ -862,11 +939,30 @@ def _clean_block(section: GeneratedSection) -> str:
     return "\n".join([SECTION_TITLES[section.section_key], *_clean_lines(section)])
 
 
+def prefilled_section_mark(section: GeneratedSection) -> str | None:
+    """D5's mark for a section rendered as PROSE (codex round 22 PR-MED-035):
+    a pre-filled line no longer exists as a line inside a paragraph, so the
+    prose block carries the mark at SECTION level — how many of its lines
+    the practitioner's own config pre-filled — built from the same
+    ``PREFILLED_MARK`` text; None when the section holds none. The line
+    editor still names the lines themselves, and the counted Save label
+    counts the same lines."""
+    count = sum(1 for assertion in section.note_assertions if is_prefilled(assertion))
+    if count == 0:
+        return None
+    noun = "line" if count == 1 else "lines"
+    return f"[includes {count} {noun} {PREFILLED_MARK}]"
+
+
 def _prose_block(note: GeneratedNote, section: GeneratedSection) -> str:
     rendering = usable_rendering(note, section)
     if rendering is None:
         return _clean_block(section)
-    return "\n".join([SECTION_TITLES[section.section_key], rendering.prose_text])
+    lines = [SECTION_TITLES[section.section_key], rendering.prose_text]
+    mark = prefilled_section_mark(section)
+    if mark is not None:
+        lines.append(mark)
+    return "\n".join(lines)
 
 
 def render_note(note: GeneratedNote, style: NoteStyle) -> str:

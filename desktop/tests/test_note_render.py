@@ -294,6 +294,37 @@ class TestProseStyles:
         assert usable_rendering(_note(), assessment) is None
 
 
+class TestPrefilledMarkInProse:
+    def test_a_prose_section_holding_a_prefilled_line_carries_the_section_mark(
+        self,
+    ) -> None:
+        """Codex round 22 PR-MED-035 (D5): a pre-filled line dissolved into a
+        paragraph cannot carry its per-line mark, so the prose block carries
+        a SECTION-level count built from the same `PREFILLED_MARK`; a prose
+        section with no pre-filled line carries none; display, `note.enc`
+        reload and Copy share the one rendering path."""
+        note = _note(
+            style="narrative",
+            style_renderings=(
+                _rendering("assessment"),
+                _rendering("treatment_performed", prose_text="An ice pack was advised."),
+            ),
+        )
+        body = render_note(note, "narrative")
+        assert (
+            "Treatment performed\nAn ice pack was advised.\n"
+            f"[includes 1 line {PREFILLED_MARK}]"
+        ) in body
+        assert "Assessment\nCervical HVLA was performed.\n\n" in body
+        assert body.count(PREFILLED_MARK) == 1
+        reloaded = GeneratedNote.from_bytes(note.to_bytes())
+        assert models.format_note_body(reloaded) == body
+        assert note_module.prefilled_section_mark(note.note_sections[1]) is None
+        assert note_module.prefilled_section_mark(note.note_sections[2]) == (
+            f"[includes 1 line {PREFILLED_MARK}]"
+        )
+
+
 class TestSectionInputDigest:
     def _section(self, *texts: str) -> GeneratedSection:
         return GeneratedSection(

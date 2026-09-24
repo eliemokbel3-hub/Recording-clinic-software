@@ -14,7 +14,12 @@ view patterns · tokens · microcopy.
   windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
-  phrases with their delete.
+  phrases with their delete. A tab whose groups stack beyond one window height SCROLLS
+  vertically inside a `QScrollArea` with every group at its natural height and the width
+  following the window (no horizontal bar — long labels word-wrap); the Practitioner tab
+  is the one that needs it today (nine groups; the Phase 4 live smoke found its lists
+  collapsed to slivers at 1920×1200), the other tabs hold a handful of widgets or an
+  expanding text view and do not.
 - The **Note review tab** shows the generated note and the full uncertainty-marked
   transcript SIDE BY SIDE through the whole review, until copy or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
@@ -69,7 +74,10 @@ view patterns · tokens · microcopy.
   box; edits freeze at Save.
 - **Pre-filled lines are marked, counted and ratified by one Save.** A line the
   practitioner's own config pre-filled renders with `[pre-filled by your config - …]` in
-  the note body and in the line editor, has no confirm/decline row, offers Remove and Edit,
+  the note body and in the line editor — under a prose style, where the line has become
+  part of a paragraph, the section's prose block ends with `[includes N lines pre-filled
+  by your config]` instead (`note.prefilled_section_mark`; the editor rows still name the
+  lines) — has no confirm/decline row, offers Remove and Edit,
   and the Save button reads `Save - confirms the N pre-filled lines shown` while any stand
   (plain `Save note` otherwise); Remove is recorded as the clinician's decline at Save and
   demotes a learned rule to proposing (`ui/note.py`, `ui/models.py`; note-learning plan D5).
@@ -99,18 +107,27 @@ view patterns · tokens · microcopy.
   and every learned phrase by section, each with a one-click Delete; the empty state
   says "No learned phrases yet." rather than hiding the lists (`ui/practitioner.py`).
 - **A choice the app cannot honour yet is shown disabled with its reason, never
-  hidden.** The Practitioner tab's "Writing style" radios list all four styles
+  hidden — and it enables itself the moment the reason goes away.** The Practitioner
+  tab's "Writing style" radios list all four styles
   (Verbatim, Clean clinical, Own voice, Narrative); Own voice and Narrative are disabled
   with a one-line reason under the group — the local language model is not installed,
   and Own voice also needs a learned style — rather than omitted, and a saved style that
   is currently unavailable stays selected-but-disabled with the line saying notes are
   shown as Clean clinical until then; the choice is saved the moment a radio is picked
   and the status line says so (`ui/practitioner.py`, `ui/models.py` `style_options` /
-  `read_note_style`; note-learning plan Flow 3, C8).
+  `read_note_style`; note-learning plan Flow 3, C8). The reason NAMES THE REMEDY (run
+  `scripts/setup-models.py --only language-model` from a normal terminal and install
+  the prose runtime), and since the practitioner does that outside the app, the tab's
+  5 s availability poll re-checks `models.language_model_available()` — an import probe
+  plus a stat of the model file, never a load and never a decrypt — and re-computes the
+  options when that presence CHANGES, so the two prose radios enable without a restart
+  (note-learning plan Task 4.4).
 - **Learning from your own notes shows what will be kept before anything is saved,
   and asks about the originals separately.** The Practitioner tab's "Learn from my
-  notes" group takes up to five `.txt`/`.docx` files or one pasted note, reads them
-  (never copies them), and opens a review dialog listing the section headings found,
+  notes" group takes up to five `.txt`/`.docx`/`.pdf` files (a Cliniko PDF export is
+  read as text; a scanned PDF is refused with "paste the text instead") or one pasted
+  note, reads them (never copies them), and opens a review dialog listing the section
+  headings found,
   the recognised shorthand, the unrecognised abbreviations as tick-to-keep rows
   (unticked by default) and the example sentences that passed the check unchanged
   with per-sentence remove; only that dialog's Save writes the learned style, under
@@ -162,6 +179,23 @@ view patterns · tokens · microcopy.
   button-enabled flag cannot prevent a worker/GUI interleaving. Always offer a
   non-destructive escape (Cancel review and regenerate — keeps the queued transcript and
   key) alongside any destructive one (Delete note and complete without one).
+- **Prose is rendered after the note is finalised, and Save waits for it.** With a
+  prose style chosen, generating a note starts ONE rendering job and the style line
+  under the note body says so — "Writing style 'Narrative': rendering the prose now -
+  Save note is available once the prose is shown." — with Save disabled meanwhile and a
+  click on it saying the same thing, because a note must never be saved with wording the
+  practitioner has not read. When the job lands, the prose is DISPLAYED first and the
+  line becomes "… prose shown for N sections, M sections shown as Clean clinical (the
+  fidelity check refused the prose) …". A section whose prose failed the check stays as
+  Clean clinical — its confirmed lines, unchanged — the line says so, and the review
+  warning "A section is shown as Clean clinical because its prose did not pass the
+  fidelity check" must be acknowledged like every other review warning. Editing a line
+  re-renders only the section it changed. The language model failing to load, or Own
+  voice with no learned style, is said on the SAME line and the note is shown as Clean
+  clinical (`ui/note.py` `style_label`;
+  `ui/models.py` `RENDERING_IN_FLIGHT_LINE` / `RENDERING_DONE_LINE` /
+  `LANGUAGE_MODEL_LOAD_FAILED_LINE` / `STYLE_PROFILE_MISSING_LINE` /
+  `SAVE_WHILE_RENDERING_MESSAGE`; note-learning plan Task 4.4, C8).
 - **Live transcript is an append-only display under a header.** While recording, the
   Transcript tab shows the header `Live — updates while recording` and appends each
   transcribed window's lines (timestamps and `[word?]` marks, no speaker — attribution
@@ -213,6 +247,16 @@ Cliniko, and only once the shipping gate allows.
 - A learning outcome names what was kept and what happened to the sources: "Learned
   style saved from 2 notes: 5 example sentence(s), 4 shorthand token(s). The original
   notes were kept." / "… Deleted 2 original file(s)."
-- A disabled writing style names what it needs: "Own voice needs the local language
-  model, which is not installed (it arrives with a later update); needs a learned style -
-  teach the scribe your note style below first." — the reason, then the remedy.
+- A disabled writing style names what it needs AND how to get it: "Own voice needs the
+  local language model, which is not installed - run scripts/setup-models.py --only
+  language-model from a normal terminal and install the prose runtime (AGENTS.md Local
+  Run Steps); needs a learned style - teach the scribe your note style below first." —
+  the reason, then the remedy.
+- A rendering in flight says what is waiting on it, not just that it is busy: "Writing
+  style 'Narrative': rendering the prose now - Save note is available once the prose is
+  shown."; a click on the disabled Save repeats it ("The prose is still being rendered -
+  Save note is available once it is shown.").
+- A fidelity fallback names what the practitioner is looking at and what to do, never
+  the refused wording: "A section is shown as Clean clinical because its prose did not
+  pass the fidelity check" / "Read that section as shown (its confirmed lines,
+  unchanged), then acknowledge."

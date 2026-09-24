@@ -161,6 +161,13 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
         "config_root": tmp_path / "config",
         # The learned-style store root — never the default one.
         "style_root": tmp_path / "style",
+        # The language model's presence is PINNED absent (leg e7): a test
+        # must never depend on whether the practitioner has downloaded the
+        # 2.3 GiB model on this host (the options provider still STATS the
+        # tmp style store, which is what the learn / delete cases exercise).
+        "style_options_provider": lambda: models.style_options(
+            style_root=tmp_path / "style", model_available=lambda: False
+        ),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(
@@ -309,8 +316,11 @@ class TestLearnGroup:
     def test_an_unreadable_file_names_itself_and_reviews_nothing(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        """Case 7: a PDF is not read (the reader refuses the suffix); the
-        status line names the file and nothing reaches the review."""
+        """Case 7: an unreadable file — a `.pdf` that is not a PDF (the
+        reader refuses it as unreadable where pypdf is installed, and as
+        needing pypdf where it is not; since the Phase 4 smoke a real text PDF
+        IS read); the status line names the file and nothing reaches the
+        review."""
         scan = tmp_path / "scan.pdf"
         scan.write_bytes(b"%PDF")
         runner = _capturing_runner()

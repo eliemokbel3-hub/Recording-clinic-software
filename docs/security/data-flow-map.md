@@ -11,9 +11,12 @@ There is
 **no status file** (that design was cut in plan hardening) and **no network
 sockets** on either desktop process at runtime (enforced by
 `desktop/tests/test_integration_no_sockets.py`, ruff import bans, and the
-offline env kill-switches in flow 7) — the ONLY sanctioned network user is the
-explicit model-setup script (flow 9). The note pipeline (flows 10–11) is
-in-process and adds no network surface and no new logging channel.
+offline env kill-switches in flow 7) — the sanctioned network users are TWO
+explicit SETUP-TIME steps outside the running app, the model-setup script and
+the one-off pinned prose-runtime wheel install, both in flow 9. The note
+pipeline (flows 10–11) is in-process and adds no network surface and no new
+logging channel, and so is the prose rendering the language model does
+(flow 17).
 
 ## Components
 
@@ -23,6 +26,7 @@ in-process and adds no network surface and no new logging channel.
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
 | Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
+| Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
 ## Flows
 
@@ -120,34 +124,63 @@ in-process and adds no network surface and no new logging channel.
    `%LOCALAPPDATA%\ClinikoScribe\models\` — `silero-vad\silero_vad.onnx`
    (~2 MiB) plus CTranslate2 whisper snapshots (runtime default
    `whisper\medium`, ~1.43 GiB, with `whisper\small` ~465 MiB as the
-   visible fallback; with all four benchmark candidates the cache is
-   ~3.0 GiB) and, for voice enrolment (practitioner-profile plan),
+   visible fallback; with all four benchmark candidates those come to
+   ~3.0 GiB), for voice enrolment (practitioner-profile plan),
    `speaker-embedding\wespeaker-voxceleb-resnet34-LM.onnx` (~25 MiB; promoted
    from the practitioner's digest-verified candidate at that plan's Task 0.6,
-   2026-09-15). Static program data, no clinical content. Written ONLY by flow 9; runtime processes never write
+   2026-09-15) and, for the prose styles (note-learning-and-styles plan Phase
+   4), `language-model\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (~2.33 GiB; size
+   and SHA-256 verified again at every load, flow 17) — so the whole cache is
+   ~5.3 GiB with all four benchmark candidates and the language model. Static
+   program data, no clinical content. Written ONLY by flow 9; runtime processes never write
    here. The hardware benchmark additionally synthesizes its fixed
    NON-CLINICAL sample script to a transient plaintext WAV (Windows SAPI)
    inside an auto-deleted temp directory — no clinical content ever takes
    that path.
 
-9. **The ONE sanctioned network flow: `scripts/setup-models.py`
-   (setup-time, separate process).** Explicit one-time HTTPS downloads into
+9. **The TWO sanctioned network steps (both setup-time, separate processes,
+   never the app).**
+   (a) `scripts/setup-models.py`. Explicit one-time HTTPS downloads into
    the model cache: silero-vad from its pinned GitHub release tag
    (SHA-256-verified), whisper snapshots from Hugging Face pinned to
-   immutable commit SHAs, and the speaker-embedding model (WeSpeaker
+   immutable commit SHAs, the speaker-embedding model (WeSpeaker
    VoxCeleb ResNet34-LM ONNX export, `Wespeaker/wespeaker-voxceleb-resnet34-LM`
    on Hugging Face) pinned by SHA-256 exactly like silero — a
    trust-on-first-download digest recorded from the practitioner's own
-   candidate fetch (practitioner-profile plan Tasks 0.4–0.5, 2026-09-15); a
-   digest mismatch refuses the bytes and promotes nothing. The
-   speaker-embedding download — candidate and pinned alike — must be https
-   on every redirect hop: a redirect to http is refused before it is
-   fetched (the guard is installed for that helper only; silero-vad and the
-   whisper snapshots rely on their pre-existing pins, not on a redirect
-   guard). Idempotent; never invoked by the app;
+   candidate fetch (practitioner-profile plan Tasks 0.4–0.5, 2026-09-15) —
+   and, since the note-learning-and-styles plan's Phase 4 (2026-09-20), the
+   local language model `Qwen3-4B-Instruct-2507-Q4_K_M.gguf` from
+   `unsloth/Qwen3-4B-Instruct-2507-GGUF` (2 497 281 120 bytes, ~2.33 GiB),
+   pinned by SIZE and SHA-256 in `scribe_desktop.language_model` and fetched
+   as streamed 1 MiB reads into `language-model\<name>.gguf.candidate` with
+   HTTP Range resume, a free-space precondition (needed bytes + a 256 MiB
+   margin) before any byte is written, and every read bounded by the PIN —
+   the declared `Content-Length` is checked but never trusted as an
+   allocation bound, and a longer body deletes the candidate. A digest
+   mismatch refuses the bytes and promotes nothing; promotion to the real
+   filename happens only after size AND SHA-256 match. The
+   speaker-embedding and language-model downloads — candidate and pinned
+   alike — must be https on every redirect hop: a redirect to http is
+   refused before it is fetched (the same handler class serves both; silero-
+   vad and the whisper snapshots rely on their pre-existing pins, not on a
+   redirect guard). Idempotent; never invoked by the app;
    runtime processes stay socketless. It must be run BY THE USER from a normal
    terminal — agent/MSIX-virtualized shells write to a package-private
    location invisible to user-launched processes (see `docs/lessons.md`).
+   (b) The prose runtime's wheel install, `pip install --require-hashes
+   --no-deps -r desktop\requirements-ml-prose.txt`. ONE requirement: the
+   prebuilt CPU wheel `llama_cpp_python-0.3.35-py3-none-win_amd64.whl` as a
+   GitHub release asset, pinned by URL AND SHA-256 (`--require-hashes`, so
+   pip refuses anything else), followed by its two pure-Python dependencies
+   from PyPI as wheels only (`--only-binary=:all:`) and a `pip check`. It is
+   deliberately NOT part of the `[ml]` extra: PyPI carries only an sdist for
+   this package, so a plain `[dev,ml]` install would BUILD it from source
+   (forbidden by that plan's D8). An installed copy whose PEP 610
+   `direct_url.json` does not name the pinned URL and hash is refused by
+   `desktop/tests/test_language_model_runtime.py::TestInstalledRuntimeGate`.
+   Run once per machine BY THE USER from a normal terminal, exactly like
+   (a); the app never installs, updates or checks for a runtime, and never
+   downloads a model.
 
 10. **Note pipeline (Phase 3A, in-process, zero network).** After transcription,
     `scribe-app` composes a draft note from the immutable transcript
@@ -329,7 +362,9 @@ in-process and adds no network surface and no new logging channel.
     key-first by `delete_style_profile`, independently of the voice profile
     (flow 12); the session, voice and style keys cannot open each other's store.
     Phase 3 BUILT the flow into it. The Practitioner tab's "Learn from my
-    notes" group reads 1–5 chosen `.txt`/`.docx` files and/or one pasted note
+    notes" group reads 1–5 chosen `.txt`/`.docx`/`.pdf` files (a `.pdf` — the
+    Cliniko export — text-extracted by `pypdf`, never OCR'd; Phase 4 live
+    smoke, practitioner decision 2026-09-20) and/or one pasted note
     through `sample_notes.read_sample_note` — into memory only, never copied
     and never moved (a whole-tree before/after snapshot test pins it) — and
     `learn_style_profile`, pure over those texts, derives the section order and
@@ -356,9 +391,49 @@ in-process and adds no network surface and no new logging channel.
     profile. Nothing in this flow is logged (`sample_text`,
     `recognised_shorthand`, `unrecognised_shorthand` and `exemplar_text` are
     registered tripwire markers and none of these modules holds a logger).
-    No network, no new channel. The prose stage (Phase
-    4) reads the style profile and confirmed assertion text only, never the
-    transcript — planned.
+    No network, no new channel. Since Phase 4 the prose stage READS this
+    profile (per job, never on a poll) as conditioning for the Own-voice
+    style — the style profile and confirmed assertion text only, never the
+    transcript (flow 17).
+
+17. **Prose rendering (note-learning-and-styles plan Phase 4, D6, D7, D8;
+    in-process, zero network).** Input: the confirmed assertion TEXTS of a
+    FINALISED note, grouped by section — never the transcript and never a
+    pending proposal, refused BY TYPE (`prose_style.ProseInput.from_note`
+    takes a `GeneratedNote`; a `TranscriptDocument` or a `NoteDraft` raises).
+    The Note tab starts ONE stage job per finalisation on its `TaskThread`
+    (`ui/note.py` `_start_style_stage`; `ui/models.build_prose_stage`): the
+    model is built once per process on that worker thread from the LOCAL file
+    only — `assert_offline_env`, UNC refused, presence, size and SHA-256
+    against the pins in `scribe_desktop.language_model`, then a smoke
+    generation — and for Own voice the style profile is decrypted per job
+    through `load_style_profile` (flow 16), never on a poll. Each section is
+    ONE call: the prompt is the section title, its confirmed lines between
+    `PROMPT_LINES_HEADER` / `PROMPT_LINES_END` and a fixed narrative
+    instruction (plus the profile's measures, shorthand and ≤ 30 exemplars as
+    conditioning for Own voice). The completion goes through
+    `prose_style.parse_section_prose` and then Check 5
+    (`note_check.fidelity_warnings` — missing fact, added content, polarity,
+    protected tokens); a refused section's prose is DROPPED before the result
+    is built and the section is shown as Clean clinical with a review warning.
+    What survives is a `StyleRendering` bound to that section's input digest,
+    attached only while the digest still matches
+    (`note.attach_style_renderings`), displayed and persisted through
+    `note.render_note` with the rest of the note in `note.enc` under the SAME
+    per-session key (flow 10) — so a rendering has exactly the note's custody,
+    lifetime and deletion, and Copy shows the same bytes. In memory only, with
+    the lifetimes stated exactly (codex round 22 PR-MED-034): one section's
+    prompt and completion for that `complete` call, at whose end the runtime's
+    inference state — token buffers and KV cache — is cleared
+    (`LocalLanguageModel._clear_inference_state`); every section's parsed
+    prose, refused prose included, for the one `render` call that judges the
+    batch (the refused text is dropped before the result is built); the loaded
+    model stays resident for the life of the process (~2.5 GiB of process
+    memory) and is freed with it.
+    Nothing here is written outside `note.enc`, nothing is logged
+    (`section_texts`, `prose_text` and `style_renderings` are registered
+    tripwire markers), and no socket is opened — pinned by the prose legs of
+    `desktop/tests/test_integration_no_sockets.py`.
 
 ## Explicit non-flows
 
@@ -390,8 +465,10 @@ in-process and adds no network surface and no new logging channel.
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the
   network-stubbed transcription test landed with Step 13, and the manual
-  completion gate's independent monitor run passed 2026-08-02). Model
-  downloads happen only in the separate setup script.
+  completion gate's independent monitor run passed 2026-08-02; since Phase 4
+  the poll also runs inside a prose generation). Model downloads and the
+  prose-runtime install happen only in the separate setup-time processes
+  (flow 9).
 - No cloud AI services; no telemetry (HF telemetry disabled; onnxruntime
   telemetry off).
 - No clinical content in logs — the whitelist + tripwire now also drops
@@ -440,14 +517,26 @@ in-process and adds no network surface and no new logging channel.
   `sample_notes.delete_sample_files` (a directory is refused, never walked;
   `TestDeleteSampleFiles::test_exactly_the_listed_paths_go`).
 - No transcript text to the language model (note-learning-and-styles plan, D6,
-  D8; PLANNED; enforced from Phase 4 — there is no language model today). What
-  it will hold: the prose stage's input is confirmed assertion text grouped by
-  section plus the style profile (or a fixed narrative instruction), never the
-  transcript and never a pending proposal; the prebuilt CPU wheel fetch is the
-  second sanctioned network step beside `setup-models.py` (flow 9) and is
-  recorded here when Phase 4 lands, and the enforcing control for the runtime's
-  offline posture is the no-sockets integration test extended over a prose
-  generation, not `assert_offline_env`.
+  D8; BUILT, Phase 4). The prose stage's ONLY input is
+  `prose_style.ProseInput.from_note`, which takes a FINALISED `GeneratedNote`
+  and refuses a `TranscriptDocument` or a `NoteDraft` BY TYPE — so neither
+  transcript text nor a pending proposal can reach the model — and
+  `build_section_prompt` takes text LINES only (a section title, the confirmed
+  lines, the fixed narrative instruction, and for Own voice the style
+  profile's measures, shorthand and exemplars as conditioning). Flow 17.
+- No network from the prose runtime (note-learning-and-styles plan, D8; BUILT,
+  Phase 4). The runtime is installed ONCE, by the practitioner, from the
+  pinned hashed wheel (flow 9b); the app process opens no socket during a
+  prose generation. `assert_offline_env` is NOT the enforcing control here —
+  llama-cpp-python reads no kill-switch variable (the contract does refuse its
+  `LLAMA_CPP_LIB_PATH` library override, threat-model surface 17) — the
+  enforcing control is `desktop/tests/test_integration_no_sockets.py` in two
+  legs (codex round 22 PR-LOW-040): the mock-model leg polls the OS socket
+  table while the process is inside a model call and covers the STAGE's
+  orchestration (no native code runs there); the real-model leg covers the
+  RUNTIME — the real library's load and one generation under continuous polls
+  — and skips BY NAME until the wheel and the file exist, so that evidence is
+  conditional.
 
 ## Phase 5 preview (locked topology — pipe deferred)
 

@@ -1,8 +1,11 @@
-"""Note checking stage (Phase 3A, Tasks 5.1-5.4).
+"""Note checking stage (Phase 3A, Tasks 5.1-5.4; Check 5 from the
+note-learning-and-styles plan, Task 4.2).
 
 This module owns the four content checks that run over a composed
 ``GeneratedNote`` AFTER confirmation and BEFORE ``write_note`` (the plan's
-pipeline order: compose -> confirm -> CHECK -> write). Every check is a pure
+pipeline order: compose -> confirm -> CHECK -> write), and the fifth — the
+prose fidelity gate — that the prose stage runs over language-model output
+after finalisation. Every check is a pure
 function from (note, transcript, config) to ``NoteWarning`` tuples — no
 state, no I/O, and NO LOGGING anywhere in this module: the returned warnings
 carry codes, ids and coordinates only, never clinical text, so the module's
@@ -133,6 +136,43 @@ What each check claims — and, recorded with equal care, what it does NOT:
   ``PLAN.md`` requires the note to do — so patient-side speech never draws
   an omission warning, and with no confirmed role the scoping predicate
   does not exist and the check honestly emits nothing.
+- **Check 5, ``fidelity_warnings``** (note-learning-and-styles plan Task
+  4.2, D6) — the fidelity GATE over the local language model's prose for one
+  section, run by the prose stage AFTER finalisation (it is NOT part of
+  ``check_note``: no prose exists when the four checks above run). Per
+  section, over normalised content tokens (``note.content_tokens`` — the
+  ONE tokenisation), four rules in this order, the first hit reported:
+  (a) ``missing_fact`` — every content token of every confirmed input line
+  that is not itself on the connective allow-list appears in the prose (set
+  containment: a token the inputs state twice may be stated once; glue
+  such as "reports" or "for" may be dropped or re-tensed, and no polarity
+  or protected token is a connective, pinned by test); (b)
+  ``added_content`` — the prose adds no content token
+  absent from the inputs other than one on the shipped connective
+  allow-list (``config_defaults/prose_connectives.json`` —
+  ``note_config.PROSE_CONNECTIVES``: articles, prepositions, conjunctions,
+  auxiliaries, pronouns and the reporting-verb families), so "neck pain
+  with paralysis" fails on ``paralysis``; (c) ``polarity`` — the MULTISET
+  of polarity markers (the checker's negation vocabulary ``_NEGATIONS``
+  plus ``nil`` and any ``n't`` contraction) is identical on both sides, so
+  a negation neither added nor dropped; (d) ``protected`` — the multiset
+  of number, date, medication and laterality tokens is identical on both
+  sides (the same classifiers the learning filters use:
+  ``transcription.is_number_token``, ``note_config._is_date_shaped``,
+  ``note_config._is_medication_shaped`` plus this module's closed
+  medication lexicon, and ``_LATERALITY_TOKENS``), so none is added,
+  removed or changed. A failing section draws ONE ``style_fallback``
+  review warning and the prose stage keeps ``clean`` for it (C8).
+  Check 5 is a GATE, not a certificate — stated as such wherever it is
+  described: prose that passes is still read and ratified by the
+  practitioner's Save (D5). Residue, named: the rules see tokens, not
+  attachment or order — a section that names both sides can have them
+  swapped between two anatomy words and pass, a negation can move from one
+  clause to another with the same count and pass, two numbers can trade
+  places and pass, and a rephrase that keeps every token but reverses a
+  comparison passes; the practitioner's reading is the control for all of
+  these, and the laterality-parser lesson (rounds 48–58) is why no binding
+  parser is attempted here.
 
 ``check_note`` is the stage entry point. It REFUSES (typed
 ``CheckTargetMismatchError``) to check a note against a transcript or
@@ -156,7 +196,8 @@ false accusation.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections import Counter
+from collections.abc import Iterable, Mapping, Sequence
 from itertools import combinations
 from typing import Final, Literal, NamedTuple, NewType
 
@@ -166,10 +207,12 @@ from scribe_desktop.note import (
     # two sets would let the instrument express a class the checker cannot
     # see, exactly the drift Task 1.2 pinned tokenisation against.
     _NEGATIONS,
+    CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
     GeneratedNote,
     NoteAssertion,
     NoteProposal,
+    NoteSectionKey,
     NoteWarning,
     SourceCoords,
     content_tokens,
@@ -182,11 +225,17 @@ from scribe_desktop.note_config import (
     # Package-private by name, shared deliberately (the note.py convention):
     # ONE definition of what ends a clause. The config authoring guard and
     # this parser must agree, or "one claim" would mean two different things
-    # on the two sides of the same pipeline.
+    # on the two sides of the same pipeline. Check 5 (Task 4.2) shares the
+    # learning filters' date and medication classifiers the same way, so a
+    # token the filters refuse and a token the fidelity gate protects are
+    # one class, never two drifting spellings of it.
     _TERMINAL_PUNCT,
+    PROSE_CONNECTIVES,
     AutofillRule,
     NoteConfig,
     _canonical_config,
+    _is_date_shaped,
+    _is_medication_shaped,
     bind_template_profile,
     mapping_drop_warnings,
 )
@@ -1465,6 +1514,134 @@ def omission_warnings(
 
 
 # ---------------------------------------------------------------------------
+# Check 5 — prose fidelity (note-learning-and-styles plan Task 4.2, D6).
+# A GATE over the language model's prose, not a certificate — the module
+# docstring states the four rules, their order and the named residue.
+# ---------------------------------------------------------------------------
+
+FidelityRule = Literal["missing_fact", "added_content", "polarity", "protected"]
+
+# Rule (c): the polarity markers — the checker's negation vocabulary plus the
+# two forms D6 names beyond it. A token ENDING in ``n't`` (``doesn't``,
+# ``can't``) counts as the marker ``n't``; a typographic apostrophe is folded
+# first so ``doesn’t`` is the same marker.
+_POLARITY_TOKENS: Final[frozenset[str]] = frozenset({*_NEGATIONS, "nil", "n't"})
+_CONTRACTED_NEGATION: Final = "n't"
+_TYPOGRAPHIC_APOSTROPHE: Final = "’"
+
+# Rule (b): the shipped connective allow-list as a set (lower-case entries —
+# the vocabulary guard refuses a mixed-case twin at import).
+_PROSE_CONNECTIVE_SET: Final[frozenset[str]] = frozenset(PROSE_CONNECTIVES)
+
+
+class FidelityVerdict(NamedTuple):
+    """One section's Check 5 outcome: ``passed`` and, when it did not, the
+    FIRST rule that failed (``rule`` is None on a pass). Codes only — never
+    the offending token, which is clinical text."""
+
+    passed: bool
+    rule: FidelityRule | None
+
+
+def _polarity_mark(token: str) -> str | None:
+    folded = token.replace(_TYPOGRAPHIC_APOSTROPHE, "'")
+    if folded in _POLARITY_TOKENS:
+        return folded
+    if folded.endswith(_CONTRACTED_NEGATION):
+        return _CONTRACTED_NEGATION
+    return None
+
+
+def _protected_class(token: str) -> Literal["laterality", "date", "number", "medication"] | None:
+    """Rule (d)'s class of ONE normalised token, or None. Date before number
+    (a year is digit-bearing and a date); the medication class is the
+    learning filter's shape rule OR this module's closed lexicon, so a listed
+    drug name without a listed suffix (``paracetamol``) is protected too."""
+    if token in _LATERALITY_TOKENS:
+        return "laterality"
+    if _is_date_shaped(token):
+        return "date"
+    if is_number_token(token):
+        return "number"
+    if token in _MEDICATION_LEXICON or _is_medication_shaped(token):
+        return "medication"
+    return None
+
+
+def _polarity_counts(tokens: Iterable[str]) -> Counter[str]:
+    marks = (_polarity_mark(token) for token in tokens)
+    return Counter(mark for mark in marks if mark is not None)
+
+
+def _protected_counts(tokens: Iterable[str]) -> Counter[str]:
+    return Counter(token for token in tokens if _protected_class(token) is not None)
+
+
+def fidelity_verdict(inputs: Sequence[str], prose: str) -> FidelityVerdict:
+    """Check 5 for ONE section: ``inputs`` are the section's confirmed
+    assertion texts exactly as confirmed, ``prose`` the language model's
+    rendering of them. Rules (a)–(d) in order (module docstring); the first
+    failure is the verdict. Prose with NO content token never passes
+    (``missing_fact`` — a rendering must show something, and a ``passed``
+    ``StyleRendering`` may not be blank; round 20 LOW-002); prose over NO
+    inputs fails (b) unless it is connectives alone — a fabricated section
+    never passes."""
+    input_tokens = [token for text in inputs for token in content_tokens(text)]
+    prose_tokens = list(content_tokens(prose))
+    if not prose_tokens:
+        return FidelityVerdict(False, "missing_fact")
+    input_set = frozenset(input_tokens)
+    prose_set = frozenset(prose_tokens)
+    # Rule (a) over the FACT-BEARING input tokens: a token on the connective
+    # allow-list is glue on both sides (it may be added, so it may be dropped
+    # or re-tensed — "reports" → "reported", "for" dropped). No polarity or
+    # protected token is a connective (pinned by test), so rules (c) and (d)
+    # still see every one of those.
+    if any(token not in prose_set and token not in _PROSE_CONNECTIVE_SET for token in input_set):
+        return FidelityVerdict(False, "missing_fact")
+    if any(
+        token not in input_set and token not in _PROSE_CONNECTIVE_SET for token in prose_set
+    ):
+        return FidelityVerdict(False, "added_content")
+    if _polarity_counts(input_tokens) != _polarity_counts(prose_tokens):
+        return FidelityVerdict(False, "polarity")
+    if _protected_counts(input_tokens) != _protected_counts(prose_tokens):
+        return FidelityVerdict(False, "protected")
+    return FidelityVerdict(True, None)
+
+
+def fidelity_verdicts(
+    section_inputs: Mapping[NoteSectionKey, Sequence[str]],
+    section_prose: Mapping[NoteSectionKey, str],
+) -> dict[NoteSectionKey, FidelityVerdict]:
+    """``fidelity_verdict`` per section that HAS prose, in canonical order. A
+    section with inputs and no prose is not judged here — it has nothing to
+    show and the prose stage keeps ``clean`` for it with its own reason; a
+    section with prose and no inputs is judged against an empty input."""
+    verdicts: dict[NoteSectionKey, FidelityVerdict] = {}
+    for key in CANONICAL_SECTION_KEYS:
+        if key not in section_prose:
+            continue
+        verdicts[key] = fidelity_verdict(section_inputs.get(key, ()), section_prose[key])
+    return verdicts
+
+
+def fidelity_warnings(
+    section_inputs: Mapping[NoteSectionKey, Sequence[str]],
+    section_prose: Mapping[NoteSectionKey, str],
+) -> tuple[NoteWarning, ...]:
+    """Check 5 as warnings: ONE ``style_fallback`` review warning per section
+    whose prose failed ``fidelity_verdict`` (codes and section keys only —
+    no token, no text). The prose stage reads the same verdicts to keep
+    ``clean`` for that section (D6, C8)."""
+    return tuple(
+        NoteWarning(note_warning_code="style_fallback", severity="review", section_key=key)
+        for key, verdict in fidelity_verdicts(section_inputs, section_prose).items()
+        if not verdict.passed
+    )
+
+
+# ---------------------------------------------------------------------------
 # The stage entry point.
 # ---------------------------------------------------------------------------
 
@@ -1486,7 +1663,9 @@ def check_note(
     note was generated from, and warnings computed against the wrong
     artifact would be false confidence in both directions. The individual
     check functions stay callable directly (the fixture matrix drives them
-    that way); this gate is the composed entry's contract.
+    that way); this gate is the composed entry's contract. Check 5
+    (``fidelity_warnings``) is NOT run here: it judges language-model prose
+    that exists only after finalisation, and the prose stage calls it.
     """
     resolved = _canonical_config(config)
     if note.transcript_digest != transcript_digest(document):
@@ -1509,9 +1688,14 @@ def check_note(
 
 __all__ = [
     "CheckTargetMismatchError",
+    "FidelityRule",
+    "FidelityVerdict",
     "NoteCheckError",
     "check_note",
     "contradiction_warnings",
+    "fidelity_verdict",
+    "fidelity_verdicts",
+    "fidelity_warnings",
     "omission_warnings",
     "provenance_warnings",
     "reconstruction_warnings",

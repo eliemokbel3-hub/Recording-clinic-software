@@ -23,6 +23,17 @@ Covered:
   default run includes the entry, a wrong-digest candidate is refused
   against the real pin and left un-promoted, ``--candidate-url`` is refused
   through the CLI, and a pinned download of wrong bytes writes nothing.
+- ``setup-models.py``'s ``language-model`` entry (note-learning-and-styles
+  plan Task 4.1): the STREAMED download under a fake pin - a fresh fetch
+  reads in bounded chunks, verifies and promotes; a partial candidate
+  resumes with a ``Range`` header and a server that ignores it restarts from
+  zero; a full-size candidate is verified without any network; an oversized
+  candidate, a Content-Length that disagrees with the pin, a body longer than
+  the pin and too little free space are all refused (the first three before a
+  byte is written, the fourth before the opener exists) while a SHORT body
+  keeps the candidate for the next resume; plus the shipped pin itself
+  (a real ``https://huggingface.co/unsloth/...`` URL, the recorded size, a
+  64-hex digest) and its single-sourcing with ``scribe_desktop.language_model``.
 - the smoke: since Task 1.1 its front-end, loader and embed step are
   ``scribe_desktop.speaker_embedding``'s (pinned by identity here; their
   behaviour is tested in ``test_speaker_embedding.py``); its cosine matrix
@@ -36,10 +47,12 @@ import importlib.util
 import io
 import wave
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
+
+from scribe_desktop import language_model
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "scripts"
@@ -100,8 +113,81 @@ def _fake_build_opener(body: bytes, seen: list[str], handlers: list[Any] | None 
     return _build
 
 
+def _fake_stream_opener(
+    body: bytes,
+    seen: list[dict[str, Any]],
+    *,
+    status_for_range: int = 206,
+    content_length: bool = True,
+    declared_length: int | None = None,
+    handlers: list[Any] | None = None,
+) -> Any:
+    """A stand-in for ``urllib.request.build_opener`` for the STREAMED
+    language-model download. Each ``open(request)`` records ``{"url", "range",
+    "reads"}`` in ``seen`` (``reads`` filling with the size of every chunk the
+    caller takes, so a test can prove the reads stay bounded) and serves
+    ``body[offset:]`` with status 206 when a ``Range`` header arrived and
+    ``status_for_range == 206``; otherwise the whole body with status 200 (a
+    server that ignores the resume). ``read()`` takes a SIZE and returns at
+    most that many bytes - no zero-argument ``read`` exists here, so code that
+    slurped the whole body would fail loudly. ``declared_length`` overrides the
+    ``Content-Length`` header (a server that lies about the size)."""
+
+    class _Response:
+        def __init__(self, served: bytes, status: int, reads: list[int]) -> None:
+            self._served = served
+            self._offset = 0
+            self._reads = reads
+            self.status = status
+            self.headers: dict[str, str] = {}
+            if content_length:
+                length = declared_length if declared_length is not None else len(served)
+                self.headers["Content-Length"] = str(length)
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+        def read(self, size: int) -> bytes:
+            chunk = self._served[self._offset : self._offset + size]
+            self._offset += len(chunk)
+            self._reads.append(len(chunk))
+            return chunk
+
+    class _Opener:
+        def open(self, request: Any) -> _Response:
+            header = request.get_header("Range")
+            reads: list[int] = []
+            seen.append({"url": request.full_url, "range": header, "reads": reads})
+            if header is not None and status_for_range == 206:
+                offset = int(str(header).split("=", 1)[1].split("-", 1)[0])
+                return _Response(body[offset:], 206, reads)
+            return _Response(body, 200, reads)
+
+    def _build(*installed: Any) -> _Opener:
+        if handlers is not None:
+            handlers.extend(installed)
+        return _Opener()
+
+    return _build
+
+
+def _fake_disk_usage(free: int) -> Any:
+    """A ``shutil.disk_usage`` stand-in reporting a fixed amount free."""
+
+    def _usage(path: Any) -> SimpleNamespace:
+        return SimpleNamespace(total=free, used=0, free=free)
+
+    return _usage
+
+
 FAKE_MODEL = bytes(range(256)) * (5 * 1024)  # 1.25 MiB, above the size floor
 FAKE_SHA = hashlib.sha256(FAKE_MODEL).hexdigest()
+
+FAKE_LM = bytes(range(256)) * 3000  # 768_000 bytes - the fake language model
+FAKE_LM_SHA = hashlib.sha256(FAKE_LM).hexdigest()
 
 
 class TestSetupModelsCli:
@@ -119,6 +205,7 @@ class TestSetupModelsCli:
         assert setup_models.valid_only_names() == {
             "silero-vad",
             "speaker-embedding",
+            "language-model",
             *setup_models.WHISPER_CANDIDATES,
         }
 
@@ -171,6 +258,10 @@ class TestSetupModelsCli:
             "fetch_speaker_embedding",
             lambda root, **kw: calls.append("speaker"),
         )
+        # Task 4.1: the default run now also reaches the language-model entry.
+        monkeypatch.setattr(
+            setup_models, "fetch_language_model", lambda root: calls.append("language-model")
+        )
         assert setup_models.main([]) == 0
         assert "speaker" not in calls
         assert calls[0] == "silero"
@@ -197,6 +288,7 @@ class TestSetupModelsCli:
             "fetch_speaker_embedding",
             lambda root, **kw: calls.append(f"speaker:{kw.get('candidate_url')}"),
         )
+        monkeypatch.setattr(setup_models, "fetch_language_model", lambda root: None)
         assert setup_models.main([]) == 0
         assert calls == ["speaker:None"]
 
@@ -556,6 +648,286 @@ class TestSpeakerEmbeddingPinnedMode:
         monkeypatch.setattr(setup_models, "SPEAKER_EMBEDDING_URL", "")
         with pytest.raises(SystemExit, match="no URL recorded"):
             setup_models.fetch_speaker_embedding(tmp_path)
+
+
+# --- the language-model entry (note-learning-and-styles Task 4.1) ----------------
+
+
+class TestLanguageModelEntry:
+    """The streamed download, driven under a FAKE pin (768 KB instead of 2.3
+    GiB) so every branch - resume, restart, refusal, promotion - runs in
+    milliseconds against ``tmp_path``. ``_no_network`` is still autouse: any
+    test asserting "no opener" is proven by it."""
+
+    @pytest.fixture(autouse=True)
+    def _fake_pin(self, monkeypatch: pytest.MonkeyPatch, setup_models: ModuleType) -> None:
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_SIZE_BYTES", len(FAKE_LM))
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_SHA256", FAKE_LM_SHA)
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_URL", "https://example.invalid/lm.gguf")
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_STREAM_CHUNK", 4096)
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_PROGRESS_EVERY", 1 << 40)
+        # Plenty of room, so the precondition never decides a test that is
+        # about something else (the one that IS about it overrides this).
+        monkeypatch.setattr(setup_models.shutil, "disk_usage", _fake_disk_usage(1 << 40))
+
+    def test_paths(self, setup_models: ModuleType, tmp_path: Path) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        name = setup_models.LANGUAGE_MODEL_FILENAME
+        assert target == tmp_path / "language-model" / name
+        assert candidate == tmp_path / "language-model" / f"{name}.candidate"
+
+    def test_valid_only_names_gains_language_model(self, setup_models: ModuleType) -> None:
+        assert "language-model" in setup_models.valid_only_names()
+
+    def test_default_run_includes_the_entry(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        calls: list[str] = []
+        monkeypatch.setattr(setup_models, "models_root", lambda: tmp_path)
+        monkeypatch.setattr(setup_models, "fetch_silero_vad", lambda root: calls.append("silero"))
+        monkeypatch.setattr(setup_models, "fetch_whisper", lambda *a: calls.append("whisper"))
+        monkeypatch.setattr(
+            setup_models, "fetch_speaker_embedding", lambda root, **kw: calls.append("speaker")
+        )
+        monkeypatch.setattr(
+            setup_models, "fetch_language_model", lambda root: calls.append("language-model")
+        )
+        assert setup_models.main([]) == 0
+        assert calls.count("language-model") == 1
+        assert calls[-1] == "language-model", "the entry runs after the speaker embedding"
+        calls.clear()
+        assert setup_models.main(["--only", "language-model"]) == 0
+        assert calls == ["language-model"]
+
+    def test_fresh_download_streams_verifies_and_promotes(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request, "build_opener", _fake_stream_opener(FAKE_LM, seen)
+        )
+        setup_models.fetch_language_model(tmp_path)
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        assert len(seen) == 1
+        assert seen[0]["url"] == "https://example.invalid/lm.gguf"
+        assert seen[0]["range"] is None, "a fresh download must not ask for a range"
+        assert seen[0]["reads"], "the body must be read in chunks, not slurped"
+        assert max(seen[0]["reads"]) <= 4096
+        assert target.read_bytes() == FAKE_LM
+        assert not candidate.exists()
+        assert not target.with_name(target.name + ".part").exists()
+        out = capsys.readouterr().out
+        assert "[ok  ] language-model" in out and FAKE_LM_SHA in out
+
+    def test_partial_candidate_resumes_with_a_range_header(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(FAKE_LM[:100_000])
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request, "build_opener", _fake_stream_opener(FAKE_LM, seen)
+        )
+        setup_models.fetch_language_model(tmp_path)
+        assert seen[0]["range"] == "bytes=100000-"
+        assert target.read_bytes() == FAKE_LM and not candidate.exists()
+
+    def test_server_ignoring_the_range_restarts_from_zero(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(FAKE_LM[:100_000])
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request,
+            "build_opener",
+            _fake_stream_opener(FAKE_LM, seen, status_for_range=200),
+        )
+        setup_models.fetch_language_model(tmp_path)
+        assert seen[0]["range"] == "bytes=100000-"
+        assert target.read_bytes() == FAKE_LM and not candidate.exists()
+        assert "[redo]" in capsys.readouterr().out
+
+    def test_full_size_candidate_is_verified_and_promoted_without_network(
+        self, setup_models: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # No opener is patched: the autouse ``_no_network`` stub would raise
+        # if a single byte were requested.
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(FAKE_LM)
+        setup_models.fetch_language_model(tmp_path)
+        assert target.read_bytes() == FAKE_LM and not candidate.exists()
+        out = capsys.readouterr().out
+        assert "promoted from candidate" in out and FAKE_LM_SHA in out
+
+    def test_full_size_candidate_with_wrong_digest_is_refused_and_left(
+        self, setup_models: ModuleType, tmp_path: Path
+    ) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        tampered = FAKE_LM[:-1] + b"x"
+        candidate.write_bytes(tampered)
+        with pytest.raises(SystemExit, match="checksum mismatch") as exc:
+            setup_models.fetch_language_model(tmp_path)
+        assert FAKE_LM_SHA in str(exc.value)
+        assert hashlib.sha256(tampered).hexdigest() in str(exc.value)
+        assert candidate.read_bytes() == tampered and not target.exists()
+
+    def test_oversized_candidate_is_refused_before_network(
+        self, setup_models: ModuleType, tmp_path: Path
+    ) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        candidate.parent.mkdir(parents=True)
+        candidate.write_bytes(FAKE_LM + b"more")
+        with pytest.raises(SystemExit, match="larger"):
+            setup_models.fetch_language_model(tmp_path)  # _no_network proves no opener
+        assert candidate.exists() and not target.exists()
+
+    def test_content_length_disagreeing_with_the_pin_refuses_before_writing(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request,
+            "build_opener",
+            _fake_stream_opener(FAKE_LM, seen, declared_length=len(FAKE_LM) + 1),
+        )
+        with pytest.raises(SystemExit, match="Content-Length"):
+            setup_models.fetch_language_model(tmp_path)
+        _target, candidate = setup_models.language_model_paths(tmp_path)
+        assert not candidate.exists(), "the candidate is opened only after the header agrees"
+
+    def test_body_longer_than_the_pin_is_refused_and_the_candidate_deleted(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request,
+            "build_opener",
+            _fake_stream_opener(FAKE_LM + b"extra", seen, content_length=False),
+        )
+        with pytest.raises(SystemExit, match="exceeds"):
+            setup_models.fetch_language_model(tmp_path)
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        assert not candidate.exists() and not target.exists()
+
+    def test_short_body_keeps_the_candidate_for_resume(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request,
+            "build_opener",
+            _fake_stream_opener(FAKE_LM[:50_000], seen, content_length=False),
+        )
+        with pytest.raises(SystemExit, match="re-run to resume"):
+            setup_models.fetch_language_model(tmp_path)
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        assert candidate.read_bytes() == FAKE_LM[:50_000] and not target.exists()
+
+    def test_free_space_precondition_refuses_before_any_fetch(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(setup_models.shutil, "disk_usage", _fake_disk_usage(10))
+        with pytest.raises(SystemExit, match="free"):
+            setup_models.fetch_language_model(tmp_path)  # _no_network proves no opener
+        _target, candidate = setup_models.language_model_paths(tmp_path)
+        assert not candidate.exists()
+
+    def test_present_matching_model_is_skipped(
+        self, setup_models: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        target, _candidate = setup_models.language_model_paths(tmp_path)
+        target.parent.mkdir(parents=True)
+        target.write_bytes(FAKE_LM)
+        setup_models.fetch_language_model(tmp_path)  # _no_network proves no opener
+        assert "[skip] language-model already present" in capsys.readouterr().out
+
+    def test_present_wrong_model_is_redone(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        target, candidate = setup_models.language_model_paths(tmp_path)
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"not the pinned model")
+        seen: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request, "build_opener", _fake_stream_opener(FAKE_LM, seen)
+        )
+        setup_models.fetch_language_model(tmp_path)
+        assert "[redo] language-model present but not the pinned file" in capsys.readouterr().out
+        assert target.read_bytes() == FAKE_LM and not candidate.exists()
+
+    def test_non_https_url_is_refused(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(setup_models, "LANGUAGE_MODEL_URL", "http://example.invalid/lm.gguf")
+        with pytest.raises(SystemExit, match="https://"):
+            setup_models.fetch_language_model(tmp_path)  # _no_network proves no opener
+        _target, candidate = setup_models.language_model_paths(tmp_path)
+        assert not candidate.exists()
+
+    def test_download_helper_installs_the_language_model_handler(
+        self, setup_models: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        handlers: list[Any] = []
+        monkeypatch.setattr(
+            setup_models.urllib.request,
+            "build_opener",
+            _fake_stream_opener(FAKE_LM, [], handlers=handlers),
+        )
+        setup_models.fetch_language_model(tmp_path)
+        assert handlers == [setup_models._LanguageModelRedirectHandler]
+
+    def test_handler_labels_are_distinct(self, setup_models: ModuleType) -> None:
+        assert setup_models._LanguageModelRedirectHandler.label == "language-model"
+        assert setup_models._HttpsOnlyRedirectHandler.label == "speaker-embedding"
+        opened: list[str] = []
+        handler = setup_models._LanguageModelRedirectHandler()
+        with pytest.raises(SystemExit, match="non-https target") as exc:
+            TestSpeakerEmbeddingRedirectPolicy._drive(
+                setup_models, handler, "http://cdn.example.invalid/lm.gguf", opened
+            )
+        assert str(exc.value).startswith("language-model download refused")
+        assert opened == [], "the downgraded hop must never be requested"
+
+
+class TestShippedLanguageModelPin:
+    """Task 4.1 (2026-09-20): the entry ships PINNED. Nothing here monkeypatches
+    the pin - these tests hold against the values in the script, and against
+    their ONE source, ``scribe_desktop.language_model``."""
+
+    def test_constants_are_a_real_pin(self, setup_models: ModuleType) -> None:
+        url = setup_models.LANGUAGE_MODEL_URL
+        assert url.startswith("https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/")
+        assert url.endswith(".gguf")
+        assert setup_models.LANGUAGE_MODEL_SIZE_BYTES == 2_497_281_120
+        sha = setup_models.LANGUAGE_MODEL_SHA256
+        assert len(sha) == 64 and int(sha, 16) >= 0
+        expected_size = setup_models.LANGUAGE_MODEL_EXPECTED_SIZE
+        assert str(setup_models.LANGUAGE_MODEL_SIZE_BYTES) in expected_size
+
+    def test_pin_is_single_sourced_with_the_runtime_module(
+        self, setup_models: ModuleType
+    ) -> None:
+        assert setup_models.LANGUAGE_MODEL_SHA256 is language_model.LANGUAGE_MODEL_SHA256
+        assert setup_models.LANGUAGE_MODEL_SIZE_BYTES is language_model.LANGUAGE_MODEL_SIZE_BYTES
+        assert setup_models.LANGUAGE_MODEL_FILENAME is language_model.LANGUAGE_MODEL_FILENAME
+        assert setup_models.LANGUAGE_MODEL_SUBDIR is language_model.LANGUAGE_MODEL_SUBDIR
 
 
 # --- the smoke's front-end -----------------------------------------------------

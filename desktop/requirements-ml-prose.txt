@@ -1,0 +1,33 @@
+# The prose runtime for the two language-model writing styles
+# (note-learning-and-styles plan Phase 4, Task 4.1; Design Decision D8).
+#
+# ONE pinned, prebuilt CPU wheel — never a source build. The URL, version and
+# SHA-256 below are the ones recorded by the practitioner's Task P.0 preflight
+# on 2026-09-20 (pip's own report and an independent local re-hash agreed) and
+# are single-sourced with `desktop/src/scribe_desktop/language_model.py`
+# (`LANGUAGE_RUNTIME_*`); `tests/test_language_model_runtime.py` pins this
+# file to those constants and refuses an installed runtime that did not come
+# from this wheel.
+#
+# The wheel is published on the project's documented CPU index
+# (https://abetlen.github.io/llama-cpp-python/whl/cpu) and served from its
+# GitHub release; this file references the release asset directly so pip
+# records the origin (PEP 610 direct_url.json) beside the verified hash.
+# `py3-none-win_amd64`: a bundled DLL, independent of the Python minor version
+# (3.14 confirmed at Task P.0).
+#
+# Install (the SECOND sanctioned network step beside scripts/setup-models.py,
+# run from a normal terminal at the repository root):
+#
+#     .venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r desktop\requirements-ml-prose.txt
+#     .venv\Scripts\python.exe -m pip install --only-binary=:all: "diskcache>=5.6.1" "jinja2>=2.11.3"
+#     .venv\Scripts\python.exe -m pip check
+#
+# `--no-deps` because hash-checking mode requires a hash for EVERY package it
+# would download and the runtime's pure-Python dependencies (numpy and
+# typing-extensions are already in the venv; diskcache and jinja2 are not) are
+# ordinary PyPI wheels outside D8's native-runtime concern — the second line
+# installs them wheel-only, and `pip check` confirms the set is complete.
+
+llama-cpp-python @ https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.35/llama_cpp_python-0.3.35-py3-none-win_amd64.whl \
+    --hash=sha256:31590ea000d5aff6f05f1e428048e72318a83709288159a5bd4dabec530080bb

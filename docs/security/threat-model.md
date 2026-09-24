@@ -881,12 +881,25 @@ these stubs are finalised at that plan's Phase H (task H3).
     screen and the one-click delete are the control.
 16. **Sample-note ingest (D9; C6).** Built (Phase 3):
     `sample_notes.read_sample_note` takes a chosen file or pasted text and
-    reads it into memory only — a `Path` must carry a `.txt` or `.docx` suffix
-    (`SAMPLE_NOTE_SUFFIXES`; a `.pdf` is refused by name, "paste the text
-    instead") and is bounded by `MAX_SAMPLE_NOTE_BYTES` (2 MiB, a stat before
-    the read) and `MAX_SAMPLE_NOTE_CHARS` (200 000); a `.txt` is ONE
-    `read_bytes` decoded utf-8-sig then cp1252, a `.docx` is opened through
-    `python-docx` 1.2.0 (a pinned base dependency in `pyproject.toml`).
+    reads it into memory only — a `Path` must carry a `.txt`, `.docx` or
+    `.pdf` suffix (`SAMPLE_NOTE_SUFFIXES`; anything else is refused by name,
+    "paste the text instead") and is bounded by `MAX_SAMPLE_NOTE_BYTES` (2 MiB,
+    a stat before the read) and `MAX_SAMPLE_NOTE_CHARS` (200 000); a `.txt` is
+    ONE `read_bytes` decoded utf-8-sig then cp1252, a `.docx` is opened through
+    `python-docx` 1.2.0 (a pinned base dependency in `pyproject.toml`), and a
+    `.pdf` (Phase 4 live smoke, practitioner decision 2026-09-20 — Cliniko
+    exports notes as PDF) is TEXT-EXTRACTED through `pypdf` 6.19.0 (pinned,
+    base, pure Python, no OCR): the bytes read through a capped request, the
+    document parsed from memory, an encrypted PDF refused by name, at most
+    `MAX_PDF_PAGES` (60) pages, at most `MAX_PDF_PAGE_CHARS` (20 000) of text
+    kept per page and the total bounded while collected, a document whose
+    pages yield no text refused by name with the paste hint, and every pypdf
+    raise translated to `SampleNoteError` naming the exception TYPE only (C9).
+    Residue, stated exactly: pypdf inflates each content stream in full itself
+    and exposes no capped-read hook, so unlike the `.docx` path the allocation
+    bound is the ≤ 2 MiB compressed input times DEFLATE's maximum ratio, not a
+    cap this module sets — a hostile stream is a same-user chosen file that
+    fails with nothing written (the PR-MED-020 → LOW precedent).
     The module never writes, copies, moves or renames — pinned by a before/after
     snapshot of the whole temporary tree
     (`tests/test_sample_notes.py::TestReadSampleNote::
@@ -927,38 +940,168 @@ these stubs are finalised at that plan's Phase H (task H3).
     sizes are a first refusal, not the ceiling; residue: the decompressor's
     window and the re-zip buffer during the parse, and python-docx's XML parse
     of a member bounded only by that member's cap.
-17. **The local language model and Check 5 (D6, D7, D8; C1, C4, C8).** Built:
-    the carrier types. `note.py`'s `StyleRendering(section_key, prose_text,
-    input_digest, verdict)` binds a rendering to the digest of its inputs and a
-    validator refuses prose on a `failed` verdict (C4); `prose_text` and
-    `style_renderings` are registered log tripwire signatures (C9);
+17. **The local language model and Check 5 (D6, D7, D8; C1, C4, C8).** Built
+    (that plan's Phase 4, 2026-09-20).
+    THE RUNTIME. `llama-cpp-python` 0.3.35 is installed ONLY from the prebuilt
+    CPU wheel pinned by URL and SHA-256 in
+    `desktop/requirements-ml-prose.txt` (`--require-hashes --no-deps`, a
+    GitHub release asset) — a SECOND sanctioned network step beside
+    `setup-models.py`, run once by the practitioner from a normal terminal —
+    and it is deliberately NOT in the `[ml]` extra, because PyPI carries only
+    an sdist and a plain `[dev,ml]` install would BUILD it from source, which
+    D8 forbids (`desktop/pyproject.toml`, the comment under
+    `[project.optional-dependencies]`). What is verified, stated exactly
+    (codex round 22 PR-LOW-039): the hashed install verifies the downloaded
+    ARCHIVE against the pin; `tests/test_language_model_runtime.py::
+    TestInstalledRuntimeGate` then reads the PEP 610 `direct_url.json` and
+    requires the pinned wheel URL and hash — a check of the install RECORD
+    that catches an install which took another route (an index resolve, an
+    sdist build), not a measurement of the installed bytes: a same-user actor
+    who forges that record over locally built bytes is inside boundary 2 and
+    is not defended (it SKIPS BY NAME when the runtime is absent, so the gate
+    cannot pass silently on a machine that simply has no runtime). The
+    runtime's own native-library override is refused at the offline contract
+    (codex round 22 PR-MED-033): `llama_cpp` loads its DLL from
+    `LLAMA_CPP_LIB_PATH` when that variable is set, so
+    `benchmark.apply_offline_env` deletes it at app startup and
+    `assert_offline_env` — the first thing `LocalLanguageModel` runs —
+    refuses while it is present, naming the variable and never reading its
+    value as a path (`benchmark.FORBIDDEN_NATIVE_OVERRIDES`); `CUDA_PATH` /
+    `HIP_PATH` are left alone (the runtime only ADDS them as DLL search
+    directories, and the CPU wheel's bundled library has no CUDA/HIP
+    dependency) — named as residue, not defended.
+    THE MODEL. `scribe_desktop/language_model.py` pins `LANGUAGE_MODEL_NAME =
+    "Qwen3-4B-Instruct-2507-Q4_K_M"`, `LANGUAGE_MODEL_SIZE_BYTES =
+    2_497_281_120` (2.33 GiB) and `LANGUAGE_MODEL_SHA256`, recorded from the
+    file's Hugging Face LFS record on 2026-09-20
+    (`unsloth/Qwen3-4B-Instruct-2507-GGUF` — the quantiser is a third party,
+    the upstream weights are Qwen's under Apache-2.0; the same
+    trust-on-first-download posture as the speaker model).
+    `LocalLanguageModel` loads from the LOCAL PATH ONLY and in this order:
+    `assert_offline_env()` (kept as the app-wide invariant, NOT the enforcing
+    control here — see the residue), a UNC path refused, presence, size == the
+    pin (checked BEFORE 2.3 GiB is hashed), the streamed SHA-256 == the pin,
+    the runtime imported lazily, then a short smoke generation. Every failure
+    is a typed `LanguageModelError` naming the STEP and never the prompt, and
+    no `from_pretrained`-style fetch exists anywhere in the module (C1). The
+    download is `scripts/setup-models.py`'s `language-model` entry: streamed
+    1 MiB reads into `<name>.gguf.candidate` with HTTP Range resume, a
+    free-space precondition before any byte is written, every read bounded by
+    the PIN rather than by the declared `Content-Length` (a longer body
+    deletes the candidate), https on every redirect hop, and promotion to
+    `<name>.gguf` only after size AND digest match.
+    THE INPUT. `prose_style.ProseInput.from_note` is the ONLY way in and it
+    takes a FINALISED `GeneratedNote`: a `TranscriptDocument` or a `NoteDraft`
+    is refused by TYPE, so the model never sees transcript text and never sees
+    a pending proposal (C4, D6). `build_section_prompt` takes text lines only,
+    and each section is ONE model call whose prompt is the section title, the
+    confirmed lines between `PROMPT_LINES_HEADER` and `PROMPT_LINES_END`, and
+    `NARRATIVE_INSTRUCTION` — own voice adds the `StyleProfile`'s measures,
+    shorthand and at most 30 exemplars as CONDITIONING, never training, read
+    per job and never on a poll. An instruction-shaped line inside the note is
+    DATA: the instruction says so, and the ENFORCING control is Check 5 — an
+    obeyed instruction that REPLACES the line drops the section's own tokens
+    (or adds new ones), fails `missing_fact` / `added_content`, and the section
+    keeps `clean`; the honest limit (codex round 22 PR-LOW-037): a completion
+    that repeats the line AND obeys it keeps every token and passes the token
+    gate — the practitioner's reading before Save is the control, and both
+    shapes are pinned in `tests/test_prose_style.py`.
+    `parse_section_prose` strips a `<think>` block, refuses an unclosed one
+    and an echoed marker, drops a title line or markdown heading, and bounds
+    the result at `MAX_SECTION_PROSE_CHARS`.
+    CHECK 5. `note_check.fidelity_warnings` (with `fidelity_verdict` /
+    `fidelity_verdicts`) compares a section's confirmed inputs with its prose
+    on four rules: (a) `missing_fact` — every non-connective input token is
+    present; (b) `added_content` — nothing outside the inputs but the shipped
+    `config_defaults/prose_connectives.json`; (c) `polarity` — the MULTISET of
+    negation markers (`no not never denies denied without nil`, and any `n't`)
+    is identical; (d) `protected` — the multiset of number, date, medication
+    and laterality tokens is identical (the learning filters' classifiers, the
+    checker's lexicon, and `left`/`right`). A failing section keeps `clean`
+    and raises ONE `style_fallback` REVIEW warning. It is a GATE, NOT A
+    CERTIFICATE: it compares TOKENS, not attachment or order, so sides swapped
+    between two anatomy words, a negation moved to another clause, two numbers
+    traded between facts and a reversed comparison all PASS — the
+    practitioner's reading of the shown prose before Save is the control,
+    which is why Check 5 is not part of `check_note` but is run by the prose
+    stage over what it is about to show.
+    CUSTODY OF A RENDERING. A failed section's `StyleRendering` carries NO
+    prose (C4, the schema validator) but does carry the section's
+    `input_digest`, so the same lines are never re-asked inside one review; a
+    model error yields no rendering at all and a reason line.
+    `note.attach_style_renderings` binds a rendering ONLY where its
+    `input_digest` equals `section_input_digest(section)` NOW — a stale
+    rendering is dropped before the note is displayed, before `note.enc` is
+    written and before Copy — and `note_input_digest` binds a job to the note
+    it started for; `render_note(note, style)` remains the ONE rendering path
+    all three go through (D7, `ui/models.format_note_body`).
+    ON SCREEN (C8). The stage runs on the Note tab's `TaskThread` after each
+    finalisation (`ui/note.py` `_start_style_stage`); the model is built ONCE
+    per process on that worker thread (`ui/models._LanguageModelCache` — a
+    failed load is remembered and named, so the remedy is a restart after the
+    fix, not a retry storm); the result lands on the GUI thread
+    (`_on_style_done`), is bound by digest (`ui/models.bind_stage_result`),
+    DISPLAYED, the style line set, and only then does `_update_controls`
+    re-enable Save. Save is UNAVAILABLE while a job is in flight — the button
+    is disabled AND a click re-checks and says `SAVE_WHILE_RENDERING_MESSAGE`
+    (PR-MED-015: Save snapshots the note, so a disabled button alone is not
+    the control) — so nothing is persisted that the practitioner has not seen.
+    Every fallback names itself on the `style_label` line under the note body:
+    `RENDERING_IN_FLIGHT_LINE`, `RENDERING_DONE_LINE` (how many sections show
+    prose, how many are shown as Clean clinical because the fidelity check
+    refused the prose, how many could not be rendered at all),
+    `LANGUAGE_MODEL_LOAD_FAILED_LINE` and `STYLE_PROFILE_MISSING_LINE` (the
+    Phase-3 `style_fallback_line` now appears in the info label only on a
+    Note tab built without a stage provider — never in the shipped window).
+    A job orphaned by `clear()` keeps its thread until
+    it reports and its result is dropped; an edit during a job invalidates
+    only the sections it changed and a fresh job renders those. The
+    Practitioner tab's "Writing style" group still writes
     `note_config.PractitionerSettings` (`practitioner_settings.json`, default
-    `clean`) holds the display setting outside `NoteConfig` and outside the
-    config digest, and since Phase 3 the Practitioner tab's "Writing style"
-    group writes it the moment a radio is picked (`ui/models.save_note_style`);
-    `note.render_note(note, style)` is the ONE rendering path the display, the
-    note artifact and Copy all go through (D7, `ui/models.format_note_body`),
-    and with no rendering present it renders a prose style as `clean` per
-    section — which is every note in this phase, since
-    `ui/models.language_model_available()` is False until Phase 4, so the two
-    prose radios stay disabled with their reason on screen and a saved-but-
-    unavailable style is shown selected-and-disabled beside
-    `style_fallback_line` (C8); and Check 5's connective allow-list ships as
+    `clean`, outside `NoteConfig` and outside the config digest) the moment a
+    radio is picked (`ui/models.save_note_style`), but the two prose radios
+    are no longer disabled by design: they ENABLE as soon as
+    `ui/models.language_model_available()` is true (the runtime importable AND
+    the model file present — an import probe and a stat, never a load and
+    never a decrypt, which is why the tab's 5 s poll may ask it), and
+    `LANGUAGE_MODEL_ABSENT_REASON` names the remedy (`setup-models.py --only
+    language-model` plus the prose-runtime install). A saved-but-unavailable
+    style is still shown selected-and-disabled beside `style_fallback_line`,
+    and Check 5's connective allow-list still ships as
     `config_defaults/prose_connectives.json` (`note_config.PROSE_CONNECTIVES`,
     refused at import by `_parse_shipped_vocabulary` if the packaged file is
-    emptied, malformed or key-missing). Planned; enforced from Phase 4: the
-    runtime installed ONLY as a prebuilt CPU wheel pinned by version AND SHA-256
-    (`--require-hashes`, never a source build) — a second sanctioned network
-    fetch beside `setup-models.py` — the ~2.5 GB instruct model pinned by
-    SHA-256 and loaded from the local path only (C1), the prompt builder typed
-    to refuse a `TranscriptDocument` (C4 — the model never sees transcript
-    text), Check 5 as a fidelity GATE and not a certificate (a passing rendering
-    is still read and ratified by the practitioner's Save), Save unavailable
-    while a rendering is in flight, a stale rendering never shown, and every
-    fallback named on screen (C8). The honest limit recorded in D8:
-    `assert_offline_env` is NOT an enforcing control for this runtime — neither
-    candidate reads a kill-switch variable — so the enforcing control will be
-    the no-sockets integration test extended over a prose generation.
+    emptied, malformed or key-missing).
+    LOGS (C9). `prose_text`, `style_renderings` and now `section_texts` (the
+    prose input's own field) are registered tripwire signatures, so a repr or
+    dump of a rendering, of a note carrying renderings, or of the stage's
+    input is dropped by the last-line filter; no module on this path holds a
+    logger.
+    RESIDUE. (1) The model's own output is unbounded semantics, bounded only
+    by Check 5's token rules and the practitioner's reading — the honest limit
+    above is the whole of it. (2) `assert_offline_env` is NOT an enforcing
+    control for this runtime's NETWORK posture: llama-cpp-python reads no
+    kill-switch variable (it refuses only the library-path override above).
+    The ENFORCING control is the no-sockets integration test, in two legs with
+    different coverage (codex round 22 PR-LOW-040):
+    `tests/test_integration_no_sockets.py::
+    test_prose_generation_no_sockets_with_the_mock_model` runs everywhere and
+    proves the STAGE's orchestration — the prompt build, the section loop,
+    Check 5, the binding — opens no socket while the process is provably
+    inside a model call, over `MockLanguageModel` (no native code runs there);
+    `test_prose_generation_no_sockets_with_the_real_model` is the RUNTIME's
+    coverage — the real library's load and one generation under continuous
+    OS-level polls — and it skips BY NAME until the wheel and the file exist,
+    so that evidence is conditional and the record says when it last ran. (3)
+    A 2.33 GiB model is resident in process memory for the life of the
+    process; one section's prompt and completion pass through it and the
+    runtime's inference state — its token buffers and KV cache — is cleared
+    at the end of EVERY call (`LocalLanguageModel._clear_inference_state`,
+    codex round 22 PR-MED-034), so what remains is the weights plus the
+    runtime's own un-enumerated scratch (batch and logits arrays), with the
+    same best-effort scrubbing residual as every other plaintext here. (4)
+    llama-cpp-python's native code runs outside the Python socket stub,
+    exactly as onnxruntime does — the OS-level socket polls of the real leg
+    are what covers it, when that leg runs.
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 
@@ -978,5 +1121,8 @@ Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
 deferred from Phase 2); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
 Cliniko keys are first stored (Phase 4); or the software is installed on the
-second clinic machine (Phase 7); or the local language model lands
-(note-learning-and-styles plan Phase 4).
+second clinic machine (Phase 7). The local language model HAS landed
+(note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next
+trigger on that surface is a change of MODEL or of RUNTIME — a new pin, a new
+quantisation, a different inference library, or a runtime installed by any
+route other than the pinned hashed wheel.

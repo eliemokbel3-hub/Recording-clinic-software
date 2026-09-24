@@ -1,7 +1,8 @@
 """Sample-note learning (note-learning-and-styles plan Phase 3, Task 3.3; D9, D10).
 
 The practitioner chooses one to five of their OWN past notes (``.txt``,
-``.docx`` or pasted text); this module reads them INTO MEMORY and derives a
+``.docx``, ``.pdf`` — a Cliniko export — or pasted text); this module reads
+them INTO MEMORY and derives a
 ``StyleProfileDraft`` for the Practitioner tab's review screen, which the
 tab turns into a ``StyleProfile`` (``build_style_profile``) and writes with
 ``practitioner_profile.save_style_profile`` only on the practitioner's Save.
@@ -10,7 +11,9 @@ What the structure enforces, and only that:
 
 - READ ONLY. ``read_sample_note`` opens a chosen file for reading (a byte
   read for ``.txt``; ``python-docx``'s ``Document`` for ``.docx``, which
-  reads the package and never saves) and returns its text; nothing here
+  reads the package and never saves; ``pypdf``'s ``PdfReader`` over the
+  bytes for ``.pdf`` — text extraction only, never OCR) and returns its
+  text; nothing here
   writes, copies, moves or renames a file, and the returned ``SampleNote``
   holds the text and the path, never a copy on disk (D9, C6). Deleting the
   originals is ``delete_sample_files`` — called by the tab ONLY after its
@@ -90,7 +93,27 @@ from scribe_desktop.practitioner_profile import ConsentRecord
 # keep one read in memory small and refuse a mis-chosen file loudly.
 MAX_SAMPLE_NOTE_BYTES: Final = 2 * 1024 * 1024
 MAX_SAMPLE_NOTE_CHARS: Final = 200_000
-SAMPLE_NOTE_SUFFIXES: Final[tuple[str, ...]] = (".txt", ".docx")
+SAMPLE_NOTE_SUFFIXES: Final[tuple[str, ...]] = (".txt", ".docx", ".pdf")
+# ``.pdf`` (Phase 4 live smoke, practitioner decision 2026-09-20 — Cliniko
+# exports notes as PDF, so the plan's Excluded item's revisit trigger was met
+# by the primary user): TEXT EXTRACTION ONLY through ``pypdf`` (pure Python,
+# no native code, no OCR). What this module bounds itself: the bytes it READS
+# (``MAX_SAMPLE_NOTE_BYTES + 1``, a capped read, never ``read()``), the page
+# count it will look at (``MAX_PDF_PAGES``), the text it KEEPS per page
+# (``MAX_PDF_PAGE_CHARS``, a refusal not a truncation) and the total
+# (``MAX_SAMPLE_NOTE_CHARS``, checked while collected); an encrypted PDF and a
+# PDF whose pages yield no text (a scan) are refused by name. Residue, named
+# exactly (the ``.docx`` lesson applies and is NOT closed here): pypdf inflates
+# each page's content stream ITSELF, in full, before any text is seen, and
+# exposes no capped-read hook the way ``ZipFile.open`` does — so the
+# allocation bound is the compressed input (≤ 2 MiB) times DEFLATE's maximum
+# ratio, not a cap this module sets; a hostile stream is a same-user chosen
+# file that fails with nothing written (the PR-MED-020 → LOW precedent), and
+# a Cliniko export is text a few kilobytes long. pypdf's parse of a corrupt
+# file raises library-specific types; every one is translated to a
+# ``SampleNoteError`` naming the TYPE, never the file's text (C9).
+MAX_PDF_PAGES: Final = 60
+MAX_PDF_PAGE_CHARS: Final = 20_000
 # Peer rounds 17 / 18 (PR-MED-020, PR-LOW-027): a ``.docx`` is a zip package
 # that python-docx inflates member by member IN FULL before any text is seen,
 # so the compressed-size bound above is not a bound on memory — and neither
@@ -464,6 +487,103 @@ def _read_docx(path: Path) -> str:
     return "\n".join(lines)
 
 
+def _read_pdf(path: Path) -> str:
+    """Text extraction from a ``.pdf`` note under the module's own bounds
+    (see the ``MAX_PDF_*`` comment): the file read ONCE through a capped
+    request, parsed by pypdf from memory, an encrypted document refused by
+    name, the page count capped, each page's extracted text capped and the
+    total bounded while collected, and a document whose pages yield no text
+    refused by name with the paste hint (a scanned PDF is never OCR'd)."""
+    try:
+        from pypdf import PdfReader
+        from pypdf.errors import FileNotDecryptedError
+    except ImportError:
+        raise SampleNoteError(
+            "reading a .pdf note needs pypdf, which is not installed - paste the text "
+            "instead"
+        ) from None
+
+    def encrypted() -> SampleNoteError:
+        return SampleNoteError(
+            f"could not read {path.name}: the PDF is encrypted (password-protected or "
+            "permission-restricted) - export it without protection or paste the text instead"
+        )
+
+    def unreadable(exc: BaseException) -> SampleNoteError:
+        return SampleNoteError(
+            f"could not read {path.name}: not a readable PDF ({type(exc).__name__})"
+        )
+
+    try:
+        with path.open("rb") as stream:
+            blob = stream.read(MAX_SAMPLE_NOTE_BYTES + 1)  # the capped read, never read()
+    except OSError as exc:
+        raise SampleNoteError(f"could not read {path.name}: {exc}") from None
+    if len(blob) > MAX_SAMPLE_NOTE_BYTES:
+        raise SampleNoteError(
+            f"{path.name} is too large to be a note (more than {MAX_SAMPLE_NOTE_BYTES:,} "
+            "bytes)"
+        )
+    # The encrypted refusal is decided BEFORE any object of the document is
+    # touched and named at every site pypdf can raise it (leg e12): pypdf
+    # 6.19 parses the trailer's /Encrypt entry in the constructor and raises
+    # ``FileNotDecryptedError`` from ``get_object`` — i.e. from the FIRST
+    # page-tree access, ``len(reader.pages)`` — when the (empty) password did
+    # not decrypt the file, so a single generic translation around both
+    # calls turned the practitioner's real reason into "not a readable PDF
+    # (FileNotDecryptedError)". ``is_encrypted`` is the trailer flag: True
+    # for any /Encrypt entry, including an owner-only restriction the empty
+    # user password opens — refused too, by the practitioner's rule (no
+    # protected document is read).
+    try:
+        reader = PdfReader(io.BytesIO(blob), strict=False)
+    except FileNotDecryptedError:
+        raise encrypted() from None
+    except Exception as exc:  # noqa: BLE001 - pypdf raises library-specific types
+        raise unreadable(exc) from None
+    if reader.is_encrypted:
+        raise encrypted()
+    try:
+        page_count = len(reader.pages)
+    except FileNotDecryptedError:  # defensive: an /Encrypt the flag did not report
+        raise encrypted() from None
+    except Exception as exc:  # noqa: BLE001 - pypdf raises library-specific types
+        raise unreadable(exc) from None
+    if page_count > MAX_PDF_PAGES:
+        raise SampleNoteError(
+            f"{path.name} is too long to be a note ({page_count:,} pages; the limit is "
+            f"{MAX_PDF_PAGES})"
+        )
+    lines: list[str] = []
+    collected = 0
+    for index in range(page_count):
+        try:
+            text = reader.pages[index].extract_text() or ""
+        except FileNotDecryptedError:  # defensive: the same raise from a page object
+            raise encrypted() from None
+        except Exception as exc:  # noqa: BLE001 - pypdf raises library-specific types
+            raise unreadable(exc) from None
+        if len(text) > MAX_PDF_PAGE_CHARS:
+            raise SampleNoteError(
+                f"{path.name} is too long to be a note (one page holds more than "
+                f"{MAX_PDF_PAGE_CHARS:,} characters of text)"
+            )
+        collected += len(text)
+        if collected > MAX_SAMPLE_NOTE_CHARS:
+            raise SampleNoteError(
+                f"{path.name} is too long to be a note (more than "
+                f"{MAX_SAMPLE_NOTE_CHARS:,} characters of text)"
+            )
+        if text.strip():
+            lines.append(text)
+    if not lines:
+        raise SampleNoteError(
+            f"{path.name} holds no readable text - a scanned or image-only PDF cannot be "
+            "read; paste the text instead"
+        )
+    return "\n".join(lines)
+
+
 def _bounded(text: str, name: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     if len(text) > MAX_SAMPLE_NOTE_CHARS:
@@ -477,17 +597,16 @@ def _bounded(text: str, name: str) -> str:
 
 
 def read_sample_note(source: Path | str) -> SampleNote:
-    """A note into memory. A ``str`` is pasted text; a ``Path`` is a ``.txt``
-    or ``.docx`` file, read once and never written, copied or moved.
+    """A note into memory. A ``str`` is pasted text; a ``Path`` is a ``.txt``,
+    ``.docx`` or ``.pdf`` file, read once and never written, copied or moved.
     ``SampleNoteError`` names the reason otherwise (unknown suffix, too
-    large, unreadable, empty)."""
+    large, unreadable, encrypted, no text, empty)."""
     if isinstance(source, str):
         return SampleNote(_bounded(source, "the pasted text"), None)
     suffix = source.suffix.casefold()
     if suffix not in SAMPLE_NOTE_SUFFIXES:
         raise SampleNoteError(
-            f"{source.name} is not a .txt or .docx file (PDF notes are not read - paste "
-            "the text instead)"
+            f"{source.name} is not a .txt, .docx or .pdf file - paste the text instead"
         )
     try:
         size = source.stat().st_size
@@ -500,6 +619,8 @@ def read_sample_note(source: Path | str) -> SampleNote:
         )
     if suffix == ".docx":
         text = _read_docx(source)
+    elif suffix == ".pdf":
+        text = _read_pdf(source)
     else:
         try:
             blob = source.read_bytes()
@@ -803,6 +924,8 @@ def delete_sample_files(paths: Sequence[Path]) -> DeletionReport:
 __all__ = [
     "MAX_DOCX_DECLARED_BYTES",
     "MAX_DOCX_MEMBERS",
+    "MAX_PDF_PAGES",
+    "MAX_PDF_PAGE_CHARS",
     "MAX_DOCX_MEMBER_BYTES",
     "MAX_SAMPLE_NOTE_BYTES",
     "MAX_SAMPLE_NOTE_CHARS",

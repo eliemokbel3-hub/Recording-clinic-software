@@ -1401,5 +1401,19 @@ class TestStyleOptions:
             f"{models.FIRST_RUN_BANNER}\n{models.FIRST_RUN_STYLE_LINE}"
         )
 
-    def test_the_language_model_is_absent_until_the_plans_phase_4(self) -> None:
-        assert models.language_model_available() is False
+    def test_the_language_model_is_available_only_with_runtime_and_file(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Task 4.4: a stat of the pinned file AND an importable runtime —
+        never a load, never a decrypt (the Practitioner tab's poll asks it)."""
+        from scribe_desktop import language_model as lm
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        monkeypatch.setattr(models, "language_runtime_importable", lambda: True)
+        assert models.language_model_available() is False  # no file
+        path = lm.default_language_model_path()
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"not verified here")
+        assert models.language_model_available() is True
+        monkeypatch.setattr(models, "language_runtime_importable", lambda: False)
+        assert models.language_model_available() is False  # no runtime

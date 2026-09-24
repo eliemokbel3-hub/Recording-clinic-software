@@ -35,7 +35,15 @@ test covers the recorder mid-capture and mid-transcription):
   at the kill, recovering through the unchanged batch path. The live leg is
   mock-ML by design: the worker drives the SAME provider class the real-ML
   leg already proves socketless, so a second real-ML leg would only re-run
-  that proof.
+  that proof;
+- (note-learning plan Task 4.4, D8) the PROSE runtime: `llama-cpp-python`
+  reads no offline kill-switch, so THESE legs are its enforcing offline
+  control, with different coverage each — the mock leg (always) proves the
+  stage's ORCHESTRATION opens no socket while the process is inside a model
+  call (no native code runs there); the real leg proves the RUNTIME across
+  the real model's load + one generation once the hashed wheel and the
+  pinned GGUF are present (skip-by-name otherwise, so that evidence is
+  conditional).
 
 Honest limits, recorded deliberately: polling samples the OS socket table,
 so a sufficiently short-lived connection could in principle dodge a poll
@@ -975,6 +983,169 @@ def test_recorder_no_sockets_during_real_whisper_transcription(tmp_path: Path) -
         if proc.poll() is None:
             proc.kill()
             proc.wait(timeout=15)  # PR round 30: reap before tmp_path cleanup
+
+
+# Child (note-learning plan Task 4.4, D8): a PROSE generation under the same
+# gate pattern. The stage is the real `models.build_prose_stage` over the
+# mock language model; the model call blocks on a gate so the parent's polls
+# provably land INSIDE a generation; the result is bound to the note and
+# rendered through the one rendering path.
+_PROSE_STAGE_CHILD = '''
+import sys
+
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+
+apply_offline_env()
+assert_offline_env()
+print("OFFLINE-OK", flush=True)
+
+from scribe_desktop.language_model import MockLanguageModel, echo_prompt_lines
+from scribe_desktop.note import render_note
+from scribe_desktop.ui import models
+from test_prose_style import FIXTURE_NOTES, _note
+
+note = _note(FIXTURE_NOTES[0], style="narrative")
+gated = [False]
+
+
+def responder(system_text, user_text):
+    if not gated[0]:
+        gated[0] = True
+        print("MID-PROSE", flush=True)
+        line = sys.stdin.readline()
+        assert line.strip() == "GO", "parent gate broken: %r" % line
+    return echo_prompt_lines(system_text, user_text)
+
+
+stage = models.build_prose_stage(
+    "narrative",
+    model_factory=lambda: MockLanguageModel(responder=responder),
+    cache=None,
+    available=lambda: True,  # the mock leg runs where no model file exists
+)
+result = stage(note)
+assert result.reason is None, result.reason
+assert (result.passed, result.failed, result.errored) == (3, 0, 0), result
+bound = models.bind_stage_result(note, result)
+assert len(bound.style_renderings) == 3
+assert render_note(bound, "narrative") != render_note(note, "clean")
+print("PROSE-OK", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
+print("DONE", flush=True)
+'''
+
+
+def test_prose_generation_no_sockets_with_the_mock_model(tmp_path: Path) -> None:
+    """Note-learning plan Task 4.4 (D8): the prose STAGE's orchestration —
+    the prompt build, the section loop, Check 5, the binding — opens no socket
+    while the process is provably inside a language-model call (the child
+    blocks there on a gate while the parent polls) and after the rendering
+    is bound. This leg runs everywhere over `MockLanguageModel`, so NO native
+    runtime code runs here (codex round 22 PR-LOW-040): the runtime's own
+    coverage is the real-model leg below, which is conditional on the wheel
+    and the file. Neither is `assert_offline_env`'s: llama-cpp-python reads
+    no kill-switch."""
+    script = _write_child(tmp_path, "prose_stage_child.py", _PROSE_STAGE_CHILD)
+    stderr_path = tmp_path / "child-stderr.txt"
+    proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
+    try:
+        _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 60)
+        ps = psutil.Process(proc.pid)
+        _await_marker(reader, proc, stderr_path, "MID-PROSE", 60)
+        _poll_no_connections(
+            proc, ps, reader, stderr_path, "inside a prose generation (mock model)", polls=10
+        )
+        _send(proc, reader, stderr_path, b"GO")
+        _await_marker(reader, proc, stderr_path, "PROSE-OK", 60)
+        assert_no_connections(ps, "after the prose rendering was bound")
+        _send(proc, reader, stderr_path, b"CONTINUE")
+        _await_marker(reader, proc, stderr_path, "DONE", 60)
+        assert proc.wait(timeout=30) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
+
+
+# Child (Task 4.4): the REAL prose runtime and the pinned model — the model
+# LOAD window (digest, DLL load, the smoke generation) and one section's
+# generation under a continuous poll. Skips by name until Task P.1 downloads
+# the file and the hashed wheel is installed.
+_REAL_PROSE_CHILD = '''
+import sys
+
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+
+apply_offline_env()
+assert_offline_env()
+print("OFFLINE-OK", flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "GO", "parent gate broken: %r" % line
+
+from scribe_desktop.language_model import LocalLanguageModel
+from scribe_desktop.note import render_note
+from scribe_desktop.ui import models
+from test_prose_style import FIXTURE_NOTES, _note
+
+note = _note(FIXTURE_NOTES[0], style="narrative")
+stage = models.build_prose_stage("narrative", model_factory=LocalLanguageModel, cache=None)
+result = stage(note)
+assert result.reason is None, result.reason
+assert result.errored == 0, result
+bound = models.bind_stage_result(note, result)
+print("PROSE-DONE passed=%d failed=%d seconds=%.1f" % (
+    result.passed, result.failed, result.seconds), flush=True)
+line = sys.stdin.readline()
+assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
+print("DONE", flush=True)
+'''
+
+
+def test_prose_generation_no_sockets_with_the_real_model(tmp_path: Path) -> None:
+    """Task 4.4 (D8): the RUNTIME's coverage — the real library's load and
+    one generation over the pinned GGUF under a continuous poll from before
+    the model load until the section prose is bound — the leg that observes
+    llama-cpp-python's native code (codex round 22 PR-LOW-040). Conditional
+    evidence: it skips by name until the wheel and the file exist. The Check
+    5 pass count is printed (the composer's record for Task 4.3), not
+    asserted: fidelity is the gate's verdict, the socket table is this leg's."""
+    from scribe_desktop.language_model import (
+        language_model_file_available,
+        language_runtime_importable,
+    )
+
+    if not language_runtime_importable():
+        pytest.skip("the prose runtime is not installed (desktop/requirements-ml-prose.txt)")
+    if not language_model_file_available():
+        pytest.skip("the pinned language model is not downloaded (Task P.1)")
+    apply_offline_env()
+    script = _write_child(tmp_path, "real_prose_child.py", _REAL_PROSE_CHILD)
+    stderr_path = tmp_path / "child-stderr.txt"
+    proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
+    try:
+        _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 120)
+        ps = psutil.Process(proc.pid)
+        assert_no_connections(ps, "before the language model load")
+        _send(proc, reader, stderr_path, b"GO")
+        polls = 0
+        deadline = time.monotonic() + 900
+        while reader.find("PROSE-DONE") is None:
+            if reader.eof or time.monotonic() > deadline:
+                _await_marker(reader, proc, stderr_path, "PROSE-DONE", 0.1)
+                break
+            assert_no_connections(ps, "during the language model load and generation")
+            polls += 1
+            time.sleep(0.05)
+        assert polls >= 3, "the generation window closed before any poll landed"
+        assert_no_connections(ps, "after the real prose rendering")
+        _send(proc, reader, stderr_path, b"CONTINUE")
+        _await_marker(reader, proc, stderr_path, "DONE", 120)
+        assert proc.wait(timeout=60) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=15)
 
 
 # Child: records continuously until the parent hard-kills it (crash-sim).

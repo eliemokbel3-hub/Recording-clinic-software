@@ -159,21 +159,21 @@ class TestReadSampleNote:
     @pytest.mark.parametrize(
         ("name", "size", "fragment"),
         [
-            ("scan.pdf", 4, "not a .txt or .docx"),
+            ("photo.png", 4, "not a .txt, .docx or .pdf"),
             ("empty.txt", 0, "no text to learn from"),
             ("blank.txt", 5, "no text to learn from"),
             # Built inside the test: an oversized payload in the id would
             # overflow PYTEST_CURRENT_TEST.
             ("big.txt", MAX_SAMPLE_NOTE_BYTES + 1, "too large"),
         ],
-        ids=["pdf", "empty", "blank", "oversized"],
+        ids=["png", "empty", "blank", "oversized"],
     )
     def test_refusals_name_their_reason(
         self, tmp_path: Path, name: str, size: int, fragment: str
     ) -> None:
         path = tmp_path / name
-        if name == "scan.pdf":
-            payload = b"%PDF"
+        if name == "photo.png":
+            payload = b"\x89PNG"
         elif name == "blank.txt":
             payload = b"  \n\t "
         else:
@@ -613,6 +613,223 @@ class TestReadSampleNote:
 
 
 # --- learning ----------------------------------------------------------------
+
+
+def _pdf_bytes(pages: list[list[str] | None]) -> bytes:
+    """A minimal, valid PDF written by hand (no library): one page per entry,
+    each a list of text lines set with ``Tj`` / ``T*`` in Helvetica, or
+    ``None`` for a page with NO content stream (an image-only / scanned
+    page's text-extraction shape). ASCII only. Offsets are computed so the
+    cross-reference table is exact."""
+    objects: list[bytes] = []  # object 1 = catalog, 2 = pages, then pairs
+    kids: list[int] = []
+    next_num = 3
+    page_bodies: list[tuple[int, bytes]] = []
+    for lines in pages:
+        page_num = next_num
+        next_num += 1
+        if lines is None:
+            page_bodies.append(
+                (page_num, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>")
+            )
+        else:
+            content_num = next_num
+            next_num += 1
+            ops = ["BT", "/F1 12 Tf", "14 TL", "72 720 Td"]
+            for index, line in enumerate(lines):
+                escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+                if index:
+                    ops.append("T*")
+                ops.append(f"({escaped}) Tj")
+            ops.append("ET")
+            stream = "\n".join(ops).encode("ascii")
+            page_bodies.append(
+                (
+                    page_num,
+                    b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << "
+                    b"/Font << /F1 << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> "
+                    b">> >> /Contents " + str(content_num).encode() + b" 0 R >>",
+                )
+            )
+            page_bodies.append(
+                (
+                    content_num,
+                    b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n"
+                    + stream + b"\nendstream",
+                )
+            )
+        kids.append(page_num)
+    kids_ref = b" ".join(f"{k} 0 R".encode() for k in kids)
+    objects.append(b"<< /Type /Catalog /Pages 2 0 R >>")
+    objects.append(
+        b"<< /Type /Pages /Kids [" + kids_ref + b"] /Count " + str(len(kids)).encode() + b" >>"
+    )
+    for _num, body in page_bodies:
+        objects.append(body)
+    out = bytearray(b"%PDF-1.4\n")
+    offsets: list[int] = []
+    for number, body in enumerate(objects, start=1):
+        offsets.append(len(out))
+        out += f"{number} 0 obj\n".encode() + body + b"\nendobj\n"
+    xref_at = len(out)
+    out += f"xref\n0 {len(objects) + 1}\n".encode()
+    out += b"0000000000 65535 f \n"
+    for offset in offsets:
+        out += f"{offset:010d} 00000 n \n".encode()
+    out += (
+        f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n"
+    ).encode()
+    return bytes(out)
+
+
+class TestReadPdf:
+    """Phase 4 live smoke, batch 2 (practitioner decision 2026-09-20: Cliniko
+    exports notes as PDF). A text PDF is read into memory like a `.txt`; the
+    module's OWN bounds (the capped byte read, the page cap, the per-page and
+    total text caps) and refusals (encrypted, no text — a scan, not a PDF,
+    pypdf absent) are pinned; the picker filter and the suffix list name
+    `.pdf`. Every case that parses a PDF skips by name without pypdf."""
+
+    def test_the_suffix_list_and_the_picker_filter_name_pdf(self) -> None:
+        from scribe_desktop.sample_notes import SAMPLE_NOTE_SUFFIXES
+        from scribe_desktop.ui.practitioner import LEARN_INTRO_TEXT, SAMPLE_NOTE_FILTER
+
+        assert ".pdf" in SAMPLE_NOTE_SUFFIXES
+        assert SAMPLE_NOTE_FILTER == "Notes (*.txt *.docx *.pdf)"
+        assert "(.txt, .docx or .pdf)" in LEARN_INTRO_TEXT
+
+    def test_a_text_pdf_is_read_into_memory_and_the_tree_is_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        path = tmp_path / "cliniko-export.pdf"
+        path.write_bytes(
+            _pdf_bytes(
+                [
+                    ["Presenting complaint", "Neck pain for three days."],
+                    ["Plan", "Review in one week."],
+                ]
+            )
+        )
+        before = sorted(p.name for p in tmp_path.iterdir())
+        note = read_sample_note(path)
+        assert sorted(p.name for p in tmp_path.iterdir()) == before
+        assert note.source_path == path
+        assert "Neck pain for three days." in note.sample_text
+        assert "Review in one week." in note.sample_text
+        assert note.sample_text.index("Presenting complaint") < note.sample_text.index("Plan")
+
+    def test_a_scanned_or_image_only_pdf_is_refused_with_the_paste_hint(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        path = tmp_path / "scan.pdf"
+        path.write_bytes(_pdf_bytes([None, None]))
+        with pytest.raises(SampleNoteError, match="no readable text") as exc:
+            read_sample_note(path)
+        assert "paste the text" in str(exc.value) and "scan.pdf" in str(exc.value)
+
+    def test_an_encrypted_pdf_is_refused_by_name(self, tmp_path: Path) -> None:
+        pypdf = pytest.importorskip("pypdf", reason="pypdf is not installed")
+        reader = pypdf.PdfReader(io.BytesIO(_pdf_bytes([["Neck pain for three days."]])))
+        writer = pypdf.PdfWriter()
+        writer.append(reader)
+        writer.encrypt("secret")
+        path = tmp_path / "locked.pdf"
+        with path.open("wb") as stream:
+            writer.write(stream)
+        # The fixture is genuinely encrypted: the trailer carries /Encrypt with
+        # the standard security handler and the empty password does not open
+        # it (pypdf raises FileNotDecryptedError from the first page access).
+        locked = pypdf.PdfReader(io.BytesIO(path.read_bytes()), strict=False)
+        assert locked.is_encrypted and "/Encrypt" in locked.trailer
+        with pytest.raises(pypdf.errors.FileNotDecryptedError):
+            len(locked.pages)
+        with pytest.raises(SampleNoteError, match="encrypted") as exc:
+            read_sample_note(path)
+        assert "Neck pain" not in str(exc.value)
+        assert "FileNotDecryptedError" not in str(exc.value)
+
+    def test_a_file_that_is_not_a_pdf_is_refused_by_type_name_only(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        path = tmp_path / "broken.pdf"
+        path.write_bytes(b"%PDF-1.4\nSECRET WORDS THAT MUST NOT ECHO\n")
+        with pytest.raises(SampleNoteError, match="not a readable PDF") as exc:
+            read_sample_note(path)
+        assert "SECRET" not in str(exc.value)
+
+    def test_the_page_cap_refuses_a_long_document(self, tmp_path: Path) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        from scribe_desktop.sample_notes import MAX_PDF_PAGES
+
+        path = tmp_path / "book.pdf"
+        path.write_bytes(_pdf_bytes([["Page text."]] * (MAX_PDF_PAGES + 1)))
+        with pytest.raises(SampleNoteError, match="pages") as exc:
+            read_sample_note(path)
+        assert str(MAX_PDF_PAGES) in str(exc.value)
+        just_inside = tmp_path / "long-note.pdf"
+        just_inside.write_bytes(_pdf_bytes([["Page text."]] * MAX_PDF_PAGES))
+        assert read_sample_note(just_inside).sample_text.count("Page text.") == MAX_PDF_PAGES
+
+    def test_the_per_page_text_cap_is_a_refusal_not_a_truncation(
+        self, tmp_path: Path
+    ) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        from scribe_desktop.sample_notes import MAX_PDF_PAGE_CHARS
+
+        path = tmp_path / "wall.pdf"
+        path.write_bytes(_pdf_bytes([["x" * (MAX_PDF_PAGE_CHARS + 10)]]))
+        with pytest.raises(SampleNoteError, match="one page holds more than"):
+            read_sample_note(path)
+
+    def test_an_oversized_pdf_is_refused_before_it_is_parsed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pypdf = pytest.importorskip("pypdf", reason="pypdf is not installed")
+
+        def _never(*args: object, **kwargs: object) -> None:
+            raise AssertionError("PdfReader must not run on an oversized file")
+
+        monkeypatch.setattr(pypdf, "PdfReader", _never)
+        path = tmp_path / "huge.pdf"
+        path.write_bytes(b"%PDF" + b"x" * MAX_SAMPLE_NOTE_BYTES)
+        with pytest.raises(SampleNoteError, match="too large"):
+            read_sample_note(path)
+
+    def test_the_bytes_are_read_through_one_capped_request(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("pypdf", reason="pypdf is not installed")
+        requests: list[int] = []
+        real_open = Path.open
+
+        def recording_open(self: Path, *args: object, **kwargs: object) -> object:
+            handle = real_open(self, *args, **kwargs)
+            real_read = handle.read
+
+            def read(n: int = -1) -> bytes:
+                requests.append(n)
+                return real_read(n)
+
+            handle.read = read  # type: ignore[method-assign]
+            return handle
+
+        monkeypatch.setattr(Path, "open", recording_open)
+        path = tmp_path / "note.pdf"
+        path.write_bytes(_pdf_bytes([["Neck pain for three days."]]))
+        read_sample_note(path)
+        assert requests == [MAX_SAMPLE_NOTE_BYTES + 1], "never an unbounded read()"
+
+    def test_without_pypdf_the_refusal_names_the_paste_route(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setitem(sys.modules, "pypdf", None)  # import raises ImportError
+        path = tmp_path / "note.pdf"
+        path.write_bytes(_pdf_bytes([["Neck pain for three days."]]))
+        with pytest.raises(SampleNoteError, match="needs pypdf"):
+            read_sample_note(path)
 
 
 class TestLearnStyleProfile:

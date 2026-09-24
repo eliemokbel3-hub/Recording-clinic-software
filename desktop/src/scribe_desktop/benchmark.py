@@ -54,6 +54,16 @@ OFFLINE_ENV: dict[str, str] = {
     "TRANSFORMERS_OFFLINE": "1",
     "HF_HUB_DISABLE_TELEMETRY": "1",
 }
+# Native-library overrides the offline contract REFUSES (note-learning plan
+# Phase 4, codex round 22 PR-MED-033): `llama-cpp-python` loads its DLL from
+# `LLAMA_CPP_LIB_PATH` when that variable is set, instead of the pinned
+# wheel's own `lib/` — an inherited value would swap the native runtime the
+# D8 hash pinned, possibly for one on a network share. `apply_offline_env`
+# deletes it; `assert_offline_env` fails while it is present, naming it and
+# touching no path. `CUDA_PATH` / `HIP_PATH` are NOT refused: the runtime only
+# ADDS them as DLL search directories, the CPU wheel's bundled library has no
+# CUDA/HIP dependency, and they are ordinary system variables on a GPU host.
+FORBIDDEN_NATIVE_OVERRIDES: tuple[str, ...] = ("LLAMA_CPP_LIB_PATH",)
 
 # Fixed, deliberately non-clinical benchmark script (~45 s of speech at
 # default SAPI rate). Plain descriptive prose with numbers and names so the
@@ -93,17 +103,27 @@ class OfflineEnvError(RuntimeError):
 
 
 def apply_offline_env() -> None:
-    """Set the offline kill-switch environment variables for this process."""
+    """Set the offline kill-switch environment variables for this process and
+    delete the forbidden native-library overrides."""
     for key, value in OFFLINE_ENV.items():
         os.environ[key] = value
+    for key in FORBIDDEN_NATIVE_OVERRIDES:
+        os.environ.pop(key, None)
 
 
 def assert_offline_env() -> None:
-    """Raise OfflineEnvError unless every offline kill-switch is set to '1'."""
+    """Raise OfflineEnvError unless every offline kill-switch is set to '1'
+    and no forbidden native-library override is present (the variable is
+    named; its value — a path — is never read or touched)."""
     missing = [k for k, v in OFFLINE_ENV.items() if os.environ.get(k) != v]
     if missing:
         raise OfflineEnvError(
             "offline kill-switches not active: " + ", ".join(sorted(missing))
+        )
+    present = [k for k in FORBIDDEN_NATIVE_OVERRIDES if k in os.environ]
+    if present:
+        raise OfflineEnvError(
+            "native-library override present, refused: " + ", ".join(sorted(present))
         )
 
 

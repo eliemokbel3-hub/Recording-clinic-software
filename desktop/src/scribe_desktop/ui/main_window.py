@@ -136,10 +136,17 @@ class MainWindow(QMainWindow):
         # Note-learning plan Task 3.2: the writing style is read from
         # `practitioner_settings.json` under the same config root at every
         # review start and stamped on the finalised note (D7).
+        # Note-learning plan Task 4.4: a prose style runs the language-model
+        # stage on the Note tab's own TaskThread (the model loads there, once
+        # per process); `style_root` is the learned-style store the own-voice
+        # stage reads.
         self.note_screen = NoteScreen(
             config_root=config_root,
             learning_status_provider=lambda: models.learning_status(profile_root=profile_root),
             note_style_provider=lambda: models.read_note_style(config_root),
+            prose_stage_provider=lambda style: models.build_prose_stage(
+                style, style_root=style_root
+            ),
         )
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
         # the profile store at construction (a stat and one profile read, no
@@ -303,7 +310,7 @@ class MainWindow(QMainWindow):
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "
-                "or benchmark to finish before closing."
+                "prose rendering or benchmark to finish before closing."
             )
             event.ignore()
             return

@@ -9,12 +9,20 @@ returns a string for DISPLAY ONLY.
 from __future__ import annotations
 
 import re
+import threading
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
+from scribe_desktop.language_model import (
+    LanguageModel,
+    LanguageModelError,
+    LocalLanguageModel,
+    language_model_file_available,
+    language_runtime_importable,
+)
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     MAX_ASSERTION_CHARS,
@@ -30,10 +38,14 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteStyle,
     NoteWarning,
+    StyleRendering,
     admissible_sections,
     assertion_label,
+    attach_style_renderings,
+    bound_rendering,
     compose_draft,
     is_prefilled,
+    note_input_digest,
     provenance_label,
     reconstruct_span_text,
     render_note,
@@ -62,6 +74,12 @@ from scribe_desktop.practitioner_profile import (
     load_profile,
     load_style_profile,
     style_profile_present,
+)
+from scribe_desktop.prose_style import (
+    PROSE_STYLES,
+    ProseInput,
+    ProseStyle,
+    ProseStyleProvider,
 )
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -682,6 +700,17 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Check the transcript beside the note (a line you removed can raise this too), "
         "then acknowledge.",
+    ),
+    # Note-learning plan Task 4.2 (D6, C8): the prose the language model
+    # wrote for a section did not pass the fidelity check, so that section is
+    # shown as Clean clinical — its confirmed lines, unchanged. The copy names
+    # the fallback the practitioner is looking at; the check is a gate, not a
+    # certificate, and nothing here reproduces the refused wording.
+    "style_fallback": WarningCopy(
+        "A section is shown as Clean clinical because its prose did not pass "
+        "the fidelity check",
+        None,
+        "Read that section as shown (its confirmed lines, unchanged), then acknowledge.",
     ),
 }
 
@@ -1602,8 +1631,9 @@ STYLE_LABELS: Final[Mapping[NoteStyle, str]] = {
 }
 # C8: every disabled option and every fallback names its reason on screen.
 LANGUAGE_MODEL_ABSENT_REASON: Final = (
-    "needs the local language model, which is not installed (it arrives with a later "
-    "update)"
+    "needs the local language model, which is not installed - run "
+    "scripts/setup-models.py --only language-model from a normal terminal and install "
+    "the prose runtime (AGENTS.md Local Run Steps)"
 )
 STYLE_PROFILE_EMPTY_REASON: Final = (
     "needs a learned style - teach the scribe your note style below first"
@@ -1616,11 +1646,14 @@ STYLE_SETTING_UNREADABLE_LINE: Final = (
 
 def language_model_available() -> bool:
     """Whether the local language model the two prose styles need is
-    installed. ALWAYS False until the plan's Phase 4 ships
-    ``language_model.py`` and its pinned model: the prose styles stay
-    disabled with ``LANGUAGE_MODEL_ABSENT_REASON`` (C8), and a note whose
-    setting names one renders as ``clean`` (``render_note``)."""
-    return False
+    installed (Phase 4, Task 4.4): the prose runtime is importable (a
+    ``find_spec`` probe, no import) AND the pinned model FILE is present (a
+    stat, UNC refused — ``language_model_file_available``). Never a decrypt
+    and never a load, so the Practitioner tab's 5 s poll may ask it; the
+    digest is verified by ``LocalLanguageModel`` when the prose stage first
+    loads the model. False keeps the prose radios disabled with
+    ``LANGUAGE_MODEL_ABSENT_REASON`` (C8)."""
+    return language_runtime_importable() and language_model_file_available()
 
 
 @dataclass(frozen=True)
@@ -1703,6 +1736,273 @@ def save_note_style(style: NoteStyle, *, config_root: Path | None = None) -> Pat
     the loader's typed errors propagate to the tab, which shows them."""
     settings = PractitionerSettings(note_style=style)
     return save_practitioner_settings(settings, config_root=config_root)
+
+
+# --- the prose stage (note-learning-and-styles plan Task 4.4; D6, D7; C4, C8) ---
+#
+# After each finalisation the Note tab runs ONE stage job on a TaskThread for
+# a prose style: it loads the language model (once per process, on that
+# worker thread — the D3 pattern), reads the style profile for ``own_voice``,
+# asks ``ProseStyleProvider`` for exactly the sections the note has no bound
+# rendering for, and returns the renderings; the tab binds them to the note
+# it holds NOW through ``attach_style_renderings`` (stale ones drop there),
+# displays the body and only then re-enables Save. Every fallback names its
+# reason on screen (C8) through the lines below; no clinical text rides any
+# of them.
+
+LANGUAGE_MODEL_LOAD_FAILED_LINE: Final = (
+    "Writing style '{label}': the language model could not be loaded ({reason}) - this "
+    "note is shown as Clean clinical."
+)
+STYLE_PROFILE_MISSING_LINE: Final = (
+    "Writing style '{label}' {reason} - this note is shown as Clean clinical."
+)
+RENDERING_IN_FLIGHT_LINE: Final = (
+    "Writing style '{label}': rendering the prose now - Save note is available once the "
+    "prose is shown."
+)
+RENDERING_DONE_LINE: Final = "Writing style '{label}': {summary} ({seconds:.1f} s)."
+SAVE_WHILE_RENDERING_MESSAGE: Final = (
+    "The prose is still being rendered - Save note is available once it is shown."
+)
+
+
+@dataclass(frozen=True)
+class StyleStageResult:
+    """One stage job's outcome: the renderings for the sections it was asked
+    about (``passed`` with prose, ``failed`` without — Check 5's verdict),
+    the counts for the tab's line, the model's wall seconds, and — when
+    NOTHING could be rendered — the C8 ``reason`` line. ``note_digest`` is
+    ``note_input_digest`` of the note the job was started for, so the tab can
+    tell a result for a note that has since changed."""
+
+    style: ProseStyle
+    note_digest: str
+    renderings: tuple[StyleRendering, ...]
+    passed: int
+    failed: int
+    errored: int
+    seconds: float
+    reason: str | None = None
+
+
+ProseStage = Callable[[GeneratedNote], StyleStageResult]
+
+
+class _LanguageModelCache:
+    """The resident language model, built ONCE per process on the first stage
+    job's worker thread and reused by every later note (a 2.3 GiB load takes
+    tens of seconds; two copies must never be resident). A failed load is
+    remembered for the process — the C8 line names it and tells the
+    practitioner to restart after fixing the install — so a broken runtime
+    is not re-probed on every edit."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._model: LanguageModel | None = None
+        self._failure: str | None = None
+
+    def get(self, factory: Callable[[], LanguageModel]) -> LanguageModel:
+        with self._lock:
+            if self._model is not None:
+                return self._model
+            if self._failure is not None:
+                raise LanguageModelError(self._failure)
+            try:
+                self._model = factory()
+            except LanguageModelError as exc:
+                self._failure = f"{exc}; restart the app after fixing this"
+                raise
+            return self._model
+
+    def reset(self) -> None:
+        with self._lock:
+            self._model = None
+            self._failure = None
+
+
+_LANGUAGE_MODEL_CACHE: Final = _LanguageModelCache()
+
+
+def reset_language_model_cache() -> None:
+    """Drop the resident model and any remembered failure (tests)."""
+    _LANGUAGE_MODEL_CACHE.reset()
+
+
+def sections_to_render(note: GeneratedNote) -> set[NoteSectionKey]:
+    """The populated sections with no rendering bound to their CURRENT
+    texts — passed or failed (a bound ``failed`` verdict is an answer: the
+    same lines are never asked twice in one review)."""
+    return {
+        section.section_key
+        for section in note.note_sections
+        if section.note_assertions and bound_rendering(note, section) is None
+    }
+
+
+def build_prose_stage(
+    style: NoteStyle,
+    *,
+    style_root: Path | None = None,
+    model_factory: Callable[[], LanguageModel] = LocalLanguageModel,
+    profile_loader: Callable[..., StyleProfile | None] = load_style_profile,
+    cache: _LanguageModelCache | None = _LANGUAGE_MODEL_CACHE,
+    available: Callable[[], bool] = language_model_available,
+) -> ProseStage | None:
+    """The stage callable for ``style``, or None for the two deterministic
+    styles (nothing to run). The callable runs on the Note tab's TaskThread:
+    it never touches a widget, never logs, and returns a
+    ``StyleStageResult`` for the note it was given — the tab decides what to
+    bind. ``model_factory`` (default ``LocalLanguageModel``: the pinned file,
+    digest-checked, smoke-tested), ``profile_loader`` and ``available`` (the
+    presence stat, default ``language_model_available``) are the test
+    seams; ``cache=None`` builds a fresh model per job (tests)."""
+    if style not in PROSE_STYLES:
+        return None
+    prose_style: ProseStyle = "own_voice" if style == "own_voice" else "narrative"
+    label = STYLE_LABELS[style]
+
+    def stage(note: GeneratedNote) -> StyleStageResult:
+        digest = note_input_digest(note)
+
+        def nothing(reason: str) -> StyleStageResult:
+            return StyleStageResult(prose_style, digest, (), 0, 0, 0, 0.0, reason)
+
+        # Round 20 MED-002: presence is a STAT, answered the same way the
+        # Practitioner tab's poll answers it, and never remembered — the
+        # model can be installed while the app runs, and the next
+        # finalisation must then try the load. Only a LOAD that failed with
+        # the file present (a digest mismatch, a broken runtime) is
+        # remembered for the process, because those need a fix and a restart.
+        if not available():
+            return nothing(style_fallback_line(style) or "")
+        try:
+            model = cache.get(model_factory) if cache is not None else model_factory()
+        except LanguageModelError as exc:
+            return nothing(LANGUAGE_MODEL_LOAD_FAILED_LINE.format(label=label, reason=exc))
+        profile: StyleProfile | None = None
+        if prose_style == "own_voice":
+            try:
+                profile = profile_loader(root=style_root)
+            except ProfileUnusableError as exc:
+                reason = STYLE_UNUSABLE_LINE.format(reason=exc.reason)
+                return nothing(STYLE_PROFILE_MISSING_LINE.format(label=label, reason=reason))
+            if profile is None:
+                return nothing(
+                    STYLE_PROFILE_MISSING_LINE.format(
+                        label=label, reason=STYLE_PROFILE_EMPTY_REASON
+                    )
+                )
+        provider = ProseStyleProvider(model, style=prose_style, profile=profile)
+        result = provider.render(ProseInput.from_note(note), only=sections_to_render(note))
+        return StyleStageResult(
+            prose_style,
+            digest,
+            result.renderings,
+            len(result.passed_sections),
+            len(result.failed_sections),
+            len(result.errored_sections),
+            result.seconds,
+        )
+
+    return stage
+
+
+def rendering_in_flight_line(style: NoteStyle) -> str:
+    return RENDERING_IN_FLIGHT_LINE.format(label=STYLE_LABELS[style])
+
+
+_WHOLE_NOTE_CLEAN_TAIL: Final = " - this note is shown as Clean clinical."
+
+
+def _sections_showing_prose(note: GeneratedNote) -> int:
+    return sum(
+        1
+        for section in note.note_sections
+        if (rendering := bound_rendering(note, section)) is not None
+        and rendering.verdict == "passed"
+    )
+
+
+def with_retained_prose(reason: str, note: GeneratedNote) -> str:
+    """A fallback ``reason`` made truthful for the note AS DISPLAYED (codex
+    round 22 PR-LOW-038): when ``note`` still shows prose rendered earlier
+    (a partial re-render failed after an edit), the whole-note clause
+    "this note is shown as Clean clinical" is replaced by the mixture —
+    which sections are Clean clinical and how many still show prose. A
+    reason over a note with no prose is returned unchanged."""
+    shown = _sections_showing_prose(note)
+    if shown == 0:
+        return reason
+    mixture = (
+        " - the sections without a rendering are shown as Clean clinical; "
+        f"{shown} section{'s' if shown != 1 else ''} still show"
+        f"{'' if shown != 1 else 's'} the prose rendered earlier."
+    )
+    if reason.endswith(_WHOLE_NOTE_CLEAN_TAIL):
+        return reason[: -len(_WHOLE_NOTE_CLEAN_TAIL)] + mixture
+    return reason.rstrip() + mixture
+
+
+def style_stage_line(result: StyleStageResult, note: GeneratedNote) -> str:
+    """The Note tab's one line after a stage job landed on ``note`` (C8):
+    the reason when nothing was rendered (made truthful for any prose the
+    note still shows — ``with_retained_prose``), else how many sections now
+    show prose, how many are shown as Clean clinical because the fidelity
+    check refused their prose, and how many could not be rendered at all —
+    counted over the NOTE as it stands, not the job alone, so the line and
+    the body agree after a partial re-render."""
+    label = STYLE_LABELS[result.style]
+    if result.reason is not None:
+        return with_retained_prose(result.reason, note)
+    shown = 0
+    refused = 0
+    for section in note.note_sections:
+        rendering = bound_rendering(note, section)
+        if rendering is None:
+            continue
+        if rendering.verdict == "passed":
+            shown += 1
+        else:
+            refused += 1
+    unrendered = sum(
+        1
+        for section in note.note_sections
+        if section.note_assertions and bound_rendering(note, section) is None
+    )
+    parts = [f"prose shown for {shown} section{'s' if shown != 1 else ''}"]
+    if refused:
+        parts.append(
+            f"{refused} section{'s' if refused != 1 else ''} shown as Clean clinical "
+            "(the fidelity check refused the prose)"
+        )
+    if unrendered:
+        parts.append(
+            f"{unrendered} section{'s' if unrendered != 1 else ''} could not be rendered "
+            "(language model error) and shown as Clean clinical"
+        )
+    return RENDERING_DONE_LINE.format(
+        label=label, summary=", ".join(parts), seconds=result.seconds
+    )
+
+
+def bind_stage_result(note: GeneratedNote, result: StyleStageResult) -> GeneratedNote:
+    """The note with the job's renderings bound where their digests still
+    match (``attach_style_renderings`` — the note's own still-valid
+    renderings first, so a job's rendering for a section replaces an older
+    one only when it is for the same texts, and a stale one never lands)."""
+    return attach_style_renderings(note, (*note.style_renderings, *result.renderings))
+
+
+def carry_renderings(note: GeneratedNote, previous: GeneratedNote | None) -> GeneratedNote:
+    """A re-finalised note with the PREVIOUS note's renderings carried over
+    where the section's texts are unchanged (the digest binding decides;
+    ``attach_style_renderings`` drops the rest and re-derives the
+    ``style_fallback`` warnings), so an edit to one section re-renders only
+    that section."""
+    if previous is None or not previous.style_renderings:
+        return attach_style_renderings(note, ())
+    return attach_style_renderings(note, previous.style_renderings)
 
 
 STYLE_NOT_LEARNED_LINE: Final = (
@@ -2048,7 +2348,23 @@ __all__ = [
     "FIRST_RUN_BANNER",
     "FIRST_RUN_STYLE_LINE",
     "LANGUAGE_MODEL_ABSENT_REASON",
+    "LANGUAGE_MODEL_LOAD_FAILED_LINE",
     "NOTE_STYLES",
+    "PROSE_STYLES",
+    "RENDERING_DONE_LINE",
+    "RENDERING_IN_FLIGHT_LINE",
+    "SAVE_WHILE_RENDERING_MESSAGE",
+    "STYLE_PROFILE_MISSING_LINE",
+    "ProseStage",
+    "StyleStageResult",
+    "bind_stage_result",
+    "build_prose_stage",
+    "carry_renderings",
+    "rendering_in_flight_line",
+    "reset_language_model_cache",
+    "sections_to_render",
+    "style_stage_line",
+    "with_retained_prose",
     "STYLE_LABELS",
     "STYLE_NOT_LEARNED_LINE",
     "STYLE_PROFILE_EMPTY_REASON",

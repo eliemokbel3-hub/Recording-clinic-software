@@ -85,6 +85,25 @@ any review warning is unacknowledged — ``clinician_asserted`` is not drawn
 for a config-decided line (the counted Save is its acknowledgement), every
 other warning keeps its gate.
 
+The prose stage (note-learning-and-styles plan Phase 4, Task 4.4; D6, D7;
+C4, C8). Under a prose writing style (``own_voice`` / ``narrative``) every
+finalisation is followed by ONE stage job on a ``TaskThread``
+(``models.build_prose_stage``): the language model renders the sections that
+have no rendering bound to their current texts, and the result lands here on
+the GUI thread through ``models.bind_stage_result`` — a rendering is bound
+only where its input digest is the section's digest NOW, so an edit made
+while the job ran invalidates exactly the sections it changed and a fresh job
+renders those. Save is DISABLED while a job is in flight and re-enabled only
+after the completed prose has been DISPLAYED (codex PR-MED-015: Save
+snapshots ``_note``, so a Save can never persist wording the practitioner has
+not seen); a job whose result arrives after the review ended is dropped. A
+section whose prose failed Check 5 keeps ``clean`` and draws the
+``style_fallback`` review warning (acknowledged like any other), and every
+fallback — language model absent or failed to load, learned style missing,
+rendering in flight — names itself on the style line under the note (C8).
+``format_note_body`` stays the ONE rendering path: the body shown, the
+``note.enc`` Save writes and Copy all read the same bound renderings.
+
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is
   cleared with the rest of the tab whenever the review ends (``clear()`` on
@@ -146,6 +165,7 @@ from scribe_desktop.note import (
     first_matching_section,
     is_interrogative,
     manual_assertion_id,
+    note_input_digest,
     reconstruct_span_text,
     spoken_by_confirmed_clinician,
     text_digest,
@@ -168,6 +188,7 @@ from scribe_desktop.note_config import (
 )
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
+from scribe_desktop.ui.tasks import TaskThread
 
 
 def _clear_layout(layout: QLayout) -> None:
@@ -213,6 +234,7 @@ class NoteScreen(QWidget):
         config_root: Path | None = None,
         learning_status_provider: Callable[[], models.LearningStatus] | None = None,
         note_style_provider: Callable[[], models.NoteStyleChoice] | None = None,
+        prose_stage_provider: Callable[[NoteStyle], models.ProseStage | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._draft: NoteDraft | None = None
@@ -251,6 +273,16 @@ class NoteScreen(QWidget):
         # window always supplies the provider.
         self._note_style_provider = note_style_provider
         self._note_style: NoteStyle = "verbatim"
+        # The prose stage (Task 4.4): the provider gives the stage callable
+        # for the review's style (None for the deterministic styles and for
+        # a screen built without one — no job ever runs there); one job at a
+        # time, bound to the digest of the note it was started for; a job
+        # orphaned by `clear()` keeps its thread object alive until it ends
+        # and its result is dropped.
+        self._prose_stage_provider = prose_stage_provider
+        self._prose_stage: models.ProseStage | None = None
+        self._style_job: TaskThread | None = None
+        self._orphaned_jobs: list[TaskThread] = []
         self._removed: set[str] = set()
         self._manual: dict[str, NoteAssertion] = {}
         self._learning_queue: dict[str, tuple[NoteSectionKey, str]] = {}
@@ -362,6 +394,12 @@ class NoteScreen(QWidget):
         self.note_body = QPlainTextEdit()
         self.note_body.setReadOnly(True)
         self.note_body.setPlaceholderText("No note generated.")
+        # The style line (Task 4.4, C8): rendering in flight, what landed,
+        # or why the note is shown as Clean clinical. PLAIN TEXT: it quotes
+        # a loader's or the runtime's error detail.
+        self.style_label = QLabel()
+        self.style_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.style_label.setWordWrap(True)
 
         self.proposals_header = QLabel("Proposed additions - confirm or decline each:")
         self.proposals_header.hide()
@@ -412,6 +450,7 @@ class NoteScreen(QWidget):
         note_layout.addWidget(self.acknowledge_all_button)
         note_layout.addWidget(QLabel("Note:"))
         note_layout.addWidget(self.note_body)
+        note_layout.addWidget(self.style_label)
         note_layout.addWidget(self.proposals_header)
         proposals_scroll = QScrollArea()
         proposals_scroll.setWidgetResizable(True)
@@ -468,6 +507,14 @@ class NoteScreen(QWidget):
         self._refresh_learning_status()
         style_choice = self._read_note_style()
         self._note_style = style_choice.style
+        # Task 4.4: the stage for this review's style — None for the two
+        # deterministic styles, and None on a screen built without a
+        # provider (then a prose style still says it renders as Clean
+        # clinical, below); with a provider, the stage itself names on the
+        # style line why nothing rendered (model absent or failed to load,
+        # learned style missing).
+        provider = self._prose_stage_provider
+        self._prose_stage = provider(style_choice.style) if provider is not None else None
 
         self.transcript_view.setPlainText(models.format_transcript_text(result.document))
         # The config report, then any generation note (C8: a fallback names
@@ -479,7 +526,7 @@ class NoteScreen(QWidget):
         if style_choice.reason is not None:
             notes.append(style_choice.reason)
         fallback = models.style_fallback_line(style_choice.style)
-        if fallback is not None:
+        if fallback is not None and provider is None:
             notes.append(fallback)
         self.info_label.setText(
             "  ".join(
@@ -503,6 +550,9 @@ class NoteScreen(QWidget):
         self._on_abandon = None
         self._on_cancel = None
         self._on_state_changed = None
+        self._orphan_style_job()
+        self._prose_stage = None
+        self.style_label.setText("")
         self._resolutions.clear()
         self._rendered_excerpt.clear()
         self._state_labels.clear()
@@ -1688,15 +1738,136 @@ class NoteScreen(QWidget):
         )
         note = finalise_note(self._working, self._build_resolutions(), document, config)
         # D7: the note records the style it is rendered under; `model_copy`
-        # changes that one field on the frozen model (no rendering exists
-        # yet — Phase 4 adds the prose stage after this point).
-        self._note = note.model_copy(update={"style": self._note_style})
+        # changes that one field on the frozen model. Task 4.4: the previous
+        # note's renderings are carried over where a section's texts are
+        # unchanged (the digest binding decides — `carry_renderings`), then
+        # the stage renders what is left.
+        styled = note.model_copy(update={"style": self._note_style})
+        self._note = models.carry_renderings(styled, self._note)
         self.note_body.setPlainText(models.format_note_body(self._note))
         self._refresh_proposal_states()
         self._refresh_warnings()
         self._rebuild_edit_controls()
+        self._start_style_stage()
         self._update_controls()
         self._emit_state()
+
+    # --- the prose stage (Task 4.4) -----------------------------------------
+
+    def _start_style_stage(self) -> None:
+        """Run the stage for the note as it stands, unless one is already in
+        flight (its landing re-checks the digest and starts again) or every
+        populated section already has a rendering bound to its current
+        texts. Sets the in-flight line; `_update_controls` reads the job."""
+        stage, note = self._prose_stage, self._note
+        if stage is None or note is None or self._style_job is not None:
+            return
+        if not models.sections_to_render(note):
+            return
+        # The closure hands the note to the stage and keeps NO reference to
+        # it afterwards (the session screen's holder pattern, PR rounds
+        # 18/PR6): the thread object is a child of this widget, so anything
+        # the closure retained would live as long as the tab does — past
+        # `clear()`, past the review (round 20 MED-001).
+        holder = [note]
+        job = TaskThread(lambda: stage(holder.pop()), self)
+        job.succeeded.connect(lambda result, job=job: self._on_style_done(job, result))
+        job.failed.connect(lambda message, job=job: self._on_style_failed(job, message))
+        # Disposal rides the thread's OWN `finished` signal (codex round 22
+        # PR-MED-036): Qt emits it after `run` has returned, queued to this
+        # thread, so the object is deleted only once the thread has provably
+        # ended — never on the strength of a timed join.
+        job.finished.connect(lambda job=job: self._dispose_style_job(job))
+        self._style_job = job
+        self.style_label.setText(models.rendering_in_flight_line(self._note_style))
+        job.start()
+
+    def _release_style_job(self, job: TaskThread) -> bool:
+        """A job just REPORTED (its result or failure): stop treating it as
+        the current job. True when it was; False for an orphan (the review
+        it belonged to has ended). The thread object stays in
+        `_orphaned_jobs` — and `is_busy` stays True — until its `finished`
+        signal disposes it (`_dispose_style_job`)."""
+        current = job is self._style_job
+        if current:
+            self._style_job = None
+            self._orphaned_jobs.append(job)
+        return current
+
+    def _dispose_style_job(self, job: TaskThread) -> None:
+        """The thread has ENDED (its `finished` signal): drop the last
+        reference — the closure holds nothing (the holder was popped), the
+        result was delivered by signal — and delete the object. Bounded
+        join first only as a formality: `finished` fires after `run`
+        returned."""
+        job.finish()
+        if not job.isFinished():
+            # `finished` is emitted just before the thread ends; a join that
+            # timed out leaves the object orphaned (and the tab busy) rather
+            # than deleting a thread that is still running.
+            if job is not self._style_job and job not in self._orphaned_jobs:
+                self._orphaned_jobs.append(job)
+            return
+        if job is self._style_job:
+            self._style_job = None
+        if job in self._orphaned_jobs:
+            self._orphaned_jobs.remove(job)
+        job.setParent(None)
+        job.deleteLater()
+        self._update_controls()
+        self._emit_state()
+
+    def _orphan_style_job(self) -> None:
+        """`clear()`: a running job cannot be joined on the GUI thread (the
+        model may be mid-generation for seconds); keep its thread object
+        alive until it reports, then drop its result."""
+        job = self._style_job
+        if job is None:
+            return
+        self._style_job = None
+        self._orphaned_jobs.append(job)
+
+    def _on_style_done(self, job: TaskThread, result: object) -> None:
+        current = self._release_style_job(job)
+        note = self._note
+        if not current or note is None or self._prose_stage is None:
+            return  # the review ended (or restarted) while the job ran
+        assert isinstance(result, models.StyleStageResult)
+        # Bind what still matches (a section edited meanwhile drops here),
+        # DISPLAY it, and only then re-enable Save (`_update_controls`).
+        self._note = models.bind_stage_result(note, result)
+        self.note_body.setPlainText(models.format_note_body(self._note))
+        self.style_label.setText(models.style_stage_line(result, self._note))
+        self._refresh_warnings()
+        if result.note_digest != note_input_digest(self._note) and models.sections_to_render(
+            self._note
+        ):
+            # Content changed during the job: render the sections it missed.
+            self._start_style_stage()
+        self._update_controls()
+        self._emit_state()
+
+    def _on_style_failed(self, job: TaskThread, message: object) -> None:
+        current = self._release_style_job(job)
+        if not current or self._note is None:
+            return
+        # An unexpected error in the stage (a model failure is a RESULT, not
+        # this): nothing landed, the body already shows Clean clinical, and
+        # Save is re-enabled because nothing unseen exists.
+        label = models.STYLE_LABELS[self._note_style]
+        reason = (
+            f"Writing style '{label}': rendering failed ({message}) - this note is shown as "
+            "Clean clinical."
+        )
+        self.style_label.setText(models.with_retained_prose(reason, self._note))
+        self._update_controls()
+        self._emit_state()
+
+    @property
+    def rendering_in_flight(self) -> bool:
+        """True while a prose rendering job runs for the review (Save is
+        disabled meanwhile — a Save must never persist unseen wording)."""
+        return self._style_job is not None
 
     def _refresh_proposal_states(self) -> None:
         for proposal_id, label in self._state_labels.items():
@@ -1761,6 +1932,11 @@ class NoteScreen(QWidget):
                 "Confirm every proposed line and acknowledge every review "
                 "warning before saving."
             )
+            return
+        if self._style_job is not None:
+            # Click-time re-check (fail closed): the note under the button
+            # would be the pre-rendering one, never shown with its prose.
+            self.message_label.setText(models.SAVE_WHILE_RENDERING_MESSAGE)
             return
         try:
             on_save(note)
@@ -2019,6 +2195,9 @@ class NoteScreen(QWidget):
             and not self._note_saved
             and state.blocking_errors == 0
             and state.unacknowledged_reviews == 0
+            # Task 4.4 (codex PR-MED-015): never while a rendering is in
+            # flight — Save snapshots `_note`, which must be what is shown.
+            and self._style_job is None
         )
         self.save_button.setEnabled(save_ready)
         # D5: the button SAYS how many pre-filled lines this Save confirms —
@@ -2057,6 +2236,11 @@ class NoteScreen(QWidget):
     @property
     def is_busy(self) -> bool:
         """True while a draft is under review and not yet saved or abandoned —
-        the state during which a generation lease is held. Closing must wait
-        (the in-progress note would be lost)."""
-        return self._draft is not None and not self._note_saved
+        the state during which a generation lease is held — OR while a prose
+        rendering thread is still running (the current job, or one orphaned
+        by a Cancel / Delete / Discard that has not yet ended; codex round 22
+        PR-MED-036). Closing must wait: the in-progress note would be lost,
+        and destroying a running QThread aborts the process (the PR-round-18
+        PR6 hazard the window's close guard exists for)."""
+        reviewing = self._draft is not None and not self._note_saved
+        return reviewing or self._style_job is not None or bool(self._orphaned_jobs)

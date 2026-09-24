@@ -62,9 +62,16 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
     kwargs: dict[str, Any] = {
         "profile_root": tmp_path / "profile",
         "config_root": tmp_path / "config",
-        # The learned-style store root the default options provider STATS —
-        # never the default one.
+        # The learned-style store root the options provider STATS — never
+        # the default one.
         "style_root": tmp_path / "style",
+        # The language model's presence is PINNED absent (leg e7): a test
+        # must never depend on whether the practitioner has downloaded the
+        # 2.3 GiB model on this host. A test that assumes it present injects
+        # `model_available=lambda: True` through the same seam.
+        "style_options_provider": lambda: models.style_options(
+            style_root=tmp_path / "style", model_available=lambda: False
+        ),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(
@@ -83,6 +90,42 @@ def _write_settings_blob(tmp_path: Path, blob: str) -> None:
     root = tmp_path / "config"
     root.mkdir(parents=True, exist_ok=True)
     (root / PRACTITIONER_SETTINGS_FILENAME).write_text(blob, encoding="utf-8")
+
+
+class TestTabScrolls:
+    def test_the_groups_sit_inside_a_vertically_scrolling_area(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase 4 live smoke (2026-09-20, "make a scroll button because i
+        can't read the stuff"): the nine groups outgrow a window, so the tab
+        scrolls — the content keeps its natural height, the width follows the
+        tab (no horizontal bar), and a short window shows a usable scrollbar
+        rather than squashed lists."""
+        from PySide6.QtCore import Qt
+
+        screen = _screen(tmp_path)
+        area = screen.scroll_area
+        assert area.widgetResizable()
+        assert area.widget() is screen.scroll_content
+        assert area.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        assert area.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        # Every group reaches the tab through the scroll content, one level
+        # deeper than before; the attributes the other tests use are the same.
+        widget = screen.style_radios["clean"]
+        ancestors = []
+        while widget is not None:
+            ancestors.append(widget)
+            widget = widget.parentWidget()
+        assert screen.scroll_content in ancestors and screen in ancestors
+        # A window shorter than the content gets a scrollbar with range.
+        screen.resize(1200, 400)
+        screen.show()
+        qapp.processEvents()
+        assert screen.scroll_content.height() > area.viewport().height()
+        assert area.verticalScrollBar().maximum() > 0
+        assert screen.learned_rules_list.height() >= 40  # no sliver
+        screen.hide()
+        screen.deleteLater()
 
 
 class TestWritingStyleGroup:
@@ -213,6 +256,44 @@ class TestWritingStyleGroup:
 
         assert _settings_path(tmp_path).exists()
         assert load_practitioner_settings(tmp_path / "config").note_style == "verbatim"
+        screen.deleteLater()
+
+    def test_the_poll_refreshes_the_options_when_the_model_appears(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Task 4.4: the language model can be installed while the app runs,
+        so the 5 s availability poll re-checks it (an import probe plus a
+        stat, never a decrypt) and re-computes the style options ONLY on a
+        transition — the prose radios enable without a restart."""
+        installed = {"value": False}
+        monkeypatch.setattr(models, "language_model_available", lambda: installed["value"])
+        calls = {"count": 0}
+
+        def provider() -> tuple[models.StyleOption, ...]:
+            calls["count"] += 1
+            return models.style_options(
+                model_available=lambda: installed["value"],
+                style_present=lambda root: True,
+            )
+
+        screen = _screen(tmp_path, style_options_provider=provider)
+        at_construction = calls["count"]
+        assert at_construction > 0
+        assert not screen.style_radios["narrative"].isEnabled()
+
+        for _ in range(3):
+            screen.refresh_availability()
+        assert calls["count"] == at_construction
+
+        installed["value"] = True
+        screen.refresh_availability()
+        assert calls["count"] == at_construction + 1
+        assert screen.style_radios["narrative"].isEnabled()
+
+        installed["value"] = False
+        screen.refresh_availability()
+        assert calls["count"] == at_construction + 2
+        assert not screen.style_radios["narrative"].isEnabled()
         screen.deleteLater()
 
     def test_the_radios_are_disabled_while_the_tab_is_busy(

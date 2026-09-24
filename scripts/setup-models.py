@@ -9,6 +9,8 @@ Downloads into %LOCALAPPDATA%\\ClinikoScribe\\models\\:
   - silero-vad ONNX model (voice activity detection)
   - faster-whisper (CTranslate2) model candidates for the Step D6 benchmark
   - speaker-embedding ONNX model (voice enrolment; practitioner-profile plan)
+  - language-model GGUF (the 4B instruct model behind the prose writing
+    styles; note-learning-and-styles plan Phase 4)
 
 Idempotent: existing complete downloads are skipped. No clinical data is
 involved at any point.
@@ -34,6 +36,17 @@ step trusts. That guard is installed for the speaker-embedding helper only;
 silero-vad's fetch keeps the default opener and relies on its pre-existing
 SHA-256 pin, and the whisper snapshots on their immutable commit SHAs.
 
+The language-model entry is PINNED (note-learning-and-styles plan Task 4.1,
+2026-09-20): name, size and SHA-256 are imported from
+``scribe_desktop.language_model`` (the runtime verifies the same pin at every
+load) and the URL is recorded below. The file is ~2.3 GiB, so it is STREAMED
+to ``language-model/<name>.gguf.candidate`` in 1 MiB reads with HTTP Range
+resume of a partial candidate, a free-space precondition before any byte is
+fetched, and every read bounded by the pinned size (a declared Content-Length
+is checked but never trusted as an allocation bound); the candidate is
+promoted to ``<name>.gguf`` only after its size AND SHA-256 match the pin. A
+run without ``--only`` includes it.
+
 Usage:
     .venv\\Scripts\\python.exe scripts\\setup-models.py [--only NAME]
 """
@@ -43,6 +56,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -101,6 +115,18 @@ from scribe_desktop.speaker_embedding import (  # noqa: E402
     sha256_of_file,
 )
 
+# The language-model pin is likewise defined ONCE, in
+# scribe_desktop.language_model (note-learning-and-styles plan Task 4.1): the
+# runtime verifies the SAME name, subdirectory, size and SHA-256 this script
+# downloads and promotes by, at every load.
+from scribe_desktop.language_model import (  # noqa: E402
+    LANGUAGE_MODEL_FILENAME,
+    LANGUAGE_MODEL_REPO,
+    LANGUAGE_MODEL_SHA256,
+    LANGUAGE_MODEL_SIZE_BYTES,
+    LANGUAGE_MODEL_SUBDIR,
+)
+
 # Speaker-embedding model (practitioner-profile plan, Phase 0 Tasks 0.3-0.5):
 # the WeSpeaker VoxCeleb ResNet34-LM ONNX export (80-bin Kaldi fbank in,
 # 256-dim embedding out). Trust-on-first-download pin, computed
@@ -125,6 +151,25 @@ SPEAKER_EMBEDDING_SHA256 = SPEAKER_MODEL_SHA256
 # refuse it instead of reporting a digest the practitioner would then pin.
 SPEAKER_EMBEDDING_MIN_BYTES = 1024 * 1024
 
+# Language model (note-learning-and-styles plan Phase 4, Task 4.1): the
+# Qwen3-4B-Instruct-2507 GGUF at Q4_K_M behind the two prose writing styles.
+# The pin - size AND SHA-256 - is single-sourced from the runtime module
+# (scribe_desktop.language_model), which verifies the very same values at
+# every load, so the two surfaces cannot drift. The URL below is the only
+# setup-time-only constant. The Hugging Face `resolve/main` URL is NOT an
+# immutable ref - the digest is what pins the bytes, exactly as for silero and
+# the speaker embedding. The quantiser `unsloth` is a third party (the
+# upstream model is Qwen's, Apache-2.0); its bytes are trusted only because
+# they hash to the recorded pin.
+LANGUAGE_MODEL_URL = (
+    f"https://huggingface.co/{LANGUAGE_MODEL_REPO}/resolve/main/{LANGUAGE_MODEL_FILENAME}"
+)
+LANGUAGE_MODEL_STREAM_CHUNK = 1024 * 1024  # one bounded read
+LANGUAGE_MODEL_PROGRESS_EVERY = 64 * 1024 * 1024  # print progress per this many bytes
+# Headroom demanded on top of the bytes still to fetch, so a download cannot
+# fill the disk the app itself writes sessions to.
+LANGUAGE_MODEL_FREE_SPACE_MARGIN = 256 * 1024 * 1024
+
 
 def models_root() -> Path:
     # Single-sourced with the runtime (LOW-014): setup must download into the
@@ -146,6 +191,14 @@ def human(size: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024
     return f"{value:.1f} GiB"
+
+
+# Belongs with the language-model constants above; defined here because it
+# renders through `human`, which is declared on the line above.
+LANGUAGE_MODEL_EXPECTED_SIZE = (
+    f"{LANGUAGE_MODEL_SIZE_BYTES} bytes ({human(LANGUAGE_MODEL_SIZE_BYTES)}), "
+    "recorded 2026-09-20"
+)
 
 
 def fetch_silero_vad(root: Path) -> None:
@@ -221,19 +274,31 @@ class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
     receives the ABSOLUTE target (``http_error_302`` joins a relative
     ``Location`` first), so every hop of a chain is checked here. Ordinary
     https -> https redirects (Hugging Face ``resolve`` -> CDN, GitHub
-    releases) pass unchanged. Installed for the speaker-embedding helper
-    only; silero's already-pinned fetch is untouched."""
+    releases) pass unchanged. Installed for the speaker-embedding helper and,
+    through the subclass below, the language-model stream; silero's
+    already-pinned fetch is untouched.
+
+    ``label`` names the entry in the refusal so one implementation serves both
+    downloads (Task 4.1) without either message going vague."""
+
+    label = "speaker-embedding"
 
     def redirect_request(
         self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str
     ) -> Any:
         if not str(newurl).lower().startswith("https://"):
             raise SystemExit(
-                f"speaker-embedding download refused: {req.full_url} redirects to the "
+                f"{self.label} download refused: {req.full_url} redirects to the "
                 f"non-https target {newurl!r}; the candidate must arrive over https on "
                 "every hop, so nothing was fetched from it and no candidate was written"
             )
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+class _LanguageModelRedirectHandler(_HttpsOnlyRedirectHandler):
+    """The same https-only policy for the language-model stream."""
+
+    label = "language-model"
 
 
 def _download_speaker_embedding(url: str) -> bytes:
@@ -342,8 +407,179 @@ def fetch_speaker_embedding(root: Path, *, candidate_url: str | None = None) -> 
     _report_candidate(candidate)
 
 
+# --- the language model (note-learning-and-styles plan Task 4.1) -----------------
+
+
+def language_model_paths(root: Path) -> tuple[Path, Path]:
+    """``(promoted, candidate)`` paths: ``<name>.gguf`` and
+    ``<name>.gguf.candidate`` under the runtime's subdirectory
+    (``language_model.default_language_model_path`` resolves the same promoted
+    path from the same constants)."""
+    target = root / LANGUAGE_MODEL_SUBDIR / LANGUAGE_MODEL_FILENAME
+    return target, target.with_name(f"{LANGUAGE_MODEL_FILENAME}.candidate")
+
+
+def _require_free_space(directory: Path, needed: int) -> None:
+    """Refuse BEFORE a single byte is fetched unless the volume holding
+    ``directory`` has room for ``needed`` bytes plus the margin: a 2.3 GiB
+    download that fills the disk would leave the app unable to write a
+    session."""
+    directory.mkdir(parents=True, exist_ok=True)
+    free = shutil.disk_usage(directory).free
+    if free < needed + LANGUAGE_MODEL_FREE_SPACE_MARGIN:
+        raise SystemExit(
+            f"language-model needs {needed} bytes ({human(needed)}) plus a "
+            f"{LANGUAGE_MODEL_FREE_SPACE_MARGIN} byte "
+            f"({human(LANGUAGE_MODEL_FREE_SPACE_MARGIN)}) margin at {directory}, but only "
+            f"{free} bytes ({human(free)}) are free; nothing was fetched"
+        )
+
+
+def _stream_language_model(url: str, candidate: Path, *, expected_size: int) -> None:
+    """Stream the pinned GGUF to ``candidate`` in bounded reads, resuming a
+    partial candidate with an HTTP Range request. Nothing here trusts the
+    server: a declared Content-Length must agree with the pin (and is never
+    used as an allocation bound), every read is ``LANGUAGE_MODEL_STREAM_CHUNK``
+    bytes at most, a body that runs past the pinned size deletes the candidate,
+    and a short body KEEPS it so the next run resumes. The caller verifies the
+    digest before anything is promoted."""
+    if not url.startswith("https://"):
+        raise SystemExit(f"language-model URL must be https://, got {url!r}")
+    have = candidate.stat().st_size if candidate.exists() else 0
+    if have > expected_size:
+        raise SystemExit(
+            f"language-model candidate at {candidate} is {have} bytes, larger than the "
+            f"pinned size {expected_size}; delete it and re-run"
+        )
+    if have == expected_size:
+        return  # complete already - no network; the caller verifies the digest
+    request = urllib.request.Request(url)  # noqa: S310 - https enforced above
+    if have > 0:
+        request.add_header("Range", f"bytes={have}-")
+        print(f"[get ] language-model resuming at {have} bytes")
+    else:
+        print(f"[get ] language-model <- {url}")
+    # https is enforced on the supplied URL above and on every redirect hop by
+    # the handler; build_opener swaps the default redirect handler for ours.
+    opener = urllib.request.build_opener(_LanguageModelRedirectHandler)
+    start = 0
+    written = 0
+    oversize = False
+    with opener.open(request) as resp:  # noqa: S310
+        status = getattr(resp, "status", 200)
+        length = resp.headers.get("Content-Length")
+        if have > 0 and status == 206:
+            start, mode = have, "ab"
+        elif status == 200:
+            start, mode = 0, "wb"
+            if have > 0:
+                print("[redo] language-model server ignored the resume; starting over")
+        else:
+            raise SystemExit(
+                f"language-model download refused: the server answered status {status}, "
+                "not 200 or 206; nothing was written"
+            )
+        try:
+            declared = None if length is None else int(length)
+        except ValueError:
+            raise SystemExit(
+                f"language-model download refused: Content-Length {length!r} is not a "
+                "number; nothing was written"
+            ) from None
+        if declared is not None and declared != expected_size - start:
+            raise SystemExit(
+                f"language-model Content-Length {length} does not match the pinned size "
+                f"({expected_size - start} bytes expected from offset {start}); this is "
+                "not the pinned file; nothing was written"
+            )
+        # Progress is reported against the total, so a resumed download does
+        # not replay the milestones it already passed.
+        next_progress = start + LANGUAGE_MODEL_PROGRESS_EVERY
+        with candidate.open(mode) as handle:
+            while True:
+                chunk = resp.read(LANGUAGE_MODEL_STREAM_CHUNK)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                written += len(chunk)
+                if start + written > expected_size:
+                    oversize = True
+                    break
+                if start + written >= next_progress:
+                    print(
+                        f"[    ] language-model {human(start + written)} / "
+                        f"{human(expected_size)}"
+                    )
+                    next_progress += LANGUAGE_MODEL_PROGRESS_EVERY
+    if oversize:
+        candidate.unlink()
+        raise SystemExit(
+            f"language-model download body exceeds the pinned size {expected_size} bytes; "
+            "the candidate was deleted"
+        )
+    if start + written < expected_size:
+        raise SystemExit(
+            f"language-model connection ended at {start + written} of {expected_size} "
+            "bytes; re-run to resume"
+        )
+
+
+def fetch_language_model(root: Path) -> None:
+    """Verify-and-promote, exactly like the pinned speaker-embedding branch,
+    but over a streamed download: a present file that matches the pin is
+    skipped, a present file that does not is re-downloaded, a full-size
+    candidate is verified and promoted (or refused and left), and anything
+    else is streamed, size-checked, digest-checked and only then promoted."""
+    target, candidate = language_model_paths(root)
+
+    if target.exists():
+        size = target.stat().st_size
+        if size == LANGUAGE_MODEL_SIZE_BYTES and _sha256_of(target) == LANGUAGE_MODEL_SHA256:
+            print(f"[skip] language-model already present ({human(size)})")
+            return
+        print("[redo] language-model present but not the pinned file; re-downloading")
+        target.unlink()
+
+    have = candidate.stat().st_size if candidate.exists() else 0
+    if have == LANGUAGE_MODEL_SIZE_BYTES:
+        digest = _sha256_of(candidate)
+        if digest != LANGUAGE_MODEL_SHA256:
+            raise SystemExit(
+                "language-model candidate checksum mismatch: expected "
+                f"{LANGUAGE_MODEL_SHA256}, got {digest}; the candidate at {candidate} is "
+                "left un-promoted - delete it to re-download"
+            )
+        candidate.replace(target)
+        print(f"[ok  ] language-model promoted from candidate -> {target}")
+        print(f"       size    : {target.stat().st_size} bytes ({human(target.stat().st_size)})")
+        print(f"       sha256  : {digest} (verified against the pin)")
+        return
+
+    _require_free_space(target.parent, LANGUAGE_MODEL_SIZE_BYTES - have)
+    _stream_language_model(
+        LANGUAGE_MODEL_URL, candidate, expected_size=LANGUAGE_MODEL_SIZE_BYTES
+    )
+    size = candidate.stat().st_size
+    if size != LANGUAGE_MODEL_SIZE_BYTES:
+        raise SystemExit(
+            f"language-model candidate at {candidate} is {size} bytes, not the pinned "
+            f"{LANGUAGE_MODEL_SIZE_BYTES}; delete it to re-download"
+        )
+    digest = _sha256_of(candidate)
+    if digest != LANGUAGE_MODEL_SHA256:
+        raise SystemExit(
+            "language-model checksum mismatch: expected "
+            f"{LANGUAGE_MODEL_SHA256}, got {digest}; the candidate at {candidate} is left "
+            "in place - delete it to re-download"
+        )
+    candidate.replace(target)
+    print(f"[ok  ] language-model ({human(target.stat().st_size)}) -> {target}")
+    print(f"       size    : {target.stat().st_size} bytes ({human(target.stat().st_size)})")
+    print(f"       sha256  : {digest} (verified against the pin)")
+
+
 def valid_only_names() -> set[str]:
-    return {"silero-vad", "speaker-embedding", *WHISPER_CANDIDATES}
+    return {"silero-vad", "speaker-embedding", "language-model", *WHISPER_CANDIDATES}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -352,8 +588,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--only",
-        help="download only one entry: 'silero-vad', 'speaker-embedding' or a whisper "
-        f"candidate name ({', '.join(WHISPER_CANDIDATES)})",
+        help="download only one entry: 'silero-vad', 'speaker-embedding', "
+        "'language-model' or a whisper candidate name "
+        f"({', '.join(WHISPER_CANDIDATES)})",
     )
     parser.add_argument(
         "--candidate-url",
@@ -391,6 +628,8 @@ def main(argv: list[str] | None = None) -> int:
                 "[skip] speaker-embedding: candidate mode (no pin yet) - fetch it "
                 "explicitly with --only speaker-embedding --candidate-url URL"
             )
+    if args.only is None or args.only == "language-model":
+        fetch_language_model(root)
 
     total = dir_size_bytes(root)
     print(f"Total model cache size: {human(total)}")

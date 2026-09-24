@@ -22,6 +22,12 @@ dependencies = [
     # the installer ships it; pinned exactly (practitioner-authorised
     # 2026-09-19). Read-only use: the module never writes a document.
     "python-docx==1.2.0",
+    # Note-learning-and-styles plan Phase 4 live smoke (practitioner decision
+    # 2026-09-20, the Excluded item's revisit trigger met: Cliniko exports
+    # notes as PDF): text extraction from a .pdf sample note
+    # (`sample_notes._read_pdf`). Pure Python, no native code, NO OCR — a
+    # scanned PDF is refused by name. BASE like python-docx; pinned exactly.
+    "pypdf==6.19.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +39,18 @@ ml = [
     "onnxruntime>=1.28",
     "huggingface_hub>=1.0",
 ]
+# The prose runtime (note-learning-and-styles plan Phase 4, Task 4.1; D8) is
+# `llama-cpp-python==0.3.35` — pinned by version AND wheel SHA-256 in the
+# hashed requirements file beside this one, `requirements-ml-prose.txt`, and
+# installed ONLY from it:
+#     python -m pip install --require-hashes --no-deps -r desktop/requirements-ml-prose.txt
+# It is deliberately NOT listed under `[ml]`: PyPI carries only an sdist of
+# that project, so a `[dev,ml]` install (AGENTS.md, CI) would BUILD it from
+# source — exactly what D8 forbids — and pip cannot pin a hash or a wheel
+# index inside this file. The runtime module (`scribe_desktop.language_model`)
+# single-sources the version, wheel URL and digest; the gate test
+# `tests/test_language_model_runtime.py` refuses an installed copy that did
+# not come from that wheel.
 dev = [
     "pytest>=8",
     "ruff>=0.6",
@@ -105,6 +123,14 @@ module = [
     # python-docx ships no stubs (note-learning plan Task 3.3).
     "docx",
     "docx.*",
+    # llama-cpp-python ships no stubs (note-learning plan Task 4.1).
+    "llama_cpp",
+    "llama_cpp.*",
+    # pypdf DOES ship `py.typed`; this entry only lets mypy pass on a host
+    # where the wheel is not installed (an agent shell, a bare dev venv) —
+    # where it is installed, the override is inert and its types are used.
+    "pypdf",
+    "pypdf.*",
 ]
 ignore_missing_imports = true
 

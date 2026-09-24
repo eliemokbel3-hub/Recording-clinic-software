@@ -60,14 +60,18 @@ radio is picked, into ``practitioner_settings.json`` through
 never part of the config digest). All four styles are LISTED: Verbatim and
 Clean clinical need no model and are always available; Own voice and
 Narrative are disabled with a one-line reason under the group until the
-local language model ships (the plan's Phase 4), and Own voice also until a
-style has been learned (C8 — a choice the app cannot honour yet is shown
-disabled with its reason, never hidden). A saved style that is currently
+local language model is installed, and Own voice also until a style has
+been learned (C8 — a choice the app cannot honour yet is shown disabled
+with its reason, never hidden). A saved style that is currently
 unavailable stays SELECTED and disabled, with the Clean-clinical fallback
 line (``models.style_fallback_line``) on the status line, and an unreadable
 settings file shows its own line rather than silently rewriting the setting.
 Option availability is ``models.style_options``, which STATS the learned-style
-store — it never decrypts it.
+store — it never decrypts it. The model can be installed while the app runs,
+so the 5 s availability poll re-checks ``models.language_model_available()``
+(an import probe plus a STAT of the model file — never a load, never a
+decrypt) and re-computes the options only when that presence CHANGES, which
+is what enables the two prose radios without a restart (Task 4.4).
 
 Learning from past notes (note-learning plan Tasks 3.4–3.6; D9, D10; C5,
 C6). The "Learn from my notes" group takes one to five of the practitioner's
@@ -130,6 +134,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -201,7 +206,7 @@ NO_LEARNED_RULES_TEXT: Final = "No learned shorthand yet."
 # Note-learning plan Task 3.4: the "Learn from my notes" group's copy.
 LEARN_INTRO_TEXT: Final = (
     f"Teach the scribe your note style from 1-{MAX_SAMPLE_NOTES} of your own past notes "
-    "(.txt or .docx), or paste one note below. The notes are read, never copied; what "
+    "(.txt, .docx or .pdf), or paste one note below. The notes are read, never copied; what "
     "would be kept is shown for review before anything is saved, and you are asked "
     "separately whether to delete the original files afterwards."
 )
@@ -211,7 +216,7 @@ LEARN_CONSENT_GATE_TEXT: Final = (
 LEARN_NOTHING_CHOSEN_TEXT: Final = f"Choose 1-{MAX_SAMPLE_NOTES} notes or paste one first."
 LEARN_CANCELLED_TEXT: Final = "Nothing was saved - the review was cancelled."
 NO_LEARNED_STYLE_TEXT: Final = "No learned style yet."
-SAMPLE_NOTE_FILTER: Final = "Notes (*.txt *.docx)"
+SAMPLE_NOTE_FILTER: Final = "Notes (*.txt *.docx *.pdf)"
 
 CaptureFn = Callable[
     [CaptureBackend, int, Callable[[EnrolmentProgress], None], Callable[[], bool]], bytes
@@ -639,9 +644,33 @@ class PractitionerScreen(QWidget):
         layout.addWidget(phrases_box)
         layout.addWidget(rules_box)
         layout.addStretch(1)
-        self.setLayout(layout)
+        # Nine groups stacked in one column outgrow any ordinary window: the
+        # tab SCROLLS vertically (note-learning plan Phase 4 live smoke,
+        # 2026-09-20: "make a scroll button because i can't read the stuff" —
+        # at 1920×1200 the lists collapsed to slivers). The content widget
+        # keeps every group at its natural height; the width follows the tab
+        # (no horizontal bar — every long label word-wraps), so the widgets
+        # the tests reach by attribute are unchanged, one level deeper.
+        self.scroll_content = QWidget()
+        self.scroll_content.setLayout(layout)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setWidget(self.scroll_content)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        outer = QVBoxLayout()
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self.scroll_area)
+        self.setLayout(outer)
 
         self._progress_reported.connect(self._on_progress)
+
+        # Task 4.4: the language model's presence as the last poll saw it, so
+        # the poll can spot a TRANSITION (installed / removed while the app
+        # runs) and re-compute the style options then and only then. Taken
+        # before the timer starts, so the first tick compares against a real
+        # value rather than a guess.
+        self._language_model_available = models.language_model_available()
 
         self._availability_timer = QTimer(self)
         self._availability_timer.setInterval(_AVAILABILITY_POLL_MS)
@@ -729,6 +758,16 @@ class PractitionerScreen(QWidget):
         else:
             self.availability_label.hide()
         self._update_controls()
+        # Task 4.4: the two prose radios enable as soon as the local language
+        # model is installed. `models.language_model_available()` is an import
+        # probe plus a stat, so the poll may ask it every tick; only a CHANGE
+        # re-computes the options, and the provider stats the learned-style
+        # store too — it never decrypts it (round 51 MED-001 is about profile
+        # decrypts and is untouched).
+        language_ok = models.language_model_available()
+        if language_ok != self._language_model_available:
+            self._language_model_available = language_ok
+            self.refresh_style_options()
 
     # --- profile state ---------------------------------------------------------
 
