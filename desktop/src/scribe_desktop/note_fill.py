@@ -2,17 +2,24 @@
 
 This module turns clinician-authored config — autofill rules and prefill
 templates (``note_config.py``) — into ``NoteProposal`` candidates against a
-finished transcript. Its entire output surface is PROPOSALS:
+finished transcript. Its output surface is PROPOSALS plus, since D5, the
+config DECISIONS minted for the ones that arrive pre-filled:
 
-- **Everything emitted here awaits confirmation.** A ``NoteProposal`` is
-  structurally distinct from ``NoteAssertion`` and cannot be placed in a
+- **Everything emitted here awaits a recorded decision.** A ``NoteProposal``
+  is structurally distinct from ``NoteAssertion`` and cannot be placed in a
   ``GeneratedSection`` (``note.py``), so nothing this module produces can
-  reach ``note.enc`` without the clinician's explicit per-assertion
-  confirmation of the exact shown wording. What enforces this: every
-  public function here is TYPED to return only ``NoteProposal`` tuples
-  (mypy-strict) and the outputs are pinned proposal-only by test — a
-  matched trigger makes a rule a CANDIDATE, never a note line (plan
-  Critical Constraints; the round-1 CRIT reversal).
+  reach ``note.enc`` without a decision the review records: the clinician's
+  per-line confirmation of the exact shown wording for a proposal that has a
+  row, or — for a hand-authored rule, a prefill seed or an auto-confirmed
+  learned rule — the ``decided_by="config"`` resolution that
+  ``config_decisions`` mints here and that ONE counted Save ratifies under
+  the D5 mark (Remove is the clinician's recorded decline). What enforces
+  this: every emitter is TYPED to return only ``NoteProposal`` tuples,
+  ``config_decisions`` returns only ``ProposalResolution`` evidence that
+  ``finalise_note`` accepts solely when the draft carries it, and the
+  outputs are pinned by test — a matched trigger makes a rule a CANDIDATE,
+  never a note line by itself (plan Critical Constraints; the round-1 CRIT
+  reversal; Phase H round 25).
 - **One proposal per ATOMIC assertion.** Expansions and seeds are authored
   as lists of atomic assertions; each list entry becomes its own proposal,
   because confirming a block is not evidence about each claim inside it. No
@@ -30,15 +37,21 @@ finished transcript. Its entire output surface is PROPOSALS:
   accepted material — every member of ``_ALLOWED_IN_CLAIM_PUNCT`` at any
   position, words/spaces, hyphen-between-alphanumerics, digit-boundary
   adjacency — plus override misuse, all mechanically inseparable from the
-  legitimate wording those positions admit. Accepted by design; Phase 7's
-  per-assertion confirmation UI and Phase 5's checking stage are the
-  compensating controls, and nothing here or there parses sentence
-  meaning.
+  legitimate wording those positions admit. Accepted by design; the review
+  surface (a per-line row for a proposal, the D5 mark plus the counted Save
+  for a pre-filled line) and Phase 5's checking stage are the compensating
+  controls, and nothing here or there parses sentence meaning.
 - **Matching runs against the transcript, never against the note**, and is
   deliberately SPEAKER-AGNOSTIC: presence gates candidacy, not truth, so a
   trigger spoken by the patient produces exactly the same proposals as one
-  spoken by the clinician — and in both cases only proposals (pinned; the
-  round-1 CRIT's failure case).
+  spoken by the clinician — never an assertion, never an insertion (pinned;
+  the round-1 CRIT's failure case). Since D5 (the note-learning plan's Phase
+  2) a proposal from a hand-authored rule, a prefill seed or an
+  auto-confirmed learned rule arrives PRE-FILLED — ``config_decisions``
+  mints its decision at this emitter — whoever spoke the trigger; the D5
+  mark, the counted Save and Remove are the controls for that line, and the
+  residue (a patient speaking a learned trigger's tail) is named in the
+  threat model's surface 14 (Phase H round 24).
 
 Matching semantics, recorded because each is a decision:
 

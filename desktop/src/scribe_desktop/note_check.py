@@ -155,7 +155,15 @@ What each check claims — and, recorded with equal care, what it does NOT:
   with paralysis" fails on ``paralysis``; (c) ``polarity`` — the MULTISET
   of polarity markers (the checker's negation vocabulary ``_NEGATIONS``
   plus ``nil`` and any ``n't`` contraction) is identical on both sides, so
-  a negation neither added nor dropped; (d) ``protected`` — the multiset
+  a negation neither added nor dropped — and, since Phase H round 24, the
+  closed set of polarity-BEARING function words ``_POLARITY_BEARING_TOKENS``
+  (on/off, before/after, over/under, since/until, in/out, up/down, if —
+  words that reverse a meaning when swapped for their antonym or dropped)
+  is kept OFF the connective allow-list, so rules (a) and (b) treat each as
+  a fact: a dropped one is a missing fact, an added one is added content —
+  and no connective may equal a shipped abbreviation's lower-case form
+  (``AS``), refused at import by ``note_config`` (round 28); (d)
+  ``protected`` — the multiset
   of number, date, medication and laterality tokens is identical on both
   sides (the same classifiers the learning filters use:
   ``transcription.is_number_token``, ``note_config._is_date_shaped``,
@@ -1528,6 +1536,35 @@ FidelityRule = Literal["missing_fact", "added_content", "polarity", "protected"]
 _POLARITY_TOKENS: Final[frozenset[str]] = frozenset({*_NEGATIONS, "nil", "n't"})
 _CONTRACTED_NEGATION: Final = "n't"
 _TYPOGRAPHIC_APOSTROPHE: Final = "’"
+# Phase H round 24 MED-004 (+ round 28 SEC-002): the closed set of function
+# words that REVERSE a clinical meaning when swapped for their antonym or
+# dropped — on/off (a medication), before/after, over/under (a duration),
+# since/until, in/out ("ruled out"), up/down (a dose, a weight, a pressure)
+# and the conditional `if`. Shipped as connectives until Phase H, so rules
+# (a) and (b) let the model drop or add them freely and `Off paracetamol` →
+# `On paracetamol` passed every rule. They are now FACT tokens: off the
+# allow-list (the vocabulary pin keeps them off), so a dropped one fails (a)
+# and an added one fails (b) — SET semantics, like every other fact, so a
+# merge of two lines that share `on` still passes. The named residue stays the
+# token-not-attachment one: two such words swapped BETWEEN facts ("off
+# paracetamol, on ibuprofen" → "on paracetamol, off ibuprofen") keep the set
+# and pass — the practitioner's reading is the control. A second class is
+# refused at IMPORT rather than listed here (round 28 SEC-001): no connective
+# may equal the lower-case form of a shipped clinical abbreviation, because
+# the one tokenisation folds case and `AS` (ankylosing spondylitis) would
+# otherwise be glue — `note_config` raises on that overlap.
+_POLARITY_BEARING_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "on", "off", "before", "after", "over", "under", "since", "until", "in", "out",
+        "up", "down", "if",
+        # Codex round 30 PR-MED-044: MODALS turn a recommendation or a future
+        # into recorded fact when dropped ("should have surgery" → "has had
+        # surgery"); TEMPORALS add or drop an interval or a condition ("pain
+        # before eating" → "pain before and during eating").
+        "should", "shall", "will", "would",
+        "during", "while", "when", "within", "between",
+    }
+)
 
 # Rule (b): the shipped connective allow-list as a set (lower-case entries —
 # the vocabulary guard refuses a mixed-case twin at import).

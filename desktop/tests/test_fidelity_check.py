@@ -120,8 +120,9 @@ class TestTheMultisetRules:
         assert fidelity_verdict(inputs, prose) == _failed("protected")
 
     def test_a_changed_date_is_a_missing_fact(self) -> None:
-        assert fidelity_verdict(("Review 12/03",), "Review on 12/03").passed
-        assert fidelity_verdict(("Review 12/03",), "Review on 12/04") == _failed("missing_fact")
+        # `at` is glue; `on` no longer is (Phase H round 24 MED-004, below).
+        assert fidelity_verdict(("Review 12/03",), "Review at 12/03").passed
+        assert fidelity_verdict(("Review 12/03",), "Review at 12/04") == _failed("missing_fact")
 
 
 class TestTokenisationAndEdges:
@@ -212,8 +213,103 @@ class TestSharedClassifiers:
         assert nc._POLARITY_TOKENS.isdisjoint(nc._PROSE_CONNECTIVE_SET)
         assert {"no", "not", "never", "denies", "without", "nil", "n't"} <= nc._POLARITY_TOKENS
 
+    def test_no_polarity_bearing_word_is_a_connective(self) -> None:
+        # Phase H round 24 MED-004: the antonym function words are facts.
+        expected = {"on", "off", "before", "after", "over", "under", "since", "until", "in",
+                    "out", "up", "down", "if",
+                    # codex round 30 PR-MED-044: modals + temporals
+                    "should", "shall", "will", "would",
+                    "during", "while", "when", "within", "between"}
+        assert nc._POLARITY_BEARING_TOKENS == frozenset(expected)
+        assert nc._POLARITY_BEARING_TOKENS.isdisjoint(nc._PROSE_CONNECTIVE_SET)
+        assert not expected & set(PROSE_CONNECTIVES)
+        assert len(PROSE_CONNECTIVES) == 118
+
+    def test_no_connective_is_a_clinical_abbreviation_folded(self) -> None:
+        # Round 28 SEC-001: Check 5 compares FOLDED tokens, so a connective
+        # equal to the lower-case form of a shipped abbreviation ("as" / "AS",
+        # ankylosing spondylitis) would let a diagnosis drop or appear as
+        # glue. The import-time guard in `note_config` is the control; this
+        # pins it against the shipped files.
+        from scribe_desktop.note_config import CLINICAL_ABBREVIATIONS
+
+        folded = {entry.lower() for entry in CLINICAL_ABBREVIATIONS}
+        assert folded.isdisjoint(nc._PROSE_CONNECTIVE_SET)
+        assert "AS" in CLINICAL_ABBREVIATIONS and "as" not in PROSE_CONNECTIVES
+        assert fidelity_verdict(("AS suspected",), "Suspected") == _failed("missing_fact")
+        assert fidelity_verdict(("Suspected",), "AS suspected") == _failed("added_content")
+
     def test_the_warning_code_is_registered_as_review(self) -> None:
         assert NOTE_WARNING_SEVERITY["style_fallback"] == "review"
+
+
+class TestPolarityBearingWords:
+    """Phase H round 24 MED-004: on/off, before/after, over/under,
+    since/until, in/out and `if` reverse a clinical meaning when swapped or
+    dropped, so they left the connective allow-list. By rule ORDER the
+    protection lands on (a) — the dropped or swapped-away word is a missing
+    fact — before (c) is reached; an added one lands on (b). The named
+    residue (tokens, not attachment) is pinned too: two such words swapped
+    BETWEEN facts keep the set and pass."""
+
+    @pytest.mark.parametrize(
+        ("inputs", "prose"),
+        [
+            (("Off paracetamol",), "On paracetamol"),
+            (("Pain before running",), "Pain after running"),
+            (("Symptoms over 2 weeks",), "Symptoms under 2 weeks"),
+            (("Neck pain since Tuesday",), "Neck pain until Tuesday"),
+            (("Fracture ruled out",), "Fracture ruled in"),
+            (("Refer if no improvement in 2 weeks",), "Refer, no improvement in 2 weeks"),
+            (("Weight down 2 kg",), "Weight up 2 kg"),  # round 28 SEC-002
+            # codex round 30 PR-MED-044: a modal dropped turns a
+            # recommendation into history; a temporal dropped loses a condition
+            (("Should have surgery",), "Has had surgery"),
+            (("Will review if worse",), "Reviewed if worse"),
+            (("Review when pain settles",), "Review pain settles"),
+            (("Pain while walking",), "Pain walking"),
+            (("Improve within 2 weeks",), "Improve 2 weeks"),
+        ],
+        ids=[
+            "on-off", "before-after", "over-under", "since-until", "in-out", "if-dropped",
+            "down-up", "should-dropped", "will-dropped", "when-dropped", "while-dropped",
+            "within-dropped",
+        ],
+    )
+    def test_a_swapped_or_dropped_word_is_a_missing_fact(
+        self, inputs: tuple[str, ...], prose: str
+    ) -> None:
+        assert fidelity_verdict(inputs, prose) == _failed("missing_fact")
+
+    @pytest.mark.parametrize(
+        ("inputs", "prose"),
+        [
+            (("Paracetamol at night",), "On paracetamol at night"),
+            # codex round 30 PR-MED-044: an interval or a modal INSERTED
+            (("Pain before eating",), "Pain before and during eating"),
+            (("Surgery",), "Should have surgery"),
+            (("Review 2 weeks",), "Review within 2 weeks"),
+            (("Symptoms exercise",), "Symptoms between exercise"),
+        ],
+        ids=["on-added", "during-added", "should-added", "within-added", "between-added"],
+    )
+    def test_an_added_word_is_added_content(
+        self, inputs: tuple[str, ...], prose: str
+    ) -> None:
+        assert fidelity_verdict(inputs, prose) == _failed("added_content")
+
+    def test_a_faithful_rephrase_keeping_them_passes(self) -> None:
+        inputs = ("Off paracetamol since Tuesday",)
+        assert fidelity_verdict(inputs, "Since Tuesday, off paracetamol.").passed
+
+    def test_a_merge_of_two_lines_sharing_one_still_passes(self) -> None:
+        # SET semantics, like every fact: the shared `on` stated once.
+        inputs = ("Neck pain on rotation", "Neck pain on flexion")
+        assert fidelity_verdict(inputs, "Neck pain on rotation and flexion").passed
+
+    def test_two_words_swapped_between_facts_is_the_named_residue(self) -> None:
+        inputs = ("Off paracetamol", "On ibuprofen")
+        assert fidelity_verdict(inputs, "On paracetamol, off ibuprofen").passed
 
 
 class TestFidelityWarnings:

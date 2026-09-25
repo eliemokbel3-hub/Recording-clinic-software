@@ -29,8 +29,13 @@ What comes back: ``parse_section_prose`` reduces one completion to one
 section's prose (a ``<think>`` block stripped, an unclosed one refused, a
 leading title line or markdown heading dropped, an echoed marker refused,
 whitespace collapsed, ``MAX_SECTION_PROSE_CHARS`` bounded; anything unusable
-is the empty string); ``note_check.fidelity_verdicts`` / ``fidelity_warnings``
-then judge every section — ONE emitter for the ``style_fallback`` code — and a
+is the empty string); ``note_check.fidelity_verdicts`` then judges every
+section — the ONE verdict source for the ``style_fallback`` code, carried
+twice: as ``ProseResult.warnings`` (``fidelity_warnings``, the provider's own
+view, read by the tests and the measurement tool) and, for the note the tab
+shows, re-derived from the ``failed`` renderings by
+``note.attach_style_renderings`` so the note's warnings and renderings cannot
+disagree — and a
 section that fails keeps ``clean`` (C8): its ``StyleRendering`` carries the
 ``failed`` verdict and NO prose (C4), bound to the section's input digest so
 the stage never asks the same question of the same lines twice in a review;
@@ -51,11 +56,12 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
 from scribe_desktop.language_model import (
+    LANGUAGE_MODEL_CONTEXT_TOKENS,
     PROMPT_LINES_END,
     PROMPT_LINES_HEADER,
     LanguageModel,
@@ -76,7 +82,7 @@ from scribe_desktop.note_check import (
     fidelity_verdicts,
     fidelity_warnings,
 )
-from scribe_desktop.note_config import MAX_STYLE_EXEMPLARS, StyleProfile
+from scribe_desktop.note_config import MAX_STYLE_EXEMPLARS, StyleExemplar, StyleProfile
 
 ProseStyle = Literal["own_voice", "narrative"]
 PROSE_STYLES: Final[tuple[ProseStyle, ...]] = ("own_voice", "narrative")
@@ -90,17 +96,24 @@ _TOKENS_PER_INPUT_WORD: Final = 4
 # The fixed narrative instruction (D6): the model may glue, never add. The
 # prompt version is recorded on Task 4.3 beside the measured pass rate;
 # `narrative-v2` (leg e6, 2026-09-20) states the EXACT-FORM rule, names the
-# framing words the untuned model kept adding, lists the connective
-# allow-list itself (single-sourced with Check 5's rule (b) — whatever the
-# gate admits, the model is told it may use) and shows one worked example
-# whose words are unlikely to be echoed into a note.
+# framing words the untuned model kept adding, DESCRIBES the connective
+# allow-list by category (it never listed the words — the inline-list form
+# was rejected for speed, below) and shows one worked example whose words
+# are unlikely to be echoed into a note.
 PROMPT_VERSION: Final = "narrative-v2"
 # Kept SHORT on purpose: the whole system prompt is re-evaluated on every
 # section call (the runtime's state is cleared after each call — PR-MED-034),
 # and on the CPU host prompt length was the time driver in leg e6 (the same
-# rules with the 141 connectives listed inline: 9.5 s/section; a long prose
-# rule set: 6.6 s; this form: see Task 4.3's record). The allow-list is
-# DESCRIBED by category — the categories name `prose_connectives.json`'s set.
+# rules with the then-141 connectives listed inline: 9.5 s/section; a long
+# prose rule set: 6.6 s; this form: see Task 4.3's record). The allow-list is
+# DESCRIBED by category, and since Phase H round 24 (MED-004) the categories
+# are WIDER than `prose_connectives.json`'s set: the prompt still says "a
+# preposition, a conjunction" while the gate refuses on/off, before/after,
+# over/under, since/until, in/out and `if` as added glue. The divergence is
+# the safe direction (an added one fails Check 5 and the section keeps
+# `clean`, C8) and the re-measurement under the narrowed list held 10/10 in
+# both styles; naming the eleven words in the prompt would lengthen every
+# section call and needs its own re-measurement — not done here.
 NARRATIVE_INSTRUCTION: Final = (
     "Rewrite a clinician's confirmed note lines as one short paragraph of clinical prose.\n"
     "Rules:\n"
@@ -203,10 +216,24 @@ def _text_lines(lines: object) -> tuple[str, ...]:
     return tuple(checked)
 
 
-def _style_conditioning(profile: StyleProfile) -> str:
-    """The ``own_voice`` conditioning block: measures, the shorthand the
-    clinician uses (kept only where the lines already use it — no
-    substitution at render time), and the reviewed exemplars for tone."""
+# Phase H round 28 SEC-004 → codex round 30 PR-MED-046: every section's prompt
+# is BUDGETED against the model's context window with the model's OWN token
+# count (`LanguageModel.count_tokens` — the runtime's tokenizer; the mock
+# counts words), never a character heuristic. The window holds, in this
+# order of precedence: the chat template's framing (a fixed margin), the
+# completion the section may need (`output_token_budget`), the fixed
+# instruction and the section's own lines (the user text) — and whatever
+# remains is the allowance for own-voice conditioning, trimmed exemplars
+# first (from the end of the reviewed list), then shorthand. A section whose
+# instruction, lines and completion alone do not fit is refused BEFORE the
+# call with a named reason (`too_long`, C8) instead of raising in the runtime.
+PROMPT_FRAMING_TOKENS: Final = 64
+SECTION_TOO_LONG_DETAIL: Final = "the section's lines are too long for the model's window"
+
+
+def _render_conditioning(
+    profile: StyleProfile, shorthand: Sequence[str], exemplars: Sequence[StyleExemplar]
+) -> str:
     parts = [_OWN_VOICE_HEADER]
     measures = profile.measures
     words = max(1, round(measures.mean_sentence_words))
@@ -216,41 +243,48 @@ def _style_conditioning(profile: StyleProfile) -> str:
     voice = ", ".join(part for part in (person, tense) if part is not None)
     if voice:
         parts.append(f"- {voice}")
-    if profile.shorthand:
+    if shorthand:
         parts.append(
             "- abbreviations the clinician uses; keep any that appear in the lines exactly "
-            "as written, and introduce none: " + ", ".join(profile.shorthand)
+            "as written, and introduce none: " + ", ".join(shorthand)
         )
-    exemplars = profile.exemplars[:MAX_STYLE_EXEMPLARS]
     if exemplars:
         parts.append(_EXEMPLAR_HEADER)
         parts.extend(f"  {exemplar.exemplar_text}" for exemplar in exemplars)
     return "\n".join(parts)
 
 
-def build_section_prompt(
-    section_key: NoteSectionKey,
-    lines: Sequence[str],
-    *,
-    style: ProseStyle,
-    profile: StyleProfile | None = None,
-) -> tuple[str, str]:
-    """``(system_text, user_text)`` for one section. ``lines`` must be text
-    lines (``_text_lines``); ``own_voice`` needs ``profile`` (a
-    ``ProseStyleError`` otherwise — the tab's C8 reason is "needs a learned
-    style"); ``narrative`` ignores it. The lines sit between the shared
-    markers, one per bullet, so ``language_model.prompt_lines`` reads them
-    back exactly."""
-    texts = _text_lines(lines)
-    if style not in PROSE_STYLES:
-        raise ProseStyleError(f"not a prose style: {style!r}")
-    if style == "own_voice":
-        if profile is None:
-            raise ProseStyleError("the own-voice style needs a learned style profile")
-        system_text = f"{NARRATIVE_INSTRUCTION}\n{_style_conditioning(profile)}"
-    else:
-        system_text = NARRATIVE_INSTRUCTION
-    user_text = "\n".join(
+def _style_conditioning(profile: StyleProfile) -> str:
+    """The ``own_voice`` conditioning block, UNTRIMMED: measures, the
+    shorthand the clinician uses (kept only where the lines already use it —
+    no substitution at render time), and the reviewed exemplars for tone."""
+    return _render_conditioning(
+        profile, list(profile.shorthand), list(profile.exemplars[:MAX_STYLE_EXEMPLARS])
+    )
+
+
+def _budgeted_conditioning(
+    profile: StyleProfile, budget: int, count_tokens: Callable[[str], int]
+) -> str | None:
+    """The conditioning block trimmed to ``budget`` tokens (codex round 30
+    PR-MED-046): exemplars dropped from the END of the reviewed list until
+    the block fits, then shorthand tokens; the measures always come first.
+    None when even the bare block does not fit — the caller refuses the
+    section as too long rather than overflow the window."""
+    shorthand = list(profile.shorthand)
+    exemplars = list(profile.exemplars[:MAX_STYLE_EXEMPLARS])
+    text = _render_conditioning(profile, shorthand, exemplars)
+    while count_tokens(text) > budget and exemplars:
+        exemplars.pop()
+        text = _render_conditioning(profile, shorthand, exemplars)
+    while count_tokens(text) > budget and shorthand:
+        shorthand.pop()
+        text = _render_conditioning(profile, shorthand, exemplars)
+    return text if count_tokens(text) <= budget else None
+
+
+def _user_text(section_key: NoteSectionKey, texts: Sequence[str]) -> str:
+    return "\n".join(
         [
             f"Section: {SECTION_TITLES[section_key]}",
             PROMPT_LINES_HEADER,
@@ -259,7 +293,52 @@ def build_section_prompt(
             _USER_INSTRUCTION,
         ]
     )
-    return system_text, user_text
+
+
+def conditioning_allowance(
+    section_key: NoteSectionKey, texts: Sequence[str], count_tokens: Callable[[str], int]
+) -> int:
+    """How many tokens of the model's window are left for own-voice
+    conditioning once the fixed instruction, the section's user text, the
+    completion the section may need and the chat framing are reserved
+    (codex round 30 PR-MED-046). Negative means the section cannot be
+    rendered at all: its lines alone overflow the window."""
+    reserved = (
+        count_tokens(NARRATIVE_INSTRUCTION)
+        + count_tokens(_user_text(section_key, texts))
+        + output_token_budget(texts)
+        + PROMPT_FRAMING_TOKENS
+    )
+    return LANGUAGE_MODEL_CONTEXT_TOKENS - reserved
+
+
+def build_section_prompt(
+    section_key: NoteSectionKey,
+    lines: Sequence[str],
+    *,
+    style: ProseStyle,
+    profile: StyleProfile | None = None,
+    conditioning: str | None = None,
+) -> tuple[str, str]:
+    """``(system_text, user_text)`` for one section. ``lines`` must be text
+    lines (``_text_lines``); ``own_voice`` needs ``profile`` (a
+    ``ProseStyleError`` otherwise — the tab's C8 reason is "needs a learned
+    style"); ``narrative`` ignores it. ``conditioning`` is the already
+    budgeted own-voice block from ``render`` (``_budgeted_conditioning``);
+    absent, the untrimmed block is used (the prompt-shape tests). The lines
+    sit between the shared markers, one per bullet, so
+    ``language_model.prompt_lines`` reads them back exactly."""
+    texts = _text_lines(lines)
+    if style not in PROSE_STYLES:
+        raise ProseStyleError(f"not a prose style: {style!r}")
+    if style == "own_voice":
+        if profile is None:
+            raise ProseStyleError("the own-voice style needs a learned style profile")
+        block = conditioning if conditioning is not None else _style_conditioning(profile)
+        system_text = f"{NARRATIVE_INSTRUCTION}\n{block}"
+    else:
+        system_text = NARRATIVE_INSTRUCTION
+    return system_text, _user_text(section_key, texts)
 
 
 def output_token_budget(lines: Sequence[str]) -> int:
@@ -301,16 +380,19 @@ def parse_section_prose(raw: str, section_key: NoteSectionKey) -> str:
 
 # --- the provider ---------------------------------------------------------------------------
 
-SectionFailure = Literal["fidelity", "model_error"]
+SectionFailure = Literal["fidelity", "model_error", "too_long"]
 
 
 @dataclass(frozen=True)
 class SectionOutcome:
     """One section's result: a ``passed`` rendering with prose, a ``failed``
-    rendering with none (Check 5 refused it — ``rule`` says which rule), or
-    NO rendering when the model call itself raised (``model_error`` — the
-    exception type in ``detail``, never the prompt). ``seconds`` is the
-    model's wall time for the section (Task P.2's record)."""
+    rendering with none (Check 5 refused it — ``rule`` says which rule), NO
+    rendering when the model call itself raised (``model_error`` — the
+    exception type in ``detail``, never the prompt), or NO rendering and no
+    call because the section's lines alone overflow the model's window
+    (``too_long``, codex round 30 PR-MED-046 — ``SECTION_TOO_LONG_DETAIL``).
+    ``seconds`` is the model's wall time for the section (Task P.2's
+    record)."""
 
     section_key: NoteSectionKey
     rendering: StyleRendering | None
@@ -346,7 +428,14 @@ class ProseResult:
 
     @property
     def errored_sections(self) -> tuple[NoteSectionKey, ...]:
-        return tuple(o.section_key for o in self.outcomes if o.failure == "model_error")
+        """The sections with NO rendering — a model error, or too long."""
+        return tuple(
+            o.section_key for o in self.outcomes if o.failure in ("model_error", "too_long")
+        )
+
+    @property
+    def too_long_sections(self) -> tuple[NoteSectionKey, ...]:
+        return tuple(o.section_key for o in self.outcomes if o.failure == "too_long")
 
     @property
     def seconds(self) -> float:
@@ -388,13 +477,28 @@ class ProseStyleProvider:
         prose_input: ProseInput,
         *,
         only: Collection[NoteSectionKey] | None = None,
+        abort: Callable[[], bool] | None = None,
     ) -> ProseResult:
         """Render every section of ``prose_input`` (or just those in
         ``only``): one model call per section, the completion parsed, every
-        section judged by ``fidelity_verdicts`` at once, ``style_fallback``
-        warnings from ``fidelity_warnings`` (the one emitter). A section's
+        section judged by ``fidelity_verdicts`` at once, and the same
+        verdicts carried as ``ProseResult.warnings`` through
+        ``fidelity_warnings`` (the provider's own view of them — the note
+        the tab shows re-derives its ``style_fallback`` warnings from the
+        carried ``failed`` renderings in ``note.attach_style_renderings``:
+        one verdict source, two carriages that cannot disagree). A section's
         rendering is stamped with ``input_texts_digest`` of exactly the lines
-        it was given, so ``note.usable_rendering`` binds it to the section."""
+        it was given, so ``note.usable_rendering`` binds it to the section.
+
+        ``abort`` (Phase H round 24 MED-002) is consulted BEFORE each
+        section's model call: once it answers True no further call is made
+        and the sections not yet rendered get no outcome — the review that
+        asked has ended (Abandon, Cancel, Complete, Discard), so the note's
+        lines must not keep being handed to the model after its session key
+        may be gone. The call in progress cannot be interrupted: the MODEL
+        sees at most that one section's prompt, while this frame keeps the
+        whole ``prose_input`` referenced until the call returns (codex round
+        31 PR-LOW-047 — the stated residue)."""
         if not isinstance(prose_input, ProseInput):
             raise TypeError(
                 f"render takes a ProseInput built from a finalised note, not "
@@ -407,12 +511,35 @@ class ProseStyleProvider:
         for section_key, texts in prose_input.section_texts:
             if only is not None and section_key not in only:
                 continue
+            if abort is not None and abort():
+                break
             inputs[section_key] = texts
-            system_text, user_text = build_section_prompt(
-                section_key, texts, style=self._style, profile=self._profile
-            )
             started = time.perf_counter()
+            # ONE error boundary per section (codex round 32 PR-LOW-049): the
+            # tokenizer budget and the model call both raise
+            # `LanguageModelError` on a runtime failure, and either is THIS
+            # section's `model_error` — the sections already rendered keep
+            # their outcomes and the loop goes on.
             try:
+                # PR-MED-046: the whole prompt is budgeted with the model's
+                # own tokenizer before any call; a section that cannot fit
+                # even without conditioning is refused here, by name.
+                allowance = conditioning_allowance(
+                    section_key, texts, self._model.count_tokens
+                )
+                conditioning: str | None = None
+                if allowance >= 0 and self._profile is not None:
+                    conditioning = _budgeted_conditioning(
+                        self._profile, allowance, self._model.count_tokens
+                    )
+                if allowance < 0 or (self._profile is not None and conditioning is None):
+                    timings[section_key] = 0.0
+                    errors[section_key] = "too_long"
+                    continue
+                system_text, user_text = build_section_prompt(
+                    section_key, texts, style=self._style, profile=self._profile,
+                    conditioning=conditioning,
+                )
                 raw = self._model.complete(
                     system_text=system_text,
                     user_text=user_text,
@@ -429,6 +556,13 @@ class ProseStyleProvider:
         outcomes: list[SectionOutcome] = []
         for section_key, texts in inputs.items():
             if section_key in errors:
+                if errors[section_key] == "too_long":
+                    outcomes.append(
+                        SectionOutcome(
+                            section_key, None, "too_long", None, SECTION_TOO_LONG_DETAIL, 0.0
+                        )
+                    )
+                    continue
                 outcomes.append(
                     SectionOutcome(
                         section_key, None, "model_error", None, errors[section_key],

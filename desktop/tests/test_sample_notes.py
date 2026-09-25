@@ -183,6 +183,21 @@ class TestReadSampleNote:
             read_sample_note(path)
         assert fragment in str(exc.value)
 
+    def test_a_txt_is_read_through_the_capped_read_never_read_bytes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Phase H round 24 LOW-008: ONE read rule for every reader — the
+        capped `read(MAX + 1)`, so a file that grows after the stat cannot
+        reach memory unbounded; `read_bytes` is never called."""
+
+        def forbidden(self: Path) -> bytes:
+            raise AssertionError("read_bytes must not be used")
+
+        monkeypatch.setattr(Path, "read_bytes", forbidden)
+        small = tmp_path / "small.txt"
+        small.write_text(NOTE_A, encoding="utf-8")
+        assert read_sample_note(small).sample_text == NOTE_A
+
     def test_a_missing_file_and_empty_pasted_text_are_refused(self, tmp_path: Path) -> None:
         with pytest.raises(SampleNoteError):
             read_sample_note(tmp_path / "absent.txt")

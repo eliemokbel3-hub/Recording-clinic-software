@@ -492,9 +492,6 @@ CONSENT_MANUAL_REMINDER: Final[str] = (
 # (Task 3.2: ONE rendering path shared by display, ``note.enc`` reload and
 # Copy); this module re-exports them so the screens and tests keep one
 # import surface.
-_SECTION_TITLES: Final[Mapping[NoteSectionKey, str]] = SECTION_TITLES
-
-
 @dataclass(frozen=True)
 class RenderedAssertion:
     """One assertion rendered as ONE bullet — never assembled prose (plan
@@ -536,7 +533,7 @@ def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
         rendered.append(
             RenderedSection(
                 section_key=section.section_key,
-                title=_SECTION_TITLES[section.section_key],
+                title=SECTION_TITLES[section.section_key],
                 assertions=tuple(
                     RenderedAssertion(
                         assertion_id=assertion.assertion_id,
@@ -585,7 +582,7 @@ def render_proposal(proposal: NoteProposal) -> RenderedProposal:
     return RenderedProposal(
         proposal_id=proposal.proposal_id,
         section_key=proposal.section_key,
-        section_title=_SECTION_TITLES[proposal.section_key],
+        section_title=SECTION_TITLES[proposal.section_key],
         provenance=proposal.provenance,
         provenance_label=provenance_label(proposal.provenance),
         excerpt=proposal.note_excerpt,
@@ -856,7 +853,7 @@ def config_report_lines(
         lines.append(f"Active template: {selected.display_name}")
         dropped = selected.unmapped_section_keys()
         if dropped:
-            titles = ", ".join(_SECTION_TITLES[key] for key in dropped)
+            titles = ", ".join(SECTION_TITLES[key] for key in dropped)
             lines.append(f"Sections with no template mapping: {titles}")
     return lines
 
@@ -930,7 +927,7 @@ def working_draft(
 
 
 def section_title(key: NoteSectionKey) -> str:
-    return _SECTION_TITLES[key]
+    return SECTION_TITLES[key]
 
 
 def _lead_words(text: str, *, max_chars: int = 60) -> str:
@@ -1638,6 +1635,11 @@ LANGUAGE_MODEL_ABSENT_REASON: Final = (
 STYLE_PROFILE_EMPTY_REASON: Final = (
     "needs a learned style - teach the scribe your note style below first"
 )
+STYLE_CONSENT_STALE_REASON: Final = (
+    "needs your consent to the current text - the learned style was saved under an "
+    "older consent text; read it, tick the consent box and press Confirm consent on the "
+    "Practitioner tab"
+)
 STYLE_SETTING_UNREADABLE_LINE: Final = (
     "Writing style setting unreadable ({reason}) - notes are shown as Clean clinical until "
     "it is fixed or deleted."
@@ -1665,6 +1667,9 @@ class StyleOption:
     label: str
     enabled: bool
     reason: str | None
+    # The bare reasons the line above was built from (Phase H round 24
+    # MED-005: the tab's fallback line names THESE, never a fixed one).
+    reasons: tuple[str, ...] = ()
 
 
 def style_options(
@@ -1692,18 +1697,26 @@ def style_options(
         if style == "own_voice" and not present:
             reasons.append(STYLE_PROFILE_EMPTY_REASON)
         reason = None if not reasons else f"{STYLE_LABELS[style]} {'; '.join(reasons)}."
-        options.append(StyleOption(style, STYLE_LABELS[style], not reasons, reason))
+        options.append(
+            StyleOption(style, STYLE_LABELS[style], not reasons, reason, tuple(reasons))
+        )
     return tuple(options)
 
 
-def style_fallback_line(style: NoteStyle) -> str | None:
-    """The Note tab's C8 line for a note whose chosen style is a prose style
-    while no language model exists: it renders as ``clean`` and says so.
-    None for the two deterministic styles."""
+def style_fallback_line(
+    style: NoteStyle, reasons: Sequence[str] = (LANGUAGE_MODEL_ABSENT_REASON,)
+) -> str | None:
+    """The C8 line for a note whose chosen style is a prose style the app
+    cannot render now: it renders as ``clean`` and says WHY. The default
+    reason is the absent language model — the Note tab's and the stage's
+    case, where that is the one reason; the Practitioner tab passes the
+    disabled option's own ``reasons`` (Phase H round 24 MED-005: a saved
+    Own voice with the model installed but no learned style must name the
+    learned style, not the model). None for the two deterministic styles."""
     if style in ("verbatim", "clean"):
         return None
     return (
-        f"Writing style '{STYLE_LABELS[style]}' {LANGUAGE_MODEL_ABSENT_REASON} - this note "
+        f"Writing style '{STYLE_LABELS[style]}' {'; '.join(reasons)} - this note "
         "is shown as Clean clinical."
     )
 
@@ -1784,9 +1797,21 @@ class StyleStageResult:
     errored: int
     seconds: float
     reason: str | None = None
+    # Of `errored`, the sections refused BEFORE any call because their lines
+    # alone overflow the model's window (codex round 30 PR-MED-046).
+    too_long: int = 0
 
 
-ProseStage = Callable[[GeneratedNote], StyleStageResult]
+class ProseStage(Protocol):
+    """The stage callable the Note tab runs on its TaskThread: the note it
+    was started for, plus ``abort`` — consulted by the provider before each
+    section's model call (Phase H round 24 MED-002: a job orphaned by
+    ``clear()`` stops after the call in progress instead of rendering the
+    rest of a note whose review has ended)."""
+
+    def __call__(
+        self, note: GeneratedNote, /, *, abort: Callable[[], bool] | None = None
+    ) -> StyleStageResult: ...
 
 
 class _LanguageModelCache:
@@ -1862,7 +1887,9 @@ def build_prose_stage(
     prose_style: ProseStyle = "own_voice" if style == "own_voice" else "narrative"
     label = STYLE_LABELS[style]
 
-    def stage(note: GeneratedNote) -> StyleStageResult:
+    def stage(
+        note: GeneratedNote, /, *, abort: Callable[[], bool] | None = None
+    ) -> StyleStageResult:
         digest = note_input_digest(note)
 
         def nothing(reason: str) -> StyleStageResult:
@@ -1893,8 +1920,21 @@ def build_prose_stage(
                         label=label, reason=STYLE_PROFILE_EMPTY_REASON
                     )
                 )
+            # Phase H round 24 LOW-001: the style store's OWN consent record
+            # (D9) gates USE as well as display — a profile learned under an
+            # older text is not conditioning material until the practitioner
+            # re-agrees on the tab, exactly as the voice side goes dark
+            # (`learning_status`). Dormant while every record is current.
+            if not consent_is_current(profile):
+                return nothing(
+                    STYLE_PROFILE_MISSING_LINE.format(
+                        label=label, reason=STYLE_CONSENT_STALE_REASON
+                    )
+                )
         provider = ProseStyleProvider(model, style=prose_style, profile=profile)
-        result = provider.render(ProseInput.from_note(note), only=sections_to_render(note))
+        result = provider.render(
+            ProseInput.from_note(note), only=sections_to_render(note), abort=abort
+        )
         return StyleStageResult(
             prose_style,
             digest,
@@ -1903,6 +1943,7 @@ def build_prose_stage(
             len(result.failed_sections),
             len(result.errored_sections),
             result.seconds,
+            too_long=len(result.too_long_sections),
         )
 
     return stage
@@ -1976,10 +2017,17 @@ def style_stage_line(result: StyleStageResult, note: GeneratedNote) -> str:
             f"{refused} section{'s' if refused != 1 else ''} shown as Clean clinical "
             "(the fidelity check refused the prose)"
         )
-    if unrendered:
+    too_long = min(result.too_long, unrendered)
+    failed_calls = unrendered - too_long
+    if failed_calls:
         parts.append(
-            f"{unrendered} section{'s' if unrendered != 1 else ''} could not be rendered "
+            f"{failed_calls} section{'s' if failed_calls != 1 else ''} could not be rendered "
             "(language model error) and shown as Clean clinical"
+        )
+    if too_long:
+        parts.append(
+            f"{too_long} section{'s' if too_long != 1 else ''} too long for the model's "
+            "window and shown as Clean clinical"
         )
     return RENDERING_DONE_LINE.format(
         label=label, summary=", ".join(parts), seconds=result.seconds
@@ -2013,28 +2061,21 @@ STYLE_UNUSABLE_LINE: Final = (
 )
 
 
-def style_profile_report_line(*, style_root: Path | None = None) -> str:
-    """The learned style's state in one line (Task 3.5): not learned,
-    learned (its date, source count and exemplar count — never a field's
-    text), or unusable naming why. ONE style-store read (a DPAPI unwrap and
-    a decrypt on the GUI thread) — the Practitioner tab takes that read
-    itself (``refresh_style_profile_state``, at construction and on its own
-    learn / remove / delete events ONLY) and renders the line from the
-    loaded profile through ``style_profile_line``; no poll reads the STYLE
-    store (round 51 MED-001: the microphone screen's 5 s poll renders
+def style_profile_line(profile: StyleProfile | None) -> str:
+    """The learned style's state in one line (Task 3.5) for an ALREADY-LOADED
+    profile (None = not learned): a date, a source count and an exemplar
+    count, never a field's text; an unusable store is named by the caller
+    through ``STYLE_UNUSABLE_LINE``. The ONE style-store read behind it (a
+    DPAPI unwrap and a decrypt on the GUI thread) is the Practitioner tab's
+    own (``refresh_style_profile_state``, at construction and on its learn /
+    remove / delete / consent-renewal events ONLY); no poll reads the STYLE
+    store (round 51
+    MED-001: the microphone screen's 5 s poll renders
     ``model_file_report_lines``, stats alone, re-reading the voice profile
     only on a speaker-model presence transition — round 55 PR-REG-006; the
-    Practitioner tab's 5 s availability poll reads no store)."""
-    try:
-        profile = load_style_profile(root=style_root)
-    except ProfileUnusableError as exc:
-        return STYLE_UNUSABLE_LINE.format(reason=exc.reason)
-    return style_profile_line(profile)
-
-
-def style_profile_line(profile: StyleProfile | None) -> str:
-    """The line for an already-loaded profile (None = not learned): a date,
-    a source count and an exemplar count, never a field's text."""
+    Practitioner tab's 5 s availability poll reads no store). This module
+    deliberately exports no helper that decrypts the store on the caller's
+    behalf (Phase H round 24 LOW-009 removed the unused one)."""
     if profile is None:
         return STYLE_NOT_LEARNED_LINE
     notes = "note" if profile.source_count == 1 else "notes"
@@ -2228,7 +2269,15 @@ def _live_transcript(
     released when its thread exited (D3), and ``stop`` confirms the buffers
     are gone — BEFORE the caller constructs the batch provider, so two
     models are never resident. A store write failure propagates exactly as
-    it would from the batch path."""
+    it would from the batch path. The verdict of ``stop`` is CONSULTED
+    (Phase H round 24 LOW-002): a worker that did not confirm its buffers
+    cleared raises ``LiveTranscriptionError`` out of the transcriber instead
+    of admitting the batch path — a second model beside a possibly-alive
+    worker is exactly what this ordering exists to prevent. Unreachable by
+    construction (``finish`` seals before PROCESSING and ``drain`` refuses
+    an unsealed worker before its join), so the raise is the fail-closed
+    shape of a claim, not an expected path."""
+    document: TranscriptDocument | None = None
     try:
         try:
             result = worker.drain()
@@ -2237,16 +2286,20 @@ def _live_transcript(
         except LiveTranscriptionFailed as exc:
             if on_status is not None:
                 on_status(f"{LIVE_FALLBACK_STATUS[exc.failure.kind]} ({exc.failure.detail})")
-            return None
         except (LiveTranscriptionError, ValueError) as exc:
             if on_status is not None:
                 on_status(
                     f"{LIVE_FALLBACK_STATUS[LiveFailureKind.WORKER_ERROR]} "
                     f"({type(exc).__name__}: {exc})"
                 )
-            return None
     finally:
-        worker.stop()
+        cleared = worker.stop()
+    if not cleared:
+        raise LiveTranscriptionError(
+            "the live worker did not confirm its buffers cleared; the batch path is refused"
+        )
+    if document is None:
+        return None
     write_transcript(session_dir, crypto, document)
     if on_status is not None:
         on_status(LIVE_ASSEMBLED_STATUS)
@@ -2379,7 +2432,7 @@ __all__ = [
     "style_fallback_line",
     "style_options",
     "style_profile_line",
-    "style_profile_report_line",
+    "STYLE_CONSENT_STALE_REASON",
     "LEARNING_NO_PROFILE_HINT",
     "LEARNING_NOT_ATTRIBUTED_NOTE",
     "LEARNING_ON_LINE",

@@ -1374,6 +1374,23 @@ class TestStyleOptions:
             assert models.STYLE_LABELS[style] in line
             assert models.LANGUAGE_MODEL_ABSENT_REASON in line
 
+    def test_the_fallback_line_names_the_reasons_it_is_given(self) -> None:
+        # Phase H round 24 MED-005.
+        line = models.style_fallback_line("own_voice", ("needs x", "needs y"))
+        assert line is not None
+        assert "needs x; needs y" in line
+        assert line.endswith("- this note is shown as Clean clinical.")
+        assert models.style_fallback_line("clean", ("needs x",)) is None
+
+    def test_style_options_carry_their_bare_reasons(self) -> None:
+        options = self._options(model=False, present=False)
+        assert options["own_voice"].reasons == (
+            models.LANGUAGE_MODEL_ABSENT_REASON,
+            models.STYLE_PROFILE_EMPTY_REASON,
+        )
+        assert options["narrative"].reasons == (models.LANGUAGE_MODEL_ABSENT_REASON,)
+        assert options["clean"].reasons == ()
+
     def test_the_saved_style_round_trips_and_an_unreadable_file_names_itself(
         self, tmp_path: Path
     ) -> None:

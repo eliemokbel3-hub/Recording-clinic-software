@@ -124,6 +124,7 @@ Clinical-content discipline (Critical Constraints, design-system):
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -160,6 +161,7 @@ from scribe_desktop.note import (
     NoteStyle,
     ProposalResolution,
     admissible_sections,
+    bound_rendering,
     content_tokens,
     finalise_note,
     first_matching_section,
@@ -179,6 +181,9 @@ from scribe_desktop.note_config import (
     append_learned_rules,
     append_user_cues,
     is_learned_rule_id,
+    learned_rule_problem,
+    plain_rule_problem,
+    plain_skip_reason,
     propose_learning_phrase,
     propose_rule_trigger,
     record_rule_outcomes,
@@ -189,6 +194,17 @@ from scribe_desktop.note_config import (
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
+
+
+def _refused_sections(note: GeneratedNote) -> frozenset[NoteSectionKey]:
+    """The sections whose BOUND rendering is a Check 5 refusal — the ones a
+    `style_fallback` warning stands for right now."""
+    return frozenset(
+        section.section_key
+        for section in note.note_sections
+        if (rendering := bound_rendering(note, section)) is not None
+        and rendering.verdict == "failed"
+    )
 
 
 def _clear_layout(layout: QLayout) -> None:
@@ -282,6 +298,7 @@ class NoteScreen(QWidget):
         self._prose_stage_provider = prose_stage_provider
         self._prose_stage: models.ProseStage | None = None
         self._style_job: TaskThread | None = None
+        self._style_job_abort: threading.Event | None = None
         self._orphaned_jobs: list[TaskThread] = []
         self._removed: set[str] = set()
         self._manual: dict[str, NoteAssertion] = {}
@@ -452,12 +469,17 @@ class NoteScreen(QWidget):
         note_layout.addWidget(self.note_body)
         note_layout.addWidget(self.style_label)
         note_layout.addWidget(self.proposals_header)
-        proposals_scroll = QScrollArea()
-        proposals_scroll.setWidgetResizable(True)
+        # The proposal rows' scroll area shows and hides WITH its header
+        # (Phase H live smoke, leg h1j): with no proposal it used to stay as
+        # a large empty framed box under the style line, which reads as a
+        # blank prose pane — the prose itself is in `note_body` above.
+        self.proposals_scroll = QScrollArea()
+        self.proposals_scroll.setWidgetResizable(True)
         proposals_content = QWidget()
         proposals_content.setLayout(self._proposals_box)
-        proposals_scroll.setWidget(proposals_content)
-        note_layout.addWidget(proposals_scroll)
+        self.proposals_scroll.setWidget(proposals_content)
+        self.proposals_scroll.hide()
+        note_layout.addWidget(self.proposals_scroll)
         buttons = QHBoxLayout()
         buttons.addWidget(self.save_button)
         buttons.addWidget(self.cancel_button)
@@ -587,6 +609,7 @@ class NoteScreen(QWidget):
         _clear_layout(self._blocking_box)
         _clear_layout(self._review_box)
         self.proposals_header.hide()
+        self.proposals_scroll.hide()
         self.blocking_header.hide()
         self.review_header.hide()
         self.acknowledge_all_button.hide()
@@ -705,9 +728,9 @@ class NoteScreen(QWidget):
             row_layout.addLayout(actions)
             self._proposal_buttons.extend((confirm, decline, retract, edit))
             self._proposals_box.addWidget(row)
-        self.proposals_header.setVisible(
-            any(p.proposal_id not in prefilled for p in self._draft.note_proposals)
-        )
+        has_rows = any(p.proposal_id not in prefilled for p in self._draft.note_proposals)
+        self.proposals_header.setVisible(has_rows)
+        self.proposals_scroll.setVisible(has_rows)
 
     # --- resolution / acknowledgement --------------------------------------
 
@@ -1217,6 +1240,23 @@ class NoteScreen(QWidget):
                     f"({refusal})."
                 )
                 return
+            # The rules file's own validation runs here too (Phase H smoke
+            # item 2, leg h1l): the correction is validated against the rule
+            # it replaces — the same trigger and section Save's
+            # `replace_learned_rule_wording` validates — so "Will update" is
+            # never withdrawn at Save, and the line says the clinician's reason.
+            rule = next((r for r in config.autofill_rules if r.rule_id == proposal.rule_id), None)
+            if rule is None:
+                self._append_edit_status(
+                    "Shorthand not updated: that shorthand is no longer in your rules file."
+                )
+                return
+            correction = LearnedRuleCandidate(rule.section_key, rule.trigger_phrase, typed.text)
+            if learned_rule_problem(correction) is not None:
+                self._append_edit_status(
+                    f"Shorthand not updated: {plain_rule_problem(typed.text)}."
+                )
+                return
             self._rule_replacements[typed_id] = (proposal.rule_id, typed.text)
             self._append_edit_status(
                 "Will update this learned shorthand rule's wording to your line when you "
@@ -1256,6 +1296,18 @@ class NoteScreen(QWidget):
                 f"({wording_refusal})."
             )
             return
+        queued = LearnedRuleCandidate(typed.section_key, candidate.phrase, typed.text)
+        # Phase H round 24 LOW-005: the rules file's own validation runs at
+        # the edit too (the same validator Save runs), so "Will learn" / "Will
+        # update" is said only for a wording the file will accept — never a
+        # promise Save then withdraws. It runs BEFORE the trigger match so a
+        # correction to an already-learned shorthand is checked the same way
+        # (Phase H smoke item 2), and the status line says the clinician's
+        # reason — the validator's authoring message (rule id, entry position,
+        # the JSON override) never reaches the screen.
+        if learned_rule_problem(queued) is not None:
+            self._append_edit_status(f"Not learned: {plain_rule_problem(typed.text)}.")
+            return
         trigger_tokens = tuple(candidate.phrase.split(" "))
         for rule in config.autofill_rules:
             if content_tokens(rule.trigger_phrase) != trigger_tokens:
@@ -1274,9 +1326,7 @@ class NoteScreen(QWidget):
                     "file."
                 )
             return
-        self._rule_queue[typed_id] = LearnedRuleCandidate(
-            typed.section_key, candidate.phrase, typed.text
-        )
+        self._rule_queue[typed_id] = queued
         self._append_edit_status(
             f"Will learn shorthand: '{candidate.phrase}' -> '{typed.text}' for "
             f"{models.section_title(typed.section_key)} when you press Save note on this tab."
@@ -1770,7 +1820,15 @@ class NoteScreen(QWidget):
         # the closure retained would live as long as the tab does — past
         # `clear()`, past the review (round 20 MED-001).
         holder = [note]
-        job = TaskThread(lambda: stage(holder.pop()), self)
+        # Phase H round 24 MED-002: the job's abort flag. `_orphan_style_job`
+        # (so `clear()` — Abandon, Cancel, Complete, Discard, a replacement
+        # review) sets it, and the provider consults it before EACH section's
+        # model call: an orphaned job stops after the call in progress
+        # instead of handing the rest of a note whose review has ended — and
+        # whose session key may already be gone — to the model.
+        abort = threading.Event()
+        job = TaskThread(lambda: stage(holder.pop(), abort=abort.is_set), self)
+        self._style_job_abort = abort
         job.succeeded.connect(lambda result, job=job: self._on_style_done(job, result))
         job.failed.connect(lambda message, job=job: self._on_style_failed(job, message))
         # Disposal rides the thread's OWN `finished` signal (codex round 22
@@ -1791,6 +1849,7 @@ class NoteScreen(QWidget):
         current = job is self._style_job
         if current:
             self._style_job = None
+            self._style_job_abort = None
             self._orphaned_jobs.append(job)
         return current
 
@@ -1824,6 +1883,10 @@ class NoteScreen(QWidget):
         job = self._style_job
         if job is None:
             return
+        abort = self._style_job_abort
+        if abort is not None:
+            abort.set()  # MED-002: at most the section call in progress remains
+        self._style_job_abort = None
         self._style_job = None
         self._orphaned_jobs.append(job)
 
@@ -1835,7 +1898,15 @@ class NoteScreen(QWidget):
         assert isinstance(result, models.StyleStageResult)
         # Bind what still matches (a section edited meanwhile drops here),
         # DISPLAY it, and only then re-enable Save (`_update_controls`).
+        refused_before = _refused_sections(note)
         self._note = models.bind_stage_result(note, result)
+        # Phase H round 24 LOW-003: a `style_fallback` acknowledged for the
+        # sections refused so far does not cover a section this result has
+        # just refused — the only warning that can arrive OUTSIDE the
+        # content-change path (which clears every acknowledgement). A new
+        # refusal re-opens the code; Save waits for a fresh acknowledgement.
+        if _refused_sections(self._note) - refused_before:
+            self._acknowledged.discard("style_fallback")
         self.note_body.setPlainText(models.format_note_body(self._note))
         self.style_label.setText(models.style_stage_line(result, self._note))
         self._refresh_warnings()
@@ -2061,8 +2132,11 @@ class NoteScreen(QWidget):
                             f"Learned shorthand without a date ({outcome.sidecar_error})."
                         )
                 for candidate, reason in outcome.skipped:
+                    # The writer's reason is for its record; the line says
+                    # the clinician's form (Phase H smoke item 2).
+                    plain = plain_skip_reason(reason, candidate.typed_wording)
                     parts.append(
-                        f"Shorthand '{candidate.trigger_phrase}' was not learned ({reason})."
+                        f"Shorthand '{candidate.trigger_phrase}' was not learned: {plain}."
                     )
         for rule_id, wording in replacements:
             try:
@@ -2076,7 +2150,9 @@ class NoteScreen(QWidget):
                 parts.append(f"Updated a learned shorthand rule's wording to '{wording}'.")
                 changed = True
             else:
-                detail = replaced.rules_file_error or replaced.reason or "unknown"
+                detail = replaced.rules_file_error or (
+                    plain_skip_reason(replaced.reason, wording) if replaced.reason else "unknown"
+                )
                 parts.append(f"Shorthand wording was not updated ({detail}).")
                 # A rules write that failed AFTER the sidecar's reset landed
                 # still changed what the tab lists (PR-LOW-024).

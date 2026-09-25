@@ -2262,25 +2262,17 @@ class LiveTranscriber:
         self._provider = None
         self._embedder = None
         self._reference_unit = None
-        self._pcm = bytearray()
-        self._windows.clear()
-        with self._account_lock:
-            self._queued_bytes = 0
-        while True:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
+        self._drop_pcm()
         if self._failure is not None or self._stop_requested:
             self._result = None
             self._clear_buffers()
 
-    def _clear_buffers(self) -> None:
+    def _drop_pcm(self) -> None:
+        """Every byte of plaintext PCM the worker holds — the open span, the
+        packed windows, the queued chunks and their account — gone. Shared by
+        every exit (Phase H round 27 SIMP-004: one block, not two copies that
+        could drift)."""
         self._pcm = bytearray()
-        self._marked.clear()
-        self._embeddings.clear()
-        self._similarities.clear()
-        self._window_timings.clear()
         self._windows.clear()
         with self._account_lock:
             self._queued_bytes = 0
@@ -2289,6 +2281,15 @@ class LiveTranscriber:
                 self._queue.get_nowait()
             except queue.Empty:
                 return
+
+    def _clear_buffers(self) -> None:
+        """The PCM plus every per-segment product (marks, embeddings,
+        similarities, timings) — a failed or stopped worker keeps nothing."""
+        self._drop_pcm()
+        self._marked.clear()
+        self._embeddings.clear()
+        self._similarities.clear()
+        self._window_timings.clear()
 
 
 __all__ = [

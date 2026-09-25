@@ -294,9 +294,8 @@ def _match_heading(line: str) -> tuple[_Heading, str] | None:
     (``Plan: continue HEP``) → the section and the remainder of the line."""
     head, colon, rest = line.partition(":")
     head = head.strip()
+    # With no colon `head` IS the whole line, so its word bound covers both.
     if not head or len(head.split()) > _MAX_HEADING_WORDS:
-        return None
-    if not colon and len(line.split()) > _MAX_HEADING_WORDS:
         return None
     if len(head) > MAX_CONFIG_LABEL_CHARS:
         return None
@@ -622,10 +621,19 @@ def read_sample_note(source: Path | str) -> SampleNote:
     elif suffix == ".pdf":
         text = _read_pdf(source)
     else:
+        # ONE rule for every reader (Phase H round 24 LOW-008): the capped
+        # read, never `read()` / `read_bytes()` — the stat above is a fast
+        # first refusal, this bounds the bytes that can reach memory.
         try:
-            blob = source.read_bytes()
+            with source.open("rb") as stream:
+                blob = stream.read(MAX_SAMPLE_NOTE_BYTES + 1)
         except OSError as exc:
             raise SampleNoteError(f"could not read {source.name}: {exc}") from None
+        if len(blob) > MAX_SAMPLE_NOTE_BYTES:
+            raise SampleNoteError(
+                f"{source.name} is too large to be a note (more than "
+                f"{MAX_SAMPLE_NOTE_BYTES:,} bytes)"
+            )
         text = _decode(blob, source.name)
     return SampleNote(_bounded(text, source.name), source)
 

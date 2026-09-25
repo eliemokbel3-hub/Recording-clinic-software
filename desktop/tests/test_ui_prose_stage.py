@@ -33,7 +33,7 @@ from typing import Any
 import pytest
 
 from scribe_desktop.language_model import LanguageModelError, MockLanguageModel
-from scribe_desktop.note import GeneratedNote, render_note, usable_rendering
+from scribe_desktop.note import GeneratedNote, bound_rendering, render_note, usable_rendering
 from scribe_desktop.ui import models
 
 
@@ -76,12 +76,14 @@ class _Stage:
         )
         assert self._real is not None
 
-    def __call__(self, note: GeneratedNote) -> models.StyleStageResult:
+    def __call__(
+        self, note: GeneratedNote, /, *, abort: Callable[[], bool] | None = None
+    ) -> models.StyleStageResult:
         self.calls += 1
         assert self.release.wait(10.0), "the test never released the stage"
         if self.fail:
             raise RuntimeError("stage exploded")
-        result = self._real(note)
+        result = self._real(note, abort=abort)
         self.results.append(result)
         return result
 
@@ -191,6 +193,33 @@ class TestSaveWhileRendering:
         screen.deleteLater()
 
 
+class TestProseReachesTheBody:
+    def test_a_rendered_sections_prose_reaches_the_note_body(self, qapp: Any) -> None:
+        """Phase H live smoke (leg h1j): the note body IS the prose pane —
+        every usable rendering's text is in it, the `clean` per-line form is
+        not, and the body equals the ONE rendering path's output; the
+        proposal rows' scroll area shows only with rows."""
+        stage = _Stage()
+        stage.release.set()
+        screen, _record = _screen(stage.provider)
+        assert not screen.proposals_scroll.isHidden()  # the fixture draft has proposals
+        _ratify(screen)
+        _settled(qapp, screen)
+        note = screen._note
+        body = screen.note_body.toPlainText()
+        assert body == render_note(note, "narrative") == models.format_note_body(note)
+        rendered = [usable_rendering(note, s) for s in note.note_sections]
+        assert any(r is not None for r in rendered)
+        for rendering in rendered:
+            if rendering is not None:
+                assert rendering.prose_text in body
+        assert body != render_note(note, "clean")
+        assert "prose shown for" in screen.style_label.text()
+        screen.clear()
+        assert screen.proposals_scroll.isHidden()
+        screen.deleteLater()
+
+
 class TestStaleRenderings:
     def test_an_edit_during_the_job_drops_its_rendering_and_re_renders(
         self, qapp: Any
@@ -276,6 +305,95 @@ class TestStaleRenderings:
         assert screen._orphaned_jobs == [] and job.isFinished()
         screen.deleteLater()
 
+    def test_an_orphaned_job_stops_after_the_call_in_progress(self, qapp: Any) -> None:
+        """Phase H round 24 MED-002: `clear()` (Abandon, Cancel, Complete,
+        Discard) flips the job's abort flag; the provider consults it before
+        each section's model call, so the orphan makes no further call —
+        the model sees at most the call in progress (the frame keeps the
+        note referenced until that call returns — round 31 PR-LOW-047)."""
+
+        class _Blocking(MockLanguageModel):
+            def __init__(self) -> None:
+                super().__init__()
+                self.entered = threading.Event()
+                self.held = threading.Event()
+
+            def complete(self, *, system_text: str, user_text: str, max_tokens: int) -> str:
+                self.entered.set()
+                assert self.held.wait(10.0), "the test never released the model"
+                return super().complete(
+                    system_text=system_text, user_text=user_text, max_tokens=max_tokens
+                )
+
+        mock = _Blocking()
+        stage = _Stage(mock)
+        stage.release.set()
+        screen, _record = _screen(stage.provider)
+        populated = [s for s in screen._note.note_sections if s.note_assertions]
+        assert len(populated) >= 2
+        assert mock.entered.wait(10.0)  # the first section's call is in progress
+        screen.clear()
+        assert screen._orphaned_jobs and screen.is_busy
+        mock.held.set()
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert len(mock.calls) == 1
+        screen.deleteLater()
+
+    def test_a_late_refusal_reopens_the_acknowledgement(self, qapp: Any) -> None:
+        """Phase H round 24 LOW-003: acknowledgement is per CODE and a stage
+        result is the one warning source outside the content-change path —
+        a `style_fallback` acknowledged while a job was in flight must not
+        cover the section that job then refuses."""
+        result = _note_result()
+        first_section = result.draft.note_sections[0]
+        first_line = first_section.note_assertions[0].text
+        refused = {first_line}
+
+        def responder(system_text: str, user_text: str) -> str:
+            from scribe_desktop.language_model import echo_prompt_lines, prompt_lines
+
+            lines = prompt_lines(user_text)
+            if lines and lines[0] in refused:
+                return "Something else entirely."
+            return echo_prompt_lines(system_text, user_text)
+
+        stage = _Stage(MockLanguageModel(responder=responder))
+        stage.release.set()
+        screen, _record = _screen(stage.provider)
+        _ratify(screen)
+        _settled(qapp, screen)
+        note = screen._note
+        assert any(w.note_warning_code == "style_fallback" for w in note.note_warnings)
+        # A SECOND section, rendered fine so far; its first line will be
+        # refused by the job the next edit starts.
+        second = next(
+            s
+            for s in note.note_sections
+            if s.section_key != first_section.section_key and len(s.note_assertions) >= 2
+        )
+        line = next(a for a in second.note_assertions if a.provenance == "transcript")
+        remaining = [a.text for a in second.note_assertions if a.assertion_id != line.assertion_id]
+        refused.add(remaining[0])
+        jobs_before = stage.calls
+        stage.release.clear()
+        assert screen.remove_line(line.assertion_id)  # acks cleared, a job starts (held)
+        assert _process_until(qapp, lambda: stage.calls == jobs_before + 1)
+        screen._acknowledge_all()  # the practitioner acknowledges the FIRST refusal now
+        assert "style_fallback" in screen._acknowledged
+        stage.release.set()
+        _settled(qapp, screen)
+        refused_now = {
+            s.section_key
+            for s in screen._note.note_sections
+            if (r := bound_rendering(screen._note, s)) is not None and r.verdict == "failed"
+        }
+        assert second.section_key in refused_now
+        assert "style_fallback" not in screen._acknowledged
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("style_fallback")
+        assert screen.save_button.isEnabled()
+        screen.deleteLater()
+
     def test_a_failed_partial_re_render_names_the_prose_that_still_shows(
         self, qapp: Any
     ) -> None:
@@ -291,7 +409,7 @@ class TestStaleRenderings:
         _settled(qapp, screen)
         reason = models.LANGUAGE_MODEL_LOAD_FAILED_LINE.format(label="Narrative", reason="x")
 
-        def failing_stage(note: Any) -> models.StyleStageResult:
+        def failing_stage(note: Any, /, *, abort: Any = None) -> models.StyleStageResult:
             return models.StyleStageResult(
                 "narrative", note_input_digest(note), (), 0, 0, 0, 0.0, reason
             )
@@ -346,6 +464,43 @@ class TestFallbackReasons:
         assert outcome.reason is not None and "digest mismatch" in outcome.reason
         assert cache._failure is not None  # a real load failure IS remembered
         assert stage(note).reason is not None and calls == ["load"]  # not re-probed
+
+    def test_a_stale_style_consent_keeps_clean_and_names_it(self) -> None:
+        """Phase H round 24 LOW-001: the style store's own consent record
+        gates USE — a profile learned under an older text is not
+        conditioning material until the practitioner re-agrees on the tab."""
+        from scribe_desktop.note import finalise_note
+        from scribe_desktop.practitioner_profile import ConsentRecord
+        from test_prose_style import _NOW, _style_profile
+
+        current = _style_profile()
+        stale = current.model_copy(
+            update={
+                "consent": ConsentRecord(
+                    accepted_at=_NOW, consent_text_version="consent-v2", learning_opt_in=True
+                )
+            }
+        )
+        result = _note_result()
+        note = finalise_note(result.draft, [], result.document, result.config)
+        for profile, expects_calls in ((stale, False), (current, True)):
+            mock = MockLanguageModel()
+            stage = models.build_prose_stage(
+                "own_voice",
+                model_factory=lambda mock=mock: mock,
+                cache=None,
+                available=lambda: True,
+                profile_loader=lambda root=None, profile=profile: profile,
+            )
+            assert stage is not None
+            outcome = stage(note)
+            if expects_calls:
+                assert outcome.reason is None and mock.calls
+            else:
+                assert outcome.reason == models.STYLE_PROFILE_MISSING_LINE.format(
+                    label="Own voice", reason=models.STYLE_CONSENT_STALE_REASON
+                )
+                assert mock.calls == []
 
     def test_a_model_that_cannot_load_names_itself_and_frees_save(self, qapp: Any) -> None:
         def broken() -> Any:

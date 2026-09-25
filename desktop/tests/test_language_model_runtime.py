@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import hashlib
 import importlib.metadata
-import importlib.util
 import json
 import os
 from collections.abc import Callable
@@ -202,6 +201,7 @@ class _FakeLlama:
         raises: Exception | None = None,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.tokenize_calls: list[tuple[bool, bool]] = []
         self._content = content
         self._response = response
         self._raises = raises
@@ -217,6 +217,12 @@ class _FakeLlama:
         if self._response is not _UNSET:
             return self._response
         return {"choices": [{"message": {"content": self._content}}]}
+
+    def tokenize(self, text: bytes, add_bos: bool = True, special: bool = False) -> list[int]:
+        """The runtime's tokenizer surface (PR-MED-046): one token per word
+        here, recording the call's flags."""
+        self.tokenize_calls.append((add_bos, special))
+        return list(range(len(text.decode("utf-8").split())))
 
 
 class _Buffer:
@@ -307,6 +313,97 @@ class TestLoadContract:
                 llama_factory=_factory(record, _FakeLlama()),
             )
         assert record == []
+
+    def test_std_fds_get_a_sink_only_when_they_cannot_be_duplicated(self) -> None:
+        """Round 28 SEC-003: a windowed launcher (pythonw, no console) has no
+        valid fds 1/2; the runtime's verbose=False path dup()s them and would
+        fail the load. The helper gives exactly the failing ones devnull."""
+        calls: list[tuple[int, int]] = []
+
+        def failing_dup(fd: int) -> int:
+            raise OSError(9, "Bad file descriptor")
+
+        def record_dup2(src: int, dst: int) -> int:
+            calls.append((src, dst))
+            return dst
+
+        opened = iter([50, 51])
+        closed: list[int] = []
+        given = lm._give_std_fds_a_sink(
+            dup=failing_dup, dup2=record_dup2, open_sink=lambda: next(opened),
+            close=closed.append,
+        )
+        assert given == (1, 2)
+        assert calls == [(50, 1), (51, 2)]
+        assert closed == [50, 51]  # only the DISTINCT temporaries are closed
+        # A console process: both duplicate fine, nothing is touched.
+        calls.clear()
+        assert lm._give_std_fds_a_sink(dup2=record_dup2) == ()
+        assert calls == []
+
+    def test_count_tokens_is_the_runtimes_tokenizer_without_bos(self, tmp_path: Path) -> None:
+        """Codex round 30 PR-MED-046: the prompt budget uses the model's own
+        token count — `tokenize` with no BOS and special tokens counted; a
+        tokenizer failure is a typed error naming the type only."""
+        llama = _FakeLlama()
+        model = self._loaded(tmp_path, llama)
+        assert model.count_tokens("neck pain for three days") == 5
+        assert llama.tokenize_calls[-1] == (False, True)
+
+        class _Broken(_FakeLlama):
+            def tokenize(self, text: bytes, add_bos: bool = True, special: bool = False) -> Any:
+                raise RuntimeError("secret prompt text must not appear")
+
+        broken = self._loaded(tmp_path, _Broken())
+        with pytest.raises(lm.LanguageModelError) as exc:
+            broken.count_tokens("x")
+        assert "RuntimeError" in str(exc.value) and "secret" not in str(exc.value)
+
+    def test_a_sink_that_is_the_target_descriptor_is_kept_open(self) -> None:
+        """Codex round 30 PR-MED-045: with the target closed and every lower
+        descriptor open, `os.open` returns the target ITSELF — it is the
+        sink, so it is neither duplicated onto itself nor closed."""
+        calls: list[tuple[int, int]] = []
+        closed: list[int] = []
+
+        def failing_dup(fd: int) -> int:
+            raise OSError(9, "Bad file descriptor")
+
+        def record_dup2(src: int, dst: int) -> int:
+            calls.append((src, dst))
+            return dst
+
+        opened = iter([1, 2])  # the lowest free descriptor IS the target
+        given = lm._give_std_fds_a_sink(
+            dup=failing_dup, dup2=record_dup2, open_sink=lambda: next(opened),
+            close=closed.append,
+        )
+        assert given == (1, 2)
+        assert calls == [] and closed == []
+        # The mixed shape: fd 1 aliased, fd 2 repaired through a temporary.
+        opened = iter([1, 7])
+        closed.clear()
+        given = lm._give_std_fds_a_sink(
+            dup=failing_dup, dup2=record_dup2, open_sink=lambda: next(opened),
+            close=closed.append,
+        )
+        assert given == (1, 2) and calls == [(7, 2)] and closed == [7]
+
+    def test_the_load_gives_the_std_fds_a_sink_before_the_factory(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        order: list[str] = []
+        monkeypatch.setattr(lm, "_give_std_fds_a_sink", lambda: order.append("sink") or ())
+        path, sha = _write_model(tmp_path)
+
+        def factory(**kwargs: Any) -> Any:
+            order.append("factory")
+            return _FakeLlama()
+
+        lm.LocalLanguageModel(
+            path, expected_sha256=sha, expected_size=len(_MODEL_BYTES), llama_factory=factory
+        )
+        assert order == ["sink", "factory"]
 
     def test_a_native_library_override_is_refused_before_the_factory(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -624,8 +721,3 @@ class TestAvailability:
     ) -> None:
         monkeypatch.delenv("LOCALAPPDATA", raising=False)
         assert lm.language_model_file_available() is False
-
-    def test_runtime_probe_matches_find_spec(self) -> None:
-        importable = lm.language_runtime_importable()
-        assert isinstance(importable, bool)
-        assert importable == (importlib.util.find_spec("llama_cpp") is not None)

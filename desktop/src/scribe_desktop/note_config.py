@@ -478,8 +478,9 @@ def _refuse_prose_blob(value: object, field_name: str, example: str) -> object:
 # (2x), 50%, <3/10, 90°, ~10 reps, quoted patient speech), and telling a
 # join apart from that wording would require the semantic parsing this
 # project forbids. The compensating controls for the WHOLE residue are
-# Phase 7's per-assertion confirmation UI (the clinician sees and confirms
-# the exact wording) and Phase 5's checking stage — which must not be
+# the review surface (the clinician sees the exact wording — a per-line
+# row for a proposal; since D5 the mark plus the counted Save for a line the
+# practitioner's own config pre-filled) and Phase 5's checking stage — which must not be
 # assumed to semantically decompose entries either; it checks, it does not
 # split. ``test_note_config`` pins BOTH sides mechanically: every member of
 # ``_ALLOWED_IN_CLAIM_PUNCT`` is accepted mid-claim (so narrowing the set
@@ -1242,6 +1243,28 @@ CLINICAL_ABBREVIATIONS: Final[tuple[str, ...]] = _load_shipped_vocabulary(
 PROSE_CONNECTIVES: Final[tuple[str, ...]] = _load_shipped_vocabulary(
     PROSE_CONNECTIVES_FILENAME, "connectives", lower_case=True
 )
+
+
+def _refuse_vocabulary_overlap(
+    abbreviations: Sequence[str], connectives: Sequence[str]
+) -> None:
+    """Phase H round 28 SEC-001: Check 5 compares tokens FOLDED to lower
+    case (``note.content_tokens``, the one tokenisation), so a connective
+    equal to the lower-case form of a shipped abbreviation would make that
+    abbreviation glue — ``AS`` (ankylosing spondylitis) could be dropped from
+    or added to prose unseen. The two files ship together; an overlap is a
+    broken install, refused at import like a malformed vocabulary."""
+    overlap = sorted({entry.lower() for entry in abbreviations} & set(connectives))
+    if overlap:
+        raise RuntimeError(
+            f"shipped {PROSE_CONNECTIVES_FILENAME} lists {overlap}, the lower-case form of "
+            f"a shipped clinical abbreviation in {CLINICAL_ABBREVIATIONS_FILENAME} "
+            "(broken install: an abbreviation can never be a connective)"
+        )
+
+
+_refuse_vocabulary_overlap(CLINICAL_ABBREVIATIONS, PROSE_CONNECTIVES)
+
 # The abbreviations as a set for the refusal filter's rule (a) (Task 3.7):
 # exact, case-preserving membership.
 _CLINICAL_ABBREVIATION_SET: Final[frozenset[str]] = frozenset(CLINICAL_ABBREVIATIONS)
@@ -2077,6 +2100,81 @@ def _build_learned_rule(
         )
     except ValidationError as exc:
         return _first_error_message(exc)
+
+
+def learned_rule_problem(candidate: LearnedRuleCandidate) -> str | None:
+    """Why ``append_learned_rules`` would SKIP ``candidate`` as invalid, or
+    None when it would be written (the duplicate-trigger check is the
+    writer's — it needs the rules file). The Note tab asks this at the edit
+    (Phase H round 24 LOW-005), so "Will learn shorthand …" is said only for
+    a wording the rules file will accept; the same validator runs again at
+    Save, which stays the only writer. The string is the validator's own
+    message (for logs and the writer's record); the tab says
+    ``plain_rule_problem`` instead."""
+    built = _build_learned_rule(
+        new_learned_rule_id(),
+        candidate.section_key,
+        candidate.trigger_phrase,
+        candidate.typed_wording,
+    )
+    return built if isinstance(built, str) else None
+
+
+# The clinician's reasons a typed wording is not a shorthand rule (Phase H
+# live smoke, item 2, 2026-09-26): the validator's message is written for the
+# author of a rules FILE — it names the rule id, the entry position and the
+# JSON override — and reached the Note tab's status line verbatim. These are
+# the status-line forms; the validator's text stays in the writer's ``skipped``
+# record and the logs, never on screen.
+RULE_WORDING_MANY_CLAIMS: Final = (
+    "the typed wording reads as more than one claim (a dash, ';' or ':' between "
+    "words, or several sentences) - keep one plain statement per line to learn it"
+)
+RULE_WORDING_TOO_LONG: Final = (
+    "the typed wording is longer than a shorthand rule may hold "
+    f"({MAX_CONFIG_ASSERTION_CHARS:,} characters at most)"
+)
+RULE_WORDING_HIDDEN_CHARACTER: Final = (
+    "the typed wording contains a hidden control character - retype it as plain text"
+)
+RULE_WORDING_BLANK: Final = "the typed wording is blank"
+RULE_WORDING_NOT_ACCEPTED: Final = (
+    "your rules file would not accept the typed wording as one plain statement"
+)
+
+
+def plain_rule_problem(typed_wording: str) -> str:
+    """The clinician-facing reason ``typed_wording`` is not a rule entry —
+    said on the Note tab's status line in place of the validator's authoring
+    message. Asked only AFTER ``learned_rule_problem`` (or the writer) refused:
+    it does not decide, it explains. The classes are the validator's own
+    checks in the validator's order (blank, the length bound, the
+    control-character validator, the single-claim shape); a refusal none of
+    them explains gets the closed fallback sentence, never the validator's
+    text."""
+    if not typed_wording.strip():
+        return RULE_WORDING_BLANK
+    if len(typed_wording) > MAX_CONFIG_ASSERTION_CHARS:
+        return RULE_WORDING_TOO_LONG
+    try:
+        _no_control_chars(typed_wording)
+    except ValueError:
+        return RULE_WORDING_HIDDEN_CHARACTER
+    if not _is_atomic_shape(typed_wording):
+        return RULE_WORDING_MANY_CLAIMS
+    return RULE_WORDING_NOT_ACCEPTED
+
+
+def plain_skip_reason(reason: str, typed_wording: str) -> str:
+    """The status-line form of a writer's ``skipped`` / ``ReplacedRule``
+    reason: ``duplicate`` and ``invalid: <validator text>`` are rendered for
+    the clinician (the latter through ``plain_rule_problem``); any other
+    reason is already plain and passes through."""
+    if reason == "duplicate":
+        return "that trigger is already in your rules file"
+    if reason.startswith("invalid: "):
+        return plain_rule_problem(typed_wording)
+    return reason
 
 
 def _listed(rule: AutofillRule, entry: LearnedRuleEntry | None) -> LearnedRule:

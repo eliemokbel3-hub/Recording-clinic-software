@@ -46,6 +46,8 @@ from scribe_desktop.note_config import (  # noqa: E402
     AUTOFILL_RULES_FILENAME,
     LEARNED_RULE_AUTO_CONFIRM_AFTER,
     LEARNED_SIDECAR_FILENAME,
+    RULE_WORDING_MANY_CLAIMS,
+    RULE_WORDING_TOO_LONG,
     SECTION_CUES_FILENAME,
     AutofillRule,
     LearnedRuleCandidate,
@@ -753,6 +755,13 @@ def _practitioner_screen(
         # store it stats for the writing-style options.
         "config_root": tmp_path / "config",
         "style_root": tmp_path / "style",
+        # Phase H round 24 MED-006: the language model's presence is pinned
+        # ABSENT through both seams — the tab's own probe and the options
+        # provider — never read from this host.
+        "language_model_available": lambda: False,
+        "style_options_provider": lambda: models.style_options(
+            style_root=tmp_path / "style", model_available=lambda: False
+        ),
         "embedder_factory": lambda kind: _StubEmbedder(),
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
@@ -762,6 +771,27 @@ def _practitioner_screen(
     }
     kwargs.update(overrides)
     return PractitionerScreen(controller, backend, **kwargs)
+
+
+def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any) -> Any:
+    """Every `MainWindow` a test builds (Phase H round 24 MED-006): the
+    learned-style store and the language model's presence are SEAMS — a
+    test never decrypts the real `style.enc` or stats the real 2.3 GiB
+    model (docs/lessons.md 2026-09-24); overrides still win."""
+    from scribe_desktop.ui.main_window import MainWindow
+
+    kwargs: dict[str, Any] = {
+        "sessions_root": tmp_path,
+        "profile_root": tmp_path,
+        "config_root": tmp_path / "config",
+        "style_root": tmp_path / "style",
+        "language_model_available": lambda: False,
+        "benchmark_runner": list,
+        "recovery_runner": lambda d: pytest.fail("not called"),
+    }
+    kwargs.update(overrides)
+    owner = controller if controller is not None else FakeController()
+    return MainWindow(owner, FakeBackend(), **kwargs)
 
 
 def _enrol(qapp: Any, screen: Any, capture: _FakeCapture) -> None:
@@ -2302,17 +2332,7 @@ class TestTranscriptScreen:
 
 class TestMainWindow:
     def test_constructs_all_screens(self, qapp: Any, tmp_path: Path) -> None:
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         assert window.tabs.count() == 7
         titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
         assert titles == [
@@ -2329,19 +2349,9 @@ class TestMainWindow:
     def test_live_transcript_routed_to_inspection_view(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         window.session_screen.transcript_ready.emit(_document())
         qapp.processEvents()
         assert window.tabs.currentWidget() is window.transcript_screen
@@ -2359,18 +2369,8 @@ class TestMainWindow:
         LOW-003: a failed Start must not open the view), the Session screen's
         successful Start opens the live view, and its Discard closes it
         again. The worker itself is never started here."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         assert ("set_live_transcriber_factory",) in controller.calls
         factory = controller.live_transcriber_factory
         assert callable(factory)
@@ -2384,21 +2384,81 @@ class TestMainWindow:
         assert not header.isVisibleTo(window.transcript_screen)
         window.close()
 
+    def test_a_window_built_with_the_seam_never_probes_the_host(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Phase H round 24 MED-006: the language model's presence reaches
+        the Practitioner tab and the prose stage through the window's seam
+        — the real host is never asked, at construction or on the poll."""
+
+        def forbidden() -> bool:
+            raise AssertionError("the host must not be probed")
+
+        monkeypatch.setattr(models, "language_model_available", forbidden)
+        window = _main_window(tmp_path)
+        window.practitioner_screen.refresh_availability()
+        window.practitioner_screen.refresh_availability()
+        assert not window.practitioner_screen.style_radios["narrative"].isEnabled()
+        window.close()
+
+    def test_start_releases_an_open_recovered_view_before_the_live_view_opens(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase H round 24 MED-001: a successful Start drops whatever the
+        transcript screen held — a RECOVERED document's only route to its
+        Complete/Discard — so the window must first destroy the retained
+        key copy and release that session's checkout; otherwise a Discard
+        during the recording leaves it checked out with its key resident and
+        no control able to finish it until restart."""
+        recovered_id = _make_recoverable(tmp_path, finished=True)
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        window.recovery_screen._protected.add(recovered_id)
+        outcome = RecoveryOutcome(
+            document=_document(), crypto=SessionCrypto(), store_finished=True
+        )
+        window.recovery_screen.recovered.emit((tmp_path / recovered_id, outcome))
+        qapp.processEvents()
+        assert window._recovered_crypto is not None
+        assert window._transcript_source == recovered_id
+        assert recovered_id in window.recovery_screen.protected_session_ids()
+
+        window.session_screen.session_started.emit()
+        assert window._recovered_crypto is None
+        assert window._transcript_source is None
+        assert recovered_id not in window.recovery_screen.protected_session_ids()
+        assert ("destroy_recovered_crypto",) in controller.calls
+        header = window.transcript_screen.live_header_label
+        assert header.isVisibleTo(window.transcript_screen)
+        # A Discard during the recording leaves nothing checked out behind.
+        window.session_screen.session_discarded.emit()
+        assert window.recovery_screen.protected_session_ids() == frozenset()
+        window.close()
+
+    def test_start_over_a_live_view_releases_no_checkout(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """The "live" source needs nothing at Start (the controller retired
+        that session); an unrelated recovered checkout is untouched."""
+        other_id = uuid.uuid4().hex
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        window = _main_window(tmp_path, controller)
+        window.recovery_screen._protected.add(other_id)
+        window.session_screen.transcript_ready.emit(_document())
+        qapp.processEvents()
+        assert window._transcript_source == "live"
+        window.session_screen.session_started.emit()
+        assert window._transcript_source is None
+        assert other_id in window.recovery_screen.protected_session_ids()
+        assert ("destroy_recovered_crypto",) not in controller.calls
+        window.close()
+
     def test_close_refused_while_transcribing(self, qapp: Any, tmp_path: Path) -> None:
         """PR round 18 (PR6): closing must not destroy a running worker."""
         from PySide6.QtGui import QCloseEvent
 
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         window.session_screen._transcribing = True
         event = QCloseEvent()
         window.closeEvent(event)
@@ -2415,18 +2475,8 @@ class TestMainWindow:
         thread guard refuses for a running benchmark."""
         from PySide6.QtGui import QCloseEvent
 
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         for blocked_state in (SessionState.RECORDING, SessionState.PAUSED):
             controller.state_value = blocked_state
             event = QCloseEvent()
@@ -2473,18 +2523,8 @@ class TestMainWindow:
         recovered checkout, the checkout's unwrapped in-memory key must be
         zeroized (its custody callbacks are unreachable; disk custody stays
         for a post-restart recovery)."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         crypto = SessionCrypto()
         directory = tmp_path / uuid.uuid4().hex
         directory.mkdir()
@@ -2505,18 +2545,8 @@ class TestMainWindow:
     def _recovered_window(
         self, tmp_path: Path
     ) -> tuple[Any, FakeController, Path, SessionCrypto]:
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         crypto = SessionCrypto()
         directory = tmp_path / uuid.uuid4().hex
         directory.mkdir()
@@ -2605,20 +2635,10 @@ class TestMainWindow:
     ) -> None:
         """Round 30: the recovery-list exclusion is sourced from the
         controller's RESERVATION SET, not only the mutable live session."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         reserved_id = uuid.uuid4().hex
         controller = FakeController()
         controller.reserved_ids = frozenset({reserved_id})
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         assert reserved_id in window._live_session_ids()
         window.close()
 
@@ -2628,18 +2648,10 @@ class TestMainWindow:
         """Round 30: the rendered list can be stale — a session reserved by
         an in-flight discard AFTER listing must be refused at resume time,
         BEFORE any key unwrap."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         recovered_id = _make_recoverable(tmp_path, finished=True)
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("must never unwrap"),
+        window = _main_window(
+            tmp_path, controller, recovery_runner=lambda d: pytest.fail("must never unwrap")
         )
         assert window.recovery_screen.session_list.count() == 1
         window.recovery_screen.session_list.setCurrentRow(0)
@@ -2656,18 +2668,8 @@ class TestMainWindow:
         window must not compose split reserved/live reads, because a
         Discard-reserve + admitted Start between two reads yields a set
         omitting the still-reserved session."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         snap_id = uuid.uuid4().hex
         calls: list[str] = []
 
@@ -2687,19 +2689,9 @@ class TestMainWindow:
     def test_stale_recovery_discard_refused_at_click_time(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        from scribe_desktop.ui.main_window import MainWindow
-
         recovered_id = _make_recoverable(tmp_path, finished=True)
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         assert window.recovery_screen.session_list.count() == 1
         window.recovery_screen.session_list.setCurrentRow(0)
         controller.reserved_ids = frozenset({recovered_id})
@@ -2713,8 +2705,6 @@ class TestMainWindow:
     ) -> None:
         """PR round 18 (PR1): a queued/failed session the controller still
         owns must not be offered through the recovery custody path."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         session_id = _make_recoverable(tmp_path, finished=True)
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
@@ -2726,15 +2716,7 @@ class TestMainWindow:
             created_at=datetime.now(UTC),
             updated_at=datetime.now(UTC),
         )
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         assert window.recovery_screen.session_list.count() == 0
         controller.session_value = None
         window.recovery_screen.refresh()
@@ -2747,20 +2729,10 @@ class TestMainWindow:
         """PR round 20 (PR-HIGH-009): closing a LIVE transcript must not
         strip an open recovered session's sweep/relist protection; closing
         the recovered transcript releases exactly its own checkout."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         recovered_id = _make_recoverable(tmp_path, finished=True)
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         # Simulate an open recovered transcript (checked out).
         window.recovery_screen._protected.add(recovered_id)
         outcome = RecoveryOutcome(
@@ -2782,19 +2754,9 @@ class TestMainWindow:
     def test_recovered_transcript_close_releases_only_itself(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        from scribe_desktop.ui.main_window import MainWindow
-
         recovered_id = _make_recoverable(tmp_path, finished=True)
         other_id = uuid.uuid4().hex
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         window.recovery_screen._protected.update({recovered_id, other_id})
         crypto = SessionCrypto()
         outcome = RecoveryOutcome(
@@ -2812,17 +2774,7 @@ class TestMainWindow:
     def test_recovered_transcript_carries_unfinished_warning(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         outcome = RecoveryOutcome(
             document=_document(), crypto=SessionCrypto(), store_finished=False
         )
@@ -2841,17 +2793,7 @@ class TestMainWindow:
     ) -> None:
         """D10: with no profile the window opens ON the Practitioner tab and
         shows the banner — first run ASKS, it never blocks."""
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         screen = window.practitioner_screen
         assert window.tabs.currentWidget() is screen
         assert screen.banner_label.isVisibleTo(screen)
@@ -2871,8 +2813,6 @@ class TestMainWindow:
             save_profile,
         )
         from scribe_desktop.speaker_embedding import shipped_embedder_identity
-        from scribe_desktop.ui.main_window import MainWindow
-
         model_id, model_sha256 = shipped_embedder_identity()
         now = datetime.now(UTC)
         save_profile(
@@ -2892,15 +2832,7 @@ class TestMainWindow:
             ),
             root=tmp_path,
         )
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         screen = window.practitioner_screen
         assert window.tabs.currentWidget() is window.microphone_screen
         assert not screen.banner_label.isVisibleTo(screen)
@@ -2918,18 +2850,8 @@ class TestMainWindow:
     ) -> None:
         """D15: `begin_enrolment` cannot see the benchmark worker, so the
         window registers it as the blocker."""
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         assert ("set_enrolment_blocker",) in controller.calls
         assert controller.blocker is not None
         assert controller.blocker() is None
@@ -2941,18 +2863,8 @@ class TestMainWindow:
     def test_close_refused_while_enrolling(self, qapp: Any, tmp_path: Path) -> None:
         from PySide6.QtGui import QCloseEvent
 
-        from scribe_desktop.ui.main_window import MainWindow
-
         controller = FakeController()
-        window = MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path, controller)
         controller.enrolling = True
         event = QCloseEvent()
         window.closeEvent(event)
@@ -2968,17 +2880,7 @@ class TestMainWindow:
         enrolment still refuses the close (the PR6 thread guard)."""
         from PySide6.QtGui import QCloseEvent
 
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         window.practitioner_screen._task = _Running()
         event = QCloseEvent()
         window.closeEvent(event)
@@ -2993,17 +2895,7 @@ class TestMainWindow:
         """Peer round 27 PR-MED-022: the tab's capture-start hook IS the
         microphone screen's `stop_monitor`, so the idle monitor closes on the
         GUI thread before the enrolment worker starts."""
-        from scribe_desktop.ui.main_window import MainWindow
-
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         assert window.practitioner_screen._on_capture_start == (
             window.microphone_screen.stop_monitor
         )
@@ -3019,22 +2911,12 @@ class TestMainWindow:
         Practitioner tab's learned-phrase read never reaches the default
         config root either."""
         from scribe_desktop import note_config, practitioner_profile
-        from scribe_desktop.ui.main_window import MainWindow
-
         def forbidden() -> Path:
             raise AssertionError("the default profile root must not be consulted")
 
         monkeypatch.setattr(practitioner_profile, "default_profile_root", forbidden)
         monkeypatch.setattr(note_config, "default_config_root", forbidden)
-        window = MainWindow(
-            FakeController(),
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        window = _main_window(tmp_path)
         window.microphone_screen.refresh_model_status()
         window.microphone_screen.refresh_devices()
         window.practitioner_screen.refresh_profile_state()
@@ -4849,6 +4731,69 @@ class TestNoteScreenTypedEdits:
 
     # --- Task 2.3: shorthand learning, written only on Save ------------------------
 
+    def test_a_wording_the_rules_file_would_refuse_is_not_queued(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase H round 24 LOW-005: the rules file's own validation runs at
+        the edit, so "Will learn" is never a promise Save withdraws."""
+        screen, _record = self._screen(
+            config_root=tmp_path / "config", learning_status_provider=_learning_on
+        )
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        too_long = ("a " * 1100).strip()  # a valid typed line, not a valid rule
+        assert screen.edit_line(line.assertion_id, too_long) is True
+        assert screen.rule_queue() == () and screen.queued_rule_count() == 0
+        status = screen.edit_status_label.text()
+        assert f"Not learned: {RULE_WORDING_TOO_LONG}." in status
+        assert "Will learn" not in status
+        screen.deleteLater()
+
+    def test_the_status_line_says_a_plain_reason_never_the_validators_message(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase H live smoke item 2 (2026-09-26): a typed line with a dash
+        between words was refused with the rules file's AUTHORING message —
+        rule id, "Value error", the JSON override — on the clinician's status
+        line. The line now says the clinician's reason per class; the number
+        class is unchanged; and a correction to an already-learned shorthand
+        is checked at the edit the same way (it had been queued unchecked)."""
+        authoring_text = ("learned-", "{", "Value error", "expansion entry")
+        config_root = tmp_path / "config"
+        screen, _record = self._screen(
+            config_root=config_root, learning_status_provider=_learning_on
+        )
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        # The dash case, as smoked.
+        assert screen.edit_line(line.assertion_id, "Mild knee sprain - rest advised") is True
+        assert screen.rule_queue() == () and screen.queued_rule_count() == 0
+        status = screen.edit_status_label.text()
+        assert f"Not learned: {RULE_WORDING_MANY_CLAIMS}." in status
+        assert "Will learn" not in status
+        assert not any(text in status for text in authoring_text)
+        assert screen.undo_line("t0001") is True
+        # The number case is unchanged.
+        assert screen.edit_line(line.assertion_id, "Rest for 3 days") is True
+        assert screen.rule_queue() == ()
+        status = screen.edit_status_label.text()
+        assert "Not learned: the typed wording contains a number/date/medication (" in status
+        assert not any(text in status for text in authoring_text)
+        screen.deleteLater()
+        # A correction over an already-learned shorthand's line: the same
+        # check at the edit, so Save never says "not updated (invalid: ...)".
+        result, rule_id = _rooted_learned_result(config_root, confirmations=2)
+        screen, _record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        assert screen.edit_line(proposal.proposal_id, "Ice applied - well tolerated") is True
+        assert screen.rule_replacement_queue() == ()
+        status = screen.edit_status_label.text()
+        # The proposal-line branch's own prefix (its number case says the same).
+        assert f"Shorthand not updated: {RULE_WORDING_MANY_CLAIMS}." in status
+        assert "Will update" not in status
+        assert not any(text in status for text in authoring_text)
+        screen.deleteLater()
+
     def test_a_typed_edit_over_the_practitioners_line_queues_a_rule_written_on_save(
         self, qapp: Any, tmp_path: Path
     ) -> None:
@@ -4972,6 +4917,7 @@ class TestNoteScreenTypedEdits:
         assert len(draft.config_decisions) == 2  # the hand rule and the prefill
         assert screen._rendered_excerpt == {}  # no confirm/decline rows
         assert not screen.proposals_header.isVisibleTo(screen)
+        assert screen.proposals_scroll.isHidden()  # leg h1j: no empty framed box either
         rows = screen.prefilled_lines()
         assert [row.state for row in rows] == ["prefilled", "prefilled"]
         assert all(models.PREFILLED_MARK in row.label for row in rows)
@@ -5561,32 +5507,12 @@ class TestTranscriptGeneration:
 
 class TestNoteWiring:
     def _window(self, tmp_path: Path, controller: FakeController) -> Any:
-        from scribe_desktop.ui.main_window import MainWindow
-
-        return MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path,
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        return _main_window(tmp_path, controller)
 
     def _rooted_window(self, tmp_path: Path, controller: FakeController) -> Any:
         """A window whose profile AND config roots are both under `tmp_path`
         (the PR-REG-005 rule: no test may reach the real stores)."""
-        from scribe_desktop.ui.main_window import MainWindow
-
-        return MainWindow(
-            controller,
-            FakeBackend(),
-            sessions_root=tmp_path,
-            profile_root=tmp_path / "profile",
-            config_root=tmp_path / "config",
-            benchmark_runner=list,
-            recovery_runner=lambda d: pytest.fail("not called"),
-        )
+        return _main_window(tmp_path, controller, profile_root=tmp_path / "profile")
 
     def test_draft_ready_routes_to_note_tab(self, qapp: Any, tmp_path: Path) -> None:
         controller = FakeController()

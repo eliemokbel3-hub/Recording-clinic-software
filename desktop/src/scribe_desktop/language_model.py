@@ -43,13 +43,14 @@ rendering passes Check 5; scripted responses model the adversarial cases.
 from __future__ import annotations
 
 import importlib.util
+import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Protocol
 
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
-from scribe_desktop.speaker_embedding import sha256_of_file
+from scribe_desktop.speaker_embedding import is_unc_path, sha256_of_file
 
 # --- the pinned model (single source; scripts/setup-models.py imports these) ---
 
@@ -110,13 +111,18 @@ class LanguageModelError(RuntimeError):
 
 
 class LanguageModel(Protocol):
-    """What the prose stage needs from a model: an identity for reporting and
-    one deterministic completion call. ``max_tokens`` bounds the output."""
+    """What the prose stage needs from a model: an identity for reporting,
+    one deterministic completion call (``max_tokens`` bounds the output) and
+    the model's OWN token count of a text (codex round 30 PR-MED-046: the
+    prose stage budgets every prompt against the context window with the
+    runtime's tokenizer, never a character heuristic)."""
 
     @property
     def model_id(self) -> str: ...
 
     def complete(self, *, system_text: str, user_text: str, max_tokens: int) -> str: ...
+
+    def count_tokens(self, text: str) -> int: ...
 
 
 # --- paths and availability (stat-only; the load contract verifies) -------------
@@ -124,10 +130,6 @@ class LanguageModel(Protocol):
 
 def default_language_model_path() -> Path:
     return default_models_root() / LANGUAGE_MODEL_SUBDIR / LANGUAGE_MODEL_FILENAME
-
-
-def _is_unc(path: Path) -> bool:
-    return str(path).startswith(("\\\\", "//"))
 
 
 def language_model_file_available(model_path: Path | None = None) -> bool:
@@ -138,7 +140,7 @@ def language_model_file_available(model_path: Path | None = None) -> bool:
     ``LocalLanguageModel`` at load, not here."""
     try:
         path = model_path if model_path is not None else default_language_model_path()
-        if _is_unc(path):
+        if is_unc_path(path):
             return False
         return path.is_file()
     except (RuntimeError, OSError, ValueError):  # ValueError: a NUL in LOCALAPPDATA
@@ -171,6 +173,49 @@ def _import_llama() -> Callable[..., Any]:
 # --- the real model -----------------------------------------------------------------
 
 
+def _open_devnull_sink() -> int:
+    return os.open(os.devnull, os.O_RDWR)
+
+
+def _give_std_fds_a_sink(
+    *,
+    dup: Callable[[int], int] = os.dup,
+    dup2: Callable[[int, int], int] = os.dup2,
+    open_sink: Callable[[], int] = _open_devnull_sink,
+    close: Callable[[int], None] = os.close,
+) -> tuple[int, ...]:
+    """Phase H round 28 SEC-003: the runtime's ``verbose=False`` path
+    silences llama.cpp's native log by ``os.dup``-ing file descriptors 1 and
+    2 and pointing them at ``devnull`` for the load. A WINDOWED process — the
+    shipped ``scribe-app.exe`` is a ``pythonw`` launcher with no console — has
+    no valid descriptor there, ``dup`` raises ``OSError`` and the load would
+    fail (remembered for the process: both prose styles dead). So before the
+    runtime is built, any of the two descriptors that cannot be duplicated is
+    given ``devnull`` as its sink; a console process is untouched. Returns
+    the descriptors that were given a sink (for the test pin).
+
+    Codex round 30 PR-MED-045: ``open_sink`` returns the LOWEST free
+    descriptor, which — when the target itself is closed and every lower one
+    is open — is the target: then the opened descriptor IS the sink and is
+    kept; only a DISTINCT temporary is duplicated onto the target and closed.
+    Closing unconditionally re-closed the descriptor just repaired."""
+    given: list[int] = []
+    for fd in (1, 2):
+        try:
+            close(dup(fd))
+            continue
+        except OSError:
+            pass
+        sink = open_sink()
+        if sink != fd:
+            try:
+                dup2(sink, fd)
+            finally:
+                close(sink)
+        given.append(fd)
+    return tuple(given)
+
+
 class LocalLanguageModel:
     """The pinned GGUF model over ``llama-cpp-python``, loaded from the local
     path only under the contract in the module docstring. Construction runs
@@ -197,7 +242,7 @@ class LocalLanguageModel:
     ) -> None:
         assert_offline_env()
         path = model_path if model_path is not None else default_language_model_path()
-        if _is_unc(path):
+        if is_unc_path(path):
             raise LanguageModelError(
                 f"language model path must be a local path, not UNC: {path}"
             )
@@ -226,6 +271,7 @@ class LocalLanguageModel:
                 "--only language-model"
             )
         factory = llama_factory if llama_factory is not None else _import_llama()
+        _give_std_fds_a_sink()  # SEC-003: before the runtime dup()s fds 1 and 2
         try:
             self._llama = factory(
                 model_path=str(path),
@@ -288,6 +334,19 @@ class LocalLanguageModel:
         if not isinstance(content, str):
             raise LanguageModelError("language model generation returned a non-text completion")
         return content
+
+    def count_tokens(self, text: str) -> int:
+        """The runtime's own token count of ``text`` (``Llama.tokenize``, no
+        BOS, special tokens counted) — the prose stage's prompt budget (codex
+        round 30 PR-MED-046). A tokenizer failure is a ``LanguageModelError``
+        naming the exception type only."""
+        with self._lock:
+            try:
+                return len(self._llama.tokenize(text.encode("utf-8"), add_bos=False, special=True))
+            except Exception as exc:
+                raise LanguageModelError(
+                    f"language model tokenisation failed ({type(exc).__name__})"
+                ) from exc
 
     def _clear_inference_state(self) -> None:
         """Drop what one completion left in the RESIDENT runtime (codex round
@@ -402,6 +461,11 @@ class MockLanguageModel:
             if lines and lines[0] in self._by_first_line:
                 return self._by_first_line[lines[0]]
         return echo_prompt_lines(system_text, user_text)
+
+    def count_tokens(self, text: str) -> int:
+        """Whitespace-separated words — a deterministic stand-in for the
+        runtime's tokenizer, so the prompt budget is testable exactly."""
+        return len(text.split())
 
 
 __all__ = [

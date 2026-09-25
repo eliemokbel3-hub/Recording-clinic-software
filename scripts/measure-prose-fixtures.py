@@ -90,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
             self.calls.append((system_text, user_text, completion))
             return completion
 
+        def count_tokens(self, text):  # PR-MED-046: the provider's prompt budget
+            return self._inner.count_tokens(text)
+
     recorder = RecordingModel(model)
     for style in ([args.style] if args.style else ["narrative", "own_voice"]):
         passed = 0
@@ -140,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
             notes.append(entry)
         note_walls = [n["wall_seconds"] for n in notes]
         report["styles"][style] = {
-            "pass_rate": f"{passed}/10",
+            "pass_rate": f"{passed}/{len(fixtures.FIXTURE_NOTES)}",
             "seconds_per_section_mean": round(sum(section_seconds) / len(section_seconds), 1),
             "seconds_per_section_max": round(max(section_seconds), 1),
             "seconds_per_note_min": min(note_walls),
@@ -149,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         summary = report["styles"][style]
         print(
-            f"{style}: {passed}/10 passed; {summary['seconds_per_section_mean']} s/section mean, "
+            f"{style}: {summary['pass_rate']} passed; "
+            f"{summary['seconds_per_section_mean']} s/section mean, "
             f"{summary['seconds_per_section_max']} max; "
             f"{summary['seconds_per_note_min']}-{summary['seconds_per_note_max']} s per note",
             flush=True,

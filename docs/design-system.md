@@ -51,7 +51,7 @@ view patterns · tokens · microcopy.
   recording works without it; every other screen behaves as before (`ui/main_window.py`,
   `ui/models.py` `FIRST_RUN_BANNER`; plan D10). Consent is a visible checkbox directly
   above the action it gates, under the FULL ratified text shown verbatim
-  (`ui/models.py` `CONSENT_TEXT_V2`, the current version); the action is disabled, not
+  (`ui/models.py` `CONSENT_TEXT_V3`, the current version; v1 and v2 are history); the action is disabled, not
   error-handled, until the box is ticked, and withdrawing consent is the visible Delete,
   not an un-tick (`ui/practitioner.py`). Only a READABLE profile's own consent record,
   carrying the CURRENT text version, pre-ticks the box — readable against the shipped
@@ -87,7 +87,14 @@ view patterns · tokens · microcopy.
   contains a name/number/date/medication (<class>)", "Not learned: this line is not
   attributed to you …", or the one-line reason learning is off (naming the Practitioner
   tab) — a status line, never a modal, never a prompt (plan D9 as amended: auto-learn,
-  review later). While phrases are queued the learning line above it reads "N phrases
+  review later). A typed shorthand the rules file would refuse is told so at the edit in
+  the clinician's words per class — "Not learned: the typed wording reads as more than
+  one claim (a dash, ';' or ':' between words, or several sentences) - keep one plain
+  statement per line to learn it", "… is longer than a shorthand rule may hold (2,000
+  characters at most)" (`note_config.plain_rule_problem`) — never the rules file's
+  authoring message (a rule id, an entry position, the JSON override, "Value error"),
+  which stays in the writer's record and the logs; the same check covers a correction
+  to an already-learned shorthand (Phase H live smoke, 2026-09-26). While phrases are queued the learning line above it reads "N phrases
   queued - press Save note on this tab to learn them (Cancel, Delete and Complete learn
   nothing)": the live smoke of 2026-09-17 showed a queued phrase read as the outcome and
   the review left by another exit. On Save the same status line reports what was written,
@@ -140,8 +147,9 @@ view patterns · tokens · microcopy.
   source count, sentence count — never the text in the summary), the kept example
   sentences by section and the kept shorthand, each with Remove, and a confirmed
   "Delete learned style" that removes the whole store and leaves the voice profile
-  alone; the summary and lists refresh after a learn, a remove or a delete, never on
-  a timer (`ui/practitioner.py`).
+  alone; the summary and lists refresh after a learn, a remove, a delete or a consent
+  renewal ("Confirm consent" re-seals the learned style with the current consent
+  record, content untouched), never on a timer (`ui/practitioner.py`).
 - **A confirmation line replaces a choice the app made for you, with a one-click way
   back.** When the clinician role is auto-confirmed from the voice profile, the manual
   radios are replaced by ONE plain-text line stating what was decided and the evidence

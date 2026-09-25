@@ -48,8 +48,11 @@ from scribe_desktop.session_store import (
 )
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE, MockSpeechProvider, TranscribedWord
 from scribe_desktop.transcription import (
+    LiveFailure,
     LiveFailureKind,
     LiveTranscriber,
+    LiveTranscriptionError,
+    LiveTranscriptionFailed,
     TranscriptDocument,
     TranscriptSegment,
     read_transcript,
@@ -851,6 +854,35 @@ class TestBuildTranscriberLive:
         )
         transcriber(tmp_path, SessionCrypto())
         assert statuses == [] and len(recorded) == 1
+
+    def test_an_unconfirmed_stop_refuses_the_batch_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Phase H round 24 LOW-002: `stop()`'s verdict is consulted — a
+        worker that did not confirm its buffers cleared raises out of the
+        transcriber instead of admitting the batch path beside a possibly
+        alive worker (fail closed; unreachable by construction, pinned)."""
+
+        class _Uncleared:
+            def drain(self) -> Any:
+                raise LiveTranscriptionFailed(LiveFailure(LiveFailureKind.MODEL_LOAD, "x"))
+
+            def stop(self) -> bool:
+                return False
+
+        recorded: list[dict[str, Any]] = []
+        monkeypatch.setattr(
+            models, "transcribe_session", lambda *a, **k: recorded.append(k) or object()
+        )
+        statuses: list[str] = []
+        transcriber = models.build_transcriber(
+            attribution=lambda: (None, None),
+            live_source=lambda: _Uncleared(),
+            on_status=statuses.append,
+        )
+        with pytest.raises(LiveTranscriptionError, match="did not confirm"):
+            transcriber(tmp_path, SessionCrypto())
+        assert len(statuses) == 1 and recorded == []
 
     def test_build_live_transcriber_builds_its_models_on_the_worker_thread(
         self, monkeypatch: pytest.MonkeyPatch

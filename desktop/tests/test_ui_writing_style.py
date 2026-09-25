@@ -72,6 +72,9 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
         "style_options_provider": lambda: models.style_options(
             style_root=tmp_path / "style", model_available=lambda: False
         ),
+        # Phase H round 24 MED-006: the tab's own presence probe is the same
+        # seam, pinned absent too.
+        "language_model_available": lambda: False,
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(
@@ -199,11 +202,94 @@ class TestWritingStyleGroup:
 
         assert screen.style_radios["own_voice"].isChecked()
         assert not screen.style_radios["own_voice"].isEnabled()
-        fallback = models.style_fallback_line("own_voice")
+        # Phase H round 24 MED-005: the line names the disabled option's OWN
+        # reasons (here both: no model, no learned style).
+        option = next(
+            o
+            for o in models.style_options(
+                style_root=tmp_path / "style", model_available=lambda: False
+            )
+            if o.style == "own_voice"
+        )
+        fallback = models.style_fallback_line("own_voice", option.reasons)
         assert fallback is not None
         assert fallback in screen.style_status_label.text()
+        assert models.STYLE_PROFILE_EMPTY_REASON in fallback
         assert not screen.style_status_label.isHidden()
         assert load_practitioner_settings(tmp_path / "config").note_style == "own_voice"
+        screen.deleteLater()
+
+    def test_the_fallback_names_the_disabled_options_own_reason(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase H round 24 MED-005: with the model INSTALLED and no learned
+        style, a saved Own voice names the learned style — never "not
+        installed" — so the reason label and the status line agree (C8)."""
+        save_practitioner_settings(
+            PractitionerSettings(note_style="own_voice"), config_root=tmp_path / "config"
+        )
+        screen = _screen(
+            tmp_path,
+            style_options_provider=lambda: models.style_options(
+                model_available=lambda: True, style_present=lambda root: False
+            ),
+            language_model_available=lambda: True,
+        )
+
+        assert screen.style_radios["own_voice"].isChecked()
+        assert not screen.style_radios["own_voice"].isEnabled()
+        text = screen.style_status_label.text()
+        assert models.STYLE_PROFILE_EMPTY_REASON in text
+        assert models.LANGUAGE_MODEL_ABSENT_REASON not in text
+        assert "shown as Clean clinical" in text
+        screen.deleteLater()
+
+    def test_saving_another_style_retracts_the_fallback(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 25 R25-02: the fallback line belongs to the CHECKED style —
+        saving an available style leaves only the save message."""
+        save_practitioner_settings(
+            PractitionerSettings(note_style="own_voice"), config_root=tmp_path / "config"
+        )
+        screen = _screen(tmp_path)
+        assert "shown as Clean clinical" in screen.style_status_label.text()
+
+        screen.style_radios["clean"].click()
+        assert screen.style_status_label.text() == "Writing style saved: Clean clinical."
+        assert load_practitioner_settings(tmp_path / "config").note_style == "clean"
+        screen.deleteLater()
+
+    def test_the_fallback_is_retracted_when_the_model_appears(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Phase H round 24 MED-005: the status line is re-rendered on every
+        options recompute, so the poll's presence transition retracts the
+        fallback line instead of leaving "not installed" on screen."""
+        save_practitioner_settings(
+            PractitionerSettings(note_style="own_voice"), config_root=tmp_path / "config"
+        )
+        installed = {"value": False}
+        screen = _screen(
+            tmp_path,
+            style_options_provider=lambda: models.style_options(
+                model_available=lambda: installed["value"], style_present=lambda root: True
+            ),
+            language_model_available=lambda: installed["value"],
+        )
+        assert not screen.style_radios["own_voice"].isEnabled()
+        assert "shown as Clean clinical" in screen.style_status_label.text()
+
+        installed["value"] = True
+        screen.refresh_availability()
+        assert screen.style_radios["own_voice"].isEnabled()
+        assert "shown as Clean clinical" not in screen.style_status_label.text()
+        assert screen.style_status_label.isHidden()
+
+        installed["value"] = False
+        screen.refresh_availability()
+        assert not screen.style_radios["own_voice"].isEnabled()
+        assert "shown as Clean clinical" in screen.style_status_label.text()
         screen.deleteLater()
 
     def test_every_style_is_enabled_once_its_needs_are_met(
@@ -266,6 +352,11 @@ class TestWritingStyleGroup:
         stat, never a decrypt) and re-computes the style options ONLY on a
         transition — the prose radios enable without a restart."""
         installed = {"value": False}
+        # Deliberately the MODULE attribute, not the constructor seam: this
+        # pins that a tab built WITHOUT the seam resolves it at call time —
+        # so the helper's absent-pin is lifted here (`None` = no seam; leg
+        # h1c: with the pin in place the poll saw no transition and never
+        # re-called the provider).
         monkeypatch.setattr(models, "language_model_available", lambda: installed["value"])
         calls = {"count": 0}
 
@@ -276,7 +367,9 @@ class TestWritingStyleGroup:
                 style_present=lambda root: True,
             )
 
-        screen = _screen(tmp_path, style_options_provider=provider)
+        screen = _screen(
+            tmp_path, style_options_provider=provider, language_model_available=None
+        )
         at_construction = calls["count"]
         assert at_construction > 0
         assert not screen.style_radios["narrative"].isEnabled()

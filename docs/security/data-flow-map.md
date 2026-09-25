@@ -250,9 +250,11 @@ logging channel, and so is the prose rendering the language model does
     DPAPI-wrapped, current-user, with the profile description) and `voice.enc`
     (AES-256-GCM under that key: the vector, the embedder identity, the
     creation time, speech seconds, the device name and the consent record —
-    the CURRENT text's version, `consent-v2` since Phase 5 (a `consent-v1`
-    record is readable but not current: the tab asks for a fresh tick and
-    phrase learning stays off until re-consent), acceptance time, learning
+    the CURRENT text's version, `consent-v3` since the note-learning plan's
+    Phase 0 (`consent-v2` was current from Phase 5 until then; a `consent-v1`
+    or `consent-v2` record is readable but not current: the tab asks for a
+    fresh tick and phrase learning stays off until re-consent), acceptance
+    time, learning
     opt-in). The lease is
     released after the tab's own status update, on every path. Re-record
     replaces `voice.enc` under the existing key; "Confirm consent" (Phase 5)
@@ -301,25 +303,42 @@ logging channel, and so is the prose rendering the language model does
     lists the sidecar's recent entries and every non-shipped phrase in the
     cue file (`note_config.load_learned_phrases`) and deletes one from both
     files (`delete_user_cue`). Only the practitioner's own words leave the
-    review, as config plaintext, by their consent (text v2); nothing here is
+    review, as config plaintext, by their consent (text v3 — the current
+    version; v2 was current when this flow was built); nothing here is
     logged (the phrase is shown on the local UI only).
 
 14. **Capture → live transcription worker → live view (note-learning-and-styles
-    plan, D1–D3; PLANNED; enforced from Phase 1 — no such flow exists today,
-    transcription runs only in the batch stage, flow 7).** Flows 14–16 and the
-    two note-learning non-flows below are Phase 0 stubs, finalised at that
-    plan's Phase H (task H3). What it will be: a
-    tee wrapped around the capture sink hands the worker plaintext PCM BEFORE
-    encryption, so the worker never holds `SessionCrypto`, never reads the
-    encrypted store and never writes a file; VAD segments and their embeddings
-    stay in process memory for the session and the PCM is dropped per ~30 s
-    window; the live view is the display-only transcript widget. Finish seals
-    capture as today and the TAIL DRAIN (the last open segment and any queued
-    windows) runs on the existing processing thread, never on the GUI thread;
-    Discard stops and joins the worker and confirms its buffers are cleared
-    BEFORE the session key is destroyed. A load failure, a stalled worker or a
-    drain error falls back to the batch stage with its reason on screen. Zero
-    network, no new logging channel.
+    plan, D1–D3; BUILT, Phase 1, 2026-09-19; in-process, zero network).** The
+    capture sink is `session._tee_sink`: the store's encrypting `append_chunk`
+    runs FIRST (its failure fails the session as before), then the SAME
+    plaintext chunk goes to `LiveTranscriber.feed` inside a boundary that
+    never raises into the capture thread — so the worker never holds
+    `SessionCrypto`, never reads the encrypted store and never writes a file.
+    In the worker the PCM lives as the open VAD span, the packed ~30 s windows
+    and the queued chunks (capped at `LIVE_QUEUE_CAP_BYTES`, three windows'
+    worth — over the cap the worker fails itself as `fell_behind`), dropped
+    per window as it is transcribed; VAD segments with their embeddings and
+    enrolment cosines stay in process memory for the session. Each transcribed
+    window is posted through a queued Qt signal to the display-only transcript
+    widget (`ui/transcript.py`; a post after the view closed is dropped; the
+    view is cleared on the Session screen's Discard and replaced wholesale by
+    the final document). Finish seals capture as before and the TAIL DRAIN
+    (the last open span and any queued windows) runs on the processing
+    `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
+    via `claim_live_transcriber`), never on the GUI thread, and writes
+    `transcript.enc` once through `assemble_transcript`; the worker's models
+    are released before the batch fallback builds its own. Discard stops and
+    joins the worker and requires its buffers CONFIRMED cleared
+    (`buffers_cleared`) BEFORE the session key is destroyed — an uncleared
+    stop refuses the key deletion, routes the recording to FAILED with key +
+    chunks intact and is retried by the next Discard; the same verdict gates
+    the three Complete paths and retirement on a new Start (threat-model
+    surface 11). A load failure, `fell_behind`, a worker error or a drain error
+    falls back to the batch stage (flow 7) with its reason on the Session
+    screen. No new logging channel: the one new record is
+    `live_transcriber_stop_timeout` (session id and state only). Flows 15–16
+    and the note-learning non-flows below are likewise BUILT — the Phase 0
+    stubs were finalised at that plan's Phase H (task H3, 2026-09-25).
 
 15. **Typed edit → typed line → (on Save) learned rule (note-learning-and-styles
     plan, D4, D5, D11; in-process, zero network).** Phase 0 BUILT the carriers:
@@ -459,8 +478,10 @@ logging channel, and so is the prose rendering the language model does
   headings, shorthand, measures and up to 30 practitioner-reviewed exemplar
   sentences that passed the shape filter unchanged — under the practitioner's
   consent (text v3), never under a session key and never a copy of a chosen
-  note; it is written only by the Practitioner tab's Save after the review, and
-  by that tab's per-item Remove re-saving the same profile (flow 16).
+  note; it is written only by the Practitioner tab's Save after the review, by
+  that tab's per-item Remove re-saving the same profile (flow 16), and by its
+  "Confirm consent" re-saving the same profile with a current consent record
+  (content untouched; codex round 31 PR-LOW-048).
 - No network traffic from either desktop process at runtime (no-sockets
   integration test on host and app, plus offline env kill-switches set and
   asserted; the during-capture/during-transcription poll and the

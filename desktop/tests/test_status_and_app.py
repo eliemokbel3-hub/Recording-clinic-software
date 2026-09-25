@@ -70,6 +70,8 @@ def test_window_offscreen_smoke(tmp_path) -> None:
         sessions_root=tmp_path / "sessions",
         profile_root=tmp_path / "profile",
         config_root=tmp_path / "config",  # peer round 55 PR-LOW-041: off the real config
+        style_root=tmp_path / "style",  # Phase H round 24 MED-006: never the real store
+        language_model_available=lambda: False,  # nor the real model's presence
     )
     panel = window.status_panel
     assert "Registration:" in panel.registration_label.text()

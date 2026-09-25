@@ -39,6 +39,11 @@ from scribe_desktop.note_config import (
     LEARNED_RULE_ID_PREFIX,
     LEARNED_RULES_SIDECAR_FILENAME,
     LEARNED_TRIGGER_MAX_TOKENS,
+    RULE_WORDING_BLANK,
+    RULE_WORDING_HIDDEN_CHARACTER,
+    RULE_WORDING_MANY_CLAIMS,
+    RULE_WORDING_NOT_ACCEPTED,
+    RULE_WORDING_TOO_LONG,
     LearnedRuleCandidate,
     LearnedRuleEntry,
     LearnedRuleHistoryEntry,
@@ -48,10 +53,13 @@ from scribe_desktop.note_config import (
     append_learned_rules,
     delete_learned_rule,
     is_learned_rule_id,
+    learned_rule_problem,
     load_learned_rule_entries,
     load_learned_rules,
     load_note_config,
     new_learned_rule_id,
+    plain_rule_problem,
+    plain_skip_reason,
     propose_rule_trigger,
     record_rule_outcomes,
     refuse_learning_candidate,
@@ -115,6 +123,71 @@ def _learn(root: Path, *candidates: LearnedRuleCandidate, at: datetime = _AT) ->
     assert outcome.skipped == ()
     assert outcome.sidecar_error is None
     return [rule.rule_id for rule in outcome.added]
+
+
+class TestLearnedRuleProblem:
+    """Phase H round 24 LOW-005: the edit-time check mirrors the writer's
+    validation, so the Note tab's "Will learn" is never withdrawn at Save."""
+
+    def test_a_valid_candidate_has_no_problem(self) -> None:
+        assert learned_rule_problem(_candidate()) is None
+
+    def test_an_over_long_wording_names_the_writers_reason(self, tmp_path: Path) -> None:
+        invalid = _candidate(wording=("a " * 1100).strip())
+        problem = learned_rule_problem(invalid)
+        assert problem
+        outcome = append_learned_rules([invalid], config_root=tmp_path, learned_at=_AT)
+        assert outcome.added == ()
+        assert outcome.skipped == ((invalid, f"invalid: {problem}"),)
+
+
+# What the validator's message carries and the clinician must never be shown
+# (Phase H live smoke, item 2): the rule id, the JSON override, pydantic's
+# "Value error" prefix and the entry position.
+_AUTHORING_TEXT = ("learned-", "{", "Value error", "expansion entry")
+
+
+class TestPlainRuleProblem:
+    """Phase H live smoke item 2 (2026-09-26): the status line says the
+    clinician's reason per refusal class; the validator's authoring message
+    stays in the writer's record."""
+
+    @pytest.mark.parametrize(
+        ("wording", "expected"),
+        [
+            ("Rest; then ice", RULE_WORDING_MANY_CLAIMS),
+            ("Mild knee sprain - rest advised", RULE_WORDING_MANY_CLAIMS),
+            ("Rest advised. Ice applied.", RULE_WORDING_MANY_CLAIMS),
+            (("a " * 1100).strip(), RULE_WORDING_TOO_LONG),
+            ("   ", RULE_WORDING_BLANK),
+            ("Mild​sprain", RULE_WORDING_HIDDEN_CHARACTER),
+        ],
+        ids=["semicolon", "dash", "two-sentences", "over-long", "blank", "hidden"],
+    )
+    def test_each_refused_wording_has_a_plain_reason(self, wording: str, expected: str) -> None:
+        detail = learned_rule_problem(_candidate(wording=wording))
+        assert detail is not None  # the validator decides ...
+        plain = plain_rule_problem(wording)  # ... this only explains
+        assert plain == expected
+        assert not any(text in plain for text in _AUTHORING_TEXT)
+
+    def test_the_validators_own_text_is_what_the_plain_form_replaces(self) -> None:
+        detail = learned_rule_problem(_candidate(wording="Mild knee sprain - rest advised"))
+        assert detail is not None
+        assert "expansion entry 1" in detail and "{" in detail  # the authoring message
+
+    def test_a_refusal_no_class_explains_gets_the_closed_fallback(self) -> None:
+        # Asked about a wording the checks here accept: never the validator's text.
+        assert plain_rule_problem("HVLA Cx") == RULE_WORDING_NOT_ACCEPTED
+
+    def test_the_writers_skip_reasons_render_plain(self) -> None:
+        wording = "Rest; then ice"
+        detail = learned_rule_problem(_candidate(wording=wording))
+        assert plain_skip_reason(f"invalid: {detail}", wording) == RULE_WORDING_MANY_CLAIMS
+        assert plain_skip_reason("duplicate", "HVLA Cx") == (
+            "that trigger is already in your rules file"
+        )
+        assert plain_skip_reason("not a learned rule", "HVLA Cx") == "not a learned rule"
 
 
 # ---------------------------------------------------------------------------

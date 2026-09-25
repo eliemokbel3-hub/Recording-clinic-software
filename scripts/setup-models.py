@@ -262,10 +262,6 @@ def speaker_embedding_pinned() -> bool:
     return bool(SPEAKER_EMBEDDING_SHA256)
 
 
-def _sha256_of(path: Path) -> str:
-    return sha256_of_file(path)
-
-
 class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Refuse any redirect whose target is not ``https://`` BEFORE the hop is
     fetched. The stdlib default follows ``http://`` targets, which would move
@@ -330,7 +326,7 @@ def _report_candidate(candidate: Path) -> None:
     size = candidate.stat().st_size
     print(f"[cand] speaker-embedding candidate: {candidate}")
     print(f"       size    : {size} bytes ({human(size)}; {SPEAKER_EMBEDDING_EXPECTED_SIZE})")
-    print(f"       sha256  : {_sha256_of(candidate)}")
+    print(f"       sha256  : {sha256_of_file(candidate)}")
     print(
         "       NOT promoted (candidate mode - no pin yet). Report the size and SHA-256 "
         "for the pin step; the smoke reads this .candidate path directly."
@@ -351,14 +347,14 @@ def fetch_speaker_embedding(root: Path, *, candidate_url: str | None = None) -> 
                 "(URL, size and SHA-256 recorded in this script); re-run without it"
             )
         if target.exists() and target.stat().st_size > 0:
-            if _sha256_of(target) == SPEAKER_EMBEDDING_SHA256:
+            if sha256_of_file(target) == SPEAKER_EMBEDDING_SHA256:
                 print(
                     f"[skip] speaker-embedding already present ({human(target.stat().st_size)})"
                 )
                 return
             print("[redo] speaker-embedding present but checksum mismatch; re-downloading")
         if candidate.exists() and candidate.stat().st_size > 0:
-            digest = _sha256_of(candidate)
+            digest = sha256_of_file(candidate)
             if digest != SPEAKER_EMBEDDING_SHA256:
                 raise SystemExit(
                     "speaker-embedding candidate checksum mismatch: expected "
@@ -534,7 +530,7 @@ def fetch_language_model(root: Path) -> None:
 
     if target.exists():
         size = target.stat().st_size
-        if size == LANGUAGE_MODEL_SIZE_BYTES and _sha256_of(target) == LANGUAGE_MODEL_SHA256:
+        if size == LANGUAGE_MODEL_SIZE_BYTES and sha256_of_file(target) == LANGUAGE_MODEL_SHA256:
             print(f"[skip] language-model already present ({human(size)})")
             return
         print("[redo] language-model present but not the pinned file; re-downloading")
@@ -542,7 +538,7 @@ def fetch_language_model(root: Path) -> None:
 
     have = candidate.stat().st_size if candidate.exists() else 0
     if have == LANGUAGE_MODEL_SIZE_BYTES:
-        digest = _sha256_of(candidate)
+        digest = sha256_of_file(candidate)
         if digest != LANGUAGE_MODEL_SHA256:
             raise SystemExit(
                 "language-model candidate checksum mismatch: expected "
@@ -565,7 +561,7 @@ def fetch_language_model(root: Path) -> None:
             f"language-model candidate at {candidate} is {size} bytes, not the pinned "
             f"{LANGUAGE_MODEL_SIZE_BYTES}; delete it to re-download"
         )
-    digest = _sha256_of(candidate)
+    digest = sha256_of_file(candidate)
     if digest != LANGUAGE_MODEL_SHA256:
         raise SystemExit(
             "language-model checksum mismatch: expected "

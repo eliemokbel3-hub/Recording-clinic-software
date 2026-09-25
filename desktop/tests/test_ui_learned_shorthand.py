@@ -84,6 +84,12 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
         "profile_root": tmp_path / "profile",
         "config_root": tmp_path / "config",
         "style_root": tmp_path / "style",
+        # Phase H round 25 R25-03: the language model's presence is pinned
+        # absent through both seams — never read from this host.
+        "style_options_provider": lambda: models.style_options(
+            style_root=tmp_path / "style", model_available=lambda: False
+        ),
+        "language_model_available": lambda: False,
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(

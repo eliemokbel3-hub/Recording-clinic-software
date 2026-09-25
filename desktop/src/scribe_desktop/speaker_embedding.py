@@ -244,7 +244,7 @@ def default_speaker_model_path() -> Path:
     return default_models_root() / SPEAKER_MODEL_SUBDIR / f"{SPEAKER_MODEL_NAME}.onnx"
 
 
-def _is_unc(path: Path) -> bool:
+def is_unc_path(path: Path) -> bool:
     return str(path).startswith(("\\\\", "//"))
 
 
@@ -258,7 +258,7 @@ def speaker_model_available(model_path: Path | None = None) -> bool:
         path = model_path if model_path is not None else default_speaker_model_path()
     except (RuntimeError, OSError):
         return False
-    if _is_unc(path):
+    if is_unc_path(path):
         return False
     return path.is_file()
 
@@ -283,7 +283,7 @@ def load_onnx_session(model_path: Path, *, expected_sha256: str | None = None) -
     session options, telemetry, session construction — every failure is a
     ``SpeakerModelError`` naming the step (round 6 PR-LOW-020)."""
     assert_offline_env()
-    if _is_unc(model_path):
+    if is_unc_path(model_path):
         raise SpeakerModelError(f"speaker model path must be a local path, not UNC: {model_path}")
     if not model_path.is_file():
         raise SpeakerModelError(

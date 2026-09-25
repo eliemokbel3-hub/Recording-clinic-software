@@ -284,6 +284,7 @@ class PractitionerScreen(QWidget):
         config_root: Path | None = None,
         style_root: Path | None = None,
         style_options_provider: Callable[[], tuple[models.StyleOption, ...]] | None = None,
+        language_model_available: Callable[[], bool] | None = None,
         embedder_kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER,
         embedder_factory: Callable[[EmbedderKind], SpeakerEmbedder] = build_speaker_embedder,
         embedder_available: Callable[[EmbedderKind], bool] = speaker_embedder_available,
@@ -313,11 +314,28 @@ class PractitionerScreen(QWidget):
         # The learned-style store root: `models.style_options` STATS it for
         # the Own-voice option (`style_profile_present`), it never decrypts it.
         self._style_root = style_root
+        # Phase H round 24 MED-006: the language model's presence is a test
+        # seam like every other host-state input (docs/lessons.md 2026-09-24
+        # — a test must never read whether THIS host has the 2.3 GiB model).
+        # None resolves `models.language_model_available` at CALL time, so a
+        # monkeypatch of the module attribute still takes effect. The default
+        # options provider asks the SAME probe (round 25 R25-01): the
+        # `style_options` default would otherwise bind the real probe at
+        # definition time and bypass the seam.
+        self._language_model_probe = language_model_available
         self._style_options_provider: Callable[[], tuple[models.StyleOption, ...]] = (
             style_options_provider
             if style_options_provider is not None
-            else (lambda: models.style_options(style_root=style_root))
+            else (
+                lambda: models.style_options(
+                    style_root=style_root, model_available=self._probe_language_model
+                )
+            )
         )
+        # The "Writing style" status line's two parts (MED-005): the base
+        # text and the fallback line of a disabled saved style.
+        self._style_status_base = ""
+        self._style_status_fallback: str | None = None
         self._embedder_kind = embedder_kind
         self._embedder_factory = embedder_factory
         self._embedder_available = embedder_available
@@ -347,7 +365,8 @@ class PractitionerScreen(QWidget):
         )
         self._sample_files: list[Path] = []
         # The learned style as last READ from its store (one decrypt per
-        # learn / remove / delete event, never per poll); None when absent or
+        # learn / remove / delete / consent-renewal event, never per poll);
+        # None when absent or
         # unusable — `_style_present` (a stat) still enables Delete then.
         self._style_profile: StyleProfile | None = None
         self._style_present = False
@@ -670,7 +689,7 @@ class PractitionerScreen(QWidget):
         # runs) and re-compute the style options then and only then. Taken
         # before the timer starts, so the first tick compares against a real
         # value rather than a guess.
-        self._language_model_available = models.language_model_available()
+        self._language_model_available = self._probe_language_model()
 
         self._availability_timer = QTimer(self)
         self._availability_timer.setInterval(_AVAILABILITY_POLL_MS)
@@ -764,10 +783,18 @@ class PractitionerScreen(QWidget):
         # re-computes the options, and the provider stats the learned-style
         # store too — it never decrypts it (round 51 MED-001 is about profile
         # decrypts and is untouched).
-        language_ok = models.language_model_available()
+        language_ok = self._probe_language_model()
         if language_ok != self._language_model_available:
             self._language_model_available = language_ok
             self.refresh_style_options()
+
+    def _probe_language_model(self) -> bool:
+        """The injected presence probe, or ``models.language_model_available``
+        resolved now (never bound at construction — MED-006)."""
+        probe = self._language_model_probe
+        if probe is None:
+            probe = models.language_model_available
+        return probe()
 
     # --- profile state ---------------------------------------------------------
 
@@ -878,15 +905,19 @@ class PractitionerScreen(QWidget):
         self.consent_checkbox.setEnabled(not busy and not self._consent_current)
         self.learning_checkbox.setEnabled(not busy)
         profile = self._profile
-        self.confirm_consent_button.setVisible(profile is not None)
+        # Codex round 31 PR-LOW-048: "Confirm consent" renews BOTH stores —
+        # shown when either profile exists, enabled when the box is ticked
+        # and the voice record is stale (or its opt-in changed) or the STYLE
+        # record is stale; the style store had no renewal path of its own.
+        learned = self._style_profile
+        style_stale = learned is not None and not models.consent_is_current(learned)
+        voice_needs = profile is not None and (
+            not self._consent_current
+            or self.learning_checkbox.isChecked() != profile.consent.learning_opt_in
+        )
+        self.confirm_consent_button.setVisible(profile is not None or learned is not None)
         self.confirm_consent_button.setEnabled(
-            not busy
-            and profile is not None
-            and self.consent_checkbox.isChecked()
-            and (
-                not self._consent_current
-                or self.learning_checkbox.isChecked() != profile.consent.learning_opt_in
-            )
+            not busy and self.consent_checkbox.isChecked() and (voice_needs or style_stale)
         )
         self.delete_recent_button.setEnabled(
             not busy and self.recently_learned_list.count() > 0
@@ -932,35 +963,53 @@ class PractitionerScreen(QWidget):
     # --- re-consent without re-record (Task 5.0) ----------------------------------
 
     def on_confirm_consent(self) -> None:
-        """Re-save the SAME vector under the existing key with a consent
-        record for the CURRENT text and the learning opt-in as ticked
-        (``save_profile`` replaces only ``voice.enc``). Needs a readable
-        profile and a ticked consent box; runs on the GUI thread (one small
-        atomic file replace, no microphone, no lease)."""
-        profile = self._profile
-        if self.is_busy or profile is None or not self.consent_checkbox.isChecked():
+        """Re-save each present profile under its existing key with a consent
+        record for the CURRENT text and the learning opt-in as ticked: the
+        SAME voice vector (``save_profile`` replaces only ``voice.enc``) and —
+        codex round 31 PR-LOW-048 — the SAME learned style (``save_style_profile``
+        replaces only ``style.enc``; the reviewed exemplars are untouched),
+        which had no renewal path of its own. Needs a ticked consent box and
+        at least one readable profile; runs on the GUI thread (small atomic
+        file replaces, no microphone, no lease)."""
+        profile, style = self._profile, self._style_profile
+        if self.is_busy or not self.consent_checkbox.isChecked():
             return
-        now = self._clock()
-        updated = profile.model_copy(
-            update={
-                "consent": ConsentRecord(
-                    accepted_at=now,
-                    consent_text_version=models.CONSENT_TEXT_VERSION,
-                    learning_opt_in=self.learning_checkbox.isChecked(),
-                )
-            }
+        if profile is None and style is None:
+            return
+        consent = ConsentRecord(
+            accepted_at=self._clock(),
+            consent_text_version=models.CONSENT_TEXT_VERSION,
+            learning_opt_in=self.learning_checkbox.isChecked(),
         )
+        saved: list[str] = []
         try:
-            save_profile(updated, root=self._profile_root)
+            if profile is not None:
+                save_profile(
+                    profile.model_copy(update={"consent": consent}), root=self._profile_root
+                )
+                saved.append("voice profile")
+            if style is not None:
+                save_style_profile(
+                    style.model_copy(update={"consent": consent}), root=self._style_root
+                )
+                saved.append("learned style")
         except (StoreWriteError, ProfileError, OSError) as exc:
             # OSError too (peer round 37 PR-MED-025's in-phase sibling): the
             # atomic writer's temp-file cleanup can surface a raw error in
             # place of the typed one, and a GUI slot must not raise.
             self._set_enrolment_status(f"Could not save your consent - {exc}")
             self.refresh_profile_state()
+            self.refresh_style_profile_state()
             return
-        self._set_enrolment_status("Consent saved - your voice profile is unchanged.")
-        self.refresh_profile_state()  # re-read from disk: the tick now comes from the record
+        # The voice-only sentence is the pinned, pre-existing one (byte for
+        # byte); the other two shapes follow its grammar (leg h1g).
+        verb = "are" if len(saved) > 1 else "is"
+        self._set_enrolment_status(
+            f"Consent saved - your {' and '.join(saved)} {verb} unchanged."
+        )
+        # Re-read both from disk: the tick now comes from the records.
+        self.refresh_profile_state()
+        self.refresh_style_profile_state()
 
     # --- enrolment ----------------------------------------------------------------
 
@@ -1293,8 +1342,10 @@ class PractitionerScreen(QWidget):
     def refresh_style_profile_state(self) -> None:
         """ONE style-store read (a stat, then a DPAPI unwrap and a decrypt on
         the GUI thread) and a re-render of the learned-style line and both
-        lists. Called at construction and after a learn, a remove or a delete
-        — never from a poll (round 51 MED-001). An unusable store shows its
+        lists. Called at construction and after a learn, a remove, a delete or
+        a consent renewal (Confirm consent re-saves the same profile with a
+        current record — codex round 31 PR-LOW-048) — never from a poll
+        (round 51 MED-001). An unusable store shows its
         line and keeps Delete available."""
         self._style_present = style_profile_present(root=self._style_root)
         try:
@@ -1412,6 +1463,7 @@ class PractitionerScreen(QWidget):
         the learned style changes."""
         options = self._style_options_provider()
         reasons: list[str] = []
+        by_style = {option.style: option for option in options}
         for option in options:
             self._style_enabled[option.style] = option.enabled
             if not option.enabled and option.reason is not None:
@@ -1421,13 +1473,18 @@ class PractitionerScreen(QWidget):
         checked = next(
             (style for style, radio in self.style_radios.items() if radio.isChecked()), None
         )
-        if checked is not None and not self._style_enabled.get(checked, False):
-            # A SAVED style the app cannot honour yet stays selected-but-
-            # disabled and says how the note is rendered meanwhile (C8).
-            fallback = models.style_fallback_line(checked)
-            if fallback is not None and fallback not in self.style_status_label.text():
-                current = self.style_status_label.text()
-                self._set_style_status(f"{current}\n{fallback}" if current else fallback)
+        # A SAVED style the app cannot honour yet stays selected-but-disabled
+        # and says how the note is rendered meanwhile (C8). Phase H round 24
+        # MED-005: the line names the disabled option's OWN reasons (a saved
+        # Own voice with the model installed but no learned style names the
+        # learned style, never the model), and it is RE-RENDERED from the
+        # kept base text on every recompute — so the poll's next transition
+        # (the model installed, a style learned) retracts it.
+        fallback: str | None = None
+        chosen = by_style.get(checked) if checked is not None else None
+        if checked is not None and chosen is not None and not chosen.enabled:
+            fallback = models.style_fallback_line(checked, chosen.reasons)
+        self._render_style_status(fallback)
         self._update_controls()
 
     def on_style_selected(self, style: NoteStyle) -> None:
@@ -1446,6 +1503,9 @@ class PractitionerScreen(QWidget):
             return
         self._saved_style = style
         self._set_style_status(f"Writing style saved: {models.STYLE_LABELS[style]}.")
+        # Round 25 R25-02: the fallback line belongs to the CHECKED style —
+        # recompute it for the one just saved (an enabled style has none).
+        self.refresh_style_options()
 
     def _check_style_radio(self, style: NoteStyle) -> None:
         """Check one radio without firing ``on_style_selected``: the style is
@@ -1461,7 +1521,17 @@ class PractitionerScreen(QWidget):
                 each.blockSignals(was_blocked)
 
     def _set_style_status(self, text: str | None) -> None:
-        self.style_status_label.setText(text or "")
+        """The group's BASE status (the read reason, a save's outcome or its
+        failure); the fallback line of a disabled saved style is appended by
+        `_render_style_status` from the current options, never accumulated."""
+        self._style_status_base = text or ""
+        self._render_style_status(self._style_status_fallback)
+
+    def _render_style_status(self, fallback: str | None) -> None:
+        self._style_status_fallback = fallback
+        parts = [part for part in (self._style_status_base, fallback) if part]
+        text = "\n".join(parts)
+        self.style_status_label.setText(text)
         self.style_status_label.setVisible(bool(text))
 
     # --- learned phrases (Task 5.3) --------------------------------------------------

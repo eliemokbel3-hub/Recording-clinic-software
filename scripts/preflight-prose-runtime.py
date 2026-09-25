@@ -4,7 +4,8 @@ Run this YOURSELF from a NORMAL terminal (PowerShell or cmd), never from an agen
 shell - it fetches wheels and a tiny smoke model over the network:
 
     py -3.14 scripts\\preflight-prose-runtime.py
-    py -3.14 scripts\\preflight-prose-runtime.py --python 3.12      (fallback: after `py install 3.12`)
+    py -3.14 scripts\\preflight-prose-runtime.py --python 3.12
+        (the fallback interpreter, after `py install 3.12`)
     py -3.14 scripts\\preflight-prose-runtime.py --only llama       (one candidate only)
 
 What it does, per candidate runtime:
@@ -197,10 +198,16 @@ def candidate(name: str, python: Path, args: argparse.Namespace, workdir: Path) 
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--only", choices=["llama", "genai"], help="run one candidate only")
-    ap.add_argument("--python", dest="pyver", help="venv interpreter via the py launcher, e.g. 3.12")
-    ap.add_argument("--genai-model", help="a genai-exported ONNX model directory for the genai smoke")
+    ap.add_argument(
+        "--python", dest="pyver", help="venv interpreter via the py launcher, e.g. 3.12"
+    )
+    ap.add_argument(
+        "--genai-model", help="a genai-exported ONNX model directory for the genai smoke"
+    )
     ap.add_argument("--fresh", action="store_true", help="delete and recreate the throwaway venvs")
     args = ap.parse_args()
 
@@ -231,7 +238,10 @@ def main() -> None:
     print("\n=== P.0 RESULT (paste this whole block back) ===")
     print(json.dumps(report, indent=2))
     print("=== END P.0 RESULT ===")
-    print(f"\n(also saved to {report_path}; the throwaway venvs live under {workdir} and can be deleted)")
+    print(
+        f"\n(also saved to {report_path}; the throwaway venvs live under {workdir} and can "
+        "be deleted)"
+    )
 
 
 if __name__ == "__main__":

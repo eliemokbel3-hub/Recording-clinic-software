@@ -168,6 +168,9 @@ def _screen(tmp_path: Path, **overrides: Any) -> Any:
         "style_options_provider": lambda: models.style_options(
             style_root=tmp_path / "style", model_available=lambda: False
         ),
+        # Phase H round 25 R25-03: the tab's own presence probe is the second
+        # seam, pinned absent too.
+        "language_model_available": lambda: False,
         "embedder_available": lambda kind: True,
         "vad_available": lambda: True,
         "readiness_provider": lambda: models.AttributionReadiness(
@@ -872,6 +875,69 @@ class TestDialogDisposal:
         screen.deleteLater()
 
 
+class TestStyleConsentRenewal:
+    """Codex round 31 PR-LOW-048: a learned style saved under an OLDER
+    consent text is renewed by "Confirm consent" — shown with a style
+    profile alone, enabled once the box is ticked while the record is stale,
+    re-sealing the SAME profile with a current record — the path the
+    stale-consent style line names."""
+
+    @windows_only
+    def test_confirm_consent_renews_a_stale_style_record(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.practitioner_profile import ConsentRecord, save_style_profile
+
+        learned = _learned(tmp_path)
+        current = learned.style_profile
+        assert current is not None and models.consent_is_current(current)
+        learned.deleteLater()
+        stale = current.model_copy(
+            update={
+                "consent": ConsentRecord(
+                    accepted_at=current.consent.accepted_at,
+                    consent_text_version="consent-v2",
+                    learning_opt_in=True,
+                )
+            }
+        )
+        save_style_profile(stale, root=_style_root(tmp_path))
+
+        screen = _screen(tmp_path)  # no voice profile at all
+        assert screen.style_profile is not None
+        assert not models.consent_is_current(screen.style_profile)
+        assert "consent text updated" in screen.style_line_label.text()
+        assert not screen.confirm_consent_button.isHidden()
+        assert not screen.confirm_consent_button.isEnabled()  # the box is unticked
+
+        screen.consent_checkbox.setChecked(True)
+        assert screen.confirm_consent_button.isEnabled()
+        screen.confirm_consent_button.click()
+
+        renewed = load_style_profile(root=_style_root(tmp_path))
+        assert renewed is not None and models.consent_is_current(renewed)
+        assert renewed.exemplars == current.exemplars
+        assert renewed.shorthand == current.shorthand
+        assert models.consent_is_current(screen.style_profile)
+        assert "consent text updated" not in screen.style_line_label.text()
+        assert not screen.confirm_consent_button.isEnabled()  # nothing left to renew
+        assert screen.enrolment_status_label.text() == (
+            "Consent saved - your learned style is unchanged."
+        )
+        # The Own-voice stage accepts the renewed profile (LOW-001's gate).
+        assert models.STYLE_CONSENT_STALE_REASON.endswith("Practitioner tab")
+        screen.deleteLater()
+
+    @windows_only
+    def test_a_current_style_alone_shows_the_button_disabled(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen = _learned(tmp_path)
+        assert not screen.confirm_consent_button.isHidden()
+        assert not screen.confirm_consent_button.isEnabled()
+        screen.deleteLater()
+
+
 class TestPollNeverDecrypts:
     def test_no_five_second_poll_opens_either_store(
         self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -883,7 +949,8 @@ class TestPollNeverDecrypts:
         store — the microphone poll's one voice-profile re-read on a presence
         transition is round 55 PR-REG-006's documented exception. Only
         ``refresh_style_profile_state`` decrypts the style store, and it is
-        called on the tab's own learn / remove / delete events."""
+        called on the tab's own learn / remove / delete / consent-renewal
+        events."""
         from scribe_desktop.ui.microphone import MicrophoneScreen
 
         screen = _screen(tmp_path)

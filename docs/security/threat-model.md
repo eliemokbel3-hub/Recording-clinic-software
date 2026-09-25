@@ -607,8 +607,10 @@ boundary 2: the defended adversary is outside the user's Windows session.
 9. **Consent, first run and deletion are UI state at the same-user
    boundary, not identity (Phase 3, D10; consent v2 and re-consent at Phase
    5, Task 5.0).** What the structure enforces: the Practitioner tab shows
-   the CURRENT consent text verbatim (`ui/models.py` `CONSENT_TEXT_V2`,
-   version `CONSENT_TEXT_VERSION`; the v1 text stays in the file as history)
+   the CURRENT consent text verbatim (`ui/models.py` `CONSENT_TEXT_V3`,
+   version `CONSENT_TEXT_VERSION = "consent-v3"` since the note-learning
+   plan's Phase 0; the v1 and v2 texts stay in the file as history, and a
+   record carrying either is readable but not current)
    and the Record button is enabled only while the consent
    box is ticked (and a microphone is selected and the selected embedder and
    the VAD model are present — an absent model disables the action and names
@@ -711,31 +713,81 @@ boundary 2: the defended adversary is outside the user's Windows session.
     same-user boundary applies to the plaintext exactly as to the other
     config files.
 
-## Note learning and styles — Phase 0 stubs (surfaces 11–17; finalised at that plan's Phase H)
+## Note learning and styles (surfaces 11–17; Phases 0–4 BUILT, the Task 0.5 stubs finalised at that plan's Phase H)
 
 The note-learning-and-styles plan adds live transcription during recording,
 practitioner-typed edits that can become learned rules, a learned writing style
 derived from the practitioner's own past notes, and a local language model that
 renders prose; boundary 2 is unchanged — the defended adversary is still outside
 the user's Windows session and every new artefact inherits exactly that posture.
-Only that plan's PHASE 0 is built (the contracts: consent v3, note schema v2,
-the style store and its model, the settings file, the two shipped vocabularies
-and the typed-wording filter), so each surface below states what is enforced
-TODAY with its symbol and marks everything else "planned; enforced from Phase N";
-these stubs are finalised at that plan's Phase H (task H3).
+Phases 0–4 of that plan are BUILT (2026-09-19 → 2026-09-24: the contracts —
+consent v3, note schema v2, the style store and its model, the settings file,
+the two shipped vocabularies and the typed-wording filter; live transcription;
+typed edits and learned rules; the writing styles and sample-note learning; the
+local language model and Check 5). Each surface below states what the structure
+ENFORCES with its symbol and names its residue; the Phase 0 stubs that marked
+later-phase controls "planned; enforced from Phase N" were finalised at that
+plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
+24–26).
 
-11. **Live transcription worker (D1–D3; C2, C7, C8, C9).** Planned; enforced
-    from Phase 1 — none of it exists today, transcription runs only in the batch
-    stage. What it will hold: the worker is fed plaintext PCM by a tee placed
-    around the capture sink BEFORE encryption, so it never holds `SessionCrypto`,
-    never reads the session store and never writes a file (C7); its per-window
-    PCM, segments and embeddings stay in process memory and the PCM is dropped
-    per window; Discard stops and joins the worker and confirms its buffers are
-    cleared BEFORE the session key is destroyed (C7, D2); every failure — model
-    load, "could not keep up", a tee error — names its reason on screen and the
-    consultation falls back to the batch stage (C8); the live view is the same
-    display-only transcript widget under the same `NoTextInteraction` rule and
-    is cleared on Discard (C2); and no live segment reaches a log line (C9).
+11. **Live transcription worker (D1–D3; C2, C7, C8, C9).** BUILT (that plan's
+    Phase 1, 2026-09-19; the custody bounds hardened through codex rounds 9–11
+    and Phase H). THE TEE: `session._tee_sink` wraps the capture sink — the
+    store's encrypting `append_chunk` FIRST (the system of record; its
+    exception propagates and fails the session exactly as before the tee
+    existed), then the SAME plaintext chunk to `LiveTranscriber.feed` inside a
+    boundary that never raises into the capture thread (a worker error fails
+    the worker toward the batch path); the store method is resolved per call.
+    THE WORKER (`transcription.LiveTranscriber`) never holds `SessionCrypto`,
+    never reads the encrypted store and never writes a file (C7): it keeps
+    the open VAD span, the packed ~30 s windows and the queued chunks as
+    plaintext PCM in process memory, drops the PCM per window as it is
+    transcribed, and keeps per-segment embeddings and enrolment cosines for
+    the session; its Whisper and silero models are built on its own thread at
+    Start (D3) and released before any batch fallback, so two models are
+    never resident. BOUNDS (D2 as built): the queue is capped at
+    `LIVE_QUEUE_CAP_BYTES` (three windows' worth, checked in `feed` under
+    the account lock — exceeding it fails the worker as `fell_behind`); an
+    open span is force-closed at `LIVE_MAX_SEGMENT_SECONDS`; the drain yields
+    at every ready window, so retained plaintext is at most the window in
+    progress plus the open span plus one chunk; a sealed tail is finite and
+    drains in full. CUSTODY (C7): `stop()` joins the thread with a bound and
+    returns whether the buffers are CONFIRMED cleared — `buffers_cleared`, an
+    inspected predicate over the PCM, the windows, the queue and every
+    per-segment product, which every exit clears through `_drop_pcm` /
+    `_clear_buffers`; `False` on a join timeout — and every path that
+    destroys or drops custody consults that verdict: `discard()` (the
+    unlocked 10 s stop under the custody reservation; an uncleared worker
+    REFUSES `discard_session` with `SessionActivityError`, routes the
+    recording to FAILED with key + chunks intact, and the next Discard
+    retries), the three Complete paths and `_retire_locked` on a new Start
+    (`_stop_live_locked`, the 1 s in-lock bound); the one caller allowed to
+    ignore the verdict is `_fail_locked`, which destroys nothing. Finish seals
+    only (`finish()` enqueues the sentinel); the TAIL DRAIN runs on the
+    processing `TaskThread` inside the transcriber callable
+    (`ui/models._live_transcript`, handed the worker by
+    `claim_live_transcriber` — legal only inside `transcribe()`, where
+    Discard is already refused), which writes `transcript.enc` once through
+    `assemble_transcript` and consults `stop()`'s verdict before the batch
+    path may build a second model. FALLBACKS (C8): a model-load failure,
+    `fell_behind`, a worker error or a drain error each name their reason on
+    the Session screen's status line and the consultation continues through
+    the batch stage (flow 7). THE LIVE VIEW (C2): the worker posts each
+    window through a queued Qt signal to the same display-only
+    `NoTextInteraction` transcript widget (`ui/transcript.py`); a post after
+    the view closed is dropped, the view is cleared on the Session screen's
+    Discard, the final document replaces it wholesale, and live segments
+    carry `LIVE_SPEAKER_PENDING`, never a cluster label. LOGGING (C9): the
+    worker holds no logger; the ONE new log record is
+    `live_transcriber_stop_timeout` with the session id and state only, and
+    the words of a posted window are `word_text` tripwire markers. Residue,
+    stated: ≤ 0.25 s of tail speech after a forced 30 s cut is absent from
+    the LIVE document (the batch fallback keeps it); the join bounds are
+    time-based, so a provider call that blocks past them leaves the worker
+    ATTACHED and the key in place until the worker clears itself — the retry
+    case above, logged as metadata, never a destroyed key; and the plaintext
+    the worker holds is bounded in audio (the cap) and not in window count
+    (short utterances 5 s apart make many small windows).
 12. **Typed edits — the `clinician` provenance (D4; C3, C9).** The TYPE is
     built. In `note.py` a `clinician` assertion's typed text IS its span text
     (no second field, so the digested wording and the carried wording cannot
@@ -814,7 +866,19 @@ these stubs are finalised at that plan's Phase H (task H3).
     the line is rendered from the assertion's `span_text`, which IS the
     proposal's excerpt, by the one rendering path, so the two cannot name
     different words except through that path itself (the proposal-row read-back
-    defence belongs to lines that have a row).
+    defence belongs to lines that have a row). Second residue (Phase H round
+    24 MED-003): trigger matching is SPEAKER-AGNOSTIC (`note_fill.py`, Phase
+    3A — presence gates candidacy, not truth), which was harmless while every
+    autofill line had a confirm row; since D5 a matched hand-authored rule, a
+    prefill seed or an auto-confirmed learned rule arrives PRE-FILLED whoever
+    spoke the trigger — a PATIENT saying a learned trigger's tail (≤ 6 content
+    tokens of the practitioner's own earlier utterance) pre-fills the
+    practitioner's typed wording into a clinician-owned section under the D5
+    mark and the counted Save alone. The alternative NOT taken — gating
+    pre-fill on the CONFIRMED clinician's segment — needs voice attribution,
+    which exists only after enrolment, and would demote every pre-fill to a
+    proposal for an un-enrolled practitioner, reversing D5; the mark, the
+    Save count and Remove (the clinician's recorded decline) are the controls.
 15. **The style profile and its exemplars (D9, D10; C5, C6, C9).** Built: the
     store and the model. The learned style has its OWN root
     `%LOCALAPPDATA%\ClinikoScribe\style\` (`practitioner_profile.
@@ -840,8 +904,10 @@ these stubs are finalised at that plan's Phase H (task H3).
     and `practitioner_profile.save_style_profile` seals them under the style
     key (an existing key reused) — and by the "Learned style" group's per-item
     Remove, which re-saves the same profile minus one exemplar or one shorthand
-    token under that same key; nothing else writes it, and a cancelled review
-    writes nothing (C6). The review may only REMOVE: `build_style_profile`
+    token under that same key — and, since codex round 31 PR-LOW-048, by the
+    tab's "Confirm consent", which re-saves the SAME profile with only its
+    consent record replaced by a current one (learned content untouched);
+    nothing else writes it, and a cancelled review writes nothing (C6). The review may only REMOVE: `build_style_profile`
     raises `SampleNoteError` on a token the draft did not list as unrecognised
     or on an exemplar that is not one of the draft's own, so the review screen
     has no path that adds or edits text
@@ -856,12 +922,24 @@ these stubs are finalised at that plan's Phase H (task H3).
     per-token Removes above, plus the group's "Delete learned style" behind a
     confirmation dialog, which runs `delete_style_profile` key-first and is
     INDEPENDENT of the voice profile (neither Delete removes the other, and it
-    works with no voice profile at all). Reading is bounded to ONE decrypt:
-    `refresh_style_profile_state` is the tab's only caller of
-    `load_style_profile` — at construction and after a learn, a remove or a
-    delete — and the summary line (`ui/models.style_profile_line`: a date and
+    works with no voice profile at all). Reading is bounded to ONE decrypt on
+    the tab: `refresh_style_profile_state` is the tab's only caller of
+    `load_style_profile` — at construction and after a learn, a remove, a
+    delete or a consent renewal — and the summary line (`ui/models.style_profile_line`: a date and
     two counts, never a field's text) and both "Learned style" lists render
-    from that one in-memory copy; no 5 s poll ever opens the STYLE store, and
+    from that one in-memory copy; the ONE other reader is the Own-voice prose
+    stage (that plan's Phase 4, `ui/models.build_prose_stage`): one decrypt
+    per rendering job on the Note tab's worker thread, the profile handed to
+    the prompt builder as conditioning for every section call of that job and
+    dropped when the job returns — and refused as conditioning when its own
+    consent record is not the current text version (the same rule that turns
+    phrase learning off; Phase H round 24). What that record's fields do,
+    stated exactly (Phase H round 28): its `consent_text_version` gates USE
+    of the learned style and the tab's summary line; its `learning_opt_in` is
+    the evidence of the tick at that Save and is consulted by nothing — phrase
+    and rule learning read the VOICE record's opt-in (`learning_status`), and
+    withdrawing a learned artefact is its deletion, as the v3 text says. No
+    5 s poll ever opens the STYLE store, and
     in steady state neither poll opens any store (the tab's
     `refresh_availability` and the microphone screen's `refresh_model_status`
     render stats — round 51 MED-001; the microphone poll re-reads the VOICE
@@ -883,16 +961,20 @@ these stubs are finalised at that plan's Phase H (task H3).
     `sample_notes.read_sample_note` takes a chosen file or pasted text and
     reads it into memory only — a `Path` must carry a `.txt`, `.docx` or
     `.pdf` suffix (`SAMPLE_NOTE_SUFFIXES`; anything else is refused by name,
-    "paste the text instead") and is bounded by `MAX_SAMPLE_NOTE_BYTES` (2 MiB,
-    a stat before the read) and `MAX_SAMPLE_NOTE_CHARS` (200 000); a `.txt` is
-    ONE `read_bytes` decoded utf-8-sig then cp1252, a `.docx` is opened through
+    "paste the text instead") and is bounded by `MAX_SAMPLE_NOTE_BYTES` (2 MiB
+    — a stat first, then every reader's ONE rule, the capped
+    `read(MAX_SAMPLE_NOTE_BYTES + 1)`, so a file that grows after the stat is
+    still refused; Phase H round 24) and `MAX_SAMPLE_NOTE_CHARS` (200 000); a
+    `.txt` is ONE capped read decoded utf-8-sig then cp1252, a `.docx` is
+    opened through
     `python-docx` 1.2.0 (a pinned base dependency in `pyproject.toml`), and a
     `.pdf` (Phase 4 live smoke, practitioner decision 2026-09-20 — Cliniko
     exports notes as PDF) is TEXT-EXTRACTED through `pypdf` 6.19.0 (pinned,
     base, pure Python, no OCR): the bytes read through a capped request, the
     document parsed from memory, an encrypted PDF refused by name, at most
-    `MAX_PDF_PAGES` (60) pages, at most `MAX_PDF_PAGE_CHARS` (20 000) of text
-    kept per page and the total bounded while collected, a document whose
+    `MAX_PDF_PAGES` (60) pages, a page yielding more than `MAX_PDF_PAGE_CHARS`
+    (20 000) characters REFUSING the file by name (a refusal, never a
+    truncation) and the total bounded while collected, a document whose
     pages yield no text refused by name with the paste hint, and every pypdf
     raise translated to `SampleNoteError` naming the exception TYPE only (C9).
     Residue, stated exactly: pypdf inflates each content stream in full itself
@@ -959,7 +1041,11 @@ these stubs are finalised at that plan's Phase H (task H3).
     sdist build), not a measurement of the installed bytes: a same-user actor
     who forges that record over locally built bytes is inside boundary 2 and
     is not defended (it SKIPS BY NAME when the runtime is absent, so the gate
-    cannot pass silently on a machine that simply has no runtime). The
+    cannot pass silently on a machine that simply has no runtime — which is
+    every CI runner: CI installs `[dev]` / `[dev,ml]` and never the
+    requirements file, so this gate is evidence from the practitioner's
+    machine ONLY and a source-built copy on CI would merely skip; Phase H
+    round 24). The
     runtime's own native-library override is refused at the offline contract
     (codex round 22 PR-MED-033): `llama_cpp` loads its DLL from
     `LLAMA_CPP_LIB_PATH` when that variable is set, so
@@ -981,7 +1067,12 @@ these stubs are finalised at that plan's Phase H (task H3).
     `assert_offline_env()` (kept as the app-wide invariant, NOT the enforcing
     control here — see the residue), a UNC path refused, presence, size == the
     pin (checked BEFORE 2.3 GiB is hashed), the streamed SHA-256 == the pin,
-    the runtime imported lazily, then a short smoke generation. Every failure
+    the runtime imported lazily, then — because the runtime's `verbose=False`
+    path duplicates file descriptors 1 and 2 to silence the native log, which
+    a windowed process (`scribe-app.exe` is a `pythonw` launcher) cannot
+    satisfy — any of the two that cannot be duplicated is given `devnull` as
+    its sink (`_give_std_fds_a_sink`, Phase H round 28; a console process is
+    untouched), then the load, then a short smoke generation. Every failure
     is a typed `LanguageModelError` naming the STEP and never the prompt, and
     no `from_pretrained`-style fetch exists anywhere in the module (C1). The
     download is `scripts/setup-models.py`'s `language-model` entry: streamed
@@ -998,7 +1089,16 @@ these stubs are finalised at that plan's Phase H (task H3).
     confirmed lines between `PROMPT_LINES_HEADER` and `PROMPT_LINES_END`, and
     `NARRATIVE_INSTRUCTION` — own voice adds the `StyleProfile`'s measures,
     shorthand and at most 30 exemplars as CONDITIONING, never training, read
-    per job and never on a poll. An instruction-shaped line inside the note is
+    per job and never on a poll, and BUDGETED against the model's window with
+    the model's OWN token count (`LanguageModel.count_tokens` — the runtime's
+    tokenizer; codex round 30 PR-MED-046 replaced Phase H round 28's
+    character cap): `prose_style.conditioning_allowance` reserves the fixed
+    instruction, the section's user text, the completion the section may
+    need and a framing margin, and the conditioning block is trimmed to what
+    remains (exemplars from the end, then shorthand); a section whose lines
+    alone overflow the window is refused BEFORE any call as `too_long`,
+    named on the style line ("too long for the model's window") — never a
+    runtime raise. An instruction-shaped line inside the note is
     DATA: the instruction says so, and the ENFORCING control is Check 5 — an
     obeyed instruction that REPLACES the line drops the section's own tokens
     (or adds new ones), fails `missing_fact` / `added_content`, and the section
@@ -1013,9 +1113,21 @@ these stubs are finalised at that plan's Phase H (task H3).
     `fidelity_verdicts`) compares a section's confirmed inputs with its prose
     on four rules: (a) `missing_fact` — every non-connective input token is
     present; (b) `added_content` — nothing outside the inputs but the shipped
-    `config_defaults/prose_connectives.json`; (c) `polarity` — the MULTISET of
-    negation markers (`no not never denies denied without nil`, and any `n't`)
-    is identical; (d) `protected` — the multiset of number, date, medication
+    `config_defaults/prose_connectives.json` — since Phase H rounds 24 and 28
+    WITHOUT the antonym function words on/off, before/after, over/under,
+    since/until, in/out, up/down and `if` (`note_check._POLARITY_BEARING_TOKENS`,
+    pinned off the list), which reverse a clinical meaning when swapped or
+    dropped and are therefore facts under (a) and (b): "off paracetamol" →
+    "on paracetamol" fails, "weight down 2 kg" → "weight up 2 kg" fails, as
+    does a dropped "if"; and WITHOUT any word that is the lower-case form of a
+    shipped clinical abbreviation (`as` / `AS`, ankylosing spondylitis —
+    Check 5 compares folded tokens), refused at IMPORT by
+    `note_config._refuse_vocabulary_overlap` as a broken install; two such
+    words swapped BETWEEN facts keep the set and pass — the
+    token-not-attachment residue below; (c) `polarity`
+    — the MULTISET of negation markers (`no not never denies denied without
+    nil`, and any `n't`) is identical; (d) `protected` — the multiset of
+    number, date, medication
     and laterality tokens is identical (the learning filters' classifiers, the
     checker's lexicon, and `left`/`right`). A failing section keeps `clean`
     and raises ONE `style_fallback` REVIEW warning. It is a GATE, NOT A
@@ -1055,7 +1167,26 @@ these stubs are finalised at that plan's Phase H (task H3).
     Note tab built without a stage provider — never in the shipped window).
     A job orphaned by `clear()` keeps its thread until
     it reports and its result is dropped; an edit during a job invalidates
-    only the sections it changed and a fresh job renders those. The
+    only the sections it changed and a fresh job renders those. CUSTODY
+    ORDER AT THE EXITS, stated exactly (Phase H round 24 MED-002): unlike the
+    live worker, whose uncleared stop REFUSES key destruction (surface 11),
+    the prose job holds no session crypto and is NOT consulted by Abandon,
+    Cancel, Complete or Discard — those may destroy the session key while a
+    rendering runs. The BOUND: `clear()` flips the job's abort flag, which
+    `ProseStyleProvider.render` consults before every section's model call,
+    so an orphaned job stops after the call in progress. Stated exactly
+    (codex round 31 PR-LOW-047): the abort bounds what the MODEL sees — at
+    most the one section whose call is in progress, whose prompt and
+    completion are cleared from the runtime at that call's end — not what
+    stays REFERENCED: the suspended stage frame holds the whole note (every
+    populated section's confirmed lines, as the `ProseInput`) until that
+    call returns, seconds later, and only then drops it. Residue, named:
+    that one call and that whole-note reference for its duration; and a new
+    Start admitted while it
+    runs (the benchmark has a symmetric guard, the prose stage none) puts two
+    CPU-bound models side by side for its duration — a C8 `fell_behind`
+    fallback at worst, never data loss. The refuse-while-rendering shape
+    (Save's) was NOT taken: it would block Abandon for a whole CPU render. The
     Practitioner tab's "Writing style" group still writes
     `note_config.PractitionerSettings` (`practitioner_settings.json`, default
     `clean`, outside `NoteConfig` and outside the config digest) the moment a

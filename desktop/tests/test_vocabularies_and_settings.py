@@ -172,6 +172,14 @@ class TestShippedVocabularies:
         for token in _FORBIDDEN_CONNECTIVES:
             assert token not in PROSE_CONNECTIVES
 
+    def test_an_abbreviation_that_folds_to_a_connective_is_a_broken_install(self) -> None:
+        # Phase H round 28 SEC-001: the import-time guard, exercised directly.
+        guard = note_config_module._refuse_vocabulary_overlap
+        guard(CLINICAL_ABBREVIATIONS, PROSE_CONNECTIVES)  # the shipped pair passes
+        with pytest.raises(RuntimeError, match=r"\['as'\].*broken install"):
+            guard(("AS", "Cx"), ("a", "as", "the"))
+        assert "AS" in CLINICAL_ABBREVIATIONS and "as" not in PROSE_CONNECTIVES
+
     def test_no_shipped_entry_is_a_number_token(self) -> None:
         for entry in (*PROSE_CONNECTIVES, *CLINICAL_ABBREVIATIONS):
             assert not is_number_token(entry)

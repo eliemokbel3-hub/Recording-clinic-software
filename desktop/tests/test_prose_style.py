@@ -54,6 +54,7 @@ from scribe_desktop.note import (
     usable_rendering,
 )
 from scribe_desktop.note_config import (
+    MAX_STYLE_EXEMPLARS,
     NoteConfig,
     SectionMapping,
     StyleExemplar,
@@ -404,6 +405,179 @@ class TestInstructionShapedLine:
         result = provider.render(ProseInput.from_note(note))
         assert result.passed_sections == ("presenting_complaint",)
         assert result.warnings == ()
+
+
+class TestAbort:
+    """Phase H round 24 MED-002: ``abort`` is consulted before EACH section's
+    model call — once it answers True no further call is made and the
+    sections not yet rendered get no outcome (the review that asked has
+    ended); the call in progress is the stated residue."""
+
+    SECTIONS: dict[NoteSectionKey, list[str]] = {
+        "presenting_complaint": ["Neck pain for three days"],
+        "assessment": ["Thoracic stiffness"],
+        "management_plan": ["Review next week"],
+    }
+
+    def test_the_flag_stops_the_next_call(self) -> None:
+        note = _note(self.SECTIONS)
+        stop = {"value": False}
+
+        def flip_after_first(system_text: str, user_text: str) -> str:
+            stop["value"] = True
+            return lm_module.echo_prompt_lines(system_text, user_text)
+
+        mock = MockLanguageModel(responder=flip_after_first)
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note), abort=lambda: stop["value"])
+        assert len(mock.calls) == 1
+        assert [o.section_key for o in result.outcomes] == ["presenting_complaint"]
+        assert result.warnings == ()
+
+    def test_a_flag_that_never_flips_renders_every_section(self) -> None:
+        note = _note(self.SECTIONS)
+        mock = MockLanguageModel()
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note), abort=lambda: False)
+        assert len(mock.calls) == 3 and len(result.outcomes) == 3
+
+    def test_a_flag_set_before_the_first_call_renders_nothing(self) -> None:
+        note = _note(self.SECTIONS)
+        mock = MockLanguageModel()
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note), abort=lambda: True)
+        assert mock.calls == [] and result.outcomes == () and result.warnings == ()
+
+
+class TestPromptBudget:
+    """Phase H round 28 SEC-004 → codex round 30 PR-MED-046: every prompt is
+    budgeted against the model's window with the MODEL's token count (the
+    mock counts words): the instruction, the section's user text, the
+    completion reservation and the framing are reserved first; own-voice
+    conditioning takes what remains, exemplars trimmed from the end, then
+    shorthand; a section whose lines alone overflow is refused before any
+    call, by name."""
+
+    LINES = ("Neck pain for three days", "Worse on turning left")
+
+    def test_the_allowance_is_the_window_minus_the_reservations(self) -> None:
+        count = MockLanguageModel().count_tokens
+        allowance = ps.conditioning_allowance("presenting_complaint", self.LINES, count)
+        reserved = (
+            count(NARRATIVE_INSTRUCTION)
+            + count(ps._user_text("presenting_complaint", self.LINES))
+            + output_token_budget(self.LINES)
+            + ps.PROMPT_FRAMING_TOKENS
+        )
+        assert allowance == lm_module.LANGUAGE_MODEL_CONTEXT_TOKENS - reserved
+        assert allowance > 0
+
+    def test_a_maximal_style_is_trimmed_to_the_allowance_exemplars_first(self) -> None:
+        count = MockLanguageModel().count_tokens
+        long_text = ("word " * 197).strip() + " end."  # 198 words each
+        exemplars = tuple(
+            StyleExemplar(section_key="assessment", exemplar_text=long_text)
+            for _ in range(MAX_STYLE_EXEMPLARS)
+        )
+        profile = _style_profile().model_copy(update={"exemplars": exemplars})
+        budget = 1_000
+        block = ps._budgeted_conditioning(profile, budget, count)
+        assert block is not None and count(block) <= budget
+        assert block.startswith(ps._OWN_VOICE_HEADER)
+        assert "HVLA, Cx" in block  # the shorthand survives; exemplars gave way first
+        assert 1 <= block.count(long_text) < MAX_STYLE_EXEMPLARS
+
+    def test_shorthand_gives_way_after_the_exemplars_and_the_bare_block_can_fail(
+        self,
+    ) -> None:
+        count = MockLanguageModel().count_tokens
+        shorthand = tuple(f"ABBREVIATIONTOKEN{i:04d}" for i in range(500))
+        profile = _style_profile().model_copy(
+            update={"shorthand": shorthand, "exemplars": ()}
+        )
+        block = ps._budgeted_conditioning(profile, 120, count)
+        assert block is not None and count(block) <= 120
+        assert "ABBREVIATIONTOKEN0000" in block and "ABBREVIATIONTOKEN0499" not in block
+        # A budget below the measures-only block: nothing fits — None, and
+        # the provider refuses the section rather than overflow the window.
+        assert ps._budgeted_conditioning(profile, 3, count) is None
+
+    def test_a_small_style_is_untouched(self) -> None:
+        count = MockLanguageModel().count_tokens
+        profile = _style_profile()
+        block = ps._budgeted_conditioning(profile, 4_000, count)
+        assert block == ps._style_conditioning(profile)
+        assert all(e.exemplar_text in block for e in profile.exemplars)
+
+    def test_a_section_whose_lines_overflow_is_refused_before_any_call(self) -> None:
+        # 3 400 words (under MAX_ASSERTION_CHARS) whose user text plus the
+        # 768-token completion reservation and the framing exceed the window.
+        huge = " ".join(f"w{i}" for i in range(3_400))
+        assert ps.conditioning_allowance(
+            "presenting_complaint", (huge,), MockLanguageModel().count_tokens
+        ) < 0
+        note = _note({"presenting_complaint": [huge], "assessment": ["Thoracic stiffness"]})
+        mock = MockLanguageModel()
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note))
+        assert [c[1] for c in mock.calls] and len(mock.calls) == 1  # assessment only
+        assert result.too_long_sections == ("presenting_complaint",)
+        assert result.errored_sections == ("presenting_complaint",)
+        assert result.passed_sections == ("assessment",)
+        refused = result.outcomes[0]
+        assert refused.failure == "too_long" and refused.rendering is None
+        assert refused.detail == ps.SECTION_TOO_LONG_DETAIL and refused.seconds == 0.0
+        assert result.warnings == ()  # no prose, no fidelity verdict
+
+    def test_a_tokenizer_failure_is_that_sections_model_error_only(self) -> None:
+        """Codex round 32 PR-LOW-049: the budget's `count_tokens` sits inside
+        the per-section error boundary — a failure there is one section's
+        `model_error`, the sections before keep their outcomes and the
+        sections after are still rendered."""
+
+        class _FlakyTokenizer(MockLanguageModel):
+            def __init__(self) -> None:
+                super().__init__()
+                self.counted_sections = 0
+
+            def count_tokens(self, text: str) -> int:
+                if text.startswith("Section:"):
+                    self.counted_sections += 1
+                    if self.counted_sections == 2:
+                        raise LanguageModelError("secret tokenizer text")
+                return super().count_tokens(text)
+
+        note = _note(TestAbort.SECTIONS)  # three populated sections
+        mock = _FlakyTokenizer()
+        provider = ProseStyleProvider(mock, style="narrative")
+        result = provider.render(ProseInput.from_note(note))
+        keys = [o.section_key for o in result.outcomes]
+        assert keys == ["presenting_complaint", "assessment", "management_plan"]
+        assert result.passed_sections == ("presenting_complaint", "management_plan")
+        assert result.errored_sections == ("assessment",)
+        errored = result.outcomes[1]
+        assert errored.failure == "model_error" and errored.rendering is None
+        assert errored.detail == "LanguageModelError" and "secret" not in str(errored)
+        assert len(mock.calls) == 2  # no call for the section whose budget failed
+
+    def test_own_voice_renders_with_the_trimmed_block(self) -> None:
+        long_text = ("word " * 197).strip() + " end."
+        exemplars = tuple(
+            StyleExemplar(section_key="assessment", exemplar_text=long_text)
+            for _ in range(MAX_STYLE_EXEMPLARS)
+        )
+        profile = _style_profile().model_copy(update={"exemplars": exemplars})
+        note = _note({"presenting_complaint": [self.LINES[0]]})
+        mock = MockLanguageModel()
+        provider = ProseStyleProvider(mock, style="own_voice", profile=profile)
+        result = provider.render(ProseInput.from_note(note))
+        assert result.passed_sections == ("presenting_complaint",)
+        system_text, _user, _max = mock.calls[0]
+        budget = ps.conditioning_allowance(
+            "presenting_complaint", (self.LINES[0],), mock.count_tokens
+        )
+        assert mock.count_tokens(system_text) - mock.count_tokens(NARRATIVE_INSTRUCTION) <= budget
+        assert system_text.count(long_text) < MAX_STYLE_EXEMPLARS
 
 
 class TestPromptShape:

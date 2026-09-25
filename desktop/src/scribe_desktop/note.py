@@ -38,7 +38,9 @@ caller behaves (plan Key Design Decisions):
   that declares version 1 cannot carry v2 content.
 - Provenance proves ATTRIBUTION, never truth. Trigger presence, role
   attribution and provenance say nothing about whether a claim is true of
-  this encounter; only explicit per-assertion confirmation does.
+  this encounter; only a recorded decision does — the clinician's per-line
+  confirmation, or (D5) the counted Save that ratifies a config-decided line
+  under its mark.
 
 Constraints honoured (plan Critical Constraints):
 - No ML imports, no network I/O, no new runtime dependency — this module
@@ -2200,7 +2202,9 @@ class NoteDraft(BaseModel):
     TRANSCRIPT-provenance assertions and the clinician's typed ``clinician``
     lines. A rule-authored ``autofill``/``prefill`` assertion is refused by
     the validator however complete its evidence fields look — confirmation
-    evidence is a record of a CLINICIAN decision, and provider output must
+    evidence is a record of a RECORDED decision (the clinician's per-line
+    one, or since D5 a ``decided_by="config"`` resolution minted at the
+    emitter and ratified by the counted Save), and provider output must
     never bypass the proposal-resolution loop that creates one.
     ``finalise_note`` re-establishes the same confinement, so a
     validator-skipping (``model_construct``) draft cannot bypass it either.
@@ -2220,8 +2224,9 @@ class NoteDraft(BaseModel):
     ``write_note`` is outside this confinement (``write_note`` verifies
     evidence self-consistency, not proposal membership: the artifact carries
     no proposal set). Same-user hand-crafting sits outside the threat model
-    (the rounds 12-13 convention), and per-assertion confirmation in Phase
-    7's UI plus Check 3 remain the compensating controls. Phase 3B's
+    (the rounds 12-13 convention), and the review surface (a per-line row
+    for a proposal; the D5 mark plus the counted Save for a config-decided
+    line) plus Check 3 remain the compensating controls. Phase 3B's
     model-authored provenance gets its OWN explicit contract when it
     arrives; it does not widen this path.
     """

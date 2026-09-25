@@ -91,10 +91,21 @@ class MainWindow(QMainWindow):
         profile_root: Path | None = None,
         config_root: Path | None = None,
         style_root: Path | None = None,
+        language_model_available: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Cliniko Scribe")
         self._controller = controller
+        # Phase H round 24 MED-006: the language model's presence is a seam
+        # here too — the Practitioner tab's poll and the Note tab's prose
+        # stage both ask it, and a test must never read the real host's
+        # install (docs/lessons.md 2026-09-24). None resolves the module
+        # function at call time.
+        self._language_model_available: Callable[[], bool] = (
+            language_model_available
+            if language_model_available is not None
+            else (lambda: models.language_model_available())
+        )
         # PR round 20 (PR-HIGH-009): which session the transcript view is
         # showing — "live", a recovered session id, or None. Closing the
         # view releases ONLY its own recovery checkout; a live transcript
@@ -145,7 +156,7 @@ class MainWindow(QMainWindow):
             learning_status_provider=lambda: models.learning_status(profile_root=profile_root),
             note_style_provider=lambda: models.read_note_style(config_root),
             prose_stage_provider=lambda style: models.build_prose_stage(
-                style, style_root=style_root
+                style, style_root=style_root, available=self._language_model_available
             ),
         )
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
@@ -158,6 +169,7 @@ class MainWindow(QMainWindow):
             profile_root=profile_root,
             config_root=config_root,
             style_root=style_root,
+            language_model_available=self._language_model_available,
             # D15 (peer round 27 PR-MED-022): the idle monitor is handed over
             # synchronously before the enrolment worker opens the device.
             on_capture_start=self.microphone_screen.stop_monitor,
@@ -203,7 +215,7 @@ class MainWindow(QMainWindow):
         # synchronously inside `on_start`, before the GUI thread returns to
         # its event loop, so it always precedes the delivery of the worker's
         # first queued `live_window` post.
-        self.session_screen.session_started.connect(self.transcript_screen.begin_live_view)
+        self.session_screen.session_started.connect(self._on_session_started)
         self.session_screen.session_discarded.connect(self.transcript_screen.clear_live_view)
         # D10: first run asks, never blocks — with no profile the tab is
         # selected and its banner shown; every other screen works as today.
@@ -342,6 +354,31 @@ class MainWindow(QMainWindow):
         self._destroy_recovered_crypto()
         self._transcript_source = "live"
         self.tabs.setCurrentWidget(self.transcript_screen)
+
+    def _on_session_started(self) -> None:
+        """A successful Start (note-learning plan Task 1.4) opens the live
+        view, whose first act is to DROP whatever the transcript screen held
+        — including a RECOVERED document's Complete/Discard closures, the
+        only route to that session's custody actions. Phase H round 24
+        MED-001: a view change that drops those closures must do what a
+        close does — destroy the retained in-memory key copy and release
+        the recovered checkout (scoped, by id) — BEFORE the live view opens;
+        otherwise a Discard during the recording leaves the recovered
+        session checked out with its key copy resident and no control able
+        to finish it until restart. A "live" source needs nothing: the
+        controller retired that session at Start. `_destroy_recovered_crypto`'s
+        two refusal branches stay unreachable here (round 45 LOW-004): Start
+        itself is refused under a generation lease (`_refuse_while_generating`),
+        and a discard reservation is held synchronously on the GUI thread by
+        the Session screen's own Discard handler, so no Start click can
+        interleave with it (the controller deliberately admits a concurrent
+        `start()` mid-discard — round 30 — but the GUI never issues one)."""
+        self._destroy_recovered_crypto()
+        source = self._transcript_source
+        self._transcript_source = None
+        if source is not None and source != "live":
+            self.recovery_screen.release_checkout(source)
+        self.transcript_screen.begin_live_view()
 
     def _on_recovered(self, payload: object) -> None:
         assert isinstance(payload, tuple) and len(payload) == 2
