@@ -198,6 +198,7 @@ export class Panel {
     section.append(this.el("p", layout.patient, "patient"));
     if (layout.clinic !== undefined) section.append(this.el("p", layout.clinic, "clinic"));
     section.append(this.el("p", layout.consent, "consent-at"));
+    for (const line of layout.hands_free ?? []) section.append(this.el("p", line, "hands-free"));
     const ref = { state_rev: layout.state_rev, session_ref: layout.session_ref };
     const row = this.el("div", undefined, "buttons");
     if (layout.phase === "recording") {

@@ -199,23 +199,33 @@ def main() -> int:
     pipe = _start_chrome_link(window, logger)
     if pipe is not None:
         app.aboutToQuit.connect(pipe.stop)
+    # Task 7.1 (D7): the pause hotkey, reserved for this window after the
+    # single-instance guard; a refusal is shown, never fatal. Given back on
+    # close, again at quit, and — if start-up fails after this point — by
+    # the ``finally`` (round 42 PR-LOW-240); detach is idempotent.
+    hotkey = window.attach_hotkey()
+    try:
+        log_event(logger, "hotkey", state=hotkey.state)
+        app.aboutToQuit.connect(window.detach_hotkey)
 
-    sweep_timer = QTimer(window)
-    sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
+        sweep_timer = QTimer(window)
+        sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
 
-    def periodic_sweep() -> None:
-        # PR round 18 (PR2): a resume-processing run and a recovered session
-        # awaiting Complete/Discard are protected from the sweep too — the
-        # sweep must never destroy a store mid-recovery.
-        run_sweep(window.recovery_screen.protected_session_ids())
-        window.prune_reminders()  # D6: an expired session's reminder goes too
-        window.recovery_screen.refresh()
+        def periodic_sweep() -> None:
+            # PR round 18 (PR2): a resume-processing run and a recovered
+            # session awaiting Complete/Discard are protected from the sweep
+            # too — the sweep must never destroy a store mid-recovery.
+            run_sweep(window.recovery_screen.protected_session_ids())
+            window.prune_reminders()  # D6: an expired session's reminder goes too
+            window.recovery_screen.refresh()
 
-    sweep_timer.timeout.connect(periodic_sweep)
-    sweep_timer.start()
+        sweep_timer.timeout.connect(periodic_sweep)
+        sweep_timer.start()
 
-    window.show()
-    code = app.exec()
+        window.show()
+        code = app.exec()
+    finally:
+        window.detach_hotkey()
     log_event(logger, "app_exit", state="closed")
     return code
 

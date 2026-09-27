@@ -8,14 +8,18 @@ import {
   CHECKING,
   CLINIC_NOT_SET_UP,
   CONNECTING,
+  HOTKEY_UNAVAILABLE,
   NOT_RUNNING,
   OFFLINE_LINE,
   OPEN_A_NOTE,
   PROFILE_HINT,
   QUEUED_LINE,
   RESTORING,
+  SPOKEN_PAUSE_ON,
+  SPOKEN_PAUSE_UNAVAILABLE,
   VERIFIED_LINE,
   blockReasonText,
+  hotkeyLine,
   noteRefusalText,
   panelModel,
   timer,
@@ -166,6 +170,7 @@ describe("Live", () => {
       clinic: "Example Clinic",
       timer: "1:35",
       consent: "Consent confirmed clock 2026-09-27T01:31:02Z",
+      hands_free: [HOTKEY_UNAVAILABLE, SPOKEN_PAUSE_UNAVAILABLE],
       session_ref: REF,
       state_rev: 21,
     });
@@ -176,6 +181,17 @@ describe("Live", () => {
     const finishing = panelModel(view(state({ live: { ...LIVE, phase: "finishing" } })), FMT).layout;
     expect(finishing).toMatchObject({ title: "Finishing Alex Example…" });
     expect(finishing).not.toHaveProperty("timer");
+    expect(finishing).not.toHaveProperty("hands_free");
+  });
+
+  test.each(["recording", "paused"] as const)("%s shows the app's hotkey chord and the spoken pause (Phase 7)", (phase) => {
+    const s = state({ live: { ...LIVE, phase }, hotkey: { available: true, chord: "Ctrl+Shift+F9" }, spoken_pause: true });
+    expect(panelModel(view(s), FMT).layout).toMatchObject({
+      hands_free: ["Ctrl+Shift+F9 pauses and resumes.", SPOKEN_PAUSE_ON],
+    });
+    expect(hotkeyLine("Ctrl+Shift+F9")).toBe("Ctrl+Shift+F9 pauses and resumes.");
+    const off = state({ live: { ...LIVE, phase } });
+    expect(panelModel(view(off), FMT).layout).toMatchObject({ hands_free: [HOTKEY_UNAVAILABLE, SPOKEN_PAUSE_UNAVAILABLE] });
   });
 
   test("an unlinked recording says so", () => {

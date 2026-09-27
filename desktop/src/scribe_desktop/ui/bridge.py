@@ -71,6 +71,14 @@ THE BANNER (D6, Task 5.5). While the focused tab reports a note on an
 allow-listed host whose clinic's note has recordings in the reminder index,
 ``state.banner`` names the newest one's reference and the count — ids only.
 
+HANDS-FREE AND WARNINGS (D7, D8, Phase 7). The main window owns the hotkey
+and the phrase rules and tells the bridge only what to SHOW: the hotkey's
+status (``state.hotkey``; ``available`` with its chord only while Windows has
+reserved it), whether the spoken pause works for the live recording
+(``state.spoken_pause``) and the new-consultation warning, kept for the
+recording it was raised on while that recording is live (``state.warnings``).
+None of the three changes a session.
+
 DISPLAY. The patient's name reaches the snapshot only from a note Cliniko
 verified, with two lifetimes (codex round 29 PR-LOW-151): the BOUND REPORT's
 name is published while that verified report is bound (before a Start and
@@ -114,6 +122,7 @@ from scribe_desktop.encounter import (
     reverification_request,
     verify_note_context,
 )
+from scribe_desktop.hotkey import NOT_SET_UP, HotkeyStatus
 from scribe_desktop.protocol import (
     LIMITS,
     CommandPayload,
@@ -126,6 +135,7 @@ from scribe_desktop.session import ACTIVE_STATES, SessionState
 from scribe_desktop.ui import models
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.voice_commands import NEW_CONSULTATION_WARNING, spoken_pause_state
 
 PUBLISH_INTERVAL_MS: Final = 500
 _PHASES: Final[dict[SessionState, str]] = {
@@ -260,6 +270,9 @@ class ChromeBridge(QObject):
         self._live_check: _LiveCheck | None = None
         self._live_check_seq = 0
         self._live_display: _LiveDisplay | None = None
+        # Phase 7 (D7, D8): shown only — the main window owns both.
+        self._hotkey: HotkeyStatus = NOT_SET_UP
+        self._warning_session: str | None = None
         for signal, slot in (
             (self._connected_q, self._on_connected),
             (self._message_q, self._on_message),
@@ -432,6 +445,38 @@ class ChromeBridge(QObject):
         if self._ledger.bound_target() != context.target:
             return "report_mismatch"
         return None
+
+    # --- hands-free and warnings (Phase 7: shown only) ------------------------
+
+    def set_hotkey_status(self, status: HotkeyStatus) -> None:
+        """Task 7.1: the main window's hotkey status, for ``state.hotkey``
+        and the Session screen."""
+        self._hotkey = status
+        self.publish()
+        self._refresh_view()
+
+    def set_new_consultation_warning(self, session_id: str) -> None:
+        """Task 7.3 (D8): the phrase rule raised its warning on this
+        recording. Kept while that recording is live; it changes nothing."""
+        self._warning_session = session_id
+        self.publish()
+        self._refresh_view()
+
+    def _warning_live(self) -> bool:
+        session = self._controller.session
+        return (
+            self._warning_session is not None
+            and session is not None
+            and session.session_id == self._warning_session
+            and session.state in (SessionState.RECORDING, SessionState.PAUSED)
+        )
+
+    def _spoken_pause(self) -> str:
+        return spoken_pause_state(
+            self._controller.state,
+            attached=self._controller.live_transcription_attached,
+            failure=self._controller.live_failure,
+        )
 
     def _resume_guard_message(self) -> str | None:
         reason = self.resume_refusal()
@@ -918,12 +963,17 @@ class ChromeBridge(QObject):
     def build_content(self) -> dict[str, Any]:
         """The ``state`` snapshot without its ``state_rev`` (D2: one builder
         for the poll, the events and every (re)connect)."""
+        hotkey = self._hotkey
         content: dict[str, Any] = {
             "app_running": True,
             "allow_list": self._allow_list(),
-            "hotkey": {"available": False},  # Phase 7
-            "spoken_pause": False,  # Phase 7
-            "warnings": [],
+            "hotkey": (
+                {"available": True, "chord": hotkey.chord}
+                if hotkey.available
+                else {"available": False}
+            ),
+            "spoken_pause": self._spoken_pause() == "on",
+            "warnings": [NEW_CONSULTATION_WARNING] if self._warning_live() else [],
         }
         for key, value in (
             ("report", self._report_state()),
@@ -981,6 +1031,8 @@ class ChromeBridge(QObject):
             self._live_check = None
         if self._block is not None and self._current_block() is None:
             self._block = None  # resolved, or its session left PAUSED
+        if self._warning_session is not None and not self._warning_live():
+            self._warning_session = None  # its recording finished or ended
         pending = self._pending_resume
         if pending is not None and not (
             0 <= self._clock() - pending.at <= RESUME_PREVIOUS_WINDOW_SECONDS
@@ -1009,21 +1061,19 @@ class ChromeBridge(QObject):
             check = self._live_check
             if check is not None and check.session_id == session.session_id:
                 recheck, recheck_reason = self._recheck_line(check)
-        spoken_unavailable = (
-            session is not None
-            and session.state in (SessionState.RECORDING, SessionState.PAUSED)
-            and self._controller.live_failure is not None
-        )
         return models.ChromeView(
             link=self._link,
             patient=patient,
             clinic=clinic,
             recheck=recheck,
             recheck_reason=recheck_reason,
-            spoken_pause_unavailable=spoken_unavailable,
             refusal=self._refusal.message if self._refusal is not None else None,
             phase=_PHASES[session.state] if live and session is not None else None,
             blocked=self._current_block() is not None,
+            hotkey=self._hotkey.state,
+            hotkey_chord=self._hotkey.chord,
+            spoken_pause=self._spoken_pause(),
+            new_consultation=self._warning_live(),
         )
 
     def _recheck_line(self, check: _LiveCheck) -> tuple[str, NoteRefusal | None]:

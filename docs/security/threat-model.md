@@ -1649,7 +1649,7 @@ and neither does a SEPARATE tab showing a page that is not Cliniko's (the
 bound tab itself leaving its note for such a page does pause, as above;
 codex round 34 PR-LOW-191). The rule never resumes. THE RESUME
 CHECK: every Resume through the Session screen's slot (its button, a Chrome
-`resume`, Phase 7's hotkey) is refused, by name and before the controller
+`resume`, the pause hotkey) is refused, by name and before the controller
 is called, for a linked session unless a pipe client is connected and the
 focused tab's current report on this connection names the session's exact
 clinic host, patient and note; a successful Resume clears the block and
@@ -1668,8 +1668,8 @@ navigation — is recorded into the session it was bound to (the plan's
 pre-navigation-speech assumption), and a change the extension never reports
 is never seen; until the Phase 6 extension reports pages, only pipe loss, a
 new client and suspend act. (2) An UNLINKED (desktop) recording ignores
-Chrome's reasons by design; only suspend (and Phase 7's hands-free
-reasons) pause it. (3) Suspend is Windows' broadcast: a power cut, a crash
+Chrome's reasons by design; only suspend and the hands-free reasons (the
+hotkey and the spoken phrase, below) pause it. (3) Suspend is Windows' broadcast: a power cut, a crash
 or a hibernation that sends none is crash recovery's case. (4) Every report
 and command is the extension's assertion (pipe residue (1)): a same-user
 process on the pipe can forge the report the resume check and
@@ -1736,6 +1736,60 @@ extension's report and click (pipe residue (1)): a same-user process on the
 pipe can learn that a note it names has an unreviewed recording (ids and a
 count, no name) and open that recording on the desktop — never for another
 session than the one its reference names.
+
+HANDS-FREE AND WARNINGS (Tasks 7.1–7.3, `hotkey.py`, `voice_commands.py`,
+`ui/main_window.py`, `ui/bridge.py`; D7, D8). None of the three is a new way
+to act on a session: each reaches only what a Pause or Resume button already
+can, or nothing. Enforced:
+THE HOTKEY — Ctrl+Shift+F9 is reserved with `RegisterHotKey` for the main
+window by `app.main` alone (a test's window reserves nothing; tests use a
+fake registrar), and given back on close and at quit. `nativeEvent` acts only
+on a `WM_HOTKEY` carrying the app's id while the chord is reserved, and
+re-delivers it as a queued call, so nothing runs inside Windows' message
+dispatch and nothing raises into it. A press while RECORDING pauses through
+`pause_for` (the desktop cue; no block — a hands-free reason is not a context
+reason); while PAUSED it asks the Session screen's guarded Resume — the
+resume check above, with no bypass: a linked session resumes only on a
+current report of its own note — and a refusal is shown with a taskbar
+flash; in any other state it does nothing. It never starts, finishes,
+discards or opens anything. A refused registration is a status: the status
+line, the Session screen and `state.hotkey` (the panel says the hotkey is
+unavailable) show it.
+THE SPOKEN PAUSE — "scribe pause" is matched as whole words in each live
+window (so "prescribe, pause" and "scribe paused" do not match) and counts
+only when the phrase's FIRST word starts at or after the last Resume's
+captured-audio time plus one capture chunk — never by a window's end time,
+since a window can span a Pause and a Resume. It can only PAUSE, through
+`pause_for` (nothing while paused, finishing or idle); the words stay in the
+transcript. Whether it works for the recording (a live transcriber attached
+and not failed) is shown on the Session screen and in `state.spoken_pause`.
+THE WARNING — a closing phrase followed, in the same window or within three
+windows, by a greeting (the lists and the count are constants in
+`voice_commands.py`, pinned by tests) raises `new_consultation` once per
+recording: a desktop line, a taskbar flash and `state.warnings` while that
+recording is live. It never pauses, blocks, finishes or changes a session.
+The panel shows only warning codes it knows, as text.
+RESIDUE: (1) the hotkey is a GLOBAL input: anyone at this Windows session's
+keyboard can press it from any window, and any program of this user can
+send the app's window a `WM_HOTKEY`; either does exactly what the Pause and
+guarded Resume buttons do, and resuming a linked session still needs its
+note's current report (which a same-user process on the pipe can forge —
+pipe residue (1)(d)). While the app runs, the chord is taken from every
+other program (Word's Ctrl+Shift+F9 is the known clash). If Windows ever
+re-created the main window's native handle, the reservation would be lost
+while the status still read "on" (not observed). (2) The phrase is heard from
+ANYONE in the room — the speaker is never checked — and from any audio the
+microphone picks up; it can only pause. The pause comes when live
+transcription reaches the phrase: a few seconds after speech stops, and up
+to about half a minute plus the transcription time when speech runs on;
+what is said in between is recorded. A missed or mis-transcribed phrase
+does not pause (the hotkey and the buttons remain). A phrase begun within
+about a second of a Resume is ignored (the cutoff's one-chunk margin), and
+Whisper's word times are estimates. (3) The warning is a phrase heuristic: it misses
+consultations that end or begin in other words and can fire on a goodbye
+then a greeting within one consultation — a cue, never a control; the pause
+rule's patient-change reasons and the practitioner's Finish are the
+controls.
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 

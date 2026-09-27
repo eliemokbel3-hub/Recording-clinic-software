@@ -207,6 +207,8 @@ class FakeController:
         self.session_ref: str | None = None
         self.recorded_seconds = 0
         self.live_failure: Any = None
+        # Task 7.2 (D7): whether a live transcriber is attached.
+        self.live_transcription_attached = False
         self.generating = False
         self.forgotten_refs: list[str] = []
         # Task 5.5: D2's registry for sessions other than the tracked one.

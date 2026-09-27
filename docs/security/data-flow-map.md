@@ -379,7 +379,14 @@ rendering the language model does (flow 17).
     window is posted through a queued Qt signal to the display-only transcript
     widget (`ui/transcript.py`; a post after the view closed is dropped; the
     view is cleared on the Session screen's Discard and replaced wholesale by
-    the final document). Finish seals capture as before and the TAIL DRAIN
+    the final document). The same queued signal also reaches the main
+    window's phrase rules (Cliniko workflow safeguards plan Tasks 7.2–7.3,
+    `voice_commands.py`) while the recording is live: they read each window's
+    words in memory to pause on "scribe pause" or raise the new-consultation
+    warning, change no word, write nothing and log nothing; between windows
+    they keep only the last normalised word of the latest window that held
+    words (for a phrase split across two) until the next Resume or Start, the
+    resume cutoff (a number of seconds) and a window count. Finish seals capture as before and the TAIL DRAIN
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
     via `claim_live_transcriber`), never on the GUI thread, and writes
@@ -617,8 +624,12 @@ rendering the language model does (flow 17).
     clinic host and label, and that same session's name under the same
     rule), the Unreviewed banner while the focused tab reports a note that
     has retired recordings (Task 5.5: the newest one's reference, the host,
-    the note id and the count — no patient's name), a notice code and the
-    last refusal (a code and a fixed message).
+    the note id and the count — no patient's name), a notice code, the
+    last refusal (a code and a fixed message), and the hands-free status
+    (Phase 7: whether the pause hotkey is reserved and its chord's name,
+    whether the spoken pause works for the live recording, and the
+    `new_consultation` warning code while the recording it was raised on is
+    live — codes and a key name, never a word of the transcript).
     Every field is bounded by `protocol/fixtures/meta.json`'s `limits`, and
     ids match `^[1-9][0-9]{0,18}$`. WHAT IS KEPT: in the bridge's memory only —
     the latest report per open tab and the bound tab, cleared on every new
@@ -627,7 +638,9 @@ rendering the language model does (flow 17).
     when that session ends; the tab the linked live session is bound to (a
     tab number, forgotten on every new connection or disconnect and when the
     session ends), its block (a reason code, while it is paused) and a
-    clicked "Resume previous" (a time, lapsing after 30 seconds); and the
+    clicked "Resume previous" (a time, lapsing after 30 seconds); the hotkey's
+    status and the session id a warning was raised on (dropped when that
+    recording finishes or ends); and the
     last snapshot sent, for change detection. The main window keeps the
     Unreviewed reminder index (Task 5.3: clinic id, note id and session id
     per retired linked queued session, never persisted; rebuilt at app start

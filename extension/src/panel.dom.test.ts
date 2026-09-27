@@ -217,6 +217,23 @@ test("Live buttons carry the live session's ref", async () => {
   ]);
 });
 
+test("Live draws the hands-free status and a warning as text (Phase 7)", async () => {
+  await open();
+  await show(
+    state({
+      live: LIVE,
+      hotkey: { available: true, chord: "<b>Ctrl</b>+Shift+F9" },
+      spoken_pause: true,
+      warnings: ["new_consultation"],
+    }),
+  );
+  const lines = Array.from(document.querySelectorAll('[data-part="hands-free"]'), (el) => el.textContent);
+  expect(lines).toEqual(["<b>Ctrl</b>+Shift+F9 pauses and resumes.", 'Say "scribe pause" to pause.']);
+  expect(q("b")).toBeNull();
+  expect(part("warning")).toBe("This sounds like a new consultation — finish this recording before the next patient.");
+  expect(q('button[data-action="pause"]')).not.toBeNull(); // a warning changes no control
+});
+
 test("a queued session shows no timer and no Live buttons", async () => {
   await open();
   await show(state({ live: { ...LIVE, phase: "queued", recorded_seconds: 0 } }));

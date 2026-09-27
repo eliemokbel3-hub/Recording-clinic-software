@@ -38,6 +38,7 @@ from scribe_desktop.encounter import (  # noqa: E402
     Verified,
     unlinked_consent,
 )
+from scribe_desktop.hotkey import HotkeyStatus  # noqa: E402
 from scribe_desktop.protocol import (  # noqa: E402
     Envelope,
     StatePayload,
@@ -290,7 +291,7 @@ class TestLinkAndSnapshot:
         assert h.sender.sent == []
         text = h.screen.chrome_label.text()
         assert text.startswith(models.CHROME_WAITING_LINE)
-        assert models.CHROME_HANDS_FREE_LINE in text
+        assert models.HOTKEY_LINES["not_set_up"] in text
         assert not h.screen.chrome_label.isHidden()
 
     def test_unavailable_names_the_desktop_fallback(self, harness: Any) -> None:
@@ -837,9 +838,14 @@ class TestLiveSession:
         h.verified_report()
         h.start()
         h.controller.recorded_seconds = 42
+        # Round 41 LOW-034: a RUNNING live transcriber first, so the
+        # unavailable line below can only come from the failure.
+        h.controller.live_transcription_attached = True
         h.bridge._tick()
         live = h.sender.last.live
         assert live is not None and live.recorded_seconds == 42
+        assert h.sender.last.spoken_pause is True
+        assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE not in h.screen.chrome_label.text()
         h.controller.live_failure = LiveFailure(LiveFailureKind.WORKER_ERROR, "x")
         h.bridge._tick()
         assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE in h.screen.chrome_label.text()
@@ -869,6 +875,81 @@ def _recording(harness: Any) -> Harness:
 def _refusal_of(h: Harness) -> tuple[str, str] | None:
     refusal = h.sender.last.last_refusal
     return None if refusal is None else (refusal.action, refusal.reason)
+
+
+class TestHandsFree:
+    """Phase 7 (D7, D8) as the bridge SHOWS it: the hotkey's status, the
+    spoken pause's availability and the warning, in ``state`` and on the
+    Session screen — none of them changing a session."""
+
+    def test_the_hotkey_status_reaches_state_and_the_desktop(self, harness: Any) -> None:
+        h: Harness = harness()
+        h.connect()
+        assert h.sender.last.hotkey.available is False
+        h.bridge.set_hotkey_status(HotkeyStatus("on"))
+        hotkey = h.sender.last.hotkey
+        assert hotkey.available is True and hotkey.chord == "Ctrl+Shift+F9"
+        assert models.HOTKEY_LINES["on"].format(chord="Ctrl+Shift+F9") in (
+            h.screen.chrome_label.text()
+        )
+        h.bridge.set_hotkey_status(HotkeyStatus("failed", error=1409))
+        hotkey = h.sender.last.hotkey
+        assert hotkey.available is False and hotkey.chord is None
+        assert "Pause hotkey unavailable" in h.screen.chrome_label.text()
+        assert h.controller.calls == []  # a status changes no session
+
+    def test_spoken_pause_is_on_only_while_a_live_transcriber_runs(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.bridge._tick()
+        assert h.sender.last.spoken_pause is False  # no live transcriber attached
+        assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE in h.screen.chrome_label.text()
+        h.controller.live_transcription_attached = True
+        h.bridge._tick()
+        assert h.sender.last.spoken_pause is True
+        assert models.SPOKEN_PAUSE_LINES["on"] in h.screen.chrome_label.text()
+        h.controller.live_failure = LiveFailure(LiveFailureKind.FELL_BEHIND, "x")
+        h.bridge._tick()
+        assert h.sender.last.spoken_pause is False
+        assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE in h.screen.chrome_label.text()
+
+    def test_the_warning_is_published_for_its_live_recording_only(self, harness: Any) -> None:
+        h = _recording(harness)
+        session = h.controller.session
+        assert session is not None
+        h.bridge.set_new_consultation_warning(session.session_id)
+        assert h.sender.last.warnings == ["new_consultation"]
+        assert models.NEW_CONSULTATION_WARNING_LINE in h.screen.chrome_label.text()
+        assert ("pause",) not in h.controller.calls  # a warning never pauses
+        assert h.sender.last.block is None and h.controller.state is SessionState.RECORDING
+        h.screen.on_pause()
+        h.bridge._tick()
+        assert h.sender.last.warnings == ["new_consultation"]  # still live while paused
+        h.screen.on_finish()
+        h.bridge._tick()
+        assert h.sender.last.warnings == []
+        assert h.bridge._warning_session is None
+        assert models.NEW_CONSULTATION_WARNING_LINE not in h.screen.chrome_label.text()
+
+    def test_a_warning_for_another_recording_is_not_shown(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.bridge.set_new_consultation_warning("0" * 32)
+        assert h.sender.last.warnings == []
+
+    @pytest.mark.parametrize("reason", [PauseReason.HOTKEY, PauseReason.SPOKEN])
+    def test_a_hands_free_pause_pauses_without_a_block(
+        self, harness: Any, reason: PauseReason
+    ) -> None:
+        """D5: only a context reason sets the block; the hotkey and the
+        spoken phrase pause, cue, and leave Resume to the one guard."""
+        h = _recording(harness)
+        h.bridge.pause_for(reason)
+        assert h.controller.state is SessionState.PAUSED
+        assert h.sender.last.block is None
+        assert h.cues == [models.pause_cue_text(reason.value, linked=True)]
+        h.bridge.pause_for(reason)  # PAUSED: nothing more
+        assert h.controller.calls.count(("pause",)) == 1
+        assert h.screen.on_resume() is True  # its own note is still the focused report
+        assert h.controller.state is SessionState.RECORDING
 
 
 class TestPauseRule:

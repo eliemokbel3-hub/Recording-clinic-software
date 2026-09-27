@@ -34,6 +34,15 @@ export const OFFLINE_LINE =
 // PLAN.md Flow 2 step 4, verbatim (the desktop's `RECORDING_CONSENT_TEXT`).
 export const CONSENT_TEXT = "I confirm the patient has consented to AI-assisted recording and documentation";
 export const DISCARD_CONFIRM = "Discard this recording? This cannot be undone. Press Confirm discard to delete it.";
+// Phase 7 (D7): the hands-free status under a recording or paused session.
+// The chord comes from the app (`state.hotkey.chord`, shown as text).
+export const HOTKEY_UNAVAILABLE = "Pause hotkey unavailable — see Clinic Scribe's Session tab.";
+export const SPOKEN_PAUSE_ON = 'Say "scribe pause" to pause.';
+export const SPOKEN_PAUSE_UNAVAILABLE = "Spoken pause unavailable for this recording.";
+
+export function hotkeyLine(chord: string): string {
+  return `${chord} pauses and resumes.`;
+}
 
 // D4's named refusals (`encounter.NoteRefusal`), in the desktop's words.
 const NOTE_REFUSALS: Readonly<Record<string, string>> = {
@@ -62,7 +71,8 @@ const BLOCK_REASONS: Readonly<Record<string, string>> = {
   suspend: "The computer went to sleep.",
 };
 
-// `state.warnings` codes (Phase 7 adds them); an unknown code shows nothing.
+// `state.warnings` codes (Phase 7, D8: a warning only — the app never pauses
+// or blocks on one); an unknown code shows nothing.
 const WARNINGS: Readonly<Record<string, string>> = {
   new_consultation: "This sounds like a new consultation — finish this recording before the next patient.",
 };
@@ -88,6 +98,8 @@ export interface LiveModel {
   clinic?: string;
   timer?: string;
   consent: string;
+  /** Recording or paused: the hotkey's and the spoken pause's status (D7). */
+  hands_free?: string[];
   session_ref: string;
   state_rev: number;
 }
@@ -211,7 +223,14 @@ function contentLayout(view: PanelView, state: StatePayload, fmt: Formatters): L
       state_rev: state.state_rev,
     };
     if (live.clinic_label !== undefined) model.clinic = live.clinic_label;
-    if (live.phase !== "finishing") model.timer = timer(live.recorded_seconds);
+    if (live.phase !== "finishing") {
+      model.timer = timer(live.recorded_seconds);
+      const chord = state.hotkey.available ? state.hotkey.chord : undefined;
+      model.hands_free = [
+        chord !== undefined ? hotkeyLine(chord) : HOTKEY_UNAVAILABLE,
+        state.spoken_pause ? SPOKEN_PAUSE_ON : SPOKEN_PAUSE_UNAVAILABLE,
+      ];
+    }
     return model;
   }
   const focus = view.focus;

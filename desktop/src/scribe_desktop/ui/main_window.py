@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QByteArray
+from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -45,6 +45,13 @@ from scribe_desktop.encounter import (
     verify_note_context,
     writeback_context,
 )
+from scribe_desktop.hotkey import (
+    NOT_SET_UP,
+    GlobalHotkey,
+    HotkeyRegistrar,
+    HotkeyStatus,
+    Win32HotkeyRegistrar,
+)
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.note_config import NoteConfig, load_note_config
 from scribe_desktop.protocol import HOST_NAME
@@ -74,6 +81,7 @@ from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.transcript import TranscriptScreen
+from scribe_desktop.voice_commands import NewConsultationWatcher, SpokenPauseDetector
 
 
 @dataclass
@@ -96,7 +104,8 @@ class _CheckoutEncounter:
 
 class _MSG(ctypes.Structure):
     """The head of a Windows ``MSG`` (``nativeEvent``'s
-    ``windows_generic_MSG``): enough to recognise a power broadcast."""
+    ``windows_generic_MSG``): enough to recognise a power broadcast or a
+    hotkey press."""
 
     _fields_ = [
         ("hwnd", ctypes.c_void_p),
@@ -105,17 +114,23 @@ class _MSG(ctypes.Structure):
     ]
 
 
-def _is_suspend_event(event_type: object, message: object) -> bool:
-    """D5: the native event is ``WM_POWERBROADCAST`` / ``PBT_APMSUSPEND``."""
+def _native_msg(event_type: object, message: object) -> tuple[int, int] | None:
+    """A Windows native event's ``(message, wParam)``; None for anything else."""
     name = event_type.data() if isinstance(event_type, QByteArray) else event_type
     to_int = getattr(message, "__int__", None)  # an int, or shiboken's VoidPtr
     if name != b"windows_generic_MSG" or to_int is None:
-        return False
+        return None
     address = to_int()
     if not isinstance(address, int) or address == 0:
-        return False
+        return None
     msg = _MSG.from_address(address)
-    return is_suspend_message(int(msg.message), int(msg.wParam))
+    return int(msg.message), int(msg.wParam)
+
+
+def _is_suspend_event(event_type: object, message: object) -> bool:
+    """D5: the native event is ``WM_POWERBROADCAST`` / ``PBT_APMSUSPEND``."""
+    head = _native_msg(event_type, message)
+    return head is not None and is_suspend_message(*head)
 
 
 class StatusPanel(QWidget):
@@ -152,6 +167,10 @@ class StatusPanel(QWidget):
 
 
 class MainWindow(QMainWindow):
+    # Task 7.1: a hotkey press, re-delivered from ``nativeEvent`` as a queued
+    # call so the pause or resume runs outside Windows' message dispatch.
+    _hotkey_pressed_q = Signal()
+
     def __init__(
         self,
         controller: models.SessionControllerLike,
@@ -298,6 +317,15 @@ class MainWindow(QMainWindow):
         self._config_root = config_root
         # D6's on-close list: when the first close showed it (monotonic).
         self._close_armed_at: float | None = None
+        # Phase 7 (D7, D8): the global hotkey (reserved only by
+        # `attach_hotkey`, which only `app.py` calls — a test's window reserves
+        # nothing) and the phrase rules over the live windows, per recording.
+        self._hotkey: GlobalHotkey | None = None
+        self._spoken_pause = SpokenPauseDetector()
+        self._new_consultation = NewConsultationWatcher()
+        self._hotkey_pressed_q.connect(
+            self._on_hotkey_pressed, Qt.ConnectionType.QueuedConnection
+        )
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -325,6 +353,10 @@ class MainWindow(QMainWindow):
         # its event loop, so it always precedes the delivery of the worker's
         # first queued `live_window` post.
         self.session_screen.session_started.connect(self._on_session_started)
+        self.session_screen.session_resumed.connect(self._on_session_resumed)
+        # Tasks 7.2 and 7.3: the phrase rules read every live window (a queued
+        # GUI-thread delivery, beside the Transcript screen's own rendering).
+        self.transcript_screen.live_window.connect(self._on_live_window)
         self.session_screen.session_retired.connect(self._on_session_retired)
         self.session_screen.session_discarded.connect(self.transcript_screen.clear_live_view)
         self.recovery_screen.session_removed.connect(self.forget_unreviewed)
@@ -371,13 +403,69 @@ class MainWindow(QMainWindow):
             )
             self.clinics_screen.clinics_changed.connect(bridge.on_clinics_changed)
             bridge.pause_cue.connect(self._show_pause_cue)
+            bridge.set_hotkey_status(self.hotkey_status)
             self.chrome_bridge = bridge
         return self.chrome_bridge
+
+    # --- the global hotkey (Task 7.1, D7) --------------------------------------
+
+    @property
+    def hotkey_status(self) -> HotkeyStatus:
+        return self._hotkey.status if self._hotkey is not None else NOT_SET_UP
+
+    def attach_hotkey(self, registrar: HotkeyRegistrar | None = None) -> HotkeyStatus:
+        """Reserve the pause hotkey for this window (``app.main`` only; a
+        test passes a fake ``registrar``). A refusal is shown on the status
+        line and, through the bridge, in Chrome's side panel."""
+        if self._hotkey is None:
+            self._hotkey = GlobalHotkey(
+                registrar if registrar is not None else Win32HotkeyRegistrar()
+            )
+        status = self._hotkey.register(int(self.winId()))
+        if status.state == "failed":
+            self.statusBar().showMessage(models.HOTKEY_FAILED_STATUS.format(chord=status.chord))
+        if self.chrome_bridge is not None:
+            self.chrome_bridge.set_hotkey_status(status)
+        return status
+
+    def detach_hotkey(self) -> None:
+        """Give the chord back (on close and at quit; idempotent)."""
+        if self._hotkey is not None:
+            self._hotkey.unregister()
+            if self.chrome_bridge is not None:
+                self.chrome_bridge.set_hotkey_status(self._hotkey.status)
+
+    def _on_hotkey_pressed(self) -> None:
+        # A press queued before ``detach_hotkey`` is dropped: it acts only
+        # while the chord is still reserved (round 42 PR-LOW-241).
+        if self._hotkey is not None and self._hotkey.status.available:
+            self.on_hotkey()
+
+    def on_hotkey(self) -> None:
+        """A press of the reserved chord: RECORDING pauses through
+        ``pause_for`` (with its cue); PAUSED asks the Session screen's
+        guarded Resume — the same check as its button and Chrome's Resume
+        (Constraint 7), with no bypass — and a refusal is flashed here, since
+        the practitioner is probably in another window. Anything else does
+        nothing."""
+        state = self._controller.state
+        if state is SessionState.RECORDING:
+            self.pause_for(PauseReason.HOTKEY)
+            return
+        if state is not SessionState.PAUSED or self.session_screen.is_busy:
+            return
+        if self.session_screen.on_resume():
+            self.statusBar().showMessage(models.HOTKEY_RESUMED_STATUS)
+            return
+        self.statusBar().showMessage(self.session_screen.message_label.text())
+        QApplication.alert(self)
 
     # --- the pause rule (Task 5.1, D5) ----------------------------------------
 
     def nativeEvent(self, eventType: object, message: object) -> object:  # noqa: N802, N803
-        """D5: the machine suspending pauses a recording.
+        """D5: the machine suspending pauses a recording. D7 (Task 7.1): a
+        ``WM_HOTKEY`` for the chord this window reserved is re-delivered as
+        a queued call to ``on_hotkey`` (only while it is reserved).
 
         Qt calls this for EVERY native message the window receives, so it
         must never raise into Qt's dispatch and must hand every message back
@@ -386,11 +474,17 @@ class MainWindow(QMainWindow):
         calling the base: PySide6 refused ``super().nativeEvent`` a 64-bit
         message address ("called with wrong argument values", seen
         2026-09-28), and a real ``MSG*`` on 64-bit Windows is such an
-        address. ``TestSuspendAndCue`` drives a real message through Qt's
-        dispatch in a child process."""
+        address. Qt does nothing with ``WM_HOTKEY`` itself, so the hotkey's
+        message is answered the same way. ``TestSuspendAndCue`` and
+        ``TestHotkeyWindow`` drive real messages through Qt's dispatch in a
+        child process."""
         try:
-            if _is_suspend_event(eventType, message):
-                self.pause_for(PauseReason.SUSPEND)
+            head = _native_msg(eventType, message)
+            if head is not None:
+                if is_suspend_message(*head):
+                    self.pause_for(PauseReason.SUSPEND)
+                elif self._hotkey is not None and self._hotkey.matches(*head):
+                    self._hotkey_pressed_q.emit()
         except Exception:  # noqa: BLE001 - nothing may raise into Qt's dispatch
             pass
         return False, 0
@@ -751,6 +845,8 @@ class MainWindow(QMainWindow):
         # Release the idle level-monitor's device before the window goes away
         # (smoke round 21) — never leave a PortAudio stream running teardown.
         self.microphone_screen.stop_monitor()
+        # Task 7.1: the chord goes back to Windows with the window.
+        self.detach_hotkey()
         super().closeEvent(event)
 
     def _on_live_transcript(self, document: object) -> None:
@@ -811,6 +907,39 @@ class MainWindow(QMainWindow):
         # the lease, so no unsaved review is ever dropped here.)
         self.note_screen.clear()
         self.transcript_screen.begin_live_view()
+        # Phase 7: the phrase rules start afresh for the new recording.
+        self._spoken_pause.reset()
+        self._new_consultation.reset()
+
+    # --- the phrase rules (Tasks 7.2, 7.3; D7, D8) ------------------------------
+
+    def _on_session_resumed(self) -> None:
+        """D7: nothing said before this Resume may pause the recording again
+        — the cutoff is the captured audio so far (pauses add none)."""
+        self._spoken_pause.note_resume(float(self._controller.recorded_seconds))
+
+    def _on_live_window(self, payload: object) -> None:
+        """One live window (GUI thread): "scribe pause" spoken after the last
+        Resume pauses through ``pause_for`` (which does nothing unless the
+        recording is running); a goodbye then a greeting raises the
+        new-consultation WARNING, which changes nothing. The transcript keeps
+        every word either way."""
+        if not isinstance(payload, tuple):
+            return
+        if self._controller.state not in (SessionState.RECORDING, SessionState.PAUSED):
+            return
+        if self._spoken_pause.feed(payload):
+            self.pause_for(PauseReason.SPOKEN)
+        if self._new_consultation.feed(payload):
+            self._raise_new_consultation()
+
+    def _raise_new_consultation(self) -> None:
+        session = self._controller.session
+        if session is not None and self.chrome_bridge is not None:
+            self.chrome_bridge.set_new_consultation_warning(session.session_id)
+        self.statusBar().showMessage(models.NEW_CONSULTATION_WARNING_LINE)
+        self.session_screen.show_notice(models.NEW_CONSULTATION_WARNING_LINE)
+        QApplication.alert(self)
 
     def _on_recovered(self, payload: object) -> None:
         assert isinstance(payload, tuple) and len(payload) == 2

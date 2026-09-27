@@ -39,6 +39,7 @@ from scribe_desktop.encounter import (
     Verified,
     read_encounter_record,
 )
+from scribe_desktop.hotkey import CHORD_TEXT
 from scribe_desktop.language_model import (
     LanguageModel,
     LanguageModelError,
@@ -313,10 +314,45 @@ CHROME_UNAVAILABLE_LINE: Final = (
     "Chrome link unavailable - another program is using its channel. Close Cliniko Scribe "
     "and open it again; recording from the Session tab still works."
 )
-CHROME_HANDS_FREE_LINE: Final = "Pause hotkey: not set up. Spoken pause: not set up."
 CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE: Final = (
-    "Spoken pause unavailable for this recording - live transcription has stopped."
+    "Spoken pause unavailable for this recording - live transcription is off or has stopped."
 )
+# Tasks 7.1 and 7.2 (D7): the hands-free lines, keyed by the hotkey's status
+# (``hotkey.HotkeyStatus.state``) and ``voice_commands.spoken_pause_state``.
+HOTKEY_LINES: Final[Mapping[str, str]] = {
+    "not_set_up": "Pause hotkey: not set up.",
+    "on": "Pause hotkey: {chord} pauses the recording and resumes it.",
+    "failed": (
+        "Pause hotkey unavailable - Windows would not reserve {chord} (another program may "
+        "be using it). Use Pause and Resume here or in Chrome's side panel."
+    ),
+}
+SPOKEN_PAUSE_LINES: Final[Mapping[str, str]] = {
+    "idle": 'Spoken pause: say "scribe pause" while recording to pause.',
+    "on": (
+        'Spoken pause: say "scribe pause" to pause. It takes effect once live transcription '
+        "reaches it - usually a few seconds after you stop speaking."
+    ),
+    "unavailable": CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE,
+}
+HOTKEY_FAILED_STATUS: Final = (
+    "The pause hotkey {chord} is unavailable - another program may be using it. Pause and "
+    "Resume still work on the Session tab and in Chrome's side panel."
+)
+HOTKEY_RESUMED_STATUS: Final = "Recording resumed by the hotkey."
+# Task 7.3 (D8): a WARNING only — nothing is paused, blocked or changed.
+NEW_CONSULTATION_WARNING_LINE: Final = (
+    "Warning: this sounds like a new consultation (a goodbye, then a greeting). If the next "
+    "patient is in, finish this recording first - nothing has been paused."
+)
+
+
+def hands_free_lines(hotkey: str, chord: str, spoken: str) -> list[str]:
+    """The Session screen's hotkey and spoken-pause lines."""
+    return [
+        HOTKEY_LINES.get(hotkey, HOTKEY_LINES["not_set_up"]).format(chord=chord),
+        SPOKEN_PAUSE_LINES.get(spoken, SPOKEN_PAUSE_LINES["idle"]),
+    ]
 CHROME_RECHECK_LINES: Final[Mapping[str, str]] = {
     "checking": "Checking the note with Cliniko again after Chrome reconnected...",
     "verified": "Cliniko verified the note again after Chrome reconnected.",
@@ -426,12 +462,17 @@ class ChromeView:
     clinic: str | None = None
     recheck: str | None = None
     recheck_reason: NoteRefusal | None = None
-    spoken_pause_unavailable: bool = False
     refusal: str | None = None
     # Phase 5: the linked live session's phase (``recording``, ``paused``,
     # ``finishing`` or ``queued``) and whether Chrome shows the block.
     phase: str | None = None
     blocked: bool = False
+    # Phase 7 (D7, D8): the hotkey's status, the spoken pause's
+    # (``idle``, ``on`` or ``unavailable``) and the new-consultation warning.
+    hotkey: str = "not_set_up"
+    hotkey_chord: str = CHORD_TEXT
+    spoken_pause: str = "idle"
+    new_consultation: bool = False
 
 
 def _live_line(who: str, clinic: str, phase: str | None) -> str:
@@ -461,11 +502,9 @@ def chrome_view_text(view: ChromeView) -> str:
     if view.recheck is not None:
         reason = note_refusal_line(view.recheck_reason) if view.recheck_reason else ""
         lines.append(CHROME_RECHECK_LINES[view.recheck].format(reason=reason))
-    lines.append(
-        CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE
-        if view.spoken_pause_unavailable
-        else CHROME_HANDS_FREE_LINE
-    )
+    lines.extend(hands_free_lines(view.hotkey, view.hotkey_chord, view.spoken_pause))
+    if view.new_consultation:
+        lines.append(NEW_CONSULTATION_WARNING_LINE)
     if view.refusal is not None:
         lines.append(f"Refused from Chrome: {view.refusal}")
     return "\n".join(lines)
@@ -494,6 +533,11 @@ class SessionControllerLike(Protocol):
 
     @property
     def live_failure(self) -> LiveFailure | None: ...
+
+    # Task 7.2 (D7): whether a live transcriber is attached at all (with
+    # ``live_failure``, the spoken pause's availability).
+    @property
+    def live_transcription_attached(self) -> bool: ...
 
     @property
     def generating(self) -> bool: ...
@@ -3272,8 +3316,13 @@ __all__ = [
     "CHROME_WAITING_LINE",
     "CHROME_CONNECTED_LINE",
     "CHROME_UNAVAILABLE_LINE",
-    "CHROME_HANDS_FREE_LINE",
     "CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE",
+    "HOTKEY_LINES",
+    "SPOKEN_PAUSE_LINES",
+    "HOTKEY_FAILED_STATUS",
+    "HOTKEY_RESUMED_STATUS",
+    "NEW_CONSULTATION_WARNING_LINE",
+    "hands_free_lines",
     "CHROME_RECHECK_LINES",
     "CHROME_REFUSALS",
     "chrome_refusal_message",

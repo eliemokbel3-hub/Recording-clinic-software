@@ -1542,7 +1542,52 @@ class TestChromeView:
     )
     def test_the_link_line_leads_and_hands_free_follows(self, link: str, first: str) -> None:
         lines = models.chrome_view_text(models.ChromeView(link=link)).split("\n")
-        assert lines == [first, models.CHROME_HANDS_FREE_LINE]
+        assert lines == [
+            first,
+            "Pause hotkey: not set up.",
+            'Spoken pause: say "scribe pause" while recording to pause.',
+        ]
+
+    @pytest.mark.parametrize(
+        "hotkey, line",
+        [
+            ("not_set_up", "Pause hotkey: not set up."),
+            ("on", "Pause hotkey: Ctrl+Shift+F9 pauses the recording and resumes it."),
+            (
+                "failed",
+                "Pause hotkey unavailable - Windows would not reserve Ctrl+Shift+F9 (another "
+                "program may be using it). Use Pause and Resume here or in Chrome's side panel.",
+            ),
+            ("unknown", "Pause hotkey: not set up."),
+        ],
+    )
+    def test_the_hotkey_line_follows_its_status(self, hotkey: str, line: str) -> None:
+        """Task 7.1 (D7): the real status replaces Phase 4's "not set up"."""
+        view = models.ChromeView(link="connected", hotkey=hotkey, hotkey_chord="Ctrl+Shift+F9")
+        assert models.chrome_view_text(view).split("\n")[1] == line
+
+    @pytest.mark.parametrize(
+        "spoken, line",
+        [
+            ("idle", models.SPOKEN_PAUSE_LINES["idle"]),
+            ("on", models.SPOKEN_PAUSE_LINES["on"]),
+            ("unavailable", models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE),
+        ],
+    )
+    def test_the_spoken_pause_line_follows_its_state(self, spoken: str, line: str) -> None:
+        view = models.ChromeView(link="connected", spoken_pause=spoken)
+        assert models.chrome_view_text(view).split("\n")[2] == line
+        assert "{" not in line
+
+    def test_the_new_consultation_warning_has_its_own_line(self) -> None:
+        """Task 7.3 (D8): a warning line; it says nothing was paused."""
+        view = models.ChromeView(link="connected", new_consultation=True)
+        lines = models.chrome_view_text(view).split("\n")
+        assert lines[-1] == models.NEW_CONSULTATION_WARNING_LINE
+        assert "nothing has been paused" in models.NEW_CONSULTATION_WARNING_LINE
+        assert models.NEW_CONSULTATION_WARNING_LINE not in models.chrome_view_text(
+            models.ChromeView(link="connected")
+        )
 
     def test_a_linked_live_session_names_patient_and_clinic(self) -> None:
         text = models.chrome_view_text(
@@ -1592,7 +1637,7 @@ class TestChromeView:
                 clinic="Northside",
                 recheck="refused",
                 recheck_reason=NoteRefusal.NOTE_NOT_FOUND,
-                spoken_pause_unavailable=True,
+                spoken_pause="unavailable",
                 refusal="Open the patient's treatment note in Cliniko first.",
             )
         )
@@ -1600,7 +1645,7 @@ class TestChromeView:
         assert lines[2].startswith("Cliniko did not verify the note after Chrome reconnected: ")
         assert "{reason}" not in text
         assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE in lines
-        assert models.CHROME_HANDS_FREE_LINE not in lines
+        assert models.SPOKEN_PAUSE_LINES["idle"] not in lines
         assert lines[-1] == (
             "Refused from Chrome: Open the patient's treatment note in Cliniko first."
         )
