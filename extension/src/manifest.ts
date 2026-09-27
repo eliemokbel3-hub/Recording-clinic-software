@@ -17,13 +17,13 @@ import { CLINIKO_MATCH, PANEL_PATH } from "./manifest-paths";
 export default defineManifest({
   manifest_version: 3,
   key: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0xCeYi0oFYOLACueOgrOF0wVBJuDYCGUlDIhp0y5kthyNhSk5LHDrYfzQAGbC068E2sI2OyfTDv7S227MMZ7CAHnnRsqYaR2oQ/RnVK7FyEwK+cPEpoqsDwMVYHlCGvwllhdRjvyB6I5RGUAtrp8+XE4+k7iA58khq3JcE5V2BRxewMWOhFFivn0fbkO/g5toT2dcsbQbNQ+eBIvaBlXLlNp3Q0NJ607QI2GIrgW/cp3ci9lUBKM8KaFcXOwh2IgIVEieQnQ2Y2XqCfUyd3U2wJ22OTc2dEGM3WfK0jTz8Ac/NqIQzlvxj1AnHmsdZZvgwMM76lzuSrJC2zMpJTTiwIDAQAB",
-  name: "Cliniko Scribe Companion",
+  name: "Clinic Scribe Companion",
   version: "0.1.0",
   description: "Privacy-first clinical scribe companion for Cliniko: consent, controls and recording safeguards",
   permissions: ["nativeMessaging", "alarms", "sidePanel", "scripting"],
   host_permissions: [CLINIKO_MATCH],
   action: {
-    default_title: "Cliniko Scribe Companion",
+    default_title: "Clinic Scribe Companion",
   },
   side_panel: {
     default_path: PANEL_PATH,

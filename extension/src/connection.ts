@@ -85,22 +85,22 @@ export function badgeFor(connection: ConnectionState, state: StatePayload | null
     return {
       text: "!",
       color: RED,
-      title: "Cliniko Scribe: lost the link to the app while a recording was live - it is paused",
+      title: "Clinic Scribe: lost the link to the app while a recording was live - it is paused",
     };
   }
   if (connection === "error") {
-    return { text: "ERR", color: RED, title: "Cliniko Scribe: the link to the app failed - retrying" };
+    return { text: "ERR", color: RED, title: "Clinic Scribe: the link to the app failed - retrying" };
   }
   if (connection === "connecting" || (connection === "connected" && state === null)) {
-    return { text: "…", color: AMBER, title: "Cliniko Scribe: connecting to the app" };
+    return { text: "…", color: AMBER, title: "Clinic Scribe: connecting to the app" };
   }
-  if (down) return { text: "OFF", color: GREY, title: "Cliniko Scribe is not running" };
+  if (down) return { text: "OFF", color: GREY, title: "Clinic Scribe is not running" };
   const phase = state?.live?.phase;
-  if (phase === "recording") return { text: "REC", color: RED, title: "Cliniko Scribe: recording" };
+  if (phase === "recording") return { text: "REC", color: RED, title: "Clinic Scribe: recording" };
   if (phase === "paused" || state?.block !== undefined) {
-    return { text: "PAUSED", color: AMBER, title: "Cliniko Scribe: recording paused" };
+    return { text: "PAUSED", color: AMBER, title: "Clinic Scribe: recording paused" };
   }
-  return { text: "OK", color: GREEN, title: "Cliniko Scribe is running" };
+  return { text: "OK", color: GREEN, title: "Clinic Scribe is running" };
 }
 
 export class ConnectionManager {

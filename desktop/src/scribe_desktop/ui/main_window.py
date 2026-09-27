@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
         clinic_registry: ClinicRegistry | None = None,
     ) -> None:
         super().__init__()
-        self.setWindowTitle("Cliniko Scribe")
+        self.setWindowTitle("Clinic Scribe")
         self._controller = controller
         # Phase H round 24 MED-006: the language model's presence is a seam
         # here too — the Practitioner tab's poll and the Note tab's prose

@@ -1,4 +1,4 @@
-"""One-time ML model setup for Cliniko Scribe.
+"""One-time ML model setup for Clinic Scribe.
 
 This script is one of the project's two SETUP-TIME network steps (the other is
 the pinned prose-runtime wheel install, desktop/requirements-ml-prose.txt; see

@@ -306,12 +306,12 @@ def session_link_line(session: RecordingSession | None) -> str:
 # screen. Plain text only; the patient's name appears only for the live
 # session linked to a note Cliniko verified, and only in memory.
 CHROME_WAITING_LINE: Final = (
-    "Chrome: not connected - open Cliniko in Chrome with the Cliniko Scribe Companion "
+    "Chrome: not connected - open Cliniko in Chrome with the Clinic Scribe Companion "
     "extension to record from a treatment note."
 )
 CHROME_CONNECTED_LINE: Final = "Chrome: connected."
 CHROME_UNAVAILABLE_LINE: Final = (
-    "Chrome link unavailable - another program is using its channel. Close Cliniko Scribe "
+    "Chrome link unavailable - another program is using its channel. Close Clinic Scribe "
     "and open it again; recording from the Session tab still works."
 )
 CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE: Final = (
@@ -344,7 +344,7 @@ HOTKEY_RESUMED_STATUS: Final = "Recording resumed by the hotkey."
 # ``system_events.SystemPauseStatus`` field. Shown only when it failed.
 SYSTEM_PAUSE_FAILED_LINES: Final[Mapping[str, str]] = {
     "suspend": (
-        "Sleep pause may not work - Windows would not report sleep to Cliniko Scribe. Pause "
+        "Sleep pause may not work - Windows would not report sleep to Clinic Scribe. Pause "
         "the recording before the computer sleeps."
     ),
     "lock": (
@@ -412,16 +412,16 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
     # resumes nothing.
     "locked": "The computer is locked - sign in, then press it again.",
     "lock_unknown": (
-        "The computer was locked and Cliniko Scribe cannot confirm it is unlocked - lock it "
+        "The computer was locked and Clinic Scribe cannot confirm it is unlocked - lock it "
         "and sign in again (Windows key + L), then press it again."
     ),
-    "failed": "It did not work - see the Session tab in Cliniko Scribe.",
+    "failed": "It did not work - see the Session tab in Clinic Scribe.",
     # Task 5.5 (D6): the banner's "Open for review".
     "review_in_progress": (
         "Save or cancel the note review open on the Note tab first, then open this recording."
     ),
     "cannot_open": (
-        "Cliniko Scribe could not open that recording for review - see its Recovery tab."
+        "Clinic Scribe could not open that recording for review - see its Recovery tab."
     ),
 }
 
@@ -442,8 +442,8 @@ PAUSE_CUES: Final[Mapping[str, str]] = {
     "tab_closed": "Paused - the recording's Cliniko tab was closed.",
     "other_note": "Paused - another treatment note is open in Chrome.",
     "login": "Paused - Cliniko's login page is open in Chrome.",
-    "pipe_lost": "Paused - Chrome disconnected from Cliniko Scribe.",
-    "new_client": "Paused - Chrome reconnected to Cliniko Scribe.",
+    "pipe_lost": "Paused - Chrome disconnected from Clinic Scribe.",
+    "new_client": "Paused - Chrome reconnected to Clinic Scribe.",
     "suspend": "Paused - the computer went to sleep.",
     "locked": "Paused - the computer was locked.",
     "hotkey": "Paused by the hotkey.",

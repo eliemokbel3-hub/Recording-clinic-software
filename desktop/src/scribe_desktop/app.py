@@ -50,7 +50,7 @@ _SWEEP_INTERVAL_MS = 15 * 60 * 1000
 _ERROR_ALREADY_EXISTS = 183
 
 _ALREADY_RUNNING_TEXT = (
-    "Cliniko Scribe is already running.\n\n"
+    "Clinic Scribe is already running.\n\n"
     "Use the existing window — check the taskbar. If you cannot find it, "
     "end scribe-app.exe in Task Manager, then launch again."
 )
@@ -112,7 +112,7 @@ def release_single_instance_lock(handle: int) -> None:
 
 
 def _show_already_running_warning() -> None:
-    box = QMessageBox(QMessageBox.Icon.Warning, "Cliniko Scribe", _ALREADY_RUNNING_TEXT)
+    box = QMessageBox(QMessageBox.Icon.Warning, "Clinic Scribe", _ALREADY_RUNNING_TEXT)
     box.exec()
 
 

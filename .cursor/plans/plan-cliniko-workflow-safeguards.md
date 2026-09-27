@@ -633,6 +633,21 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 
 ## Current State / Handoff Note
 - **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k8`, 2026-09-28T09:09+10:00, run stage-9) — display name "Clinic Scribe" (practitioner decision; H2a SIMP-006 DONE); `reason=composer-run`.**
+  - Renamed display strings only:
+    - `app.py` (2), `ui/main_window.py` (the window title) and `ui/models.py` (8, including "Clinic Scribe Companion");
+    - `extension/src/connection.ts` (7 badge tooltips), `manifest.ts` (name and action title → "Clinic Scribe Companion") and `panel.html` `<title>`;
+    - `scripts/setup-models.py`'s docstring.
+  - Every `ClinikoScribe` identifier is byte-identical. No test pinned an old string; all pins go through the constants.
+  - New `desktop/tests/test_display_name.py` (+2): a text-matching guard over the production source, plus identifier pins. It cannot see run-time-built or split literals, the built `extension/dist`, or docs.
+  - Historical text left alone: this plan's closed rounds and the old smoke steps, and old CHANGELOG entries. The docs had no occurrence.
+  - Checks: see the brief.
+  - Expected:
+    - desktop **4124 passed** with the app closed (4122 + 2), or 4123 + 1 skipped with it running;
+    - extension **307** (unchanged); `npm run build` is required because the manifest, `connection.ts` and `panel.html` changed.
+  - Re-check:
+    - Rebuild the extension, reload it in `chrome://extensions`, fully restart Chrome and relaunch the app. The window title, the extension card's name and the icon tooltip read "Clinic Scribe", and the id is unchanged.
+    - Validate a saved clinic on the Clinics tab. It must succeed without re-entering a key, which proves the Credential Manager prefix is untouched.
 - **EXECUTOR HANDOFF (leg `stage-9-exec-k7`, 2026-09-28T08:21+10:00, run stage-9) — smoke finding S1 FIXED and CLOSED as round 62 (LOW-060); `reason=composer-run`.**
   - What changed:
     - `ui/main_window.py` `_on_session_retired` now re-lists the Recovery tab. It runs on the GUI thread, from a Start's synchronous `session_retired` or the adopt path, so nothing is queued.
@@ -3630,7 +3645,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Changing the manifest `name` does not change the extension id, which comes from its key.
     - One pass after the smoke, together with SIMP-004/005, since the same strings move.
     - surface=production (user-visible: window title, badge tooltips, the extensions page, desktop messages).
-    - Triage: Fix-now → task H2a. It needs the practitioner's choice first. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. It needs the practitioner's choice first. /fix decision: Applied (leg stage-9-exec-k8, 2026-09-28 — the practitioner chose "Clinic Scribe" (`OWNERSHIP: gate-disposition key=product-display-name choice=clinic-scribe`); every display string listed above renamed, plus `panel.html`'s title and `setup-models.py`'s docstring; every `ClinikoScribe` identifier unchanged; guard test `test_display_name.py`).
   - **[MED]** SIMP-007 (recorded): there are two re-verification pipelines.
     - `ui/main_window.py` `_dispatch_reverification` / `_run_reverification` / `_finish_reverify_task`.
     - `ui/bridge.py` `_dispatch` / `_run` / `_finish_task`.
@@ -4851,6 +4866,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - `npm run build` is required, because `panel.ts`, `context.ts` and `connection.ts` changed.
 - [ ] 🟥 H2a: round 56's recorded simplifications (SIMP-004..016) — a scoped `/review-plan` on this task AFTER the P.2 live smoke, then `/fix` in the order it sets. Suggested order:
   - SIMP-006, the practitioner's product-name choice (recommended: "Clinic Scribe").
+    - **DECIDED 2026-09-28 by the practitioner ("Go with Clinic Scribe") and DONE in leg stage-9-exec-k8.** The display name is "Clinic Scribe" everywhere a person sees it, and the extension is "Clinic Scribe Companion". Every internal `ClinikoScribe` identifier is byte-identical: the `%LOCALAPPDATA%\ClinikoScribe` folders, the mutex, the pipe, the Credential Manager prefix, the DPAPI key descriptions, `INSTALL_DIR`, the native-host name and the extension id. `desktop/tests/test_display_name.py` guards both halves.
   - Then SIMP-004 / 005, the canonical text tables pinned by a both-mirrors test.
   - Then SIMP-007, one re-verification pipeline.
   - Then the rest: 008–016.
