@@ -5,6 +5,7 @@ the Phase-1 registration/self-test panel as a Status tab)."""
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtGui import QCloseEvent
@@ -20,6 +21,19 @@ from PySide6.QtWidgets import (
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.encounter import (
+    EncounterRecord,
+    EncounterUnavailable,
+    VerificationRequest,
+    VerificationResult,
+    VerifiedTarget,
+    WritebackRefused,
+    WritebackSubject,
+    read_encounter_record,
+    reverification_request,
+    verify_note_context,
+    writeback_context,
+)
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
@@ -41,7 +55,22 @@ from scribe_desktop.ui.note import NoteScreen
 from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.session_screen import SessionScreen
+from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.transcript import TranscriptScreen
+
+
+@dataclass
+class _CheckoutEncounter:
+    """The recovered checkout's Cliniko link (Task 3.4). ``record`` is the
+    decrypted ``encounter.enc`` (None: missing or undecryptable, so the
+    session is unlinked); ``request`` the re-verification in flight and
+    ``result`` the one that answered it. Ids only — never a display string."""
+
+    session_id: str | None = None
+    record: EncounterRecord | None = None
+    request: VerificationRequest | None = None
+    result: VerificationResult | None = None
+    stopped: bool = False
 
 
 class StatusPanel(QWidget):
@@ -197,10 +226,21 @@ class MainWindow(QMainWindow):
         # registry reads `clinics.json` at construction and nothing else — no
         # key, no Cliniko call (a call happens only on Validate / Replace key).
         # `clinic_registry` is the test seam: a test never reads the real file.
-        self.clinics_screen = ClinicsScreen(
-            clinic_registry if clinic_registry is not None else ClinicRegistry(),
-            live_session_clinic=self._live_session_clinic,
+        self._clinic_registry = (
+            clinic_registry if clinic_registry is not None else ClinicRegistry()
         )
+        self.clinics_screen = ClinicsScreen(
+            self._clinic_registry, live_session_clinic=self._live_session_clinic
+        )
+        # Task 3.4: a recovered checkout's encounter record, decrypted ONCE on
+        # checkout (`_on_recovered`), and its D4 re-verification.
+        self._checkout = _CheckoutEncounter()
+        self._checkout_seq = 0
+        self._reverify_task: TaskThread | None = None
+        self._reverify_running: VerificationRequest | None = None
+        # D9: a Replace key or Remove moves the clinic's rev — a checkout's
+        # re-verification under the old rev no longer counts; check again.
+        self.clinics_screen.clinics_changed.connect(self._on_clinics_changed)
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -275,10 +315,14 @@ class MainWindow(QMainWindow):
 
     def _live_session_clinic(self) -> str | None:
         """The clinic the live session is linked to, for the Clinics tab's
-        Remove refusal (D10). Until the plan's Phase 3 links a session to a
-        clinic (`EncounterContext`), no session is ever linked, so this is
-        None; Phase 3 must answer from the live session here."""
-        return None
+        Remove refusal (D10): the tracked session's `EncounterContext` in any
+        non-terminal state (recording, paused, processing, queued — and
+        failed, whose custody the controller still holds). None when there
+        is no such session or it is unlinked."""
+        session = self._controller.session
+        if session is None or session.is_terminal or session.encounter_context is None:
+            return None
+        return session.encounter_context.clinic_id
 
     def _recovery_in_flight(self) -> bool:
         """Round 33 MED-001: a recovery resume is running, so a note
@@ -339,11 +383,12 @@ class MainWindow(QMainWindow):
             or self.transcript_screen.is_busy
             or self.note_screen.is_busy
             or self.clinics_screen.is_busy
+            or self.is_reverifying
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "
-                "prose rendering, a benchmark or a clinic key check to finish "
-                "before closing."
+                "prose rendering, a benchmark, a clinic key check or a Cliniko "
+                "note check to finish before closing."
             )
             event.ignore()
             return
@@ -373,6 +418,7 @@ class MainWindow(QMainWindow):
         # destroy the in-memory key copy (disk custody remains for a
         # post-restart recovery; adds zero availability loss).
         self._destroy_recovered_crypto()
+        self._end_checkout_encounter()
         self._transcript_source = "live"
         self.tabs.setCurrentWidget(self.transcript_screen)
 
@@ -395,6 +441,7 @@ class MainWindow(QMainWindow):
         interleave with it (the controller deliberately admits a concurrent
         `start()` mid-discard — round 30 — but the GUI never issues one)."""
         self._destroy_recovered_crypto()
+        self._end_checkout_encounter()
         source = self._transcript_source
         self._transcript_source = None
         if source is not None and source != "live":
@@ -432,7 +479,170 @@ class MainWindow(QMainWindow):
         self._destroy_recovered_crypto()
         self._recovered_crypto = crypto
         self._transcript_source = directory.name
+        self._open_checkout_encounter(directory, crypto)
         self.tabs.setCurrentWidget(self.transcript_screen)
+
+    # --- the recovered checkout's Cliniko link (Task 3.4) --------------------
+
+    def _open_checkout_encounter(self, directory: Path, crypto: SessionCrypto) -> None:
+        """THE one decrypt of a recovered session's ``encounter.enc`` —
+        here, on checkout, never in the listing, the sweep or a refresh
+        (Critical Constraint 7). Missing or undecryptable means unlinked. A
+        linked record is re-verified with Cliniko (D4) before it counts as
+        linked: until an answer lands, write-back is refused."""
+        self._end_checkout_encounter()
+        record: EncounterRecord | None
+        try:
+            record = read_encounter_record(directory, crypto, directory.name)
+        except EncounterUnavailable:
+            record = None
+        self._checkout = _CheckoutEncounter(session_id=directory.name, record=record)
+        if record is not None and record.context is not None:
+            self._checkout_seq += 1
+            request = reverification_request(
+                record.context, self._clinic_registry, seq=self._checkout_seq
+            )
+            if request is not None:
+                self._dispatch_reverification(request)
+        self._show_checkout_line()
+
+    def _dispatch_reverification(self, request: VerificationRequest) -> None:
+        """One check runs at a time; a request made while an older (now
+        stale) one runs is started when that one finishes."""
+        self._checkout.request = request
+        if self._reverify_task is None:
+            self._run_reverification(request)
+
+    def _run_reverification(self, request: VerificationRequest) -> None:
+        registry = self._clinic_registry
+        # The holder pattern (`ui/clinics.py`, round 15 MED-006): the thread
+        # object stays a child of this window, so a closure that kept the
+        # request would keep the checkout's ids alive after the checkout
+        # ended (round 20 LOW-013). The worker takes it; nothing here keeps it.
+        holder = [request]
+        task = TaskThread(
+            lambda: verify_note_context(
+                holder.pop(), key_store=registry.key_store, transport=registry.transport
+            ),
+            self,
+        )
+        task.succeeded.connect(self._on_reverified)
+        task.failed.connect(self._on_reverify_failed)
+        self._reverify_task = task
+        self._reverify_running = request
+        task.start()
+
+    def _finish_reverify_task(self) -> VerificationRequest | None:
+        ran = self._reverify_running
+        self._reverify_running = None
+        if self._reverify_task is not None:
+            self._reverify_task.finish()
+            self._reverify_task = None
+        return ran
+
+    def _start_waiting_reverification(self, ran: VerificationRequest | None) -> None:
+        waiting = self._checkout.request
+        if waiting is not None and waiting is not ran and self._checkout.result is None:
+            self._run_reverification(waiting)
+
+    def _on_reverified(self, result: object) -> None:
+        ran = self._finish_reverify_task()
+        # Applied only to the checkout that dispatched it (identity): a result
+        # arriving after the view closed or moved on changes nothing.
+        if (
+            isinstance(result, VerificationResult)
+            and self._checkout.request is not None
+            and result.request is self._checkout.request
+        ):
+            self._checkout.result = result
+        self._start_waiting_reverification(ran)
+        self._show_checkout_line()
+
+    def _on_reverify_failed(self, _message: str) -> None:
+        # `verify_note_context` never raises; if it did, fixed copy only.
+        ran = self._finish_reverify_task()
+        if ran is not None and ran is self._checkout.request:
+            self._checkout.stopped = True
+        self._start_waiting_reverification(ran)
+        self._show_checkout_line()
+
+    @property
+    def is_reverifying(self) -> bool:
+        return self._reverify_task is not None
+
+    def _on_clinics_changed(self) -> None:
+        checkout = self._checkout
+        record = checkout.record
+        if checkout.session_id is None or record is None or record.context is None:
+            return
+        request = checkout.request
+        registry = self._clinic_registry
+        if (
+            request is not None
+            and registry.record(request.clinic.clinic_id) is not None
+            and registry.rev(request.clinic.clinic_id) == request.clinic_rev
+        ):
+            return  # the check in hand (or in flight) is still current
+        checkout.result = None
+        checkout.stopped = False
+        self._checkout_seq += 1
+        fresh = reverification_request(record.context, registry, seq=self._checkout_seq)
+        if fresh is None:
+            checkout.request = None
+        else:
+            self._dispatch_reverification(fresh)
+        self._show_checkout_line()
+
+    def _end_checkout_encounter(self) -> None:
+        """Drop the checkout's decrypted record (ids) when its view closes or
+        is replaced. A re-verification still running answers nobody."""
+        self._checkout = _CheckoutEncounter()
+        self.transcript_screen.set_link_line("")
+
+    def _show_checkout_line(self) -> None:
+        """On the Transcript screen — where opening a recovered session
+        lands (round 20 LOW-014)."""
+        checkout = self._checkout
+        if checkout.session_id is None:
+            self.transcript_screen.set_link_line("")
+            return
+        record = checkout.record
+        context = record.context if record is not None else None
+        result = checkout.result
+        self.transcript_screen.set_link_line(
+            models.checkout_link_line(
+                record,
+                checking=checkout.request is not None and result is None and not checkout.stopped,
+                outcome=result.outcome if result is not None else None,
+                clinic_known=(
+                    context is None
+                    or self._clinic_registry.record(context.clinic_id) is not None
+                ),
+            )
+        )
+
+    def recovered_writeback_target(self) -> VerifiedTarget | WritebackRefused | None:
+        """Constraint 6 over the recovered checkout (Phase 4's entry): None
+        when no recovered session is checked out."""
+        if self._checkout.session_id is None:
+            return None
+        subject = WritebackSubject.of_checkout(self._checkout.record, self._checkout.result)
+        return writeback_context(subject, self._clinic_registry)
+
+    def live_writeback_target(
+        self, reverification: VerificationResult | None = None
+    ) -> VerifiedTarget | WritebackRefused | None:
+        """Constraint 6 over the live session (Phase 4's entry): refused
+        until ``reverification`` — Phase 4's pre-write check of the session's
+        note, D4 — answers under the clinic's current rev (round 20
+        MED-012). None with no non-terminal session."""
+        session = self._controller.session
+        if session is None or session.is_terminal:
+            return None
+        subject = WritebackSubject.of_live(
+            session.consent, session.encounter_context, reverification
+        )
+        return writeback_context(subject, self._clinic_registry)
 
     def _destroy_recovered_crypto(self) -> None:
         """Zeroize the retained recovered-checkout key copy (round 42
@@ -538,6 +748,7 @@ class MainWindow(QMainWindow):
         # already destroyed the key — this is the idempotent cleanup of the
         # retained reference.
         self._destroy_recovered_crypto()
+        self._end_checkout_encounter()
         source = self._transcript_source
         self._transcript_source = None
         if source is not None and source != "live":

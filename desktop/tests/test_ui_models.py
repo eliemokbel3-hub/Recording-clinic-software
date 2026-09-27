@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,7 +32,14 @@ from scribe_desktop.note_config import (
 )
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
-from scribe_desktop.session_store import AUDIO_FILENAME, KEY_FILENAME, SessionChunkStore
+from scribe_desktop.session_store import (
+    AUDIO_FILENAME,
+    ENCOUNTER_FILENAME,
+    KEY_FILENAME,
+    NOTE_FILENAME,
+    TRANSCRIPT_FILENAME,
+    SessionChunkStore,
+)
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
     SPEAKER_1,
@@ -263,6 +271,85 @@ class TestListRecoverableSessions:
         future = time.time() + 7 * 86400
         os.utime(tmp_path / session_id / KEY_FILENAME, (future, future))
         assert models.list_recoverable_sessions(tmp_path) == []
+
+    def test_transcript_note_and_encounter_flags_come_from_stat(self, tmp_path: Path) -> None:
+        """Cliniko safeguards Task 3.4 / D6: presence only, never content."""
+        bare = _make_session_dir(tmp_path, finished=True)
+        full = _make_session_dir(tmp_path, finished=True)
+        for name in (TRANSCRIPT_FILENAME, NOTE_FILENAME, ENCOUNTER_FILENAME):
+            (tmp_path / full / name).write_bytes(b"not decryptable - never read")
+        infos = {i.session_id: i for i in models.list_recoverable_sessions(tmp_path)}
+        assert (
+            infos[bare].has_transcript,
+            infos[bare].has_note,
+            infos[bare].has_encounter,
+        ) == (False, False, False)
+        assert (
+            infos[full].has_transcript,
+            infos[full].has_note,
+            infos[full].has_encounter,
+        ) == (True, True, True)
+
+
+class TestEncounterNeverDecryptedOutsideCheckout:
+    """Critical Constraint 7 (Task 3.4 spy test): the recovery listing and
+    the sweep never decrypt ``encounter.enc`` — nor anything else."""
+
+    def _spy(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        import scribe_desktop.encounter as encounter_mod
+        import scribe_desktop.session_store as store_mod
+
+        calls: list[str] = []
+
+        def spy(name: str) -> Any:
+            def record(*_args: Any, **_kwargs: Any) -> Any:
+                calls.append(name)
+                raise AssertionError(f"{name} called outside a checkout")
+
+            return record
+
+        monkeypatch.setattr(store_mod, "read_encounter", spy("read_encounter"))
+        monkeypatch.setattr(encounter_mod, "read_encounter", spy("encounter.read_encounter"))
+        monkeypatch.setattr(
+            encounter_mod, "read_encounter_record", spy("read_encounter_record")
+        )
+        monkeypatch.setattr(SessionCrypto, "decrypt", spy("SessionCrypto.decrypt"))
+        monkeypatch.setattr(store_mod, "unwrap_key_from_file", spy("unwrap_key_from_file"))
+        return calls
+
+    def _linked_session(self, tmp_path: Path) -> str:
+        from scribe_desktop.encounter import EncounterRecord, unlinked_consent
+        from scribe_desktop.session_store import write_encounter
+
+        session_id = _make_session_dir(tmp_path, finished=True)
+        crypto = SessionCrypto()
+        record = EncounterRecord(consent=unlinked_consent())
+        write_encounter(tmp_path / session_id, crypto, session_id, record.to_bytes())
+        crypto.destroy()
+        return session_id
+
+    def test_the_listing_never_decrypts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_id = self._linked_session(tmp_path)
+        calls = self._spy(monkeypatch)
+        for _ in range(3):  # the periodic refresh lists again and again
+            (info,) = models.list_recoverable_sessions(tmp_path)
+            assert info.session_id == session_id and info.has_encounter
+        assert calls == []
+
+    def test_the_sweep_never_decrypts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session_store import sweep_sessions
+
+        self._linked_session(tmp_path)
+        calls = self._spy(monkeypatch)
+        results = sweep_sessions(tmp_path)
+        assert [r.action for r in results] == ["kept"]
+        results = sweep_sessions(tmp_path, now=time.time() + 25 * 3600)
+        assert [r.action for r in results] == ["expired"]  # destroyed, still undecrypted
+        assert calls == []
 
 
 def _fake_whisper_snapshot(local_app_data: Path, name: str) -> None:

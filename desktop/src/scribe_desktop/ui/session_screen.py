@@ -9,6 +9,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop.encounter import ConsentAttestation, EncounterContext, unlinked_consent
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
 from scribe_desktop.transcription import TranscriptDocument
@@ -64,6 +66,17 @@ class SessionScreen(QWidget):
         self.live_status.connect(self._on_live_status)
 
         self.state_label = QLabel()
+        # Cliniko workflow safeguards plan Task 3.3: whether the tracked
+        # session is bound to a Cliniko note (never which patient).
+        self.link_label = QLabel()
+        self.link_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.link_label.setWordWrap(True)
+        # Constraint 4: the consent tick sits directly above Start, carries
+        # PLAN.md's wording verbatim, is NEVER pre-ticked, and is cleared
+        # after every Start; Start is disabled until it is ticked.
+        self.consent_checkbox = QCheckBox(models.RECORDING_CONSENT_LABEL)
+        self.consent_checkbox.setChecked(False)
+        self.consent_checkbox.toggled.connect(lambda _checked: self.refresh())
         self.message_label = QLabel()
         # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
         # exception detail (config validation errors, save/compose failures),
@@ -102,6 +115,8 @@ class SessionScreen(QWidget):
 
         layout = QVBoxLayout()
         layout.addWidget(self.state_label)
+        layout.addWidget(self.link_label)
+        layout.addWidget(self.consent_checkbox)
         layout.addLayout(buttons)
         layout.addWidget(self.progress_label)
         layout.addWidget(self.progress_bar)
@@ -145,9 +160,13 @@ class SessionScreen(QWidget):
         state = self._controller.state
         self._last_state = state
         self.state_label.setText(f"Session state: {state.value}")
+        self.link_label.setText(models.session_link_line(self._controller.session))
         controls = models.controls_for_state(state)
         busy = self._transcribing
-        self.start_button.setEnabled(controls.start and not busy)
+        self.consent_checkbox.setEnabled(controls.start and not busy)
+        self.start_button.setEnabled(
+            controls.start and not busy and self.consent_checkbox.isChecked()
+        )
         self.pause_button.setEnabled(controls.pause and not busy)
         self.resume_button.setEnabled(controls.resume and not busy)
         self.finish_button.setEnabled(controls.finish and not busy)
@@ -169,12 +188,31 @@ class SessionScreen(QWidget):
     # --- controls ---------------------------------------------------------------
 
     def on_start(self) -> None:
+        """The desktop Start: an UNLINKED recording, behind the consent tick
+        (Constraint 4). The tick is cleared whatever the outcome."""
+        if not self.consent_checkbox.isChecked():
+            self._show_message(models.CONSENT_REQUIRED_MESSAGE)
+            self.refresh()
+            return
+        self.consent_checkbox.setChecked(False)
+        self._start(unlinked_consent(), None)
+
+    def start_linked(self, consent: ConsentAttestation, context: EncounterContext) -> None:
+        """A linked Start (Task 4.5 wires it from the Chrome side panel): the
+        panel's own consent tick produced ``consent``, and the context is the
+        one the bound report's verification produced. The controller refuses
+        a consent that does not name the context's note."""
+        self.consent_checkbox.setChecked(False)
+        self._start(consent, context)
+
+    def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> None:
         device_id = self._device_provider()
         if device_id is None:
             self._show_message("Select an input device on the Microphone screen first.")
+            self.refresh()
             return
         try:
-            self._controller.start(device_id)
+            self._controller.start(device_id, consent=consent, context=context)
             self.session_started.emit()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI

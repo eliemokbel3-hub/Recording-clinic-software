@@ -208,6 +208,22 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"section_texts"',
     "'section_texts'",
     "section_texts=",
+    # Cliniko workflow safeguards plan Task 3.1 (D3): an ``EncounterContext``
+    # carries ``patient_id`` and ``treatment_note_id``, a
+    # ``ConsentAttestation`` always renders ``treatment_note_id`` (None when
+    # unlinked), and ``NoteTarget`` / ``EncounterRecord`` / a
+    # ``RecordingSession`` carry one of them; ``NoteDisplay`` carries the
+    # patient's name as ``patient_display_name``. Every rendering of any of
+    # them is dropped, empty or populated (pinned by test as a class).
+    '"patient_id"',
+    "'patient_id'",
+    "patient_id=",
+    '"treatment_note_id"',
+    "'treatment_note_id'",
+    "treatment_note_id=",
+    '"patient_display_name"',
+    "'patient_display_name'",
+    "patient_display_name=",
 )
 
 # THE production log format — one string, used to build every handler's

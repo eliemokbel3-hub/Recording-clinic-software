@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import pytest
 
+from conftest import start_unlinked
 from scribe_desktop.status import read_registration_status, run_self_test
 
 windows_only = pytest.mark.skipif(
@@ -98,7 +99,7 @@ def test_sweep_protected_ids_covers_nonterminal_controller_session(tmp_path) -> 
     controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
     assert sweep_protected_ids(controller) == frozenset()
 
-    session = controller.start(0)
+    session = start_unlinked(controller)
     assert session.session_id in sweep_protected_ids(controller)  # state-active
 
     controller.finish()

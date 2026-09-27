@@ -22,11 +22,12 @@ source check sees — the named residue). What the process does at runtime is
 pinned separately: `desktop/tests/test_integration_no_sockets.py` asserts zero
 connections from the host, from `scribe-app` at startup and idle, and during
 capture, transcription and prose generation, and the offline env
-kill-switches (flow 7) keep the ML stack off the network. The client's one
-app caller today is the clinic registry: a Validate or Replace key pressed on
-the Clinics tab (flow 18). Note verification (a context report from Chrome,
-the plan's Phase 3) adds the next; each runs on a practitioner action or a
-report, never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
+kill-switches (flow 7) keep the ML stack off the network. The client has two
+app callers (flow 18): the clinic registry, on a Validate or Replace key
+pressed on the Clinics tab, and note verification (the plan's Phase 3), on a
+recovered session opened for checkout whose encounter record names a Cliniko
+note (a context report from Chrome reaches it only with Phase 4's pipe); each
+runs on a practitioner action, never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
 running app, the model-setup script and the one-off pinned prose-runtime
 wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
@@ -67,8 +68,8 @@ rendering the language model does (flow 17).
    `ClinikoScribe/<clinic_id>` / `cliniko_api_key` — stored only after
    Cliniko has validated them, deleted by the tab's Remove, overwritten by
    its Replace key. A Validate or Replace key reads the TYPED key (never
-   this store); note verification (Phase 3) will read the stored one, once
-   per logical call. Either way the client's own references go when the call
+   this store); note verification (Phase 3) reads the stored one, once per
+   logical call, on its worker thread. Either way the client's own references go when the call
    ends — in memory only, and a still-live exception from the call keeps its
    frames (and so the key or token) referenced until it is dropped (flow 18).
 
@@ -94,6 +95,17 @@ rendering the language model does (flow 17).
    nonce per record, chunk index as AAD, sealed footer at Finish). The
    per-session key is DPAPI-wrapped (current-user) at
    `sessions\<id>\key.dpapi`, written durably BEFORE the first chunk.
+   Between the key and `audio.enc`, Start writes `sessions\<id>\encounter.enc`
+   (Cliniko workflow safeguards plan, D11; every session, linked or not): the
+   practitioner's recording-consent attestation (time, text version, and the
+   note and practitioner it names, if any) and, for a linked recording, the
+   encounter context — clinic id and web host, patient, treatment note,
+   booking, template and practitioner ids, and how it was verified; no name
+   or other display text. AES-256-GCM under the session key, AAD
+   `encounter:<session_id>`; a failed write refuses the start. It is
+   decrypted ONLY when a recovered session is opened for checkout (the
+   recovery listing reads only whether the file exists; the sweep never
+   reads it) and goes with the session's key like every other artifact.
    Plaintext audio exists ONLY in transient capture/processing buffers —
    never on disk, never in logs. Deleting `key.dpapi` is the cryptographic
    deletion of the session (same-user boundary; NTFS unlink residual — see
@@ -514,8 +526,8 @@ rendering the language model does (flow 17).
     repr, formatted traceback) — a still-live exception from the call does
     keep its frames, and so the key or Basic token, the path, ids and
     response bytes, referenced in memory until it is dropped (threat-model
-    residue (6)). CALLERS: `clinics.py` is the only app module that imports
-    the client (pinned by `test_cliniko_client.py`). A Validate or Replace
+    residue (6)). CALLERS: `clinics.py` and `encounter.py` are the only app
+    modules that import the client (pinned by `test_cliniko_client.py`). A Validate or Replace
     key on the Clinics tab is ONE client call on a worker thread, with the
     key the practitioner just typed: `GET /user`, `GET /practitioners` for
     that user and `GET /settings/public`. What it keeps: on success, the
@@ -529,8 +541,19 @@ rendering the language model does (flow 17).
     a replaced key under the old record). The role, the practitioner list and the
     rest of each answer are dropped with the call. Nothing calls the client
     at startup, on a timer or while idle (the registry's construction reads
-    `clinics.json` only). Note verification (Phase 3) adds the next caller
-    and extends this flow. The practitioner-run feasibility script
+    `clinics.json` only). NOTE VERIFICATION (Phase 3, `encounter.py`
+    `verify_note_context`) is ONE client call on a worker thread with the
+    key read once from Credential Manager: `GET /treatment_notes/<id>`,
+    `GET /patients/<id>` and, when the note links one, `GET /bookings/<id>`.
+    Today it runs only when the practitioner opens a recovered session whose
+    encounter record (flow 6) names a note, and again if a clinic changes
+    while that checkout is open. What it keeps: an outcome in memory — ids,
+    a verification state and time, or a reason code — and, beside it, a
+    separate display value (the patient's name, cleaned to one line of at
+    most 120 characters, and the appointment time) that no model, record,
+    log or file holds and this phase shows nowhere; the note's content and
+    the rest of each answer are dropped with the call. The outcome is
+    dropped when the checkout ends. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
     same client that prints structure only — never a name, id value, answer
     text or the key.

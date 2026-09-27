@@ -24,6 +24,18 @@ from scribe_desktop.clinics import (
     Refused,
     Removed,
 )
+from scribe_desktop.encounter import (
+    RECORDING_CONSENT_TEXT,
+    ConsentAttestation,
+    EncounterContext,
+    EncounterRecord,
+    NoteRefusal,
+    NoteRefused,
+    UnverifiedOffline,
+    Verification,
+    VerificationOutcome,
+    Verified,
+)
 from scribe_desktop.language_model import (
     LanguageModel,
     LanguageModelError,
@@ -98,9 +110,12 @@ from scribe_desktop.session import (
 )
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
+    ENCOUNTER_FILENAME,
     KEY_FILENAME,
+    NOTE_FILENAME,
     RECOVERY_WINDOW,
     SESSION_ID_PATTERN,
+    TRANSCRIPT_FILENAME,
     SessionStoreError,
     default_sessions_root,
     earliest_trusted_timestamp,
@@ -153,6 +168,131 @@ LIVE_TRANSCRIPT_PLACEHOLDER: Final = (
     "Live transcription appears here as the consultation is recorded."
 )
 
+# Cliniko workflow safeguards plan Task 3.3 (Constraint 4, D1): the desktop
+# consent tick carries PLAN.md's wording verbatim; it is never pre-ticked and
+# is cleared after every Start. The link line says whether the session is
+# bound to a Cliniko note — never which patient.
+RECORDING_CONSENT_LABEL: Final = RECORDING_CONSENT_TEXT
+CONSENT_REQUIRED_MESSAGE: Final = (
+    "Tick the consent box above Start first - consent is confirmed for every recording."
+)
+NOT_LINKED_LABEL: Final = "Not linked to a Cliniko note"
+NOT_LINKED_DETAIL: Final = (
+    f"{NOT_LINKED_LABEL} - a recording started here cannot be written back to Cliniko."
+)
+LINKED_VERIFIED_LABEL: Final = (
+    "Linked to a Cliniko treatment note - verified with Cliniko at Start."
+)
+LINKED_UNVERIFIED_LABEL: Final = (
+    "Linked to a Cliniko treatment note, not yet verified with Cliniko - write-back "
+    "stays blocked until Cliniko verifies the note."
+)
+
+
+# Task 3.4: the recovery list reads the encounter record's PRESENCE only (a
+# stat); a present record may be linked or unlinked — that is read on opening.
+RECOVERY_NO_ENCOUNTER_LINE: Final = "not linked to a Cliniko note (consent record unavailable)"
+RECOVERY_ENCOUNTER_LINE: Final = "Cliniko link checked when opened"
+CHECKOUT_CONSENT_UNAVAILABLE_LINE: Final = (
+    "Consent record unavailable - this recording is treated as not linked to a Cliniko "
+    "note and cannot be written back to Cliniko."
+)
+CHECKOUT_UNLINKED_LINE: Final = (
+    f"{NOT_LINKED_LABEL} - this recording cannot be written back to Cliniko."
+)
+CHECKOUT_REVERIFYING_LINE: Final = (
+    "Linked to a Cliniko treatment note - checking it with Cliniko again before it counts "
+    "as linked..."
+)
+CHECKOUT_VERIFIED_LINE: Final = (
+    "Linked to a Cliniko treatment note - Cliniko verified it again just now."
+)
+CHECKOUT_OFFLINE_LINE: Final = (
+    "Linked to a Cliniko treatment note, but Cliniko could not be reached to check it "
+    "again - write-back stays blocked until Cliniko verifies the note."
+)
+# Round 20 LOW-015: no remedy is offered — a clinic added again gets a NEW
+# clinic id (ids are never re-minted), so it never matches this record.
+CHECKOUT_CLINIC_GONE_LINE: Final = (
+    "Linked to a Cliniko treatment note in a clinic that is no longer set up in this app - "
+    "this recording cannot be written back to Cliniko."
+)
+CHECKOUT_CHECK_STOPPED_LINE: Final = (
+    "Linked to a Cliniko treatment note - the check with Cliniko stopped unexpectedly; "
+    "write-back stays blocked. Open the session again to retry."
+)
+
+# Why a note did not verify (D4's named refusals), as the plain reason shown
+# beside a refused Start or a refused re-check. No id, name or key.
+NOTE_REFUSAL_REASONS: Final[Mapping[NoteRefusal, str]] = {
+    NoteRefusal.CLINIC_NOT_SET_UP: (
+        "this clinic is not set up - add its key on the Clinics tab"
+    ),
+    NoteRefusal.CLINIC_MISMATCH: "the note is not in this clinic's Cliniko account",
+    NoteRefusal.PATIENT_MISMATCH: "the note belongs to a different patient than the page",
+    NoteRefusal.NOTE_FINAL: "the note is already final in Cliniko",
+    NoteRefusal.NOTE_ARCHIVED: "the note has been archived or deleted in Cliniko",
+    NoteRefusal.WRONG_PRACTITIONER: "the note belongs to another practitioner",
+    NoteRefusal.NOTE_NOT_FOUND: "Cliniko has no such note for this key",
+    NoteRefusal.KEY_REJECTED: (
+        "Cliniko rejected the clinic's API key - replace it on the Clinics tab"
+    ),
+    NoteRefusal.KEY_UNAVAILABLE: (
+        "the clinic's API key could not be read from Windows Credential Manager - "
+        "replace it on the Clinics tab"
+    ),
+    NoteRefusal.CERTIFICATE_REJECTED: "Cliniko's certificate was not trusted",
+    NoteRefusal.ANSWER_UNREADABLE: "Cliniko's answer could not be read",
+}
+
+
+def note_refusal_line(reason: NoteRefusal) -> str:
+    return NOTE_REFUSAL_REASONS[reason]
+
+
+def recovery_link_line(has_encounter: bool) -> str:
+    return RECOVERY_ENCOUNTER_LINE if has_encounter else RECOVERY_NO_ENCOUNTER_LINE
+
+
+def checkout_link_line(
+    record: EncounterRecord | None,
+    *,
+    checking: bool,
+    outcome: VerificationOutcome | None,
+    clinic_known: bool,
+) -> str:
+    """The recovered checkout's link line (Task 3.4). ``record`` None: the
+    encounter record was missing or undecryptable."""
+    if record is None:
+        return CHECKOUT_CONSENT_UNAVAILABLE_LINE
+    if record.context is None:
+        return CHECKOUT_UNLINKED_LINE
+    if not clinic_known:
+        return CHECKOUT_CLINIC_GONE_LINE
+    if checking:
+        return CHECKOUT_REVERIFYING_LINE
+    if isinstance(outcome, Verified):
+        return CHECKOUT_VERIFIED_LINE
+    if isinstance(outcome, UnverifiedOffline):
+        return CHECKOUT_OFFLINE_LINE
+    if isinstance(outcome, NoteRefused):
+        return (
+            "Linked to a Cliniko treatment note, but Cliniko did not verify it: "
+            f"{note_refusal_line(outcome.reason)}. Write-back is blocked."
+        )
+    return CHECKOUT_CHECK_STOPPED_LINE
+
+
+def session_link_line(session: RecordingSession | None) -> str:
+    """The Session screen's link line for the tracked session (ids never
+    shown). No session, a finished one, or an unlinked one: not linked."""
+    context = session.encounter_context if session is not None else None
+    if session is None or session.is_terminal or context is None:
+        return NOT_LINKED_DETAIL
+    if context.verification is Verification.VERIFIED:
+        return LINKED_VERIFIED_LABEL
+    return LINKED_UNVERIFIED_LABEL
+
 
 class SessionControllerLike(Protocol):
     """The controller surface the screens depend on (fakes in tests)."""
@@ -166,7 +306,15 @@ class SessionControllerLike(Protocol):
     @property
     def session(self) -> RecordingSession | None: ...
 
-    def start(self, device_id: int) -> RecordingSession: ...
+    # Cliniko workflow safeguards plan Task 3.3: consent is required on every
+    # Start (Constraint 4); ``context`` None is an unlinked recording.
+    def start(
+        self,
+        device_id: int,
+        *,
+        consent: ConsentAttestation,
+        context: EncounterContext | None = None,
+    ) -> RecordingSession: ...
 
     def pause(self) -> RecordingSession: ...
 
@@ -286,6 +434,13 @@ class RecoverableSessionInfo:
     created_at: float | None  # POSIX seconds; None when unreadable
     store_finished: bool  # False -> UNFINISHED_STORE_WARNING must be shown
     has_audio: bool
+    # Cliniko workflow safeguards plan Task 3.4 / D6: by STAT only — the
+    # listing never decrypts anything (Critical Constraint 7). Whether a
+    # present ``encounter.enc`` is LINKED is known only after the checkout
+    # decrypts it.
+    has_transcript: bool
+    has_note: bool
+    has_encounter: bool
 
 
 def list_recoverable_sessions(
@@ -362,6 +517,9 @@ def list_recoverable_sessions(
                 created_at=created_at,
                 store_finished=store_finished,
                 has_audio=has_audio,
+                has_transcript=(child / TRANSCRIPT_FILENAME).is_file(),
+                has_note=(child / NOTE_FILENAME).is_file(),
+                has_encounter=(child / ENCOUNTER_FILENAME).is_file(),
             )
         )
     return infos
@@ -2673,6 +2831,26 @@ __all__ = [
     "LIVE_FALLBACK_STATUS",
     "LIVE_TRANSCRIPT_HEADER",
     "LIVE_TRANSCRIPT_PLACEHOLDER",
+    "RECORDING_CONSENT_LABEL",
+    "CONSENT_REQUIRED_MESSAGE",
+    "NOT_LINKED_LABEL",
+    "NOT_LINKED_DETAIL",
+    "LINKED_VERIFIED_LABEL",
+    "LINKED_UNVERIFIED_LABEL",
+    "session_link_line",
+    "RECOVERY_NO_ENCOUNTER_LINE",
+    "RECOVERY_ENCOUNTER_LINE",
+    "CHECKOUT_CONSENT_UNAVAILABLE_LINE",
+    "CHECKOUT_UNLINKED_LINE",
+    "CHECKOUT_REVERIFYING_LINE",
+    "CHECKOUT_VERIFIED_LINE",
+    "CHECKOUT_OFFLINE_LINE",
+    "CHECKOUT_CLINIC_GONE_LINE",
+    "CHECKOUT_CHECK_STOPPED_LINE",
+    "NOTE_REFUSAL_REASONS",
+    "note_refusal_line",
+    "recovery_link_line",
+    "checkout_link_line",
     "LiveTranscriberSource",
     "LEARNING_STALE_CONSENT_HINT",
     "LEARNING_UNUSABLE_HINT",

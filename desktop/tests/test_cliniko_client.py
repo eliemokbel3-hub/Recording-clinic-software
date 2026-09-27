@@ -856,16 +856,19 @@ class TestConfinement:
         assert "native_host" in seen and "protocol" in seen
         assert "cliniko_client" not in seen
 
-    def test_only_the_clinic_registry_imports_the_client(self) -> None:
+    def test_only_the_clinic_registry_and_note_verification_import_the_client(
+        self,
+    ) -> None:
         """Task 1.1 built the client with no caller; Task 2.1b's clinic
-        registry is the first, for the Clinics tab's Validate / Replace key
-        (the data-flow map's flow 18 and the threat model's "Cliniko API
-        client" say so). Note verification (Phase 3) adds the next caller —
-        and must update this pin together with those docs."""
+        registry is the first, for the Clinics tab's Validate / Replace key,
+        and Task 3.2's note verification (``encounter.verify_note_context``)
+        the second (the data-flow map's flow 18 and the threat model's
+        "Cliniko API client" say so). A new caller must update this pin
+        together with those docs."""
         importers = sorted(
             path.relative_to(SRC).as_posix()
             for path in SRC.rglob("*.py")
             if path.name != "cliniko_client.py"
             and any("cliniko_client" in name for name in _imports(path))
         )
-        assert importers == ["clinics.py"]
+        assert importers == ["clinics.py", "encounter.py"]

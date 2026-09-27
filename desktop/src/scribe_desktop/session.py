@@ -4,10 +4,12 @@
 supersedes Phase 1's throwaway `ConnectionState` (now retired).
 
 `RecordingSession` carries the PLAN.md fields: session identifier,
-encounter context, encryption-key reference and timestamps. In Phase 2
-there is no Chrome-side encounter context yet (that is Phase 5), so
-`encounter_context` is optional. `key_reference` is a REFERENCE to the
-DPAPI-wrapped key blob (a filesystem path string) — never key material.
+encounter context, consent, encryption-key reference and timestamps. The
+Cliniko workflow safeguards plan (D3) types them: `encounter_context` is the
+`EncounterContext` a linked Start verified (None when unlinked) and
+`consent` the REQUIRED `ConsentAttestation`. `key_reference` is a REFERENCE
+to the DPAPI-wrapped key blob (a filesystem path string) — never key
+material.
 
 Step 4 adds :class:`SessionController` — the state machine wiring
 start/pause/resume/finish/discard/Complete across capture ↔ store ↔ key
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import secrets
 import threading
 import uuid
 from collections.abc import Callable
@@ -47,9 +50,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from scribe_desktop.audio_capture import CaptureBackend, CaptureWorker
+from scribe_desktop.encounter import (
+    ConsentAttestation,
+    EncounterContext,
+    EncounterRecord,
+    bind_consent,
+    write_encounter_record,
+)
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
@@ -118,6 +128,12 @@ def _new_session_id() -> str:
     return uuid.uuid4().hex
 
 
+def _new_session_ref() -> str:
+    """D2's opaque session reference: 24 url-safe characters — never the
+    32-hex session id (so never the directory name), never persisted."""
+    return secrets.token_urlsafe(18)
+
+
 def _tee_sink(
     store: SessionChunkStore, live_worker: LiveTranscriber | None
 ) -> Callable[[bytes], int]:
@@ -165,9 +181,15 @@ class RecordingSession(BaseModel):
     # pattern keeps it safe as a single filesystem path segment
     # (sessions/<id>/) and as whitelisted log metadata (PR-MED-002).
     session_id: str = Field(default_factory=_new_session_id, pattern=SESSION_ID_PATTERN)
-    # Phase 5 delivers the real EncounterContext from Chrome; until then an
-    # opaque optional reference keeps the PLAN.md shape without inventing data.
-    encounter_context: str | None = Field(default=None, max_length=256)
+    # Cliniko workflow safeguards plan D3: the Cliniko note this recording is
+    # bound to at Start (ids only), or None for an UNLINKED recording. Frozen
+    # with the session: no path re-binds a session to another note.
+    encounter_context: EncounterContext | None = None
+    # Constraint 4 / Task 3.1 decision: REQUIRED on the model, not only at
+    # start(), so no construction path yields a session without consent.
+    # ``bind_consent`` ties it to the context (an unlinked consent names no
+    # note; a linked one names exactly the context's note).
+    consent: ConsentAttestation
     # Opaque reference to the DPAPI-wrapped session key blob. NEVER key
     # material, and NEVER a caller-supplied path (PR-MED-003): the only legal
     # value is the literal filename "key.dpapi"; Step 2 resolves it strictly
@@ -177,6 +199,11 @@ class RecordingSession(BaseModel):
     state: SessionState = SessionState.IDLE
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
+
+    @model_validator(mode="after")
+    def _consent_bound(self) -> RecordingSession:
+        bind_consent(self.consent, self.encounter_context)
+        return self
 
     def with_state(self, state: SessionState) -> RecordingSession:
         """Return a copy in `state` with a fresh `updated_at` timestamp.
@@ -250,6 +277,11 @@ class SessionActivityError(SessionControllerError):
     there is no session in the state the operation requires."""
 
 
+class ConsentRequiredError(SessionControllerError):
+    """``start()`` was called without a ``ConsentAttestation``, or with one
+    that does not name the context's note (Constraint 4)."""
+
+
 class GenerationInProgressError(SessionControllerError):
     """The operation would destroy or retire custody state a live note
     generation depends on (Task 6.3). Refused while the generation lease is
@@ -305,6 +337,9 @@ class _LiveSession:
     # processing callable claims it through ``claim_live_transcriber`` under
     # the ``transcribing`` guard, after which the callable owns it.
     live_transcriber: LiveTranscriber | None = None
+    # Cliniko workflow safeguards plan D2: this session's opaque reference in
+    # the controller's reference registry (minted at start).
+    session_ref: str | None = None
 
 
 class SessionController:
@@ -384,6 +419,14 @@ class SessionController:
         # is the reason begin_enrolment() refuses.
         self._enrolment: EnrolmentLease | None = None
         self._enrolment_blocker: Callable[[], str | None] | None = None
+        # Cliniko workflow safeguards plan D2 (peer r2 PR-MED-001): THE
+        # reference registry, session_ref -> session_id, in memory for the
+        # controller's lifetime and never persisted. A ref is minted by
+        # start(), kept through retirement (the live ref becomes the indexed
+        # ref) and removed when its session is completed or discarded;
+        # ``forget_session_ref`` removes an expired one. A session-bound
+        # command resolves to exactly the entry its ref names.
+        self._session_refs: dict[str, str] = {}
 
     # --- observers ---------------------------------------------------------
 
@@ -404,6 +447,29 @@ class SessionController:
             live = self._live
             return live.worker.level if live is not None and live.worker is not None else 0.0
 
+    @property
+    def session_ref(self) -> str | None:
+        """The tracked session's D2 reference (None with no session)."""
+        with self._lock:
+            return self._live.session_ref if self._live is not None else None
+
+    def resolve_session_ref(self, session_ref: str) -> str | None:
+        """The session id ``session_ref`` names, or None when it no longer
+        resolves (completed, discarded, expired, or minted before a restart)
+        — a named refusal for the caller, never "the newest session"."""
+        with self._lock:
+            return self._session_refs.get(session_ref)
+
+    def forget_session_ref(self, session_id: str) -> None:
+        """Remove every reference to ``session_id`` (its session expired or
+        was removed outside the controller)."""
+        with self._lock:
+            self._forget_refs_locked(session_id)
+
+    def _forget_refs_locked(self, session_id: str) -> None:
+        for ref in [r for r, sid in self._session_refs.items() if sid == session_id]:
+            del self._session_refs[ref]
+
     def active_session_ids(self) -> frozenset[str]:
         """Session ids the expiry sweep must skip (keyed off STATE — plan
         Critical Constraint: the sweep never touches recording/paused/
@@ -416,13 +482,37 @@ class SessionController:
 
     # --- controls ----------------------------------------------------------
 
-    def start(self, device_id: int) -> RecordingSession:
+    def start(
+        self,
+        device_id: int,
+        *,
+        consent: ConsentAttestation,
+        context: EncounterContext | None = None,
+    ) -> RecordingSession:
         """Start a new recording session.
 
+        Refused (``ConsentRequiredError``, before anything is created)
+        without a ``ConsentAttestation``, or with one that does not name
+        ``context``'s note (Constraint 4). ``context`` None is an UNLINKED
+        recording (the desktop Start); a linked Start passes the context its
+        verification produced.
+
         Ordering (binding key-custody decision): session dir -> DPAPI-wrap
-        the fresh session key to ``key.dpapi`` (atomic, durable) -> ONLY
-        THEN create ``audio.enc`` -> start the capture worker (the single
-        writer) -> state=recording."""
+        the fresh session key to ``key.dpapi`` (atomic, durable) -> write
+        ``encounter.enc`` (the consent and context, D11; atomic, durable) ->
+        ONLY THEN create ``audio.enc`` -> start the capture worker (the
+        single writer) -> state=recording. A crash after the key leaves no
+        audio without its consent record."""
+        if not isinstance(consent, ConsentAttestation):
+            raise ConsentRequiredError("start refused: no recording consent was given")
+        if context is not None and not isinstance(context, EncounterContext):
+            raise SessionControllerError("start refused: the encounter context is malformed")
+        try:
+            bind_consent(consent, context)
+        except ValueError:
+            raise ConsentRequiredError(
+                "start refused: the consent does not name this note"
+            ) from None
         with self._lock:
             # Task 6.3: start() on a queued session RETIRES it — dropping the
             # in-memory handle (directory, crypto) a generation worker
@@ -440,7 +530,9 @@ class SessionController:
                 # a recoverable session stays recoverable via the sweep and
                 # recovery screen.
                 self._retire_locked(live)
-            session = RecordingSession(key_reference="key.dpapi")  # state defaults to idle
+            session = RecordingSession(  # state defaults to idle
+                key_reference="key.dpapi", consent=consent, encounter_context=context
+            )
             directory = self._root / session.session_id
             crypto = SessionCrypto()
             try:
@@ -451,6 +543,14 @@ class SessionController:
             live_worker: LiveTranscriber | None = None
             try:
                 wrap_key_to_file(crypto, directory)  # key BEFORE first chunk
+                # D11: the consent (and context) record, after the key and
+                # BEFORE audio.enc; the failure cleanup below removes it.
+                write_encounter_record(
+                    directory,
+                    crypto,
+                    session.session_id,
+                    EncounterRecord(consent=consent, context=context),
+                )
                 store = SessionChunkStore.create(
                     directory / AUDIO_FILENAME, crypto, session.session_id
                 )
@@ -483,6 +583,8 @@ class SessionController:
                 raise
             live = _LiveSession(session, directory, crypto, store, worker)
             live.live_transcriber = live_worker
+            live.session_ref = _new_session_ref()
+            self._session_refs[live.session_ref] = session.session_id
             self._live = live
             self._transition_locked(live, SessionState.RECORDING)
             return live.session
@@ -1070,6 +1172,7 @@ class SessionController:
             self._refuse_while_generating("complete")
             self._refuse_reserved_target_locked(directory, "complete")
             complete_session(directory, crypto)
+            self._forget_refs_locked(directory.name)  # D2: its ref stops resolving
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
         """Discard a RECOVERED session (key-first cryptographic deletion),
@@ -1078,6 +1181,7 @@ class SessionController:
             self._refuse_while_generating("discard")
             self._refuse_reserved_target_locked(directory, "discard")
             discard_session(directory, crypto)
+            self._forget_refs_locked(directory.name)  # D2: its ref stops resolving
 
     def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None:
         """Zeroize a recovered checkout's in-memory key copy (disk custody
@@ -1184,6 +1288,9 @@ class SessionController:
         if target not in LEGAL_TRANSITIONS[current]:
             raise IllegalTransitionError(f"illegal transition {current} -> {target}")
         live.session = live.session.with_state(target)
+        if target in TERMINAL_STATES:
+            # D2: a completed or discarded session's reference stops resolving.
+            self._forget_refs_locked(live.session.session_id)
         if self._logger is not None:
             log_event(
                 self._logger,

@@ -22,6 +22,13 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import scribe_desktop.note_config as note_config_module  # noqa: E402
 from scribe_desktop.audio_capture import AudioDevice  # noqa: E402
 from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
+from scribe_desktop.encounter import (  # noqa: E402
+    ConsentAttestation,
+    EncounterContext,
+    Verification,
+    linked_consent,
+    unlinked_consent,
+)
 from scribe_desktop.enrolment import (  # noqa: E402
     EnrolmentCancelledError,
     EnrolmentProgress,
@@ -67,6 +74,7 @@ from scribe_desktop.note_config import (  # noqa: E402
 )
 from scribe_desktop.secure_storage import SessionCrypto  # noqa: E402
 from scribe_desktop.session import (  # noqa: E402
+    ConsentRequiredError,
     EnrolmentLease,
     GenerationInProgressError,
     GenerationLease,
@@ -192,6 +200,8 @@ class FakeController:
         self.enrolment_lease: EnrolmentLease | None = None
         self.blocker: Callable[[], str | None] | None = None
         self.end_enrolment_hook: Callable[[], None] | None = None
+        # Cliniko safeguards Task 3.3: the consent and context of every Start.
+        self.started_with: list[tuple[ConsentAttestation, EncounterContext | None]] = []
 
     @property
     def state(self) -> SessionState:
@@ -206,10 +216,20 @@ class FakeController:
         return self.session_value
 
     def _session(self) -> RecordingSession:
-        return RecordingSession().with_state(self.state_value)
+        return RecordingSession(consent=unlinked_consent()).with_state(self.state_value)
 
-    def start(self, device_id: int) -> RecordingSession:
+    def start(
+        self,
+        device_id: int,
+        *,
+        consent: ConsentAttestation,
+        context: EncounterContext | None = None,
+    ) -> RecordingSession:
+        # Mirrors the real controller's Constraint-4 refusal.
+        if not isinstance(consent, ConsentAttestation):
+            raise ConsentRequiredError("start refused: no recording consent was given")
         self.calls.append(("start", device_id))
+        self.started_with.append((consent, context))
         self.state_value = SessionState.RECORDING
         return self._session()
 
@@ -1781,11 +1801,15 @@ def _session_screen(
     factory = (lambda: transcriber) if transcriber is not None else (
         lambda: (lambda d, c: _document())
     )
-    return SessionScreen(
+    screen = SessionScreen(
         controller,
         device_provider=lambda: device,
         transcriber_factory=factory,  # type: ignore[arg-type]
     )
+    # Cliniko safeguards Task 3.3: the consent tick gates Start; the existing
+    # screen tests start ticked (the tick tests below start from the default).
+    screen.consent_checkbox.setChecked(True)
+    return screen
 
 
 class TestSessionScreen:
@@ -1855,11 +1879,13 @@ class TestSessionScreen:
         screen.on_start()
         assert started == [1]
 
-        def failing_start(device_id: int) -> Any:
+        def failing_start(device_id: int, **_kwargs: Any) -> Any:
             raise RuntimeError("no device")
 
         controller.start = failing_start  # type: ignore[method-assign]
         controller.state_value = SessionState.IDLE
+        screen.refresh()
+        screen.consent_checkbox.setChecked(True)  # cleared by the first Start
         screen.on_start()
         assert started == [1]  # not emitted on the failed Start
         assert "Start failed" in screen.message_label.text()
@@ -1932,6 +1958,10 @@ class TestSessionScreen:
         screen.on_discard()
         assert ("discard",) in controller.calls
         assert "cryptographically deleted" in screen.message_label.text()
+        # Task 3.3: Start was cleared of its consent tick, so the next
+        # recording needs a fresh tick before Start enables.
+        assert not screen.start_button.isEnabled()
+        screen.consent_checkbox.setChecked(True)
         assert screen.start_button.isEnabled()
         screen.deleteLater()
 
@@ -1946,6 +1976,131 @@ class TestSessionScreen:
         screen.on_discard()
         assert emitted == [1]
         assert ("discard",) in controller.calls
+        screen.deleteLater()
+
+
+def _linked_context(
+    verification: Verification = Verification.VERIFIED,
+) -> EncounterContext:
+    return EncounterContext(
+        clinic_id="0123456789abcdef",
+        clinic_host="northside.au2.cliniko.com",
+        patient_id="10",
+        treatment_note_id="20",
+        practitioner_id="30",
+        verification=verification,
+        verified_at=datetime.now(UTC) if verification is Verification.VERIFIED else None,
+    )
+
+
+class TestSessionScreenConsent:
+    """Cliniko workflow safeguards plan Task 3.3 (Constraint 4): the desktop
+    consent tick and the "Not linked to a Cliniko note" line."""
+
+    def _screen(self, controller: FakeController) -> Any:
+        screen = _session_screen(controller)
+        screen.consent_checkbox.setChecked(False)  # the screen's own default
+        return screen
+
+    def test_the_tick_carries_plan_wording_and_is_never_pre_ticked(self, qapp: Any) -> None:
+        from scribe_desktop.encounter import RECORDING_CONSENT_TEXT
+        from scribe_desktop.ui.session_screen import SessionScreen
+
+        screen = SessionScreen(FakeController(), device_provider=lambda: 7)
+        assert screen.consent_checkbox.text() == RECORDING_CONSENT_TEXT
+        assert RECORDING_CONSENT_TEXT == (
+            "I confirm the patient has consented to AI-assisted recording and documentation"
+        )
+        assert not screen.consent_checkbox.isChecked()
+        assert not screen.start_button.isEnabled()  # disabled, not error-handled
+        screen.consent_checkbox.setChecked(True)
+        assert screen.start_button.isEnabled()
+        screen.deleteLater()
+
+    def test_start_without_the_tick_is_refused_and_calls_nothing(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller)
+        screen.on_start()
+        assert controller.calls == []
+        assert screen.message_label.text() == models.CONSENT_REQUIRED_MESSAGE
+        screen.deleteLater()
+
+    def test_the_desktop_start_records_an_unlinked_consent_and_clears_the_tick(
+        self, qapp: Any
+    ) -> None:
+        controller = FakeController()
+        screen = self._screen(controller)
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert controller.calls == [("start", 7)]
+        consent, context = controller.started_with[0]
+        assert isinstance(consent, ConsentAttestation)
+        assert consent.treatment_note_id is None and context is None
+        assert not screen.consent_checkbox.isChecked()  # cleared after every Start
+        screen.deleteLater()
+
+    def test_a_failed_start_also_clears_the_tick(self, qapp: Any) -> None:
+        controller = FakeController()
+
+        def failing_start(device_id: int, **_kwargs: Any) -> Any:
+            raise RuntimeError("no device")
+
+        controller.start = failing_start  # type: ignore[method-assign]
+        screen = self._screen(controller)
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert "Start failed" in screen.message_label.text()
+        assert not screen.consent_checkbox.isChecked()
+        assert not screen.start_button.isEnabled()
+        screen.deleteLater()
+
+    def test_start_linked_passes_its_consent_and_context(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller)
+        context = _linked_context()
+        consent = linked_consent(context)
+        started: list[int] = []
+        screen.session_started.connect(lambda: started.append(1))
+        screen.start_linked(consent, context)
+        assert controller.started_with == [(consent, context)]
+        assert started == [1]
+        assert not screen.consent_checkbox.isChecked()
+        screen.deleteLater()
+
+    def test_the_link_line_says_not_linked_when_idle_and_unlinked(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller)
+        assert screen.link_label.text() == models.NOT_LINKED_DETAIL
+        assert models.NOT_LINKED_LABEL in screen.link_label.text()
+        controller.session_value = RecordingSession(consent=unlinked_consent()).with_state(
+            SessionState.RECORDING
+        )
+        controller.state_value = SessionState.RECORDING
+        screen.refresh()
+        assert screen.link_label.text() == models.NOT_LINKED_DETAIL
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "verification, expected",
+        [
+            (Verification.VERIFIED, models.LINKED_VERIFIED_LABEL),
+            (Verification.UNVERIFIED_OFFLINE, models.LINKED_UNVERIFIED_LABEL),
+        ],
+    )
+    def test_the_link_line_for_a_linked_session_names_no_patient(
+        self, qapp: Any, verification: Verification, expected: str
+    ) -> None:
+        controller = FakeController()
+        screen = self._screen(controller)
+        context = _linked_context(verification)
+        controller.session_value = RecordingSession(
+            consent=linked_consent(context), encounter_context=context
+        ).with_state(SessionState.RECORDING)
+        controller.state_value = SessionState.RECORDING
+        screen.refresh()
+        assert screen.link_label.text() == expected
+        for identifier in ("10", "20", "30", "northside"):
+            assert identifier not in screen.link_label.text()
         screen.deleteLater()
 
 
@@ -2738,6 +2893,7 @@ class TestMainWindow:
         controller.session_value = RecordingSession.model_construct(
             session_id=session_id,
             encounter_context=None,
+            consent=unlinked_consent(),
             key_reference="key.dpapi",
             state=SessionState.QUEUED,
             created_at=datetime.now(UTC),

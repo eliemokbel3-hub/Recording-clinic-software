@@ -65,6 +65,16 @@ view patterns · tokens · microcopy.
   box unticked with a one-line notice asking for a fresh tick (`CONSENT_STALE_NOTICE`),
   with "Confirm consent" saving the new consent (and the learning opt-in) without a
   re-record.
+- **Recording consent is per recording and never pre-ticked** (Cliniko workflow safeguards
+  plan, Task 3.3; PLAN.md Flow 2 step 4). The Session screen's box, directly above Start
+  under the verbatim text (`ui/models.py` `RECORDING_CONSENT_LABEL`), starts unticked,
+  Start is disabled until it is ticked, and every Start press clears it — the explicit
+  exception to "a stored consent record pre-ticks the box" above, because this consent
+  belongs to one patient's recording and nothing stored may stand in for it. Above the
+  box a plain-text line says whether the recording is linked to a Cliniko note; a desktop
+  Start is always "Not linked to a Cliniko note", with a line saying it cannot be written
+  back. No id or patient name is ever shown there. A recovered session names its link
+  status only after it is opened (the listing says "Cliniko link checked when opened").
 - **Edits over whole lines, with typing only OVER a line.** The Note tab's "Edit the note"
   group offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
   transcript utterances under the router's ownership rule as before; Edit opens a one-line

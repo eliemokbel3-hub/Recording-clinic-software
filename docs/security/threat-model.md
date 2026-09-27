@@ -1263,12 +1263,16 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
 The app's offline contract is now **no connection except Cliniko's API, and
 none at startup or idle**. `scribe-app` holds exactly one network-capable
 module, `desktop/src/scribe_desktop/cliniko_client.py` (flow 18 of the
-data-flow map); the native host has none and never imports it. Its one app
-caller is the clinic registry (`clinics.py`, Phase 2): a Validate or Replace
-key pressed on the Clinics tab makes ONE client call, on a worker thread;
-nothing calls it at startup, on a timer or while idle (CLINIC KEYS below).
-Note verification (the plan's Phase 3) adds the next caller and extends this
-section.
+data-flow map); the native host has none and never imports it. It has two
+app callers, each making ONE client call on a worker thread in answer to a
+practitioner action, never at startup, on a timer or while idle: the clinic
+registry (`clinics.py`, Phase 2) on a Validate or Replace key press on the
+Clinics tab (CLINIC KEYS below), and note verification (`encounter.py`
+`verify_note_context`, Phase 3) — dispatched today only when the
+practitioner opens a recovered session for checkout and its encounter record
+names a Cliniko note, or when a clinic changes while that checkout is open
+(NOTE VERIFICATION below). The Chrome-driven verification of a note report is
+Phase 4's pipe; its GUI-thread ledger is built and unwired.
 
 CONFINEMENT. Ruff TID251 bans `socket`, `http`, `urllib.request` and
 `PySide6.QtNetwork` across `desktop/`; the ONE exemption is the client's
@@ -1276,7 +1280,7 @@ CONFINEMENT. Ruff TID251 bans `socket`, `http`, `urllib.request` and
 count at exactly one, that no other module under `desktop/src` imports
 `http`, `ssl`, `socket`, `urllib.request` or `PySide6.QtNetwork`, that the
 native host's import closure never reaches the client, and that `clinics.py`
-is the only module that imports it. Residue: these are SOURCE checks, so a dynamic import
+and `encounter.py` are the only modules that import it. Residue: these are SOURCE checks, so a dynamic import
 (`importlib.import_module`) is outside them; the runtime check is the
 no-sockets integration test (host, app startup and idle, capture,
 transcription, prose), which asserts zero connections.
@@ -1375,7 +1379,8 @@ GUI thread only when its captured rev is still current — so a delayed result
 after a Replace or a Remove, or a check whose key was replaced between its
 requests, commits nothing and cannot restore a removed clinic. Remove takes
 a second, confirming click and is refused while the live session is linked
-to that clinic (until Phase 3 links sessions to clinics, none is). Write
+to that clinic (its `EncounterContext` names the clinic id; an unlinked
+session blocks no Remove). Write
 order, so no failure leaves a key at rest that the registry does not list: a
 new clinic writes the file, then stores the key (a failed store deletes
 whatever it may have written, then rewrites the file without it — if either
@@ -1383,8 +1388,9 @@ step fails the clinic stays listed for Remove); Remove deletes the key, then
 rewrites the file. Residue: a
 Replace whose file write fails leaves the NEW key in Credential Manager under
 the OLD record (the rev is bumped so nothing pending commits; the stored
-practitioner id is then checked against what the new key reports at the next
-verification, Phase 3); a new clinic whose key store fails and whose cleanup
+practitioner id is then compared with the note's practitioner link at every
+note verification, so a note of the new key's practitioner is refused
+`wrong_practitioner` until the clinic is re-validated); a new clinic whose key store fails and whose cleanup
 (the key delete or the file rewrite) also fails stays listed — with no key,
 or with whatever the failed store wrote — until Remove; the typed key has
 two lifetimes, both never zeroed, as (2): as a Python `str` it is held in
@@ -1393,6 +1399,62 @@ dropped (the check thread's closure keeps no reference, round 15 MED-006),
 and separately the line edit's own storage, which `setText("")` releases
 but does not zero, may keep the bytes until Qt or the allocator reuses
 them, whatever the commit does.
+
+NOTE VERIFICATION (Phase 3, Tasks 3.1–3.6, D3/D4/D11; `encounter.py`, the
+checkout in `ui/main_window.py`). `verify_note_context` runs on a worker
+thread and never raises: it refuses a note whose URL host is not the clinic's
+recorded host before any request, then makes ONE client call whose key source
+reads Credential Manager once (`KeyStore.retrieve`; a failed or empty read is
+the named refusal `key_unavailable`, not an exception). That call is
+`GET /treatment_notes/<id>` — the note's patient link must equal the URL's
+patient, the note must be an open draft (`draft` true, `finalized_at`,
+`archived_at` and `deleted_at` null), its practitioner link must equal the
+clinic's recorded practitioner — then `GET /patients/<id>` and, when the note
+links one, `GET /bookings/<id>`. Every assumption about those answers' shape
+sits in one commented block (Task P.1, clinic 1; clinic 2 owed); an answer
+without it is `answer_unreadable`. Outcomes: VERIFIED (a context of ids and a
+timestamp), `unverified_offline` (a connection failure, timeout, 5xx or 429 —
+ids only, never a write target), or a named refusal carrying a reason code
+only. The patient's display name (control and format characters replaced,
+one line, at most 120 characters) and the appointment time travel as a
+separate `NoteDisplay`, in memory only: no model, record, log line or file
+holds them, and this phase shows them nowhere. A result is applied on the GUI
+thread only when it is the one the current checkout dispatched (request
+identity) and, for the ledger, only for the current connection generation,
+the current report run, the same target and an unmoved `clinic_rev`; its
+per-note throttle reuses a VERIFIED outcome for the same note, connection
+and `clinic_rev` for at most 60 s (never a refusal or an offline outcome),
+and drops expired entries — with their display strings — at the next
+report. The logging tripwire refuses `patient_id`, `treatment_note_id` and
+`patient_display_name` field names in a log payload.
+
+THE ENCOUNTER RECORD. `SessionController.start` refuses without a
+`ConsentAttestation` (the practitioner's tick; the Session screen never
+pre-ticks it and clears it after every Start) and binds it to the optional
+`EncounterContext`: an unlinked consent names no note; a linked one names
+exactly the context's note and, if it names a practitioner (the field is
+optional, D3), the context's practitioner — `linked_consent`, the only
+production constructor of a linked consent, always names it. The same rule
+runs in `RecordingSession` and `EncounterRecord`, so no construction path
+skips it.
+Start writes `encounter.enc` (consent plus context, ids only) under the
+session key with AAD `encounter:<session_id>`, after `key.dpapi` and before
+any audio, for EVERY session, linked or not; a failed write refuses the
+start. It is decrypted in one place — a recovered session opened for
+checkout (Critical Constraint 7) — and the recovery listing learns only
+whether the file exists. A missing or unreadable record reads as "consent
+unavailable": that session is treated as unlinked and has no write target.
+
+THE WRITE-BACK GUARD (Constraint 6). `writeback_context` is the only route to
+a `VerifiedTarget`: it needs a bound consent, a context whose clinic is
+still registered with the same host and practitioner, and — for a live
+session and a checked-out one alike — a re-verification of that same note,
+dispatched under the clinic's CURRENT `clinic_rev`, that came back VERIFIED.
+A verification made at Start or stored in `encounter.enc` is never enough on
+its own (round 20 MED-012): a Replace key or Remove since then moved the rev.
+Everything else is a named refusal. Nothing calls it for a write yet (Phase
+4's draft write is the next plan, and brings the pre-write re-verification);
+`encounter.py` has no write method and the client stays GET-only.
 
 RESIDUE. (1) The TLS trust decision is the Windows store's: a root installed
 there — a TLS-inspection proxy's, or a same-user attacker's — is trusted like
@@ -1441,7 +1503,9 @@ deferred from Phase 2); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
 Cliniko keys are first stored (the Clinics tab of the Cliniko workflow
 safeguards plan's Phase 2 is built; the practitioner's first Validate is the
-event) or note verification first calls the Cliniko client (its Phase 3);
+event); a note report from Chrome first reaches note verification (Phase 4's
+pipe — the Phase 3 verification is built and today runs only on a recovered
+checkout) or anything first SHOWS the verification's display strings;
 or the software is installed on the
 second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next

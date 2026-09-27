@@ -18,6 +18,11 @@ On-disk layout (plan Schema / Data Changes), all under
   module only provides the Complete-ordering primitive that consumes it.
 - ``note.enc`` — written by the Phase-3A note pipeline under the SAME key;
   likewise only consumed here, by the same Complete-ordering primitive.
+- ``encounter.enc`` — the recording's consent and Cliniko note context
+  (Cliniko workflow safeguards plan D11), under the SAME key with the
+  associated data ``encounter:<session id>``; written by
+  ``SessionController.start`` between ``key.dpapi`` and ``audio.enc``.
+  Discard's ``rmtree`` and the sweep remove it with the rest.
 
 Durability ordering (BINDING, plan key-custody decision):
 - ``key.dpapi`` is written atomically (temp + fsync + ``os.replace``)
@@ -82,6 +87,10 @@ TRANSCRIPT_FILENAME: Final = "transcript.enc"
 # Phase 3A: the generated note artifact, under the SAME session key as audio
 # and transcript, so cryptographic deletion still destroys everything.
 NOTE_FILENAME: Final = "note.enc"
+# Cliniko workflow safeguards plan D11: the recording's consent and, when
+# linked, its Cliniko note context — written on EVERY start, after the key
+# and before ``audio.enc``, under the SAME key with its own associated data.
+ENCOUNTER_FILENAME: Final = "encounter.enc"
 
 _MAGIC: Final = b"CSS2"
 _FORMAT_VERSION: Final = 1
@@ -846,6 +855,42 @@ def write_note(
     note_path = session_dir / NOTE_FILENAME
     atomic_write_bytes(note_path, crypto.encrypt(note.to_bytes()), error_label="note artifact")
     return note_path
+
+
+def _encounter_aad(session_id: str) -> bytes:
+    """Distinct from every other artifact's (chunks bind their index, the
+    footer ``footer``, transcript and note none), and bound to the session."""
+    return b"encounter:" + validate_session_id(session_id).encode("ascii")
+
+
+def write_encounter(
+    session_dir: Path, crypto: SessionCrypto, session_id: str, plaintext: bytes
+) -> Path:
+    """Encrypt and write ``encounter.enc`` ATOMICALLY (D11). The caller
+    serialises the record (``encounter.EncounterRecord``); this module only
+    holds the bytes' custody."""
+    path = session_dir / ENCOUNTER_FILENAME
+    atomic_write_bytes(
+        path, crypto.encrypt(plaintext, _encounter_aad(session_id)), error_label="encounter record"
+    )
+    return path
+
+
+def read_encounter(session_dir: Path, crypto: SessionCrypto, session_id: str) -> bytes:
+    """Decrypt ``encounter.enc``. Called ONLY on a checkout (Critical
+    Constraint 7) — never by the recovery listing or the sweep. A missing,
+    unreadable or unauthentic file raises ``StoreCorruptError`` (terse), and
+    the caller treats the session as unlinked."""
+    try:
+        blob = (session_dir / ENCOUNTER_FILENAME).read_bytes()
+    except OSError:
+        blob = None
+    if blob is not None:
+        try:
+            return crypto.decrypt(blob, _encounter_aad(session_id))
+        except InvalidTag:
+            pass
+    raise StoreCorruptError("encounter record unavailable")  # outside the except
 
 
 def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:

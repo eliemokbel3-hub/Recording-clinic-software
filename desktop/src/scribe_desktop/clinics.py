@@ -475,6 +475,17 @@ class ClinicRegistry:
     def load_problem(self) -> LoadProblem | None:
         return self._load_problem
 
+    @property
+    def key_store(self) -> KeyStore:
+        """Where the keys live — note verification (``encounter``) reads a
+        clinic's key through it, once per verification, on its worker."""
+        return self._storage
+
+    @property
+    def transport(self) -> Transport | None:
+        """The injected transport (None: the real HTTPS transport)."""
+        return self._transport
+
     def record(self, clinic_id: str) -> ClinicRecord | None:
         return next((r for r in self._records if r.clinic_id == clinic_id), None)
 

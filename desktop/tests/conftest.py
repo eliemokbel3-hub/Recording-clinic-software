@@ -1,11 +1,21 @@
-"""Shared test-side wire helpers (LOW-002): the single place tests build and
-read native-messaging frames and protocol dicts."""
+"""Shared test-side helpers: the wire helpers (LOW-002) — the single place
+tests build and read native-messaging frames and protocol dicts — and the
+consent-bearing Start (Cliniko workflow safeguards plan Task 3.3)."""
 
 import io
 import json
 import struct
+from typing import Any
+
+from scribe_desktop.encounter import unlinked_consent
 
 NONCE = "f" * 32
+
+
+def start_unlinked(controller: Any, device_id: int = 0) -> Any:
+    """``controller.start`` as a desktop Start: an UNLINKED recording with a
+    fresh consent attestation (Constraint 4 — start() refuses without one)."""
+    return controller.start(device_id, consent=unlinked_consent())
 
 
 def frame(value: object) -> bytes:

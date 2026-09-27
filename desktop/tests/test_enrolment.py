@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from conftest import start_unlinked
 from scribe_desktop import enrolment as enrolment_mod
 from scribe_desktop.audio_capture import (
     AudioDevice,
@@ -504,16 +505,16 @@ class TestEnrolmentActivityStartOrders:
         controller, _backend = _controller(tmp_path)
         lease = controller.begin_enrolment()
         with pytest.raises(SessionActivityError, match="start refused"):
-            controller.start(0)
+            start_unlinked(controller)
         assert controller.state is SessionState.IDLE
         assert list(tmp_path.iterdir()) == []  # no session directory was created
         controller.end_enrolment(lease)
-        assert controller.start(0).state is SessionState.RECORDING
+        assert start_unlinked(controller).state is SessionState.RECORDING
         controller.discard()
 
     def test_start_then_enrolment(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        controller.start(0)
+        start_unlinked(controller)
         with pytest.raises(SessionActivityError, match="recording"):
             controller.begin_enrolment()
         controller.pause()
@@ -528,7 +529,7 @@ class TestEnrolmentActivityStartOrders:
         lease = controller.begin_enrolment()  # a queued session holds no microphone
         assert controller.enrolling
         with pytest.raises(SessionActivityError, match="start refused"):
-            controller.start(0)  # the queued session is NOT retired by the refusal
+            start_unlinked(controller)  # the queued session is NOT retired by the refusal
         assert controller.state is SessionState.QUEUED
         controller.end_enrolment(lease)
         controller.discard()

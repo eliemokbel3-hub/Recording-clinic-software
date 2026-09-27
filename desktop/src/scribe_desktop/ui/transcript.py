@@ -181,6 +181,15 @@ class TranscriptScreen(QWidget):
         self.attribution_status_label.setWordWrap(True)
         self.attribution_status_label.hide()
 
+        # Cliniko workflow safeguards plan Task 3.4: a recovered session's
+        # Cliniko link (read from its encounter record on checkout, then
+        # re-checked with Cliniko), shown here because opening a recovered
+        # session lands on this screen (round 20 LOW-014). `MainWindow` owns
+        # the text; empty while no recovered session is checked out.
+        self.link_label = QLabel()
+        self.link_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.link_label.setWordWrap(True)
+
         # --- Task 7.5: pre-generation role + template controls -------------
         self.generate_box = QGroupBox("Generate note")
         generate_layout = QVBoxLayout(self.generate_box)
@@ -267,6 +276,7 @@ class TranscriptScreen(QWidget):
         layout.addWidget(self.transcript_view)
         layout.addWidget(self.legend_label)
         layout.addWidget(self.attribution_status_label)
+        layout.addWidget(self.link_label)
         layout.addWidget(self.generate_box)
         layout.addLayout(buttons)
         layout.addWidget(self.message_label)
@@ -316,6 +326,11 @@ class TranscriptScreen(QWidget):
         already clears through ``_clear``."""
         self.end_live_view()
         self._clear()
+
+    def set_link_line(self, text: str) -> None:
+        """The checked-out recovered session's Cliniko link line ("" clears
+        it). Ids and names never appear in it (`models.checkout_link_line`)."""
+        self.link_label.setText(text)
 
     # --- loading -----------------------------------------------------------
 

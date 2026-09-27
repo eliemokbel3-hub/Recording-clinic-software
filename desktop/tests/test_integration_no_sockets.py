@@ -443,6 +443,7 @@ assert_offline_env()
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import (
     KEY_FILENAME,
@@ -488,7 +489,7 @@ class GatedProvider:
 
 backend = MockCaptureBackend()
 controller = SessionController(backend, sessions_root=root)
-session = controller.start(0)
+session = controller.start(0, consent=unlinked_consent())
 stop = threading.Event()
 
 
@@ -611,6 +612,7 @@ assert_offline_env()
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import (
     KEY_FILENAME,
@@ -682,7 +684,7 @@ backend = MockCaptureBackend()
 controller = SessionController(
     backend, sessions_root=root, live_transcriber_factory=live_factory
 )
-session = controller.start(0)
+session = controller.start(0, consent=unlinked_consent())
 stop = threading.Event()
 second_utterance = threading.Event()
 tone_blocks_fed = [0]
@@ -843,6 +845,7 @@ assert_offline_env()
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import (
     KEY_FILENAME,
@@ -866,7 +869,7 @@ pcm = bytes(chunk_bytes * 6) + speech + bytes(chunk_bytes * 12)
 
 backend = MockCaptureBackend()
 controller = SessionController(backend, sessions_root=root)
-session = controller.start(0)
+session = controller.start(0, consent=unlinked_consent())
 stop = threading.Event()
 
 
@@ -1179,6 +1182,7 @@ apply_offline_env()
 assert_offline_env()
 
 from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.session import SessionController
 from scribe_desktop.speech import SAMPLE_RATE
 
@@ -1211,7 +1215,7 @@ backend = MockCaptureBackend()
 controller = SessionController(
     backend, sessions_root=root, live_transcriber_factory=live_factory
 )
-session = controller.start(0)
+session = controller.start(0, consent=unlinked_consent())
 print("RECORDING %s" % session.session_id, flush=True)
 while True:
     backend.feed(loud)

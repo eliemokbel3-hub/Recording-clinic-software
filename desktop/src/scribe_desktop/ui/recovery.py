@@ -33,6 +33,9 @@ def _describe(info: models.RecoverableSessionInfo) -> str:
     else:
         stamp = "unknown start time"
     label = f"Session {info.session_id[:8]}... ({stamp})"
+    # Task 3.4: from the STAT only — the listing never decrypts, so it names
+    # no clinic or patient; whether the record is linked is read on opening.
+    label += " - " + models.recovery_link_line(info.has_encounter)
     if not info.has_audio:
         return label + " - no audio recorded"
     if not info.store_finished:
@@ -89,7 +92,6 @@ class RecoveryScreen(QWidget):
         # in it as rich text. Same discipline as the proposal excerpt label.
         self.message_label.setTextFormat(Qt.TextFormat.PlainText)
         self.message_label.setWordWrap(True)
-
         self.resume_button = QPushButton("Resume processing")
         self.discard_button = QPushButton("Discard")
         self.refresh_button = QPushButton("Refresh")

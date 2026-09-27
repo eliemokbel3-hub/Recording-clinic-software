@@ -8,6 +8,7 @@ platform-neutral."""
 
 from __future__ import annotations
 
+import re
 import sys
 import threading
 import time
@@ -17,13 +18,24 @@ from typing import Any
 
 import pytest
 
+from conftest import start_unlinked
+from encounter_fakes import NOW, consent_for
+from encounter_fakes import context as enc_context
 from scribe_desktop.audio_capture import DeviceLostError, MockCaptureBackend
+from scribe_desktop.encounter import (
+    ConsentAttestation,
+    EncounterRecord,
+    Verification,
+    read_encounter_record,
+    unlinked_consent,
+)
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
     ACTIVE_STATES,
     LEGAL_TRANSITIONS,
     RECOVERABLE_STATES,
     TERMINAL_STATES,
+    ConsentRequiredError,
     GenerationInProgressError,
     GenerationLease,
     SessionActivityError,
@@ -32,6 +44,8 @@ from scribe_desktop.session import (
     SessionState,
 )
 from scribe_desktop.session_store import (
+    AUDIO_FILENAME,
+    ENCOUNTER_FILENAME,
     KEY_FILENAME,
     NOTE_FILENAME,
     TRANSCRIPT_FILENAME,
@@ -126,7 +140,7 @@ def _start_small_chunks(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(session_mod, "CaptureWorker", patched)
-    controller.start(0)
+    start_unlinked(controller)
 
 
 @windows_only
@@ -156,26 +170,26 @@ class TestControllerFlows:
 
     def test_single_active_session_invariant(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        controller.start(0)
+        start_unlinked(controller)
         for state in (SessionState.RECORDING,):
             assert controller.state is state
         with pytest.raises(SessionActivityError, match="single-active-session"):
-            controller.start(0)
+            start_unlinked(controller)
         controller.pause()
         with pytest.raises(SessionActivityError):
-            controller.start(0)
+            start_unlinked(controller)
         controller.finish()  # processing is still active
         with pytest.raises(SessionActivityError):
-            controller.start(0)
+            start_unlinked(controller)
 
     def test_start_allowed_after_queued_and_old_session_stays_recoverable(
         self, tmp_path: Path
     ) -> None:
         controller, _backend = _controller(tmp_path)
-        first = controller.start(0)
+        first = start_unlinked(controller)
         controller.finish()
         controller.mark_queued()
-        second = controller.start(0)
+        second = start_unlinked(controller)
         assert second.session_id != first.session_id
         # The queued session's custody remains on disk: recoverable.
         assert (tmp_path / first.session_id / KEY_FILENAME).is_file()
@@ -198,13 +212,13 @@ class TestControllerFlows:
 
     def test_finish_from_paused(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        controller.start(0)
+        start_unlinked(controller)
         controller.pause()
         assert controller.finish().state is SessionState.PROCESSING
 
     def test_complete_deletes_key_and_terminates(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -219,7 +233,7 @@ class TestControllerFlows:
 
     def test_complete_failure_keeps_key_and_stays_queued(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -235,7 +249,7 @@ class TestControllerFlows:
     )
     def test_discard_from_every_legal_state(self, tmp_path: Path, prepare: str) -> None:
         controller, backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         if prepare == "paused":
             controller.pause()
@@ -293,7 +307,7 @@ class TestControllerFlows:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         monkeypatch.setattr(
             SessionChunkStore,
             "finish",
@@ -307,7 +321,7 @@ class TestControllerFlows:
         backend = MockCaptureBackend()
         controller = SessionController(backend, sessions_root=tmp_path)
         with pytest.raises(DeviceLostError):
-            controller.start(99)  # no such device
+            start_unlinked(controller, 99)  # no such device
         assert controller.state is SessionState.IDLE
         assert list(tmp_path.iterdir()) == []  # no orphan session dir
 
@@ -352,7 +366,7 @@ class TestControllerFlows:
 
     def test_sweep_skips_active_session_by_state(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         assert controller.active_session_ids() == frozenset({session.session_id})
         # Even with an absurdly old clock the ACTIVE session is untouched.
         results = sweep_sessions(
@@ -381,7 +395,7 @@ class TestIllegalOperations:
         ):
             with pytest.raises(SessionActivityError):
                 operation()
-        controller.start(0)
+        start_unlinked(controller)
         with pytest.raises(SessionActivityError):
             controller.resume()  # recording, not paused
         with pytest.raises(SessionActivityError):
@@ -403,7 +417,7 @@ class TestIllegalOperations:
 
     def test_discard_illegal_after_terminal(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -436,7 +450,7 @@ class TestDiscardStartRace:
         session in that window. Discard must then delete the OLD session's
         artifacts only — never the freshly started recording's key."""
         controller, backend = _controller(tmp_path)
-        old = controller.start(0)
+        old = start_unlinked(controller)
         backend.fail()  # device loss -> failed (recoverable), worker retained
         _wait_for_state(controller, SessionState.FAILED)
         live = controller._live  # noqa: SLF001 - deliberate race injection
@@ -451,7 +465,7 @@ class TestDiscardStartRace:
                 real_worker.stop(flush=flush)
                 if not _RacingWorker.triggered:  # concurrent start exactly once
                     _RacingWorker.triggered = True
-                    started.append(controller.start(0))
+                    started.append(start_unlinked(controller))
 
         live.worker = _RacingWorker()  # type: ignore[assignment]
         discarded = controller.discard()
@@ -583,7 +597,7 @@ class TestGenerationLeaseLivePath:
 
     def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -597,7 +611,7 @@ class TestGenerationLeaseLivePath:
         assert queued is not None
         lease = controller.begin_generation()
         with pytest.raises(GenerationInProgressError, match="start"):
-            controller.start(0)
+            start_unlinked(controller)
         with pytest.raises(GenerationInProgressError, match="complete"):
             controller.complete()
         with pytest.raises(GenerationInProgressError, match="discard"):
@@ -634,7 +648,7 @@ class TestGenerationLeaseLivePath:
         with pytest.raises(GenerationInProgressError):
             controller.complete()
         with pytest.raises(GenerationInProgressError):
-            controller.start(0)
+            start_unlinked(controller)
         # ...the GUI-thread write_note would run here...
         controller.end_generation(lease)
         assert controller.complete().state is SessionState.WRITTEN
@@ -650,7 +664,7 @@ class TestGenerationLeaseLivePath:
         while `discard_session` deletes the key. The reservation clears on
         exit, so a generation can begin normally afterwards."""
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         live = controller._live  # noqa: SLF001 - deliberate race injection
         assert live is not None and live.worker is not None
@@ -735,7 +749,7 @@ class TestGenerationLeaseLivePath:
         from scribe_desktop import session as session_mod
 
         controller, _backend = _controller(tmp_path)
-        controller.start(0)
+        start_unlinked(controller)
 
         def boom(directory: Path, crypto: object = None) -> None:
             raise StoreWriteError("injected discard failure")
@@ -759,7 +773,7 @@ class TestGenerationLeaseLivePath:
         transcript/store mutation; the released discard alone destroys X
         key-first and clears the reservation."""
         controller, _backend = _controller(tmp_path)
-        x = controller.start(0)
+        x = start_unlinked(controller)
         x_dir = tmp_path / x.session_id
         controller.finish()  # PROCESSING; transcribing is False
         live = controller._live  # noqa: SLF001 - deliberate race injection
@@ -816,7 +830,7 @@ class TestGenerationLeaseLivePath:
         discard alone deletes X key-first with the reservation clearing and
         Y's custody intact."""
         controller, _backend = _controller(tmp_path)
-        x = controller.start(0)
+        x = start_unlinked(controller)
         x_dir = tmp_path / x.session_id
         controller.finish()
         controller.mark_queued()
@@ -852,7 +866,7 @@ class TestGenerationLeaseLivePath:
             # The admitted concurrent start(): retires X, installs Y — the
             # round-30 pivot. X's on-disk custody remains, but the live
             # pointer no longer names it.
-            y = controller.start(0)
+            y = start_unlinked(controller)
             assert x.session_id in controller.reserved_session_ids()
             assert y.session_id not in controller.reserved_session_ids()
             # Round 31: the atomic snapshot names BOTH the reserved X and
@@ -926,7 +940,7 @@ class TestGenerationCustodyOp:
 
     def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -963,7 +977,7 @@ class TestGenerationCustodyOp:
 
     def test_refused_when_session_not_queued(self, tmp_path: Path) -> None:
         controller, _backend = _controller(tmp_path)
-        controller.start(0)  # RECORDING, not QUEUED
+        start_unlinked(controller)  # RECORDING, not QUEUED
         lease = controller.begin_generation()
         with pytest.raises(SessionActivityError):
             controller.with_generation_custody(lease, lambda d, c: None)
@@ -980,7 +994,7 @@ class TestCompleteWithoutNote:
 
     def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -1044,7 +1058,7 @@ class TestCompleteDeletingSavedNote:
 
     def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path]:
         controller, _backend = _controller(tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         session_dir = tmp_path / session.session_id
         controller.finish()
         controller.mark_queued()
@@ -1081,3 +1095,278 @@ class TestCompleteDeletingSavedNote:
             controller.complete_deleting_saved_note()
         assert (session_dir / KEY_FILENAME).is_file()  # key retained
         assert controller.state is SessionState.QUEUED
+
+
+# ---------------------------------------------------------------------------
+# Cliniko workflow safeguards plan Task 3.3: consent, target and
+# encounter.enc on start(), and D2's reference registry.
+# ---------------------------------------------------------------------------
+
+
+class _SimulatedCrash(BaseException):  # noqa: N818 - models a process death
+    """Not an ``Exception``: start()'s failure cleanup does not run, exactly
+    as when the process dies between two writes."""
+
+
+def _read_record(directory: Path) -> EncounterRecord:
+    return read_encounter_record(directory, unwrap_key_from_file(directory), directory.name)
+
+
+class TestStartRefusesWithoutConsent:
+    """Constraint 4 on the controller path (platform-neutral: the refusal
+    happens before any custody write)."""
+
+    @pytest.mark.parametrize("consent", [None, "yes", object()], ids=["none", "str", "object"])
+    def test_start_without_a_consent_attestation_is_refused(
+        self, tmp_path: Path, consent: Any
+    ) -> None:
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(ConsentRequiredError):
+            controller.start(0, consent=consent)
+        assert controller.session is None
+        assert list(tmp_path.iterdir()) == []  # nothing created
+
+    def test_start_with_no_consent_argument_is_a_type_error(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(TypeError):
+            controller.start(0)  # type: ignore[call-arg]
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "consent_note, linked",
+        [("2001", False), (None, True), ("2002", True)],
+        ids=["unlinked-consent-names-a-note", "linked-consent-names-none", "another-note"],
+    )
+    def test_a_consent_that_does_not_name_the_note_is_refused(
+        self, tmp_path: Path, consent_note: str | None, linked: bool
+    ) -> None:
+        controller, _ = _controller(tmp_path)
+        consent = ConsentAttestation(confirmed_at=NOW, treatment_note_id=consent_note)
+        with pytest.raises(ConsentRequiredError):
+            controller.start(0, consent=consent, context=enc_context() if linked else None)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_a_context_of_the_wrong_type_is_refused(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(SessionControllerError):
+            controller.start(
+                0, consent=unlinked_consent(), context={"patient_id": "1"}  # type: ignore[arg-type]
+            )
+        assert list(tmp_path.iterdir()) == []
+
+
+@windows_only
+class TestEncounterRecordOnStart:
+    def test_an_unlinked_start_records_its_consent(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        consent = unlinked_consent()
+        session = controller.start(0, consent=consent)
+        directory = tmp_path / session.session_id
+        assert session.consent == consent and session.encounter_context is None
+        record = _read_record(directory)
+        assert record.consent == consent and record.context is None
+        controller.discard()
+
+    def test_a_linked_start_records_consent_and_context(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        ctx = enc_context()
+        consent = consent_for(ctx)
+        session = controller.start(0, consent=consent, context=ctx)
+        assert session.encounter_context == ctx
+        record = _read_record(tmp_path / session.session_id)
+        assert record == EncounterRecord(consent=consent, context=ctx)
+        controller.discard()
+
+    def test_an_unverified_offline_start_records_the_same_way(self, tmp_path: Path) -> None:
+        """The positive matrix case (the rest is in test_cross_patient.py)."""
+        controller, _ = _controller(tmp_path)
+        ctx = enc_context(Verification.UNVERIFIED_OFFLINE)
+        session = controller.start(0, consent=consent_for(ctx), context=ctx)
+        assert session.state is SessionState.RECORDING
+        assert _read_record(tmp_path / session.session_id).context == ctx
+        controller.discard()
+
+    def test_every_start_writes_its_own_record(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        first = start_unlinked(controller)
+        controller.finish()
+        controller.mark_queued()
+        ctx = enc_context()
+        second = controller.start(0, consent=consent_for(ctx), context=ctx)  # retires first
+        assert _read_record(tmp_path / first.session_id).context is None
+        assert _read_record(tmp_path / second.session_id).context == ctx
+        controller.discard()
+
+    def test_encounter_enc_is_written_after_the_key_and_before_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session as session_mod
+
+        order: list[tuple[str, bool, bool, bool]] = []
+        real_write = session_mod.write_encounter_record
+        real_create = session_mod.SessionChunkStore.create
+
+        def seen(directory: Path) -> tuple[bool, bool, bool]:
+            return (
+                (directory / KEY_FILENAME).is_file(),
+                (directory / ENCOUNTER_FILENAME).is_file(),
+                (directory / AUDIO_FILENAME).exists(),
+            )
+
+        def spy_write(directory: Path, *args: Any) -> Any:
+            order.append(("encounter", *seen(directory)))
+            return real_write(directory, *args)
+
+        def spy_create(path: Path, *args: Any, **kwargs: Any) -> Any:
+            order.append(("audio", *seen(path.parent)))
+            return real_create(path, *args, **kwargs)
+
+        monkeypatch.setattr(session_mod, "write_encounter_record", spy_write)
+        monkeypatch.setattr(session_mod.SessionChunkStore, "create", staticmethod(spy_create))
+        controller, _ = _controller(tmp_path)
+        start_unlinked(controller)
+        # (step, key present, encounter present, audio present) at each write
+        assert order == [("encounter", True, False, False), ("audio", True, True, False)]
+        controller.discard()
+
+    def test_a_crash_before_audio_leaves_the_consent_record_and_no_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session as session_mod
+
+        def crash(*_args: Any, **_kwargs: Any) -> Any:
+            raise _SimulatedCrash()
+
+        monkeypatch.setattr(session_mod.SessionChunkStore, "create", staticmethod(crash))
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(_SimulatedCrash):
+            start_unlinked(controller)
+        (directory,) = list(tmp_path.iterdir())
+        assert (directory / KEY_FILENAME).is_file()
+        assert not (directory / AUDIO_FILENAME).exists()
+        record = _read_record(directory)  # the consent outlives the crash
+        assert record.consent.treatment_note_id is None
+
+    def test_a_crash_before_the_encounter_write_leaves_no_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session as session_mod
+
+        def crash(*_args: Any, **_kwargs: Any) -> Any:
+            raise _SimulatedCrash()
+
+        monkeypatch.setattr(session_mod, "write_encounter_record", crash)
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(_SimulatedCrash):
+            start_unlinked(controller)
+        (directory,) = list(tmp_path.iterdir())
+        assert not (directory / AUDIO_FILENAME).exists()  # never audio without its record
+        assert not (directory / ENCOUNTER_FILENAME).exists()
+
+    def test_a_failed_encounter_write_cleans_up_and_creates_no_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session as session_mod
+
+        created: list[Path] = []
+
+        def fail(*_args: Any, **_kwargs: Any) -> Any:
+            raise StoreWriteError("failed writing encounter record: disk full")
+
+        def spy_create(path: Path, *args: Any, **kwargs: Any) -> Any:
+            created.append(path)
+            raise AssertionError("audio.enc must not be created")
+
+        monkeypatch.setattr(session_mod, "write_encounter_record", fail)
+        monkeypatch.setattr(session_mod.SessionChunkStore, "create", staticmethod(spy_create))
+        controller, _ = _controller(tmp_path)
+        with pytest.raises(StoreWriteError):
+            start_unlinked(controller)
+        assert created == []
+        assert list(tmp_path.iterdir()) == []  # the failure cleanup removed it all
+        assert controller.session is None
+
+    def test_discard_removes_the_record_with_the_session(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        session = start_unlinked(controller)
+        directory = tmp_path / session.session_id
+        assert (directory / ENCOUNTER_FILENAME).is_file()
+        controller.discard()
+        assert not directory.exists()
+
+
+@windows_only
+class TestSessionRefs:
+    """D2's reference registry (peer r2 PR-MED-001)."""
+
+    def test_start_mints_an_opaque_ref_that_is_never_the_session_id(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _ = _controller(tmp_path)
+        session = start_unlinked(controller)
+        ref = controller.session_ref
+        assert ref is not None and len(ref) == 24
+        assert ref != session.session_id and session.session_id not in ref
+        assert not re.fullmatch(r"[0-9a-f]{32}", ref)
+        assert controller.resolve_session_ref(ref) == session.session_id
+        assert ref not in [p.name for p in tmp_path.rglob("*")]  # never persisted as a name
+        controller.discard()
+
+    def test_each_start_gets_a_new_ref_and_retirement_keeps_the_old(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _ = _controller(tmp_path)
+        first = start_unlinked(controller)
+        first_ref = controller.session_ref
+        controller.finish()
+        controller.mark_queued()
+        second = start_unlinked(controller)  # retires the first
+        second_ref = controller.session_ref
+        assert first_ref is not None and second_ref is not None and first_ref != second_ref
+        assert controller.resolve_session_ref(first_ref) == first.session_id
+        assert controller.resolve_session_ref(second_ref) == second.session_id
+        controller.discard()
+
+    def test_discard_and_complete_stop_the_ref_resolving(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        start_unlinked(controller)
+        ref = controller.session_ref
+        assert ref is not None
+        controller.discard()
+        assert controller.resolve_session_ref(ref) is None
+
+        session = start_unlinked(controller)
+        ref = controller.session_ref
+        assert ref is not None
+        controller.finish()
+        controller.mark_queued()
+        directory = tmp_path / session.session_id
+        crypto = unwrap_key_from_file(directory)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        controller.complete()
+        assert controller.resolve_session_ref(ref) is None
+
+    def test_a_recovered_discard_and_forget_remove_refs(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        session = start_unlinked(controller)
+        ref = controller.session_ref
+        assert ref is not None
+        controller.finish()
+        controller.mark_queued()
+        start_unlinked(controller)  # retires it: its ref still resolves
+        assert controller.resolve_session_ref(ref) == session.session_id
+        controller.discard_recovered(tmp_path / session.session_id, None)
+        assert controller.resolve_session_ref(ref) is None
+        live_ref = controller.session_ref
+        assert live_ref is not None
+        live_id = controller.resolve_session_ref(live_ref)
+        assert live_id is not None
+        controller.forget_session_ref(live_id)
+        assert controller.resolve_session_ref(live_ref) is None
+        controller.discard()
+
+    def test_an_unknown_ref_resolves_to_nothing(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        start_unlinked(controller)
+        assert controller.resolve_session_ref("not-a-ref") is None
+        controller.discard()

@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import start_unlinked
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
@@ -1208,7 +1209,7 @@ class TestControllerTranscription:
     def _finished_controller(self, tmp_path: Path) -> tuple[SessionController, str]:
         backend = MockCaptureBackend()
         controller = SessionController(backend, sessions_root=tmp_path)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         backend.feed(silence_pcm(0.5) + tone_pcm(1.0) + silence_pcm(0.5))
         controller.finish()
         return controller, session.session_id
@@ -1248,7 +1249,7 @@ class TestControllerTranscription:
 
     def test_transcribe_requires_processing_state(self, tmp_path: Path) -> None:
         controller = SessionController(MockCaptureBackend(), sessions_root=tmp_path)
-        controller.start(0)  # recording, not processing
+        start_unlinked(controller)  # recording, not processing
         with pytest.raises(SessionActivityError, match="processing"):
             controller.transcribe(lambda d, c: None)
 

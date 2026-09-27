@@ -36,6 +36,7 @@ from typing import Any
 
 import pytest
 
+from conftest import start_unlinked
 from scribe_desktop import session as session_mod
 from scribe_desktop.audio_capture import CHUNK_BYTES, DeviceLostError, MockCaptureBackend
 from scribe_desktop.benchmark import apply_offline_env
@@ -268,7 +269,7 @@ class TestLiveSessionController:
         posts: list[tuple[TranscriptSegment, ...]] = []
         workers = _Workers(on_window=posts.append)
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         assert worker.running and not worker.sealed
         pcm = silence_pcm(1.0) + tone_pcm(2.0) + silence_pcm(1.0)
@@ -297,7 +298,7 @@ class TestLiveSessionController:
         provider = _BlockingProvider(gate)
         workers = _Workers(provider=provider)
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         _feed(backend, tone_pcm(1.0) + silence_pcm(5.0))
         assert provider.entered.wait(5.0)  # blocked in the first window
@@ -325,7 +326,7 @@ class TestLiveSessionController:
         posts: list[tuple[TranscriptSegment, ...]] = []
         workers = _Workers(on_window=posts.append)
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         worker = workers.last
         session_dir = tmp_path / session.session_id
         _feed(backend, silence_pcm(0.5) + tone_pcm(2.0))
@@ -375,7 +376,7 @@ class TestLiveSessionController:
         logger.setLevel(logging.INFO)
         try:
             controller, backend = _controller(tmp_path, workers, logger)
-            session = controller.start(0)
+            session = start_unlinked(controller)
             worker = workers.last
             _feed(backend, tone_pcm(1.0) + silence_pcm(5.0))
             assert provider.entered.wait(5.0)
@@ -414,7 +415,7 @@ class TestLiveSessionController:
         provider = _BlockingProvider(gate)
         workers = _Workers(provider=provider, stop_timeout=0.2)
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         worker = workers.last
         _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
         controller.finish()  # seals: the tail window blocks in the provider
@@ -447,7 +448,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         _feed(backend, tone_pcm(1.0))
         backend.fail(DeviceLostError("usb yanked"))
@@ -462,7 +463,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         worker = workers.last
         _feed(backend, tone_pcm(1.0))
         monkeypatch.setattr(
@@ -494,7 +495,7 @@ class TestLiveSessionController:
         logger.setLevel(logging.INFO)
         try:
             controller, backend = _controller(tmp_path, workers, logger)
-            failed = controller.start(0)
+            failed = start_unlinked(controller)
             first = workers.last
             _feed(backend, tone_pcm(1.0) + silence_pcm(5.0))
             assert provider.entered.wait(5.0)
@@ -503,7 +504,7 @@ class TestLiveSessionController:
             assert first.running  # the in-lock stop timed out: still attached
             assert len([m for m in records.messages if "stop_timeout" in m]) == 1
             with pytest.raises(SessionActivityError, match="has not stopped yet"):
-                controller.start(0)  # retirement refused: the worker is uncleared
+                start_unlinked(controller)  # retirement refused: the worker is uncleared
             assert len(workers.built) == 1  # no new worker was built
             assert controller.state is SessionState.FAILED  # the session is still tracked
             assert (tmp_path / failed.session_id / KEY_FILENAME).is_file()
@@ -511,7 +512,7 @@ class TestLiveSessionController:
             gate.set()
             _wait(lambda: not first.running)
             assert first.buffers_cleared
-            controller.start(0)  # FAILED -> retired; a NEW worker for the new session
+            start_unlinked(controller)  # FAILED -> retired; a NEW worker for the new session
             second = workers.last
             assert second is not first and second.running
             controller.discard()
@@ -523,7 +524,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         _feed(backend, silence_pcm(1.0))
         controller.pause()
@@ -545,7 +546,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         with pytest.raises(SessionActivityError):
             controller.claim_live_transcriber()  # RECORDING
@@ -570,7 +571,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         worker = workers.last
         _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
         controller.finish()
@@ -594,7 +595,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
 
         def broken_feed(data: bytes) -> None:
@@ -630,7 +631,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers() if with_worker else None
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         monkeypatch.setattr(
             SessionChunkStore,
             "append_chunk",
@@ -655,7 +656,7 @@ class TestLiveSessionController:
 
         workers = _Workers(provider_factory=broken)
         controller, backend = _controller(tmp_path, workers)
-        controller.start(0)
+        start_unlinked(controller)
         worker = workers.last
         _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
         _wait(lambda: worker.failed_reason is not None)
@@ -675,7 +676,7 @@ class TestLiveSessionController:
     ) -> None:
         pytest.importorskip("numpy")
         controller, backend = _controller(tmp_path, None)
-        controller.start(0)
+        start_unlinked(controller)
         _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
         controller.finish()
         statuses: list[str] = []
@@ -698,7 +699,7 @@ class TestLiveSessionController:
         pytest.importorskip("numpy")
         workers = _Workers()
         controller, backend = _controller(tmp_path, workers)
-        session = controller.start(0)
+        session = start_unlinked(controller)
         worker = workers.last
         _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
         controller.finish()
@@ -747,7 +748,7 @@ class TestLiveSessionController:
         controller, _backend = _controller(tmp_path, workers)
         started = time.perf_counter()
         with pytest.raises(DeviceLostError):
-            controller.start(99)  # no such device: the capture stream fails to open
+            start_unlinked(controller, 99)  # no such device: the capture stream fails to open
         elapsed = time.perf_counter() - started
         assert elapsed < 5.0  # the 1 s in-lock bound, not LIVE_STOP_TIMEOUT_SECONDS
         assert controller.state is SessionState.IDLE
@@ -763,7 +764,7 @@ class TestLiveSessionController:
         controller, backend = _controller(tmp_path, None)
         workers = _Workers()
         controller.set_live_transcriber_factory(workers)
-        controller.start(0)
+        start_unlinked(controller)
         assert len(workers.built) == 1 and workers.last.running
         controller.discard()
         assert not workers.last.running
