@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import threading
 import time
@@ -207,6 +208,9 @@ class FakeController:
         self.recorded_seconds = 0
         self.live_failure: Any = None
         self.generating = False
+        self.forgotten_refs: list[str] = []
+        # Task 5.5: D2's registry for sessions other than the tracked one.
+        self.refs: dict[str, str] = {}
 
     @property
     def state(self) -> SessionState:
@@ -294,6 +298,29 @@ class FakeController:
 
     def active_session_ids(self) -> frozenset[str]:
         return frozenset()
+
+    def forget_session_ref(self, session_id: str) -> None:
+        # Task 5.3: kept apart from `calls`, whose exact lists tests pin.
+        self.forgotten_refs.append(session_id)
+        for ref in [r for r, sid in self.refs.items() if sid == session_id]:
+            del self.refs[ref]
+
+    # Task 5.5 (D2): the registry for indexed sessions, apart from `calls`.
+    def session_ref_for(self, session_id: str) -> str | None:
+        return next((r for r, sid in self.refs.items() if sid == session_id), None)
+
+    def register_session_ref(self, session_id: str) -> str:
+        ref = self.session_ref_for(session_id)
+        if ref is None:
+            ref = secrets.token_urlsafe(18)
+            self.refs[ref] = session_id
+        return ref
+
+    def resolve_session_ref(self, session_ref: str) -> str | None:
+        if self.session_ref is not None and session_ref == self.session_ref:
+            session = self.session_value
+            return session.session_id if session is not None else None
+        return self.refs.get(session_ref)
 
     # Practitioner-profile plan D15: the enrolment activity.
 
@@ -2335,7 +2362,8 @@ class TestRecoveryScreen:
 
     def test_no_resume_recording_control_exists(self, qapp: Any, tmp_path: Path) -> None:
         """Flow 3 Critical Constraint: recovery offers resume-PROCESSING and
-        discard only — never resume recording."""
+        discard only — never resume recording. Task 5.4 (D6) adds the
+        Unreviewed section's "Open for review" and its own Discard."""
         from PySide6.QtWidgets import QPushButton
 
         from scribe_desktop.ui.recovery import RecoveryScreen
@@ -2344,7 +2372,10 @@ class TestRecoveryScreen:
             tmp_path, recovery_runner=lambda d: pytest.fail("not called")
         )
         labels = [b.text().lower() for b in screen.findChildren(QPushButton)]
-        assert labels == ["resume processing", "discard", "refresh"]
+        assert sorted(labels) == sorted(
+            ["resume processing", "discard", "refresh", "open for review", "discard"]
+        )
+        assert not any("record" in label for label in labels)
         screen.deleteLater()
 
 
@@ -2959,28 +2990,34 @@ class TestMainWindow:
         self, qapp: Any, tmp_path: Path
     ) -> None:
         """PR round 20 (PR-HIGH-009): closing a LIVE transcript must not
-        strip an open recovered session's sweep/relist protection; closing
-        the recovered transcript releases exactly its own checkout."""
+        strip an unrelated checkout's sweep/relist protection. Cliniko
+        workflow safeguards plan Task 5.4 replaced the hold-until-restart
+        residue: the recovered view the live transcript REPLACES loses its
+        callbacks, so its checkout is released then (scoped, by id); a
+        checkout the live view never replaced keeps its protection."""
         recovered_id = _make_recoverable(tmp_path, finished=True)
+        other_id = uuid.uuid4().hex
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
         window = _main_window(tmp_path, controller)
-        # Simulate an open recovered transcript (checked out).
-        window.recovery_screen._protected.add(recovered_id)
+        # Simulate an open recovered transcript (checked out) beside another.
+        window.recovery_screen._protected.update({recovered_id, other_id})
         outcome = RecoveryOutcome(
             document=_document(), crypto=SessionCrypto(), store_finished=True
         )
         window.recovery_screen.recovered.emit((tmp_path / recovered_id, outcome))
         qapp.processEvents()
         assert recovered_id in window.recovery_screen.protected_session_ids()
-        # A live transcript replaces the view, then closes.
+        # A live transcript replaces the view: the replaced checkout goes.
         window.session_screen.transcript_ready.emit(_document())
         qapp.processEvents()
+        assert recovered_id not in window.recovery_screen.protected_session_ids()
+        assert window._recovered_crypto is None
         window.transcript_screen.on_complete()  # live path -> controller
         qapp.processEvents()
         assert ("complete",) in controller.calls
-        # The recovered session's protection survives the live closure.
-        assert recovered_id in window.recovery_screen.protected_session_ids()
+        # The unrelated checkout's protection survives the live closure.
+        assert other_id in window.recovery_screen.protected_session_ids()
         window.close()
 
     def test_recovered_transcript_close_releases_only_itself(

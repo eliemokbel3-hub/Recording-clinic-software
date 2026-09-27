@@ -4,12 +4,16 @@ the Phase-1 registration/self-test panel as a Status tab)."""
 
 from __future__ import annotations
 
+import ctypes
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from PySide6.QtCore import QByteArray
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -21,6 +25,13 @@ from PySide6.QtWidgets import (
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.context_rules import (
+    PauseReason,
+    ReminderIndex,
+    is_suspend_message,
+    pause_action,
+    reminder_entry,
+)
 from scribe_desktop.encounter import (
     EncounterRecord,
     EncounterUnavailable,
@@ -35,13 +46,18 @@ from scribe_desktop.encounter import (
     writeback_context,
 )
 from scribe_desktop.note import GeneratedNote
+from scribe_desktop.note_config import NoteConfig, load_note_config
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
     GenerationInProgressError,
+    RecordingSession,
+    ReviewOpenRefused,
     SessionActivityError,
+    SessionControllerError,
     SessionState,
 )
+from scribe_desktop.session_store import KEY_FILENAME, session_expires_at
 from scribe_desktop.status import read_registration_status, run_self_test
 from scribe_desktop.transcription import (
     LiveTranscriber,
@@ -72,6 +88,34 @@ class _CheckoutEncounter:
     request: VerificationRequest | None = None
     result: VerificationResult | None = None
     stopped: bool = False
+    # Task 5.4: the session was ADOPTED as the live session (Open for review);
+    # its record came from the adoption's one decrypt, and write-back goes
+    # through the live entry, never the recovered one.
+    adopted: bool = False
+
+
+class _MSG(ctypes.Structure):
+    """The head of a Windows ``MSG`` (``nativeEvent``'s
+    ``windows_generic_MSG``): enough to recognise a power broadcast."""
+
+    _fields_ = [
+        ("hwnd", ctypes.c_void_p),
+        ("message", ctypes.c_uint),
+        ("wParam", ctypes.c_size_t),
+    ]
+
+
+def _is_suspend_event(event_type: object, message: object) -> bool:
+    """D5: the native event is ``WM_POWERBROADCAST`` / ``PBT_APMSUSPEND``."""
+    name = event_type.data() if isinstance(event_type, QByteArray) else event_type
+    to_int = getattr(message, "__int__", None)  # an int, or shiboken's VoidPtr
+    if name != b"windows_generic_MSG" or to_int is None:
+        return False
+    address = to_int()
+    if not isinstance(address, int) or address == 0:
+        return False
+    msg = _MSG.from_address(address)
+    return is_suspend_message(int(msg.message), int(msg.wParam))
 
 
 class StatusPanel(QWidget):
@@ -245,6 +289,15 @@ class MainWindow(QMainWindow):
         # Task 4.5: the Chrome link, attached by `app.main` with the pipe
         # (`attach_chrome_link`); None in tests that build a window alone.
         self.chrome_bridge: ChromeBridge | None = None
+        # Task 5.3 (D6): the Unreviewed reminder index — ids only, in memory,
+        # filled when a Start retires a linked queued session.
+        self.reminders = ReminderIndex()
+        # Task 5.4 (D6): the note config a reopened saved note is compared
+        # with — the root the Note tab learns into (None: the default root,
+        # exactly as the generator resolves it).
+        self._config_root = config_root
+        # D6's on-close list: when the first close showed it (monotonic).
+        self._close_armed_at: float | None = None
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -272,7 +325,16 @@ class MainWindow(QMainWindow):
         # its event loop, so it always precedes the delivery of the worker's
         # first queued `live_window` post.
         self.session_screen.session_started.connect(self._on_session_started)
+        self.session_screen.session_retired.connect(self._on_session_retired)
         self.session_screen.session_discarded.connect(self.transcript_screen.clear_live_view)
+        self.recovery_screen.session_removed.connect(self.forget_unreviewed)
+        self.recovery_screen.review_requested.connect(self._on_review_requested)
+        self.recovery_screen.expiry_warning.connect(self._on_expiry_warning)
+        # The Recovery screen listed once before this connection existed: a
+        # session already inside the 2-hour window is announced now.
+        soon = models.expiring_soon(self.recovery_screen.unreviewed_infos(), time.time())
+        if soon:
+            self.statusBar().showMessage(models.expiry_warning_line(len(soon)))
         # D10: first run asks, never blocks — with no profile the tab is
         # selected and its banner shown; every other screen works as today.
         if not self.practitioner_screen.profile_present:
@@ -300,11 +362,270 @@ class MainWindow(QMainWindow):
         Replace key or Remove re-checks its bound report (D9)."""
         if self.chrome_bridge is None:
             bridge = ChromeBridge(
-                self._controller, self.session_screen, self._clinic_registry, parent=self
+                self._controller,
+                self.session_screen,
+                self._clinic_registry,
+                parent=self,
+                reminders=self.reminders,
+                open_review=self.open_unreviewed,
             )
             self.clinics_screen.clinics_changed.connect(bridge.on_clinics_changed)
+            bridge.pause_cue.connect(self._show_pause_cue)
             self.chrome_bridge = bridge
         return self.chrome_bridge
+
+    # --- the pause rule (Task 5.1, D5) ----------------------------------------
+
+    def nativeEvent(self, eventType: object, message: object) -> object:  # noqa: N802, N803
+        """D5: the machine suspending pauses a recording.
+
+        Qt calls this for EVERY native message the window receives, so it
+        must never raise into Qt's dispatch and must hand every message back
+        to Qt's own handling. It returns ``(False, 0)`` — "not handled",
+        exactly what ``QWidget::nativeEvent``'s default returns — WITHOUT
+        calling the base: PySide6 refused ``super().nativeEvent`` a 64-bit
+        message address ("called with wrong argument values", seen
+        2026-09-28), and a real ``MSG*`` on 64-bit Windows is such an
+        address. ``TestSuspendAndCue`` drives a real message through Qt's
+        dispatch in a child process."""
+        try:
+            if _is_suspend_event(eventType, message):
+                self.pause_for(PauseReason.SUSPEND)
+        except Exception:  # noqa: BLE001 - nothing may raise into Qt's dispatch
+            pass
+        return False, 0
+
+    def pause_for(self, reason: PauseReason) -> None:
+        """D5's ``pause_for`` for app-level reasons (suspend now; Phase 7's
+        hotkey and spoken pause). The Chrome bridge applies it when attached
+        (it owns the block); otherwise the same table pauses through the
+        Session screen's slot."""
+        if self.chrome_bridge is not None:
+            self.chrome_bridge.pause_for(reason)
+            return
+        session = self._controller.session
+        linked = session is not None and session.encounter_context is not None
+        action = pause_action(self._controller.state, reason, linked=linked)
+        if action.pause and self.session_screen.on_pause():
+            self._show_pause_cue(models.pause_cue_text(reason.value, linked=linked))
+
+    def _show_pause_cue(self, text: str) -> None:
+        """D5: every pause shows a desktop cue — the status line, the Session
+        screen's message, and a taskbar flash."""
+        self.statusBar().showMessage(text)
+        self.session_screen.show_notice(text)
+        QApplication.alert(self)
+
+    # --- the Unreviewed reminder index (Task 5.3, D6) ------------------------
+
+    def _on_session_retired(self, previous: object) -> None:
+        """A Start retired ``previous``: a linked, queued one waits for review
+        in the reminder index (from its in-memory context — nothing is
+        decrypted), under the reference it already had (D2)."""
+        if not isinstance(previous, RecordingSession):
+            return
+        entry = reminder_entry(previous)
+        if entry is not None:
+            self.reminders.add(entry)
+
+    def forget_unreviewed(self, session_id: str) -> None:
+        """A retired session was completed, discarded or expired: drop its
+        own index entry and its reference (D2, D6) — and only those."""
+        self.reminders.remove(session_id)
+        self._controller.forget_session_ref(session_id)
+
+    def prune_reminders(self) -> None:
+        """After a sweep: forget every indexed session whose key is gone
+        (expired or removed). A stat only — nothing is decrypted."""
+        root = self.recovery_screen.sessions_root
+        for session_id in self.reminders.session_ids():
+            if not (root / session_id / KEY_FILENAME).is_file():
+                self.forget_unreviewed(session_id)
+
+    # --- Open for review (Task 5.4, D6; decided option (a)) --------------------
+
+    def reconstruct_reminders(self) -> None:
+        """Task 5.5 (D6), called ONCE by ``app.main`` after the start-up
+        sweep: rebuild the reminder index from the sessions on disk — the one
+        path besides a checkout that decrypts ``encounter.enc``, once per
+        Unreviewed session (``models.reconstruct_reminder_entries``) — and
+        give each indexed session a reference, so its banner can name it."""
+        self.recovery_screen.refresh()
+        for entry in models.reconstruct_reminder_entries(self.recovery_screen.unreviewed_infos()):
+            self.reminders.add(entry)
+            self._controller.register_session_ref(entry.session_id)
+
+    def open_unreviewed(self, session_id: str) -> str | None:
+        """Task 5.5: the Chrome banner's "Open for review" for exactly
+        ``session_id`` (the bridge resolved its reference and found it in the
+        index). The window comes forward — Windows may refuse the focus, so
+        the taskbar flashes too — and the session opens as from its Recovery
+        row. Returns None, or a ``CHROME_REFUSALS`` code."""
+        info = next(
+            (
+                row
+                for row in self.recovery_screen.unreviewed_infos()
+                if row.session_id == session_id
+            ),
+            None,
+        )
+        if info is None:
+            self.recovery_screen.refresh()
+            info = next(
+                (
+                    row
+                    for row in self.recovery_screen.unreviewed_infos()
+                    if row.session_id == session_id
+                ),
+                None,
+            )
+        if info is None:
+            return "session_changed"
+        self._raise_window()
+        return None if self._on_review_requested(info) else "cannot_open"
+
+    def _raise_window(self) -> None:
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)
+
+    def _on_review_requested(self, info: object) -> bool:
+        """An Unreviewed row's "Open for review": the controller ADOPTS the
+        session as the live queued session (``adopt_queued``, which decrypts
+        its consent record — the checkout — and reads the transcript and any
+        saved note before installing anything), then it opens on the path
+        every live queued session uses. Every refusal is named on the row.
+        True when the session opened."""
+        if not isinstance(info, models.RecoverableSessionInfo):
+            return False
+        recovery = self.recovery_screen
+        if self.transcript_screen.is_busy or self.note_screen.is_busy:
+            recovery.show_message(models.REVIEW_OPEN_BUSY_LINE)
+            self.tabs.setCurrentWidget(recovery)
+            return False
+        if recovery.is_busy:
+            # The Recovery screen's own button is disabled for this; the Chrome
+            # route checks it here — the resume would land on the adopted
+            # session's view (round 32 LOW-024).
+            recovery.show_message(models.REVIEW_OPEN_RECOVERY_BUSY_LINE)
+            self.tabs.setCurrentWidget(recovery)
+            return False
+        if self._transcript_source not in (None, "live"):
+            recovery.show_message(
+                "Finish the open recovered transcript first (Complete or Discard) before "
+                "opening another recording."
+            )
+            self.tabs.setCurrentWidget(recovery)
+            return False
+        previous = self._controller.session
+        try:
+            session, opening = self._controller.adopt_queued(
+                info.directory, models.read_for_review
+            )
+        except ReviewOpenRefused as exc:
+            refusal = models.review_refusal_line(exc.reason, exc.__cause__)
+        except SessionControllerError as exc:
+            refusal = f"This recording cannot be opened for review now: {exc}."
+        except Exception as exc:  # noqa: BLE001 - named, never a crash
+            refusal = f"This recording cannot be opened for review: {type(exc).__name__}."
+        else:
+            if (
+                previous is not None
+                and not previous.is_terminal
+                and previous.session_id != session.session_id
+            ):
+                self._on_session_retired(previous)  # D6: as a Start would retire it
+            self.reminders.remove(session.session_id)  # in review now; re-added if retired
+            self._open_adopted(session, opening, store_finished=info.store_finished)
+            return True
+        recovery.refresh()
+        recovery.show_message(refusal)
+        # The refusal is named on the row — show it (a Chrome banner's click
+        # lands here with the window just brought forward).
+        self.tabs.setCurrentWidget(recovery)
+        return False
+
+    def _open_adopted(
+        self,
+        session: RecordingSession,
+        opening: models.ReviewOpening,
+        *,
+        store_finished: bool,
+    ) -> None:
+        """Show the adopted session exactly as a live queued one: the
+        controller owns its custody (Complete/Discard), generation is offered
+        — as "Regenerate (replaces the saved note)" when a saved note exists —
+        and a saved note opens on the Note tab as it was saved.
+        ``store_finished`` is the listing's footer read (a retired store is
+        closed, so it cannot change): a crash-recovered store without one
+        keeps the binding unfinished-store warning (codex round 34
+        PR-MED-190)."""
+        self._destroy_recovered_crypto()
+        self._end_checkout_encounter()
+        # The retired session's post-Save Note tab would act on whichever
+        # session the controller tracks — this one now (the 5.3 rule).
+        self.note_screen.clear()
+        self.transcript_screen.show_document(
+            opening.document,
+            on_complete=self._controller.complete,
+            on_discard=self._controller.discard,
+            store_finished=store_finished,
+            can_generate=True,
+            note_committed=opening.note is not None,
+        )
+        self._transcript_source = "live"
+        self._begin_checkout(
+            session.session_id,
+            EncounterRecord(consent=session.consent, context=session.encounter_context),
+            adopted=True,
+        )
+        self.recovery_screen.refresh()
+        self.session_screen.refresh()
+        note = opening.note
+        if note is None:
+            self.tabs.setCurrentWidget(self.transcript_screen)
+            return
+        self.note_screen.show_saved_note(
+            note,
+            opening.document,
+            info=models.saved_note_line(note, self._load_note_config),
+            copy_enabled=models.COPY_TO_CLINIKO_ENABLED,
+            on_abandon=self._on_note_abandon,
+        )
+        self.tabs.setCurrentWidget(self.note_screen)
+
+    def _load_note_config(self) -> NoteConfig:
+        return load_note_config(self._config_root)
+
+    def _on_expiry_warning(self, text: str) -> None:
+        """D6: a recording is inside its last 2 hours — status line and a
+        taskbar flash (no clinic, no patient)."""
+        self.statusBar().showMessage(text)
+        QApplication.alert(self)
+
+    def _unreviewed_expiries(self) -> list[tuple[str, float | None]]:
+        """D6's on-close list: every Unreviewed row plus the live queued
+        session and an open recovered checkout — both excluded from the
+        listing as protected (round 32 LOW-027) — each counted by the sweep
+        from its creation."""
+        self.recovery_screen.refresh()
+        entries: list[tuple[str, float | None]] = [
+            (info.session_id, info.expires_at)
+            for info in self.recovery_screen.unreviewed_infos()
+        ]
+        extra: list[str] = []
+        session = self._controller.session
+        if session is not None and session.state is SessionState.QUEUED:
+            extra.append(session.session_id)
+        source = self._transcript_source
+        if source is not None and source != "live":
+            extra.append(source)
+        root = self.recovery_screen.sessions_root
+        for session_id in extra:
+            entries.append((session_id, session_expires_at(root / session_id, time.time())))
+        return entries
 
     # --- routing -----------------------------------------------------------
 
@@ -411,6 +732,22 @@ class MainWindow(QMainWindow):
             )
             event.ignore()
             return
+        # Task 5.4 (D6): list the unreviewed recordings and when each expires.
+        # Shown on a first close, which is refused; a second close inside
+        # CLOSE_CONFIRM_SECONDS quits (a modal box would block every close).
+        entries = self._unreviewed_expiries()
+        if entries:
+            now = time.monotonic()
+            armed = self._close_armed_at
+            if armed is None or not 0 <= now - armed <= models.CLOSE_CONFIRM_SECONDS:
+                self._close_armed_at = now
+                text = models.close_expiry_message(entries, time.time())
+                self.statusBar().showMessage(text)
+                self.recovery_screen.show_message(text)
+                self.tabs.setCurrentWidget(self.recovery_screen)
+                event.ignore()
+                return
+        self._close_armed_at = None
         # Release the idle level-monitor's device before the window goes away
         # (smoke round 21) — never leave a PortAudio stream running teardown.
         self.microphone_screen.stop_monitor()
@@ -430,14 +767,15 @@ class MainWindow(QMainWindow):
             store_finished=True,
             can_generate=True,
         )
-        # If a recovered transcript was open it stays CHECKED OUT (protected
-        # from sweep/relist) until app restart — availability residual only,
-        # never a custody violation (PR round 20 residual, recorded in plan).
-        # Round 42 LOW-006: its replaced callbacks are unreachable now, so
-        # destroy the in-memory key copy (disk custody remains for a
-        # post-restart recovery; adds zero availability loss).
+        # A recovered transcript this replaces loses its callbacks, so its
+        # in-memory key copy is destroyed (round 42 LOW-006) and — Task 5.4,
+        # replacing the PR-round-20 hold-until-restart residual — its checkout
+        # is released (scoped, by id), so it is listed and swept again.
         self._destroy_recovered_crypto()
         self._end_checkout_encounter()
+        source = self._transcript_source
+        if source is not None and source != "live" and self._recovered_crypto is None:
+            self.recovery_screen.release_checkout(source)
         self._transcript_source = "live"
         self.tabs.setCurrentWidget(self.transcript_screen)
 
@@ -465,6 +803,13 @@ class MainWindow(QMainWindow):
         self._transcript_source = None
         if source is not None and source != "live":
             self.recovery_screen.release_checkout(source)
+        # Task 5.3 (D6): a Start at QUEUED retired the session a post-Save
+        # Note tab still shows. Its "delete note and complete" acts on
+        # WHICHEVER session the controller tracks — the new recording once it
+        # queues — so the stale review goes now; the retired session reopens
+        # from the Unreviewed section. (Start is refused while a review holds
+        # the lease, so no unsaved review is ever dropped here.)
+        self.note_screen.clear()
         self.transcript_screen.begin_live_view()
 
     def _on_recovered(self, payload: object) -> None:
@@ -509,13 +854,21 @@ class MainWindow(QMainWindow):
         (Critical Constraint 7). Missing or undecryptable means unlinked. A
         linked record is re-verified with Cliniko (D4) before it counts as
         linked: until an answer lands, write-back is refused."""
-        self._end_checkout_encounter()
         record: EncounterRecord | None
         try:
             record = read_encounter_record(directory, crypto, directory.name)
         except EncounterUnavailable:
             record = None
-        self._checkout = _CheckoutEncounter(session_id=directory.name, record=record)
+        self._begin_checkout(directory.name, record)
+
+    def _begin_checkout(
+        self, session_id: str, record: EncounterRecord | None, *, adopted: bool = False
+    ) -> None:
+        """Hold ``record`` for the open session and re-verify a linked one
+        (D4). An ADOPTED session (Task 5.4) passes the record its adoption
+        already decrypted — never a second decrypt."""
+        self._end_checkout_encounter()
+        self._checkout = _CheckoutEncounter(session_id=session_id, record=record, adopted=adopted)
         if record is not None and record.context is not None:
             self._checkout_seq += 1
             request = reverification_request(
@@ -642,8 +995,10 @@ class MainWindow(QMainWindow):
 
     def recovered_writeback_target(self) -> VerifiedTarget | WritebackRefused | None:
         """Constraint 6 over the recovered checkout (Phase 4's entry): None
-        when no recovered session is checked out."""
-        if self._checkout.session_id is None:
+        when no recovered session is checked out — and for an ADOPTED one
+        (Task 5.4), which is the live session: ``live_writeback_target``
+        governs it."""
+        if self._checkout.session_id is None or self._checkout.adopted:
             return None
         subject = WritebackSubject.of_checkout(self._checkout.record, self._checkout.result)
         return writeback_context(subject, self._clinic_registry)
@@ -750,7 +1105,7 @@ class MainWindow(QMainWindow):
         if active_bool:
             self.note_screen.clear()
 
-    def _on_transcript_closed(self, _outcome: str) -> None:
+    def _on_transcript_closed(self, outcome: str) -> None:
         # Practitioner-profile plan Task 5.6: Delete-note-and-complete and
         # Discard reach here with the review's learning queue still live —
         # read it before the clear, then append what was lost to the
@@ -771,6 +1126,8 @@ class MainWindow(QMainWindow):
         source = self._transcript_source
         self._transcript_source = None
         if source is not None and source != "live":
+            if outcome in ("completed", "discarded"):
+                self.forget_unreviewed(source)  # D6: only this session's entry
             self.recovery_screen.release_checkout(source)
         else:
             self.recovery_screen.refresh()

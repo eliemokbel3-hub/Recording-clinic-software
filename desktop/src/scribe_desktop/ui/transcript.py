@@ -234,7 +234,7 @@ class TranscriptScreen(QWidget):
         self.prefill_combo = QComboBox()
         prefill_row.addWidget(self.prefill_combo, 1)
         generate_layout.addLayout(prefill_row)
-        self.generate_button = QPushButton("Generate note")
+        self.generate_button = QPushButton(models.GENERATE_NOTE_LABEL)
         self.generate_button.setToolTip(
             "Compose a draft note from this transcript. Enabled once both the "
             "clinician and the template profile are confirmed."
@@ -342,6 +342,7 @@ class TranscriptScreen(QWidget):
         on_discard: Callable[[], object],
         store_finished: bool = True,
         can_generate: bool = False,
+        note_committed: bool = False,
     ) -> None:
         """Display a decrypted transcript with its custody callbacks.
 
@@ -351,12 +352,20 @@ class TranscriptScreen(QWidget):
         caller so live (controller) and recovered (custody-primitive)
         sessions share this one view. ``can_generate`` shows the Task 7.5
         generation controls — LIVE sessions only (the scoped generation op
-        needs a QUEUED controller session)."""
+        needs a QUEUED controller session). ``note_committed`` (Cliniko
+        workflow safeguards plan Task 5.4) opens a session whose verified
+        ``note.enc`` is already on disk: Complete counts it exactly as after
+        a Save (round 36 PR-MED-002), and generation is offered only as
+        "Regenerate (replaces the saved note)" (D6)."""
         # Task 1.4: the final document REPLACES the live lines wholesale —
         # close the live view first so the header is gone and no in-flight
         # post can append after `setPlainText` below.
         self.end_live_view()
         self._reset_generation_state()
+        self._note_committed = note_committed
+        self.generate_button.setText(
+            models.REGENERATE_NOTE_LABEL if note_committed else models.GENERATE_NOTE_LABEL
+        )
         self._on_complete = on_complete
         self._on_discard = on_discard
         self._note_review_state = models.NoteReviewState()

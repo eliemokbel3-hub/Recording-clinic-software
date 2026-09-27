@@ -267,6 +267,11 @@ class NoteScreen(QWidget):
         self._acknowledged: set[str] = set()
         self._note: GeneratedNote | None = None
         self._note_saved = False
+        # Cliniko workflow safeguards plan Task 5.4 (D6): a SAVED note reopened
+        # from the Unreviewed section — the verified ``note.enc``
+        # (``session_store.read_note``), shown as it was saved. Never a draft:
+        # no proposal, edit or Save control acts on it.
+        self._saved: GeneratedNote | None = None
 
         # Review edits (D14) and the learning queue (D9 as amended). A screen
         # constructed WITHOUT a learning status provider never reads the
@@ -585,6 +590,7 @@ class NoteScreen(QWidget):
         self._acknowledged.clear()
         self._note = None
         self._note_saved = False
+        self._saved = None
         self._removed.clear()
         self._manual.clear()
         self._learning_queue.clear()
@@ -617,6 +623,36 @@ class NoteScreen(QWidget):
         self.review_header.hide()
         self.acknowledge_all_button.hide()
         self._update_controls()
+
+    def show_saved_note(
+        self,
+        note: GeneratedNote,
+        document: TranscriptDocument,
+        *,
+        info: str,
+        copy_enabled: bool = models.COPY_TO_CLINIKO_ENABLED,
+        on_abandon: Callable[[], None] | None = None,
+    ) -> None:
+        """Cliniko workflow safeguards plan Task 5.4 (D6): show a SAVED note
+        reopened from the Unreviewed section, as it was saved — its edits,
+        confirmations and prose kept, rendered by the one path
+        (``models.format_note_body``). ``note`` must be what
+        ``session_store.read_note`` verified. Read-only: changing it means
+        Regenerate on the Transcript screen, which replaces it only on that
+        review's Save. Copy follows the recorded flag (``_copy_ready``);
+        ``on_abandon`` is "Delete note and complete without one"."""
+        self.clear()
+        self._saved = note
+        self._copy_enabled = copy_enabled
+        self._on_abandon = on_abandon
+        self.transcript_view.setPlainText(models.format_transcript_text(document))
+        self.note_body.setPlainText(models.format_note_body(note))
+        self.info_label.setText(info)
+        self._update_controls()
+
+    @property
+    def showing_saved_note(self) -> bool:
+        return self._saved is not None
 
     def _read_learning_status(self) -> models.LearningStatus:
         provider = self._learning_status_provider
@@ -1987,7 +2023,7 @@ class NoteScreen(QWidget):
         self.clear()
 
     def _copy_note(self) -> None:
-        note = self._note
+        note = self._note if self._note is not None else self._saved
         if not self._copy_ready() or note is None:  # click-time re-check (fail closed)
             return
         clipboard = QApplication.clipboard()
@@ -2004,7 +2040,15 @@ class NoteScreen(QWidget):
         fully ratified (no pending proposal, no blocking error, saved, no
         unacknowledged review — exactly what ``complete_block_reason``
         enforces), so an unresolved-error note can never be copied with the
-        flag on."""
+        flag on.
+
+        A reopened SAVED note (Task 5.4) met that bar when it was saved —
+        Save needs a fully ratified note and ``write_note`` refuses an
+        unresolved error — and ``read_note`` verified it; its unresolved
+        errors are re-checked here all the same (fail closed)."""
+        saved = self._saved
+        if saved is not None and self._note is None:
+            return self._copy_enabled and not saved.blocking_warnings()
         return (
             self._copy_enabled
             and self._note is not None

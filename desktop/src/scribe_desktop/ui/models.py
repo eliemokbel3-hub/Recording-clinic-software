@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
@@ -24,6 +25,7 @@ from scribe_desktop.clinics import (
     Refused,
     Removed,
 )
+from scribe_desktop.context_rules import ReminderEntry
 from scribe_desktop.encounter import (
     RECORDING_CONSENT_TEXT,
     ConsentAttestation,
@@ -35,6 +37,7 @@ from scribe_desktop.encounter import (
     Verification,
     VerificationOutcome,
     Verified,
+    read_encounter_record,
 )
 from scribe_desktop.language_model import (
     LanguageModel,
@@ -120,8 +123,11 @@ from scribe_desktop.session_store import (
     default_sessions_root,
     earliest_trusted_timestamp,
     key_blob_is_dead,
+    read_note,
     read_store_header,
+    session_expires_at,
     store_has_footer,
+    unwrap_key_from_file,
 )
 from scribe_desktop.speaker_embedding import (
     SHIPPED_SPEAKER_EMBEDDER,
@@ -347,9 +353,59 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
     "report_mismatch": (
         "Open this recording's own treatment note in Cliniko to resume it."
     ),
+    "pipe_down": (
+        "Chrome is not connected - open this recording's own treatment note in Cliniko to "
+        "resume it."
+    ),
     "not_available": "That action is not available in this version.",
     "failed": "It did not work - see the Session tab in Cliniko Scribe.",
+    # Task 5.5 (D6): the banner's "Open for review".
+    "review_in_progress": (
+        "Save or cancel the note review open on the Note tab first, then open this recording."
+    ),
+    "cannot_open": (
+        "Cliniko Scribe could not open that recording for review - see its Recovery tab."
+    ),
 }
+
+# Task 5.2 (D1, D5): the Session screen's Discard asks once more.
+DISCARD_CONFIRM_MESSAGE: Final = (
+    "Discard this recording? This cannot be undone. Press Confirm discard to delete it."
+)
+# Task 5.3 (D6): why Start waits while a note review is open.
+REVIEW_OPEN_START_HINT: Final = (
+    "Save or cancel the open note review on the Note tab to start the next recording."
+)
+
+# Task 5.1 (D5): the desktop cue shown with every pause the rule makes (the
+# status line and a window flash). Keyed by ``context_rules.PauseReason``.
+PAUSE_CUES: Final[Mapping[str, str]] = {
+    "note_changed": "Paused - the recording's Cliniko tab opened a different treatment note.",
+    "left_note": "Paused - the recording's Cliniko tab left its treatment note.",
+    "tab_closed": "Paused - the recording's Cliniko tab was closed.",
+    "other_note": "Paused - another treatment note is open in Chrome.",
+    "login": "Paused - Cliniko's login page is open in Chrome.",
+    "pipe_lost": "Paused - Chrome disconnected from Cliniko Scribe.",
+    "new_client": "Paused - Chrome reconnected to Cliniko Scribe.",
+    "suspend": "Paused - the computer went to sleep.",
+    "hotkey": "Paused by the hotkey.",
+    "spoken": "Paused - \"scribe pause\" was heard.",
+}
+PAUSE_CUE_LINKED_TAIL: Final = (
+    " Resume once this recording's own treatment note is open in Cliniko, or use Finish "
+    "or Discard."
+)
+PAUSE_CUE_UNLINKED_TAIL: Final = " Press Resume to carry on recording."
+BLOCK_DESKTOP_LINE: Final = (
+    "Chrome is blocked on this recording: resume it on its own treatment note, finish it or "
+    "discard it."
+)
+
+
+def pause_cue_text(reason: str, *, linked: bool) -> str:
+    """The desktop cue for a pause the rule made (plain text, no name)."""
+    cue = PAUSE_CUES.get(reason, "Paused.")
+    return cue + (PAUSE_CUE_LINKED_TAIL if linked else PAUSE_CUE_UNLINKED_TAIL)
 
 
 def chrome_refusal_message(reason: str, note_refusal: NoteRefusal | None = None) -> str:
@@ -372,6 +428,18 @@ class ChromeView:
     recheck_reason: NoteRefusal | None = None
     spoken_pause_unavailable: bool = False
     refusal: str | None = None
+    # Phase 5: the linked live session's phase (``recording``, ``paused``,
+    # ``finishing`` or ``queued``) and whether Chrome shows the block.
+    phase: str | None = None
+    blocked: bool = False
+
+
+def _live_line(who: str, clinic: str, phase: str | None) -> str:
+    if phase == "finishing":
+        return f"Finishing {who} - {clinic}..."  # D6: the processing tail
+    if phase == "queued":
+        return f"Ready for review: {who} - {clinic}."
+    return f"Recording for {who} - {clinic}."
 
 
 def chrome_view_text(view: ChromeView) -> str:
@@ -387,7 +455,9 @@ def chrome_view_text(view: ChromeView) -> str:
     ]
     if view.clinic is not None:
         who = view.patient if view.patient is not None else "a patient (name not verified)"
-        lines.append(f"Recording for {who} - {view.clinic}.")
+        lines.append(_live_line(who, view.clinic, view.phase))
+    if view.blocked:
+        lines.append(BLOCK_DESKTOP_LINE)
     if view.recheck is not None:
         reason = note_refusal_line(view.recheck_reason) if view.recheck_reason else ""
         lines.append(CHROME_RECHECK_LINES[view.recheck].format(reason=reason))
@@ -427,6 +497,24 @@ class SessionControllerLike(Protocol):
 
     @property
     def generating(self) -> bool: ...
+
+    # Task 5.3 (D2): a retired session removed outside the controller (the
+    # Recovery list's Discard, the sweep) stops resolving by its reference.
+    def forget_session_ref(self, session_id: str) -> None: ...
+
+    # Task 5.5 (D2, D6): the Unreviewed banner names a session by its
+    # reference; an indexed session found at app start is given one.
+    def session_ref_for(self, session_id: str) -> str | None: ...
+
+    def register_session_ref(self, session_id: str) -> str: ...
+
+    def resolve_session_ref(self, session_ref: str) -> str | None: ...
+
+    # Task 5.4 (D6, decided option (a)): reinstall a retired session as the
+    # live QUEUED session for review; ``reader`` runs before it is installed.
+    def adopt_queued[T](
+        self, directory: Path, reader: Callable[[Path, SessionCrypto], T]
+    ) -> tuple[RecordingSession, T]: ...
 
     # Cliniko workflow safeguards plan Task 3.3: consent is required on every
     # Start (Constraint 4); ``context`` None is an unlinked recording.
@@ -532,7 +620,11 @@ _CONTROLS: dict[SessionState, ControlSet] = {
     # (PR-HIGH-006: never race Discard against an in-flight transcribe).
     SessionState.PROCESSING: ControlSet(),
     # Complete/Discard for a queued session live on the transcript view.
-    SessionState.QUEUED: ControlSet(),
+    # Cliniko workflow safeguards plan D6 (Task 5.3): Start for the NEXT
+    # patient is offered here — it retires this session to the Unreviewed
+    # section — unless its note review holds the generation lease, which the
+    # Session screen and the Chrome bridge check beside this table.
+    SessionState.QUEUED: ControlSet(start=True),
     SessionState.FAILED: ControlSet(discard=True),
     SessionState.WRITTEN: ControlSet(start=True),
     SessionState.DISCARDED: ControlSet(start=True),
@@ -563,6 +655,10 @@ class RecoverableSessionInfo:
     has_transcript: bool
     has_note: bool
     has_encounter: bool
+    # Task 5.4 (D6): when the sweep will first treat it as expired — THE
+    # sweep's own timestamp derivation (``session_expires_at``), from the
+    # header and file times only.
+    expires_at: float | None = None
 
 
 def list_recoverable_sessions(
@@ -642,9 +738,222 @@ def list_recoverable_sessions(
                 has_transcript=(child / TRANSCRIPT_FILENAME).is_file(),
                 has_note=(child / NOTE_FILENAME).is_file(),
                 has_encounter=(child / ENCOUNTER_FILENAME).is_file(),
+                expires_at=session_expires_at(child, now),
             )
         )
     return infos
+
+
+# ---------------------------------------------------------------------------
+# The Unreviewed section (Cliniko workflow safeguards plan D6, Task 5.4).
+# ---------------------------------------------------------------------------
+
+UNREVIEWED_HEADER: Final = "Unreviewed recordings - open one to review its note:"
+RECOVERABLE_HEADER: Final = "Recoverable sessions (24-hour window):"
+OPEN_FOR_REVIEW_LABEL: Final = "Open for review"
+REVIEW_OPEN_BUSY_LINE: Final = (
+    "A note review is open - save or cancel it before opening another recording."
+)
+REVIEW_OPEN_RECOVERY_BUSY_LINE: Final = (
+    "A recovery is still transcribing - wait for it to finish before opening another "
+    "recording."
+)
+GENERATE_NOTE_LABEL: Final = "Generate note"
+REGENERATE_NOTE_LABEL: Final = "Regenerate (replaces the saved note)"
+# D6: warn this long before a session's 24-hour window closes.
+EXPIRY_WARNING_SECONDS: Final = 2 * 3600
+# The on-close list is shown on a first close; a second close inside this
+# window quits (a modal box would block every close path, tests included).
+CLOSE_CONFIRM_SECONDS: Final = 10.0
+SAVED_NOTE_LINE: Final = (
+    "Saved note - shown as it was saved. Copy it here; Complete, or Regenerate "
+    "(replaces the saved note), on the Transcript screen."
+)
+SAVED_NOTE_CONFIG_CHANGED_LINE: Final = (
+    "This note was saved under a different note configuration from the one now in "
+    "use, so it is shown read-only as it was saved. Regenerate on the Transcript "
+    "screen to write it under the current configuration."
+)
+SAVED_NOTE_CONFIG_UNREADABLE_LINE: Final = (
+    "The note configuration could not be loaded, so this saved note is shown "
+    "read-only as it was saved."
+)
+_REVIEW_REFUSALS: Final[dict[str, str]] = {
+    "no_transcript": "it has no transcript - use Resume processing instead",
+    "key_unavailable": "its session key could not be unlocked",
+    "consent_unavailable": (
+        "its consent record is missing or damaged, so it cannot be reviewed - discard it"
+    ),
+    "transcript": "its transcript could not be read",
+    "note": (
+        "its saved note could not be verified against the transcript - the note was "
+        "not replaced; discard the session or contact support"
+    ),
+    "unreadable": "its transcript or saved note could not be read",
+}
+
+
+@dataclass(frozen=True)
+class ReviewOpening:
+    """What "Open for review" reads under the adopted session's key: the
+    transcript and, when ``note.enc`` exists, the SAVED note verified by
+    ``session_store.read_note`` (D6). Display only; never persisted here."""
+
+    document: TranscriptDocument
+    note: GeneratedNote | None
+
+
+class ReviewReadError(Exception):
+    """``read_for_review`` could not read one artifact: ``kind`` is
+    ``transcript`` or ``note``. The message never carries clinical text."""
+
+    def __init__(self, kind: Literal["transcript", "note"]) -> None:
+        super().__init__(f"the {kind} could not be read")
+        self.kind = kind
+
+
+def read_for_review(directory: Path, crypto: SessionCrypto) -> ReviewOpening:
+    """The reader ``SessionController.adopt_queued`` runs before it installs
+    anything: a note that fails verification refuses the opening (named on
+    the row), never a silent regenerate or overwrite (D6)."""
+    try:
+        document = read_transcript(directory, crypto)
+    except Exception as exc:
+        raise ReviewReadError("transcript") from exc
+    if not (directory / NOTE_FILENAME).is_file():
+        return ReviewOpening(document, None)
+    try:
+        note = read_note(directory, crypto)
+    except Exception as exc:
+        raise ReviewReadError("note") from exc
+    return ReviewOpening(document, note)
+
+
+def review_refusal_line(reason: str, cause: BaseException | None = None) -> str:
+    """The Recovery row's named refusal for ``ReviewOpenRefused``: the
+    reader's own ``ReviewReadError`` kind when that is the cause."""
+    if reason == "unreadable" and isinstance(cause, ReviewReadError):
+        reason = cause.kind
+    detail = _REVIEW_REFUSALS.get(reason, _REVIEW_REFUSALS["unreadable"])
+    return f"This recording cannot be opened for review: {detail}."
+
+
+def saved_note_line(note: GeneratedNote, config_loader: Callable[[], NoteConfig]) -> str:
+    """The saved note's info line (D6): whether it matches the note config
+    now in use. Either way the saved note is shown as it was saved."""
+    try:
+        config = config_loader()
+    except Exception:  # noqa: BLE001 - runs after adoption: never raise (round 32 LOW-025)
+        return SAVED_NOTE_CONFIG_UNREADABLE_LINE
+    if config.config_digest() != note.config_digest:
+        return SAVED_NOTE_CONFIG_CHANGED_LINE
+    return SAVED_NOTE_LINE
+
+
+def _clock_text(timestamp: float) -> str:
+    """Local wall-clock time — the practitioner acts on it."""
+    return datetime.fromtimestamp(timestamp).strftime("%H:%M on %d %b")
+
+
+def unreviewed_row_text(info: RecoverableSessionInfo, now: float) -> str:
+    """An Unreviewed row: stat-only facts (never a clinic or patient) plus
+    when it expires."""
+    parts = [f"Recording {info.session_id[:8]}..."]
+    parts.append("note saved" if info.has_note else "no note yet")
+    parts.append(recovery_link_line(info.has_encounter))
+    # The binding Step-10 note, as the recoverable list's rows carry it
+    # (codex round 34 PR-MED-190).
+    if not info.has_audio:
+        parts.append("no audio recorded")
+    elif not info.store_finished:
+        parts.append("did not finish cleanly")
+    if info.expires_at is not None:
+        parts.append(expiry_text(info.expires_at, now))
+    return " - ".join(parts)
+
+
+def expiry_text(expires_at: float, now: float) -> str:
+    if expires_at <= now:
+        return "expiring now"
+    return f"expires {_clock_text(expires_at)}"
+
+
+def expiring_soon(infos: Sequence[RecoverableSessionInfo], now: float) -> list[str]:
+    """Session ids inside D6's 2-hour warning window."""
+    return [
+        info.session_id
+        for info in infos
+        if info.expires_at is not None and info.expires_at - now <= EXPIRY_WARNING_SECONDS
+    ]
+
+
+def expiry_warning_line(count: int) -> str:
+    if count == 1:
+        return (
+            "1 unreviewed recording expires within 2 hours - open it and Complete it, or "
+            "it is deleted when its 24-hour window closes."
+        )
+    return (
+        f"{count} unreviewed recordings expire within 2 hours - open and Complete them, "
+        "or they are deleted when their 24-hour windows close."
+    )
+
+
+def close_expiry_message(entries: Sequence[tuple[str, float | None]], now: float) -> str:
+    """D6's on-close list: each unreviewed recording and when it expires.
+    Ids are shortened; no clinic or patient appears."""
+    lines = [
+        f"Recording {session_id[:8]}...: "
+        + (expiry_text(expires_at, now) if expires_at is not None else "expiry unknown")
+        for session_id, expires_at in entries
+    ]
+    return (
+        "Unreviewed recordings stay on this computer until their 24-hour window closes. "
+        + "; ".join(lines)
+        + f". Close again within {int(CLOSE_CONFIRM_SECONDS)} seconds to quit."
+    )
+
+
+def reconstruct_reminder_entries(
+    infos: Sequence[RecoverableSessionInfo],
+    *,
+    unwrap: Callable[[Path], SessionCrypto] | None = None,
+    read_record: Callable[[Path, SessionCrypto, str], EncounterRecord] | None = None,
+) -> list[ReminderEntry]:
+    """Task 5.5 (D6): rebuild the Unreviewed reminder index at APP START —
+    the ONE path besides a checkout that decrypts ``encounter.enc``, once
+    per session on disk that has a transcript and an encounter record. The
+    key is unwrapped for that one read and destroyed at once; only the ids
+    go on (``ReminderEntry``), never a name. A session whose key or record
+    cannot be read is skipped (it stays on the Unreviewed list, where opening
+    it names why). Returned OLDEST first, so adding them in order leaves the
+    index newest first. The two readers resolve at call time (the spy
+    test's seam)."""
+    unwrap_key = unwrap if unwrap is not None else unwrap_key_from_file
+    read = read_record if read_record is not None else read_encounter_record
+    entries: list[tuple[float, ReminderEntry]] = []
+    for info in infos:
+        if not (info.has_transcript and info.has_encounter):
+            continue
+        try:
+            crypto = unwrap_key(info.directory)
+        except Exception:  # noqa: BLE001 - unreadable custody: not indexed
+            continue
+        try:
+            record = read(info.directory, crypto, info.session_id)
+        except Exception:  # noqa: BLE001 - EncounterUnavailable or worse: not indexed
+            continue
+        finally:
+            crypto.destroy()
+        context = record.context
+        if context is None:
+            continue
+        order = info.expires_at if info.expires_at is not None else float("-inf")
+        entries.append(
+            (order, ReminderEntry(context.clinic_id, context.treatment_note_id, info.session_id))
+        )
+    entries.sort(key=lambda pair: pair[0])
+    return [entry for _, entry in entries]
 
 
 # ---------------------------------------------------------------------------
@@ -2970,6 +3279,13 @@ __all__ = [
     "chrome_refusal_message",
     "ChromeView",
     "chrome_view_text",
+    "DISCARD_CONFIRM_MESSAGE",
+    "REVIEW_OPEN_START_HINT",
+    "PAUSE_CUES",
+    "PAUSE_CUE_LINKED_TAIL",
+    "PAUSE_CUE_UNLINKED_TAIL",
+    "BLOCK_DESKTOP_LINE",
+    "pause_cue_text",
     "RECOVERY_NO_ENCOUNTER_LINE",
     "RECOVERY_ENCOUNTER_LINE",
     "CHECKOUT_CONSENT_UNAVAILABLE_LINE",
@@ -2983,6 +3299,28 @@ __all__ = [
     "note_refusal_line",
     "recovery_link_line",
     "checkout_link_line",
+    "UNREVIEWED_HEADER",
+    "RECOVERABLE_HEADER",
+    "OPEN_FOR_REVIEW_LABEL",
+    "REVIEW_OPEN_BUSY_LINE",
+    "GENERATE_NOTE_LABEL",
+    "REGENERATE_NOTE_LABEL",
+    "EXPIRY_WARNING_SECONDS",
+    "CLOSE_CONFIRM_SECONDS",
+    "SAVED_NOTE_LINE",
+    "SAVED_NOTE_CONFIG_CHANGED_LINE",
+    "SAVED_NOTE_CONFIG_UNREADABLE_LINE",
+    "ReviewOpening",
+    "ReviewReadError",
+    "read_for_review",
+    "review_refusal_line",
+    "saved_note_line",
+    "unreviewed_row_text",
+    "expiry_text",
+    "expiring_soon",
+    "expiry_warning_line",
+    "close_expiry_message",
+    "reconstruct_reminder_entries",
     "LiveTranscriberSource",
     "LEARNING_STALE_CONSENT_HINT",
     "LEARNING_UNUSABLE_HINT",

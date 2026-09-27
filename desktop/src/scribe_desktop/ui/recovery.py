@@ -1,10 +1,19 @@
 """Recovery screen (Flow 3): lists recoverable session stores; the ONLY
 actions are Resume processing and Discard — recording is NEVER resumed
 after a crash (plan Critical Constraint). Stores without a Finish footer
-carry the binding unfinished-store warning (PR-HIGH-007 residual)."""
+carry the binding unfinished-store warning (PR-HIGH-007 residual).
+
+Cliniko workflow safeguards plan D6 (Task 5.4): sessions that already have a
+transcript are listed in the Unreviewed section instead, with "Open for
+review" and Discard — never "Resume processing", which re-transcribes and
+would unlink a saved note. Opening is the main window's (the controller
+adopts the session); this screen only asks, through ``review_requested``.
+Both lists are ONE listing with one exclusion set, so ``_protected`` keeps
+feeding the sweep exactly as before."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -46,6 +55,15 @@ def _describe(info: models.RecoverableSessionInfo) -> str:
 class RecoveryScreen(QWidget):
     # Emitted with (Path, RecoveryOutcome) after resume-processing succeeds.
     recovered = Signal(object)
+    # Cliniko workflow safeguards plan Task 5.3 (D2, D6): a session this list
+    # discarded — its reminder entry and reference go with it.
+    session_removed = Signal(str)
+    # Task 5.4 (D6): "Open for review" on an Unreviewed row, with its
+    # ``RecoverableSessionInfo``; the main window adopts and opens it.
+    review_requested = Signal(object)
+    # Task 5.4 (D6): a session newly inside the 2-hour expiry warning; the
+    # text is the warning line (counts only — no clinic, no patient).
+    expiry_warning = Signal(str)
 
     def __init__(
         self,
@@ -53,11 +71,17 @@ class RecoveryScreen(QWidget):
         *,
         active_ids_provider: Callable[[], frozenset[str]] | None = None,
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
+        clock: Callable[[], float] = time.time,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._root = sessions_root if sessions_root is not None else default_sessions_root()
         self._active_ids_provider = active_ids_provider or frozenset
+        self._clock = clock
+        # The ids already warned about (D6), so the cue fires once per
+        # session entering the window, not on every refresh.
+        self._warned: set[str] = set()
+        self._unreviewed: list[models.RecoverableSessionInfo] = []
         self._recovery_runner = (
             recovery_runner if recovery_runner is not None else models.build_recovery_runner()
         )
@@ -103,6 +127,28 @@ class RecoveryScreen(QWidget):
         self.progress_bar.setRange(0, 0)
         self.progress_bar.hide()
 
+        # --- Task 5.4 (D6): the Unreviewed section -----------------------------
+        self.unreviewed_list = QListWidget()
+        self.unreviewed_list.currentItemChanged.connect(lambda *_: self._update_controls())
+        self.open_button = QPushButton(models.OPEN_FOR_REVIEW_LABEL)
+        self.open_button.setToolTip(
+            "Open this recording's transcript - and its saved note, if it has one - "
+            "to generate, save, copy or Complete it."
+        )
+        self.unreviewed_discard_button = QPushButton("Discard")
+        self.open_button.clicked.connect(self.on_open_for_review)
+        self.unreviewed_discard_button.clicked.connect(self.on_discard_unreviewed)
+        self.expiry_label = QLabel()
+        self.expiry_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        self.expiry_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.expiry_label.setWordWrap(True)
+        self.expiry_label.hide()
+
+        unreviewed_buttons = QHBoxLayout()
+        unreviewed_buttons.addWidget(self.open_button)
+        unreviewed_buttons.addWidget(self.unreviewed_discard_button)
+        unreviewed_buttons.addStretch(1)
+
         buttons = QHBoxLayout()
         buttons.addWidget(self.resume_button)
         buttons.addWidget(self.discard_button)
@@ -110,7 +156,11 @@ class RecoveryScreen(QWidget):
         buttons.addStretch(1)
 
         layout = QVBoxLayout()
-        layout.addWidget(QLabel("Recoverable sessions (24-hour window):"))
+        layout.addWidget(QLabel(models.UNREVIEWED_HEADER))
+        layout.addWidget(self.unreviewed_list)
+        layout.addWidget(self.expiry_label)
+        layout.addLayout(unreviewed_buttons)
+        layout.addWidget(QLabel(models.RECOVERABLE_HEADER))
         layout.addWidget(self.session_list)
         layout.addWidget(self.warning_label)
         layout.addLayout(buttons)
@@ -123,23 +173,63 @@ class RecoveryScreen(QWidget):
 
     def refresh(self) -> None:
         self.session_list.clear()
+        self.unreviewed_list.clear()
         try:
             active = self._active_ids_provider()
         except Exception:  # noqa: BLE001 - conservative: exclude nothing
             active = frozenset()
         excluded = frozenset(active | self._protected)
+        now = self._clock()
+        unreviewed: list[models.RecoverableSessionInfo] = []
         for info in models.list_recoverable_sessions(self._root, excluded):
+            if info.has_transcript:
+                # D6: a transcript means review, never re-transcription.
+                unreviewed.append(info)
+                item = QListWidgetItem(models.unreviewed_row_text(info, now))
+                item.setData(Qt.ItemDataRole.UserRole, info)
+                self.unreviewed_list.addItem(item)
+                continue
             item = QListWidgetItem(_describe(info))
             item.setData(Qt.ItemDataRole.UserRole, info)
             self.session_list.addItem(item)
+        self._unreviewed = unreviewed
+        self._show_expiry(now)
         self._update_controls()
 
-    def _selected_info(self) -> models.RecoverableSessionInfo | None:
-        item = self.session_list.currentItem()
+    def _show_expiry(self, now: float) -> None:
+        """D6's 2-hour warning: the line while any Unreviewed row is inside
+        the window; the cue (``expiry_warning``) once per session entering it."""
+        soon = models.expiring_soon(self._unreviewed, now)
+        if soon:
+            self.expiry_label.setText(models.expiry_warning_line(len(soon)))
+            self.expiry_label.show()
+        else:
+            self.expiry_label.hide()
+        fresh = [session_id for session_id in soon if session_id not in self._warned]
+        self._warned = set(soon)
+        if fresh:
+            self.expiry_warning.emit(models.expiry_warning_line(len(soon)))
+
+    def unreviewed_infos(self) -> tuple[models.RecoverableSessionInfo, ...]:
+        """The Unreviewed rows as last listed (D6's on-close list)."""
+        return tuple(self._unreviewed)
+
+    def show_message(self, text: str) -> None:
+        self.message_label.setText(text)
+
+    @staticmethod
+    def _info_of(list_widget: QListWidget) -> models.RecoverableSessionInfo | None:
+        item = list_widget.currentItem()
         if item is None:
             return None
         info = item.data(Qt.ItemDataRole.UserRole)
         return info if isinstance(info, models.RecoverableSessionInfo) else None
+
+    def _selected_info(self) -> models.RecoverableSessionInfo | None:
+        return self._info_of(self.session_list)
+
+    def _selected_unreviewed(self) -> models.RecoverableSessionInfo | None:
+        return self._info_of(self.unreviewed_list)
 
     def set_generation_blocked(self, blocked: bool) -> None:
         """Block/unblock recovery actions while a live note generation lease
@@ -159,8 +249,18 @@ class RecoveryScreen(QWidget):
         has_selection = info is not None and not blocked
         self.resume_button.setEnabled(bool(has_selection and info is not None and info.has_audio))
         self.discard_button.setEnabled(bool(has_selection))
+        # Task 5.4: the Unreviewed actions share the same blocks — a checkout,
+        # a resume in flight or a held generation lease disables them.
+        unreviewed = self._selected_unreviewed() is not None and not blocked
+        self.open_button.setEnabled(unreviewed)
+        self.unreviewed_discard_button.setEnabled(unreviewed)
         self.refresh_button.setEnabled(not self._busy and not self._generation_blocked)
-        if info is not None and not info.store_finished:
+        # Either list's selection (codex round 34 PR-MED-190: an Unreviewed
+        # row can be a recovered store that never got its Finish footer).
+        if any(
+            selected is not None and not selected.store_finished
+            for selected in (info, self._selected_unreviewed())
+        ):
             # Binding Step-10 note: warn whenever store_finished is False.
             self.warning_label.setText(models.UNFINISHED_STORE_WARNING)
             self.warning_label.show()
@@ -173,6 +273,10 @@ class RecoveryScreen(QWidget):
     def is_busy(self) -> bool:
         """True while a resume-processing run is in flight."""
         return self._busy
+
+    @property
+    def sessions_root(self) -> Path:
+        return self._root
 
     def protected_session_ids(self) -> frozenset[str]:
         """Session ids the expiry sweep must not touch: in-flight recovery
@@ -286,8 +390,33 @@ class RecoveryScreen(QWidget):
         )
         self.refresh()
 
+    def on_open_for_review(self) -> None:
+        """Task 5.4 (D6): ask the main window to open this Unreviewed row.
+        The same click-time re-checks as a resume: a stale row (since
+        reserved by a Discard, or become the live session) is refused
+        before anything is unwrapped."""
+        info = self._selected_unreviewed()
+        if info is None or self._busy or self._generation_blocked:
+            return
+        if self._selection_blocked(info):
+            self._refuse_stale_selection()
+            return
+        if self._protected:
+            self.message_label.setText(
+                "Finish the open recovered transcript first (Complete or Discard) before "
+                "opening another recording."
+            )
+            return
+        self.message_label.setText("")
+        self.review_requested.emit(info)
+
     def on_discard(self) -> None:
-        info = self._selected_info()
+        self._discard(self._selected_info())
+
+    def on_discard_unreviewed(self) -> None:
+        self._discard(self._selected_unreviewed())
+
+    def _discard(self, info: models.RecoverableSessionInfo | None) -> None:
         if info is None or self._busy or self._generation_blocked:
             return
         if self._selection_blocked(info):
@@ -299,4 +428,6 @@ class RecoveryScreen(QWidget):
             self.message_label.setText("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
             self.message_label.setText(f"Discard failed: {type(exc).__name__}: {exc}")
+        else:
+            self.session_removed.emit(info.session_id)
         self.refresh()

@@ -990,6 +990,16 @@ def _session_created_at(session_dir: Path, now: float) -> float:
     return now
 
 
+def session_expires_at(
+    session_dir: Path, now: float, *, max_age: timedelta = RECOVERY_WINDOW
+) -> float:
+    """When the sweep will first treat ``session_dir`` as expired (POSIX
+    seconds): THE sweep's own creation time (``_session_created_at``) plus
+    the window, so the Unreviewed expiry warning (Cliniko workflow
+    safeguards plan D6) can never promise longer than the sweep allows."""
+    return _session_created_at(session_dir, now) + max_age.total_seconds()
+
+
 def sweep_sessions(
     root: Path,
     *,

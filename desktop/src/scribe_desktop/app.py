@@ -192,6 +192,10 @@ def main() -> int:
 
     run_sweep()  # Flow 3: app start -> sweep BEFORE the recovery list renders
     window = MainWindow(controller, backend, sessions_root=sessions_root)
+    # Task 5.5 (D6): after the sweep, the reminder index is rebuilt from the
+    # sessions left on disk — the one start-up decrypt of `encounter.enc`,
+    # once per Unreviewed session. Nothing contacts Cliniko here.
+    window.reconstruct_reminders()
     pipe = _start_chrome_link(window, logger)
     if pipe is not None:
         app.aboutToQuit.connect(pipe.stop)
@@ -204,6 +208,7 @@ def main() -> int:
         # awaiting Complete/Discard are protected from the sweep too — the
         # sweep must never destroy a store mid-recovery.
         run_sweep(window.recovery_screen.protected_session_ids())
+        window.prune_reminders()  # D6: an expired session's reminder goes too
         window.recovery_screen.refresh()
 
     sweep_timer.timeout.connect(periodic_sweep)

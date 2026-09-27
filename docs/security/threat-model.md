@@ -1535,8 +1535,13 @@ while the slot is free, can:
       verifies it with Cliniko and publishes the name;
   (c) hold the only pipe slot — the Chrome link is then down (the host sees
       the pipe busy and tells Chrome the app is not running);
-  (d) drive `resume_previous` once Phase 5 builds it — ids only; the
-      extension builds the URL from the allow-list.
+  (d) drive `resume_previous` (built in Task 5.2) — it names the live
+      session's reference and resumes that PAUSED session once a report
+      names its own note, a report the same process can also forge; ids
+      only, and the extension builds any URL from the allow-list;
+  (e) read the Unreviewed banner for a note id of its choosing and send
+      `open_review` for the reference it names (Task 5.5) — ids and a count,
+      no name; it opens only that session on the desktop.
 The same attacker already has more without the pipe: it can read the
 Cliniko key from Credential Manager and query `/patients/<id>` itself, use
 the microphone, and repoint the host registration. (2) A same-user process
@@ -1599,11 +1604,13 @@ allow-listed host is verified. `start` is refused unless its `state_rev` is
 the last one sent, its target is that bound report, the report is verified
 or `unverified_offline`, no session is active, no note review holds the
 generation lease and a microphone is selected; an `unverified_offline` Start
-records with write-back blocked (Constraint 6). `resume`, `finish` and
-`discard` are refused BEFORE their slot runs unless their `session_ref` is
-the live session's, and resuming a LINKED session also needs the bound
-report to be its own note; `pause` needs no reference (fail-safe);
-`resume_previous` and `open_review` are refused until Phase 5 builds them.
+records with write-back blocked (Constraint 6). `resume`, `finish`,
+`discard` and `resume_previous` are refused BEFORE their slot runs unless
+their `session_ref` is the live session's; `pause` needs no reference
+(fail-safe); `open_review` names a RETIRED session and is refused unless its
+reference resolves to a session still in the reminder index (the "Open for
+review" paragraph below). Resume is governed by the pause rule's resume
+check (next paragraph).
 Refusals travel in `state.last_refusal`, never as `error` (Constraint 9).
 The patient's name reaches `state` and the Session screen (a plain-text
 label) only from a note Cliniko verified, and has TWO in-memory lifetimes
@@ -1626,6 +1633,109 @@ The name is on screen while the session records — the same exposure as
 Cliniko's own page. (4) The snapshot is rebuilt every 500 ms and on every
 event, so what the panel shows can trail the controller by that long; the
 controller still refuses any transition that is no longer legal.
+
+THE PAUSE RULE AND THE BLOCK (Tasks 5.1–5.3, `context_rules.py` +
+`ui/bridge.py`; D5, D6). Enforced, by the app alone (Constraint 3): for a
+LINKED live session, the bridge puts every report to the rule against the
+tab that session is bound to — its bound tab changing note or patient,
+leaving its note (any other page, including one off the allow-list) or
+closing, and the focused tab reporting another note or Cliniko's login
+page, each pause a recording and set the resolution block; so do pipe loss
+and a new pipe client; machine suspend (`PBT_APMSUSPEND`, the main window)
+pauses any recording. Every pause runs through the Session screen's slot
+and shows a desktop cue. A PAUSED session only gains the block; nothing
+else changes state. A tab that is neither bound nor focused never pauses,
+and neither does a SEPARATE tab showing a page that is not Cliniko's (the
+bound tab itself leaving its note for such a page does pause, as above;
+codex round 34 PR-LOW-191). The rule never resumes. THE RESUME
+CHECK: every Resume through the Session screen's slot (its button, a Chrome
+`resume`, Phase 7's hotkey) is refused, by name and before the controller
+is called, for a linked session unless a pipe client is connected and the
+focused tab's current report on this connection names the session's exact
+clinic host, patient and note; a successful Resume clears the block and
+binds the session to that tab. A tab is re-bound after pipe loss only to a
+report naming those exact ids — a session is never re-bound to another
+note. `resume_previous` resumes the paused session only when such a report
+arrives within 30 seconds of the click on the same connection, and then
+only through the same check. The Session screen's own Discard needs a second
+click within 10 seconds for the same session; a Chrome `discard` carries its
+second click in the protocol. A Start that retires a queued linked session
+adds it to the Unreviewed reminder index (ids only, in memory, never
+persisted); a completion, a discard or an expiry removes that one entry and
+its reference. RESIDUE: (1) the rule sees only what Chrome reports: speech
+between a page change and its report — and anything said before a
+navigation — is recorded into the session it was bound to (the plan's
+pre-navigation-speech assumption), and a change the extension never reports
+is never seen; until the Phase 6 extension reports pages, only pipe loss, a
+new client and suspend act. (2) An UNLINKED (desktop) recording ignores
+Chrome's reasons by design; only suspend (and Phase 7's hands-free
+reasons) pause it. (3) Suspend is Windows' broadcast: a power cut, a crash
+or a hibernation that sends none is crash recovery's case. (4) Every report
+and command is the extension's assertion (pipe residue (1)): a same-user
+process on the pipe can forge the report the resume check and
+`resume_previous` accept.
+
+OPEN FOR REVIEW (Task 5.4, decided option (a): `SessionController.adopt_queued`
++ the Recovery screen's Unreviewed section + `ui/main_window.py`; D6).
+Enforced: a session with a transcript is listed as Unreviewed and offers
+"Open for review" and Discard — never "Resume processing", which
+re-transcribes and unlinks a saved note. Opening ADOPTS it as the
+controller's live queued session, so it is reviewed, saved and completed
+through the one leased custody path that already exists; no second path
+serves a non-live session. Adoption is refused while the generation lease
+is held, while any discard holds a custody reservation, while a session is
+recording, paused or processing, for a directory outside the app's sessions
+root, and for the session already live; each refusal leaves the live session
+untouched. The key is unwrapped once and destroyed in memory on every later
+refusal. The consent and context come from `encounter.enc`, decrypted by
+the adoption itself — it IS the checkout (Constraint 7); a missing or
+unauthentic record refuses the opening by name, and no consent is ever
+fabricated. The transcript and any saved note are read BEFORE anything is
+installed, the note through `session_store.read_note` (the same verification
+Complete uses): a note that fails is refused on the row and never
+regenerated or overwritten. A saved note opens as it was saved, read-only;
+changing it means "Regenerate (replaces the saved note)", which replaces it
+only on that review's Save. Copying it follows the recorded copy flag and
+re-checks it carries no unresolved error. An adopted linked session is
+re-verified with Cliniko from the record the adoption decrypted (no second
+decrypt); its write-back goes through the live entry, which still needs its
+own current re-verification (MED-012). Adopting retires a live queued or
+failed session exactly as a Start does (its reminder entry and reference
+kept); the adopted session's own entry leaves the index until it is retired
+again. A recovered view replaced by a live transcript now releases its
+checkout (scoped, by id), ending the hold-until-restart residue. THE BANNER
+AND `open_review` (Task 5.5): at app start the reminder index is rebuilt by
+decrypting each Unreviewed session's `encounter.enc` once (Constraint 7's
+one start-up exception; its key unwrapped for that read and destroyed at
+once; a record that cannot be read is skipped and the session stays on the
+list), and each indexed session is given a D2 reference. While the focused
+tab reports a note with indexed recordings, `state.banner` carries the
+newest one's reference, the host, the note id and the count — never a
+patient's name (a retired session keeps no display string). `open_review`
+is refused before anything runs unless its reference still resolves in D2's
+registry to a session still in the index — a click after that entry was
+completed, discarded, expired or opened is refused, never redirected to "the
+newest session" — and while a review holds the lease or a session is
+recording, paused or processing (round 32 LOW-023: named before the window
+moves); then the window comes forward (the taskbar flashes where Windows refuses focus) and exactly that
+session is adopted as above. RESIDUE:
+(1) while adopted, a session is the controller's own queued session and is
+protected from the 24 h sweep, like any review in progress (retention
+schedule, the 24-hour rule); the listing's age filter means a session whose
+age is ESTABLISHED past its window is not offered for opening — one with no
+readable timestamp at all is listed regardless of age (round 47 PR-LOW-001;
+the sweep owns that case) and its shown expiry is provisional (codex round
+34 PR-LOW-192). (2) The expiry warning and the
+on-close list (the Unreviewed rows, the live queued session and an open
+recovered checkout) are stat-derived (the sweep's own `session_expires_at`); they
+name only an 8-character id prefix. (3) The on-close list refuses the first
+close and accepts a second within 10 seconds; a Windows shutdown that
+delivers one close event is refused once — the sessions stay on disk under
+the 24 h rule either way. (4) The banner and `open_review` are the
+extension's report and click (pipe residue (1)): a same-user process on the
+pipe can learn that a note it names has an unreviewed recording (ids and a
+count, no name) and open that recording on the desktop — never for another
+session than the one its reference names.
 
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 

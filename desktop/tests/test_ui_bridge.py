@@ -30,6 +30,7 @@ from encounter_fakes import (  # noqa: E402
     ok,
     status,
 )
+from scribe_desktop.context_rules import PauseReason  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     ConsentAttestation,
     EncounterContext,
@@ -48,7 +49,7 @@ from scribe_desktop.transcription import LiveFailure, LiveFailureKind  # noqa: E
 from scribe_desktop.ui import models  # noqa: E402
 from scribe_desktop.ui.bridge import ChromeBridge  # noqa: E402
 from scribe_desktop.ui.session_screen import SessionScreen  # noqa: E402
-from test_ui_screens import FakeController, _process_until  # noqa: E402
+from test_ui_screens import FakeController, _document, _process_until  # noqa: E402
 
 PATIENT_NAME = "Jan Citizen"  # encounter_fakes.PATIENT_BODY's display name
 TAB = 412
@@ -127,6 +128,17 @@ class BridgeController(FakeController):
         self.state_value = SessionState.IDLE
         return self._session()
 
+    def finish(self) -> RecordingSession:
+        super().finish()
+        self._track()
+        return self._session()
+
+    def transcribe(self, transcriber: Any) -> RecordingSession:
+        try:
+            return super().transcribe(transcriber)
+        finally:
+            self._track()
+
 
 class Harness:
     def __init__(
@@ -136,16 +148,32 @@ class Harness:
         *,
         transport: Any = None,
         device: int | None = 1,
+        reminders: Any = None,
+        open_review: Any = None,
     ) -> None:
         self.qapp = qapp
         self.transport = transport if transport is not None else NoteTransport()
         self.registry = make_registry(tmp_path, transport=self.transport)
         self.controller = BridgeController()
-        self.screen = SessionScreen(self.controller, device_provider=lambda: device)
+        # Never the real ML stack: a Finish transcribes to a fixed document.
+        self.screen = SessionScreen(
+            self.controller,
+            device_provider=lambda: device,
+            transcriber_factory=lambda: (lambda _d, _c: _document()),
+        )
+        self.now = 1000.0  # the bridge's clock (a "Resume previous" lapses)
         # A long interval: the tests drive publish/_tick themselves.
         self.bridge = ChromeBridge(
-            self.controller, self.screen, self.registry, publish_interval_ms=60_000
+            self.controller,
+            self.screen,
+            self.registry,
+            publish_interval_ms=60_000,
+            clock=lambda: self.now,
+            reminders=reminders,
+            open_review=open_review,
         )
+        self.cues: list[str] = []
+        self.bridge.pause_cue.connect(self.cues.append)
         self.sender = FakeSender()
         self.bridge.attach(self.sender)
         self.seq = 0
@@ -171,6 +199,7 @@ class Harness:
         page: str = "note",
         host: str = HOST,
         note_id: str = NOTE,
+        patient_id: str = PATIENT,
         seq: int | None = None,
     ) -> None:
         if seq is None:
@@ -186,7 +215,7 @@ class Harness:
         if page in ("note", "login", "other_cliniko"):
             payload["host"] = host
         if page == "note":
-            payload.update(patient_id=PATIENT, note_id=note_id)
+            payload.update(patient_id=patient_id, note_id=note_id)
         self.bridge.message(conn_id, make_pipe_envelope("context", payload=payload))
         self.pump()
 
@@ -217,6 +246,10 @@ class Harness:
         assert report is not None and report.verification == "verified"
 
     def close(self) -> None:
+        # Let a check, or a Finish's transcription, end before teardown.
+        _process_until(
+            self.qapp, lambda: not self.bridge.is_busy and not self.screen.is_busy, 15.0
+        )
         self.bridge.deleteLater()
         self.screen.deleteLater()
         self.pump()
@@ -588,12 +621,13 @@ class TestSessionCommands:
         assert ("discard",) in h.controller.calls and self._refusal(h) is None
         assert h.sender.last.live is None
 
-    @pytest.mark.parametrize("action", ["resume_previous", "open_review"])
-    def test_phase_5_actions_are_not_available(self, harness: Any, action: str) -> None:
+    def test_open_review_without_an_index_is_not_available(self, harness: Any) -> None:
+        """A bridge built without the main window's reminder index and opener
+        (Task 5.5) refuses ``open_review`` by name and runs nothing."""
         h = harness()
         h.connect()
-        h.command(action, session_ref=secrets.token_urlsafe(18))
-        assert self._refusal(h) == (action, "not_available")
+        h.command("open_review", session_ref=secrets.token_urlsafe(18))
+        assert self._refusal(h) == ("open_review", "not_available")
         assert h.controller.calls == []
 
 
@@ -821,6 +855,486 @@ class TestLiveSession:
         live = h.sender.last.live
         assert live is not None and live.linked is False
         assert live.patient_id is None and live.note_id is None and live.patient_name is None
+
+
+def _recording(harness: Any) -> Harness:
+    """A linked, verified recording started from ``TAB`` on ``NOTE``."""
+    h: Harness = harness()
+    h.verified_report()
+    h.start()
+    assert h.controller.state is SessionState.RECORDING
+    return h
+
+
+def _refusal_of(h: Harness) -> tuple[str, str] | None:
+    refusal = h.sender.last.last_refusal
+    return None if refusal is None else (refusal.action, refusal.reason)
+
+
+class TestPauseRule:
+    """Task 5.1: D5 as the bridge applies it — every pause through the
+    Session screen's slot, the block on a linked session, the desktop cue."""
+
+    @pytest.mark.parametrize(
+        ("shape", "reason"),
+        [
+            ({"note_id": OTHER_NOTE}, "note_changed"),
+            ({"page": "other_cliniko"}, "left_note"),
+            ({"page": "not_cliniko"}, "left_note"),  # the bound tab left the allow-list
+            ({"page": "closed"}, "tab_closed"),
+            ({"tab_id": OTHER_TAB, "note_id": OTHER_NOTE}, "other_note"),
+            ({"tab_id": OTHER_TAB, "page": "login"}, "login"),
+        ],
+    )
+    def test_a_context_change_pauses_and_blocks(
+        self, harness: Any, shape: dict[str, Any], reason: str
+    ) -> None:
+        h = _recording(harness)
+        h.report(**shape)
+        h.settle()
+        assert ("pause",) in h.controller.calls
+        assert h.controller.state is SessionState.PAUSED
+        state = h.sender.last
+        assert state.live is not None and state.live.phase == "paused"
+        block = state.block
+        assert block is not None and block.reason == reason
+        assert block.session_ref == h.controller.session_ref
+        assert (block.clinic_host, block.clinic_label) == (HOST, "Northside")
+        assert block.patient_name == PATIENT_NAME  # the recording's own patient
+        assert h.cues == [models.pause_cue_text(reason, linked=True)]
+        assert models.BLOCK_DESKTOP_LINE in h.screen.chrome_label.text()
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            {"tab_id": OTHER_TAB, "page": "not_cliniko"},  # a SEPARATE non-Cliniko tab
+            {"tab_id": OTHER_TAB, "page": "other_cliniko"},  # the calendar elsewhere
+            {"tab_id": OTHER_TAB, "note_id": OTHER_NOTE, "focused": False},
+            {"tab_id": OTHER_TAB, "page": "closed"},
+            {"tab_id": OTHER_TAB},  # the same note in a second tab
+            {},  # its own note again
+        ],
+    )
+    def test_the_positive_controls_never_pause(
+        self, harness: Any, shape: dict[str, Any]
+    ) -> None:
+        h = _recording(harness)
+        h.report(**shape)
+        h.settle()
+        assert ("pause",) not in h.controller.calls
+        assert h.controller.state is SessionState.RECORDING
+        assert h.sender.last.block is None and h.cues == []
+
+    def test_pipe_loss_pauses_and_resume_is_refused_until_the_note_is_reported(
+        self, harness: Any
+    ) -> None:
+        h = _recording(harness)
+        h.bridge.disconnected(1, "closed")
+        h.pump()
+        assert h.controller.state is SessionState.PAUSED
+        assert h.cues == [models.pause_cue_text("pipe_lost", linked=True)]
+        # the desktop button: refused by name, nothing called
+        assert h.screen.on_resume() is False
+        assert ("resume",) not in h.controller.calls
+        assert h.screen.message_label.text() == models.CHROME_REFUSALS["pipe_down"]
+        h.connect(2)  # a new client: still paused (already), still refused
+        assert h.screen.on_resume() is False
+        assert h.screen.message_label.text() == models.CHROME_REFUSALS["report_mismatch"]
+        h.seq = 0
+        h.report(conn_id=2, tab_id=900)  # Chrome restarted: a NEW tab id, same note
+        h.settle()
+        assert h.screen.on_resume() is True
+        assert h.controller.state is SessionState.RECORDING
+        assert h.sender.last.block is None
+        # the session is bound to the re-bound tab: that tab leaving pauses
+        h.report(conn_id=2, tab_id=900, page="other_cliniko")
+        assert h.controller.state is SessionState.PAUSED
+
+    def test_a_new_client_pauses_a_recording(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.connect(2)
+        h.settle()
+        assert h.controller.state is SessionState.PAUSED
+        block = h.sender.last.block
+        assert block is not None and block.reason == "new_client"
+
+    def test_an_unlinked_recording_ignores_chrome_but_not_suspend(self, harness: Any) -> None:
+        h: Harness = harness()
+        h.connect()
+        h.screen.consent_checkbox.setChecked(True)
+        h.screen.on_start()
+        h.report(note_id=OTHER_NOTE)
+        h.bridge.disconnected(1, "closed")
+        h.pump()
+        assert h.controller.state is SessionState.RECORDING and h.cues == []
+        h.bridge.pause_for(PauseReason.SUSPEND)
+        assert h.controller.state is SessionState.PAUSED
+        assert h.cues == [models.pause_cue_text("suspend", linked=False)]
+        assert h.bridge._block is None  # no note, so no block
+        assert h.screen.on_resume() is True  # no report needed for an unlinked one
+        h.settle()
+
+    @pytest.mark.parametrize(
+        "state", [SessionState.PROCESSING, SessionState.QUEUED, SessionState.IDLE]
+    )
+    def test_pause_for_is_a_no_op_outside_recording_and_paused(
+        self, harness: Any, state: SessionState
+    ) -> None:
+        h = _recording(harness)
+        h.controller.state_value = state
+        h.controller._track()
+        for reason in PauseReason:
+            h.bridge.pause_for(reason)
+        assert ("pause",) not in h.controller.calls
+        assert h.cues == [] and h.bridge._block is None
+
+    def test_paused_already_only_blocks_and_cues_once(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.command("pause")
+        pauses = h.controller.calls.count(("pause",))
+        h.report(note_id=OTHER_NOTE)
+        h.report(page="other_cliniko")
+        h.settle()
+        assert h.controller.calls.count(("pause",)) == pauses  # nothing paused again
+        block = h.sender.last.block
+        assert block is not None and block.reason == "left_note"  # the latest reason
+        assert h.cues == [models.pause_cue_text("note_changed", linked=True)]
+
+    def test_a_replayed_report_after_resolution_changes_nothing(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.report(note_id=OTHER_NOTE)  # seq 2: pauses
+        stale = h.seq
+        h.report()  # its own note again
+        h.settle()
+        assert h.screen.on_resume() is True
+        h.report(note_id=OTHER_NOTE, seq=stale)  # replayed: ignored
+        assert h.controller.state is SessionState.RECORDING
+
+    def test_resume_command_needs_the_focused_report_of_its_own_note(self, harness: Any) -> None:
+        h = _recording(harness)
+        ref = h.controller.session_ref
+        h.report(tab_id=OTHER_TAB, note_id=OTHER_NOTE)  # B focused: pauses
+        h.settle()
+        h.command("resume", session_ref=ref)
+        assert _refusal_of(h) == ("resume", "report_mismatch")
+        h.report(tab_id=TAB)  # A's tab focused again
+        h.settle()
+        h.command("resume", session_ref=ref)
+        assert _refusal_of(h) is None and h.controller.state is SessionState.RECORDING
+        assert h.sender.last.block is None
+
+
+class TestResolution:
+    """Task 5.2: Flow 3's block — Finish previous, Resume previous (by ids,
+    resuming only on a matching report) and Discard previous (confirmed)."""
+
+    def _blocked(self, harness: Any) -> Harness:
+        h = _recording(harness)
+        h.report(note_id=OTHER_NOTE)  # the recording's tab opened B's note
+        h.settle()
+        assert h.sender.last.block is not None
+        return h
+
+    def test_resume_previous_waits_for_the_recordings_own_note(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        ref = h.controller.session_ref
+        h.command("resume_previous", session_ref=ref)
+        assert _refusal_of(h) is None
+        assert h.controller.state is SessionState.PAUSED  # B is still on screen
+        h.report(note_id=OTHER_NOTE)  # B again: still waiting
+        h.settle()
+        assert ("resume",) not in h.controller.calls
+        h.report()  # the extension took the tab back to A's note
+        h.settle()
+        assert ("resume",) in h.controller.calls
+        assert h.controller.state is SessionState.RECORDING
+        assert h.sender.last.block is None and h.bridge._pending_resume is None
+
+    def test_resume_previous_when_the_note_is_already_shown_resumes_at_once(
+        self, harness: Any
+    ) -> None:
+        h = self._blocked(harness)
+        h.report()
+        h.settle()
+        assert h.controller.state is SessionState.PAUSED  # a report alone never resumes
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        assert h.controller.state is SessionState.RECORDING
+
+    def test_resume_previous_lapses(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        h.now += 31
+        h.report()
+        h.settle()
+        assert h.controller.state is SessionState.PAUSED
+        assert h.bridge._pending_resume is None
+
+    def test_resume_previous_lapses_on_a_new_connection(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        h.connect(2)
+        h.seq = 0
+        h.report(conn_id=2)
+        h.settle()
+        assert h.controller.state is SessionState.PAUSED
+        assert h.bridge._pending_resume is None
+
+    def test_resume_previous_needs_the_live_ref_and_a_paused_linked_session(
+        self, harness: Any
+    ) -> None:
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=secrets.token_urlsafe(18))
+        assert _refusal_of(h) == ("resume_previous", "session_changed")
+        assert h.bridge._pending_resume is None
+        h.report()
+        h.settle()
+        h.command("resume", session_ref=h.controller.session_ref)
+        h.command("resume_previous", session_ref=h.controller.session_ref)  # recording
+        assert _refusal_of(h) == ("resume_previous", "not_allowed_now")
+
+    def test_finish_previous_finishes_the_blocked_recording(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        h.command("finish", session_ref=h.controller.session_ref)
+        assert ("finish",) in h.controller.calls and _refusal_of(h) is None
+        assert _process_until(h.qapp, lambda: not h.screen.is_busy)
+        h.bridge._tick()
+        assert h.controller.state is SessionState.QUEUED
+        assert h.sender.last.block is None and h.bridge._block is None
+
+    def test_discard_previous_carries_its_confirmation(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        h.command("discard", session_ref=h.controller.session_ref, confirmed=True)
+        assert ("discard",) in h.controller.calls
+        assert h.sender.last.block is None and h.sender.last.live is None
+
+    def test_the_desktop_resume_honours_the_block(self, harness: Any) -> None:
+        h = self._blocked(harness)
+        assert h.screen.on_resume() is False  # B's note is on screen
+        assert ("resume",) not in h.controller.calls
+        h.report()
+        h.settle()
+        assert h.screen.on_resume() is True
+        assert h.sender.last.block is None
+
+
+class TestBackToBack:
+    """Task 5.3 (D6): the next patient's Start at QUEUED, refused while the
+    previous note review holds the generation lease."""
+
+    def _queued(self, harness: Any) -> Harness:
+        h = _recording(harness)
+        h.controller.state_value = SessionState.QUEUED
+        h.controller._track()
+        h.bridge._tick()
+        live = h.sender.last.live
+        assert live is not None and live.phase == "queued"
+        return h
+
+    def test_start_at_queued_starts_the_next_recording(self, harness: Any) -> None:
+        h = self._queued(harness)
+        h.start()
+        assert len(h.controller.started_with) == 2 and _refusal_of(h) is None
+        assert h.controller.state is SessionState.RECORDING
+
+    def test_an_open_review_refuses_start_and_says_so(self, harness: Any) -> None:
+        h = self._queued(harness)
+        h.controller.generating = True
+        h.bridge._tick()
+        assert h.sender.last.notice == "review_open"
+        h.start()
+        assert _refusal_of(h) == ("start", "review_open")
+        assert len(h.controller.started_with) == 1
+
+    def test_the_processing_tail_shows_finishing(self, harness: Any) -> None:
+        h = _recording(harness)
+        h.controller.state_value = SessionState.PROCESSING
+        h.controller._track()
+        h.bridge._tick()
+        live = h.sender.last.live
+        assert live is not None and live.phase == "finishing"
+        assert f"Finishing {PATIENT_NAME} - Northside..." in h.screen.chrome_label.text()
+
+
+def _indexed(controller: BridgeController, index: Any, note_id: str = NOTE) -> tuple[str, str]:
+    """A retired recording of ``note_id`` in the reminder index, with the
+    reference D2's registry gives it (startup reconstruction's shape)."""
+    from scribe_desktop.context_rules import ReminderEntry
+
+    session_id = secrets.token_hex(16)
+    index.add(ReminderEntry(CLINIC_ID, note_id, session_id))
+    return session_id, controller.register_session_ref(session_id)
+
+
+class TestBanner:
+    """Task 5.5 (D6): the reminder on reopening a note — ids and a count
+    only, for the note the focused tab reports."""
+
+    def _harness(self, harness: Any) -> tuple[Harness, Any]:
+        from scribe_desktop.context_rules import ReminderIndex
+
+        index = ReminderIndex()
+        h: Harness = harness(reminders=index, open_review=lambda _sid: None)
+        h.connect()
+        return h, index
+
+    def test_a_report_of_an_indexed_note_sets_the_banner(self, harness: Any) -> None:
+        h, index = self._harness(harness)
+        _older, _ = _indexed(h.controller, index)
+        _newer, newer_ref = _indexed(h.controller, index)
+        h.report()
+        h.settle()
+        banner = h.sender.last.banner
+        assert banner is not None
+        assert (banner.session_ref, banner.clinic_host, banner.note_id, banner.count) == (
+            newer_ref,
+            HOST,
+            NOTE,
+            2,
+        )
+        assert banner.patient_name is None  # a retired session keeps no name
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            {"note_id": OTHER_NOTE},
+            {"page": "other_cliniko"},
+            {"host": OTHER_HOST},
+            {"focused": False},
+        ],
+        ids=["other-note", "not-a-note", "off-allow-list", "not-focused"],
+    )
+    def test_no_banner_for_any_other_page(self, harness: Any, shape: dict[str, Any]) -> None:
+        h, index = self._harness(harness)
+        _indexed(h.controller, index)
+        h.report(**shape)
+        h.settle()
+        assert h.sender.last.banner is None
+
+    def test_the_banner_goes_with_its_entry(self, harness: Any) -> None:
+        h, index = self._harness(harness)
+        session_id, _ = _indexed(h.controller, index)
+        h.report()
+        h.settle()
+        assert h.sender.last.banner is not None
+        index.remove(session_id)
+        h.bridge._tick()
+        assert h.sender.last.banner is None
+
+    def test_a_new_connection_re_renders_the_banner(self, harness: Any) -> None:
+        """A service-worker restart is a new pipe connection: the full
+        snapshot, banner included, is sent again once the tab reports."""
+        h, index = self._harness(harness)
+        _session_id, ref = _indexed(h.controller, index)
+        h.report()
+        h.settle()
+        h.connect(2)
+        h.seq = 0
+        h.report(conn_id=2)
+        h.settle()
+        states = h.sender.states(2)
+        assert states and states[-1].banner is not None
+        assert states[-1].banner.session_ref == ref
+
+    def test_no_index_no_banner(self, harness: Any) -> None:
+        h: Harness = harness()
+        h.connect()
+        h.report()
+        h.settle()
+        assert h.sender.last.banner is None
+
+
+class TestOpenReview:
+    """Task 5.5 (D2): ``open_review`` goes through the session gate for a
+    RETIRED session — the exact reference, still in the index."""
+
+    def _harness(self, harness: Any, refusal: str | None = None) -> tuple[Harness, Any, list[str]]:
+        from scribe_desktop.context_rules import ReminderIndex
+
+        index = ReminderIndex()
+        opened: list[str] = []
+
+        def opener(session_id: str) -> str | None:
+            opened.append(session_id)
+            return refusal
+
+        h: Harness = harness(reminders=index, open_review=opener)
+        h.connect()
+        return h, index, opened
+
+    def test_the_banner_ref_opens_exactly_its_session(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness)
+        older, older_ref = _indexed(h.controller, index)
+        _newer, _ = _indexed(h.controller, index)
+        h.command("open_review", session_ref=older_ref)
+        assert opened == [older]  # the exact ref — never "the newest session"
+        assert _refusal_of(h) is None
+
+    def test_a_delayed_click_after_the_entry_went_is_refused(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness)
+        session_id, ref = _indexed(h.controller, index)
+        index.remove(session_id)  # completed, discarded, expired or opened meanwhile
+        h.command("open_review", session_ref=ref)
+        assert opened == []
+        assert _refusal_of(h) == ("open_review", "session_changed")
+
+    def test_an_unknown_or_forgotten_ref_is_refused(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness)
+        session_id, ref = _indexed(h.controller, index)
+        h.controller.forget_session_ref(session_id)  # the ref no longer resolves
+        for candidate in (ref, secrets.token_urlsafe(18)):
+            h.command("open_review", session_ref=candidate)
+            assert _refusal_of(h) == ("open_review", "session_changed")
+        assert opened == []
+
+    def test_the_live_sessions_ref_is_not_an_unreviewed_one(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness)
+        h.report()
+        h.settle()
+        h.start()
+        live_ref = h.controller.session_ref
+        assert live_ref is not None
+        h.command("open_review", session_ref=live_ref)
+        assert opened == []
+        assert _refusal_of(h) == ("open_review", "session_changed")
+
+    def test_refused_while_a_review_holds_the_lease(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness)
+        _session_id, ref = _indexed(h.controller, index)
+        h.controller.generating = True
+        h.command("open_review", session_ref=ref)
+        assert opened == []
+        assert _refusal_of(h) == ("open_review", "review_in_progress")
+
+    @pytest.mark.parametrize(
+        ("state", "refused"),
+        [
+            (SessionState.RECORDING, True),
+            (SessionState.PAUSED, True),
+            (SessionState.PROCESSING, True),
+            (SessionState.QUEUED, False),
+        ],
+    )
+    def test_an_active_session_is_refused_before_the_opener(
+        self, harness: Any, state: SessionState, refused: bool
+    ) -> None:
+        """Round 32 LOW-023: named before the window comes forward — a
+        queued session is retired by the adoption instead."""
+        h, index, opened = self._harness(harness)
+        session_id, ref = _indexed(h.controller, index)
+        h.controller.state_value = state
+        h.command("open_review", session_ref=ref)
+        if refused:
+            assert opened == []
+            assert _refusal_of(h) == ("open_review", "session_active")
+        else:
+            assert opened == [session_id] and _refusal_of(h) is None
+
+    def test_the_openers_refusal_is_reported(self, harness: Any) -> None:
+        h, index, opened = self._harness(harness, refusal="cannot_open")
+        session_id, ref = _indexed(h.controller, index)
+        h.command("open_review", session_ref=ref)
+        assert opened == [session_id]
+        assert _refusal_of(h) == ("open_review", "cannot_open")
 
 
 class TestNothingLeaks:

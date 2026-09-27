@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import re
 import secrets
 import threading
 import uuid
@@ -64,7 +65,9 @@ from scribe_desktop.encounter import (
     ConsentAttestation,
     EncounterContext,
     EncounterRecord,
+    EncounterUnavailable,
     bind_consent,
+    read_encounter_record,
     write_encounter_record,
 )
 from scribe_desktop.logging_setup import log_event
@@ -72,6 +75,8 @@ from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     SESSION_ID_PATTERN,
+    TRANSCRIPT_FILENAME,
+    KeyCustodyError,
     SessionChunkStore,
     StoreWriteError,
     # Package-private by name, shared deliberately (the note.py convention):
@@ -82,6 +87,7 @@ from scribe_desktop.session_store import (
     complete_session,
     default_sessions_root,
     discard_session,
+    unwrap_key_from_file,
     wrap_key_to_file,
 )
 from scribe_desktop.transcription import LiveFailure, LiveTranscriber
@@ -298,6 +304,19 @@ class GenerationInProgressError(SessionControllerError):
     held; the caller retries after ``end_generation``."""
 
 
+class ReviewOpenRefused(SessionControllerError):
+    """``adopt_queued`` refused the SESSION itself (Cliniko workflow
+    safeguards plan Task 5.4): ``reason`` is ``no_transcript``,
+    ``key_unavailable``, ``consent_unavailable`` (its ``encounter.enc`` is
+    missing or unauthentic — never a fabricated consent) or ``unreadable``
+    (the caller's reader raised; the cause is chained). Nothing was
+    installed and the live session, if any, is untouched."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"open for review refused: {reason}")
+        self.reason = reason
+
+
 class GenerationLease:
     """Opaque token for ONE in-flight note-generation operation (Task 6.3).
 
@@ -362,7 +381,7 @@ class SessionController:
     CONCURRENCY CONTRACT, stated accurately after peer rounds 27-32 (the
     earlier blanket "safe from any thread" claim is deliberately NOT
     re-inflated): custody-mutating and custody-using operations — start,
-    complete, discard, transcribe, generation begin/end, the recovered-path
+    adopt_queued, complete, discard, transcribe, generation begin/end, the recovered-path
     coordinator ops, and the sweep/recovery-list protection snapshot — are
     serialized through the controller lock PLUS the per-session custody
     reservation (``_custody_reservations``), whose consumers cover
@@ -507,6 +526,28 @@ class SessionController:
         — a named refusal for the caller, never "the newest session"."""
         with self._lock:
             return self._session_refs.get(session_ref)
+
+    def session_ref_for(self, session_id: str) -> str | None:
+        """The reference ``session_id`` is registered under, or None (Task
+        5.5: the Unreviewed banner names its session by this, never by id)."""
+        with self._lock:
+            return self._ref_for_locked(session_id)
+
+    def register_session_ref(self, session_id: str) -> str:
+        """Task 5.5 (D2, D6): the reference of a session found on disk at app
+        start — its existing one, else a fresh one minted now. Refs never
+        survive a restart, so an indexed session needs one for its banner."""
+        if not re.fullmatch(SESSION_ID_PATTERN, session_id):
+            raise SessionControllerError("not a session id")
+        with self._lock:
+            ref = self._ref_for_locked(session_id)
+            if ref is None:
+                ref = _new_session_ref()
+                self._session_refs[ref] = session_id
+            return ref
+
+    def _ref_for_locked(self, session_id: str) -> str | None:
+        return next((r for r, sid in self._session_refs.items() if sid == session_id), None)
 
     def forget_session_ref(self, session_id: str) -> None:
         """Remove every reference to ``session_id`` (its session expired or
@@ -1042,6 +1083,90 @@ class SessionController:
         finally:
             with self._lock:
                 self._release_custody_locked(session_id)
+
+    def adopt_queued[T](
+        self, directory: Path, reader: Callable[[Path, SessionCrypto], T]
+    ) -> tuple[RecordingSession, T]:
+        """Cliniko workflow safeguards plan Task 5.4, decided option (a):
+        reinstall a RETIRED session (one a Start or crash left on disk with a
+        transcript) as THE live QUEUED session, so the review, the lease,
+        ``with_generation_custody``, Save and Complete are the live path that
+        exists. Returns the session and ``reader(directory, crypto)``'s value
+        (the caller's transcript and saved-note read), run before anything is
+        installed — a reader failure (a note that fails verification, say)
+        refuses the whole adoption, so a note is never silently replaced.
+
+        Refusals mirror ``start()``: while the generation lease is held (this
+        retires the session a generation depends on), while any discard holds
+        a custody reservation, while a session is recording, paused or
+        processing, and for a directory that is not a session of THIS root or
+        is already the live one. ``ReviewOpenRefused`` names a session that
+        cannot be opened. The consent and context come from ``encounter.enc``,
+        decrypted HERE — adoption is a checkout (Critical Constraint 7). A
+        live queued or failed session is retired exactly as ``start()``
+        retires it; the adopted session keeps the reference it already had
+        (D2), else one is minted. The key is unwrapped once, and destroyed
+        (in memory) on every refusal after the unwrap."""
+        with self._lock:
+            self._refuse_while_generating("open for review")
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard is completing; open for review after it finishes"
+                )
+            live = self._live
+            if live is not None and live.session.state in ACTIVE_STATES:
+                raise SessionActivityError(
+                    "another session is active (single-active-session invariant)"
+                )
+            session_id = directory.name
+            if directory.parent != self._root or not re.fullmatch(
+                SESSION_ID_PATTERN, session_id
+            ):
+                raise SessionActivityError("open for review refused: not a session of this app")
+            if live is not None and live.session.session_id == session_id:
+                raise SessionActivityError("open for review refused: the session is already open")
+            if not (directory / TRANSCRIPT_FILENAME).is_file():
+                raise ReviewOpenRefused("no_transcript")
+            try:
+                crypto = unwrap_key_from_file(directory)
+            except KeyCustodyError:
+                raise ReviewOpenRefused("key_unavailable") from None
+            try:
+                try:
+                    record = read_encounter_record(directory, crypto, session_id)
+                except EncounterUnavailable:
+                    raise ReviewOpenRefused("consent_unavailable") from None
+                try:
+                    value = reader(directory, crypto)
+                except Exception as exc:
+                    raise ReviewOpenRefused("unreadable") from exc
+                session = RecordingSession(
+                    session_id=session_id,
+                    encounter_context=record.context,
+                    consent=record.consent,
+                    key_reference="key.dpapi",
+                    state=SessionState.QUEUED,
+                )
+                if live is not None:
+                    self._retire_locked(live)  # raises -> nothing installed
+            except BaseException:
+                crypto.destroy()
+                raise
+            ref = self._ref_for_locked(session_id)
+            if ref is None:
+                ref = _new_session_ref()
+                self._session_refs[ref] = session_id
+            adopted = _LiveSession(session, directory, crypto, store=None, worker=None)
+            adopted.session_ref = ref
+            self._live = adopted
+            if self._logger is not None:
+                log_event(
+                    self._logger,
+                    "session_transition",
+                    session_id=session_id,
+                    session_state=SessionState.QUEUED.value,
+                )
+            return session, value
 
     # --- note-generation lease + custody coordination (Task 6.3) -----------
     #

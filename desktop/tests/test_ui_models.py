@@ -87,11 +87,13 @@ class TestControlsForState:
         controls = models.controls_for_state(SessionState.PAUSED)
         assert controls == models.ControlSet(resume=True, finish=True, discard=True)
 
-    def test_processing_and_queued_disable_all_session_buttons(self) -> None:
+    def test_processing_disables_all_and_queued_offers_only_the_next_start(self) -> None:
         # PROCESSING: a transcribe run owns the session (PR-HIGH-006);
-        # QUEUED: Complete/Discard live on the transcript view.
+        # QUEUED: Complete/Discard live on the transcript view, and Start for
+        # the next patient retires this session to the Unreviewed section
+        # (Cliniko workflow safeguards plan D6, Task 5.3).
         assert models.controls_for_state(SessionState.PROCESSING) == models.ControlSet()
-        assert models.controls_for_state(SessionState.QUEUED) == models.ControlSet()
+        assert models.controls_for_state(SessionState.QUEUED) == models.ControlSet(start=True)
 
     def test_failed_offers_only_discard(self) -> None:
         assert models.controls_for_state(SessionState.FAILED) == models.ControlSet(discard=True)
@@ -1551,6 +1553,35 @@ class TestChromeView:
             models.ChromeView(link="connected", clinic="Northside")
         )
         assert "Recording for a patient (name not verified) - Northside." in unverified
+
+    @pytest.mark.parametrize(
+        "phase, line",
+        [
+            ("recording", "Recording for Jan Citizen - Northside."),
+            ("paused", "Recording for Jan Citizen - Northside."),
+            ("finishing", "Finishing Jan Citizen - Northside..."),
+            ("queued", "Ready for review: Jan Citizen - Northside."),
+        ],
+    )
+    def test_the_live_line_follows_the_phase(self, phase: str, line: str) -> None:
+        view = models.ChromeView(
+            link="connected", patient="Jan Citizen", clinic="Northside", phase=phase
+        )
+        assert line in models.chrome_view_text(view).split("\n")
+
+    def test_the_block_has_its_own_line(self) -> None:
+        view = models.ChromeView(link="connected", clinic="Northside", blocked=True)
+        assert models.BLOCK_DESKTOP_LINE in models.chrome_view_text(view).split("\n")
+
+    def test_pause_cues_cover_every_reason_and_name_nobody(self) -> None:
+        from scribe_desktop.context_rules import PauseReason
+
+        assert set(models.PAUSE_CUES) == {reason.value for reason in PauseReason}
+        linked = models.pause_cue_text("note_changed", linked=True)
+        assert linked == models.PAUSE_CUES["note_changed"] + models.PAUSE_CUE_LINKED_TAIL
+        unlinked = models.pause_cue_text("suspend", linked=False)
+        assert unlinked == models.PAUSE_CUES["suspend"] + models.PAUSE_CUE_UNLINKED_TAIL
+        assert "pipe_down" in models.CHROME_REFUSALS
 
     def test_recheck_spoken_pause_and_refusal_lines(self) -> None:
         from scribe_desktop.encounter import NoteRefusal

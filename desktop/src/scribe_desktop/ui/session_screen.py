@@ -1,11 +1,21 @@
 """Session controls screen: start/pause/resume/finish/discard with
 state-driven enablement; Finish drives transcription with progress
-indication (plan Step 10, Flows 1-2)."""
+indication (plan Step 10, Flows 1-2).
+
+Cliniko workflow safeguards plan Phase 5: Resume asks the Chrome bridge's
+guard first (D5 — a linked session resumes only on a current report of its
+own note), Discard from this screen takes two clicks (the resolution
+block's rule, D1), Start is offered at QUEUED for the next patient unless a
+note review holds the generation lease (D6), and a Start that retires a
+queued session announces it (``session_retired``) so the Unreviewed
+reminder index can take it."""
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Final
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
@@ -24,6 +34,11 @@ from scribe_desktop.session import SessionState
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
+
+# The second Discard click must come within this long of the first, for the
+# same session; otherwise the first click is asked for again.
+DISCARD_CONFIRM_SECONDS: Final = 10.0
+DISCARD_CONFIRM_LABEL: Final = "Confirm discard"
 
 
 class SessionScreen(QWidget):
@@ -44,6 +59,13 @@ class SessionScreen(QWidget):
     # factory, which `start()` calls before the device is even opened: a
     # failed Start must not leave the live header up with no session).
     session_started = Signal()
+    # Cliniko workflow safeguards plan Task 5.1: a SUCCESSFUL Resume, from any
+    # source — the Chrome bridge re-binds the session's tab and drops the block.
+    session_resumed = Signal()
+    # Task 5.3 (D6): a successful Start RETIRED the previous tracked session
+    # (the RecordingSession as it was, e.g. QUEUED) — the main window adds a
+    # linked, reviewable one to the Unreviewed reminder index.
+    session_retired = Signal(object)
 
     def __init__(
         self,
@@ -62,7 +84,13 @@ class SessionScreen(QWidget):
         self._task: TaskThread | None = None
         self._transcribing = False
         self._last_state = controller.state
+        self._last_generating = controller.generating
         self._live_status: str | None = None
+        # Task 5.1 (D5): the Chrome bridge's resume check — a refusal message,
+        # or None when Resume may run. None: no bridge (Resume as before).
+        self._resume_guard: Callable[[], str | None] | None = None
+        # Task 5.2: the first Discard click's session ref and time.
+        self._discard_armed: tuple[str | None, float] | None = None
         self.live_status.connect(self._on_live_status)
 
         self.state_label = QLabel()
@@ -101,7 +129,7 @@ class SessionScreen(QWidget):
         self.pause_button.clicked.connect(self.on_pause)
         self.resume_button.clicked.connect(self.on_resume)
         self.finish_button.clicked.connect(self.on_finish)
-        self.discard_button.clicked.connect(self.on_discard)
+        self.discard_button.clicked.connect(self.on_discard_clicked)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 0)  # indeterminate
@@ -148,7 +176,16 @@ class SessionScreen(QWidget):
         return self._transcribing
 
     def _watch_state(self) -> None:
+        armed = self._discard_armed
+        if armed is not None and not self._discard_confirmable(armed):
+            # Round 32 LOW-026: "Confirm discard" never outlives its window or
+            # its session — the next click asks again, under the plain label.
+            self._disarm_discard()
         state = self._controller.state
+        generating = self._controller.generating
+        if generating != self._last_generating:
+            self._last_generating = generating
+            self.refresh()  # D6: the review lease gates Start at QUEUED
         if state == self._last_state:
             return
         previous = self._last_state
@@ -170,17 +207,33 @@ class SessionScreen(QWidget):
         self.link_label.setText(models.session_link_line(self._controller.session))
         controls = models.controls_for_state(state)
         busy = self._transcribing
-        self.consent_checkbox.setEnabled(controls.start and not busy)
-        self.start_button.setEnabled(
-            controls.start and not busy and self.consent_checkbox.isChecked()
+        # D6: Start for the next patient at QUEUED, unless the note review
+        # holds the generation lease (the controller refuses it anyway).
+        startable = controls.start and not busy and not self._controller.generating
+        self.consent_checkbox.setEnabled(startable)
+        self.start_button.setEnabled(startable and self.consent_checkbox.isChecked())
+        self.start_button.setToolTip(
+            models.REVIEW_OPEN_START_HINT if controls.start and self._controller.generating else ""
         )
         self.pause_button.setEnabled(controls.pause and not busy)
         self.resume_button.setEnabled(controls.resume and not busy)
         self.finish_button.setEnabled(controls.finish and not busy)
         self.discard_button.setEnabled(controls.discard and not busy)
+        if not self.discard_button.isEnabled():
+            self._disarm_discard()
 
     def _show_message(self, text: str) -> None:
         self.message_label.setText(text)
+
+    def show_notice(self, text: str) -> None:
+        """A line from elsewhere in the app (the pause rule's desktop cue)."""
+        self._show_message(text)
+
+    def set_resume_guard(self, guard: Callable[[], str | None] | None) -> None:
+        """Task 5.1 (D5): the check every Resume from this screen's slot runs
+        first — the desktop button, a Chrome command and (Phase 7) the
+        hotkey. It returns the refusal to show, or None to go ahead."""
+        self._resume_guard = guard
 
     def set_chrome_view(self, text: str) -> None:
         """Task 4.5: the bridge's Chrome lines (hidden when empty)."""
@@ -230,9 +283,18 @@ class SessionScreen(QWidget):
             self.refresh()
             return False
         started = False
+        # D6: a Start retires the previous tracked session (QUEUED, FAILED or
+        # finished) — read it BEFORE, while it is still the tracked one.
+        previous = self._controller.session
         try:
-            self._controller.start(device_id, consent=consent, context=context)
+            session = self._controller.start(device_id, consent=consent, context=context)
             started = True
+            if (
+                previous is not None
+                and not previous.is_terminal
+                and previous.session_id != session.session_id
+            ):
+                self.session_retired.emit(previous)
             self.session_started.emit()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
@@ -255,6 +317,14 @@ class SessionScreen(QWidget):
         return True
 
     def on_resume(self) -> bool:
+        guard = self._resume_guard
+        refusal = guard() if guard is not None else None
+        if refusal is not None:
+            # D5: a linked session never resumes without a current report of
+            # its own note — named, and nothing is called.
+            self._show_message(refusal)
+            self.refresh()
+            return False
         try:
             self._controller.resume()
             self._show_message("Recording.")
@@ -263,6 +333,7 @@ class SessionScreen(QWidget):
             self.refresh()
             return False
         self.refresh()
+        self.session_resumed.emit()
         return True
 
     def on_finish(self) -> bool:
@@ -283,7 +354,34 @@ class SessionScreen(QWidget):
         self._begin_transcription()
         return True
 
+    def on_discard_clicked(self) -> None:
+        """The Discard BUTTON (Task 5.2): the first click asks, the second —
+        within ``DISCARD_CONFIRM_SECONDS``, for the same session — discards.
+        A Chrome Discard arrives already confirmed by its own second click
+        and calls ``on_discard`` directly."""
+        armed = self._discard_armed
+        if armed is not None and self._discard_confirmable(armed):
+            self._disarm_discard()
+            self.on_discard()
+            return
+        self._discard_armed = (self._controller.session_ref, time.monotonic())
+        self.discard_button.setText(DISCARD_CONFIRM_LABEL)
+        self._show_message(models.DISCARD_CONFIRM_MESSAGE)
+
+    def _discard_confirmable(self, armed: tuple[str | None, float]) -> bool:
+        """The first click was for the session still tracked, and recent."""
+        token, at = armed
+        return (
+            token == self._controller.session_ref
+            and 0 <= time.monotonic() - at <= DISCARD_CONFIRM_SECONDS
+        )
+
+    def _disarm_discard(self) -> None:
+        self._discard_armed = None
+        self.discard_button.setText("Discard")
+
     def on_discard(self) -> bool:
+        self._disarm_discard()
         try:
             self._controller.discard()
             self.session_discarded.emit()

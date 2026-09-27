@@ -112,9 +112,16 @@ rendering the language model does (flow 17).
    booking, template and practitioner ids, and how it was verified; no name
    or other display text. AES-256-GCM under the session key, AAD
    `encounter:<session_id>`; a failed write refuses the start. It is
-   decrypted ONLY when a recovered session is opened for checkout (the
-   recovery listing reads only whether the file exists; the sweep never
-   reads it) and goes with the session's key like every other artifact.
+   decrypted ONLY when a recovered session is opened for checkout, or an
+   Unreviewed session is opened for review (Task 5.4: the controller's
+   `adopt_queued` decrypts it once — the adoption is the checkout — and the
+   consent and context live on the in-memory session until it completes, is
+   discarded or is retired again), plus ONCE per Unreviewed session at app
+   start to rebuild the reminder index (Task 5.5: the key unwrapped for that
+   one read and destroyed at once; only the clinic, note and session ids are
+   kept, in memory). The recovery listing reads only whether the file
+   exists; the sweep and the periodic refresh never read it. It goes with the session's key
+   like every other artifact.
    Plaintext audio exists ONLY in transient capture/processing buffers —
    never on disk, never in logs. Deleting `key.dpapi` is the cryptographic
    deletion of the session (same-user boundary; NTFS unlink residual — see
@@ -604,14 +611,29 @@ rendering the language model does (flow 17).
     name and the appointment time), the live session (an opaque 24-character
     reference — never the session id — its phase, recorded seconds, consent
     time, and when linked its ids, verification and clinic label, plus the
-    patient's name when that session was started from a verified note), a
-    notice code and the last refusal (a code and a fixed message). Every
-    field is bounded by `protocol/fixtures/meta.json`'s `limits`, and ids
-    match `^[1-9][0-9]{0,18}$`. WHAT IS KEPT: in the bridge's memory only —
+    patient's name when that session was started from a verified note), the
+    resolution block while a linked session is paused by the pause rule
+    (Task 5.1–5.2: the reason code, the live session's reference, its OWN
+    clinic host and label, and that same session's name under the same
+    rule), the Unreviewed banner while the focused tab reports a note that
+    has retired recordings (Task 5.5: the newest one's reference, the host,
+    the note id and the count — no patient's name), a notice code and the
+    last refusal (a code and a fixed message).
+    Every field is bounded by `protocol/fixtures/meta.json`'s `limits`, and
+    ids match `^[1-9][0-9]{0,18}$`. WHAT IS KEPT: in the bridge's memory only —
     the latest report per open tab and the bound tab, cleared on every new
     connection or disconnect; the bound report's verification outcome (flow
     18's display value beside it); the live session's display name, dropped
-    when that session ends; and the last snapshot sent, for change detection.
+    when that session ends; the tab the linked live session is bound to (a
+    tab number, forgotten on every new connection or disconnect and when the
+    session ends), its block (a reason code, while it is paused) and a
+    clicked "Resume previous" (a time, lapsing after 30 seconds); and the
+    last snapshot sent, for change detection. The main window keeps the
+    Unreviewed reminder index (Task 5.3: clinic id, note id and session id
+    per retired linked queued session, never persisted; rebuilt at app start
+    from each Unreviewed session's `encounter.enc`, Task 5.5), which loses an
+    entry when that session is completed, discarded, expires or is opened
+    for review.
     Nothing is written to disk, and nothing is logged beyond a connection's
     state or close reason with its connection number (`pipe_client`), the
     server's own state (`pipe_server`), a failed connect's Windows error

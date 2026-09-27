@@ -15,8 +15,8 @@ keeps no request once it has run) and comes back as a queued signal.
 
 CONNECTIONS (D4). A client connecting or going away bumps the ledger's
 ``conn_gen`` and clears the bound report, the per-tab reports and the
-per-connection snapshot, and emits ``pipe_lost`` (Phase 5's pause rule
-listens; this phase pauses nothing). So a verification answering an
+per-connection snapshot, emits ``pipe_lost``, and puts the pipe loss to the
+pause rule (below). So a verification answering an
 earlier connection is dropped by ``VerificationLedger.accept``, Start needs
 a fresh report on the new connection, and the first ``publish`` on every
 connection sends the full snapshot even when nothing changed. A LINKED live
@@ -31,19 +31,45 @@ REPORTS. ``seq`` must rise on a connection (a replay is ignored). The BOUND
 tab is the one whose latest report said ``focused``; only its reports feed
 the ledger, and only a note page on an allow-listed host becomes a target.
 
+THE PAUSE RULE (D5, Task 5.1). Every report — from any tab — is first put to
+``context_rules.ContextEvaluator`` for the linked live session, against the
+tab THAT SESSION is bound to (set at its Start, re-bound by exact ids after a
+reconnect, moved to the focused tab on a Resume); pipe loss and a new client
+are reasons too, and the main window adds suspend. ``pause_for`` applies
+``context_rules.pause_action``: it pauses through the Session screen's slot,
+sets the resolution block for a linked session, and emits ``pause_cue`` for
+the desktop cue. Nothing here ever resumes on a report alone, except a
+"Resume previous" the practitioner clicked, and only once Chrome reports the
+session's own note in the focused tab within
+``RESUME_PREVIOUS_WINDOW_SECONDS``.
+
+RESUME (Constraint 7). ``resume_refusal`` is the one check: a linked session
+resumes only while a pipe client is connected and the focused tab's current
+report on this connection names the session's own note. The Session screen
+runs it before EVERY Resume (its button, a Chrome command, Phase 7's
+hotkey), and a successful Resume clears the block.
+
 COMMANDS (D2, Constraint 5). ``start`` is refused unless its ``state_rev`` is
 the last one sent, its target is the bound tab's report, that report's
 verification is ``verified`` or ``unverified_offline``
 (``VerificationLedger.start_context``), no session is active, no note
 review holds the generation lease, and a microphone is selected; then the
 Session screen's ``start_linked`` runs with a consent bound to the verified
-note. ``resume``, ``finish`` and ``discard`` are refused BEFORE their slot
-runs unless their ``session_ref`` is the live session's; ``resume`` of a
-linked session also needs the bound report to be that session's own note.
-``pause`` needs no ref (fail-safe). ``resume_previous`` and ``open_review``
-are refused until Phase 5 builds them. Every refusal travels in
-``state.last_refusal`` — never as ``error`` (Constraint 9). Commands reach
-the Session screen's slots, never the controller directly.
+note. ``resume``, ``finish``, ``discard`` and ``resume_previous`` are refused
+BEFORE their slot runs unless their ``session_ref`` is the live session's;
+``resume`` then needs ``resume_refusal`` to pass. ``pause`` needs no ref
+(fail-safe). ``open_review`` (Task 5.5) names a RETIRED session: its ref
+must still resolve in D2's registry to a session still in the main window's
+reminder index — else ``session_changed`` before anything runs — and no
+review may hold the lease and no session be recording, paused or
+processing; then the main window's opener opens exactly that session. Every refusal travels
+in ``state.last_refusal`` — never as ``error`` (Constraint 9). Commands reach
+the Session screen's slots (or, for ``open_review``, the main window's
+opener), never the controller directly.
+
+THE BANNER (D6, Task 5.5). While the focused tab reports a note on an
+allow-listed host whose clinic's note has recordings in the reminder index,
+``state.banner`` names the newest one's reference and the count — ids only.
 
 DISPLAY. The patient's name reaches the snapshot only from a note Cliniko
 verified, with two lifetimes (codex round 29 PR-LOW-151): the BOUND REPORT's
@@ -55,7 +81,9 @@ is held for that session and dropped when it ends. Nothing here logs.
 
 from __future__ import annotations
 
+import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC
 from typing import Any, Final, Protocol
@@ -64,6 +92,13 @@ from pydantic import ValidationError
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 
 from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.context_rules import (
+    RESUME_PREVIOUS_WINDOW_SECONDS,
+    ContextEvaluator,
+    PauseReason,
+    ReminderIndex,
+    pause_action,
+)
 from scribe_desktop.encounter import (
     NoteDisplay,
     NoteRefusal,
@@ -87,7 +122,7 @@ from scribe_desktop.protocol import (
     make_pipe_envelope,
     typed_payload,
 )
-from scribe_desktop.session import SessionState
+from scribe_desktop.session import ACTIVE_STATES, SessionState
 from scribe_desktop.ui import models
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.tasks import TaskThread
@@ -149,6 +184,22 @@ class _Refusal:
     message: str
 
 
+@dataclass(frozen=True)
+class _Block:
+    """D1's resolution block for one PAUSED linked session."""
+
+    session_id: str
+    reason: PauseReason
+
+
+@dataclass(frozen=True)
+class _PendingResume:
+    """A clicked "Resume previous", waiting for the session's own note."""
+
+    session_id: str
+    at: float
+
+
 class ChromeBridge(QObject):
     """See the module docstring."""
 
@@ -157,6 +208,9 @@ class ChromeBridge(QObject):
     _disconnected_q = Signal(int, str)
     # A client went away or a new one connected (D5's pipe-loss input).
     pipe_lost = Signal()
+    # D5: the pause rule paused the recording or put up the block — the
+    # desktop cue's text (plain, no name) for the main window.
+    pause_cue = Signal(str)
 
     def __init__(
         self,
@@ -166,11 +220,26 @@ class ChromeBridge(QObject):
         *,
         parent: QObject | None = None,
         publish_interval_ms: int = PUBLISH_INTERVAL_MS,
+        clock: Callable[[], float] = time.monotonic,
+        reminders: ReminderIndex | None = None,
+        open_review: Callable[[str], str | None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._screen = session_screen
         self._clinics = clinics
+        self._clock = clock
+        # Task 5.5 (D6): the main window's Unreviewed reminder index (read
+        # only, for the banner) and its opener — given a session id, it
+        # opens that session for review and returns None, or a
+        # ``CHROME_REFUSALS`` code. None: no banner, and ``open_review`` is
+        # refused ``not_available``.
+        self._reminders = reminders
+        self._open_review_handler = open_review
+        # Task 5.1 (D5): the linked live session's tab binding and the rule.
+        self._rules = ContextEvaluator()
+        self._block: _Block | None = None
+        self._pending_resume: _PendingResume | None = None
         self._ledger = VerificationLedger(clinics)
         self._sender: PipeSender | None = None
         self._link = "off"
@@ -201,6 +270,9 @@ class ChromeBridge(QObject):
         self._timer.setInterval(publish_interval_ms)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+        # Constraint 7: every Resume from the Session screen's slot asks first.
+        session_screen.set_resume_guard(self._resume_guard_message)
+        session_screen.session_resumed.connect(self._on_resumed)
 
     # --- the pipe's side (called on the PIPE thread: emit only) --------------
 
@@ -293,6 +365,11 @@ class ChromeBridge(QObject):
         # it (``_reverify_live``) and ``_finish_task`` skips one no longer
         # current, but a bare disconnect must not strand it on "Checking".
         self._waiting = None
+        # D5: tab ids from the old connection mean nothing now — the session
+        # waits unbound for a report of its own note — and a clicked "Resume
+        # previous" lapses (it must be clicked again on the new connection).
+        self._rules.lose_tab()
+        self._pending_resume = None
 
     def _on_connected(self, conn_id: int) -> None:
         self._conn = conn_id
@@ -300,6 +377,7 @@ class ChromeBridge(QObject):
         if self._sender is not None:
             self._link = "connected"
         self.pipe_lost.emit()  # a NEW client is pipe loss too (D5)
+        self.pause_for(PauseReason.NEW_CLIENT)
         self._reverify_live()
         self.publish()
         self._refresh_view()
@@ -312,7 +390,110 @@ class ChromeBridge(QObject):
         if self._sender is not None:
             self._link = "waiting"
         self.pipe_lost.emit()
+        self.pause_for(PauseReason.PIPE_LOST)
         self._refresh_view()
+
+    # --- the pause rule (D5, Task 5.1) and resume (Constraint 7) ---------------
+
+    def pause_for(self, reason: PauseReason) -> None:
+        """D5's ``pause_for``: RECORDING pauses (through the Session screen's
+        slot) and, for a context reason on a linked session, sets the block;
+        PAUSED only sets the block; any other state does nothing. Emits
+        ``pause_cue`` when it paused or newly blocked."""
+        session = self._controller.session
+        linked = session is not None and session.encounter_context is not None
+        action = pause_action(self._controller.state, reason, linked=linked)
+        paused = action.pause and self._screen.on_pause()
+        new_block = False
+        if (
+            action.block
+            and session is not None
+            and self._controller.state is SessionState.PAUSED
+        ):
+            block = self._block
+            new_block = block is None or block.session_id != session.session_id
+            self._block = _Block(session.session_id, reason)
+        if paused or new_block:
+            self.pause_cue.emit(models.pause_cue_text(reason.value, linked=linked))
+        self.publish()
+        self._refresh_view()
+
+    def resume_refusal(self) -> str | None:
+        """Constraint 7: why a Resume of the tracked session is refused now
+        (a ``CHROME_REFUSALS`` code), or None. An unlinked session has no
+        note to match; a linked one needs a pipe client and the focused
+        tab's current report on this connection naming its own note."""
+        session = self._controller.session
+        context = session.encounter_context if session is not None else None
+        if context is None:
+            return None
+        if self._conn is None:
+            return "pipe_down"
+        if self._ledger.bound_target() != context.target:
+            return "report_mismatch"
+        return None
+
+    def _resume_guard_message(self) -> str | None:
+        reason = self.resume_refusal()
+        return None if reason is None else models.chrome_refusal_message(reason)
+
+    def _on_resumed(self) -> None:
+        """A Resume succeeded (any source): the block is resolved, and the
+        session is bound to the focused tab that shows its note."""
+        self._block = None
+        self._pending_resume = None
+        session = self._controller.session
+        if session is not None and session.encounter_context is not None:
+            self._rules.bind(session.session_id, self._bound_tab)
+        self.publish()
+        self._refresh_view()
+
+    def _apply_rule(self, report: ContextPayload) -> None:
+        session = self._controller.session
+        context = session.encounter_context if session is not None else None
+        if (
+            session is None
+            or context is None
+            or session.state not in (SessionState.RECORDING, SessionState.PAUSED)
+        ):
+            return
+        reason = self._rules.evaluate(session.session_id, context.target, report)
+        if reason is not None:
+            self.pause_for(reason)
+
+    def _resume_if_pending(self) -> None:
+        """A clicked "Resume previous" resumes once — and only once —
+        Chrome's focused tab reports the session's own note (D5)."""
+        pending = self._pending_resume
+        if pending is None:
+            return
+        session = self._controller.session
+        if (
+            session is None
+            or session.session_id != pending.session_id
+            or self._controller.state is not SessionState.PAUSED
+            or not 0 <= self._clock() - pending.at <= RESUME_PREVIOUS_WINDOW_SECONDS
+        ):
+            self._pending_resume = None
+            return
+        if self.resume_refusal() is not None:
+            return  # not yet: wait for the note's report
+        self._pending_resume = None
+        if not self._screen.on_resume():
+            self._refuse("resume_previous", "failed")
+
+    def _current_block(self) -> _Block | None:
+        block = self._block
+        session = self._controller.session
+        if (
+            block is None
+            or session is None
+            or session.session_id != block.session_id
+            or session.state is not SessionState.PAUSED
+            or session.encounter_context is None
+        ):
+            return None
+        return block
 
     def _reverify_live(self) -> None:
         session = self._controller.session
@@ -374,13 +555,16 @@ class ChromeBridge(QObject):
             self._tabs[report.tab_id] = report
             if report.focused:
                 self._bound_tab = report.tab_id
-        if report.tab_id != self._bound_tab:
-            return
-        request = self._ledger.report(report.seq, self._target_of(report))
-        if report.page == "closed":
-            self._bound_tab = None
-        if request is not None:
-            self._dispatch(request)
+        # D5 first, for EVERY report: the live session's own tab may change
+        # while it is not the focused one.
+        self._apply_rule(report)
+        if report.tab_id == self._bound_tab:
+            request = self._ledger.report(report.seq, self._target_of(report))
+            if report.page == "closed":
+                self._bound_tab = None
+            if request is not None:
+                self._dispatch(request)
+        self._resume_if_pending()
 
     # --- verification (worker thread, holder pattern) ---------------------------
 
@@ -466,8 +650,8 @@ class ChromeBridge(QObject):
     def _on_command(self, command: CommandPayload) -> None:
         self._refusal = None
         action = command.action
-        if action in ("resume_previous", "open_review"):
-            self._refuse(action, "not_available")  # Phase 5
+        if action == "open_review":
+            self._open_review(command.session_ref)
             return
         if action == "start":
             self._start(command)
@@ -480,13 +664,18 @@ class ChromeBridge(QObject):
         if self._screen.is_busy:
             self._refuse(action, "busy")
             return
+        if action == "resume_previous":
+            self._resume_previous()
+            return
         controls = models.controls_for_state(self._controller.state)
         if not getattr(controls, _ACTION_CONTROL[action]):
             self._refuse(action, "not_allowed_now")
             return
-        if action == "resume" and not self._report_matches_live():
-            self._refuse(action, "report_mismatch")
-            return
+        if action == "resume":
+            refusal = self.resume_refusal()
+            if refusal is not None:
+                self._refuse(action, refusal)
+                return
         done = {
             "pause": self._screen.on_pause,
             "resume": self._screen.on_resume,
@@ -496,12 +685,53 @@ class ChromeBridge(QObject):
         if not done:
             self._refuse(action, "failed")
 
-    def _report_matches_live(self) -> bool:
-        """Constraint 7: a LINKED session resumes only while the bound report
-        is its own note on this connection (an unlinked one has no note)."""
+    def _open_review(self, session_ref: str | None) -> None:
+        """Task 5.5 (D2, D6): the banner's "Open for review". THE session
+        gate for a RETIRED session: the reference must still resolve (D2's
+        registry) to a session still in the reminder index — a click made
+        after that entry was completed, discarded, expired or opened is
+        refused ``session_changed`` BEFORE anything runs, never "the newest
+        session". Then the main window opens exactly that session."""
+        opener, reminders = self._open_review_handler, self._reminders
+        if opener is None or reminders is None:
+            self._refuse("open_review", "not_available")
+            return
+        session_id = (
+            self._controller.resolve_session_ref(session_ref) if session_ref is not None else None
+        )
+        if session_id is None or session_id not in reminders:
+            self._refuse("open_review", "session_changed")
+            return
+        if self._screen.is_busy:
+            self._refuse("open_review", "busy")
+            return
+        if self._controller.generating:
+            self._refuse("open_review", "review_in_progress")
+            return
+        if self._controller.state in ACTIVE_STATES:
+            # ``adopt_queued`` refuses it too; named here, before the window
+            # comes forward or a tab changes mid-recording (round 32 LOW-023).
+            self._refuse("open_review", "session_active")
+            return
+        refusal = opener(session_id)
+        if refusal is not None:
+            self._refuse("open_review", refusal)
+
+    def _resume_previous(self) -> None:
+        """Flow 3's "Resume previous" (Task 5.2): the extension takes the tab
+        back to the session's note, built from ``state.live``'s ids and the
+        allow-list; the app resumes only when Chrome then reports that note
+        (``_resume_if_pending``) — at once if it already does."""
         session = self._controller.session
-        context = session.encounter_context if session is not None else None
-        return context is None or self._ledger.bound_target() == context.target
+        if (
+            session is None
+            or session.encounter_context is None
+            or self._controller.state is not SessionState.PAUSED
+        ):
+            self._refuse("resume_previous", "not_allowed_now")
+            return
+        self._pending_resume = _PendingResume(session.session_id, self._clock())
+        self._resume_if_pending()
 
     def _start(self, command: CommandPayload) -> None:
         target = command.target
@@ -542,6 +772,10 @@ class ChromeBridge(QObject):
         if isinstance(outcome, Verified) and session is not None:
             self._live_display = _LiveDisplay(session.session_id, outcome.display)
         self._live_check = None
+        self._block = None
+        self._pending_resume = None
+        if session is not None:
+            self._rules.bind(session.session_id, target.tab_id)  # D5: its own tab
 
     # --- the snapshot ------------------------------------------------------------
 
@@ -585,6 +819,10 @@ class ChromeBridge(QObject):
         return state
 
     def _notice(self) -> str | None:
+        if self._controller.generating:
+            # D1/D6: "Save or cancel <A>'s note review to start" — the panel
+            # names A from ``live`` while that session is still tracked.
+            return "review_open"
         report = self._tabs.get(self._bound_tab) if self._bound_tab is not None else None
         if report is None or report.page != "note":
             return "open_a_note"
@@ -626,6 +864,57 @@ class ChromeBridge(QObject):
                 )
         return state
 
+    def _block_state(self) -> dict[str, Any] | None:
+        """D1's block for the paused linked session: its OWN clinic and, when
+        Cliniko verified its note at Start, its patient's name. The patient
+        on screen now is the ``report``'s; the extension scopes both to each
+        tab's host (D2)."""
+        block = self._current_block()
+        session = self._controller.session
+        ref = self._controller.session_ref
+        context = session.encounter_context if session is not None else None
+        if block is None or session is None or context is None or ref is None:
+            return None
+        state: dict[str, Any] = {
+            "reason": block.reason.value,
+            "session_ref": ref,
+            "clinic_host": context.clinic_host,
+            "clinic_label": self._clinic_label(context.clinic_host) or "Clinic",
+        }
+        display = self._live_display
+        if display is not None and display.session_id == session.session_id:
+            state["patient_name"] = _one_line(
+                display.display.patient_display_name,
+                LIMITS["max_display_chars"],
+                "Unnamed patient",
+            )
+        return state
+
+    def _banner_state(self) -> dict[str, Any] | None:
+        """D6's reminder for the note on the focused tab: when the main
+        window's index holds recordings for that clinic's note, the newest
+        one's reference (D2) and how many there are. Ids and a count only —
+        no patient's name: a retired session keeps no display string."""
+        reminders = self._reminders
+        report = self._tabs.get(self._bound_tab) if self._bound_tab is not None else None
+        target = self._target_of(report) if report is not None else None
+        if reminders is None or target is None:
+            return None
+        record = next((r for r in self._clinics.records if r.host == target.clinic_host), None)
+        if record is None:
+            return None
+        sessions = reminders.sessions_for(record.clinic_id, target.note_id)
+        for session_id in sessions:  # newest first: the first one still referenced
+            ref = self._controller.session_ref_for(session_id)
+            if ref is not None:
+                return {
+                    "session_ref": ref,
+                    "clinic_host": target.clinic_host,
+                    "note_id": target.note_id,
+                    "count": min(len(sessions), LIMITS["max_banner_count"]),
+                }
+        return None
+
     def build_content(self) -> dict[str, Any]:
         """The ``state`` snapshot without its ``state_rev`` (D2: one builder
         for the poll, the events and every (re)connect)."""
@@ -639,6 +928,8 @@ class ChromeBridge(QObject):
         for key, value in (
             ("report", self._report_state()),
             ("live", self._live_state()),
+            ("block", self._block_state()),
+            ("banner", self._banner_state()),
             ("notice", self._notice()),
         ):
             if value is not None:
@@ -688,6 +979,15 @@ class ChromeBridge(QObject):
         if check is not None and ended(check.session_id):
             # Round 25 LOW-019: the re-check's result names the patient too.
             self._live_check = None
+        if self._block is not None and self._current_block() is None:
+            self._block = None  # resolved, or its session left PAUSED
+        pending = self._pending_resume
+        if pending is not None and not (
+            0 <= self._clock() - pending.at <= RESUME_PREVIOUS_WINDOW_SECONDS
+        ):
+            self._pending_resume = None  # the click lapsed
+        if session is None or session.is_terminal or session.encounter_context is None:
+            self._rules.forget()
         self.publish()
         self._refresh_view()
 
@@ -722,6 +1022,8 @@ class ChromeBridge(QObject):
             recheck_reason=recheck_reason,
             spoken_pause_unavailable=spoken_unavailable,
             refusal=self._refusal.message if self._refusal is not None else None,
+            phase=_PHASES[session.state] if live and session is not None else None,
+            blocked=self._current_block() is not None,
         )
 
     def _recheck_line(self, check: _LiveCheck) -> tuple[str, NoteRefusal | None]:
