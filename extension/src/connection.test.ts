@@ -2,7 +2,7 @@
 import { describe, expect, test } from "vitest";
 
 import type { ChromeLike, PortLike } from "./connection";
-import { ConnectionManager, PING_ALARM, RECONNECT_ALARM, WATCHDOG_ALARM } from "./connection";
+import { ConnectionManager, PING_ALARM, RECONNECT_ALARM, WATCHDOG_ALARM, badgeFor } from "./connection";
 import type { StatePayload } from "./protocol";
 import { PROTOCOL_VERSION } from "./protocol";
 
@@ -108,7 +108,23 @@ describe("handshake", () => {
     expect(manager.state).toBe("connected");
     expect(api.lastPort.sent[0]).toMatchObject({ type: "hello", request_id: "req-1" });
     expect(api.cleared).toContain(RECONNECT_ALARM);
+    // Connected to the host, but the app has not answered yet (Task 6.2).
+    expect(api.badges.at(-1)?.[0]).toBe("…");
+    api.lastPort.receive(state(NONCE, false));
     expect(api.badges.at(-1)).toEqual(["OK", "#2e7d32"]);
+  });
+
+  test("the handshake hook fires once per fresh handshake", () => {
+    const api = new FakeChrome();
+    let handshakes = 0;
+    const manager = new ConnectionManager(api, undefined, { onHandshake: () => (handshakes += 1) });
+    manager.connect();
+    api.lastPort.receive(ack("req-1"));
+    expect(handshakes).toBe(1);
+    api.lastPort.drop();
+    manager.onAlarm(RECONNECT_ALARM);
+    api.lastPort.receive(ack("req-2"));
+    expect(handshakes).toBe(2);
   });
 
   test("ack with mismatched request_id fails and schedules reconnect", () => {
@@ -300,6 +316,14 @@ describe("disconnect and reconnect", () => {
     expect(states).toHaveLength(0);
   });
 
+  test("a state keeps the latest snapshot on the manager and a disconnect clears it", () => {
+    const { api, manager } = handshake();
+    api.lastPort.receive(state(NONCE, false));
+    expect(manager.appState?.state_rev).toBe(3);
+    api.lastPort.drop();
+    expect(manager.appState).toBeNull();
+  });
+
   test("typed error envelope from host disconnects and schedules reconnect", () => {
     const { api, manager } = handshake();
     api.lastPort.receive({
@@ -309,5 +333,107 @@ describe("disconnect and reconnect", () => {
     });
     expect(manager.state).toBe("error");
     expect(api.alarms.some((a) => a.name === RECONNECT_ALARM)).toBe(true);
+  });
+});
+
+const LIVE = {
+  session_ref: "AbCdEfGhIjKlMnOpQrStUv_-",
+  linked: false,
+  recorded_seconds: 12,
+  consent_confirmed_at: "2026-09-27T01:31:02Z",
+};
+
+function snapshot(extra: Partial<StatePayload> = {}): StatePayload {
+  return {
+    state_rev: 4,
+    app_running: true,
+    allow_list: [],
+    hotkey: { available: false },
+    spoken_pause: false,
+    warnings: [],
+    ...extra,
+  };
+}
+
+describe("the badge reflects the app (D1, Task 6.2)", () => {
+  test.each([
+    ["error", null, false, "ERR"],
+    ["connecting", null, false, "…"],
+    ["connected", null, false, "…"],
+    ["disconnected", null, false, "OFF"],
+    ["connected", { ...snapshot(), app_running: false }, false, "OFF"],
+    ["connected", snapshot(), false, "OK"],
+    ["connected", snapshot({ live: { ...LIVE, phase: "recording" } }), true, "REC"],
+    ["connected", snapshot({ live: { ...LIVE, phase: "paused" } }), true, "PAUSED"],
+    ["connected", snapshot({ live: { ...LIVE, phase: "queued" } }), false, "OK"],
+    ["disconnected", null, true, "!"],
+    ["error", null, true, "!"],
+    ["connecting", null, true, "!"],
+    ["connected", null, true, "!"], // round 37 PR-LOW-201: a new link has not shown the app back yet
+    ["connected", { ...snapshot(), app_running: false }, true, "!"],
+  ] as const)("%s / %j / wasLive=%s -> %s", (connection, appState, wasLive, text) => {
+    expect(badgeFor(connection, appState, wasLive).text).toBe(text);
+  });
+
+  test("a session live when the link drops leaves '!' until the app says otherwise", () => {
+    const { api, manager } = handshake();
+    api.lastPort.receive({
+      protocol_version: PROTOCOL_VERSION,
+      type: "state",
+      session_nonce: NONCE,
+      payload: snapshot({ live: { ...LIVE, phase: "recording" } }),
+    });
+    expect(api.badges.at(-1)?.[0]).toBe("REC");
+    api.lastPort.drop();
+    expect(api.badges.at(-1)?.[0]).toBe("!");
+    manager.onAlarm(RECONNECT_ALARM);
+    api.lastPort.receive(ack("req-2"));
+    expect(api.badges.at(-1)?.[0]).toBe("!"); // no snapshot yet on the new link
+    api.lastPort.receive({
+      protocol_version: PROTOCOL_VERSION,
+      type: "state",
+      session_nonce: NONCE,
+      payload: snapshot(),
+    });
+    expect(api.badges.at(-1)?.[0]).toBe("OK");
+  });
+});
+
+describe("send (Task 6.2)", () => {
+  const context = { seq: 1, tab_id: 5, window_id: 1, focused: true, page: "login" as const, host: "a.au1.cliniko.com" };
+
+  test("a valid context goes out under the session nonce", () => {
+    const { api, manager } = handshake();
+    expect(manager.send("context", context)).toBe(true);
+    expect(api.lastPort.sent.at(-1)).toEqual({
+      protocol_version: PROTOCOL_VERSION,
+      type: "context",
+      session_nonce: NONCE,
+      payload: context,
+    });
+  });
+
+  test("nothing is sent before the handshake", () => {
+    const api = new FakeChrome();
+    const manager = new ConnectionManager(api);
+    manager.connect();
+    expect(manager.send("context", context)).toBe(false);
+    expect(api.lastPort.sent).toHaveLength(1); // the hello only
+  });
+
+  test("a payload the mirror refuses is dropped, never sent", () => {
+    const { api, manager } = handshake();
+    const before = api.lastPort.sent.length;
+    // A start without its consent, and a context carrying a URL.
+    expect(
+      manager.send("command", {
+        action: "start",
+        state_rev: 1,
+        target: { tab_id: 5, clinic_host: "a.au1.cliniko.com", patient_id: "1", note_id: "2" },
+      }),
+    ).toBe(false);
+    expect(manager.send("context", { ...context, url: "https://a.au1.cliniko.com/" } as typeof context)).toBe(false);
+    expect(api.lastPort.sent).toHaveLength(before);
+    expect(manager.state).toBe("connected");
   });
 });

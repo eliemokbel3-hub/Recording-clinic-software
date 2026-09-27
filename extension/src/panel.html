@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cliniko Scribe</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #202124;
+        --muted: #5f6368;
+        --bg: #ffffff;
+        --line: #dadce0;
+        --red: #c62828;
+        --amber: #b26a00;
+        --accent: #1a73e8;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e8eaed;
+          --muted: #9aa0a6;
+          --bg: #202124;
+          --line: #3c4043;
+          --accent: #8ab4f8;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 16px;
+        font: 14px/1.45 system-ui, sans-serif;
+        color: var(--fg);
+        background: var(--bg);
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 6px;
+        overflow-wrap: anywhere;
+      }
+      p {
+        margin: 0 0 8px;
+      }
+      [data-part="hint"],
+      [data-part="clinic"],
+      [data-part="appointment"],
+      [data-part="consent-at"],
+      [data-part="queued"],
+      [data-part="label"] {
+        color: var(--muted);
+      }
+      [data-part="timer"] {
+        font: 600 28px system-ui, sans-serif;
+        font-variant-numeric: tabular-nums;
+      }
+      [data-layout="live"] [data-part="title"] {
+        color: var(--red);
+      }
+      [data-layout="blocked"] [data-part="title"] {
+        color: var(--amber);
+      }
+      [data-part="banner"] {
+        border: 1px solid var(--amber);
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 0 0 14px;
+      }
+      [data-part="consent"] {
+        display: flex;
+        gap: 8px;
+        align-items: flex-start;
+        margin: 12px 0;
+      }
+      [data-part="patients"] {
+        display: flex;
+        gap: 16px;
+        margin: 8px 0 14px;
+      }
+      [data-part="patients"] > div {
+        flex: 1 1 0;
+        min-width: 0;
+      }
+      [data-part="previous"],
+      [data-part="current"] {
+        font-weight: 600;
+        overflow-wrap: anywhere;
+      }
+      [data-part="buttons"] {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 8px 0;
+      }
+      [data-part="refusal"],
+      [data-part="confirm"],
+      [data-part="warning"] {
+        color: var(--red);
+      }
+      button {
+        font: 600 14px system-ui, sans-serif;
+        padding: 8px 14px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--fg);
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: var(--bg);
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="panel" aria-live="polite"></main>
+    <script type="module" src="./panel.ts"></script>
+  </body>
+</html>

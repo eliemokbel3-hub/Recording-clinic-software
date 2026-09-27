@@ -15,9 +15,16 @@
 // carrying this session's nonce is handed to the state listener and the
 // connection STAYS up — a refused command arrives as `state.last_refusal`,
 // never as `error` (which stays fatal and disconnects).
+//
+// Task 6.2: `send` carries a `context` or `command` out under this session's
+// nonce, and only after the extension's own mirror has accepted the whole
+// envelope (a malformed message is dropped here, never sent). The badge
+// (D1, replacing the Phase 1 connection badges) reflects the APP, not only
+// the host: REC / PAUSED for a live session, "!" when the link is down while
+// a session was live, OK while the app runs idle, OFF when it does not.
 
-import type { Envelope, StatePayload } from "./protocol";
-import { HOST_NAME, makeHello, makePing, parseEnvelope } from "./protocol";
+import type { ContextPayload, CommandPayload, Envelope, StatePayload } from "./protocol";
+import { HOST_NAME, PROTOCOL_VERSION, makeHello, makePing, parseEnvelope } from "./protocol";
 
 export const RECONNECT_ALARM = "scribe-reconnect";
 export const PING_ALARM = "scribe-ping";
@@ -41,19 +48,67 @@ export interface ChromeLike {
   connectNative(hostName: string): PortLike;
   createAlarm(name: string, delayInMinutes: number): void;
   clearAlarm(name: string): void;
-  setBadge(text: string, color: string): void;
+  setBadge(text: string, color: string, title?: string): void;
   newRequestId(): string;
 }
 
-const BADGES: Record<ConnectionState, [string, string]> = {
-  connecting: ["…", "#f0ad4e"],
-  connected: ["OK", "#2e7d32"],
-  disconnected: ["OFF", "#9e9e9e"],
-  error: ["ERR", "#c62828"],
-};
+export interface ConnectionHooks {
+  /** A fresh handshake completed (a new host, so a new pipe client). */
+  onHandshake?: () => void;
+  /** The connection state or the badge changed. */
+  onChange?: (state: ConnectionState) => void;
+}
+
+export interface Badge {
+  text: string;
+  color: string;
+  title: string;
+}
+
+const RED = "#c62828";
+const AMBER = "#b26a00";
+const GREEN = "#2e7d32";
+const GREY = "#757575";
+
+/**
+ * D1's badge. `state` is the app's latest snapshot on the current
+ * connection (null before the first one); `wasLive` says the last running
+ * snapshot had a recording or paused session, so a link that goes down
+ * under it shows "!" rather than a quiet OFF.
+ */
+export function badgeFor(connection: ConnectionState, state: StatePayload | null, wasLive: boolean): Badge {
+  const down = connection !== "connected" || (state !== null && !state.app_running);
+  // A live session's warning outranks ERR: a failed link under a recording
+  // is first of all a paused recording (round 36 LOW-028). A new link with
+  // no snapshot yet has not shown the app back either (round 37 PR-LOW-201).
+  if ((down || state === null) && wasLive) {
+    return {
+      text: "!",
+      color: RED,
+      title: "Cliniko Scribe: lost the link to the app while a recording was live - it is paused",
+    };
+  }
+  if (connection === "error") {
+    return { text: "ERR", color: RED, title: "Cliniko Scribe: the link to the app failed - retrying" };
+  }
+  if (connection === "connecting" || (connection === "connected" && state === null)) {
+    return { text: "…", color: AMBER, title: "Cliniko Scribe: connecting to the app" };
+  }
+  if (down) return { text: "OFF", color: GREY, title: "Cliniko Scribe is not running" };
+  const phase = state?.live?.phase;
+  if (phase === "recording") return { text: "REC", color: RED, title: "Cliniko Scribe: recording" };
+  if (phase === "paused" || state?.block !== undefined) {
+    return { text: "PAUSED", color: AMBER, title: "Cliniko Scribe: recording paused" };
+  }
+  return { text: "OK", color: GREEN, title: "Cliniko Scribe is running" };
+}
 
 export class ConnectionManager {
   state: ConnectionState = "disconnected";
+  /** The app's latest `state` on the CURRENT connection (null until one arrives). */
+  appState: StatePayload | null = null;
+  /** The last running snapshot had a recording or paused session (the "!" badge). */
+  wasLive = false;
   private port: PortLike | null = null;
   private sessionNonce: string | null = null;
   private helloRequestId: string | null = null;
@@ -66,13 +121,43 @@ export class ConnectionManager {
     private readonly api: ChromeLike,
     // The app's latest `state` snapshot (rendered by the Phase 6 UI).
     private readonly onState: (state: StatePayload) => void = () => undefined,
+    private readonly hooks: ConnectionHooks = {},
   ) {}
+
+  /**
+   * Send a `context` or `command` under this session's nonce. The whole
+   * envelope must pass the extension's own mirror first; a malformed one is
+   * dropped. False when not connected or refused.
+   */
+  send(type: "context", payload: ContextPayload): boolean;
+  send(type: "command", payload: CommandPayload): boolean;
+  send(type: "context" | "command", payload: ContextPayload | CommandPayload): boolean {
+    if (this.state !== "connected" || !this.port || !this.sessionNonce) return false;
+    const envelope = {
+      protocol_version: PROTOCOL_VERSION,
+      type,
+      session_nonce: this.sessionNonce,
+      payload: { ...payload },
+    };
+    try {
+      parseEnvelope(envelope);
+    } catch {
+      return false;
+    }
+    try {
+      this.port.postMessage(envelope);
+    } catch {
+      return false;
+    }
+    return true;
+  }
 
   /** Full fresh handshake. Safe to call repeatedly (idempotent while connecting/connected). */
   connect(): void {
     if (this.state === "connecting" || this.state === "connected") return;
     this.reconnectScheduled = false;
     this.sessionNonce = null; // discard any stale nonce (plan acceptance criterion)
+    this.appState = null;
     this.pingOutstanding = false;
     this.setState("connecting");
     try {
@@ -128,6 +213,7 @@ export class ConnectionManager {
       this.api.clearAlarm(RECONNECT_ALARM);
       this.api.clearAlarm(WATCHDOG_ALARM);
       this.setState("connected");
+      this.hooks.onHandshake?.();
       return;
     }
     if (envelope.type === "pong") {
@@ -148,7 +234,14 @@ export class ConnectionManager {
         return;
       }
       // parseEnvelope validated the payload against the v2 state shape.
-      this.onState(envelope.payload as unknown as StatePayload);
+      const state = envelope.payload as unknown as StatePayload;
+      this.appState = state;
+      if (state.app_running) {
+        const phase = state.live?.phase;
+        this.wasLive = phase === "recording" || phase === "paused" || state.block !== undefined;
+      }
+      this.refreshBadge();
+      this.onState(state);
       return;
     }
     if (envelope.type === "error") {
@@ -160,10 +253,11 @@ export class ConnectionManager {
   }
 
   private fail(): void {
-    this.setState("error");
     const port = this.port;
     this.port = null;
     this.sessionNonce = null;
+    this.appState = null;
+    this.setState("error");
     try {
       port?.disconnect();
     } catch {
@@ -175,6 +269,7 @@ export class ConnectionManager {
   private onDisconnected(): void {
     this.port = null;
     this.sessionNonce = null;
+    this.appState = null;
     if (this.state !== "error") this.setState("disconnected");
     this.scheduleReconnect();
   }
@@ -190,7 +285,12 @@ export class ConnectionManager {
 
   private setState(state: ConnectionState): void {
     this.state = state;
-    const [text, color] = BADGES[state];
-    this.api.setBadge(text, color);
+    this.refreshBadge();
+    this.hooks.onChange?.(state);
+  }
+
+  private refreshBadge(): void {
+    const badge = badgeFor(this.state, this.appState, this.wasLive);
+    this.api.setBadge(badge.text, badge.color, badge.title);
   }
 }
