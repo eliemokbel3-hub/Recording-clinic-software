@@ -633,6 +633,16 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 
 ## Current State / Handoff Note
 - **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k7`, 2026-09-28T08:21+10:00, run stage-9) — smoke finding S1 FIXED and CLOSED as round 62 (LOW-060); `reason=composer-run`.**
+  - What changed:
+    - `ui/main_window.py` `_on_session_retired` now re-lists the Recovery tab. It runs on the GUI thread, from a Start's synchronous `session_retired` or the adopt path, so nothing is queued.
+    - A new `_on_tab_changed` re-lists the Recovery tab whenever it becomes current.
+    - `refresh()` is unchanged: it is stat-only (nothing decrypted, Constraint 7) and applies the same custody exclusion.
+  - Tests: +3 in `test_ui_pause_and_unreviewed.py` `TestReminderIndexWiring`. The one-pass in-session review of the diff found nothing.
+  - Checks: ruff clean, mypy clean (50 source files), `loop-history-check` run (see the brief).
+  - Expected: `cd desktop && ../.venv/Scripts/pytest.exe -q` → **4121 passed + 1 skipped** (4119 + 3 new; with `scribe-app` running, as before). Extension unchanged at 307; no rebuild needed.
+  - Live re-check (one step): back-to-back with A saved → the Recovery tab lists A without pressing Refresh.
+  - Next: H2a + H3a through one scoped `/review-plan`; P.2 for clinic 2 after P.1 for clinic 2.
 - **EXECUTOR HANDOFF (leg `stage-9-exec-k6`, 2026-09-28T07:31+10:00, run stage-9) — codex round 61 FIXED and CLOSED; H4 🟩 (pass `stage-9.p1` converged at peer round 4 of 5); `reason=composer-run`.**
   - PR-LOW-340 (test-harness) is fixed in place. The different-session focus test is now one sequence: a same-session rebuild keeps focus on Pause, then a new session clears it. It fails if restoration is removed or applied across sessions.
   - Only `extension/src/panel.dom.test.ts` and this plan changed, with no production or doc file touched, while the practitioner's smoke runs.
@@ -1564,6 +1574,7 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 - 2026-09-28 round 59 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice B): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-320 the encounter-read docstrings name their three callers, the executor's `adopt_queued` sibling included; SEC-022 assessed LOW, stays in H3a); skew=pre-existing; action=none
 - 2026-09-28 round 60 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice C): 0 CRIT / 0 HIGH / 1 MED / 2 LOW; fixed (PR-MED-330 the side panel's timer updates in place, focus and a straddling click survive, same-session focus restore, click-time refs, plus the Ready tick sibling; PR-LOW-331 "On screen" names a patient only for the focused note; PR-LOW-332 the three one-click desktop Discards named — doc only); skew=pre-existing; action=none — scoped confirmation round 61 follows
 - 2026-09-28 round 61 (codex gpt-6-astra medium, pass stage-9.p1 H4 confirmation, peer round 4 of 5): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-MED-330, PR-LOW-331 and the five docs fixes confirmed closed; PR-LOW-340 the different-session focus test made discriminating — one sequence, same-session keeps focus then a new session clears it; test only); skew=fix-induced; action=none — H4 pass stage-9.p1 converged
+- 2026-09-28 round 62 (practitioner live smoke S1, fixed by executor leg stage-9-exec-k7, claude-opus-5-5): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (LOW-060 the Recovery tab's Unreviewed list re-lists when a Start retires a recording and when the tab is opened — stat-only, custody exclusion unchanged; +3 tests; in-session review pass clean); skew=pre-existing; action=none
 
 ## Review Findings Log
 ### Round 1 - 2026-09-27 - cliniko-workflow-safeguards plan, independent cross-family codex plan peer-review (round 1)
@@ -4083,6 +4094,33 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
 - Checks: extension `npm run typecheck` and `npm run lint` clean. Nothing but this test file and the plan changed (the practitioner's smoke is running on the current build).
 - Cap verdict: accept — test-harness — one test made discriminating in place; no production change, and the pass converges at peer round 4 of 5.
 
+### Round 62 - 2026-09-28 - Smoke finding S1: the Recovery list after a Start retires a recording
+
+- Round status: Closed (0 pending) — 1 LOW, production, Fix-now, applied in this leg.
+- Source: practitioner live smoke (P.2, clinic 1, finding S1); fixed by executor leg stage-9-exec-k7 (claude-opus-5-5).
+- Scope: `ui/main_window.py` `_on_session_retired` and the tab widget; `ui/recovery.py` `refresh()` is read and unchanged.
+- Findings:
+  - **[LOW]** LOW-060: after a Start retires a recording (back-to-back: A's note saved, then B started from the side panel), the Recovery tab's Unreviewed list did not show A until the practitioner pressed Refresh. The reminder index and the banner were correct.
+    - Evidence: `_on_session_retired` added the reminder entry but never re-listed. `RecoveryScreen.refresh()` ran only at construction, on the Refresh button and after its own actions, and nothing refreshed it when the tab was shown.
+    - Thread check: no queuing is needed. `session_retired` is emitted synchronously by `SessionScreen._start` on the GUI thread, and the adopt path calls `_on_session_retired` directly from `_on_review_requested`, which also runs on the GUI thread.
+    - Fix: `_on_session_retired` now calls `recovery_screen.refresh()`, which covers a Start, a failed Start that retired its predecessor, and the adopt path. On the adopt path the adopted session is already live, so it stays excluded. A new `_on_tab_changed`, connected to `tabs.currentChanged`, re-lists the Recovery tab when it becomes current.
+    - Why this is safe: `refresh()` stays stat-only, using `list_recoverable_sessions` (key size and mtime, the audio header, file presence), so nothing is decrypted (Constraint 7). The custody exclusion is unchanged: `custody_protected_ids()` plus the screen's `_protected`.
+    - Known effect: a re-list clears the list selection. The existing programmatic switches into Recovery (the review-open refusals and the close warning) only show a message, and none relies on a selection. A refusal raised from the Recovery tab itself does not change the tab, so it does not re-list.
+    - Tests (`test_ui_pause_and_unreviewed.py` `TestReminderIndexWiring`, +3; they use stat-only stand-ins for the key and the transcript file):
+      - a retired session is listed without a manual refresh;
+      - a custody-protected session is still never listed when a retire re-lists;
+      - opening the Recovery tab re-lists it.
+    - surface=desktop Recovery tab. Triage: Fix-now; Decision: Applied.
+- In-session review (`/review-loop`, one pass over this leg's diff, executor-read; folded here because it found nothing):
+  - Ordering: on a Start, `controller.start` installs B before `session_retired` is emitted, so B is protected. On the adopt path, `adopt_queued` installs the adopted session before the call at `main_window.py` `_on_review_requested`.
+  - Every existing programmatic `refresh()` caller already runs it without the Refresh button's busy gate, so a re-list during a resume run is not new. The running session stays in `_protected`.
+  - A re-list can emit the 2-hour expiry cue, but only for sessions newly inside the window, as the Refresh button already does.
+  - Result: none.
+- Verification counts: 1 finding (practitioner-observed), 1 confirmed; review pass 0 candidates.
+- Fix-delta self-check: PASS. Re-read the two `main_window.py` hunks and the three tests; no other production file changed.
+- Checks: ruff clean; mypy clean (50 source files). Suite composer-run.
+- Last reviewed: 2026-09-28
+
 ## Tasks
 Every task's verification is the per-phase suite in `Validation / Verification` plus the test classes it names. `[executor: premium-only]` marks custody, concurrency, network-surface and security-doc work. The tier is entirely premium, so the labels record where care concentrates rather than routing.
 
@@ -4772,7 +4810,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
   - Not in scope (recorded, not built): clearing the clipboard after a timeout (option (b), not chosen).
 - [ ] 🟨 P.2: **Practitioner live smoke** (practitioner-owned) — clinic 1 PASS 2026-09-28; clinic 2 waits on Task P.1 for clinic 2
   - Clinic 1, 2026-09-28 (mock patients A and B, no patient data recorded): the consolidated 22-step smoke over Phases 4–8 PASSED, plus the re-checks R1–R5 for the morning's fixes (the Modern Standby sleep + session-lock pause, rounds 49–52; H1's Start-while-locked refusal and block wording; H3's Back/Forward redraw; H4's side-panel focus and "On screen" label). Step 2 first failed on a missing native-host registry key (fixed by re-running `register-native-host.py` from the practitioner's own terminal — `docs/lessons.md`); step 5 first failed (sleep did not pause on Modern Standby) and led to the practitioner's sleep + lock decision (D5 addendum). Optional O1–O3 not run (O2's sign-in path stays unverified).
-  - Smoke finding **S1** (LOW, production, the Recovery tab): after a Start retires a recording, the Recovery tab's Unreviewed list is not refreshed until an event that refreshes it (the practitioner pressed Refresh and A appeared, marked "note saved"). The reminder index and banner were correct. Fix: refresh the list when a Start retires a session (and when the tab is shown).
+  - Smoke finding **S1** (LOW, production, the Recovery tab): after a Start retires a recording, the Recovery tab's Unreviewed list is not refreshed until an event that refreshes it (the practitioner pressed Refresh and A appeared, marked "note saved"). The reminder index and banner were correct. Fix: refresh the list when a Start retires a session (and when the tab is shown). **FIXED 2026-09-28 (round 62, LOW-060, leg stage-9-exec-k7):** a retire and opening the Recovery tab both re-list it (stat-only; custody exclusion unchanged). Re-check: back-to-back with A saved → the Recovery tab lists A without pressing Refresh.
   - The "confirm as you go" items (desktop recordings pause on sleep or lock only; Start clears the previous patient's saved note from the Note tab; a reopened saved note is read-only and Regenerate replaces it only on Save; the Ctrl+Shift+F9 chord, the 1 s grace and the 3 s gap; a refused hotkey Resume shows on the desktop only; no Discard in the panel while recording; Ctrl+C and right-click Copy protected like the Copy button) raised no objection; the overnight decisions (Tasks 4.3 (b), 5.4 (a), Task 6.0's jsdom) stand as revisable.
   - The Validation practitioner-run list, on both clinics.
   - Record the outcomes (no patient data) in the Done note.

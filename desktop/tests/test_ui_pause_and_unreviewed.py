@@ -24,7 +24,7 @@ from scribe_desktop.context_rules import (  # noqa: E402
 )
 from scribe_desktop.encounter import linked_consent, unlinked_consent  # noqa: E402
 from scribe_desktop.session import RecordingSession, SessionState  # noqa: E402
-from scribe_desktop.session_store import KEY_FILENAME  # noqa: E402
+from scribe_desktop.session_store import KEY_FILENAME, TRANSCRIPT_FILENAME  # noqa: E402
 from scribe_desktop.ui import models  # noqa: E402
 from scribe_desktop.ui import session_screen as session_screen_module  # noqa: E402
 from test_ui_screens import (  # noqa: E402
@@ -422,6 +422,55 @@ class TestReminderIndexWiring:
         window.prune_reminders()
         assert kept.session_id in window.reminders
         assert gone.session_id not in window.reminders
+        window.deleteLater()
+
+    @staticmethod
+    def _on_disk(root: Path, session: RecordingSession) -> None:
+        """Stat-only stand-ins: a key blob and a transcript file are all the
+        listing looks at (it never decrypts)."""
+        directory = root / session.session_id
+        directory.mkdir()
+        (directory / KEY_FILENAME).write_bytes(b"x" * 64)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(b"x")
+
+    @staticmethod
+    def _unreviewed_ids(window: Any) -> list[str]:
+        return [info.session_id for info in window.recovery_screen.unreviewed_infos()]
+
+    def test_a_retired_session_is_listed_without_a_manual_refresh(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Smoke S1: the Start that retires A lists A on the Recovery tab."""
+        window = _main_window(tmp_path, FakeController())
+        previous = _queued_linked()
+        self._on_disk(tmp_path, previous)
+        assert self._unreviewed_ids(window) == []
+        window.session_screen.session_retired.emit(previous)
+        assert self._unreviewed_ids(window) == [previous.session_id]
+        assert window.recovery_screen.unreviewed_list.count() == 1
+        window.deleteLater()
+
+    def test_a_custody_protected_session_is_still_never_listed(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        previous, live = _queued_linked(), _queued_linked()
+        self._on_disk(tmp_path, previous)
+        self._on_disk(tmp_path, live)
+        controller.reserved_ids = frozenset({live.session_id})
+        window.session_screen.session_retired.emit(previous)
+        assert self._unreviewed_ids(window) == [previous.session_id]
+        window.deleteLater()
+
+    def test_opening_the_recovery_tab_relists_it(self, qapp: Any, tmp_path: Path) -> None:
+        window = _main_window(tmp_path, FakeController())
+        window.tabs.setCurrentWidget(window.session_screen)
+        later = _queued_linked()
+        self._on_disk(tmp_path, later)
+        assert self._unreviewed_ids(window) == []
+        window.tabs.setCurrentWidget(window.recovery_screen)
+        assert self._unreviewed_ids(window) == [later.session_id]
         window.deleteLater()
 
     def test_a_start_clears_a_stale_post_save_review(

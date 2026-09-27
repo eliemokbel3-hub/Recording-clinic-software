@@ -355,6 +355,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.clinics_screen, "Clinics")
         self.tabs.addTab(self.status_panel, "Status")
         self.setCentralWidget(self.tabs)
+        # Smoke S1: opening the Recovery tab re-lists it (stat-only, nothing
+        # decrypted), so the tab never opens on a list gone stale while hidden.
+        self.tabs.currentChanged.connect(self._on_tab_changed)
 
         # D15 (the wiring owed from Phase 1): the controller cannot see the
         # microphone screen's benchmark `TaskThread`, so `begin_enrolment`
@@ -618,6 +621,15 @@ class MainWindow(QMainWindow):
         entry = reminder_entry(previous)
         if entry is not None:
             self.reminders.add(entry)
+        # Smoke S1: the retired recording is Unreviewed now, so list it at
+        # once. A stat-only listing (nothing is decrypted, Constraint 7) under
+        # the unchanged custody exclusion; always on the GUI thread (emitted
+        # synchronously by `SessionScreen._start`, called by the adopt path).
+        self.recovery_screen.refresh()
+
+    def _on_tab_changed(self, index: int) -> None:
+        if self.tabs.widget(index) is self.recovery_screen:
+            self.recovery_screen.refresh()
 
     def _released_checkout_entry(self) -> ReminderEntry | None:
         """H1 round 53 LOW-040's sibling: the index entry of a RECOVERED
