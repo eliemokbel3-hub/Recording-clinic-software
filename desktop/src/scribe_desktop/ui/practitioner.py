@@ -95,7 +95,9 @@ click and leaks nothing.
 The learned-style line (Task 3.5) and the "Learned style" group (Task 3.6)
 are rendered from ONE decrypt of the style store
 (``refresh_style_profile_state``), taken at construction and after a learn,
-a per-item remove or a delete — NEVER from the 5 s availability poll, which
+a per-item remove, a delete or a consent renewal ("Confirm consent" re-saves
+the same profile with a current consent record, content untouched; codex
+round 31 PR-LOW-048) — NEVER from the 5 s availability poll, which
 reads no store (round 51 MED-001; the microphone screen's poll renders stats
 too, re-reading the VOICE profile only on a speaker-model presence
 transition — round 55 PR-REG-006 — and never the style store). Remove on

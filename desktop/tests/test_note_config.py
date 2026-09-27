@@ -1997,14 +1997,18 @@ class TestRefusalFilter:
         source), so rule (b) never reaches the transcript-derived paths: the
         round-36 filler fixture and the utterance-opening name are refused
         exactly as before Task 3.7 (rule (a)'s vocabulary admission applies to
-        them like every caller and is pinned above)."""
+        them like every caller and is pinned above). Since Task H6 both calls
+        live in the Qt-free ``ui/note_review.py`` (phrase learning and
+        shorthand learning) and the widget module makes none."""
         import inspect
 
         from scribe_desktop.ui import note as note_screen_module
+        from scribe_desktop.ui import note_review as note_review_module
 
-        source = inspect.getsource(note_screen_module)
+        source = inspect.getsource(note_review_module)
         assert source.count("refuse_learning_candidate(") == 2
         assert "known_common" not in source
+        assert "refuse_learning_candidate(" not in inspect.getsource(note_screen_module)
         after_filler = propose_learning_phrase(["Um,", "Will", "needs", "the", "exercises"])
         assert after_filler is not None
         assert (

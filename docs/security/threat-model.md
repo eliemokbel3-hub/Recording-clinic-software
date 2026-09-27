@@ -232,9 +232,12 @@ note inherit exactly that posture.
    the loader never reads; `delete_user_cue` removes one. What can be written
    is bounded by structure at five points, each a call site: (a) only the
    Note tab's add/move path enqueues a candidate (`ui/note.py`
-   `_consider_learning`) and only after `note.spoken_by_confirmed_clinician`
-   says the utterance is the CONFIRMED clinician's — a patient's, carer's or
-   interpreter's line never reaches the learner, whatever the settings; (b)
+   `_consider_learning` queues what the Qt-free
+   `ui/note_review.consider_learning` decides — Task H6) and only after
+   `note.spoken_by_confirmed_clinician` (tested there FIRST, before the
+   learning status is read) says the utterance is the CONFIRMED clinician's —
+   a patient's, carer's or interpreter's line never reaches the learner,
+   whatever the settings; (b)
    only while `ui.models.learning_status` finds a READABLE profile whose
    consent record carries the CURRENT text version (`consent_is_current` —
    an older version disables learning until the practitioner re-consents on
@@ -669,8 +672,10 @@ boundary 2: the defended adversary is outside the user's Windows session.
     is: at most four normalised content tokens from the START of a line the
     practitioner added or moved during review — a bounded prefix, which for
     a line of two to four content words is that line's whole content — and
-    never a patient's line (the ownership test in `ui/note.py`
-    `_consider_learning` over `note.spoken_by_confirmed_clinician`, pinned).
+    never a patient's line (the ownership test in `ui/note_review.py`
+    `consider_learning` over `note.spoken_by_confirmed_clinician`, pinned —
+    since Task H6 the widget's `ui/note.py` `_consider_learning` only applies
+    its verdict).
     The controls that bound what gets written are the five call sites listed
     at the Phase 3A section's surface 1; the two on this tab are the consent
     gate (a readable profile, the CURRENT consent version, the opt-in —

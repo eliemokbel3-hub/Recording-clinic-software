@@ -404,7 +404,9 @@ logging channel, and so is the prose rendering the language model does
     `delete_sample_files`, which unlinks exactly those paths and reports every
     failure. The tab's learned-style summary and lists come from ONE decrypt
     (`refresh_style_profile_state` → `load_style_profile`, re-run after a learn,
-    a remove or a delete and on no timer), each per-item Remove re-saves the
+    a remove, a delete or a consent renewal — "Confirm consent" re-saves the
+    same profile with a current consent record, content untouched — and on no
+    timer), each per-item Remove re-saves the
     profile under the same key, and "Delete learned style" removes the store
     key-first through `delete_style_profile`, independently of the voice
     profile. Nothing in this flow is logged (`sample_text`,

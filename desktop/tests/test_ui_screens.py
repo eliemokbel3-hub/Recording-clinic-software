@@ -4522,6 +4522,31 @@ class TestNoteScreenEdits:
         assert tuple(_LEARNABLE_PHRASE.split()) in cues[key]
         screen.deleteLater()
 
+    def test_a_second_add_of_the_same_utterance_is_refused(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task H6: the chooser's "already in the note" test reads the WORKING
+        draft, which every mutation re-derives — so an utterance is added once,
+        can be added again only after its Undo, and a Removed provider line's
+        utterance can be added back exactly once."""
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        manual_id = manual_assertion_id(_LEARNABLE_INDEX)
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.add_line(_LEARNABLE_INDEX, key) is False
+        assert screen.edit_status_label.text() == "That line is already in the note."
+        assert [line.assertion_id for line in screen.editable_lines()].count(manual_id) == 1
+        assert screen.undo_line(manual_id) is True
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        assert screen.add_line(_LEARNABLE_INDEX, key) is False
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.add_line(_DIAGNOSIS_INDEX, line.section_key) is False
+        assert screen.remove_line(line.assertion_id) is True
+        assert screen.add_line(_DIAGNOSIS_INDEX, line.section_key) is True
+        assert screen.add_line(_DIAGNOSIS_INDEX, line.section_key) is False
+        assert screen.edit_status_label.text() == "That line is already in the note."
+        screen.deleteLater()
+
 
 # ---------------------------------------------------------------------------
 # Typed edits, shorthand learning and Save-as-ratification on the Note tab
@@ -4827,6 +4852,40 @@ class TestNoteScreenTypedEdits:
         assert refreshed == [1]
         assert screen.rule_queue() == () and screen.queued_rule_count() == 0
         assert screen.learning_label.text() == models.LEARNING_ON_LINE
+        screen.deleteLater()
+
+    def test_the_edit_and_save_status_lines_are_exact(self, qapp: Any, tmp_path: Path) -> None:
+        """Task H6: the widget composes the status line from the decision
+        module's verdict texts (set, then appended in order) — pinned here as
+        WHOLE strings, where the pins above are substrings: a typed edit that
+        queues a rule, and a Save report carrying a phrase part and a rule
+        part. The hand-authored config pre-fills its lines, so no learned
+        rule's count adds a third part."""
+        config_root = tmp_path / "config"
+        screen, record = self._screen(
+            config_root=config_root,
+            result=_edit_result(config=_hand_authored_config()),
+            learning_status_provider=_learning_on,
+        )
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        title = models.section_title(line.section_key)
+        assert screen.edit_line(line.assertion_id, _TYPED) is True
+        assert screen.edit_status_label.text() == (
+            f"Line replaced with your wording in {title}. Undo restores the original until "
+            f"Save. Will learn shorthand: '{_DIAGNOSIS_TRIGGER}' -> '{_TYPED}' for {title} "
+            "when you press Save note on this tab."
+        )
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        assert screen.edit_status_label.text() == (
+            f"Learned 1: '{_LEARNABLE_PHRASE}' for {models.section_title(key)}. "
+            "Review learned phrases on the Practitioner tab. "
+            f"Learned 1 shorthand: '{_DIAGNOSIS_TRIGGER}' -> '{_TYPED}' for {title}. "
+            "Review learned shorthand on the Practitioner tab."
+        )
         screen.deleteLater()
 
     def test_cancel_delete_discard_and_undo_write_no_rule(

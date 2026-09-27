@@ -104,6 +104,14 @@ rendering in flight — names itself on the style line under the note (C8).
 ``format_note_body`` stays the ONE rendering path: the body shown, the
 ``note.enc`` Save writes and Copy all read the same bound renderings.
 
+Where the decisions live (note-learning plan Task H6). This widget holds
+every piece of review STATE and the order it mutates it in; the DECISIONS it
+consults — the resolution precedence, the learned-rule outcomes at Save, what
+an add, a move or a typed edit teaches, and the review counts — are
+functions in the Qt-free ``ui.note_review``, called with the state as
+parameters. Their verdicts come back with the exact status texts, which this
+widget appends in order.
+
 Clinical-content discipline (Critical Constraints, design-system):
 - The transcript panel is display-only (``NoTextInteraction``) ALWAYS, and is
   cleared with the rest of the tab whenever the review ends (``clear()`` on
@@ -159,17 +167,12 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteSpan,
     NoteStyle,
-    ProposalResolution,
     admissible_sections,
     bound_rendering,
-    content_tokens,
     finalise_note,
-    first_matching_section,
-    is_interrogative,
     manual_assertion_id,
     note_input_digest,
     reconstruct_span_text,
-    spoken_by_confirmed_clinician,
     text_digest,
     whole_utterance_assertion,
 )
@@ -177,22 +180,14 @@ from scribe_desktop.note_config import (
     LearnedRuleCandidate,
     NoteConfig,
     NoteConfigError,
-    RuleOutcome,
     append_learned_rules,
     append_user_cues,
-    is_learned_rule_id,
-    learned_rule_problem,
-    plain_rule_problem,
     plain_skip_reason,
-    propose_learning_phrase,
-    propose_rule_trigger,
     record_rule_outcomes,
-    refuse_learning_candidate,
-    refuse_typed_wording,
     replace_learned_rule_wording,
 )
 from scribe_desktop.transcription import TranscriptDocument
-from scribe_desktop.ui import models
+from scribe_desktop.ui import models, note_review
 from scribe_desktop.ui.tasks import TaskThread
 
 
@@ -300,6 +295,12 @@ class NoteScreen(QWidget):
         self._style_job: TaskThread | None = None
         self._style_job_abort: threading.Event | None = None
         self._orphaned_jobs: list[TaskThread] = []
+        # ONE set for two kinds of id (practitioner decision 2026-09-26): the
+        # provider lines Removed (or typed over) and the pre-filled proposals
+        # Removed. The namespaces cannot collide — an assertion id is
+        # `x<nnnn>` (provider), `m<nnnn>` (manual) or `t<nnnn>` (typed), a
+        # proposal id is `autofill-<24 hex>` or `prefill-<24 hex>`
+        # (`note_fill._proposal_id`) — pinned by `tests/test_note_review.py`.
         self._removed: set[str] = set()
         self._manual: dict[str, NoteAssertion] = {}
         self._learning_queue: dict[str, tuple[NoteSectionKey, str]] = {}
@@ -316,7 +317,7 @@ class NoteScreen(QWidget):
         self._replaced_manual: dict[str, NoteAssertion] = {}
         self._edited_proposals: dict[str, str] = {}
         self._rule_queue: dict[str, LearnedRuleCandidate] = {}
-        self._rule_replacements: dict[str, tuple[str, str]] = {}
+        self._rule_replacements: dict[str, note_review.RuleReplacement] = {}
         self._typed_counter = 0
         # The inline editor (Task 2.1): the request — the id being typed over
         # and the text the field opens with — survives a row rebuild and is
@@ -665,10 +666,7 @@ class NoteScreen(QWidget):
     def _prefilled_ids(self) -> frozenset[str]:
         """The proposals the practitioner's own config decided (D5): no
         confirm/decline row — they are in the note, marked, until Removed."""
-        draft = self._draft
-        if draft is None:
-            return frozenset()
-        return frozenset(decision.proposal_id for decision in draft.config_decisions)
+        return note_review.prefilled_ids(self._draft)
 
     def _build_proposal_rows(self) -> None:
         assert self._draft is not None
@@ -1042,10 +1040,7 @@ class NoteScreen(QWidget):
         return f"t{self._typed_counter:04d}"
 
     def _proposal(self, proposal_id: str) -> NoteProposal | None:
-        draft = self._draft
-        if draft is None:
-            return None
-        return next((p for p in draft.note_proposals if p.proposal_id == proposal_id), None)
+        return note_review.proposal_by_id(self._draft, proposal_id)
 
     def _edit_target_section(self, target_id: str) -> NoteSectionKey | None:
         """The section a typed line inherits from what it replaces: a
@@ -1205,16 +1200,12 @@ class NoteScreen(QWidget):
     # --- shorthand learning (note-learning plan Task 2.3; D5, D11) -----------------
 
     def _consider_rule_learning(self, typed_id: str) -> None:
-        """Queue the shorthand this typed edit teaches, or say why not. The
-        source is what the line REPLACED: one of the practitioner's OWN
-        utterances (the ownership test, first and silently for another
-        speaker's line) yields a new rule — trigger from the utterance's
-        tail through THE refusal filter, wording through
-        ``refuse_typed_wording`` — and a LEARNED rule's own line (proposed or
-        pre-filled) yields an in-place wording replacement (D5). A
-        hand-authored config line has no utterance to learn from (the
-        plan's Excluded item) and teaches nothing. Every queue entry is keyed
-        by the typed id, so Undo drops it, and nothing is written here."""
+        """Queue the shorthand this typed edit teaches, or say why not — the
+        decision is ``note_review.consider_rule_learning``'s (the ownership
+        test first, THE refusal filter, both correction paths validated);
+        this applies its verdict. Both queue entries are dropped FIRST, so a
+        retype that no longer teaches leaves nothing queued. Every entry is
+        keyed by the typed id, so Undo drops it, and nothing is written here."""
         self._rule_queue.pop(typed_id, None)
         self._rule_replacements.pop(typed_id, None)
         draft, document, config = self._draft, self._document, self._config
@@ -1222,115 +1213,20 @@ class NoteScreen(QWidget):
         target = typed.replaces
         if draft is None or document is None or config is None or target is None:
             return
-        proposal = self._proposal(target)
-        if proposal is not None:
-            if proposal.provenance != "autofill" or not is_learned_rule_id(proposal.rule_id):
-                self._append_edit_status(
-                    "Not learned: this line came from your own config, not from a line you said."
-                )
-                return
-            status = self._refresh_learning_status()
-            if not status.enabled:
-                self._append_edit_status(status.reason or "")
-                return
-            refusal = refuse_typed_wording(typed.text)
-            if refusal is not None:
-                self._append_edit_status(
-                    f"Shorthand not updated: the wording contains a number/date/medication "
-                    f"({refusal})."
-                )
-                return
-            # The rules file's own validation runs here too (Phase H smoke
-            # item 2, leg h1l): the correction is validated against the rule
-            # it replaces — the same trigger and section Save's
-            # `replace_learned_rule_wording` validates — so "Will update" is
-            # never withdrawn at Save, and the line says the clinician's reason.
-            rule = next((r for r in config.autofill_rules if r.rule_id == proposal.rule_id), None)
-            if rule is None:
-                self._append_edit_status(
-                    "Shorthand not updated: that shorthand is no longer in your rules file."
-                )
-                return
-            correction = LearnedRuleCandidate(rule.section_key, rule.trigger_phrase, typed.text)
-            if learned_rule_problem(correction) is not None:
-                self._append_edit_status(
-                    f"Shorthand not updated: {plain_rule_problem(typed.text)}."
-                )
-                return
-            self._rule_replacements[typed_id] = (proposal.rule_id, typed.text)
-            self._append_edit_status(
-                "Will update this learned shorthand rule's wording to your line when you "
-                "press Save note on this tab (it will propose again until confirmed 3 times)."
-            )
-            return
-        segment_index = self._segment_of(target)
-        if segment_index is None:
-            return
-        segment = document.transcript_segments[segment_index]
-        if not spoken_by_confirmed_clinician(segment.speaker, draft.clinician_speaker):
-            self._append_edit_status(models.LEARNING_NOT_ATTRIBUTED_NOTE)
-            return
-        status = self._refresh_learning_status()
-        if not status.enabled:
-            self._append_edit_status(status.reason or "")
-            return
-        words = [word.word_text for word in segment.transcript_words]
-        candidate = propose_rule_trigger(words)
-        if candidate is None:
-            self._append_edit_status("Not learned: the line is too short to make a trigger.")
-            return
-        refusal = refuse_learning_candidate(
-            candidate.source_words,
-            first_in_segment=candidate.first_in_segment,
-            following=candidate.following,
+        verdict = note_review.consider_rule_learning(
+            typed,
+            draft=draft,
+            document=document,
+            config=config,
+            segment_index=self._segment_of(target),
+            learning_status=self._refresh_learning_status,
         )
-        if refusal is not None:
-            self._append_edit_status(
-                f"Not learned: the trigger contains a name/number/date/medication ({refusal})."
-            )
-            return
-        wording_refusal = refuse_typed_wording(typed.text)
-        if wording_refusal is not None:
-            self._append_edit_status(
-                f"Not learned: the typed wording contains a number/date/medication "
-                f"({wording_refusal})."
-            )
-            return
-        queued = LearnedRuleCandidate(typed.section_key, candidate.phrase, typed.text)
-        # Phase H round 24 LOW-005: the rules file's own validation runs at
-        # the edit too (the same validator Save runs), so "Will learn" / "Will
-        # update" is said only for a wording the file will accept — never a
-        # promise Save then withdraws. It runs BEFORE the trigger match so a
-        # correction to an already-learned shorthand is checked the same way
-        # (Phase H smoke item 2), and the status line says the clinician's
-        # reason — the validator's authoring message (rule id, entry position,
-        # the JSON override) never reaches the screen.
-        if learned_rule_problem(queued) is not None:
-            self._append_edit_status(f"Not learned: {plain_rule_problem(typed.text)}.")
-            return
-        trigger_tokens = tuple(candidate.phrase.split(" "))
-        for rule in config.autofill_rules:
-            if content_tokens(rule.trigger_phrase) != trigger_tokens:
-                continue
-            if is_learned_rule_id(rule.rule_id):
-                # The same utterance was learned before: D5 — replace that
-                # rule's wording in place, never a second rule under one trigger.
-                self._rule_replacements[typed_id] = (rule.rule_id, typed.text)
-                self._append_edit_status(
-                    f"Will update the learned shorthand for '{candidate.phrase}' to your "
-                    "wording when you press Save note on this tab."
-                )
-            else:
-                self._append_edit_status(
-                    f"Not learned: '{candidate.phrase}' is already a trigger in your rules "
-                    "file."
-                )
-            return
-        self._rule_queue[typed_id] = queued
-        self._append_edit_status(
-            f"Will learn shorthand: '{candidate.phrase}' -> '{typed.text}' for "
-            f"{models.section_title(typed.section_key)} when you press Save note on this tab."
-        )
+        if verdict.rule is not None:
+            self._rule_queue[typed_id] = verdict.rule
+        if verdict.replacement is not None:
+            self._rule_replacements[typed_id] = verdict.replacement
+        for message in verdict.messages:
+            self._append_edit_status(message)
 
     def _provider_line_exists(self, assertion_id: str) -> bool:
         draft = self._draft
@@ -1367,75 +1263,24 @@ class NoteScreen(QWidget):
     # --- phrase learning (D9 as amended) -------------------------------------
 
     def _consider_learning(self, assertion: NoteAssertion) -> None:
-        """Queue the added/moved line's phrase, or say why not. The
-        ownership test comes FIRST and silently: a line that is not the
-        confirmed clinician's is never a candidate, whatever the status."""
+        """Queue the added/moved line's phrase, or say why not — the decision
+        is ``note_review.consider_learning``'s (the ownership test FIRST: a
+        line that is not the confirmed clinician's is never a candidate,
+        whatever the status); this applies its verdict."""
         draft, document, config = self._draft, self._document, self._config
-        coords = assertion.note_span.source_coords
-        if draft is None or document is None or config is None or coords is None:
+        if draft is None or document is None or config is None:
             return
-        segment = document.transcript_segments[coords.segment_index]
-        if not spoken_by_confirmed_clinician(segment.speaker, draft.clinician_speaker):
-            # Never a candidate (the ownership rule) — but SAY so (live smoke
-            # 2026-09-17: a silent skip reads as a broken feature).
-            self._append_edit_status(models.LEARNING_NOT_ATTRIBUTED_NOTE)
-            return
-        status = self._refresh_learning_status()
-        if not status.enabled:
-            self._append_edit_status(status.reason or "")
-            return
-        words = [word.word_text for word in segment.transcript_words]
-        candidate = propose_learning_phrase(words)
-        if candidate is None:
-            self._append_edit_status("Not learned: the line is too short to make a phrase.")
-            return
-        # The REAL segment-start status travels with the candidate (peer
-        # round 36 PR-HIGH-008): a leading filler that was dropped does not
-        # hand the opener exemption to the word after it.
-        refusal = refuse_learning_candidate(
-            candidate.source_words,
-            first_in_segment=candidate.first_in_segment,
-            following=candidate.following,
+        verdict = note_review.consider_learning(
+            assertion,
+            draft=draft,
+            document=document,
+            config=config,
+            learning_status=self._refresh_learning_status,
         )
-        if refusal is not None:
-            self._append_edit_status(
-                f"Not learned: contains a name/number/date/medication ({refusal})."
-            )
-            return
-        tokens = tuple(candidate.phrase.split(" "))
-        cues = config.normalised_cues()
-        for key, phrases in cues.items():
-            if tokens in phrases:
-                self._append_edit_status(
-                    f"Not learned: '{candidate.phrase}' is already a cue for "
-                    f"{models.section_title(key)}."
-                )
-                return
-        section_key = assertion.section_key
-        proposed = dict(cues)
-        proposed[section_key] = (*proposed.get(section_key, ()), tokens)
-        text = reconstruct_span_text(segment.transcript_words)
-        winner = first_matching_section(
-            proposed,
-            content_tokens(text),
-            CANONICAL_SECTION_KEYS,
-            speaker=segment.speaker,
-            clinician_speaker=draft.clinician_speaker,
-            question=is_interrogative(text),
-        )
-        self._learning_queue[assertion.assertion_id] = (section_key, candidate.phrase)
-        message = (
-            f"Will learn '{candidate.phrase}' for {models.section_title(section_key)} "
-            "when you press Save note on this tab."
-        )
-        if winner is not None and winner != section_key:
-            # PR-MED-011: noted, never a silent cue deletion — the earlier
-            # section's cue keeps first-match routing for lines like this one.
-            message += (
-                f" Note: a {models.section_title(winner)} cue still routes this line "
-                "first."
-            )
-        self._append_edit_status(message)
+        if verdict.queued is not None:
+            self._learning_queue[assertion.assertion_id] = verdict.queued
+        for message in verdict.messages:
+            self._append_edit_status(message)
 
     def _append_edit_status(self, message: str) -> None:
         current = self.edit_status_label.text()
@@ -1732,48 +1577,6 @@ class NoteScreen(QWidget):
 
     # --- finalisation ------------------------------------------------------
 
-    def _clinician_resolution(
-        self, proposal: NoteProposal, decision: Literal["confirmed", "declined"]
-    ) -> ProposalResolution:
-        # The digest of what the row RENDERED for a proposal with a row; a
-        # pre-filled line has no row and its decline names the text the
-        # note body showed — the proposal's own excerpt, rendered by the one
-        # rendering path (the same residue ``config_decisions`` states).
-        rendered = self._rendered_excerpt.get(proposal.proposal_id, proposal.note_excerpt)
-        return ProposalResolution(
-            shown_text_digest=text_digest(rendered),
-            confirmation=ConfirmationDecision(
-                proposal_id=proposal.proposal_id,
-                note_confirmation=decision,
-                decided_at=datetime.now(UTC),
-            ),
-        )
-
-    def _build_resolutions(self) -> list[ProposalResolution]:
-        """One resolution per decided proposal, the clinician's decision
-        first (D5): a proposal replaced by a typed line or Removed is
-        DECLINED by the clinician; a clicked decision stands; otherwise a
-        config decision the emitter minted is passed on unchanged (the
-        counted Save ratifies it); anything else is pending."""
-        draft = self._draft
-        assert draft is not None
-        minted = {decision.proposal_id: decision for decision in draft.config_decisions}
-        resolutions: list[ProposalResolution] = []
-        for proposal in draft.note_proposals:
-            pid = proposal.proposal_id
-            if pid in self._edited_proposals or pid in self._removed:
-                resolutions.append(self._clinician_resolution(proposal, "declined"))
-                continue
-            decision = self._resolutions.get(pid)
-            if decision is not None:
-                resolutions.append(self._clinician_resolution(proposal, decision))
-                continue
-            config_decision = minted.get(pid)
-            if config_decision is not None:
-                resolutions.append(config_decision)
-            # else pending -> finalise_note flags unconfirmed_proposal
-        return resolutions
-
     def _refinalise(self) -> None:
         draft, document, config = self._draft, self._document, self._config
         if draft is None or document is None or config is None:
@@ -1786,7 +1589,18 @@ class NoteScreen(QWidget):
             removed=self._removed,
             additions=(*self._manual.values(), *self._typed.values()),
         )
-        note = finalise_note(self._working, self._build_resolutions(), document, config)
+        # The resolution precedence (C3, D5) is `note_review.build_resolutions`;
+        # the shown-text digests come from `_rendered_excerpt`, which each row
+        # filled by reading its label back (`_build_proposal_rows`).
+        resolutions = note_review.build_resolutions(
+            draft,
+            resolutions=self._resolutions,
+            removed=self._removed,
+            edited_proposals=self._edited_proposals,
+            rendered_excerpt=self._rendered_excerpt,
+            now=datetime.now(UTC),
+        )
+        note = finalise_note(self._working, resolutions, document, config)
         # D7: the note records the style it is rendered under; `model_copy`
         # changes that one field on the frozen model. Task 4.4: the previous
         # note's renderings are carried over where a section's texts are
@@ -2030,36 +1844,6 @@ class NoteScreen(QWidget):
         self._update_controls()
         self._emit_state()
 
-    def _learned_rule_outcomes(self) -> dict[str, RuleOutcome]:
-        """What this Save says about each LEARNED rule whose line was in
-        play (D5): ``confirmed`` when its proposed line was confirmed by
-        click, or its pre-filled line stood unedited; ``removed`` when the
-        line was declined, Removed or replaced by a typed line — and
-        ``removed`` wins for a rule with lines in both states."""
-        draft = self._draft
-        if draft is None:
-            return {}
-        prefilled = self._prefilled_ids()
-        outcomes: dict[str, RuleOutcome] = {}
-        for proposal in draft.note_proposals:
-            if proposal.provenance != "autofill" or not is_learned_rule_id(proposal.rule_id):
-                continue
-            pid = proposal.proposal_id
-            if pid in self._edited_proposals or pid in self._removed:
-                outcome: RuleOutcome | None = "removed"
-            elif pid in prefilled:
-                outcome = "confirmed"
-            else:
-                clicked = self._resolutions.get(pid)
-                outcome = (
-                    "confirmed" if clicked == "confirmed" else "removed" if clicked else None
-                )
-            if outcome is None:
-                continue
-            if outcomes.get(proposal.rule_id) != "removed":
-                outcomes[proposal.rule_id] = outcome
-        return outcomes
-
     def _write_learned_rules(self) -> str | None:
         """Save-time write of the shorthand queue, the in-place wording
         replacements and the confirmation counts (the ONLY write; C6). Same
@@ -2070,7 +1854,19 @@ class NoteScreen(QWidget):
         replacements = list(self._rule_replacements.values())
         self._rule_queue.clear()
         self._rule_replacements.clear()
-        outcomes = self._learned_rule_outcomes()
+        # What this Save says about each LEARNED rule whose line was in play
+        # (D5; `removed` wins) — `note_review.learned_rule_outcomes`.
+        draft = self._draft
+        outcomes = (
+            {}
+            if draft is None
+            else note_review.learned_rule_outcomes(
+                draft,
+                resolutions=self._resolutions,
+                removed=self._removed,
+                edited_proposals=self._edited_proposals,
+            )
+        )
         if not queued and not replacements and not outcomes:
             return None
         status = self._refresh_learning_status()
@@ -2238,20 +2034,19 @@ class NoteScreen(QWidget):
         draft, note = self._draft, self._note
         if draft is None or note is None:
             return models.NoteReviewState()
-        summary = models.summarise_warnings(note.note_warnings)
-        decided = set(self._resolutions) | self._prefilled_ids() | set(self._edited_proposals)
-        pending = sum(
-            1 for proposal in draft.note_proposals if proposal.proposal_id not in decided
-        )
-        unacknowledged = sum(
-            1 for group in summary.review if group.code not in self._acknowledged
+        counts = note_review.review_counts(
+            draft,
+            note,
+            resolutions=self._resolutions,
+            edited_proposals=self._edited_proposals,
+            acknowledged=self._acknowledged,
         )
         return models.NoteReviewState(
             generating=not self._note_saved,
             has_note=True,
-            unconfirmed_proposals=pending,
-            blocking_errors=summary.blocking_count,
-            unacknowledged_reviews=unacknowledged,
+            unconfirmed_proposals=counts.unconfirmed_proposals,
+            blocking_errors=counts.blocking_errors,
+            unacknowledged_reviews=counts.unacknowledged_reviews,
             note_saved=self._note_saved,
         )
 
