@@ -151,6 +151,20 @@ def test_loop_missing_nonce_gets_bad_nonce(tmp_path: Path) -> None:
     assert frames[1]["payload"]["code"] == "bad_nonce"
 
 
+@pytest.mark.parametrize("bad_type", [[], {}, ["ping"]], ids=["list", "object", "listed-ping"])
+def test_loop_an_unhashable_type_is_a_typed_error_not_a_crash(
+    tmp_path: Path, bad_type: object
+) -> None:
+    """Round 57 SEC-001: a ``type`` that is a list or an object once raised
+    ``TypeError`` in the nonce pre-check (a frozenset membership test) and
+    left the host without the typed error; it is now ``malformed``."""
+    message = {"protocol_version": PROTOCOL_VERSION, "type": bad_type, "payload": {}}
+    code, frames = run(frame(hello()) + frame(message), tmp_path)
+    assert code == 1
+    assert [f["type"] for f in frames] == ["hello_ack", "error"]
+    assert frames[1]["payload"]["code"] == "malformed"
+
+
 def test_loop_framing_violation_sends_typed_error(tmp_path: Path) -> None:
     bad = struct.pack("=I", 0xFFFF_FFF0)
     code, frames = run(bad, tmp_path)

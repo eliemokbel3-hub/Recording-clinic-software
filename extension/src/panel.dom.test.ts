@@ -7,7 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import type { PanelView } from "./hub";
 import { DISARM_MS, RECONNECT_MS } from "./panel";
-import { CONNECTING, CONSENT_TEXT } from "./panel-view";
+import { CONNECTING, CONSENT_TEXT, NO_NOTE_IN_FRONT } from "./panel-view";
 import type { StatePayload } from "./protocol";
 import type { FakeChrome, FakeRuntimePort } from "./test/chrome-fake";
 import { installChromeFake, removeChromeFake } from "./test/chrome-fake";
@@ -191,6 +191,29 @@ test("Start is disabled until the consent box is ticked, and every Start clears 
   expect(startButton().disabled).toBe(true);
 });
 
+test("round 60 PR-MED-330 sibling: a newer view of the same note keeps the ticked box and its focus", async () => {
+  await open();
+  await show(state({ report: REPORT }));
+  const box = consentBox();
+  box.focus();
+  tick();
+  await show(state({ report: REPORT, state_rev: 22 })); // only the revision moved
+  expect(consentBox()).toBe(box); // not redrawn
+  expect(document.activeElement).toBe(box);
+  expect(startButton().disabled).toBe(false);
+  click("start");
+  await flush();
+  expect(commands).toEqual([
+    {
+      kind: "command",
+      action: "start",
+      state_rev: 22, // read when clicked, not when drawn
+      consent: true,
+      target: { tab_id: 5, clinic_host: HOST, patient_id: "1001", note_id: "2002" },
+    },
+  ]);
+});
+
 test("the tick survives a repeated view but not a different note", async () => {
   await open();
   await show(state({ report: REPORT }));
@@ -215,6 +238,78 @@ test("Live buttons carry the live session's ref", async () => {
     { kind: "command", action: "finish", state_rev: 21, session_ref: REF },
     { kind: "command", action: "resume", state_rev: 22, session_ref: REF },
   ]);
+});
+
+function focusedAction(): string | null | undefined {
+  return document.activeElement?.getAttribute("data-action");
+}
+
+test("round 60 PR-MED-330: timer ticks keep the Live buttons, their focus and a press in flight", async () => {
+  await open();
+  await show(state({ live: LIVE }));
+  const pause = q('button[data-action="pause"]');
+  if (!pause) throw new Error("no Pause");
+  pause.focus();
+  pause.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); // a press begins
+  await show(state({ live: { ...LIVE, recorded_seconds: 96 }, state_rev: 22 }));
+  await show(state({ live: { ...LIVE, recorded_seconds: 97 }, state_rev: 23 }));
+  expect(part("timer")).toBe("1:37");
+  expect(q('button[data-action="pause"]')).toBe(pause); // the same node, never replaced
+  expect(pause.isConnected).toBe(true);
+  expect(document.activeElement).toBe(pause);
+  pause.click(); // the press that straddled the ticks lands
+  await flush();
+  expect(commands).toEqual([{ kind: "command", action: "pause", state_rev: 23, session_ref: REF }]);
+});
+
+test("round 60 PR-MED-330: a rebuild for the same session keeps focus on the same action", async () => {
+  await open();
+  await show(state({ live: LIVE }));
+  q('button[data-action="finish"]')?.focus();
+  await show(state({ live: LIVE, warnings: ["new_consultation"], state_rev: 22 })); // a real change
+  expect(part("warning")).toContain("new consultation");
+  expect(focusedAction()).toBe("finish");
+  expect(document.activeElement?.isConnected).toBe(true);
+});
+
+test("round 60 PR-MED-330: focus returns after a same-session rebuild but never across sessions", async () => {
+  // Round 61 PR-LOW-340: one sequence, so it fails if restoration is removed
+  // (step 1) OR applied across sessions (step 2) — a different-session case
+  // alone would also pass on the unfixed panel, which never restored focus.
+  await open();
+  await show(state({ live: LIVE }));
+  q('button[data-action="pause"]')?.focus();
+  // 1. The same session, a real (non-timer) change: rebuilt, focus kept on Pause.
+  await show(state({ live: LIVE, warnings: ["new_consultation"], state_rev: 22 }));
+  const samePause = q('button[data-action="pause"]');
+  expect(samePause?.isConnected).toBe(true);
+  expect(document.activeElement).toBe(samePause);
+  // 2. A different session: rebuilt, and its Pause is NOT focused (jsdom may
+  // keep the detached node as activeElement; Chrome falls back to the body).
+  await show(state({ live: { ...LIVE, session_ref: OLD_REF }, warnings: ["new_consultation"], state_rev: 23 }));
+  const newPause = q('button[data-action="pause"]');
+  expect(newPause).not.toBe(samePause);
+  expect(document.activeElement).not.toBe(newPause);
+  const active = document.activeElement;
+  expect(active === document.body || active?.isConnected === false).toBe(true);
+  click("pause"); // the new session's button carries the new session's ref
+  await flush();
+  expect(commands).toEqual([{ kind: "command", action: "pause", state_rev: 23, session_ref: OLD_REF }]);
+});
+
+test("round 60 PR-LOW-331: blocked with no Cliniko note in front names no patient on screen", async () => {
+  await open();
+  await show(
+    state({
+      live: { ...LIVE, phase: "paused" },
+      block: { reason: "note_changed", session_ref: REF, clinic_host: HOST, clinic_label: "Example Clinic", patient_name: MARKUP },
+      report: { ...REPORT, patient_id: "1003", note_id: "2004", patient_name: "Sam Example" },
+    }),
+    { kind: "not_cliniko", restoring: false },
+  );
+  expect(layout()).toBe("blocked");
+  expect(part("current")).toBe(NO_NOTE_IN_FRONT);
+  expect(document.body.textContent).not.toContain("Sam Example");
 });
 
 test("Live draws the hands-free status and a warning as text (Phase 7)", async () => {

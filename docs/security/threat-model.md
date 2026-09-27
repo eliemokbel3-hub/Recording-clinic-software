@@ -145,7 +145,13 @@ remains an accepted residual.
    real, confusing split-brain state in the 2026-07-28 live smoke). The
    guard fails OPEN on unexpected mutex errors, and a same-user process can
    squat the name — that is a denial-of-convenience inside boundary 2, not
-   a data exposure.
+   a data exposure. So can ANOTHER standard account on the same PC (round
+   57 SEC-015): `Global\` needs no privilege and the name is built from the
+   guessable user name, so that account can create it first and the
+   practitioner's app then says "already running" and exits — desktop
+   recording included. A denial of service only, no data exposure;
+   recorded for H3a (the recommendation: the SID in the name, a user-only
+   descriptor, and fail open when the existing mutex is not this user's).
 6. **24 h recovery cap expires at the next SUCCESSFUL sweep, not on a hard
    deadline (ACCEPTED RESIDUAL).** The cap is enforced by the startup sweep, a
    periodic sweep on a 15-minute QTimer CADENCE (`app._SWEEP_INTERVAL_MS`), and
@@ -324,9 +330,11 @@ note inherit exactly that posture.
 2. **Clinician-asserted content in a clinical record.** A confirmed
    autofill/prefill proposal becomes a `NoteAssertion` and, once the note is
    saved, ratified content in the encrypted LOCAL DRAFT (`note.enc`). It is not
-   yet a signed clinical record: copy-to-Cliniko is Phase 4+ and currently ships
-   disabled, so in 3A the assertion becomes signed clinical-record content only
-   after the clinician later finalises the note in Cliniko. The type model keeps
+   yet a signed clinical record: a fully ratified note can be COPIED for
+   pasting into Cliniko (enabled since the practitioner's 2026-09-27 decision,
+   D12; surface 4 — the flag plus `_copy_ready`), and the app writes nothing
+   to Cliniko itself, so the assertion becomes signed clinical-record content
+   only after the clinician finalises the note in Cliniko. The type model keeps
    this honest: `note_fill.py`
    emits proposals ONLY (typed return surface, pinned by test); a `NoteProposal`
    is a different type from a `NoteAssertion` and cannot be placed in a
@@ -352,8 +360,11 @@ note inherit exactly that posture.
    (`ui.models.working_draft`) through the one content-change path, clearing
    acknowledgements, so every check runs over the edited note and a stale
    acknowledgement cannot survive; an omission a removal creates is Check 4's
-   review warning, acknowledgeable, never a block; free-text editing of an
-   assertion does not exist. Edits freeze at Save like proposal decisions,
+   review warning, acknowledgeable, never a block; typing over a line or a
+   proposal is the Edit control of the note-learning section's surface 12
+   ("Typed edits"; its text admitted by
+   `check_typed_text`; a typed line draws `clinician_asserted`). Edits freeze
+   at Save like proposal decisions,
    and the transcript panel stays a non-interactive text box.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
@@ -1317,9 +1328,16 @@ count at exactly one, that no other module under `desktop/src` imports
 `http`, `ssl`, `socket`, `urllib.request` or `PySide6.QtNetwork`, that the
 native host's import closure never reaches the client, and that `clinics.py`
 and `encounter.py` are the only modules that import it. Residue: these are SOURCE checks, so a dynamic import
-(`importlib.import_module`) is outside them; the runtime check is the
+(`importlib.import_module`) is outside them; and the banned list names the
+common network modules, not every network-capable API — `asyncio`,
+`ftplib` / `smtplib` / `imaplib` / `poplib`, `xmlrpc.client`,
+`multiprocessing.connection`, a `ctypes` call into `ws2_32` / `winhttp` or a
+COM object such as `WinHttp.WinHttpRequest` through `win32com.client` are
+not banned by name (none is used: today's `ctypes` loads are `kernel32`,
+`user32` and `wtsapi32` only — H1 round 53 LOW-045). The runtime check is the
 no-sockets integration test (host, app startup and idle, capture,
-transcription, prose), which asserts zero connections.
+transcription, prose), which asserts zero connections whatever API opened
+them — on the practitioner's host only, since CI skips integration.
 
 WHAT IT CAN SEND. `GET` only: `HTTPSTransport.request` refuses any other
 method before a connection exists, the client passes only `GET`, and the
@@ -1463,7 +1481,15 @@ the current report run, the same target and an unmoved `clinic_rev`; its
 per-note throttle reuses a VERIFIED outcome for the same note, connection
 and `clinic_rev` for at most 60 s (never a refusal or an offline outcome),
 and drops expired entries — with their display strings — at the next
-report. The logging tripwire refuses `patient_id`, `treatment_note_id` and
+report. Residue (H1 round 53 LOW-046): the throttle bounds CONCURRENCY
+(one check in flight, one waiting per kind), not the rate — a report for a
+different note starts a new run, an answer for a run that has moved on is
+dropped before it can be reused, a refused or offline outcome (a 429
+included; `RateLimited.reset` is parsed but not honoured) is never reused,
+and a new pipe connection empties the reuse entries. So switching Chrome
+tabs between notes faster than Cliniko answers keeps calls running back to
+back — one logical call (up to three GETs) at a time — for as long as the
+switching lasts, none of them accepted, and they stop when it stops. The logging tripwire refuses `patient_id`, `treatment_note_id` and
 `patient_display_name` field names in a log payload.
 
 THE ENCOUNTER RECORD. `SessionController.start` refuses without a
@@ -1539,7 +1565,7 @@ turns reports and commands into the app's decisions, and the native host's
 two-way relay between Chrome and that pipe (data-flow map flows 1 and 19).
 TASK 4.3, DECIDED (b) on 2026-09-27 under the practitioner's overnight
 pre-authorisation to follow the executor's recommendation (revisable by the
-practitioner): no peer-identity gate beyond the logon session and the
+practitioner): no peer-identity gate beyond the Windows session and the
 user-only DACL; the same-user residue below is accepted as boundary 2. The
 optional log-only tripwire was built: each end logs the other's executable
 path at connect (`pipe_peer`), gating nothing.
@@ -1571,9 +1597,15 @@ the app never shares it; `nMaxInstances = 1`, so one client at a time;
 current user (nothing inherited). Enforced by the code: inbound frames are
 bounded at 1 MB (flow 1's framing) and must be nonce-free `context` or
 `command` envelopes — anything else closes that connection; a frame queued
-for one connection is never written to the next; stop is prompt in every
-state. RESIDUE (accepted under Task 4.3 (b) as boundary 2 — these are
-things the design does NOT prevent, not controls): (1) the DACL admits
+for one connection is never written to the next while the writer settles
+within its 5 s join (a writer that outlives it under extreme load could
+still write its taken frame to the next client — round 57 SEC-016, recorded
+for H3a); stop is prompt in every state; a client that connects and closes
+before the server's connect call no longer ends the server (round 57
+SEC-002), but any other unexpected end of the serve loop still leaves the
+Chrome link down with no "unavailable" line (recorded for H3a). RESIDUE
+(accepted under Task 4.3 (b) as boundary 2 — these are things the design
+does NOT prevent, not controls): (1) the DACL admits
 every process of THIS user — the same-user attacker of boundary 2 — which,
 while the slot is free, can:
   (a) forge a `start` with the consent tick set — the app cannot see the
@@ -1599,13 +1631,27 @@ then relays Chrome's reports and commands to it and its `state` to the
 panel. The app, finding the name held, says the Chrome link is unavailable
 on the Session screen, and both ends log the other's executable path
 (`pipe_peer`) — a tripwire, not a gate. A squatter of ANOTHER user, or one
-with any other DACL, fails verification: a hard error in the host.
-(3) Administrators and SYSTEM are outside this boundary (OS trust).
+with any other DACL, fails verification: a hard error in the host — with
+one gap (round 57 SEC-013, recorded for H3a): the user check reads the
+token of the process id Windows recorded when the pipe was CREATED, so
+another account in the same Windows session that creates the pipe with the
+app's DACL, hands the handle on and exits, then waits for that id to be
+reused by one of this user's processes, would pass; checking the pipe's
+OWNER closes it. (3) Administrators and SYSTEM are outside this boundary
+(OS trust). (4) The pipe carries Windows' default integrity label, which
+blocks only WRITES from lower integrity: a LOW-integrity (sandboxed, not
+AppContainer) process of this user may be able to open it read-only and
+receive `state` — a patient name included — while taking the only slot
+(round 57 SEC-014, unverified on a real machine; a no-read-up label is
+recorded for H3a). Unlike (1), such a process does NOT already hold the
+key or the microphone.
 
 THE HOST'S RELAY (Task 4.4, `native_host.py` + `pipe_client.py`). Enforced:
 before a single frame crosses, the host VERIFIES the pipe's server — its
-process runs in the host's own logon session
-(`GetNamedPipeServerSessionId` = the host's `ProcessIdToSessionId`), its
+process runs in the host's own Windows (Terminal Services) session
+(`GetNamedPipeServerSessionId` = the host's `ProcessIdToSessionId`; the
+session, not the logon session — another account signed in to the same
+session shares it), its
 token user is the host's user SID, and the pipe's DACL is exactly the one
 the app creates (protected, one ALLOW entry for that SID with no ACE flags
 and the full access `GA` grants — type, flags, mask and SID all compared,
@@ -1709,12 +1755,26 @@ before the queued pause runs — and the one resume check every path runs
 (the Session screen's Resume, the hotkey, Chrome's `resume`, a waiting
 "Resume previous") refuses `locked` FIRST, for linked and unlinked
 recordings alike, until `WTS_SESSION_UNLOCK` clears it; `resume_previous`
-creates nothing while it stands. A missed unlock cannot refuse Resume
-forever: once the flag is five seconds old a refused Resume asks Windows
+creates nothing while it stands, and every Start — a Chrome `start` and the
+Session tab's button alike (the Session screen's start guard, installed by
+the bridge) — is refused `locked` the same way (H1 rounds 53–54, MED-039 and
+MED-052: a Start still on its way, or a click still queued, when the lock
+arrived would otherwise begin a new recording after the lock's pause had run
+at IDLE or QUEUED and done nothing). A voice enrolment on the Practitioner
+tab is not a recording and is NOT covered: one running when the computer
+locks keeps capturing (in memory, up to its time limit) and whatever is said
+in the room goes into the voice profile it saves (round 54 LOW-054). A
+missed unlock cannot refuse Resume or Start forever: once the flag is five
+seconds old a refused Resume or Start asks Windows
 (`WTSQuerySessionInformationW`, `WTSSessionInfoEx` → `SessionFlags`) and
 clears it only on "unlocked"; if Windows cannot say, the refusal is
-`lock_unknown` and names the escape (lock and sign in again). The young-flag
-window keeps a query racing the lock itself from reopening the gap; a suspend or lock names the
+`lock_unknown` and names the escape (lock and sign in again). An unlock
+message is believed as delivered, never checked with Windows: a program
+running as the same user can send the window a forged `WTS_SESSION_UNLOCK`
+and clear the flag behind a locked screen (trust boundary 2, like the
+forgeable `WM_HOTKEY` and the pipe's same-user residue; round 54 LOW-056).
+The young-flag window keeps a query racing the lock itself from reopening
+the gap; a suspend or lock names the
 block only when it starts one, so a block Chrome already put up for a
 patient change keeps that reason. Every pause runs through the Session screen's slot
 and shows a desktop cue. A PAUSED session only gains the block; nothing
@@ -1735,7 +1795,10 @@ only through the same check. The Session screen's own Discard needs a second
 click within 10 seconds for the same session; a Chrome `discard` carries its
 second click in the protocol. A Start that retires a queued linked session
 adds it to the Unreviewed reminder index (ids only, in memory, never
-persisted); a completion, a discard or an expiry removes that one entry and
+persisted) — even when that Start then fails to open the microphone, since
+the retirement came first (H1 round 53 LOW-040) — and so does replacing a
+recovered linked session's view without a Complete or Discard (from the
+record its checkout already decrypted); a completion, a discard or an expiry removes that one entry and
 its reference. RESIDUE: (1) the rule sees only what Chrome reports: speech
 between a page change and its report — and anything said before a
 navigation — is recorded into the session it was bound to (the plan's
@@ -1751,7 +1814,8 @@ WITHOUT locking (sign-in on wake set to "Never") and without delivering the
 registered suspend notification is not paused at all; there is NO suspend
 flag like the lock's — no Windows signal says a person woke the machine
 (`PBT_APMRESUMEAUTOMATIC` also fires on unattended wakes) — so on such a
-machine a Chrome Resume click in flight at the suspend can apply after wake;
+machine a Chrome Resume or Start click in flight at the suspend can apply
+after wake;
 a refused lock registration sets no lock flag at all; and the audio captured
 between the lock or suspend and the app handling it (the lock is a queued
 call on the GUI thread; the suspend is handled in the message itself) is
@@ -1948,7 +2012,14 @@ frame and the block for as long as it likes; the heartbeat only re-attaches a
 REMOVED element and never restyles one. While the block shows it takes the
 pointer, but keyboard input — Cliniko's own shortcuts included — still
 reaches the page. The app's pause rule and command checks are the enforcing
-controls.
+controls. A hidden or covered block STILL TAKES the pointer (round 57
+SEC-003): a script running in a Cliniko page (an XSS in Cliniko) can raise
+the block itself — a `pushState` to another note on the bound tab — hide it
+or put a decoy over it, and collect two real clicks on "Discard previous"
+within 15 s: the app then discards the paused recording, which cannot be
+undone. The block's buttons check only that a click is trusted, never that
+the button was visible. Recorded for H3a (the recommendation: keep Discard
+on the side panel and the desktop only).
 (2) DETECTABILITY. The build tool adds a `web_accessible_resources` entry for
 the page-script module on `https://*.cliniko.com/*` with `use_dynamic_url:
 false` (see `extension/dist/manifest.json` after a build), so a page on any
@@ -1956,6 +2027,14 @@ Cliniko host can tell that the extension is installed by requesting that
 file; while a frame or block is drawn, the page can also see the page
 script's own element (its `data-cliniko-scribe` attribute), though not the
 closed shadow root's content through the DOM. The file carries no data.
+That element exists only while a frame or block is drawn, and the frame is
+drawn on EVERY allow-listed tab — another clinic's included — so any
+allow-listed Cliniko page can watch it come and go and learn when a
+recording is live or paused, though not whose (round 57 SEC-005). These
+claims hold for `npm run build` only: a `vite` serve build widens the
+web-accessible entry to every file on every site and loads the worker's
+code from localhost, so the extension's `dev` script was removed (round 57
+SEC-004).
 (3) WHAT A CLINIKO PAGE CAN SEE. The closed shadow root keeps the drawn text
 out of the page's DOM queries; it is not a boundary against the page — the
 name is rendered on screen. Per-tab scoping is what bounds a name to the

@@ -34,7 +34,9 @@ const RED = "#c62828";
 const AMBER = "#b26a00";
 
 const REASONS: Readonly<Record<string, string>> = {
-  note_changed: "This tab opened a different treatment note.",
+  // Every allow-listed tab draws the block, so the wording names the
+  // recording's tab, as the panel's does (H1 round 53 LOW-043).
+  note_changed: "The recording's tab opened a different treatment note.",
   left_note: "The recording's tab left its treatment note.",
   tab_closed: "The recording's tab was closed.",
   other_note: "Another treatment note is open.",
@@ -149,6 +151,14 @@ export class PageScript {
     this.onMessage(message, sender);
     return false;
   };
+  // A page restored from the back/forward cache still shows what it drew
+  // before it was left, and the worker skips a slice equal to the one it
+  // last sent this tab: say hello again so it re-sends (round 57 SEC-006).
+  private readonly pageshow = (event: PageTransitionEvent): void => {
+    if (!event.persisted) return;
+    this.lastHref = this.doc.location.href;
+    this.send({ kind: "hello", href: this.doc.location.href });
+  };
 
   constructor(
     private readonly doc: Document,
@@ -172,6 +182,7 @@ export class PageScript {
     // Take over from a copy orphaned by an extension update.
     for (const stale of this.doc.querySelectorAll(`[${MARKER}]`)) stale.remove();
     this.runtime.onMessage.addListener(this.listener);
+    this.doc.defaultView?.addEventListener("pageshow", this.pageshow);
     this.send({ kind: "hello", href: this.doc.location.href });
   }
 
@@ -179,6 +190,7 @@ export class PageScript {
   stop(): void {
     this.stopped = true;
     this.runtime.onMessage.removeListener(this.listener);
+    this.doc.defaultView?.removeEventListener("pageshow", this.pageshow);
     this.goInert();
   }
 

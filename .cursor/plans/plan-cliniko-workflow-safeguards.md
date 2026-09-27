@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** cliniko-workflow-safeguards
-**Overall Progress:** `44%` (18 of 41 tasks: 1.1, 1.2, 1.3, 1.4, 2.1a, 2.1b, 2.2, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 4.1, 4.2, 4.3, 4.4, 4.5; Task 8.2 added 2026-09-27 by practitioner decision; Phase 4's live-user smoke deferred to the morning of 2026-09-28 and its commit held until it passes)
+**Overall Progress:** `91%` (39 of 43 tasks: every build task 1.1–8.2 and H1–H4; open: P.1 (clinic 2), P.2 (clinic 2), H2a and H3a — the last two added 2026-09-28 by the hardening stage; the Phases 4–8 live smoke PASSED on clinic 1 on 2026-09-28 and those phases are committed)
 
 ## Lifecycle State
 - Active
@@ -424,6 +424,27 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
   - the machine suspends (`PBT_APMSUSPEND`).
 
   Screen lock does not pause. Non-Cliniko tabs never pause: activating or focusing a SEPARATE non-Cliniko tab changes nothing; only the BOUND tab leaving its note pauses.
+
+  **AS-BUILT ADDENDUM — sleep + screen lock (practitioner decision 2026-09-28, recorded as `OWNERSHIP: gate-disposition key=smoke-step5-sleep-pause choice=sleep-plus-lock`; supersedes "Screen lock does not pause").**
+  - **The finding.** In step 5 of the morning smoke, a desktop recording was not paused by Start → Power → Sleep. The log shows no pause event.
+    - The practitioner's PC is a Modern Standby machine: `powercfg /a` shows "Standby (S0 Low Power Idle) Network Connected" available, and S1–S3 disabled.
+    - On such a machine a desktop window is not sent `WM_POWERBROADCAST` / `PBT_APMSUSPEND` unless it registers for it.
+    - The Phase 5 real-dispatch test passed because it sent the broadcast itself. That was a test-harness blind spot.
+  - **Now:** the main window registers once its handle exists, only from `app.main` (`system_events.py`, through an injectable `SystemEventRegistrar` seam).
+    - `RegisterSuspendResumeNotification(hwnd, DEVICE_NOTIFY_WINDOW_HANDLE)`, so `PBT_APMSUSPEND` arrives on Modern Standby too. The classic broadcast is still handled; a second suspend finds the recording already paused, so there is one pause either way.
+    - `WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)`. A `WM_WTSSESSION_CHANGE` / `WTS_SESSION_LOCK` (Win+L, a lid close, standby with sign-in required) pauses ANY recording with the new reason `locked`, exactly like suspend: a linked one also gets the block.
+  - **Unlock resumes nothing.** Resume stays a deliberate press through the guarded path, and a linked recording still needs a current matching report. A suspend or lock also ends a clicked "Resume previous" still waiting for its note's report (`SYSTEM_REASONS`).
+  - **Locked until unlock (codex round 51 PR-MED-300).**
+    - The lock message sets a flag during its own dispatch, before the queued pause runs. While it stands, the ONE resume check (`ChromeBridge.resume_refusal`, which every path runs: the Session screen's Resume, the hotkey, Chrome's `resume`, a waiting "Resume previous") refuses `locked` FIRST, for linked and unlinked recordings alike.
+    - `resume_previous` creates nothing, and a waiting one is dropped.
+    - `WTS_SESSION_UNLOCK` clears the flag and resumes nothing.
+    - A missed unlock is re-checked with Windows once the flag is 5 s old (`WTSSessionInfoEx` → `SessionFlags`); an unanswered check is refused as `lock_unknown`.
+    - There is no suspend flag (residue named in the threat model).
+  - **Registration lifetime.** Both are given back on close, at quit and after a failed start (`app.py`'s `try/finally`). A refusal never raises; it is logged and shown on the status line and the Session screen.
+  - **Residue** (threat model):
+    - audio captured between the event and its handling;
+    - a machine that sleeps without locking and without delivering the registered notification;
+    - no automated test can prove Windows delivers either message on a given machine — the live re-smoke is the proof.
   - `pause_for(reason)` by state:
     - RECORDING → pause and set the block when the reason is a context reason;
     - PAUSED → set the block only;
@@ -611,6 +632,578 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
 See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write is the next plan and needs no rediscovery: `.cursor/plans/explore-cliniko-integration.md` carries its findings and assumptions, and this plan's `writeback_context` and `ClinikoClient` are its entry points.
 
 ## Current State / Handoff Note
+- **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k6`, 2026-09-28T07:31+10:00, run stage-9) — codex round 61 FIXED and CLOSED; H4 🟩 (pass `stage-9.p1` converged at peer round 4 of 5); `reason=composer-run`.**
+  - PR-LOW-340 (test-harness) is fixed in place. The different-session focus test is now one sequence: a same-session rebuild keeps focus on Pause, then a new session clears it. It fails if restoration is removed or applied across sessions.
+  - Only `extension/src/panel.dom.test.ts` and this plan changed, with no production or doc file touched, while the practitioner's smoke runs.
+  - Checks: extension `npm run typecheck` and `npm run lint` clean; `loop-history-check` OK (55 entries + 61 headings).
+  - Expected: `cd extension && npm run qa`, **307** (unchanged; the test was rewritten, not added). Nothing new needs a build.
+  - The hardening stage H1–H4 is 🟩. Open follow-ups: H2a and H3a (a scoped `/review-plan` after the smoke) and P.2 (the practitioner's smoke).
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k5`, 2026-09-28T07:25+10:00, run stage-9) — H4 codex rounds 58–60 FIXED and CLOSED (LEG 2 `/fix`); `reason=composer-run`.** The scoped codex confirmation (round 61) follows.
+  - **Applied (all 7 findings):**
+    - Docs:
+      - PR-LOW-310/311 in the threat model;
+      - PR-LOW-312 in the data-flow map;
+      - PR-LOW-332 in the design system (three one-click desktop Discards named; no code).
+    - Docstrings: PR-LOW-320, all three encounter-read callers.
+    - Code: `extension/src/panel.ts` (PR-MED-330, plus the Ready-tick sibling) and `panel-view.ts` (PR-LOW-331).
+  - **User-visible surface:** the SIDE PANEL only.
+    - Live: the timer now updates in place; focus and clicks survive.
+    - Blocked: "On screen" shows "No Cliniko note in front" when the bound note's tab is not in front.
+    - Ready: ticking the box, then a newer snapshot, keeps its focus.
+    - Needs `npm run build` and an extension reload.
+  - **Smoke re-check (side panel):**
+    1. During a linked recording, Tab to Pause and wait several seconds. Focus stays on Pause, and Enter pauses.
+    2. Click Pause and Finish repeatedly across timer ticks. Every click lands.
+    3. With the block up on patient B, switch to a non-Cliniko tab. The panel says "On screen: No Cliniko note in front", never B.
+  - **Docs also:** CHANGELOG (Fixed), design-system Chrome side (a new "keeps its controls under the practitioner's hand" bullet and the Blocked "On screen" rule).
+  - **Checks:** ruff "All checks passed!"; mypy 50 files, no issues; extension `npm run typecheck` and `npm run lint` clean; `loop-history-check` OK (54 entries + 60 headings).
+  - **Expected suites:**
+    - Desktop **4119 collected** (unchanged: 4118 passed + 1 skipped with `scribe-app` running). Only docstrings changed.
+    - Extension **307** (299 + 8).
+    - `npm run build` must be re-run.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k4`, 2026-09-28T07:18+10:00, run stage-9) — H4 codex rounds 58–60 LEG 1 VERIFIED (verification only, nothing fixed); `reason=phase-complete`.** H3 is 🟩 (composer suites green: 4118 passed + 1 skipped, 299, build OK).
+  - All 7 codex findings are CONFIRMED at the peer's severity:
+    - Round 58: PR-LOW-310/311/312, all docs-only.
+    - Round 59: PR-LOW-320, docs-only, plus a third decrypt caller, `session.py:1136` (adoption), that the peer missed. The SEC-022 assessment is agreed; it stays in H3a.
+    - Round 60: PR-MED-330 and PR-LOW-331 are production-behavioral in the side panel; PR-LOW-332 is docs-only, with two more one-click Discards (Recovery list, Unreviewed list), so the doc changes, not the code.
+  - Cap verdicts:
+    - Round 58: accept, docs-only.
+    - Round 59: accept, docs-only.
+    - Round 60: raise +1, production-behavioral.
+  - No CRIT/HIGH. The rounds stay Open (8 pending).
+  - Nothing outside the plan changed in this leg.
+  - **NEXT:** LEG 2, `/fix` of rounds 58–60 per the fix shapes in each `LEG 1 verified tuples` block.
+    - PR-MED-330: an in-place timer update plus focus kept by `data-action`, with 4 DOM tests.
+    - PR-LOW-331: a focus-matched "On screen" name.
+    - The docs items.
+    - Then one confirmation round for round 60's panel changes.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k3`, 2026-09-28T06:55+10:00, run stage-9) — HARDENING H3 DONE (`/security-review`, round 57); `reason=composer-run`.** H2 is 🟩 (composer suites green: 4110 passed + 1 skipped, 297, build OK). H4 (the composer-seat codex pass) has not started. H2a and H3a wait for a scoped `/review-plan` after the smoke.
+  - **Round 57:** 22 findings, all LOW, plus 1 record-only (SEC-018, write-back freshness, for the write plan).
+    - 8 applied.
+    - 13 recorded for H3a, each with an Executor recommendation and a `surface=`.
+    - No must-pause.
+  - **Production changes, and the user-visible surface each touches, for the smoke re-check:**
+    1. `extension/src/page.ts`: a `pageshow` listener. A page restored by Back/Forward says hello again, so its **frame or block is redrawn** to the current state. Needs `npm run build` and an extension reload. (SEC-006)
+    2. `encounter.py` `_check_note`: a deleted booking (404) no longer refuses the note. The **side panel's Ready layout** shows the note verified with no appointment time. (SEC-011)
+    3. `pipe_server.py` `_await_client`: the pipe server survives a client that connects and closes before its connect call. Before, the **Chrome link** died silently until the app restarted. (SEC-002)
+    4. `native_host.py` `_classify_raw`: a non-string `type` gets the typed `malformed` error. A fault path; no visible surface. (SEC-001)
+    5. `logging_setup.py`: 9 tripwire signatures added (credential and registry). No visible surface. (SEC-010)
+    6. `extension/package.json`: the `dev` script removed. (SEC-004)
+    7. Docstrings: `pipe_client.py`, `pipe_server.py` ("Windows session").
+  - **Smoke re-checks:**
+    - On a linked recording's tab, go to another Cliniko page, then press **Back**. The frame, or the block, must match the recording's current state.
+    - If a test note with a deleted booking exists, it verifies with no appointment time. Optional.
+    - A normal Chrome link and badge after an app restart.
+    - For H3a (optional during P.2):
+      - After a real lock and unlock, press Resume at once. It should succeed, which confirms the unlock reading SEC-020 relies on.
+      - Try sleeping the machine while pressing Start (SEC-021).
+  - **Docs:**
+    - `docs/security/threat-model.md`:
+      - "Windows session", not "logon session";
+      - the pipe residues for SEC-013, SEC-014, SEC-016 and SEC-017;
+      - mutex SEC-015;
+      - extension residue (1), SEC-003's hidden-block Discard;
+      - extension residue (2), SEC-005's recording timing plus the build-only note.
+    - `data-flow-map.md` flow 19, AGENTS.md and CHANGELOG (Security).
+  - **Tests added:** desktop +8 and extension +2.
+    - Desktop:
+      - `test_native_host.py` +3;
+      - `test_pipe_server.py` +1;
+      - `test_encounter.py` +3;
+      - `test_logging_setup.py` +1.
+    - `test_integration_no_sockets.py` and `test_status_and_app.py` changed environment only.
+    - Extension: `page.dom.test.ts` +2.
+  - **Checks in this leg:** ruff "All checks passed!"; mypy 50 files, no issues; extension `npm run typecheck` and `npm run lint` clean; `loop-history-check` OK.
+  - **Expected suites:**
+    - Desktop **4119 collected**: 4118 passed + 1 skipped with `scribe-app` running, or 4119 passed with it closed. The launcher leg now logs under `tmp_path`.
+    - Extension **299**.
+    - `npm run build` must be re-run, because `page.ts` changed.
+  - **NEXT:** the composer runs the suites, then H4 (composer-seat codex). H2a and H3a follow after the smoke.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k2`, 2026-09-28T06:36+10:00, run stage-9) — HARDENING H2 DONE (`/simplify`, round 56); `reason=composer-run`.** H1 is 🟩 (composer suites green: 4110 passed + 1 skipped, 297, build OK). H3 has not started.
+  - **Round 56:** 16 findings (2 MED + 14 LOW).
+    - 3 LOW applied, all behaviour-neutral.
+    - 13 recorded for the new task H2a, a scoped `/review-plan` after the P.2 smoke. Each carries an Executor recommendation and a `surface=`.
+    - No must-pause: SIMP-006 (the "Clinic Scribe" / "Cliniko Scribe" split; recommended "Clinic Scribe") is the practitioner's call, but nothing changed, so it does not block a commit.
+  - **Applied** (user-visible surface: **none**; no smoke step changes):
+    1. `extension/src/context.ts`: `ContextReporter`'s `get active()` and `isTracked()` are removed. They had no caller; `npm run typecheck` pins this.
+    2. `extension/src/panel.ts:19` and `:135`: the Checking layout takes `CHECKING` from `panel-view.ts`. The string is identical; `panel-view.test.ts:129` and the panel DOM tests pin it.
+    3. Comments only:
+       - `extension/src/connection.ts:122`;
+       - the `ui/main_window.py` `recovered_writeback_target` / `live_writeback_target` docstrings, which now name PLAN.md Phase 4's draft write.
+  - **Checks in this leg:** ruff "All checks passed!"; mypy 50 files, no issues; extension `npm run typecheck` and `npm run lint` clean; `loop-history-check` OK.
+  - **Expected suites:**
+    - Desktop **4111 collected**: 4110 passed + 1 skipped with `scribe-app` running, or 4111 passed with it closed. No test was added or removed.
+    - Extension **297**, unchanged.
+    - `npm run build` must be re-run, because `panel.ts`, `context.ts` and `connection.ts` changed.
+  - **NEXT:** the composer runs the suites. Then H3 (`/security-review`) in a later leg. H2a waits for the smoke.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k1`, 2026-09-28T06:28+10:00, run stage-9) — HARDENING H1 CONVERGED (`/review-loop` rounds 53–55 over Phases 1–8 as one surface); `reason=composer-run`.** H2, H3 and H4 have not started.
+  - **Rounds:**
+    - Round 53 (six lens subagents): 2 MED + 11 LOW.
+    - Round 54 (regression and same-family sweep): 1 MED + 5 LOW.
+    - Round 55 (regression): 2 LOW, docs only. Converged at round 3 of 3.
+    - All 21 findings were applied; none is pending, and there is no must-pause.
+  - **Production changes and the user-visible surface each touches (for the smoke re-check):**
+    1. `ui/bridge.py` `_start`, plus `_start_guard_message` installed through the new `SessionScreen.set_start_guard` (`ui/session_screen.py` `_start`). Every Start — the **side panel Start** and the **Session tab Start** — is refused while the lock flag stands. The `ui/models.py` `CHROME_REFUSALS["locked"/"lock_unknown"]` texts now end "…then press it again." (the lock refusal wording on the **Session tab, side panel and hotkey flash**). (MED-039, MED-052)
+    2. `ui/session_screen.py` `_start`, failure path: a Start that fails after retiring a queued linked session still announces it. `ui/main_window.py` `_released_checkout_entry` / `_index_released`, in `_on_session_started` and `_on_live_transcript`: a recovered linked view replaced without Complete or Discard is indexed from its checkout record, with no decrypt. Surface: the **Unreviewed banner in Chrome** / "Open for review". (LOW-040)
+    3. `ui/bridge.py` `_Refusal.situation`, `_situation(action)` and `_current_refusal()`: the **side panel refusal line** and the Session tab's "Refused from Chrome" line drop a refusal once its tab, note, (for Start) verification, session or state changes. (LOW-042, LOW-053)
+    4. `extension/src/page.ts` `REASONS.note_changed`: "The recording's tab opened a different treatment note." Surface: the **page block card**. Needs `npm run build` and an extension reload. (LOW-043)
+    5. `encounter.py` `_display_text` and `ui/bridge.py` `_one_line` clean lone surrogates. Surface: **patient names** in the panel, the block and the Session tab; in practice this only affects malformed data. (LOW-044)
+    6. Comments and docstrings only: `ui/__init__.py` and `extension/src/manifest.ts` (step 7).
+  - **Smoke steps to re-check:**
+    - **Step 5 re-smoke:** additionally lock with the side panel Ready shown, and confirm Start is refused after sign-in only while the flag stands.
+    - **A normal Start from the panel and from the Session tab.**
+    - **A patient switch (the block text).**
+    - **A refused Start** on a final or unknown note, then opening another patient's note: the red line must go.
+    - **The Unreviewed banner** after back-to-back consultations.
+  - **Tests added:**
+    - `test_ui_bridge.py` +6: Start locked ×2, desktop Start locked ×2, refusal leaves with its situation, a failed Resume previous stays shown.
+    - `test_ui_pause_and_unreviewed.py` +1.
+    - `test_ui_encounter.py` +4.
+    - `test_encounter.py` +1.
+    - `test_cross_patient.py`: one assertion updated (no refusal after the conn-2 report).
+    - `page.dom.test.ts`: the text updated.
+  - **Checks in this leg:** ruff "All checks passed!"; mypy 50 files, no issues; extension `npm run typecheck` and `npm run lint` clean; `loop-history-check` OK.
+  - **Expected suites:**
+    - Desktop **4111 collected** = 4099 + 12. That is 4110 passed + 1 skipped with `scribe-app` running, or 4111 passed with it closed.
+    - Extension **297**, unchanged in count.
+    - `npm run build` must be re-run, because `page.ts` changed.
+  - **Recorded for H2** (round 53, lens f):
+    - Three copies of the block-reason table.
+    - The "Clinic Scribe" / "Cliniko Scribe" naming split (a practitioner naming call).
+    - Test-only symbols.
+    - Two re-verification pipelines.
+    - Duplicated regexes and constants.
+    - `pipe_client` importing `pipe_server`'s private helpers.
+    - The oversized `ui/models.py`, `main_window.py` and `bridge.py`.
+    - The LOW-047 ref-expiry code fix.
+  - **Recorded for H3:**
+    - A rate throttle honouring `RateLimited.reset`.
+    - Stopping or refusing a voice enrolment on lock.
+    - Checking a `WTS_SESSION_UNLOCK` with Windows before trusting it.
+    - The unconfirmed re-entrant suspend during a GUI-thread Start (round 53 "needs investigation").
+  - **For the write plan:** the write-back freshness gap (Follow-Up Continuation Notes).
+  - **NEXT:** the composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` and `cd extension && npm run qa && npm run build`. Then H2 (`/simplify`) in a later leg.
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h7`, 2026-09-28T05:44+10:00, run stage-8) — codex round 51 FIXED and CLOSED (PR-MED-300: locked until unlock); `reason=composer-run`.** A scoped codex confirmation (round 52) follows.
+  - **Fix:**
+    - The lock message sets a flag during its own dispatch, before the queued pause. The one resume check (the Session tab's Resume, the hotkey, Chrome's `resume`, a waiting "Resume previous") refuses `locked` first, for every recording; `resume_previous` creates nothing while locked.
+    - The unlock clears the flag and resumes nothing.
+    - A missed unlock is re-checked with Windows after 5 s; `lock_unknown` names the escape.
+    - No suspend flag (residue named). Full notes on round 51's `/fix decision` and final-disposition lines.
+  - **Checks:** ruff "All checks passed!"; mypy 50 files, no issues; extension `npm run typecheck` and `npm run lint` clean (no extension change).
+  - **Expected suites:**
+    - Desktop **4099 collected** = 4076 + 23 (`test_system_pause.py` +19, `test_ui_bridge.py` +4). That is 4098 passed + 1 skipped while the practitioner's `scribe-app` is running (the launcher leg's host-state skip), or 4099 passed with it closed.
+    - Extension **297**; `npm run build` unchanged.
+    - Watch items:
+      - (1) the real-dispatch child now expects `FLAGS [true, false]` before `SENT ["locked"]`;
+      - (2) `TestSessionInfoQuery::test_the_layout_is_cs` pins `WTSINFOEXW`'s `Data` offset at 8 — ctypes' alignment of the 64-bit times.
+  - **RE-SMOKE — step 5** (mock consultations, clinic 1 only; report PASS/FAIL per step; no identifying data in chat):
+    1. Rebuild and reload the extension (`cd extension && npm run build`, reload in `chrome://extensions`), then fully quit and relaunch `scribe-app` from Explorer.
+    2. **Lock, desktop:** start a DESKTOP recording, press **Win+L**, wait ~5 s and sign back in. *Expect:* paused with "Paused - the computer was locked. Press Resume to carry on recording."; still paused after signing in; **Resume** carries on. Then Discard.
+    3. **Lock, linked:** start a LINKED recording from a mock patient's note (side panel → consent → Start), press **Win+L**, sign back in. *Expect:* the desktop and the side panel both show it PAUSED with the lock text, and the Cliniko page shows the block with "The computer was locked."; Resume (or Resume previous) works after sign-in. Then Discard.
+    4. **Sleep:** with a linked recording, **Start → Power → Sleep**, wake and sign in. *Expect:* paused with a cue on wake, and the block reason "The computer went to sleep." or "The computer was locked."; Resume works after sign-in. If step 2, 3 or 4 does NOT pause, report the app log's `suspend_notification` / `lock_notification` lines (`on` or `failed`).
+  - **NEXT:** the composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` and `cd extension && npm run qa && npm run build`, then the scoped codex confirmation (round 52), then the practitioner's re-smoke above.
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h6`, 2026-09-28, run stage-8) — LEG 1 VERIFICATION of codex round 51. Nothing fixed; no code or doc changed.** PR-MED-300 is VERIFIED as MED, behavioral, production, Fix-now. A `resume_previous` or `resume` command still in flight when the lock is handled runs after the lock's clearing, re-creates the pending resume or resumes directly, and the recording restarts behind the locked screen. `state_rev` cannot catch it, because a lock on a blocked session publishes an identical snapshot. Fix shape: a "locked until unlock" flag set synchronously in `nativeEvent` and checked FIRST in `resume_refusal`, the single guard every resume path funnels through (the button, the hotkey, Chrome's `resume`, a pending "Resume previous"), plus a refusal in `_resume_previous`. New refusal code `locked`; no suspend flag (residue named); about 7 regression tests. Round 51 stays Open. Cap verdict `accept`. NEXT: `/fix` of round 51 (composer's call).
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h5`, 2026-09-28T05:24+10:00, run stage-8) — SMOKE FIX for step 5 BUILT: sleep + screen-lock pause (practitioner decision `smoke-step5-sleep-pause` = sleep-plus-lock, amending D5); `/review-loop` rounds 49–50 converged (1 LOW applied, then clean); `reason=composer-run`.**
+  - **What changed.** The main window now registers with Windows for the suspend notification that also works on Modern Standby, and for the session-lock notification (`system_events.py`). A lock pauses ANY recording with the cue "Paused - the computer was locked. Press Resume to carry on recording." (a linked one also gets the block). Unlock does nothing; Resume stays a press. A refused registration shows on the status line and the Session screen. The side panel and the page's block read "The computer was locked." Details are in D5's AS-BUILT addendum, Task 5.1's smoke line and round 49.
+  - **Checks in this leg:** ruff "All checks passed!"; mypy 50 files (the new module), no issues; extension `npm run typecheck` and `npm run lint` clean.
+  - **Expected suites:**
+    - Desktop **4076** = 4027 + 49:
+      - new `test_system_pause.py`: 26;
+      - `test_context_rules.py`: +17 (the table's `PauseReason` parametrisations gain `locked`, and the suspend test covers lock);
+      - `test_ui_bridge.py`: +6.
+    - Extension **297** = 295 + 2 (`panel-view.test.ts`, `page.dom.test.ts`); `npm run build` must be re-run, because the panel and page text changed.
+    - Watch items:
+      - (1) `test_a_real_lock_message_through_qts_dispatch` (Windows, integration) expects `UNREGISTERED []`, `SENT ["locked"]`, `SEEN ["locked", "locked", "suspend"]`.
+      - (2) The `app.main` start-up test in `test_hands_free.py` now patches `attach_system_pause` with a fake and pins the four registrar calls; no test registers with Windows.
+  - **RE-SMOKE — step 5** (mock consultations, clinic 1 only; report PASS/FAIL per step; no identifying data in chat):
+    1. Rebuild and reload the extension (`cd extension && npm run build`, then reload in `chrome://extensions`), then fully quit and relaunch `scribe-app` from Explorer.
+    2. **Lock:** start a DESKTOP recording (Session tab, tick consent, Start), then press **Win+L**, wait ~5 s and sign back in. *Expect:* paused, with "Paused - the computer was locked. Press Resume to carry on recording." on the Session tab and the status line; still paused after signing in; **Resume** carries on. Then Discard.
+    3. **Sleep:** start a LINKED recording from a mock patient's note in Chrome (side panel → consent → Start), then **Start → Power → Sleep**; wake and sign in. *Expect:* paused, with the desktop cue on wake, and the Cliniko page showing the block with the reason "The computer went to sleep." or "The computer was locked." (whichever Windows sent first).
+    4. **Side panel:** check that it shows the same paused reason; then Resume previous or Resume on the recording's own note resumes, and Discard ends it. If step 2 or 3 does NOT pause, open the app log and report whether the `suspend_notification` / `lock_notification` lines say `on` or `failed`.
+  - **NEXT:** the composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` (expect 4076) and `cd extension && npm run qa && npm run build` (expect 297, build OK), then the practitioner's re-smoke of step 5 above. A codex confirmation over this diff is the composer's call.
+- **EXECUTOR HANDOFF — PHASE 8 FINAL (leg `stage-8-exec-h4`, 2026-09-28T04:37+10:00, run stage-8): codex rounds 46–47 FIXED and CLOSED; `reason=composer-run`.** The scoped codex confirmation (round 48) comes next. If it is clean, the composer closes Phase 8 without resuming this seat. Tasks 8.1 and 8.2 stay 🟨 until the morning smoke and commit; P.2 stays 🟥 (practitioner-owned).
+  - **Codex pass `stage-8.p1`** (gpt-6-astra medium, two slices):
+    - Round 46, slice A (the clipboard code, its tests and doc sites): 2 LOW. PR-LOW-270, test-harness: `_fake_clipboard` now asserts the offscreen platform and guards Qt's native `keyPressEvent` / `copy`, so a regressed Copy interception fails the test before any clipboard write; +2 tests. PR-LOW-271: `intended-use.md` names the clipboard limits.
+    - Round 47, slice B (the security docs as one class): 2 LOW. PR-LOW-280: four sites now say a Chrome-LINKED recording starts from a verified (or `unverified_offline`) note, a desktop Start is unlinked, and D5's actual triggers apply (a separate non-Cliniko tab does not pause). PR-LOW-281: the incident recovery `netstat` check now applies with Chrome closed and no practitioner action.
+    - Every finding was verified in leg h3 and applied here. There was no CRIT, HIGH or MED.
+  - **Before that pass:** `/review-loop` round 45 converged at round 1 (2 LOW docs, both applied).
+  - **Checks in this leg:** ruff "All checks passed!"; mypy 49 files, no issues; extension `npm run typecheck` and `npm run lint` clean (no extension change).
+  - **Final expected suites:**
+    - Desktop **4027** = 4025 + 2 (`test_the_native_copy_guard_passes_other_keys_to_qt`, `test_an_unintercepted_copy_key_fails_before_any_clipboard`).
+    - Extension **295**; `npm run build` OK (no extension change in Phase 8).
+    - Watch item: `_fake_clipboard` now patches `QPlainTextEdit.keyPressEvent` / `copy` at class level for each copy test, and monkeypatch restores them. If PySide6 refused a class attribute set, all seven copy tests would error at setup, and nothing would be written to a clipboard.
+  - **MORNING LIVE CHECK — Task 8.2** (joins P.2; mock note only, never real patient text). First turn Windows clipboard history on (Settings → System → Clipboard) if it is off.
+    1. Generate, ratify and Save a MOCK note in `scribe-app`, press the Note tab's **Copy** button, and paste into Notepad. *Expect:* the note exactly as shown.
+    2. Select a few lines of the note body with the mouse, press **Ctrl+C** and paste into Notepad. *Expect:* exactly the selected text.
+    3. Right-click the selection → **Copy** (the menu offers only Copy and Select All), then paste. *Expect:* exactly the selected text.
+    4. Press **Win+V**. *Expect:* none of the three copies is listed. Report PASS/FAIL per step.
+  - **For the practitioner to decide or know:**
+    1. **Taken overnight, revisable — the selection copy** (composer disposition `task-8.2-selection-copy`). The ratified note panel stays selectable (round 35's design). Its Ctrl+C / Ctrl+Insert and its own right-click Copy now carry the same three formats as the button, and nothing copies before ratification. The alternative, an unselectable panel with the button as the only route, was not taken.
+    2. **The code gap found while documenting** was that selection gap (leg h1's must-pause). It is closed in code by item 1, and no other gap was found.
+    3. **Residues newly named in the threat model:**
+       - **The clipboard (3A surface 4):**
+         - once copied, the note is outside the app: it stays until replaced, since nothing clears it;
+         - any same-user program can read it, and a third-party clipboard manager may ignore the marks;
+         - a DRAG of the selection carries no marks (but does not use the clipboard);
+         - a screenshot remains possible;
+         - the app cannot see whether clipboard history or sync is on, so keeping cloud sync off stays advised.
+       - **The encounter record:** no consent evidence outlives the session; a durable consent record belongs to PLAN.md Phase 6.
+       - **"The Chrome extension" section, eleven residues:**
+         - (1) the frame and block are a cue, not a control; Cliniko's page can hide them, and its shortcuts still pass;
+         - (2) detectability: a Cliniko page can tell the extension is installed through `web_accessible_resources`;
+         - (3) what a Cliniko page can see;
+         - (4) an in-page session-expiry dialog does not report;
+         - (5) speech before the next note loads, and latency;
+         - (6) the login page is recognised by `/users/sign_in`, which is UNVERIFIED on a live Cliniko — worth a glance in the smoke;
+         - (7) one Chrome profile links at a time;
+         - (8) Chrome crash dumps;
+         - (9) names in Chrome's memory;
+         - (10) the no-storage / text-only guards are text-matching, not proofs;
+         - (11) every report and click the extension relays is its assertion (the same-user pipe residue).
+  - **NEXT:**
+    - The composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` (expect 4027) and `cd extension && npm run qa && npm run build` (expect 295, build OK).
+    - Then the scoped codex confirmation, round 48, over the h4 hunks: `test_ui_screens.py` `_fake_clipboard` plus the 2 tests; `intended-use.md`; `PLAN.md:47` and `:135`; `AGENTS.md:60`; `incident-process.md` Recover step 1.
+    - Then the practitioner's P.2 with the check above, the Phase 4–7 smokes, and the commits.
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h3`, 2026-09-28, run stage-8) — LEG 1 VERIFICATION of codex rounds 46–47. Nothing was fixed and no code or doc changed.**
+  - All four findings are valid LOWs (0 CRIT, 0 HIGH, 0 MED), each Fix-now:
+    - PR-LOW-270, test-harness: an offscreen-platform assert plus a `QPlainTextEdit.keyPressEvent`/`copy` spy that refuses Copy keys, +2 tests. The real clipboard is not reachable in the default offscreen run.
+    - PR-LOW-271, docs: one sentence in `intended-use.md`.
+    - PR-LOW-280, docs: the class check widened it to 4 sites — `PLAN.md:47`, `PLAN.md:135`, `intended-use.md:47` and `AGENTS.md:60`.
+    - PR-LOW-281, docs: `incident-process.md:61`.
+  - Both rounds stay Open, and both Cap verdicts are `accept`. The tuples are in the LEG 1 blocks under each round.
+  - NEXT: `/fix` of rounds 46–47 (composer's call).
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h2`, 2026-09-28T04:19+10:00, run stage-8) — the 8.2 selection-copy gap CLOSED in code (composer disposition `task-8.2-selection-copy`: complete 8.2's own goal, the round-35 selectable panel kept — revisable by the practitioner), then `/review-loop` round 45 over the whole Phase 8 diff CONVERGED at round 1 of cap 3 (0 CRIT / 0 HIGH / 0 MED / 2 LOW docs, both applied); `reason=composer-run`.** Tasks 8.1 and 8.2 stay 🟨 (details on the 8.2 task line's ADDED block and in round 45); P.2 🟥.
+  - **Landed:** `ui/note.py` `_place_note_text` (the ONE placement of note text: plain text + the three formats; the Copy button now calls it) and `_NotePanel` (the note body): every binding of the Copy key (Ctrl+C, Ctrl+Insert) and the panel's own context menu (Copy, Select All — replacing Qt's) copy `textCursor().selection().toPlainText()` through that placement, each re-checking `_copy_ready`; nothing is placed before ratification, even over a selection made in code. Named, not covered: a drag of the selection (Qt's own, never the clipboard). Round 45 fixes: LOW-036 (AGENTS.md step 8 no longer calls Validate "the only moment the app talks to Cliniko"; the data-flow no-network non-flow and the incident trigger name the Chrome-report trigger) and LOW-037 (flow 20 / the Chrome-side retention row: the panel's Ready key, the worker's last-sent slices).
+  - **Checks in-leg:** ruff "All checks passed!"; mypy 49 files, no issues; extension `npm run typecheck` and `npm run lint` clean (no extension change).
+  - **Expected suites:** desktop **4025** = 4022 + 3 (`test_a_keyboard_copy_of_the_selection_carries_the_formats`, `test_the_context_menu_copy_carries_the_formats`, `test_an_unratified_panel_places_nothing_even_with_a_selection`; `_attempt_copy` now also drives the selection routes inside the two round-70 pins without adding tests). Extension **295**; `npm run build` unchanged.
+  - **Watch items for the composer's run:** (1) the keyboard test iterates `QKeySequence.keyBindings(StandardKey.Copy)` on the offscreen platform and asserts Ctrl+C is among them — if the offscreen theme lists more bindings (Ctrl+Insert; an X11 Copy key), each is driven and must place one mime; (2) the context-menu test triggers the real `QAction` and stubs only the modal `exec`; (3) `_attempt_copy` now calls `selectAll()` on the note panel before ratification — the later exact-text assertions read the Copy button's payload, which does not depend on the selection.
+  - **MORNING LIVE CHECK — Task 8.2 (joins P.2; mock note only, never real patient text):**
+    1. Turn on Windows clipboard history (Settings → System → Clipboard) if it is off, and press Win+V once to see what is listed.
+    2. In `scribe-app`, generate, ratify and Save a MOCK note, then press the Note tab's **Copy** button, and paste into Notepad (Ctrl+V). *Expect:* the note text exactly as shown in the Note tab.
+    3. In the Note tab, select a few lines of the note body with the mouse and press **Ctrl+C**; paste into Notepad. Then right-click the selection → **Copy**; paste again. *Expect:* exactly the selected text each time, and the right-click menu offers only Copy and Select All.
+    4. Press Win+V. *Expect:* none of the three note copies is in the history list. Report PASS/FAIL per step.
+  - **NEXT:** the composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` (expect 4025) and `cd extension && npm run qa && npm run build` (expect 295, build OK); on green, round 45 needs no further in-session round (docs-only fixes, no CRIT/HIGH/MED); next is the composer-seat codex pass over the Phase 8 diff, then the practitioner's P.2 (which now includes the 8.2 check above).
+- **EXECUTOR HANDOFF (leg `stage-8-exec-h1`, 2026-09-28T04:06+10:00, run stage-8) — Phase 8 Tasks 8.1 and 8.2 BUILT (both 🟨; file-by-file records under each task); `reason=must-pause` for ONE production gap found while documenting 8.2 (below), and the suites are owed on this tree either way.** Built on the uncommitted Phase 4–7 tree; nothing committed. P.2 stays 🟥 (practitioner-owned).
+  - **Checks in-leg:** `ruff check .` "All checks passed!"; mypy "no issues found in 49 source files". No extension source changed (typecheck/lint baselines stand).
+  - **Expected suites:** desktop **4022** = 4017 + 5 (`test_ui_screens.py` +1 `test_copy_keeps_the_note_out_of_clipboard_history_and_sync`; `test_ui_models.py` `TestClipboardFormats` +4); the two round-70 pins and `test_ui_prose_stage.py::test_display_reload_and_copy_agree` are unchanged in count and must stay green through the fakes' new `setMimeData`. Extension **295** (unchanged); `npm run build` unchanged.
+  - **MUST-PAUSE item (surface=production, MED, scope expansion):** the practitioner's 8.2 decision ("keep it out of history and sync") is honoured by the Copy BUTTON only. Once a note is ratified, `_apply_copy_binding` makes the note panel (`QPlainTextEdit`, `ui/note.py:421`) selectable by mouse and keyboard (`ui/note.py:2071` `_apply_copy_binding`, round-35 design; the button's path is `_copy_note`, `ui/note.py:2027`), and a Ctrl+C or context-menu copy of a selection goes through Qt's own `createMimeDataFromSelection` — plain text with NONE of the three formats, so it lands in clipboard history and cloud sync when those are on. The docs now say exactly that at every site (not fixed in code, per the contract). **Executor recommendation: Include in plan** — a small Task 8.2b: give the note panel a `QPlainTextEdit` subclass whose `createMimeDataFromSelection` adds the same formats from `models.clipboard_mime_formats()` (one helper, two callers), tested by calling that method on an offscreen widget (never the real clipboard); then narrow the docs' residue sentence. Alternative: make the panel non-selectable and keep Copy as the only route (changes round 35's selectable-note decision — the practitioner's call). Not Accept: the natural gesture (select, Ctrl+C) silently bypasses the chosen mitigation.
+  - **Watch items for the composer's run:** (1) the fakes now receive a real `QMimeData` from `_copy_note`; `mime.formats()` must be exactly `text/plain` plus the three `application/x-qt-windows-mime;value="…"` types on the offscreen platform (Qt stores them as given; no Windows conversion happens in the fake). (2) Nothing in the suite touches the real clipboard on the new path (every Copy test stubs `QApplication` in `ui.note`).
+  - **Docs facts the reviewers should check against code** (load-bearing citations are on the 8.1 task line): the new "The Chrome extension" threat-model section and flow 20; the encounter record's three decrypt sites; the name-bearing `state` fields. One code-vs-doc contradiction was fixed in the docs, not the code: several docs still said the Chrome-driven verification was "unwired", that names were "shown nowhere", and that the pause rule acted only on pipe loss "until the Phase 6 extension" — all replaced with what the built bridge and extension do.
+  - **MORNING LIVE CHECK — Task 8.2 (joins P.2; mock note only, never real patient text):**
+    1. Turn on Windows clipboard history (Settings → System → Clipboard) if it is off, and press Win+V once to see what is listed.
+    2. In `scribe-app`, generate, ratify and Save a MOCK note, then press the Note tab's **Copy** button.
+    3. Paste into Notepad (Ctrl+V). *Expect:* the note text exactly as shown in the Note tab.
+    4. Press Win+V. *Expect:* the copied note is NOT in the history list (an earlier item may be). Report PASS/FAIL per step; if it is listed, say whether you used the button or Ctrl+C.
+  - **NEXT:** the composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` (expect 4022) and `cd extension && npm run qa && npm run build` (expect 295, build OK); relays the must-pause item to the practitioner; then `/review-loop` from round **45** over the Phase 8 diff (docs + the 8.2 hunks).
+- **EXECUTOR HANDOFF (leg `stage-7-exec-g5`, 2026-09-28T03:49+10:00, run stage-7) — codex round 42 FIXED and closed, round 43 clean; history written; `reason=composer-run`.** Tasks 7.1–7.3 stay 🟨.
+  - **Fixes.** PR-LOW-240: `app.py` gives the chord back in a `finally` if start-up fails after it is reserved. PR-LOW-241: `_on_hotkey_pressed` drops a press queued before detach.
+  - **Checks.** ruff clean; mypy 49 files clean; extension typecheck and lint clean; no extension change.
+  - **Expected suites.** Desktop **4017** passed (4014 + 3: `test_a_start_up_failure_after_attach_gives_the_chord_back` and `test_a_press_queued_before_detach_is_dropped[False|True]`). Extension **295** passed; `npm run build` OK.
+  - **NEXT.** The scoped codex confirmation (round 44) over the two hunks; if it is clean, the composer closes the phase.
+  - **Executor recommendation: surface=production.** The same no-`finally` shape remains for the Chrome pipe (`pipe.stop` only at `aboutToQuit`, `app.py:201`) and for the single-instance mutex handle. Both are released by Windows at process exit, and every thread is daemon, so a failed start cannot keep either alive. They were NOT folded into the same `finally`: `pipe.stop` joins its thread with a timeout, which would make the error path block, and the mutex has no release call today. My recommendation is Accept as named residue. Revisit only if start-up gains a non-daemon thread.
+  - **MORNING LIVE SMOKE — Phase 7.** Run it AFTER the Phase 4, 5 and 6 smokes, with mock consultations and clinic 1 only, and never paste identifying data (names, note links, subdomains) into chat. Report pass/fail per step. Set-up: rebuild and reload the extension, fully restart Chrome, start `scribe-app` from Explorer, and open a clinic-1 mock patient's treatment note.
+    1. **Hotkey.** Tick consent and Start from the side panel, then press **Ctrl+Shift+F9** from another window (e.g. Notepad). → The recording PAUSES; the desktop and the panel show the hotkey pause cue; there is no block. Press it again. → It RESUMES, and the status line says it resumed.
+    2. **Refused Resume.** While recording, move the Cliniko tab to a DIFFERENT mock note. → The pause rule pauses the recording and the block shows. Press Ctrl+Shift+F9. → It stays paused, the desktop status line names the refusal, and the taskbar flashes. Go back to the recording's own note and press it again. → It resumes.
+    3. **Chord held elsewhere.** Close `scribe-app` with no recording live. Start another program that takes Ctrl+Shift+F9 system-wide (any small hotkey tool; skip this step if none is to hand), then relaunch `scribe-app`. → The desktop status line and Session screen say the pause hotkey is unavailable, and the panel's Live layout says "Pause hotkey unavailable". Recording still works with the buttons. Close the other program afterwards.
+    4. **Spoken pause.** While recording with live transcription running, the panel says `Say "scribe pause" to pause.` Say "…and prescribe, pause the tablets…" in a sentence. → Nothing pauses. Say "scribe pause" clearly, then stop talking. → Within a few seconds the recording PAUSES with the spoken-pause cue.
+    5. **The phrase stays.** After Finish, the transcript still contains the words "scribe pause". Resume first and speak a little more before finishing, so the pause is not the last thing said.
+    6. **"Unavailable" line.** On a normal recording, NO "Spoken pause unavailable" line shows while live transcription runs. If the Transcript screen ever reports that live transcription stopped or could not keep up, the line "Spoken pause unavailable for this recording - live transcription is off or has stopped." appears on the desktop, and the panel stops offering the phrase. Only observe this if it happens — don't force it.
+    7. **New-consultation warning.** While recording, say "Thanks for coming in, see you next week", pause about 4 s, then say "Hello, take a seat". → Within a few seconds a new-consultation warning shows on the desktop status line (with a taskbar flash) and in the panel. The recording does NOT pause or block. Say it all again. → No second warning.
+    8. **Reset.** Finish that recording and Start the next from a mock note. → No warning is shown for the new recording until the rule fires again.
+  - **Interpretation calls for the practitioner** (each can be revised):
+    - (a) The chord is **Ctrl+Shift+F9**: AltGr-safe (no Ctrl+Alt) and non-repeating. It clashes with Word's "Unlink fields" while `scribe-app` holds it (Word never sees the press). Changing it is one constant pair in `hotkey.py` plus the displayed text.
+    - (b) The **one-second grace** after each Resume: "scribe pause" said within about the first second after a Resume is ignored, because up to one capture chunk of pre-Pause audio can still land after the Resume.
+    - (c) The **3.0 s inter-word bound**: "scribe" and "pause" split across two transcript windows count as one phrase only when they start ≤3.0 s apart.
+    - (d) **Refusals are desktop-only** for the hotkey: a refused hotkey Resume is named on the desktop (status line + flash), not in the panel's `last_refusal`, which stays for Chrome's own commands. The panel still shows the paused or blocked state.
+- **EXECUTOR HANDOFF (leg `stage-7-exec-g4`, 2026-09-28T03:45+10:00, run stage-7) — LEG 1 verification of codex round 42 (pass stage-7.p1 slice A); no code changed.** Composer suites on the g3 tree: desktop 4014, extension 295, build OK. Round 42 stays Open (2 pending). PR-LOW-240: behavioral LOW, production, Fix-now as cheap hardening — the OS releases the chord at process exit and every thread is daemon, so there is no reachable leak; the fix is a `try/finally` detach around start-up and `app.exec()`, tested with a patched `main()`. PR-LOW-241: behavioral LOW, production, Fix-now — detach runs only outside RECORDING/PAUSED and posted events are delivered in order, so there is no reachable harm; the fix is a delivery-time "still reserved" check in `_on_hotkey_pressed`, tested with queue, detach, processEvents. Round 43 (slice B) is CLEAN; its history line is owed by the finishing seat of round 42. Cap verdict: accept. Tasks 7.1–7.3 stay 🟨.
+- **EXECUTOR HANDOFF (leg `stage-7-exec-g3`, 2026-09-28T03:33+10:00, run stage-7) — `/review-loop` round 41 over the whole Phase 7 diff CONVERGED at round 1 of cap 3 (0 CRIT / 0 HIGH / 0 MED / 3 LOW, all applied); `reason=composer-run` because the round changed code and tests.** Tasks 7.1–7.3 stay 🟨. Fixes: LOW-033 (production) — `SpokenPauseDetector.feed` joins the carried word only when the next window's first word starts within `CARRY_MAX_GAP_SECONDS` (3.0 s, the window-closing silence), new test `test_a_silence_between_windows_breaks_the_phrase`; LOW-034 — `test_ui_bridge.py`'s spoken-pause test attaches a live transcriber first so the failure assertion discriminates; LOW-035 — the `WM_HOTKEY` child test now also POSTS the message through Qt's dispatcher (`SENT` then `SEEN` pinned). ruff clean, mypy 49 files clean; no extension change. **Composer: run `cd desktop && ../.venv/Scripts/pytest.exe -q` (expected 4014 passed = 4013 + 1) and `cd extension && npm run qa && npm run build` (expected 295, build OK).** On green, Phase 7 needs no further in-session round; NEXT is the composer-seat codex pass over the Phase 7 diff, then the morning live smoke (hotkey pause/resume + a refused resume, "scribe pause" while recording, the new-consultation warning, the side panel's hands-free lines) before phase-complete and the Phase 4–7 commits.
+- **EXECUTOR HANDOFF (leg `stage-7-exec-g2`, 2026-09-28T03:23+10:00, run stage-7) — the g1 suite failure fixed in production code; `reason=composer-run`.** Tasks 7.1–7.3 stay 🟨.
+  - Failure: `test_note.py::TestTokenisation::test_normalisation_has_exactly_one_implementation` found `def normalise_token` (as the prefix of g1's own `normalise_tokens`) in `voice_commands.py` — a second normaliser, which Task 1.2's pin forbids.
+  - Fix (`voice_commands.py`): the tokeniser is now `phrase_tokens`, which only SPLITS a word (whitespace, hyphens, slashes) and passes every part to `note.normalise_token` — the one implementation — so no normalisation logic remains in the module. The pin is unchanged. Its second half (`_STRIP_PUNCT_RE`'s users = `note.py`, `transcription.py`) is unaffected: `voice_commands.py` never names it.
+  - D7 behaviour is kept: "prescribe, pause", "scribe paused" and "scribes pause" still do not match; "Scribe, pause." and "scribe-pause" still do. One pinned case changed with the shared normaliser: a curly apostrophe inside a word is now kept as written (it was straightened in g1). No phrase in either list contains an apostrophe. The test case now pins `Don't` → `don't`.
+  - Tests (`test_hands_free.py`): the import and `TestNormalise` renamed to `phrase_tokens`; a new spy test proves every part goes through `normalise_token`.
+  - Checks in-leg: ruff clean; mypy 49 files, no issues; extension typecheck and lint clean (no extension change).
+  - **Expected suites:** desktop **4013** = the g1 run's 4012 (4011 passed + the 1 failure, now passing) + 1 new test. Extension **295** (unchanged); `npm run build` unchanged.
+  - NEXT: the composer runs the suites; then `/review-loop` from round **41**.
+- **EXECUTOR HANDOFF (leg `stage-7-exec-g1`, 2026-09-28T03:17+10:00, run stage-7) — Phase 7 (hands-free and warnings) BUILT: Tasks 7.1, 7.2 and 7.3 🟨 awaiting the composer's suites; `reason=composer-run`.** Built on top of the uncommitted Phase 4–6 tree; nothing committed.
+  - Landed (details under each task): new `desktop/src/scribe_desktop/hotkey.py` and `voice_commands.py`; `ui/main_window.py` (`_native_msg`, `nativeEvent`'s `WM_HOTKEY` branch via the queued `_hotkey_pressed_q`, `attach_hotkey` / `detach_hotkey` / `on_hotkey`, `_on_live_window`, `_on_session_resumed`, `_raise_new_consultation`, the detach in `closeEvent`); `ui/bridge.py` (`set_hotkey_status`, `set_new_consultation_warning`, `state.hotkey` / `spoken_pause` / `warnings`, the view fields); `ui/models.py` (hands-free and warning lines; `CHROME_HANDS_FREE_LINE` removed); `app.py` (attach after the Chrome link, detach at quit); extension `panel-view.ts` / `panel.ts` (the Live layout's hotkey and spoken-pause lines). No protocol, fixture, dependency or env-var change.
+  - Checks in-leg: `ruff check .` clean; mypy **49** source files, no issues (47 + `hotkey.py` + `voice_commands.py`); extension `npm run typecheck` and `npm run lint` clean.
+  - **Expected suites:** desktop **4012** = 3922 + 90 (`test_hands_free.py` +76: hotkey module 7, normalise 7, matcher 21, availability 9, warning rule 11, window hotkey 12 including the Windows real-dispatch child, window phrase rules 9; `test_ui_models.py` +8; `test_ui_bridge.py` `TestHandsFree` +6). Extension **295** = 292 + 3 (`panel-view.test.ts` +2, `panel.dom.test.ts` +1). `npm run build` unchanged in shape.
+  - Watch items for the composer's run: (1) the real-dispatch child `test_a_real_wm_hotkey_through_qts_dispatch` (Windows, integration) sends a synthetic `WM_HOTKEY` through Qt's windows platform — the same path the suspend child proved; (2) `FakeController` gained `live_transcription_attached = False`, so a fake recording now reads "Spoken pause unavailable"; (3) `test_ui_models.py`'s `test_the_link_line_leads_and_hands_free_follows` now pins the two new lines.
+  - **Interpretation calls for the practitioner** (each applied, LOW, revisable — answer yes or say what you want instead):
+    1. The chord is **Ctrl+Shift+F9**: no Ctrl+Alt (AltGr on European layouts), no Alt+Shift (switches keyboard layout), no Win key (Windows' own). Chrome and Cliniko use nothing on it. While the app runs it is taken from every program; Word's Ctrl+Shift+F9 ("unlink field") is the known clash. On a laptop whose F-keys default to media keys it may need Fn.
+    2. A hotkey Resume that the guard refuses is shown on the DESKTOP (status line, Session screen, taskbar flash) — not as `state.last_refusal`; the panel's Blocked/Paused layout already explains the state.
+    3. `state.hotkey.available: false` covers both "not reserved" and "refused" (no protocol change); the panel says "Pause hotkey unavailable — see Clinic Scribe's Session tab" and the desktop names the refusal.
+    4. The matcher needs whole words on BOTH sides ("scribe paused" and "scribes pause" do not match; "scribe-pause" and "Scribe, pause." do) and finds a phrase split across two windows through one carried word.
+    5. The resume cutoff is the captured audio at the Resume plus ONE capture chunk (1 s), because the capture worker can still hold up to a chunk of pre-Pause audio then; a phrase begun within about a second of a Resume is ignored.
+    6. `state.spoken_pause` is true only while a recording or paused session has a running live transcriber; with no recording the desktop reads 'say "scribe pause" while recording to pause'.
+    7. The warning is raised ONCE per recording, kept while that recording is recording or paused, and dropped when it finishes; the desktop also flashes the taskbar. A greeting in the same window counts only AFTER the closing phrase. The lists: closings "see you next week / next time / soon / then", "take care", "all the best", "goodbye", "bye", "thanks / thank you for coming in", "have a good / nice / great day", "have a good weekend"; greetings "hello", "hi there", "good morning / afternoon / evening", "nice to meet you", "come on in", "take / have a seat", "what brings you in / here", "how have you been".
+    8. The panel shows the hands-free lines only in the Live layout while recording or paused.
+  - Residue named in the threat model (not controls): the hotkey is a global input (anyone at the keyboard, or a same-user program sending `WM_HOTKEY`) and does only what the Pause / guarded Resume buttons do; the phrase is heard from anyone in the room and can only pause; the warning is a heuristic cue.
+  - NEXT: the composer runs the suites; then `/review-loop` from round **41** over the Phase 7 diff; the codex pass is composer-seat. The morning live-smoke checklist for Phase 7 comes with the phase-complete handoff (after the Phase 4, 5 and 6 smokes).
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f9`, 2026-09-28T02:54+10:00, run stage-6) — Phase 6 (Chrome extension UI) BUILD-COMPLETE and REVIEW-CONVERGED; `reason=phase-complete`; gate = the practitioner's live-user smoke below, after the Phase 4 and Phase 5 smokes.** Tasks 6.0–6.5 stay 🟨 until that smoke passes (the composer records 🟩).
+  - Last leg: PR-LOW-230 fixed. `extension/src/sinks.test.ts`'s header now separates BARE-NAME rules from PREFIX-DEPENDENT ones, names the residue as a class and cites lint's `@typescript-eslint/no-implied-eval` (via `recommendedTypeChecked`); 2 fixtures; matcher unchanged. Round 40 Closed.
+  - Checks in-leg: extension typecheck and lint clean; no desktop change this phase (ruff/mypy baselines stand).
+  - **Final expected suites:** desktop **3922**; extension **292** = 290 + 2. `npm run build` unchanged in shape.
+  - Phase 6 review record:
+    - in-session `/review-loop` round 36: 5 LOW, all applied;
+    - codex pass `stage-6.p1`: rounds 37–38, 1 MED + 5 LOW → round 39, 1 LOW → round 40, 1 LOW;
+    - accept-closed at peer round 4 of 6 on the executor's cap verdict (the last two rounds were header accuracy in a test-harness guard);
+    - every finding fixed, none deferred or accepted.
+  - Open for the practitioner: Task P.1 for clinic 2; the interpretation calls below; the Phase 4 and 5 `[decision]` tasks 4.3 and 5.4 and their smokes.
+  - **MORNING LIVE SMOKE — Phase 6, run AFTER the Phase 4 and Phase 5 smokes pass.**
+    - Ground rules: mock consultations only (a made-up conversation, no real patient), clinic 1 only, on two draft treatment notes made for testing under two mock patients (call them A and B). Never paste anything identifying into chat: report the step number, PASS or FAIL, and any on-screen text with names, ids and the clinic's address blanked.
+    1. **Build, restart, badge.** Run `cd extension && npm run build`. Reload the unpacked extension in `chrome://extensions`. Fully quit Chrome and check Task Manager shows no `chrome.exe`, then reopen Chrome. Double-click `.venv\Scripts\scribe-app.exe`, then click the pinned icon. *Expect:* the side panel opens; the badge is green **OK**; the panel says "Open a patient's treatment note to record". Close the app. *Expect:* grey **OFF**; the panel says "Clinic Scribe is not running — open it to record" with "If it is open, another Chrome profile may be connected to it." underneath. Relaunch the app: **OK** again.
+    2. **Ready and the consent box.** Open A's note. *Expect:* "Checking with Cliniko…", then:
+       - A's name, the appointment (or "No linked appointment") and the clinic;
+       - "Note verified with Cliniko. It is checked again before anything is written back.";
+       - an UNticked box reading "I confirm the patient has consented to AI-assisted recording and documentation";
+       - Start greyed until the box is ticked.
+       Tick the box, switch to a non-Cliniko tab, then come back. *Expect:* the panel showed "Open a patient's treatment note to record" while away, and the box is UNticked again on return.
+    3. **Linked Start, Pause and Resume from the panel.** Tick the box, press Start and speak a few sentences. *Expect:* a thin red frame round the Cliniko page; badge **REC**; the panel reads "Recording" with a counting timer and "Consent confirmed <time>"; the box is unticked. Press Pause. *Expect:* amber frame, **PAUSED**, "Paused". Press Resume. *Expect:* red again, **REC**.
+    4. **A patient change pauses and blocks.** In the SAME tab, open B's note. *Expect:*
+       - the frame turns amber and a full-page card says "This tab opened a different treatment note.";
+       - the card names A as the recording's patient and B as this tab's, with Resume previous / Finish previous / Discard previous;
+       - badge **PAUSED**; the panel shows the same block;
+       - the desktop shows its pause cue.
+       Say whether the amber badge is legible.
+    5. **Resume previous.** Click Resume previous on the card. *Expect:* the tab goes back to A's note, and within a few seconds recording resumes (red frame, **REC**, card gone). No other tab moves.
+    6. **Chrome closing mid-recording.** Quit Chrome fully (no `chrome.exe` left). *Expect:* the desktop shows the recording paused. Reopen Chrome and open B's note. *Expect:* the amber card on B's page. Resume previous takes you back to A and resumes.
+    7. **Discard takes two clicks.** Open B's note again. On the card, click Discard previous once. *Expect:* "Confirm discard" and "Discard this recording? This cannot be undone. Press Confirm discard to delete it."; after 15 s it reverts. Now click twice. *Expect:* the recording is discarded, the frame goes, and the panel shows B's Ready with the box unticked.
+    8. **Finish and the Unreviewed banner.** On A's note, tick, Start, speak, then press Finish consultation. *Expect:* "Finishing <A>…" with NO timer, then Ready with "The last recording is waiting for review in Clinic Scribe." Close the app (twice within 10 s, as the desktop asks), relaunch it, and reload A's note. *Expect:* the panel's banner "Unreviewed recording for this note — Open for review". Pressing it brings that recording's review up in the app. Complete or discard it there.
+    9. **Extension reload mid-recording.** On A's note, Start a new recording from the panel. Reload the extension in `chrome://extensions` and return to the Cliniko tab. *Expect:* the panel briefly says "Restoring the safeguards on this tab…" or "Connecting to Clinic Scribe…", then the recording shows paused with the amber card. Resume previous resumes it.
+    10. **Lost link under a recording.** With that recording running, end Cliniko Scribe in Task Manager. *Expect:*
+        - within a few seconds the badge reads red **!**;
+        - the panel says "Clinic Scribe is not running — open it to record";
+        - the frame disappears (the app is gone, so nothing records).
+        Relaunch the app. *Expect:* badge **OK**; the Recovery tab lists the recording as recoverable. Discard it, then close the app normally. *Expect:* **OFF**.
+    - If a step fails, get back to a working state this way (never a git command):
+      - discard the mock recording in the app (Session, Transcript or Recovery tab → Discard);
+      - if Chrome shows **ERR** or nothing changes, rebuild, reload the extension and fully restart Chrome;
+      - report the step and the text.
+  - **Interpretation calls and open questions for the practitioner** (each applied as described and revisable — answer yes, or say what you want instead):
+    1. The Cliniko sign-in page is recognised by the PATH `/users/sign_in`. This is UNVERIFIED on a live account. If convenient, sign out once and report only the path. Any other path reads as "another Cliniko page", and the recording's tab leaving its note pauses it either way.
+    2. The badge shows green **OK** while the app runs idle (D1 said nothing) and grey **OFF** when it is closed; red **!** means the link dropped under a live recording.
+    3. "Resume previous" first brings forward a tab already showing the note. Otherwise it navigates only a tab on an allow-listed Cliniko page, and anything else opens the note in a new tab.
+    4. With the link to the app down, Cliniko tabs keep an amber frame if a recording was live, and the block's card is dropped, because its buttons could not reach the app. With the app closed, nothing is drawn.
+    5. The side panel has no Discard while recording (D1 lists Pause/Resume and Finish consultation). Discard stays on the desktop and on the block.
+    6. The panel's banner shows only over the Message and Ready layouts, and only while a Cliniko tab is in front.
+    7. D1's "Another Chrome profile is connected" has no signal, so the not-running message carries a hint instead.
+    8. The page script's cue can be hidden or covered by Cliniko's own page. The heartbeat only puts back a removed element, and a per-heartbeat `important` restyle was considered and NOT applied, because the hiding routes are an open class. The app's pause rule and command checks are the enforcing controls.
+    9. For Task 8.1 (detectability): the build tool (crxjs) adds a `web_accessible_resources` entry for the page-script module on Cliniko hosts (`use_dynamic_url: false`). A Cliniko page could therefore detect that the extension is installed. The file carries no data.
+    10. `sidePanel.open()` was not needed and not tried live: the toolbar icon opens the panel via `setPanelBehavior`.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f8`, 2026-09-28T02:52+10:00, run stage-6) — LEG 1 verification of codex round 40; no code changed; `reason=phase-complete`.**
+  - PR-LOW-230 verified docs-only/low/test-harness; shape: narrow the header, name the residue as a class, cite lint's `no-implied-eval`; no block-comment strip.
+  - **Cap verdict: accept** (no round 41).
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f7`, 2026-09-28T02:47+10:00, run stage-6) — LEG 2 `/fix` of codex round 39: PR-LOW-220 fixed (test-only); round 39 Closed; `reason=composer-run`.**
+  - `sinks.test.ts`: bare-token bans for `write`/`writeln`/`eval`/`Function`, a `constructor` access ban, 5 detection fixtures, class declarations proven unflagged. Extension 290.
+  - The morning smoke and the open questions written in this leg now sit in the f9 bullet above.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f6`, 2026-09-28T02:44+10:00, run stage-6) — LEG 1 verification of codex round 39; no code changed; `reason=phase-complete`.**
+  - Round 39 confirmed PR-MED-200, PR-LOW-201, PR-LOW-202, PR-LOW-211 and PR-LOW-212.
+  - PR-LOW-220 is verified behavioral/low/test-harness: the sink scan misses the destructured `write` and the aliased `Function`, and no production file uses either.
+  - Chosen shape: match the listed names as bare tokens (`write`/`writeln`/`Function`, plus property access to `constructor`), narrow the header to that class, and name the remaining gaps.
+  - **Cap verdict: accept.** Round 39 stays Open. NEXT: LEG 2 `/fix`.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f5`, 2026-09-28T02:35+10:00, run stage-6) — LEG 2 `/fix` of codex rounds 37–38: all six findings fixed; both rounds Closed; `reason=composer-run`.** Tasks 6.0–6.5 stay 🟨: the scoped codex confirmation (round 39) follows.
+  - Round 37:
+    - PR-MED-200: `extension/src/hub.ts` — event counter (`events`/`touched`/`activated`, `bump`), `resync` asks again when overtaken (3 tries, then inert until the next event), every `getTab` answer through `lookUp`, and the unknown-tab hello uses Chrome's URL.
+    - PR-LOW-201: `connection.ts` `badgeFor` shows "!" until the new link's first snapshot.
+    - PR-LOW-202: `manifest.test.ts` asserts the literal host pattern.
+  - Round 38:
+    - PR-LOW-210: `sinks.test.ts` token-level scan, wider file types, detection fixtures, lexical-guard residue.
+    - PR-LOW-211: `Object.hasOwn` in `panel-view.ts` `lookUp` and `page.ts` `reasonText`.
+    - PR-LOW-212: the page-cue residue restated as a class (Task 6.3, `page.ts` header, CHANGELOG); the `important` restyle was not applied.
+  - Checks in-leg: extension typecheck and lint clean; no desktop change (ruff/mypy baselines stand).
+  - **Expected suites:** desktop **3922**; extension **285** = 255 + 30 (`hub.test.ts` +8, `connection.test.ts` +1 row, `panel-view.test.ts` +3, `page.dom.test.ts` +1, `sinks.test.ts` +17: 22 tests replacing 5). `npm run build` unchanged in shape.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f4`, 2026-09-28T02:25+10:00, run stage-6) — LEG 1 verification of codex rounds 37–38 (pass `stage-6.p1`); no code changed; `reason=phase-complete`.**
+  - Round 37: PR-MED-200 behavioral/med/production (a stale async tab read can re-bind the unbound linked session and satisfy the resume check after a reconnect; 4 sites in `hub.ts`); PR-LOW-201 behavioral/low/production; PR-LOW-202 behavioral/low/test-harness. **Cap verdict: raise +1.**
+  - Round 38: PR-LOW-210 behavioral/low/test-harness; PR-LOW-211 behavioral/low/production; PR-LOW-212 docs-only/low/docs. **Cap verdict: accept** (its fixes fold into round 37's confirmation round).
+  - Both rounds stay Open. NEXT: LEG 2 `/fix` to the fix shapes and regression tests recorded under each round's LEG 1 block.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f3`, 2026-09-28T02:10+10:00, run stage-6) — `/review-loop` round 36 over the whole Phase 6 diff: 0 CRIT / 0 HIGH / 0 MED / 5 LOW, all applied; `reason=composer-run`.** Tasks 6.0–6.5 stay 🟨.
+  - Fixes (details in the Findings Log, round 36): `connection.ts` `badgeFor` — "!" outranks ERR under a live session (LOW-028); `panel-view.ts` `panelModel` — the banner only while a Cliniko tab is in front (LOW-029); `hub.ts` `goToRecordingNote` — the fallback navigates only a tab on an allow-listed Cliniko page, else opens a new tab (LOW-030); `context.ts` `tabUpdated` — a redundant line removed (LOW-031); new `sinks.test.ts` pins text-only rendering, no browser storage, no dynamic code and the one console call (LOW-032).
+  - Checks in-leg: extension typecheck and lint clean; no desktop change (ruff/mypy baselines stand).
+  - **Expected suites:** desktop **3922**; extension **255** = 247 + 8 (badge row 1, banner test 1, hub test 1, `sinks.test.ts` 5). `npm run build` unchanged in shape.
+  - WATCH: `sinks.test.ts` reads the source tree with `readdirSync` from its own directory (as `protocol.test.ts` reads the fixtures); if a file list assertion fails, check for CRLF or a renamed file first.
+  - Next: round 37 (`/review-loop` round 2 of cap 3, the post-fix regression check) once the suites are green; converged there → `phase-complete` for the codex pass.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f2`, 2026-09-28T01:59+10:00, run stage-6) — Phase 6 Tasks 6.3–6.5 BUILT; all of 6.0–6.5 are 🟨; `reason=composer-run`.** f1's tree passed the composer's run (desktop 3922, extension 198, build OK). No desktop file changed in f2.
+  - What landed (details on each task line): `extension/src/page.ts` (6.3, `PageScript`); `extension/src/panel-view.ts` (6.4, `panelModel` — the layout choice) + `panel.ts` (`Panel` — drawing, the port, commands) + `panel.html` (stylesheet); `hub.ts` `PanelView.focus` gains `tab_id` so Ready shows only for the note in front of the practitioner (`hub.test.ts`'s three focus expectations updated); 6.5's one missing class, "no key in any payload", added to `background.test.ts`. The 6.4 spike is recorded on its task line (not needed: the icon opens the panel through `setPanelBehavior`; nothing calls `sidePanel.open()`).
+  - Checks in-leg: extension typecheck and lint clean; ruff "All checks passed!"; mypy "no issues found in 47 source files".
+  - **Expected suites:** desktop **3922** (unchanged). Extension **247** = 198 + 49: `page.dom.test.ts` 12, `panel-view.test.ts` 26, `panel.dom.test.ts` 10, `background.test.ts` +1. `npm run build` must emit the panel page (now with the model and its stylesheet) and the page-script loader.
+  - WATCH (first run): `page.dom.test.ts` and `panel.dom.test.ts` import their module per test after `vi.resetModules()` (both boot at import); two tests use `vi.useFakeTimers()` (Discard's 15 s disarm, the panel's 1 s reconnect) — the fake's ports deliver by `queueMicrotask`, which fake timers leave alone. jsdom events from `click()` are untrusted by design; the trusted path injects `isTrusted`.
+  - Interpretation calls this leg: five for the panel (6.4's task line) and the page-script residue (6.3's task line). None is CRIT/HIGH or production-impacting beyond the planned UI; no Defer/Accept.
+  - Next: `/review-loop` from round **36** over the whole Phase 6 diff (`extension/` + AGENTS.md + CHANGELOG), then the composer's codex pass; then my phase-complete handoff with the final smoke.
+  - **DRAFT MORNING SMOKE — Phase 6, AFTER the Phase 4 and Phase 5 smokes** (finalised at phase-complete). Mock consultations only, clinic 1 only, on a draft treatment note made for testing; report step number + PASS/FAIL and on-screen text with names and ids blanked. First: `cd extension && npm run build`, reload the extension in `chrome://extensions`, fully restart Chrome (no `chrome.exe` left), then double-click `scribe-app.exe`.
+    1. **Icon and panel.** Click the pinned icon. *Expect:* the side panel opens; the badge is green **OK**; the panel says "Open a patient's treatment note to record". Close the app: badge grey **OFF**, panel "Clinic Scribe is not running — open it to record". Relaunch the app: **OK** again.
+    2. **Ready.** Open the test note in Cliniko. *Expect:* "Checking with Cliniko…", then the patient's name, the appointment (or "No linked appointment"), the clinic, "Note verified with Cliniko…", an UNticked consent box and a greyed Start.
+    3. **Linked Start.** Tick the box, press Start, speak a few sentences. *Expect:* a thin red frame round the Cliniko page, badge **REC**, the panel's timer counting and "Consent confirmed <time>"; the box is unticked again.
+    4. **Patient change pauses.** In the same tab, open a different patient's note. *Expect:* the frame turns amber, a full-page card names both patients with Resume previous / Finish previous / Discard previous, the badge reads **PAUSED** (say whether it is legible), the desktop shows its pause cue.
+    5. **Resume previous.** Click Resume previous on the card. *Expect:* the tab goes back to the first note and, within a few seconds, recording resumes (red frame, **REC**, card gone).
+    6. **Chrome closing mid-recording.** Quit Chrome fully. *Expect:* the app shows the recording paused. Reopen Chrome and the other patient's note. *Expect:* the amber card on that page; Resume previous takes you back and resumes.
+    7. **Discard takes two clicks.** Open the other note again, then on the card click Discard previous once. *Expect:* "Confirm discard" and a warning line; wait 15 s and it reverts. Click twice. *Expect:* the recording is discarded, the frame goes, the panel shows Ready with the box unticked.
+    8. **Finish and the reminder.** Start again, speak, press Finish consultation. *Expect:* "Finishing <name>…" with no timer, then Ready with "The last recording is waiting for review in Clinic Scribe." Close the app (twice within 10 s), relaunch it, and reload the note. *Expect:* the panel's banner "Unreviewed recording for this note — Open for review"; pressing it brings the recording's review up in the app.
+    9. **Extension reload mid-recording.** Complete or discard the step-8 recording in the app; Start a new one from the panel, then reload the extension in `chrome://extensions` and return to the Cliniko tab. *Expect:* the panel briefly says "Restoring the safeguards on this tab…" or "Connecting…", the recording is paused with the amber card; Resume previous resumes it. Then Finish or discard it in the app.
+    10. **Only if convenient:** sign out of Cliniko and say what the sign-in page's PATH is (for example `/users/sign_in` — no clinic name). The extension assumes that path for the login page.
+- **EXECUTOR HANDOFF (leg `stage-6-exec-f1`, 2026-09-28T01:43+10:00, run stage-6) — Phase 6 Tasks 6.0–6.2 BUILT; `reason=composer-run`.** Built on the uncommitted Phase 4 + 5 tree; no desktop file changed.
+  - Last completed: 6.0 (Vitest `node` + `dom` projects in the new `extension/vitest.config.ts`; `src/test/chrome-fake.ts`; jsdom 30.1.1 installed by the composer under the practitioner's 2026-09-27 21:39 authorisation), 6.1 (manifest + pin test; stubs `page.ts`, `panel.html`, `panel.ts`), 6.2 (`context.ts`, `hub.ts`, `connection.ts`, `background.ts`). All three 🟨 with BUILT notes on the task lines; 6.2's six interpretation calls are listed there.
+  - Checks run in-leg: `npm run typecheck` clean, `npm run lint` clean. No Python changed (ruff/mypy baselines stand: clean, 47 files).
+  - **Expected suites:** desktop **3922** (unchanged). Extension **198** = 105 + 93: `manifest.test.ts` 5; `connection.test.ts` +18 (handshake hook 1, `appState` 1, badge table 12, "!" flow 1, `send` 3; the handshake test now expects "…" until the first `state`, then OK); `context.test.ts` 36; `hub.test.ts` 28; `background.test.ts` 4; `test/chrome-fake.dom.test.ts` 2 (the `dom` project's first files — it proves jsdom is active).
+  - **`npm run build` must pass:** crxjs has to emit the side panel page and the page-script loader. WATCH: the built `manifest.json`'s `content_scripts[0].js` is what `Hub.installed` re-injects (read at run time via `chrome.runtime.getManifest()`); if crxjs writes a loader there, that is the right file.
+  - WATCH (first vitest run): `vitest.config.ts` now takes precedence over `vite.config.ts` for tests (the crx plugin no longer loads under test); if a project reports "no test files", check the two `include` globs. `background.test.ts` boots the worker with `vi.resetModules()` + dynamic import per test.
+  - **Composer note — Phase 4 morning smoke on THIS build:** if the practitioner rebuilds the extension from this tree for the Phase 4 smoke, step 5's expectation changes: with the app closed the badge now reads grey **OFF**, not **OK** (the Phase 4 recommendation, applied). Steps 3–4 (app first, then Chrome → green **OK**) are unchanged. The page script and the panel are still stubs, so nothing new appears on Cliniko pages yet.
+  - Next (leg f2): 6.3 (page script: frame, block, href heartbeat — the hub's `ToPage` / `FromPage` messages and `PageSlice` / `PageBlock` in `context.ts` are the contract), 6.4 (panel: layouts from `PanelView` — `connection`, the app's `state`, and `focus.kind` `none | not_cliniko | clinic_not_set_up | cliniko` with `restoring`; port name `PANEL_PORT`; commands as `PanelCommand` in `hub.ts`; the `sidePanel.open()` spike recorded from the API types — "may only be called in response to a user action"; the icon already opens the panel through `setPanelBehavior`), 6.5 (remaining classes: layouts, the markup-name fixture, `isTrusted`).
+  - Open, for the panel leg: D1's "Another Chrome profile is connected to Clinic Scribe" has no protocol signal (the host pushes `app_running:false` whenever the pipe is absent or held), so the panel can only say the app is not running and add that another Chrome profile may be connected — an interpretation to record in 6.4.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e7`, 2026-09-28T01:21+10:00, run stage-5) — Phase 5 BUILD-COMPLETE and CONVERGED; `reason=phase-complete`.**
+  - State:
+    - Tasks 5.1–5.6 are 🟩: suites 3922 + 105; in-session `/review-loop` round 32; codex pass stage-5.p1 rounds 33–35, converged at peer_round 3 of 5. Overall Progress `59%` (24 of 41).
+    - Task 5.4 was decided (a) under the overnight pre-authorisation and is revisable.
+    - Phases 4 AND 5 are both UNCOMMITTED. Each commit waits for its own live-user smoke: Phase 4's first, then this one.
+  - **For the composer's `/document`** (AGENTS.md Current Status + Subsystem pointers):
+    - Status: Phase 5 built:
+      - the D5 pause rule (`context_rules.py`: `pause_action`, `ContextEvaluator`; the sleep handler in `MainWindow.nativeEvent`, which never raises into Qt; unlinked recordings pause only on sleep);
+      - the resolution block and `resume_previous`;
+      - the Session screen's two-click Discard;
+      - back-to-back Start at QUEUED, gated by the review lease;
+      - the Unreviewed review via `SessionController.adopt_queued` (5.4 (a), revisable), with the saved note read-only plus "Regenerate (replaces the saved note)";
+      - the reminder index, rebuilt at start by one `encounter.enc` decrypt per session, `state.banner` and `open_review`;
+      - the 2-hour expiry warning and the on-close list.
+
+      Suites 3922 + 105; rounds 32–35.
+    - New subsystem pointer: "If working on the pause rule, the resolution block or back-to-back (`context_rules.py`, the pause and resume parts of `ui/bridge.py`, `MainWindow.nativeEvent` / `pause_for`), or on the Unreviewed review (`SessionController.adopt_queued`, the Recovery screen's Unreviewed section, `MainWindow._on_review_requested` / `_open_adopted` / `open_unreviewed` / `reconstruct_reminders`, the reminder index), read plan D5/D6, Task 5.4's decision brief (its 15 custody consumers), the threat model's PAUSE RULE and OPEN FOR REVIEW paragraphs, flows 6 and 19, and the retention schedule's 24-hour rule."
+    - Constraint 7's start-up exception (one `encounter.enc` decrypt per Unreviewed session, to rebuild the index) belongs beside the existing Cliniko-client pointer's text.
+  - Executor recommendations for Phase 6+:
+    1. The side panel must render every Phase 5 field it is handed: `state.block` on every tab of the block's own clinic host, `banner` with its count, the "Resume previous" navigation from `state.live`'s ids plus the allow-list, and plain copy for the refusal codes `session_active`, `review_in_progress`, `cannot_open`, `pipe_down` and `report_mismatch`. surface=production
+    2. The adopted (reopened) session's `recorded_seconds` reads 0, because its store closed at the Finish that produced it. Phase 6 should show no timer for `phase: "queued"`, or the app should carry the count from the store's chunk count. surface=production
+    3. After Regenerate → "Cancel review" on a reopened saved note, the saved note stays on disk but is no longer shown. This is the same as today's post-Save Regenerate → Cancel on a live session; consider re-showing it. surface=production
+    4. The on-close list refuses the first close, and so it refuses a Windows shutdown or logoff once (a documented residue). Consider handling `WM_QUERYENDSESSION` / `aboutToQuit` so a shutdown is not held. surface=production
+  - **PHASE 5 LIVE-USER SMOKE — for the practitioner, in the MORNING, AFTER the Phase 4 smoke.**
+    - Ground rules: mock consultations only (a made-up conversation, no real patient); clinic 1 alone; never paste anything identifying into chat — report only the step number, PASS or FAIL, and any message text with names or ids blanked. Launch `scribe-app.exe` by double-click. Mark PASS or FAIL per step.
+    1. **Sleep pauses a recording.** Session tab: tick consent, Start, speak a few sentences. Put the PC to sleep (Start → Power → Sleep), wake it and unlock. *Expect:* the session state reads `paused`; the status line and the Session tab say "Paused - the computer went to sleep. Press Resume to carry on recording."; the taskbar icon flashes; the window responds normally, with no error dialogs. Press Resume: recording continues.
+    2. **Discard takes two clicks.** In the same recording, click Discard once. *Expect:* the button now reads "Confirm discard" and a line asks you to confirm. Wait about 15 seconds. *Expect:* the button goes back to "Discard" and nothing was deleted. Click Discard twice in a row. *Expect:* "Session discarded (audio cryptographically deleted)."
+    3. **Back-to-back (A then B).** Record mock A and press Finish. *Expect:* "Start" stays greyed while A is transcribing; when A's transcript appears, "Start" is offered again once consent is ticked. Generate a note for A and Save it. Now tick consent and Start mock B. *Expect:* B is recording, and the Note tab no longer shows A's note. Press Finish on B and wait for its transcript.
+    4. **Reopen A's saved note.** Recovery tab. *Expect:* A appears under "Unreviewed recordings" marked "note saved", with "Open for review" and "Discard" — and NO "Resume processing" for it. Select A and press Open for review. *Expect:* the Note tab shows A's note exactly as saved, read-only (no edit or Save), with Copy available. The Transcript tab's button reads "Regenerate (replaces the saved note)". B moves to the Unreviewed list. Press Complete on the Transcript tab. *Expect:* A is completed and leaves every list.
+    5. **Reopen B, which has no note.** Recovery tab → select B → Open for review. *Expect:* B's transcript opens with "Generate note" offered. Leave it open, not completed.
+    6. **A crashed recording keeps its warning.** Discard B (Transcript tab → Discard). Start mock C, speak a little, then end the app from Task Manager (select Cliniko Scribe → End task). Relaunch it. *Expect:* the Recovery tab lists C under "Recoverable sessions" with "did not finish cleanly". Press Resume processing. *Expect:* C's transcript opens with the red "Warning: recording did not finish cleanly; the tail may be missing." Do NOT complete it.
+    7. **Closing with an unreviewed recording.** Close the window. *Expect:* it stays open; the status line and the Recovery tab list "Recording xxxxxxxx...: expires HH:MM" (8 characters, a time about 24 h after C began) and say "Close again within 10 seconds to quit." Close again at once. *Expect:* the app quits. Relaunch. *Expect:* C is now under "Unreviewed recordings" with "did not finish cleanly". Open it for review. *Expect:* the same red warning on the Transcript tab.
+    8. **Clean up.** Discard C (Transcript tab → Discard), then Discard any other mock row left on the Recovery tab. *Expect:* both lists are empty and the window closes on the first try.
+    - Cannot be tested until the Phase 6 side panel exists (Chrome shows nothing new yet):
+      - pauses on a note or patient change in Cliniko, another note or the login page, and Chrome disconnecting or reconnecting;
+      - the full-page block, "Resume previous", "Finish previous" and "Discard previous";
+      - the "unreviewed recording" banner on reopening a note, and Open for review from Chrome;
+      - a linked Start from the panel.
+    - Please CONFIRM three interpretation calls while testing (answer yes, or say what you want instead):
+      - (5.1) a desktop-started (unlinked) recording pauses only when the PC sleeps — never on anything Chrome does;
+      - (5.3) starting the next recording clears the previous patient's saved note from the Note tab (it stays reopenable from the Unreviewed list);
+      - (5.4, the D6 reading) a reopened saved note is read-only, and "Regenerate" replaces it only when that new review is Saved.
+    - If a step fails, get back to a working state this way (never a git command):
+      - discard the mock recording (Session or Transcript tab → Discard, or the Recovery tab row → Discard);
+      - if the window will not close, finish or discard what the status line names;
+      - as a last resort, Task Manager → End task is safe: crash recovery keeps everything, and the next launch lists it on the Recovery tab.
+
+      Then relaunch `scribe-app.exe` and report the step number with the on-screen message (names and ids blanked).
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e6`, 2026-09-28T01:11+10:00, run stage-5): LEG 2 `/fix` of codex rounds 33–34, all four applied; both rounds Closed with their Review History lines; `reason=composer-run`.**
+  - What landed:
+    - PR-LOW-180: the reorder in `test_cross_patient.py::test_a_second_pipe_client_pauses_and_must_report_the_note_first`.
+    - PR-MED-190, three sites:
+      - `ui/main_window.py` `_open_adopted(..., store_finished=)`, fed by `_on_review_requested`;
+      - `ui/models.py` `unreviewed_row_text`, which now carries the "no audio recorded" / "did not finish cleanly" tail;
+      - `ui/recovery.py` `_update_controls`, which warns for either list's selection.
+    - PR-MED-190 tests: `test_unreviewed_review.py`'s `_unreviewed` helper now writes a real audio store (sealed by default), plus 3 new tests.
+    - PR-LOW-191: the threat model, CHANGELOG and the `context_rules.py` docstring.
+    - PR-LOW-192: the threat model and the retention schedule.
+  - **Expected counts:** desktop **3922** = 3919 + 3 (the unfinished/finished parametrised pair and the Chrome-route test). Extension **105**, unchanged. Ruff clean, mypy 47 files, extension typecheck and lint clean.
+  - WATCH: every `_unreviewed` session now has an `audio.enc`. If a TestAdoptQueued / TestReconstruction / cross-patient positive case fails on the first run, check the store helper first.
+  - Tasks stay 🟨; the scoped codex confirmation (round 35) follows.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e5`, 2026-09-28T01:07+10:00, run stage-5): LEG 1 verification of codex rounds 33–34 (pass stage-5.p1) — all 4 findings CONFIRMED; nothing changed but the plan's records; `reason=phase-complete`.** The tuples:
+  - PR-LOW-180: test-harness low; the old-client Resume row is vacuous, and the production guard is present.
+  - PR-MED-190: regression med; the adoption hides the unfinished-store warning. The class check found a second site: the Unreviewed row text and selection.
+  - PR-LOW-191: docs low; siblings are `CHANGELOG.md:37` and the `context_rules.py` docstring.
+  - PR-LOW-192: docs low; the retention-schedule sibling.
+
+  Cap verdicts: round 33 accept; round 34 raise +1. Both rounds stay Open (4 pending) for the `/fix` leg. The fix shapes and regression tests are under each round's LEG 1 block.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e4`, 2026-09-28T00:53+10:00, run stage-5): `/review-loop` round 32 over the whole Phase 5 diff found 0 CRIT / 0 HIGH / 0 MED / 5 LOW, all applied; `reason=composer-run`.** The loop converged on findings (no CRIT/HIGH/MED), but the fixes changed code and tests, so the suites have to pass on this tree before `phase-complete`. Tasks 5.1–5.6 stay 🟨 (the codex pass follows). Overall Progress stays at 44%.
+  - The five fixes (details in the Findings Log, round 32):
+    - LOW-023: `open_review` refuses `session_active` before the window moves;
+    - LOW-024: the Chrome route honours the Recovery screen's resume-in-flight block;
+    - LOW-025: `saved_note_line` never raises after an adoption;
+    - LOW-026: "Confirm discard" goes back to "Discard" when its window lapses or its session changes;
+    - LOW-027: the on-close list names an open recovered checkout.
+  - **Expected counts:** desktop **3919** = 3912 (e3, green) + 7: `TestOpenReview` 4 parametrised cases, `TestTwoStepDiscard` 1, `TestReconstruction` 1, `TestCloseList` 1. The `saved_note_line` case extends an existing test. Extension **105**, unchanged. Ruff clean, mypy 47 files.
+  - WATCH: the new tests set screen internals directly — `recovery_screen._busy` in LOW-024's, and `_protected` plus `_transcript_source` in LOW-027's — as the existing tests set `state_value`.
+  - Next: if green, round 33 is not owed (round 32 had no MED+), so the loop ends there → `phase-complete`, then the composer's codex pass.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e3`, 2026-09-28T00:38+10:00, run stage-5): Tasks 5.5 and 5.6 are BUILT (🟨), so all of Phase 5 (5.1–5.6) is built and awaiting suites and review; `reason=composer-run`.** The tree is Phase 4 (uncommitted) plus 5.1–5.6. Overall Progress stays at 44%. The file-by-file records are under each task.
+  - 5.5 in one line: at app start the reminder index is rebuilt (one `encounter.enc` decrypt per Unreviewed session; Constraint 7's own exception) and refs are minted. `state.banner` names the newest indexed recording for the focused note (ids and a count, no name). `open_review` is gated by exact ref plus index membership, then the window comes forward and adopts exactly that session.
+  - 5.6 in one line: 5.1's evaluator tables are lifted and driven through a real bridge (19 rows), plus the remaining matrix rows, `open_review`'s own rows and the two positive restart cases (28 tests in `test_cross_patient.py`).
+  - **Expected counts:** desktop **3912** = 3865 (e2, green) + 47 new:
+    - bridge `TestBanner` 8 + `TestOpenReview` 6;
+    - `TestReconstruction` 5;
+    - `test_cross_patient.py` 28 (19 table rows + 9).
+
+    `test_context_rules.py` only moved its tables, so its count is unchanged. Extension **105**, unchanged (no extension file touched). Ruff and mypy (47 files) are clean; the extension typecheck and lint were run at the end of this leg.
+  - WATCH (first run):
+    1. `test_cross_patient.py` now imports `test_ui_bridge`, `test_ui_screens`, `test_unreviewed_review` and `test_context_rules`. It became a Qt module (its own `qapp` and `harness` fixtures), so its 3.6 cases run in a process that has imported PySide6.
+    2. `test_the_bound_tab_rows` / `test_another_tab_rows` assume the bridge's rule matches the evaluator row for row. A mismatch there is a real bridge finding, not a table bug.
+    3. `TestReconstruction.test_restart_banner_then_open_review_opens_the_right_session` uses `make_registry`'s Northside clinic, whose id and host equal `_linked_context()`'s. It waits for both the bridge's verification and the adoption's re-verification before closing.
+    4. Ordering in the reconstruction tests relies on `os.utime` back-dating the older key blob by an hour.
+  - MORNING SMOKE addition (mock, clinic 1): with an Unreviewed linked recording on disk, restart the app, then open that recording's note in Chrome. `state.banner` is present (until Phase 6 renders it, the Session tab shows nothing new, so the smoke checks that restart, Recovery → Open for review, and the Unreviewed row all still work after the reconstruction).
+  - Next: `/review-loop` from round 32 over the whole Phase 5 diff (5.1–5.6), then the codex pass.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e2`, 2026-09-28T00:10+10:00 onward, run stage-5): the suspend failure is fixed IN PRODUCTION, and Task 5.4 is decided (a) and BUILT (🟨); `reason=composer-run`.** Tasks 5.5 and 5.6 were not started. I stopped at this clean point because 5.4 is large and its tests have not run yet. The tree is Phase 4 (uncommitted) plus 5.1–5.4. Overall Progress stays at 44%.
+  - **The suspend fix — production, not only the test.**
+    - The failure: `super().nativeEvent(b"windows_generic_MSG", <int>)` was refused by PySide6's argument marshalling ("called with wrong argument values").
+    - Why production: the value was a 64-bit address, and a real `MSG*` on 64-bit Windows has that magnitude. The wheel ships stubs only (`message: int`) and no shiboken typesystem source, so this could not be proven by reading the binding. The base call would therefore most likely raise on real messages, into Qt's dispatch.
+    - The fix (`ui/main_window.py` `nativeEvent`): the base is never called. The override returns `(False, 0)`, which is exactly QWidget's default "not handled", so Qt's own handling continues. The whole body sits in `try/except`, so nothing raises into the dispatch.
+    - Tests:
+      - `test_the_override_never_raises_into_qt` (a raising `pause_for` on a real suspend message, and a junk event type and message; both return `(False, 0)`).
+      - `test_a_real_suspend_message_through_qts_dispatch` (Windows only): a child process on the real `windows` platform plugin sends `WM_POWERBROADCAST`/`PBT_APMSUSPEND`, another broadcast and `WM_NULL` through `SendMessageW`. It asserts the spy saw exactly `["suspend"]` and stderr has no traceback, `TypeError`, `ValueError` or "wrong argument".
+    - WATCH:
+      - If that test prints `SEEN []`, Qt is not delivering the broadcast to `nativeEvent`, and the suspend pause needs a native event filter. That would be a real finding, not a test bug.
+      - MORNING SMOKE: sleep the PC during a mock recording. On wake it should be paused with the cue, and the window should respond with no error spam.
+  - **Task 5.4 brief:** it is in the task: (a) `adopt_queued` vs (b) extending the lease to recovered checkouts, both costs, and all 15 custody consumers.
+    - Executor recommendation: (a). Every consumer already handles a live queued session; (b) duplicates the leased save/complete path, where rounds 27–36 found their races.
+    - Decided (a) under the overnight pre-authorisation, revisable by the practitioner.
+  - **Reading recorded for review:** a reopened saved note is shown AS SAVED and read-only; changing it means "Regenerate (replaces the saved note)".
+  - **Expected counts:** desktop **3865** = 3821 at e1 + 2 suspend tests + 42 Task 5.4 tests (`test_unreviewed_review.py`). Extension **105**, unchanged (no extension file touched this leg). Ruff, mypy (47 files) are clean; the extension's typecheck and lint were run at the end of this leg.
+  - WATCH (5.4 tests, first run):
+    1. `TestOpenForReview` / `TestCloseList` are the first tests to drive `MainWindow`'s Recovery path with a REAL `SessionController` and real DPAPI. A failure there more likely points at a seam than at custody.
+    2. A first close is now refused while Unreviewed rows or a live queued session exist. Other tests' bare `window.close()` cleanups may leave such a window open; none asserts on it.
+    3. `test_the_saved_note_line_follows_the_config` expects `PIPELINE_CONFIG.model_copy(update={"autofill_rules": ()})` to have a different `config_digest()`.
+    4. `test_the_expiry_warning_shows_and_cues_once` relies on the key blob's mtime being the earliest trusted time.
+  - MORNING SMOKE (add to the phase checklist; mock consultations, clinic 1): record A, Finish, then Start B (A retires); Discard B. Then:
+    - Recovery → Unreviewed → Open for review on A: the transcript opens with Generate.
+    - Generate, Save, then Start C and Discard it. Reopen A: the saved note is on the Note tab with Copy, and the Transcript screen offers Regenerate. Complete.
+    - Close the app with an unreviewed row: the first close lists expiries and the second quits.
+  - Next: the composer's suites → Task 5.5 (the banner, `open_review`, startup reconstruction decrypting `encounter.enc` once per session with its spy test) and 5.6 → `/review-loop` from round 32.
+- **EXECUTOR HANDOFF (leg `stage-5-exec-e1`, 2026-09-27T23:54+10:00, run stage-5): Phase 5 Tasks 5.1, 5.2 and 5.3 are BUILT (🟨); `reason=composer-run`.** The tree is Phase 4 (uncommitted, smoke pending) plus these tasks. Overall Progress is unchanged at 44%, since nothing is 🟩 until the suites and review pass. The file-by-file records are under each task.
+  - Landed:
+    - `context_rules.py` (new, Qt-free): D5's `pause_action` table, the tab-binding `ContextEvaluator`, and the reminder index (`ReminderIndex`, `reminder_entry`).
+    - `ui/bridge.py`:
+      - `pause_for` pauses through the Session screen's slot and sets the block for a linked session.
+      - `resume_refusal` is the ONE resume check, installed as the Session screen's guard.
+      - `state.block`, `resume_previous` (pending, 30 s, resumes only on the focused report of the session's own note), and `notice: review_open`.
+    - `ui/session_screen.py`: the resume guard, `session_resumed`, `session_retired`, the two-step Discard button, and Start at QUEUED disabled while the review lease is held.
+    - `ui/main_window.py`:
+      - `nativeEvent` suspend → `pause_for`, and the desktop cue (status line, message, taskbar flash).
+      - The reminder index is filled on retirement and emptied by Complete, Discard, the Recovery list's Discard and the post-sweep prune.
+      - The Note tab is cleared on Start (see 5.3's record: a stale post-Save "delete note and complete" could have completed the NEXT recording).
+    - `ui/models.py`: the QUEUED Start, the cues and copy, and the Chrome view's phase and block lines.
+    - `ui/recovery.py`: `session_removed` and `sessions_root`.
+    - `app.py`: the prune after each sweep.
+    - Docs: the threat model's "THE PAUSE RULE AND THE BLOCK" paragraph and its residue, the bridge sentence and pipe residue (1)(d), data-flow flow 19, CHANGELOG.
+  - Checks (mine): ruff clean; mypy **47 files** (46 + `context_rules.py`). No extension file changed, so I did not run `typecheck`/`lint`. I did not run pytest or vitest (no grant).
+  - **Expected suites: desktop 3821 passed** (3555 + 266):
+    - `test_context_rules.py`: 212 (the D5 table alone is 178 parametrised cases);
+    - `test_ui_bridge.py`: +31 net (the 2-case "Phase 5 actions are not available" test becomes 1 `open_review` case; plus `TestPauseRule` 21, `TestResolution` 8, `TestBackToBack` 3);
+    - `test_ui_pause_and_unreviewed.py`: 17;
+    - `test_ui_models.py`: +6 (the QUEUED pin is updated in place).
+    - **Extension 105** (unchanged).
+  - Watch items for the composer's run:
+    1. `TestSuspendAndCue::test_suspend_pauses_a_recording_and_cues` calls the real `QMainWindow.nativeEvent` offscreen with a ctypes `MSG` address. If that base call misbehaves offscreen, the fix belongs in the test (call `_is_suspend_event` plus `pause_for`), not in the contract.
+    2. Existing bridge tests that reconnect (`connect(2)`) or change the bound note during a recording now also pause it (D5). I read each one and none asserts RECORDING afterwards, but a failure there is the new rule acting, not a regression.
+    3. `test_ui_models.py::TestControlsForState` pins QUEUED as `ControlSet(start=True)` (D6). Any other test asserting that Start is disabled at QUEUED is the old behaviour; I found none.
+    4. The bridge harness now builds its Session screen with a fake transcriber (a bridge Finish would otherwise have loaded the real ML stack), and its teardown waits up to 15 s for a running check or transcription.
+  - Next:
+    1. The composer runs both suites.
+    2. Then, in order: Task 5.4's decision brief (pre-authorised: the executor's recommended option) and its build; 5.5 (the banner and `open_review`, with startup reconstruction and refs minted for indexed sessions); and 5.6 (the context rows of `test_cross_patient.py`, reusing `test_context_rules.py`'s table).
+    3. Then `/review-loop` from round 32 over the whole Phase 5 diff.
 - **EXECUTOR HANDOFF (leg `stage-4-exec-d9`, 2026-09-27T23:30+10:00, run stage-4) — Phase 4 BUILD-COMPLETE and CONVERGED; `reason=phase-complete`.** Tasks 4.1–4.5 are 🟩. Suites: desktop 3555 passed, extension 105 passed. Rounds: in-session `/review-loop` 25–26; codex pass stage-4.p1 27–31, converged at peer_round 5 of 6. Overall Progress `44%` (18 of 41). The commit is HELD until the live-user smoke below passes (`OWNERSHIP: gate-disposition key=live-user-smoke-deferral`); later phases build on this uncommitted tree.
   - **Phase 4 LIVE-USER SMOKE — for the practitioner, in the MORNING.** Run each step and report PASS or FAIL per step number. Never paste a path, a patient, a note, a clinic web address or an email into chat.
     1. **One-time setup.** In a normal PowerShell window, from the repo folder, run `cd extension`, then `npm run build`. Then open `chrome://extensions` and press the reload arrow on "Cliniko Scribe Companion". You do NOT need to re-run `register-native-host.py`. Expected: the build finishes with no error, and the extension card shows no error.
@@ -901,7 +1494,8 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 - **EXECUTOR HANDOFF (leg `stage-1-exec-a3`, 2026-09-27T16:10+10:00, run stage-1) — codex round 8 LEG 1 VERIFIED, no code changed.** The composer's pytest on the a2 tree was GREEN (2960 passed). Round 8 tuples: PR-MED-010 med/production Fix-now; PR-MED-011 downgraded low/production Fix-now; PR-MED-012 med/production Fix-now; PR-LOW-013 low/test-harness Fix-now; Cap verdict accept. **LEG 2 (/fix) would:** read the body with `response.read1` (one receive per call, `in_time()` before each; the residue named in threat-model TRANSPORT and the constant's comment); consume a body only on 200 (a stalled 401/403/404/429/3xx keeps its own named error and the 429 its reset); refuse any probe argument but `-h/--help` with fixed text before argparse; pin `sys.set_int_max_str_digits(4300)` for the digit-limit case — each with a test through the real transport seam or capsys. Round 8 stays Open (4 pending); the /fix seat writes its Review History line.
 - **EXECUTOR HANDOFF (leg `stage-1-exec-a2`, 2026-09-27T15:59+10:00, run stage-1) — `/review-loop` CONVERGED at round 7 (round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 4 LOW, all applied; `reason=composer-run` for the re-run.** The a1 suite (2956 passed, 2 errors) failed only the setup/teardown of the 100 000-deep-array case — its generated parametrize id overflowed Windows' 32 767-char `PYTEST_CURRENT_TEST`; all eight bodies now carry explicit `pytest.param(..., id=...)`. Round 7 fixes (details in the Findings Log): LOW-001 a 30 s request deadline (`DEADLINE_SECONDS`, injectable `clock`) checked after the send and before every body read, beside the 15 s per-step timeout — code, threat model, flow 18, CHANGELOG; LOW-002 `RawResponse.body` out of the repr; LOW-003 two doc sentences made exact (allocation bound incl. `http.client`'s header limits; the key row's reader); LOW-004 the probe's key-printing residue named. Ruff clean, mypy 40 files. **Expected suite: 2960 passed** (2957 + 3 new: two deadline tests, one repr test), 0 errors. On green: mark 1.1/1.2/1.3 🟩, progress 3/40, end `reason=phase-complete` (no further in-session round needed — round 7 had no CRIT/HIGH/MED). Task 1.4's answer ("flip") is recorded on its line; not built here.
 - **EXECUTOR HANDOFF (leg `stage-1-exec-a1`, 2026-09-27T15:48+10:00, run stage-1) — Tasks 1.1, 1.2, 1.3 BUILT, all 🟨 awaiting the composer's pytest; `reason=composer-run`.** Ruff clean; mypy 40 files (39 + `cliniko_client.py`). Not run by me: pytest (no grant). **Expected suite: 2817 + 140 new = 2957 passed** (`test_cliniko_client.py` 126, `test_probe_cliniko.py` 14), skips unchanged; the existing `test_integration_no_sockets.py` legs are untouched in code (docstring only) and must stay at zero connections — nothing imports the client. What landed: `desktop/src/scribe_desktop/cliniko_client.py` (new; the one `noqa: TID251` at `:57`), `benchmark.py` (`FORBIDDEN_TLS_OVERRIDES`, `apply_offline_env`/`assert_offline_env`), `scripts/probe-cliniko.py` (new), the two test files, the docs listed in 1.2's Done note (its two greps and every hit's disposition are recorded there), `CHANGELOG.md`, `scripts/README.md`. Deviations recorded on the tasks: two named errors added beyond D9's list (`RedirectRefused`, `UnexpectedStatus`); the probe prints the key user's account role word; `language_model.py:21` left unchanged (accurate as scoped). **Watch items for the pytest run:** (a) `TestConfinement` counts `noqa: TID251` across `desktop/src` — exactly 1 expected; (b) `TestTlsContext` builds a real `SSLContext` and calls `load_default_certs` (reads the Windows store, no network); (c) `TestStatusMapping` feeds a 100 000-deep JSON array to prove `RecursionError` → `Malformed`; (d) if `tests/test_sapi_fixture.py` fails with `AttributeError` in `gencache.py`, that is the stale `gen_py` cache (environment), not this diff. **Next:** composer runs `cd desktop && ../.venv/Scripts/pytest.exe -q` and resumes me; then `/review-loop` from round 7 (cap 3). P.1 and the Task 1.4 must-pause stay with the practitioner/composer (untouched: `COPY_TO_CLINIKO_ENABLED`, `ui/models.py`, `shipping-gate.md`).
-- **COMPOSER RUN-STATE (2026-09-27 23:33, `/execute-loop` run iso `cliniko-safeguards-20260927-152609-a3c9bc86`, isolation=none, branch main):** PHASES 1–3 CLOSED and committed (32e7289, dc6530b, 7a6cbd7). PHASE 4 BUILT + CONVERGED (stage-4, executor session b2a28af8): Tasks 4.1–4.5 🟩 (18 of 41, 44%); `/review-loop` rounds 25–26; codex pass stage-4.p1 rounds 27–31 converged (all findings auto-disposed under gates=executor, fixed, confirmed); composer suites 3555 + 105 green. **Phase 4 is UNCOMMITTED**: its live smoke (7 steps, in the stage-4 d9 handoff bullet) was DEFERRED to the morning by the practitioner's 21:39 overnight instruction (`OWNERSHIP: gate-disposition key=live-user-smoke-deferral`); the commit waits on its smoke-pass. Overnight pre-authorisations (same record set): Task 4.3 → executor's recommendation (applied: (b)); Task 5.4 → executor's recommendation; Task 6.0 → one pinned dev-only DOM test library. `/document` for Phase 4 run by the composer (AGENTS.md). **Immediate next action:** spawn the Phase 5 executor (runkey stage-5, fresh session) on the uncommitted tree; never `git checkout`/`reset`/`stash`. Last plan sync: 2026-09-27 23:33.
+- **Last plan sync:** 2026-09-28T04:19+10:00 (leg `stage-8-exec-h2`): Tasks 8.1 and 8.2 🟨 BUILT (8.2's selection route added under the composer's disposition), `/review-loop` round 45 converged; awaiting the composer's suites (desktop 4025, extension 295) and the codex pass; P.2 🟥; Overall Progress unchanged.
+- **COMPOSER RUN-STATE (2026-09-28 03:58, `/execute-loop` run iso `cliniko-safeguards-20260927-152609-a3c9bc86`, isolation=none, branch main):** PHASES 1–3 CLOSED and committed (32e7289, dc6530b, 7a6cbd7). PHASE 4 BUILT + CONVERGED (stage-4, session b2a28af8; rounds 25–31). PHASE 5 BUILT + CONVERGED (stage-5, session 91142c7d; rounds 32–35). PHASE 6 BUILT + CONVERGED (stage-6, session 7e75d900, legs f1–f9): Tasks 6.0–6.5 🟨 until the live smoke passes; in-session `/review-loop` round 36 (5 LOW, fixed); codex pass stage-6.p1 over a Phase-6-only tree diff (Phase 5 tree 339b8ddf → final ceb3db22+) rounds 37–40 (1 MED + 5 LOW → 1 LOW → 1 LOW, every fix applied; accept-closed at peer round 4 of 6 on the executor's cap verdict after a recorded cap raise); composer suites 3922 desktop + 292 extension + `npm run build` green. PHASE 7 BUILT + CONVERGED (stage-7, session 01ef9b00, legs g1–g5): Tasks 7.1–7.3 🟨 until the live smoke passes; one composer-caught suite failure in g1 (a second word normaliser broke the single-normaliser pin; fixed in production by reusing `note.normalise_token`); in-session `/review-loop` round 41 (3 LOW, fixed); codex pass stage-7.p1 over a Phase-7-only tree diff (Phase 6 tree 70f4b247 → bea02e4a → c71f7c09) rounds 42–44 (2 LOW → 0 → clean confirmation; converged at peer round 3 of 5); composer suites 4017 desktop + 295 extension + build green. **Phases 4, 5, 6 AND 7 are UNCOMMITTED**: their live smokes (Phase 4: 7 steps in the stage-4 d9 bullet; Phase 5: 8 steps in the stage-5 e7 bullet; Phase 6: 10 steps in the stage-6 f9 bullet; Phase 7: 8 steps in the stage-7 g5 bullet — run in that order) were DEFERRED to the morning by the practitioner's 21:39 overnight instruction; each commit waits on its own smoke-pass. Overnight pre-authorisations applied: Task 4.3 → (b); Task 5.4 → (a); Task 6.0 → `jsdom` 30.1.1 (exact, dev-only, `--ignore-scripts`). `/document` for Phases 4–7 run by the composer (AGENTS.md). **Immediate next action:** Phase 8 (runkey stage-8, fresh session: 8.1 security docs, 8.2 clipboard exclusion; P.2 is practitioner-owned) on the uncommitted tree; never `git checkout`/`reset`/`stash`. Last plan sync: 2026-09-28 03:58.
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - Earlier step: `/review-plan` hardening pass (2026-09-27; four lens subagents — coverage, practicality, risk, simplicity; ~45 findings folded in; deferral gate recorded).
 - Last completed step: `/peer-loop` plan review (codex `gpt-6-astra` medium), converged at round 6. Round 1: 5 findings (2 HIGH, 3 MED), all accepted and amended. Round 2 (attempt 1 inconclusive on the codex usage limit; resumed session `01a0e113`): 3 MED, all accepted and amended. Round 3: 2 MED (connection generation for verification results; per-connection snapshot), accepted and amended. Round 4: 1 MED (clinic key changes invalidate pending verification — `clinic_rev`), accepted and amended. Round 5: 1 MED (removing a clinic — Remove refused while the live session is linked; page-script teardown), accepted and amended. The pass hit its cap of 5 without a clean round; the practitioner approved one more round, and round 6 was clean (0 findings) — the loop CONVERGED.
@@ -940,6 +1534,36 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 - 2026-09-27 round 29 (codex gpt-6-astra medium, pass stage-4.p1 slice C): 0 CRIT / 0 HIGH / 1 MED / 1 LOW (verified: 1 med, 1 low docs-only); fixed 150 (D9's clinic_rev guards the live re-check) and 151 (two name lifetimes, docs); skew=none; action=none
 - 2026-09-27 round 30 (codex gpt-6-astra medium, pass stage-4.p1 confirmation of rounds 27-29): 0 CRIT / 0 HIGH / 1 MED / 1 LOW (verified: 2 low); 131/142/150/151 and the 130 rejection confirmed; 160/161 fixed (the stopper never closes, even on a timeout; a retired or stopped link refuses writes before any I/O); skew=fix-induced; action=none
 - 2026-09-27 round 31 (codex gpt-6-astra medium, pass stage-4.p1 confirmation of round 30): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-160 and PR-MED-161 confirmed); skew=none; action=none — pass stage-4.p1 converged at peer_round 5 of 5
+- 2026-09-28 round 32 (Phase 5, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 5 LOW; all applied (LOW-023 `open_review` refuses an active session before the window moves; LOW-024..027); skew=none; action=none
+- 2026-09-28 round 33 (codex gpt-6-astra medium, pass stage-5.p1 slice A): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-180 test-harness: the old-client Resume row now discriminates); skew=none; action=none
+- 2026-09-28 round 34 (codex gpt-6-astra medium, pass stage-5.p1 slice B): 0 CRIT / 0 HIGH / 1 MED / 2 LOW; all fixed (PR-MED-190 the unfinished-store warning kept on reopen and on the Unreviewed row and selection; PR-LOW-191 and PR-LOW-192 docs-only); skew=none; action=none
+- 2026-09-28 round 35 (codex gpt-6-astra medium, pass stage-5.p1 confirmation of rounds 33-34): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-180, PR-MED-190, PR-LOW-191, PR-LOW-192 confirmed); skew=none; action=none — pass stage-5.p1 converged at peer_round 3 of 5
+- 2026-09-28 round 36 (Phase 6, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 5 LOW; all applied (LOW-028 "!" outranks ERR; LOW-029 banner only with a Cliniko tab in front; LOW-030 Resume previous navigates only an allow-listed tab; LOW-031 simplification; LOW-032 `sinks.test.ts` pins text-only / no-storage / one console call); skew=none; action=none
+- 2026-09-28 round 37 (codex gpt-6-astra medium, pass stage-6.p1 slice A): 0 CRIT / 0 HIGH / 1 MED / 2 LOW; fixed (PR-MED-200 the event counter guarding every async tab read in `hub.ts`; PR-LOW-201 "!" until the new link's first snapshot; PR-LOW-202 literal host pattern); skew=none; action=none
+- 2026-09-28 round 38 (codex gpt-6-astra medium, pass stage-6.p1 slice B): 0 CRIT / 0 HIGH / 0 MED / 3 LOW; fixed (PR-LOW-210 token-level sink scan with detection fixtures; PR-LOW-211 own-property lookups in four dictionaries; PR-LOW-212 the page-cue residue restated as a class, restyle not applied); skew=none; action=none
+- 2026-09-28 round 39 (codex gpt-6-astra medium, pass stage-6.p1 confirmation): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-220 the sink scan's header overstated alias coverage — bare-token bans for `write`/`writeln`/`Function`, a `constructor` access ban, the header narrowed with every gap named; five of six round 37–38 fixes confirmed); skew=fix-induced; action=none
+- 2026-09-28 round 40 (codex gpt-6-astra medium, pass stage-6.p1 confirmation): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-230 the sink scan's header overstated `constructor` coverage — narrowed to bare-name vs prefix-dependent rules with the residue named and lint's `no-implied-eval` cited; PR-LOW-220 confirmed); skew=fix-induced; action=none — pass accept-closed at peer round 4 of 6 on the executor's cap verdict
+- 2026-09-28 round 41 (Phase 7, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 3 LOW; all applied (LOW-033 a carried word joins the next window only within 3 s; LOW-034 the spoken-pause bridge test discriminates again; LOW-035 the `WM_HOTKEY` child also POSTS through Qt's dispatcher); skew=none; action=none — converged at round 1 (no CRIT/HIGH/MED)
+- 2026-09-28 round 42 (codex gpt-6-astra medium, pass stage-7.p1 slice A): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; fixed (PR-LOW-240 start-up `finally` gives the chord back; PR-LOW-241 a press queued before detach is dropped); skew=none; action=none
+- 2026-09-28 round 43 (codex gpt-6-astra medium, pass stage-7.p1 slice B): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean; skew=none; action=none
+- 2026-09-28 round 44 (codex gpt-6-astra medium, pass stage-7.p1 confirmation): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-240 and PR-LOW-241 CONFIRMED); skew=none; action=none — pass stage-7.p1 converged at peer round 3 of 5
+- 2026-09-28 round 45 (Phase 8, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; all applied (LOW-036 the "no call at startup or idle" contract names the Chrome-report trigger in AGENTS.md, the data-flow non-flow and the incident trigger; LOW-037 flow 20 and the Chrome-side retention row state the panel's Ready key and the worker's last-sent slices); skew=none; action=none — converged at round 1 (no CRIT/HIGH/MED)
+- 2026-09-28 round 46 (codex gpt-6-astra medium, pass stage-8.p1 slice A): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; fixed (PR-LOW-270 test-harness: offscreen assert + native-copy guards in `_fake_clipboard`, +2 tests; PR-LOW-271 intended-use clipboard limits); skew=none; action=none
+- 2026-09-28 round 47 (codex gpt-6-astra medium, pass stage-8.p1 slice B): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; fixed (PR-LOW-280 Chrome-linked start, the desktop and offline fallbacks and D5's triggers at four sites; PR-LOW-281 the incident recovery `netstat` check conditioned on Chrome closed and no practitioner action); skew=none; action=none
+- 2026-09-28 round 48 (codex gpt-6-astra medium, pass stage-8.p1 confirmation): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-270, 271, 280, 281 CONFIRMED); skew=none; action=none — pass stage-8.p1 converged at peer round 3 of 5
+- 2026-09-28 round 49 (smoke fix — sleep + screen-lock pause, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; all applied (LOW-038 a suspend or lock no longer renames a block Chrome put up for a patient change); skew=none; action=none
+- 2026-09-28 round 50 (smoke fix, /review-loop round 2 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (LOW-038 confirmed fixed); skew=none; action=none — converged at round 2
+- 2026-09-28 round 51 (codex gpt-6-astra medium, pass stage-8.p2 smoke fix): 0 CRIT / 0 HIGH / 1 MED / 0 LOW; fixed (PR-MED-300 a Resume click in flight at the lock is refused: a lock flag set during the lock's dispatch, checked first in the one resume check and in `resume_previous`, cleared by the unlock, a missed unlock re-checked with Windows after 5 s); skew=fix-induced; action=none
+- 2026-09-28 round 52 (codex gpt-6-astra medium, pass stage-8.p2 confirmation): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-MED-300 confirmed closed); skew=none; action=none
+- 2026-09-28 round 53 (H1, Phases 1–8 as one surface, /review-loop round 1 of cap 3): 0 CRIT / 0 HIGH / 2 MED / 11 LOW; all applied (MED-039 a Chrome Start refused while locked; MED-041 intended-use's startup claim qualified; LOW-040 a failed Start and a released recovered view reach the reminder index; LOW-042 a refusal goes when its situation does; LOW-043 page block wording; LOW-044 lone surrogates cleaned; LOW-045..051 docs and a comment); lens (f) recorded for H2; skew=none; action=none
+- 2026-09-28 round 54 (H1, /review-loop round 2 of cap 3, post-fix regression + same-family sweep): 0 CRIT / 0 HIGH / 1 MED / 5 LOW; all applied (MED-052 the desktop Start refused while locked; LOW-053 a session command's refusal survives its note's check landing; LOW-054..057 docs: enrolment-under-lock and forged-unlock residue, the reconnect trigger, the lock claim qualified); skew=mixed; action=none
+- 2026-09-28 round 55 (H1, /review-loop round 3 of cap 3, post-fix regression): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; both applied (LOW-058 PLAN.md's reconnect trigger; LOW-059 the missed-unlock sentence covers Start, rewrapped); skew=fix-induced; action=none — H1 converged at round 3 of 3 (docs-only LOWs, no MED+)
+- 2026-09-28 round 56 (H2, /simplify over Phases 1–8 seeded by round 53 lens f; smoke-time routing): 0 CRIT / 0 HIGH / 2 MED / 14 LOW; 3 LOW applied behaviour-neutral (SIMP-001 dead `ContextReporter` members; SIMP-002 the panel's Checking text from `CHECKING`; SIMP-003 stale comments), 13 recorded to task H2a for a scoped /review-plan after the smoke (SIMP-006 the product-name split is the practitioner's call); skew=none; action=none
+- 2026-09-28 round 57 (H3, /security-review over Phases 1–8 via five read-only lens subagents, seeded by H1's carry-forward; smoke-time routing): 0 CRIT / 0 HIGH / 0 MED / 21 LOW + 1 record-only; 8 applied (SEC-001 host type guard; SEC-002 pipe server survives a connect-and-close; SEC-004 `dev` script removed; SEC-005 docs; SEC-006 bfcache re-hello; SEC-010 credential tripwire markers; SEC-011 a deleted booking no longer refuses the note; SEC-012 tests off the real logs), 13 recorded to task H3a (the call rate, enrolment on lock, the unlock query, suspend during Start, hidden-block Discard, pipe owner/label/writer/serve-end, mutex, URL forms, live-view tag), SEC-018 write-back freshness confirmed record-only for the write plan; skew=none; action=none
+- 2026-09-28 round 58 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice A): 0 CRIT / 0 HIGH / 0 MED / 3 LOW; fixed (PR-LOW-310 copy no longer "ships disabled"; PR-LOW-311 typed editing cross-referenced; PR-LOW-312 learned rules named as app-written config — docs only); skew=pre-existing; action=none
+- 2026-09-28 round 59 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice B): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-320 the encounter-read docstrings name their three callers, the executor's `adopt_queued` sibling included; SEC-022 assessed LOW, stays in H3a); skew=pre-existing; action=none
+- 2026-09-28 round 60 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice C): 0 CRIT / 0 HIGH / 1 MED / 2 LOW; fixed (PR-MED-330 the side panel's timer updates in place, focus and a straddling click survive, same-session focus restore, click-time refs, plus the Ready tick sibling; PR-LOW-331 "On screen" names a patient only for the focused note; PR-LOW-332 the three one-click desktop Discards named — doc only); skew=pre-existing; action=none — scoped confirmation round 61 follows
+- 2026-09-28 round 61 (codex gpt-6-astra medium, pass stage-9.p1 H4 confirmation, peer round 4 of 5): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-MED-330, PR-LOW-331 and the five docs fixes confirmed closed; PR-LOW-340 the different-session focus test made discriminating — one sequence, same-session keeps focus then a new session clears it; test only); skew=fix-induced; action=none — H4 pass stage-9.p1 converged
 
 ## Review Findings Log
 ### Round 1 - 2026-09-27 - cliniko-workflow-safeguards plan, independent cross-family codex plan peer-review (round 1)
@@ -1832,6 +2456,1633 @@ Cap verdict: accept — docs-only — pass stage-2.p1 is at peer_round 2 of cap 
 - Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-09-27
 
+### Round 32 - 2026-09-28 - Phase 5 (Tasks 5.1–5.6: the pause rule, the resolution block, back-to-back, Open for review, the banner and `open_review`, the cross-patient matrix), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending) — 5 LOW, all Fix-now, all applied in this leg; pytest owed to the composer
+- Source: Claude Code (executor leg stage-5-exec-e4, claude-opus-5-5, sequential lenses in-session — no subagents)
+- Scope / baseline: the whole Phase 5 working-tree diff on top of the uncommitted Phase 4 tree over `7a6cbd7`:
+  - read in full: `context_rules.py`, `ui/bridge.py`, `ui/recovery.py`, `ui/main_window.py`;
+  - read as changed hunks or functions: `session.py` (`adopt_queued`, the D2 registry, `_retire_locked`, `start`, `custody_protected_ids`), `session_store.session_expires_at`, `ui/models.py` (the Phase 5 constants and the Unreviewed helpers), `ui/session_screen.py`, `ui/transcript.py`, `ui/note.py` (`show_saved_note`, `_copy_ready`, `_copy_note`, `clear`), `app.py`;
+  - tests: `test_cross_patient.py`'s Phase 5 section, and the `test_ui_bridge.py`, `test_unreviewed_review.py` and `test_ui_pause_and_unreviewed.py` classes the lenses name;
+  - docs: the threat model's PAUSE RULE and OPEN FOR REVIEW paragraphs, flows 6 and 19, retention's 24-hour rule, CHANGELOG parts 2 and 3.
+
+  Composer suites on the pre-round (e3) tree: desktop 3912 passed, extension 105 passed.
+- Lenses and results:
+  - D5 — CLEAN:
+    - `pause_action` is D5's table (RECORDING pauses and blocks for a context reason; PAUSED only blocks; others nothing; a Chrome reason is nothing for an unlinked session).
+    - `ContextEvaluator` pauses on the bound tab's note, patient, leave or close, and on a focused other note or login; it re-binds only on exact ids.
+    - `nativeEvent` returns `(False, 0)` inside a blanket catch.
+    - `resume_refusal` needs a connection and the focused tab's current bound target equal to the session's; every Resume (button, Chrome, the Phase 7 hotkey slot) runs it first, and `_on_resumed` binds only the verified focused tab.
+  - Resolution block — CLEAN:
+    - the Session screen's Discard takes two clicks (see LOW-026), and Chrome's `discard` carries `confirmed`;
+    - `resume_previous` needs the live ref and a PAUSED linked session, lapses at 30 s or on a new connection, and resumes only through `on_resume`'s guard.
+  - Back-to-back — CLEAN: Start at QUEUED; the lease refuses it (the desktop tooltip, and `review_open` from Chrome); `session_retired` feeds `reminder_entry` (QUEUED and linked only); `_on_session_started` clears the stale post-Save Note tab.
+  - 5.4 custody — CLEAN on the controller:
+    - `adopt_queued` refuses under the lock before the unwrap (lease, reservation, active state, foreign root, the live session), destroys the key on every later refusal, runs the reader before installing, and retires like `start`.
+    - The adopted session is protected (`custody_protected_ids`) and completes or discards through the live path; `recovered_writeback_target` is None for it; a saved note is never replaced but by a Regenerate's Save.
+    - Found LOW-024 (the Chrome route skips one Recovery-screen block) and LOW-025 (the saved-note line can raise after adoption).
+  - 5.5 — CLEAN: `reconstruct_reminder_entries` decrypts each record once and destroys the key in `finally`; the banner is ids and a count; `open_review` refuses a stale, unknown or live ref before the opener; the window comes forward and flashes. Found LOW-023 (an active session is refused only inside the opener).
+  - 5.6 matrix honesty — CLEAN: every refusal row asserts the refusal code AND an unchanged controller (`calls` equality or the tuple form the positive tests also use), and the pausing rows fail if the rule never ran, so no row passes vacuously.
+  - Close with unreviewed — found LOW-027 (an open recovered checkout is missing from the list).
+  - Docs as control claims — the threat model's `open_review` pre-refusal list and its on-close residue were narrower than the code once LOW-023 and LOW-027 were fixed; both were reworded with the fixes. No other claim goes beyond the code.
+- Findings:
+  - **[LOW]** LOW-023: `desktop/src/scribe_desktop/ui/bridge.py` `_open_review` — `open_review` while a session was recording, paused or processing ran the opener. The window came forward, `adopt_queued` refused ("single-active-session"), and `_on_review_requested` switched the desktop to the Recovery tab mid-recording, answering `cannot_open`. Custody held; the problem was that the named refusal came after the window moved — materiality=ux surface=production — Triage: Fix-now; Decision: Applied:
+    - `_open_review` refuses `session_active` for a state in `ACTIVE_STATES`, after the lease check and before the opener;
+    - the module docstring, the threat model's THE BANNER AND `open_review` sentence and the CHANGELOG say so;
+    - test: `test_ui_bridge.py::TestOpenReview::test_an_active_session_is_refused_before_the_opener` (RECORDING, PAUSED, PROCESSING refused with the opener never called; QUEUED opens, since adoption retires it).
+  - **[LOW]** LOW-024: `ui/main_window.py` `_on_review_requested` — the Chrome route (`open_unreviewed`) skipped the Recovery screen's resume-in-flight block, which disables that screen's own button (`_busy`). An adoption during a resume-processing run succeeded, and when the resume landed `_on_recovered` replaced the adopted session's view, leaving it live QUEUED with no transcript view. Custody held: it is listed on close and retired into the index by the next Start. `_protected`'s other case (an open checkout) is already refused through `_transcript_source`, and the lease through `adopt_queued` — materiality=ux surface=production — Triage: Fix-now; Decision: Applied:
+    - `_on_review_requested` refuses while `recovery_screen.is_busy`, with `models.REVIEW_OPEN_RECOVERY_BUSY_LINE` shown on the Recovery tab;
+    - test: `test_unreviewed_review.py::TestReconstruction::test_refused_while_a_recovery_is_transcribing`.
+  - **[LOW]** LOW-025: `ui/models.py` `saved_note_line` — it caught only `NoteConfigError`, but `load_note_config` raises `RuntimeError` for a broken install (unreadable shipped defaults). It runs in `_open_adopted` AFTER the adoption, so that error left the adopted session open with no Note tab and raised into the slot; on the Chrome route it also skipped that message's publish — materiality=robustness surface=production — Triage: Fix-now; Decision: Applied:
+    - any exception gives `SAVED_NOTE_CONFIG_UNREADABLE_LINE` (true: the configuration could not be loaded);
+    - test: `TestReviewCopy::test_the_saved_note_line_follows_the_config` gains the `RuntimeError` case.
+  - **[LOW]** LOW-026: `ui/session_screen.py` — the "Confirm discard" label outlived its 10 s window and its session. A click under it after the lapse only armed again, so the label promised a discard it did not do — materiality=ux surface=production — Triage: Fix-now; Decision: Applied:
+    - `_discard_confirmable` is the one rule for both the click and the poll;
+    - `_watch_state` (the 500 ms poll) disarms a lapsed or other-session arming, so a click under "Confirm discard" always discards;
+    - CHANGELOG part 3 says so;
+    - test: `test_ui_pause_and_unreviewed.py::TestTwoStepDiscard::test_the_confirm_label_goes_when_its_window_lapses_or_its_session_changes`.
+  - **[LOW]** LOW-027: `ui/main_window.py` `_unreviewed_expiries` — D6's on-close list read only the listed Unreviewed rows plus the live queued session. An open recovered checkout (a resumed session with its transcript on screen, not yet Completed) is excluded from the listing as protected, so it was never named and the window closed at once — materiality=ux surface=production — Triage: Fix-now; Decision: Applied:
+    - the list adds `_transcript_source` when it names a recovered session, with the sweep's own `session_expires_at`;
+    - the threat model's residue (2) names the three sources;
+    - test: `test_unreviewed_review.py::TestCloseList::test_an_open_recovered_checkout_is_listed_too`.
+- Checked and not raised:
+  - after a Regenerate of a reopened saved note, "Cancel review" leaves the saved note on disk but not shown — the same as today's post-Save Regenerate → Cancel, so not Phase 5's;
+  - the adopted session's `recorded_seconds` reads 0 (its store was closed at the Finish that produced it; cosmetic, and nothing in Phase 5 displays it);
+  - `adopt_queued` does not consult the enrolment lease — it opens no microphone.
+- Verification counts: 8 lenses run, 5 candidates, 0 dropped, 0 downgraded
+- Missed-issue pass (auditable): re-read after the fixes:
+  - `bridge._open_review`'s refusal order: session_changed → busy → review_in_progress → session_active → the opener. `test_cross_patient.py::test_open_review_names_only_a_retired_session_still_indexed` runs RECORDING and still gets `session_changed` first.
+  - `SessionScreen._watch_state` / `on_discard_clicked` / `_discard_confirmable`: the disarm runs before the state early-return, and `_discard_armed` is set in `__init__` before the timer starts.
+  - `MainWindow._unreviewed_expiries` against `_on_transcript_closed`, which clears `_transcript_source`, so a closed checkout is never listed.
+  - `_on_review_requested`'s busy order.
+
+  Result: none.
+- ruff clean; mypy 47 files; no extension change; pytest owed to the composer (expected desktop 3912 + 7 = 3919: 4 parametrised bridge cases and 3 new tests; extension stays 105)
+- Last reviewed: 2026-09-28
+
+### Round 33 - 2026-09-28 - Phase 5 pause rule, resolution, back-to-back and Unreviewed (pause rule, bridge and custody core), independent cross-family codex peer review (pass stage-5.p1 slice A)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified Phase-5-only tree diff and slice A files; static review only. Startup reconstruction internals, checkout release and remaining UI custody consumers could not be fully verified within the permitted files.
+- **PR-LOW-180** (LOW, test-harness, `desktop/tests/test_cross_patient.py:595`): The old-client Resume assertion passes even without the connection-identity guard, so this matrix row does not establish rejection for its named reason. — Evidence: `h.command("resume", conn_id=1, session_ref=ref)` is followed only by `assert h.controller.state is SessionState.PAUSED`; the matching report arrives later at line 601. Without the connection check, `desktop/src/scribe_desktop/ui/bridge.py:432` still returns `"report_mismatch"`, preserving PAUSED and allowing the entire test to pass. Recommendation: Fix-now — Send the old-client Resume after the current connection has reported the matching note; assert no resume call or state change, then verify the same command from the current client succeeds. /fix decision: Fixed — `desktop/tests/test_cross_patient.py::test_a_second_pipe_client_pauses_and_must_report_the_note_first` reordered as the LEG 1 shape:
+  1. connect(2);
+  2. the conn-2 `resume` gets `report_mismatch`;
+  3. the conn-2 report of the recording's note;
+  4. THEN the conn-1 `resume`, asserted PAUSED, `h.controller.calls` unchanged, and `last_refusal` still the step-2 one (dropped, never processed);
+  5. the conn-2 `resume` gives RECORDING.
+
+  Discrimination: with `ChromeBridge._on_message`'s `conn_id != self._conn` drop removed, step 4 reaches `_on_command` with a matching ref, PAUSED and a bound target equal to the session's, so `resume_refusal` passes and it resumes; the test then fails on the state and the calls. Test-only; production unchanged. Applied by Claude Code, 2026-09-28.
+- Verification counts: 4 claims checked, 1 confirmed, 3 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-5-exec-e5)
+- PR-LOW-180 (peer labels: LOW, test-harness, Fix-now) — materiality=behavioral severity=verified: low surface=test-harness rec=Fix-now — CONFIRMED.
+  - Why the row passes without the guard: in `test_a_second_pipe_client_pauses_and_must_report_the_note_first` (`test_cross_patient.py:586-605`), the old-client `resume` (`conn_id=1`, line 595) is sent right after `h.connect(2)`, before any report on connection 2. The guard it names is `ChromeBridge._on_message`'s `conn_id != self._conn` drop. Without that guard the command would reach `_on_command`: the ref matches, PAUSED allows resume, and `resume_refusal` still returns `"report_mismatch"`, because `_conn` is 2 and the ledger's bound target was cleared by `_reset_connection`. So the state stays PAUSED, and the only assertion (`state is PAUSED`) holds either way. The production guard is present and correct; only the matrix row is vacuous for its named reason.
+  - Fix shape (test only), in this order:
+    1. `connect(2)`;
+    2. conn-2 `resume` → `report_mismatch` (kept);
+    3. conn-2 report of the recording's note;
+    4. THEN the conn-1 `resume`: assert PAUSED, `h.controller.calls` unchanged (no `("resume",)`), and `last_refusal` still the step-2 one (dropped, never processed);
+    5. conn-2 `resume` → RECORDING.
+
+    Discrimination check for the fix leg: with the `conn_id != self._conn` line removed, step 4 resumes, because the report now matches, so the test fails. Record that check in the fix notes.
+- Cap verdict: accept — test-harness — a vacuous matrix row whose production guard (`_on_message`'s connection drop) is present; a one-test reorder, no production change, and no extra round needed.
+- Decision (leg stage-5-exec-e6, `/fix`): PR-LOW-180 Applied as shaped (the test reorder; see the `/fix decision` line).
+
+### Round 34 - 2026-09-28 - Phase 5 pause rule, resolution, back-to-back and Unreviewed (UI, Unreviewed review and docs), independent cross-family codex peer review (pass stage-5.p1 slice B)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-5-only tree diff, slice B UI, Unreviewed review, tests and security documentation; static reading only, no writes, tests or network.
+- **PR-MED-190** (MED, regression, `desktop/src/scribe_desktop/ui/main_window.py:564`): Opening an Unreviewed transcript suppresses the unfinished-recording warning. A crash-recovered recording can retain an unfinished audio store alongside its transcript; reopening now treats it as cleanly finished, hiding the possibility of missing speech. — Evidence: `_open_adopted` passes `store_finished=True`; `ui/transcript.py:374` consequently hides `warning_label`. The listing already preserves the actual footer result at `ui/models.py:708`, and `ui/models.py:164` requires the warning “whenever a recovered store carries no complete Finish footer.” The Unreviewed list also bypasses the ordinary recovery selection warning. Recommendation: Fix-now — Carry the actual finish status through adoption into the review display, preserve the warning for unfinished stores, and add a reopen regression case. /fix decision: Fixed — three sites:
+  - `ui/main_window.py` `_open_adopted(session, opening, *, store_finished)` is given `info.store_finished` by `_on_review_requested` and passes it to `show_document`, so both the Recovery button and the Chrome `open_unreviewed` route are covered;
+  - `ui/models.py` `unreviewed_row_text` appends "no audio recorded" or "did not finish cleanly", as `_describe` does;
+  - `ui/recovery.py` `_update_controls` shows `UNFINISHED_STORE_WARNING` for an unfinished selection in EITHER list.
+
+  CHANGELOG part 3 says so. Tests:
+  - `test_unreviewed_review.py::TestOpenForReview::test_an_unfinished_store_keeps_its_warning_on_the_row_and_when_opened[unfinished|finished]`: row text, selection warning and the reopened transcript's `warning_label`; the finished case shows none of them;
+  - `::TestReconstruction::test_the_chrome_route_keeps_the_unfinished_store_warning`.
+
+  The `_unreviewed` helper now writes a real one-chunk audio store, sealed by default and `finished=False` leaving the footer off. Before, it wrote no `audio.enc`, which the listing reads as unfinished. Applied by Claude Code, 2026-09-28.
+- **PR-LOW-191** (LOW, docs-only, `docs/security/threat-model.md:1647`): The new pause-rule paragraph contradicts its own bound-tab rule by claiming that any non-Cliniko page never pauses. The same contradiction appears in `CHANGELOG.md:37`. — Evidence: “any page that is not Cliniko's, never pauses” conflicts with `threat-model.md:1641`, “leaving its note (any other page, including one off the allow-list)”, and plan D5 explicitly distinguishes a separate non-Cliniko tab from the bound tab leaving its note. Recommendation: Fix-now — Limit the no-pause statement to a separate non-Cliniko tab; preserve the bound-tab navigation exception in both documents. /fix decision: Fixed — the no-pause clause now reads "a SEPARATE tab showing a page that is not Cliniko's", with the bound tab's leave-its-note rule named, in three places: `docs/security/threat-model.md` (THE PAUSE RULE), `CHANGELOG.md` part 3, and the sibling in the `context_rules.py` module docstring. No code or test change: `test_the_bound_tab_rows` already pins `not_cliniko` → `LEFT_NOTE`. Applied by Claude Code, 2026-09-28.
+- **PR-LOW-192** (LOW, docs-only, `docs/security/threat-model.md:1722`): The new expiry claim overstates the listing’s guarantee; the retention schedule repeats this unconditional claim. — Evidence: “the listing's age filter means a session past its window is never offered for opening.” However, `ui/models.py:719` explicitly documents that when neither timestamp is readable, “the session IS listed regardless of age”; lines 724–731 implement that conservative fallback. Recommendation: Fix-now — Qualify both documents to say that established expired sessions are excluded, and name the unreadable-timestamp residue without changing custody behavior. /fix decision: Fixed — `docs/security/threat-model.md` OPEN FOR REVIEW residue (1) and `docs/security/retention-schedule.md`'s 24-hour rule now say a session whose age is ESTABLISHED past its window is not offered. They name the residue: with no readable timestamp at all, the session is listed regardless of age (round 47 PR-LOW-001; the sweep owns that case) and its shown expiry is provisional. No code or test change; custody unchanged. Applied by Claude Code, 2026-09-28.
+- Verification counts: 5 claims checked, 3 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-5-exec-e5)
+- PR-MED-190 (peer labels: MED, regression, Fix-now) — materiality=regression severity=verified: med surface=production rec=Fix-now — CONFIRMED.
+  - The bug: `_open_adopted` (`ui/main_window.py`) calls `transcript_screen.show_document(..., store_finished=True)` unconditionally, so `show_document` hides `warning_label`.
+  - The path exists: a crashed session is taken through Recovery → Resume processing, whose runner writes `transcript.enc` over an audio store with no Finish footer (`RecoveryOutcome.store_finished` False; `_on_recovered` passes it through correctly). If the practitioner leaves it un-Completed, the session is on the Unreviewed list at the next listing (it has a transcript) with `RecoverableSessionInfo.store_finished=False` (`models.py:708`). Reopening it shows the transcript as if cleanly finished.
+  - Why med: this breaks the binding Step-10 note (PR-HIGH-007 residual, `models.py:164`: the warning is shown "whenever a recovered store carries no complete Finish footer"). A reviewer is no longer told the tail may be missing, which bears on the clinical completeness of a note written from it. It does not affect custody.
+  - CLASS CHECK (every review-entry path):
+    - `_on_live_transcript` passes True correctly: a live Finish writes the footer before PROCESSING, and a failed final flush goes to FAILED with no transcript.
+    - `_on_recovered` passes `outcome.store_finished` correctly.
+    - `_open_adopted` is WRONG. It is shared by the Recovery "Open for review" and the Chrome `open_unreviewed` route, so both lose the warning.
+    - SECOND SITE of the same class (the listing): `unreviewed_row_text` omits the "did not finish cleanly" tail that the recoverable list's `_describe` carries. The Recovery screen's `warning_label` follows only the `session_list` selection (`RecoveryScreen._update_controls` reads `_selected_info()`), so selecting an unfinished Unreviewed row shows no warning either.
+    - The start-up reconstruction displays nothing, so it is not affected.
+  - Fix shape:
+    - `_open_adopted(session, opening, *, store_finished)`, given `info.store_finished` by `_on_review_requested`, and passed to `show_document`. The listing read the footer, and a retired store is closed, so it cannot change after listing.
+    - `unreviewed_row_text` appends "did not finish cleanly" when `not info.store_finished`, as `_describe` does.
+    - `RecoveryScreen._update_controls` shows `UNFINISHED_STORE_WARNING` for an unfinished Unreviewed selection too.
+    - Note for the fix leg: `test_unreviewed_review._unreviewed` writes NO `audio.enc`, which the listing reports as `store_finished=False`. Give the helper a real store — finished by default via `SessionChunkStore.create` plus its Finish, and `finished=False` leaving the footer off — so existing tests keep modelling a clean session.
+  - Regression tests:
+    1. an Unreviewed session with an unfinished store → Open for review → `transcript_screen.warning_label` visible with `UNFINISHED_STORE_WARNING`;
+    2. the same through `window.open_unreviewed` (the Chrome route);
+    3. a finished store → the warning hidden;
+    4. the row text carries "did not finish cleanly", and selecting that row shows the Recovery screen's warning.
+- PR-LOW-191 (peer labels: LOW, docs-only, Fix-now) — materiality=docs-only severity=verified: low surface=docs rec=Fix-now (doc) — CONFIRMED.
+  - The contradiction: `threat-model.md:1647-1648` "…and any page that is not Cliniko's, never pauses" contradicts the same paragraph's bound-tab rule (lines 1640-1641) and `ContextEvaluator.evaluate`: the bound tab reporting any page that is not a note, `not_cliniko` included, returns `LEFT_NOTE`. D5 (plan line 567) distinguishes the bound tab navigating off the allow-list (pauses) from a SEPARATE non-Cliniko tab (no pause).
+  - Siblings (searched for "not Cliniko's", "non-Cliniko", "not_cliniko" near "never paus…" / "does not pause"):
+    - `CHANGELOG.md:37` (same wording);
+    - `context_rules.py:18-19`, the module docstring: "…and neither does a page that is not Cliniko's" — a code-doc sibling the peer did not name.
+  - Fix shape (docs and docstring only): in all three, restrict the no-pause clause to "a SEPARATE tab showing a page that is not Cliniko's"; keep the bound tab's leave-its-note rule, `not_cliniko` included. No code or test change: `test_the_bound_tab_rows` already pins `not_cliniko` → `LEFT_NOTE`.
+- PR-LOW-192 (peer labels: LOW, docs-only, Fix-now) — materiality=docs-only severity=verified: low surface=docs rec=Fix-now (doc) — CONFIRMED.
+  - The overstated claim: `list_recoverable_sessions` (`models.py:711-730`) lists a session "regardless of age" when neither `created_at` nor `key_mtime` is readable (`readable` empty), which round 47 PR-LOW-001 already documented in the code. So "a session past its window is never offered for opening" (`threat-model.md:1721-1722`) and the retention schedule's "The listing's age filter means a session already past its window is never offered for opening" (`retention-schedule.md:71-72`) are absolute claims the code does not make.
+  - A sub-point for the same wording: for such a session `session_expires_at` falls back to `now + 24 h`, so its Unreviewed row and the on-close list show a moving expiry. That matches the sweep's own fallback (`_session_created_at` returns `now`), and it is the same residue.
+  - Fix shape (docs only): both documents say a session whose age is ESTABLISHED past its window is not offered. They name the residue: with no readable timestamp, it is listed and its shown expiry is provisional, and the sweep owns that case, as round 47 records. No code or test change; custody behaviour is unchanged.
+- Cap verdict: raise +1 — production-behavioral — PR-MED-190 is a confirmed regression of the binding unfinished-store warning, in two sites: the adoption display and the Unreviewed row and selection. The fix plus a confirmation round needs headroom; PR-LOW-191 and PR-LOW-192 are docs-only confirmations with one code-docstring sibling.
+- Decision (leg stage-5-exec-e6, `/fix`): PR-MED-190 Applied as shaped at all three sites: the adoption display, the Unreviewed row text and the selection warning, with the helper's real audio store. PR-LOW-191 Applied via the docs plus the `context_rules.py` docstring sibling. PR-LOW-192 Applied via the docs.
+- Fix-delta self-check: PASS — re-read four things:
+  - `_open_adopted`'s one caller, which passes `info.store_finished`;
+  - `_update_controls`, where both selections are read and `info` is the recoverable one;
+  - `unreviewed_row_text` against the existing no-full-id test (its `_info` has no audio, so the row now also says "no audio recorded" and still holds only the 8-character prefix);
+  - the helper's store: `SessionChunkStore.create` after `wrap_key_to_file`, as `require_key` needs. Its header's `created_at` is now, so the reconstruction tests' back-dated key blob stays the earliest trusted timestamp, and their ordering holds.
+
+### Round 35 - 2026-09-28 - Phase 5 pause rule, resolution, back-to-back and Unreviewed (confirmation of rounds 33-34), independent cross-family codex peer review (pass stage-5.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Scoped confirmation of rounds 33–34 against the specified Phase-5-only diff and current permitted files; static reading only, no writes, tests or network. No new findings introduced by the fixes identified.
+- Confirmations: PR-LOW-180 CONFIRMED — `desktop/tests/test_cross_patient.py:599` sends `h.report(conn_id=2)` before the old-client Resume at line 605; lines 606–610 assert unchanged state/calls followed by successful current-client Resume. Removing `desktop/src/scribe_desktop/ui/bridge.py:519`’s connection check would allow the old command through the now-satisfied resume checks. PR-MED-190 CONFIRMED — both Recovery and Chrome converge on `desktop/src/scribe_desktop/ui/main_window.py:541`, passing `store_finished=info.store_finished`; line 574 forwards it, and ordinary recovery preserves `outcome.store_finished` at line 838. `desktop/src/scribe_desktop/ui/models.py:868` adds “did not finish cleanly”; `desktop/src/scribe_desktop/ui/recovery.py:260` checks both lists; `desktop/src/scribe_desktop/ui/transcript.py:374` hides the warning for finished stores. The unfinished assertions at `desktop/tests/test_unreviewed_review.py:642` and line 852 would fail before the fix; the finished case checks warning absence. The helper’s real audio store preserves the existing tests’ explicit refusal, custody and ordering assertions. PR-LOW-191 CONFIRMED — “a SEPARATE tab” at `docs/security/threat-model.md:1648` agrees with `CHANGELOG.md:37`, `desktop/src/scribe_desktop/context_rules.py:19`, and the bound-tab `return PauseReason.LEFT_NOTE` at line 157. PR-LOW-192 CONFIRMED — “age is ESTABLISHED” and the unreadable-timestamp residue at `docs/security/threat-model.md:1725` agree with `docs/security/retention-schedule.md:72` and `desktop/src/scribe_desktop/ui/models.py:724`’s readable/earliest timestamp branches.
+- Verification counts: 4 claims checked, 4 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+### Round 36 - 2026-09-28 - Phase 6 (Tasks 6.0–6.5: test environment, manifest, service worker, page script, side panel, extension tests), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending) — 5 LOW, all Fix-now, all applied in this leg; vitest and the build owed to the composer
+- Source: Claude Code (executor leg stage-6-exec-f3, claude-opus-5-5, sequential lenses in-session — no subagents)
+- Scope / baseline: the whole Phase 6 diff under `extension/` on top of the uncommitted Phase 4 + 5 tree over `7a6cbd7`:
+  - read in full: `src/context.ts`, `src/hub.ts`, `src/connection.ts`, `src/background.ts`, `src/page.ts`, `src/panel-view.ts`, `src/panel.ts`, `src/panel.html`, `src/manifest.ts`, `src/manifest-paths.ts`, `vitest.config.ts`, `src/test/chrome-fake.ts`;
+  - tests: every new or changed test file (`context`, `hub`, `background`, `connection`, `manifest`, `page.dom`, `panel-view`, `panel.dom`, `test/chrome-fake.dom`);
+  - the BUILT output the composer produced (`dist/manifest.json` and the file list: the panel at `src/panel.html`, the page-script loader in `content_scripts[0].js`, crxjs's added `web_accessible_resources`);
+  - docs: AGENTS.md (prerequisites, step 8), CHANGELOG parts 1–2, the plan's 6.x task lines, the security docs searched for claims Phase 6 made false.
+
+  Composer suites on the pre-round (f2) tree: desktop 3922 passed, extension 247 passed, `npm run build` OK.
+- Lenses and results:
+  - Host scoping — CLEAN: `host_permissions` and the one content script are `https://*.cliniko.com/*` only, top frame only; no `tabs`, no `<all_urls>`; `scripting` reaches only Cliniko hosts and the hub injects only into tabs on a Cliniko host; the built manifest matches the pin. Noted residue (not raised): crxjs adds the page-script module as a `web_accessible_resource` for Cliniko hosts (`use_dynamic_url: false`), so a Cliniko page can detect that the extension is installed; loaded in the page's own world the module finds no `chrome.runtime` and does nothing. For Task 8.1's docs.
+  - Page-script trust — CLEAN: inert until an active slice; slices accepted only from this extension's worker (`sender.id` equal, no `sender.tab`); trusted clicks only (the closed shadow root also keeps the page's scripts from reaching the buttons; an event on the host element never reaches them); reads only `location.href` and its own marker; the orphan and re-injection takeover. The app never believes the page: pause, resume and every refusal are decided from the worker's URL-derived reports, so a page that removes or covers the card changes nothing the app enforces — the named residue (removal between heartbeats, keyboard shortcuts pass) is stated on 6.3's line.
+  - Side panel — found LOW-029. Every D1 layout and every Phase 5 field is drawn (block, banner, Resume previous, `last_refusal`'s message, D4's refusal codes); text only; the consent box is never pre-ticked and is cleared on Start and on any change of note (the key covers tab, host, patient, note and verification); no timer for queued or finishing.
+  - Background — found LOW-028 and LOW-030. The reports match D5's inputs (the bound tab is the latest `focused` report; a separate non-Cliniko tab is never reported, so it cannot pause; the bound tab leaving sends `not_cliniko` once; `closed` on removal); a restarted worker resyncs on its first `state` and pushes the full snapshot to the panel; every outbound message re-parses under the mirror.
+  - Interpretation calls — CLEAN: 6.2's six and 6.4's five each agree with D1/D5/D13 or are recorded as revisable on their task lines.
+  - Test honesty — CLEAN: the trusted-click path injects `isTrusted`, and the production default is proven by the untrusted test on the booted instance; the fake timers wrap only the 15 s disarm and the 1 s reconnect (the ports deliver by microtask, which the fake timers leave alone); the cross-clinic leak test checks names, ids AND the host.
+  - Docs as control claims — found LOW-032 (the text-only / no-storage / no-logging claims were held by review, not structure). No security-doc claim is made false by Phase 6; the Chrome-side memory and per-tab scoping are Task 8.1's planned additions to flow 19.
+  - Simplicity — found LOW-031.
+- Findings:
+  - **[LOW]** LOW-028: `extension/src/connection.ts` `badgeFor` — a failed link (`error`: a dead host's missed pong, a broken peer) showed **ERR** even while a session was live, hiding D1's "!" warning for up to one backoff step — materiality=ux surface=production — Triage: Fix-now; Decision: Applied: the "!" check (link down or failed, and the last running snapshot had a live or blocked session) now runs before ERR; test: the badge table gains `["error", null, true, "!"]`.
+  - **[LOW]** LOW-029: `extension/src/panel-view.ts` `panelModel` — the Unreviewed banner (which names the note on the app's BOUND tab) was shown over the Message layout while a non-Cliniko tab was in front, so "Unreviewed recording for this note" pointed at nothing on screen — materiality=ux surface=production — Triage: Fix-now; Decision: Applied: the banner shows only while `focus.kind` is `cliniko`; test: `panel-view.test.ts` "no banner while a page that is not Cliniko is in front".
+  - **[LOW]** LOW-030: `extension/src/hub.ts` `goToRecordingNote` — the fallback navigated the focused tab when it was on ANY Cliniko host, including a clinic that is not set up (another account's page) — materiality=correctness surface=production — Triage: Fix-now; Decision: Applied: only a tab on an allow-listed Cliniko page is navigated; otherwise the note opens in a new tab; test: `hub.test.ts` "from the panel, a focused Cliniko tab of a clinic that is not set up is left alone".
+  - **[LOW]** LOW-031: `extension/src/context.ts` `ContextReporter.tabUpdated` — a redundant `evaluate(tab.id)` for a tab that changed window (the same tab is evaluated at the end, and reports are de-duplicated) — materiality=simplification surface=production — Triage: Fix-now; Decision: Applied: the line removed; behaviour unchanged (the existing reporter tests cover the path).
+  - **[LOW]** LOW-032: `extension/src/*` — D1's "every string rendered with `textContent` only" and Constraint 8's "never in extension storage, never logged" were true of the code but held only by review (lessons 2026-08-10: guard the surface, not the instance) — materiality=assurance surface=test-harness — Triage: Fix-now; Decision: Applied: new `extension/src/sinks.test.ts` scans every production file under `src/` (tests and fakes excluded, comment lines skipped) for HTML-parsing sinks, any browser storage API and dynamic code, and pins the ONE console call (the host-disconnect diagnostic, no payload); a file-list test proves the scan sees the production files.
+- Checked and not raised:
+  - after a service-worker restart `wasLive` starts false, so a link that is still down shows OFF rather than "!" until the app's first snapshot (the app has already paused on the pipe loss);
+  - between a worker restart and its first `state`, a tab event can send the inert slice (the allow-list is not yet known), briefly removing a frame until the snapshot lands;
+  - the page's block card shows no refusal line (the panel shows it); D1 asks for none on the page;
+  - the Blocked panel's "On screen" names the app's bound report, which after a focus change may be another Cliniko tab — the panel may show both patients (D1, D2).
+- Verification counts: 8 lenses run, 5 candidates, 0 dropped, 0 downgraded
+- Missed-issue pass (auditable): re-read after the fixes — `badgeFor`'s order (the existing `["error", null, false, "ERR"]` row still reaches ERR); `panelModel`'s banner condition against the Blocked/Live exclusions and the DOM banner test (its focus is `cliniko`); `goToRecordingNote`'s three branches (focused already showing → nothing; another tracked tab showing → activate; else navigate an allow-listed tab or open a new one); `tabUpdated` sibling-then-self order. Result: none.
+- typecheck and lint clean; ruff and mypy unchanged (no desktop change); vitest owed to the composer (expected extension 247 + 8 = 255: badge row 1, banner 1, hub 1, `sinks.test.ts` 5; desktop stays 3922)
+- Last reviewed: 2026-09-28
+
+### Round 37 - 2026-09-28 - Phase 6 Chrome extension UI (service worker, tab tracking, relay and manifest), independent cross-family codex peer review (pass stage-6.p1 slice A)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-6-only tree diff, slice A’s named files and permitted references; static reading only, no tests, network commands or writes.
+- **PR-MED-200** (MED, behavioral, `extension/src/hub.ts:192`): Delayed tab reads can overwrite newer navigation, focus or removal events and emit stale context with a fresh sequence number. For example, a startup query captures note A, A closes while the window lookup remains pending, and resync restores A after its removal. The `getTab` callbacks likewise lack freshness guards; the page-message callback also overwrites the fetched URL with the earlier message’s URL. — Evidence: `hub.ts:198` calls `"this.reporter.resync(tabs, focused, state.allow_list)"`; `context.ts:183` clears the current table with `"this.tabs.clear()"` before installing the queried snapshots. Sibling callbacks at `hub.ts:221`, `235` and `292` unconditionally apply non-null results, including `"this.tabUpdated({ ...tab, url })"`. Recommendation: Fix-now — Guard asynchronous reads with connection/tab/focus generations or reconcile intervening events; add deferred-promise tests for close, navigation and activation during each lookup. /fix decision: Fixed — `extension/src/hub.ts`:
+  - An event counter: `events`, `touched` per tab, `activated` per window, bumped by `bump()` at every tab/window event — `tabUpdated`, `tabActivated`, `tabRemoved`, `tabReplaced`, `windowFocused`, and a page `hello`/`href`.
+  - `resync` asks again when an event landed while Chrome answered, `RESYNC_ATTEMPTS` = 3; still moving → stays inert with `needSync`, and the next event (`bump`) or snapshot asks again.
+  - Every `getTab` answer goes through `lookUp`, applied only if no newer event touched that tab and, for an active answer, no newer activation in its window. That covers `tabActivated`, `tabReplaced` and the page's unknown-tab path, which now applies Chrome's fetched URL, not the message's.
+  - `installed` is unchanged (flag only).
+  - Tests: `hub.test.ts` "lookups overtaken by a newer event" (8), using a hold/release `FakeApi` that answers with the state it was asked in: close, navigation and activation during the resync query; a resync overtaken on every try, then retried by the next event; an older activation answered after a newer one; a replacing tab that navigates during its lookup; the unknown-tab hello with Chrome's URL; an unknown tab closed during its lookup. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- **PR-LOW-201** (LOW, behavioral, `extension/src/connection.ts:80`): Reconnecting to the native host clears the live-recording “!” warning before the app supplies its replacement state. After `hello_ack`, `connection` is connected and `state` remains null, so the badge becomes “…” despite `wasLive` being true. — Evidence: `"const down = connection !== \"connected\" || (state !== null && !state.app_running)"` excludes this state; lines 93–94 return `"…"` for connected/null. The reconnect test at `connection.test.ts:389` immediately supplies state without asserting the intervening badge. Recommendation: Fix-now — Preserve “!” while `wasLive` is true and the new connection has no app snapshot; assert the badge immediately after acknowledgement. /fix decision: Fixed — `extension/src/connection.ts` `badgeFor`: `(down || state === null) && wasLive` → "!". Tests: `connection.test.ts` badge row `["connected", null, true, "!"]`, and the reconnect test asserts "!" right after the second `hello_ack`, before any state. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- **PR-LOW-202** (LOW, test-harness, `extension/src/manifest.test.ts:41`): The host-scope tests compare against the same constant used by the manifest, so they do not independently pin Cliniko-only access. Changing that constant to `https://*/*` would satisfy these assertions and both negative string checks. — Evidence: `"expect(manifest.host_permissions).toEqual([CLINIKO_MATCH])"` and line 51’s `"expect(script.matches).toEqual([CLINIKO_MATCH])"`; lines 43–44 exclude only `"<all_urls>"` and `"http://"`. Recommendation: Fix-now — Assert the literal approved pattern `https://*.cliniko.com/*` independently for host permissions and content-script matches. /fix decision: Fixed — `extension/src/manifest.test.ts` asserts the literal for `host_permissions` and for every content script's `matches`, and pins `CLINIKO_MATCH` itself to it. Test-only. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- Verification counts: 5 claims checked, 3 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-6-exec-f4)
+- **PR-MED-200** (peer: MED, behavioral) → materiality=behavioral severity=verified: med surface=production rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed** — the event counter plus `lookUp` in `hub.ts`; 8 regression tests.
+  - Evidence:
+    - `hub.ts:185-206` `resync` awaits `queryTabs()` + `lastFocusedWindow()`.
+    - Meanwhile the reporter is deactivated (`hub.ts:150/157/168`), so a close, navigation or activation during the wait only edits the table (`context.ts:210` `tabRemoved` deletes, and sends nothing for an untracked tab).
+    - `context.ts:182-183` then clears the table and installs the older snapshot, reporting it under a fresh `seq`.
+  - Can the stale report make the APP resume or re-bind a linked recording? YES — a fresh-`seq` stale report is indistinguishable from a current one:
+    - (1) Resync runs exactly after a (re)connect. That reconnect has already paused the linked recording (`new_client` / `pipe_lost`, with the block) and called `ContextEvaluator.lose_tab()`, leaving the session unbound.
+    - (2) `ContextEvaluator.evaluate` re-binds an unbound session to ANY report naming its exact ids (`context_rules.py:159-161`). A stale "tab A shows note A" for a tab that was closed, or navigated to patient B's note, during the query re-binds the session to that tab.
+    - (3) The bridge's `resume_refusal` (`bridge.py:421-434`) passes when the ledger's bound target, from the latest `focused` report, equals the session's target. So the practitioner's next Resume — desktop button, panel or block, or a pending "Resume previous" within 30 s — RESUMES the recording while the note is not actually on screen.
+  - Limits of the harm:
+    - The app never resumes on a report alone; a click is always needed.
+    - A full navigation is corrected when the new document's page script says hello (`hub.ts:283-294`), and an SPA change by the 500 ms heartbeat. A CLOSED tab is never corrected: it sends nothing more.
+    - The navigate-to-B case is the cross-patient one, and exists only until that hello. The window is the milliseconds of one `tabs.query` on a reconnect.
+  - Hence MED, not HIGH: user-initiated, narrow, self-correcting except for a closed tab (where the recording resumes for the right patient with its note closed).
+  - Class check — every async callback that applies tab state:
+    - (a) `hub.ts:192-198` `resync` (query + focused window) — AFFECTED: close, navigation and activation.
+    - (b) `hub.ts:220-222` `tabActivated`'s `getTab` for an unknown tab — AFFECTED: a newer activation in between is undone by `active: true` plus `unfocusSiblings`, giving a stale `focused` report and a wrong bound tab.
+    - (c) `hub.ts:234-236` `tabReplaced`'s `getTab` — AFFECTED: a navigation or removal of the added tab in between.
+    - (d) `hub.ts:291-293` `pageMessage`'s `getTab` for an unknown tab — AFFECTED: `{...tab, url}` overwrites the freshly fetched URL with the message's older one.
+    - (e) `hub.ts:253-264` `installed` — NOT affected. It only sets the `restoring` flag and injects; a tab closed during its query leaves a harmless flag on a dead id. Sibling: the flag is never cleared for that id, which is cosmetic.
+    - (f) `background.ts` adapters and `connection.ts` — hold no tab state.
+    - (g) `context.ts` — synchronous only.
+  - Fix shape:
+    - A monotonic event epoch in the hub (or reporter), bumped by every tab and window event (`tabUpdated`, `tabActivated`, `tabRemoved`, `tabReplaced`, `windowFocused`, page hello/href), plus a per-tab epoch.
+    - `resync` captures the epoch before the query. If it moved by the time the query lands, it discards the result and queries again (bounded, e.g. 3 tries; the worst case waits for the next event).
+    - Each `getTab` callback captures the tab's epoch, and for `tabActivated` the focus epoch. It applies only if unchanged; otherwise the newer event already carried the truth.
+    - `pageMessage`'s unknown-tab path applies the FETCHED tab's URL (current by construction), never the message's.
+  - Regression tests (`hub.test.ts`, with a deferred-promise `FakeApi`):
+    - close, navigation and activation each landing during the resync query → no report for the closed tab, the navigated tab reported with its NEW note, the later-activated tab focused;
+    - a newer activation landing during `tabActivated`'s lookup → the newer tab stays focused;
+    - navigation during the unknown-tab page lookup → the fetched URL wins.
+- **PR-LOW-201** (peer: LOW, behavioral) → materiality=behavioral severity=verified: low surface=production rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed** — `badgeFor`; badge row + post-ack assertion.
+  - Evidence: `connection.ts:80` computes `down` false for connected with no snapshot yet, so `connection.ts:93` returns "…" after `hello_ack` even though `wasLive` is true. The "!" returns only if the app's first snapshot says the app is not running; a running app replaces it with PAUSED.
+  - Impact: the warning blinks off for the round trip of the first snapshot, normally well under a second; a host that answers hello but never gets the app's snapshot leaves "…" until the ping watchdog.
+  - Fix shape: `badgeFor` treats "connected, no snapshot yet" as down for the `wasLive` check.
+  - Regression tests: badge table row `["connected", null, true, "!"]`, and the reconnect test asserts the badge right after the second `hello_ack` (before any state).
+- **PR-LOW-202** (peer: LOW, test-harness) → materiality=behavioral severity=verified: low surface=test-harness rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed** — literal pattern asserted three times.
+  - Evidence: `manifest.test.ts:41` and `:51` compare with `CLINIKO_MATCH`, imported from the same `manifest-paths.ts` the manifest uses. With it set to `https://*/*`, both equalities hold, and `:43-44` still pass (no `<all_urls>`, and "https://" is not "http://").
+  - Fix shape: assert the literal `"https://*.cliniko.com/*"` for `host_permissions` and for every content script's `matches`, and pin `CLINIKO_MATCH` itself to that literal.
+  - Regression tests: the same file; a mutation to `https://*/*` now fails three assertions.
+- Cap verdict: raise +1 — production-behavioral — PR-MED-200 confirmed: a stale-but-fresh-`seq` report from an async tab read can re-bind the unbound linked session and satisfy the resume check (user-initiated; a closed tab is never corrected), across 4 async sites in `hub.ts`. PR-LOW-201 is a brief badge regression; PR-LOW-202 is a test that pins nothing independent. The fix leg plus a confirmation needs headroom.
+- Fix-delta self-check: PASS — re-read the applied hunks in `hub.ts` (counter, `resync` retry, `bump`, `lookUp`, the five event entries), `connection.ts` `badgeFor`, `manifest.test.ts`, and the new `hub.test.ts` / `connection.test.ts` cases; exit paths checked: `resync`'s link-down return, exhaustion, catch; `lookUp`'s null, touched and activated discards.
+
+### Round 38 - 2026-09-28 - Phase 6 Chrome extension UI (page script, side panel and docs), independent cross-family codex peer review (pass stage-6.p1 slice B)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-6-only tree diff `339b8ddf…` → `ef142216…`, specified slice B files and permitted context; static reading only, no writes, tests or network.
+- **PR-LOW-210** (LOW, test-harness, `extension/src/sinks.test.ts:32`): The sink scanner misses ordinary bracket access and aliases, so its structural guarantee is overstated. `document["write"](value)`, `chrome["storage"].local.set(value)`, and `const execute = eval; execute(value)` evade the patterns; production `.js` files also escape discovery. — Evidence: the patterns require `document\.write`, `chrome\.storage`, and `\beval\s*\(`; line 21 selects only `/\.(ts|html)$/`. Recommendation: Fix-now — Add syntax-aware checks for property access and aliases, cover supported production source extensions, and add positive scanner fixtures proving these spellings are detected. /fix decision: Fixed — `extension/src/sinks.test.ts`:
+  - Token patterns: the sink, storage and dynamic-code names match as tokens, so dotted, bracketed, destructured and aliased spellings are caught — `write`/`writeln` after `.` or a string key, bare `storage`/`cookie`, bare `eval`, `Function(`, and string timers.
+  - Files scanned: `.ts/.tsx/.js/.mjs/.cjs/.html`, excluding `*.test.*`.
+  - 16 detection fixtures (each asserted DETECTED) plus one clean fixture.
+  - The header now states it as a LEXICAL guard with its residue: a name assembled at run time is not caught; review stays the control there.
+  - Test-only. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- **PR-LOW-211** (LOW, behavioral, `extension/src/panel-view.ts:263`): Unknown warning code `constructor` displays the inherited Object constructor instead of nothing. It passes the protocol’s reason pattern. The refusal and block-reason dictionaries have the same inherited-property fallback defect. — Evidence: `warnings: state.warnings.flatMap((code) => (WARNINGS[code] !== undefined ? [WARNINGS[code]] : []))`; `WARNINGS` is an ordinary object at line 66; `protocol.ts:65` permits `/^[a-z][a-z0-9_]{0,47}$/`. Siblings: `panel-view.ts:150`, `panel-view.ts:154`, and `page.ts:46`. Recommendation: Fix-now — Use own-property checks or Maps for all four dictionaries and verify `constructor` takes the unknown-code fallback. /fix decision: Fixed — `Object.hasOwn` at all four lookups: `panel-view.ts` `lookUp()` for `noteRefusalText`, `blockReasonText` and the warnings list, and `page.ts` `reasonText`. Tests: `panel-view.test.ts` sends `constructor` / `toString` / `__proto__` to all three panel lookups; `page.dom.test.ts` sends `constructor` / `toString` as the block's reason. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- **PR-LOW-212** (LOW, docs-only, `.cursor/plans/plan-cliniko-workflow-safeguards.md:2800`): The stated block residue incorrectly limits page interference to “between heartbeats.” A page can hide the accessible host once with `display:none`; subsequent heartbeats and renders retain that host and never restore its styles. The cue can remain invisible while the desktop still blocks. — Evidence: the task says “the page's own scripts can remove or cover the element between heartbeats”; `page.ts:194` only checks `!this.host.isConnected`, and lines 253–255 return the existing root without restoring host styling. Recommendation: Fix-now — State explicitly that page scripts/CSS can persistently hide or cover the cue; heartbeat recovery covers detachment only, while desktop pause and command guards remain the enforcing controls. /fix decision: Fixed (docs-only) — the residue is restated as a class in four places: Task 6.3's line, the `page.ts` header and `tick` docstring, and the CHANGELOG page-script bullet. The page's scripts or CSS can keep the cue hidden or covered for as long as they like; the heartbeat only re-attaches a removed element; the app's pause rule and command checks enforce. AGENTS.md and the security docs carry no page-script residue sentence, so nothing changed there. The optional `important` restyle was NOT applied: the hiding routes are an open class (transform, clip-path, size, inset, top layer, re-hide per tick), so re-asserting a fixed list would close only named cases, and it would rewrite the host's style attribute every heartbeat. (Claude Code, leg stage-6-exec-f5, 2026-09-28)
+- Verification counts: 5 claims checked, 3 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-6-exec-f4)
+- **PR-LOW-210** (peer: LOW, test-harness) → materiality=behavioral severity=verified: low surface=test-harness rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed** — token patterns, wider file types, 16 detection fixtures + 1 clean, the header reworded as a lexical guard.
+  - Evidence:
+    - `sinks.test.ts:33-35` match only dotted spellings, so `document["write"]`, `chrome["storage"]` and an aliased `const e = eval; e(x)` all pass the scan.
+    - `:21` keeps only `.ts`/`.html`.
+  - No production file uses any of these today, so this is a gap in the guard, not a live defect.
+  - Fix shape:
+    - Token-level patterns: the sink and storage names as identifiers OR string literals (`["'\`]write["'\`]` after `document`, a bare `\bstorage\b` token after `chrome`, a bare `\beval\b` token, and `\bFunction\s*\(`).
+    - Scan `.ts/.tsx/.js/.mjs/.cjs/.html`.
+    - Reword the file header, and the round-36 claim it carries, as a LEXICAL guard with its named residue: a key computed from a variable or built by concatenation is not caught, so review remains the control there.
+  - Regression tests: positive fixtures (inline strings run through the same `FORBIDDEN` list) for dotted, bracketed and aliased spellings of each class, each asserted DETECTED, plus one clean fixture asserted not flagged.
+- **PR-LOW-211** (peer: LOW, behavioral) → materiality=behavioral severity=verified: low surface=production rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed** — `Object.hasOwn` at all four lookups; tests in both files.
+  - Evidence:
+    - `panel-view.ts:39/54/66` (`NOTE_REFUSALS`, `BLOCK_REASONS`, `WARNINGS`) and `page.ts:34` (`REASONS`) are plain object literals.
+    - Their lookups at `panel-view.ts:150/154/263` and `page.ts:46` read inherited keys.
+    - `constructor` (also `toString`, `valueOf`, …) passes `protocol.ts:65`'s pattern and yields `Object.prototype.constructor`: rendered through `textContent` as the function's source text, or through `String(...)` for the `??` paths.
+  - Harm: no injection (text only), and the app sends only known codes, so a wrong or garbled line appears only for a code the app never emits. LOW.
+  - Fix shape: `Object.hasOwn(DICT, code)` (or `Map`s) at all four lookups, keeping each one's existing unknown-code fallback.
+  - Regression tests: `panel-view.test.ts` asserts `constructor` and `toString` take the fallback for `noteRefusalText`, `blockReasonText` and the warnings list (the warning dropped); `page.dom.test.ts` asserts the page block's reason line for `constructor` is the generic fallback.
+- **PR-LOW-212** (peer: LOW, docs-only) → materiality=docs-only severity=verified: low surface=docs rec=Fix-now — CONFIRMED. **/fix (leg f5): Fixed (docs-only)** — the residue restated as a class; the optional restyle not applied (an open class of hiding routes).
+  - Evidence:
+    - `page.ts` `tick` re-attaches only when `!this.host.isConnected`.
+    - `ensureRoot` returns the existing root without restyling it.
+    - The host's styles are set once, inline and without priority, so a one-time `display:none` (inline or an author `!important` rule) persists across heartbeats and renders. "Between heartbeats" understates the residue.
+  - Can the page script re-assert visibility per heartbeat? PARTLY:
+    - Re-applying the host's inline styles with `"important"` priority on each 500 ms tick (and on each render) beats an author stylesheet, including `!important` rules, and undoes a one-time inline edit.
+    - It cannot beat a page script that re-hides every tick, or that covers the cue with a top-layer element (`<dialog>`/popover), or with a later-stacked element at the maximum `z-index`.
+  - So the residue must be RESTATED in all cases: page scripts or CSS can persistently hide or cover the cue; the heartbeat restores detachment (and, if the hardening lands, inline styling) only; the desktop pause and the command guards are the enforcing controls.
+  - Fix shape:
+    - Restate the residue in Task 6.3's note, and in the threat-model / data-flow wording if it repeats "between heartbeats".
+    - OPTIONAL cheap hardening, the /fix leg's call: `important` inline styles re-applied every heartbeat.
+  - Regression test only if the hardening lands: `page.dom.test.ts` sets `host.style.display = "none"`, advances one heartbeat, and asserts `display` is restored.
+- Cap verdict: accept — production-behavioral — three LOWs confirmed (211 is a behavioral inherited-key lookup with no injection path; 210 is test-harness; 212 is docs-only). Their fixes fold into the confirmation round that round 37's raise already provides.
+- Fix-delta self-check: PASS — re-read the applied hunks in `panel-view.ts` (`lookUp` and its three callers), `page.ts` (`reasonText`, the header and `tick` docstring), `sinks.test.ts` (whole file), Task 6.3's line and the CHANGELOG bullet; the scan's production patterns re-checked against every non-comment production line (the only token hits are `//` comments).
+
+### Round 39 - 2026-09-28 - Phase 6 Chrome extension UI (confirmation of rounds 37-38), independent cross-family codex peer review (pass stage-6.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Scoped confirmation of the six fixes using the specified fix diff and permitted current files; static reading only, no writes, tests or network.
+- **PR-LOW-220** (LOW, test-harness, `extension/src/sinks.test.ts:41`): PR-LOW-210 remains partially unresolved: the new header claims destructured and aliased spellings are caught, but `const { write } = document; write.call(document, x);` and `const Build = Function; Build(x)();` evade every forbidden pattern without assembling a name at runtime. — Evidence: line 41 requires `"(\.|\[\s*["'`])\s*write(ln)?\b"`; line 44 requires `"\bFunction\s*\("`; lines 9–12 claim “destructured and aliased spellings are caught” and describe runtime-assembled names as the residue. All 16 existing positive fixtures exercise the actual patterns successfully, but neither counterexample is included. Recommendation: Fix-now — Cover these literal destructuring/alias forms with shared-matcher fixtures, or narrow the header and explicitly document these additional gaps. /fix decision: Fixed — `extension/src/sinks.test.ts`:
+  - `write`/`writeln` joined the HTML-sink names as bare tokens (the property-access prefix is dropped).
+  - The dynamic-code pattern matches bare `eval`/`Function` and any `.constructor` / `["constructor"]` access.
+  - The header states exactly that class — any literal occurrence of a listed name in a non-comment line, whatever the spelling around it — and names every remaining gap:
+    - a name assembled at run time;
+    - a capability reached through a name not on the list;
+    - string timers, matched only as a direct call with a string literal;
+    - trailing or block comments are scanned (a false positive at worst).
+  - 5 new detection fixtures: destructured `write`, renamed destructured `writeln`, aliased `Function`, dotted and bracketed `constructor`.
+  - The clean fixture adds `class A { constructor() {} }` and a multi-line class with a parameter-property `constructor(`; neither is flagged, because the ban needs `.` or a bracketed quote before `constructor`.
+  - A scan of the production tree finds none of the new tokens outside `//` comments.
+  - Test-only. (Claude Code, leg stage-6-exec-f7, 2026-09-28)
+- Confirmations: PR-MED-200 CONFIRMED — relevant tab/focus guards, three-attempt resync, event/snapshot recovery and Chrome-owned URL are present; deferred tests release their promises and distinguish pre-fix behavior (`hub.ts:203`, `hub.ts:227`, `hub.ts:238`, `hub.test.ts:242`). PR-LOW-201 CONFIRMED — connected/null preserves “!” only with `wasLive`, with a post-ack assertion (`connection.ts:84`, `connection.test.ts:391`). PR-LOW-202 CONFIRMED — literal host pattern pinned independently (`manifest.test.ts:43`). PR-LOW-210 NOT CONFIRMED — remaining coverage overstatement described in PR-LOW-220. PR-LOW-211 CONFIRMED — all four lookups require own properties and retain their fallbacks; inherited-key tests exercise them (`panel-view.ts:151`, `page.ts:49`). PR-LOW-212 CONFIRMED — Task 6.3, CHANGELOG and comments consistently describe persistent hiding and detachment-only recovery; AGENTS.md contains no contradictory strength claim (`page.ts:197`, `page.ts:256`).
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-6-exec-f6)
+- **PR-LOW-220** (peer: LOW, test-harness) → materiality=behavioral severity=verified: low surface=test-harness rec=Fix-now — CONFIRMED. **/fix (leg f7): Fixed** — bare-token bans plus the `constructor` access ban, the header narrowed to that class with every gap named, 5 detection fixtures, and class declarations proven unflagged.
+  - Evidence:
+    - `sinks.test.ts:41` matches `write`/`writeln` only after `.` or an opening string key, so `const { write } = document;` and `write.call(document, x)` contain no match.
+    - `:44` matches `Function` only directly before `(`, so `const Build = Function; Build(x)();` contains no match.
+    - The header at `:8-13` says destructured and aliased spellings are caught and names only run-time-assembled names as residue, so it overstates what the matcher proves.
+  - Impact: no production file uses either form today (a scan of `extension/src` finds bare `write`, `writeln`, `Function` and `.constructor` tokens in test files only), so this is a guard gap, not a live defect. LOW.
+  - Fix shape — CHOSEN: make the header TRUE as a class by matching the listed names as bare tokens wherever they occur, and narrow the header to exactly that class.
+    - Why not narrow the header alone: bare-token bans are cheap and hit nothing in production, and they turn "destructured and aliased" into a real guarantee for every listed name (a destructured or aliased name still has to be spelled once).
+    - (1) HTML sinks: `\b(innerHTML|outerHTML|insertAdjacentHTML|createContextualFragment|DOMParser|parseFromString|setHTMLUnsafe|write|writeln)\b`, dropping the property-access prefix.
+    - (2) Dynamic code: bare `\beval\b` (unchanged) and bare `\bFunction\b` (any use as a value), plus a property access to `constructor` (`(\.|\[\s*["'\`])\s*constructor\b`). That covers the other literal route to the Function constructor, `(() => 0).constructor(x)`; class declarations write `constructor(` with no dot, so they are unaffected.
+    - (3) Storage: unchanged (already bare tokens).
+    - (4) Header reworded to what the matcher proves: "any literal occurrence of a listed name as a token in non-comment production code fails, whatever the spelling around it (dotted, bracketed string key, destructured, aliased)".
+    - (5) Header residue, named in full:
+      - a name assembled at run time (`el["inner" + "HTML"]`, `obj[key]`, `Reflect.get(o, key)`);
+      - a capability reached through a name NOT on the list (e.g. an HTML sink such as `srcdoc`, a `javascript:` URL, a created `<script>`);
+      - string timers, matched only as a direct `setTimeout(`/`setInterval(` call with a string literal (the names themselves are legitimate), so an aliased timer is not caught;
+      - lines that start with `//` are skipped, but a trailing or block comment is scanned (a false positive only).
+      Code review stays the control for all of these.
+  - Regression fixtures (each through the shared `flagged()` matcher and asserted DETECTED):
+    - `const { write } = document; write.call(document, x);` (HTML sink);
+    - `const { writeln: w } = document; w(x);` (HTML sink);
+    - `const Build = Function; Build(x)();` (dynamic code);
+    - `(() => 0).constructor("x")();` and `f["constructor"]("x")` (dynamic code).
+    - The clean fixture gains `class A { constructor() {} }` and `const writer = 1;` (both stay unflagged).
+- Cap verdict: accept — test-harness — PR-LOW-220 is a lexical-guard coverage gap with no production use (bare-token scan clean). The fix plus its confirmation fits the remaining pass cap (round 39 is peer round 3 of 6); no production-behavioral finding remains open.
+- Fix-delta self-check: PASS — re-read the whole of `sinks.test.ts` after the edit: the three patterns, the 21 detection fixtures, the clean fixture (class declarations, `writer`, a function timer, a comment line) and the production scan; the new tokens were re-checked against every non-comment production line (no hits).
+
+### Round 40 - 2026-09-28 - Phase 6 Chrome extension UI (confirmation of round 39), independent cross-family codex peer review (pass stage-6.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified fix diff, current `extension/src/sinks.test.ts`, round-39 finding and verified tuple, and permitted production grep; static inspection only, no writes, tests, or network.
+- **PR-LOW-230** (LOW, test-harness, `extension/src/sinks.test.ts:56`): The new header overstates constructor coverage: comment-separated property accesses escape the matcher despite using the literal listed name. For example, `f./* gap */constructor("x")();` matches none of the forbidden patterns. — Evidence: `extension/src/sinks.test.ts:13` claims “any property access to”; line 14 specifies “`constructor`”; line 56 requires `(\.|\[\s*["'`])\s*constructor\b`, which permits whitespace but not an intervening comment. Lines 43–47 retain block comments. Recommendation: Fix-now — Explicitly document comment-separated constructor accesses as remaining lexical gaps, or cover them with shared-pattern fixtures. /fix decision: Fixed — `extension/src/sinks.test.ts` header rewritten to two rule kinds:
+  - BARE NAMES (any literal token, whatever the spelling around it; a comment cannot split a token).
+  - PREFIX-DEPENDENT: `constructor` only as `.constructor` / `?.constructor` / `["constructor"]`, and string timers only as a direct call with a string literal — both with only whitespace or newlines between.
+  - Residue, named as a class: any other route to a prefix-dependent name (a comment inside the access or call, destructuring, `Reflect.get(o, "constructor")`, an aliased timer). The comment line now says a scanned trailing or block comment is a false positive for bare names and a missed match inside a prefix-dependent spelling.
+  - The header cites lint as the syntax-aware check: `extension/eslint.config.js` spreads `tseslint.configs.recommendedTypeChecked`, which enables `@typescript-eslint/no-implied-eval`.
+  - 2 detection fixtures: `f\n  .constructor("x")()` and `f?.constructor("x")`.
+  - The matcher itself is unchanged; no block-comment strip (it would let string-held `/*` … `*/` markers hide code).
+  - Test-only. (Claude Code, leg stage-6-exec-f9, 2026-09-28)
+- Confirmations: PR-LOW-220 CONFIRMED for both original counterexamples: bare-token patterns at `extension/src/sinks.test.ts:53` and `:56` detect the fixtures at `:89` and `:91`. Fixtures and production scanning share `FORBIDDEN` and `code()` (`:59`, `:95`, `:110`). `writer` and plain class constructors remain unflagged (`:101–103`); the permitted production grep returns only class-constructor declarations at `extension/src/connection.ts:120` and `extension/src/protocol.ts:195`, with no production-specific exemption added. The broader header-accuracy claim is NOT CONFIRMED, as recorded in PR-LOW-230.
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-6-exec-f8)
+- **PR-LOW-230** (peer: LOW, test-harness) → materiality=docs-only severity=verified: low surface=test-harness rec=Fix-now — CONFIRMED. **/fix (leg f9): Fixed** — header narrowed to bare-name vs prefix-dependent rules with the residue class named and lint's `no-implied-eval` cited; 2 fixtures; matcher unchanged.
+  - Evidence:
+    - `sinks.test.ts:56`'s `constructor` alternative needs `.` or `[` plus a quote, then only `\s*`, then the name. So in `f./* gap */constructor("x")()` the `/*` breaks the match.
+    - `code()` (`:43-47`) drops only lines that START with `//`, so block and trailing comments stay in the scanned text.
+    - The header (`:13-14`) says "any property access to `constructor`", which is more than the matcher proves.
+  - The same limit covers the whole class, not only the peer's example: every PREFIX-dependent alternative breaks when a comment sits inside it.
+    - The `constructor` access fails the same way with a bracket (`f[/* */"constructor"]`), and the string-timer call with `setTimeout(/* */"run()")`.
+    - Other spellings of `constructor` that are not dotted or bracketed are not matched either: destructuring `const { constructor: C } = f` and `Reflect.get(f, "constructor")`.
+    - The bare-token names (`innerHTML`…`write`, the storage names, `eval`, `Function`) are unaffected, because a comment cannot split a token.
+  - No production file has any of these forms, so the matcher misses nothing in production today. The defect is only that the header overstates the guard; its materiality is docs-only.
+  - Fix shape — CHOSEN: narrow the header to exactly what the two prefix-dependent alternatives prove, and name the residue as a class.
+    - The header states that `constructor` is matched only in the property-access spellings `.constructor`, `?.constructor` and `["constructor"]`, with nothing but whitespace or newlines between the accessor and the name.
+    - Any other route to it is residue: a comment inside the access, destructuring, or `Reflect.get(o, "constructor")`.
+    - The same "whitespace only" limit is stated for the string-timer call.
+    - Why not strip block comments before matching: a naive `/\/\*[\s\S]*?\*\//g` strip opens a NEW evasion. Code between two string literals that contain `/*` and `*/` would be deleted before the scan. A correct strip needs a tokenizer, which is out of proportion for a test-harness guard.
+    - Why not widen the regex to accept comments inside the prefix: it closes only the peer's example, while destructuring and `Reflect.get` stay open. The header would still need a residue clause, so the narrowing is needed either way, and adding the regex only adds surface.
+    - Also say in the header that the syntax-aware control for dynamic code is lint: `@typescript-eslint/no-implied-eval`, from `recommendedTypeChecked` in `extension/eslint.config.js`, flags `new Function` / `Function(...)` and string timers on the AST, so it is not fooled by comments.
+  - Regression fixtures:
+    - one detection fixture proving the stated whitespace allowance: `f\n  .constructor("x")();` and `f?.constructor("x")`, both DETECTED as dynamic code;
+    - the clean fixture keeps its class declarations.
+    - No fixture pins the residue as undetected: a test that asserts a gap would fight any future widening, and the header names the gap.
+  - A further confirmation round: NOT worth a codex round after this fix.
+    - This lexical guard has now had three rounds (38 → 39 → 40). Each round found one more spelling that a regex cannot see, which is the expected behaviour of a lexical scan, not a sign of an unstable fix.
+    - After the fix the header states the matcher's limit as a class ("prefix-dependent patterns match whitespace-only spellings; everything else is residue"), so the next spelling a peer finds falls inside the named residue.
+    - The fix is header prose plus one fixture, has no production code path, and is checked by the fix-delta self-check. I recommend closing pass `stage-6.p1` on it.
+- Cap verdict: accept — test-harness — PR-LOW-230 is a header overstatement with no production use (docs-only materiality). The fix narrows the claim to the matcher's proven class with the residue named, so no further codex round is recommended after it (round 40 is peer round 4 of 6).
+- Fix-delta self-check: PASS — re-read the rewritten header against the three `FORBIDDEN` patterns line by line (each claim is one the regex proves: bare names as `\b` tokens, the `constructor` alternative `(\.|\[\s*["'\`])\s*constructor\b`, the timer alternative `set(Timeout|Interval)\s*\(\s*["'\`]`), and traced the two new fixtures (line-broken `.constructor` and `?.constructor`) through `code()` and the dynamic-code pattern.
+
+### Round 41 - 2026-09-28 - Phase 7 (Tasks 7.1–7.3: global hotkey, spoken pause, new-consultation warning), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending) — 3 LOW, all Fix-now, all applied in this leg; pytest owed to the composer
+- Source: Claude Code (executor leg stage-7-exec-g3, claude-opus-5-5, sequential lenses in-session — no subagents)
+- Scope / baseline: the whole Phase 7 diff on top of the uncommitted Phase 4–6 tree over `7a6cbd7` (git cannot separate it, so the scope is the files Phase 7 created or edited, named on the 7.x task lines):
+  - read in full: `hotkey.py`, `voice_commands.py`; the Phase 7 parts of `ui/main_window.py` (`_MSG` / `_native_msg` / `_is_suspend_event`, `__init__`'s wiring, `attach_chrome_link`, the hotkey section, `nativeEvent`, `pause_for`, `closeEvent`, `_on_session_started`, the phrase-rule section), `ui/bridge.py` (the docstring, `__init__`, the hands-free section, `build_content`, `_tick`, `view`), `ui/models.py` (the hands-free lines, `ChromeView`, `chrome_view_text`, `SessionControllerLike`), `app.py`; `extension/src/panel-view.ts` and `panel.ts`;
+  - re-read against the new callers (unchanged by Phase 7): `ui/session_screen.py` `on_resume` / `on_pause` / `show_notice`, `ui/transcript.py` `live_window` / `_on_live_window`, `session.py` `pause` / `resume` / `recorded_seconds` / `live_failure` / `live_transcription_attached`, `audio_capture.py` `CaptureWorker` (the buffer across a Pause), `context_rules.py` `pause_action`, `note.py` `normalise_token`;
+  - tests: `test_hands_free.py`, the changed parts of `test_ui_bridge.py`, `test_ui_models.py`, `test_ui_screens.py` (`FakeController`), `panel-view.test.ts`, `panel.dom.test.ts`;
+  - docs: the threat model's "HANDS-FREE AND WARNINGS" paragraph and the pause-rule paragraph's two edits, data-flow flows 14 and 19, the retention live-buffers row, CHANGELOG, the 7.x task lines and the g1/g2 handoffs.
+
+  Composer suites on the pre-round (g2) tree: desktop 4013 passed, extension 295 passed, `npm run build` OK.
+- Lenses and results:
+  - `nativeEvent` — CLEAN: one `try` around the whole body, `(False, 0)` for every message; the suspend branch is unchanged (`is_suspend_message` on the same `_MSG` head, still synchronous); the hotkey branch only emits a queued signal, so no pause or resume runs inside Windows' dispatch; `self._hotkey` absent (a native event during construction) is caught like any other error.
+  - No resume bypass — CLEAN: `on_hotkey` resumes only through `SessionScreen.on_resume`, whose guard is the bridge's `resume_refusal` (the same check the button and Chrome's `resume` run); a refusal calls nothing. "Desktop only, not `state.last_refusal`" is CONSISTENT with D2 (`last_refusal` names a refused Chrome COMMAND) and D5 ("the reason is named" — the desktop button's refusal is desktop-only too); the panel already shows the paused or blocked state. Recorded as interpretation call 2 on the g1 handoff.
+  - Registration and release — CLEAN: `attach_hotkey` only from `app.main`; a refusal (error 1409, or any registrar error) is a status on the status line, the Session screen and `state.hotkey`; nothing reserved means nothing to release; `detach_hotkey` in an ACCEPTED `closeEvent` (a refused close keeps the chord while recording goes on) and at `aboutToQuit`, idempotent. A second instance exits at the single-instance guard before any window exists.
+  - Spoken pause — found LOW-033. Whole-word tokens through `note.normalise_token` (the g2 fix); "prescribe, pause" can never match; the FIRST word's `start_seconds` against the cutoff. The one-chunk grace is justified by `CaptureWorker._run`: its partial `buffer` survives a Pause and is written with the first post-Resume chunk, so up to a second of pre-Pause audio lands after `recorded_seconds`; documented in the module docstring, threat-model residue (2) and interpretation call 5. The phrase stays in the transcript (the Transcript screen's own slot renders it). "Unavailable" comes from the existing `live_failure` and `live_transcription_attached`.
+  - Warning never acts — CLEAN: `_raise_new_consultation` sets the bridge's `_warning_session`, a status line, a notice and a taskbar flash — no controller call, no `pause_for`, no block; once per recording (`_raised`); `reset` at every Start; the bridge publishes it only while THAT session is recording or paused, and `_tick` drops it after.
+  - Test honesty — found LOW-034 and LOW-035. No test reserves a real chord: `_main_window` never calls `attach_hotkey`, and every test call passes a fake registrar (the child process too).
+  - Docs as control claims — CLEAN: the threat model states the hotkey as a global input (anyone at the keyboard, or a same-user `WM_HOTKEY`) that reaches only Pause and the guarded Resume, the phrase as heard from anyone in the room and only pausing, the warning as a heuristic cue, and the latency; each claim matches the code. LOW-033's rule is added to the module docstring and CHANGELOG.
+- Findings:
+  - **[LOW]** LOW-033: `desktop/src/scribe_desktop/voice_commands.py` `SpokenPauseDetector.feed` — the word carried from the previous window was joined to the next window's first word across ANY silence, so "…ask the scribe" and, after a pause long enough to close the window, "Pause here" read as the phrase and paused the recording — materiality=correctness surface=production — Triage: Fix-now; Decision: Applied: the carry joins only when the next window's first word starts ≤ `CARRY_MAX_GAP_SECONDS` (= `TRANSCRIBE_WINDOW_MAX_GAP_SECONDS`, 3.0 s — the silence that closes a window) after it; test: `TestSpokenPauseMatcher.test_a_silence_between_windows_breaks_the_phrase` (3.1 s apart does not pause, 2.7 s does).
+  - **[LOW]** LOW-034: `desktop/tests/test_ui_bridge.py` `test_the_timer_and_spoken_pause_follow_the_controller` — with g1's new `FakeController.live_transcription_attached = False`, its "unavailable after a failure" assertion held BEFORE the failure was set, so it no longer tested the failure — materiality=assurance surface=test-harness — Triage: Fix-now; Decision: Applied: the test first attaches a running live transcriber and asserts `spoken_pause` true and no unavailable line, then sets the failure.
+  - **[LOW]** LOW-035: `desktop/tests/test_hands_free.py` `test_a_real_wm_hotkey_through_qts_dispatch` — the child only SENT `WM_HOTKEY` into the window procedure, while Windows POSTS a real press to the thread's queue, which Qt's event dispatcher pumps; the claimed "real dispatch" did not cover that path — materiality=assurance surface=test-harness — Triage: Fix-now; Decision: Applied: the child now sends (as before, printing `SENT ["hotkey"]`) and then POSTS the app's id and another id through `PostMessageW`, pumping events five times; the test pins `SENT ["hotkey"]` then `SEEN ["hotkey", "hotkey"]`.
+- Checked and not raised:
+  - `recorded_seconds` is read in `_on_session_resumed` after `controller.resume()` has let capture run, so a chunk completed in between moves the cutoff up to one more second LATER — only in the safe direction (a pre-Resume phrase is still excluded; a phrase in that extra second is missed);
+  - a live window of a previous recording cannot reach the next one's rules: a Start is allowed only at QUEUED, after the drain has delivered every tail post, and a Discard stops the worker under its post lock before the next Start click is processed;
+  - the hotkey pressed while a voice enrolment runs: the state is IDLE, so nothing happens;
+  - `attach_hotkey` creates the native window (`winId()`) before `show()`; Qt keeps that handle when the window is shown (the recreated-handle case is threat-model residue (1));
+  - the warning's `show_notice` replaces the Session screen's last message; the warning is raised only while recording or paused, when that line holds no failure.
+- Verification counts: 7 lenses run, 3 candidates, 0 dropped, 0 downgraded
+- Missed-issue pass (auditable): re-read after the fixes — `feed`'s three stream shapes (no carry; carry within 3 s; carry dropped), with the existing split, mixed-window and cutoff tests traced through the new condition (the mixed-window test's carry precedes the next window, a negative gap, so it is kept as before); the child script's ordering (the sent id is delivered by the first `processEvents`, the posted one by the pump loop; the other id is ignored on both paths); the bridge test's two states. Result: none.
+- ruff clean; mypy 49 files, no issues; no extension change; pytest owed to the composer (expected desktop 4013 + 1 = 4014: `test_a_silence_between_windows_breaks_the_phrase`; the other two fixes change existing tests; extension stays 295)
+- Last reviewed: 2026-09-28
+
+### Round 42 - 2026-09-28 - Phase 7 hands-free and warnings (hotkey, spoken pause and warning core), independent cross-family codex peer review (pass stage-7.p1 slice A)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-7-only tree diff `70f4b247…bea02e4a`, slice A and permitted references; static review only, no writes, tests or network.
+- **PR-LOW-240** (LOW, behavioral, `desktop/src/scribe_desktop/app.py:205`): Startup exceptions after hotkey registration have no guaranteed unregister path. An exception before the event loop starts bypasses both normal close and `aboutToQuit` cleanup, leaving release dependent on process termination. — Evidence: `hotkey = window.attach_hotkey()` precedes `log_event(logger, "hotkey", state=hotkey.state)` and `app.aboutToQuit.connect(window.detach_hotkey)`; subsequent timer setup, `window.show()` and `app.exec()` have no enclosing `finally`. Recommendation: Fix-now — Enclose attachment and subsequent startup/event-loop work in `try/finally` calling the idempotent detach; verify with a fake registrar and an injected post-registration startup failure. /fix decision: Applied — /fix notes: `desktop/src/scribe_desktop/app.py`: everything after `attach_hotkey()`, from the log line through `app.exec()`, now runs in `try: … finally: window.detach_hotkey()`; the `aboutToQuit` connection is kept, since detach is idempotent. Test: `test_hands_free.py` `TestHotkeyWindow.test_a_start_up_failure_after_attach_gives_the_chord_back` patches `main()`'s collaborators, makes `show` raise, and asserts one register and exactly one unregister. Siblings (Chrome pipe `pipe.stop`, the single-instance mutex) were not touched and are recorded as an Executor recommendation in the g5 handoff. ruff and mypy clean; pytest composer-run. /fix date: 2026-09-28. /fix applied by: Claude Code
+- **PR-LOW-241** (LOW, behavioral, `desktop/src/scribe_desktop/ui/main_window.py:438`): A queued hotkey press remains actionable after its registration is detached. Registration validity is checked before enqueueing, but not when the queued callback executes; detach therefore does not invalidate an already accepted press. — Evidence: lines 483–484 use `self._hotkey.matches(*head)` then `self._hotkey_pressed_q.emit()`, while `_on_hotkey_pressed` unconditionally calls `self.on_hotkey()`; `detach_hotkey` only unregisters and publishes status. Recommendation: Fix-now — Bind queued presses to a registration generation and reject delivery after detach or replacement; add a fake-registrar test that queues a press, detaches, then processes events and asserts no action. /fix decision: Applied — /fix notes: `desktop/src/scribe_desktop/ui/main_window.py` `_on_hotkey_pressed` calls `on_hotkey()` only while `self._hotkey.status.available`. There is no generation counter: the chord is registered at most once, and nothing re-registers after detach (LEG 1). Test: `test_hands_free.py` `TestHotkeyWindow.test_a_press_queued_before_detach_is_dropped[False|True]` queues a press while RECORDING; with detach nothing is called, and the control case pauses. The existing queued-press and real-dispatch tests still deliver while reserved. No other queued signal is on the hotkey path (LEG 1 class check). ruff and mypy clean; pytest composer-run. /fix date: 2026-09-28. /fix applied by: Claude Code
+- Verification counts: 3 claims checked, 2 confirmed, 1 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-7-exec-g4)
+
+Verification only (2026-09-28T03:45+10:00): the code was re-read and nothing was changed.
+
+- **PR-LOW-240** (peer: LOW, behavioral, `app.py:205`, Fix-now) — materiality=behavioral severity=LOW surface=production rec=Fix-now (cheap hardening; no reachable leak today) — the claim holds as stated: `app.py:205–224` has no `finally`, and only the accepted `closeEvent` and `aboutToQuit` call `detach_hotkey`. Evidence:
+  - **What a leaked `RegisterHotKey` costs on Windows.** The reservation belongs to the window handle and its thread. Windows' window manager drops it when that window is destroyed or its thread or process ends: `UnregisterWindowHotKeys` and `UnregisterThreadHotKeys` in the window-manager cleanup, as ReactOS mirrors it. So a leak lasts only as long as the process does.
+  - **Can a failed start-up keep the process alive?** No. Every thread in the app is daemon (`scribe-pipe-server` and its writers, the capture worker, the live transcriber), so an exception out of `main()` ends the interpreter, which destroys the window and the thread and gives the chord back. An exception inside `app.exec()` in a slot is printed by PySide6, and the loop runs on with the chord correctly held. A HUNG but alive process keeps the chord, and it also keeps the window and the single-instance mutex. A relaunch then says "already running" anyway, so the hotkey adds no new failure.
+  - **Class check.** `pipe.stop` at `aboutToQuit` (`app.py:201`) and the mutex handle have the same no-`finally` shape and the same release at process exit. This is not a new class; the hotkey is its newest member.
+
+  **Fix shape:** wrap `app.py:205–226` (from `attach_hotkey` through `app.exec()`) in `try: … finally: window.detach_hotkey()`, keeping the `aboutToQuit` connection (detach is idempotent). **Regression test:** in `test_status_and_app.py`, follow the pattern of `test_main_refuses_second_instance`. Monkeypatch the lock to acquired, `SoundDeviceBackend`, `default_sessions_root` to `tmp_path`, `_start_chrome_link` to `None`, and `MainWindow.attach_hotkey` to use a fake registrar that records unregisters. Make `MainWindow.show` raise, then assert `main()` raises and the fake saw one unregister.
+- **PR-LOW-241** (peer: LOW, behavioral, `ui/main_window.py:438`, Fix-now) — materiality=behavioral severity=LOW surface=production rec=Fix-now (a one-line delivery-time check; no reachable harm today) — the claim holds: `matches()` (`hotkey.py:143–145`, false once `unregister` resets the status to `NOT_SET_UP`) is checked only when the press is queued (`main_window.py:483–484`). `_on_hotkey_pressed` (`:438–439`) calls `on_hotkey` unconditionally. Evidence:
+  - **Can a late press act after close?** Not in effect. `detach_hotkey` has exactly two callers:
+    - the ACCEPTED `closeEvent` (`:846`), which is reached only when the state is neither RECORDING nor PAUSED (`:784–795` refuses the close otherwise);
+    - `aboutToQuit`, after which the event loop delivers nothing more.
+
+    `on_hotkey` reads the controller state when the press is delivered, and acts only in RECORDING (pause) or PAUSED (the guarded Resume). A press delivered after an accepted close therefore finds nothing to act on. Nothing calls `setQuitOnLastWindowClosed(False)` and there is no tray icon, so an accepted close quits the app.
+  - **Can a late press reach a DIFFERENT (next) recording?** Not through detach. Qt delivers the thread's posted events in order, so any LATER posted command (the relay thread's queued bridge signals, `bridge.py:281`) runs after the press. A new recording also cannot follow an accepted close.
+
+    One property of any queued delivery, unrelated to detach: in theory a native input message (a Start click on the desktop) could be dispatched between the `WM_HOTKEY` and the press's delivery. Then the press would PAUSE the recording just started. That is the safe direction, and it is visible with its cue and Resume. A press can never RESUME a different recording: moving from one PAUSED recording to another PAUSED recording takes more than one event.
+  - **Class check: every queued signal the hotkey path uses.** `_hotkey_pressed_q` (`:326–327`) is the ONLY queued hop. Everything downstream is synchronous on the GUI thread:
+    - `pause_for` (`:489`);
+    - `SessionScreen.on_resume` → `session_resumed` → `MainWindow._on_session_resumed` and the bridge's `_on_resumed` (`:356`, `bridge.py:288`, both same-thread direct connections);
+    - `bridge.pause_cue` → `_show_pause_cue` (`:405`, direct).
+
+    The sibling phrase path's cross-thread hop, `TranscriptScreen.live_window` (emitted from the live worker's thread, `transcript.py:292`), ALREADY re-checks when it is delivered: `_on_live_window` acts only in RECORDING or PAUSED, and the start-time reset plus event order keep an old recording's window out (round 41, checked and not raised). The hotkey hop is the one member of the class without a delivery-time check.
+
+  **Fix shape:** `_on_hotkey_pressed` delivers only while the chord is still reserved: `if self._hotkey is not None and self._hotkey.status.available: self.on_hotkey()`. `attach_hotkey` registers at most once per `GlobalHotkey` (`hotkey.py:119–120`) and nothing re-registers after `detach`, so a "still reserved" check is exact and needs no generation counter. **Regression test:** add to `test_hands_free.py` `TestHotkeyWindow`. Attach a `FakeRegistrar`, set the fake controller to RECORDING, emit `window._hotkey_pressed_q`, call `detach_hotkey()`, then `processEvents()`, and assert no `pause` among `_actions(controller)`. Add a control case (the same steps without detach) that pauses, so the test can tell the two apart.
+Cap verdict: accept — production-behavioral — both claims verified true but neither is reachable as harm (the OS releases the chord at process exit and every thread is daemon; detach runs only outside RECORDING/PAUSED, and posted events are delivered in order); each fix is a few lines with a deterministic in-process test, confirmable by the finishing seat without another peer round.
+- LEG 2 decisions (leg stage-7-exec-g5, 2026-09-28; composer disposition `OWNERSHIP: auto-disposition` under `gates=executor`; cap verdict accepted):
+  - PR-LOW-240 → **Applied** as the fix shape above; test `test_a_start_up_failure_after_attach_gives_the_chord_back`.
+  - PR-LOW-241 → **Applied** as the fix shape above; tests `test_a_press_queued_before_detach_is_dropped[False|True]`.
+- Fix-delta self-check: PASS. I re-read the two applied hunks and three new test cases.
+  - `app.py`: `code` is bound only inside the `try`, so a failure raises before `return code`, and the normal exit still logs `app_exit`. The `finally` detach after the `aboutToQuit` detach is a no-op, because `unregister` is idempotent.
+  - `_on_hotkey_pressed`: the two existing tests that deliver a press (queued-only-for-the-reserved-chord, and the real-dispatch child, which detaches only after its last `processEvents`) still deliver while reserved.
+  - The new `main()` test disconnects the `aboutToQuit` slot it wired on the shared app, and patches only `app` module names and the one window instance.
+
+### Round 43 - 2026-09-28 - Phase 7 hands-free and warnings (bridge, models, side panel and docs), independent cross-family codex peer review (pass stage-7.p1 slice B)
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified Phase-7-only tree diff, permitted slice B files, and designated plan sections; static review only, with no writes, tests, npm, or network commands.
+- No verified findings. The shared snapshot preserves hands-free status across reconnects; warnings are restricted to their live recording. Panel warning lookups use own entries and rendering uses `textContent`. The revised failure test distinguishes available from failed transcription. Desktop-only hotkey refusals are consistent with D2’s Chrome-command refusal channel and Task 7.1’s recorded behavior.
+- Verification counts: 12 claims checked, 10 confirmed, 2 dropped as unverifiable within this slice: production controller accessor behavior and core hotkey/detector enforcement behind the documentation claims.
+- Last reviewed: 2026-09-28
+
+### Round 44 - 2026-09-28 - Phase 7 hands-free and warnings (confirmation of round 42), independent cross-family codex peer review (pass stage-7.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Scoped confirmation of `bea02e4a…c71f7c09`, the four permitted current files and Round 42; static reading only, no writes, tests or network. No new findings.
+- Confirmations: **PR-LOW-240 CONFIRMED** — `desktop/src/scribe_desktop/app.py:207` protects all work after successful attachment through `app.exec()` with `finally: window.detach_hotkey()` (`:227`). Window construction precedes this block; existing close/quit cleanup and pipe-stop ordering remain intact, with no exception suppression or premature mutex release added. The regression test injects `raise RuntimeError("start-up failed")` (`desktop/tests/test_hands_free.py:552`), requires its propagation (`:570`), and asserts exactly one unregister (`:574`); pre-fix code leaves that list empty. Existing tests pin repeated detach to one unregister (`:529`). **PR-LOW-241 CONFIRMED** — `desktop/src/scribe_desktop/ui/main_window.py:441` checks `self._hotkey.status.available` on the same object that detach unregisters (`:434`), consistent with Round 42’s verified status-reset contract. The parametrised test sets RECORDING, queues delivery, optionally detaches, then processes events; `assert _actions(controller) == ([] if detach else [("pause",)])` (`desktop/tests/test_hands_free.py:592`) requires a real pause call in the control case. The detached case fails against the pre-fix unconditional callback.
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+### Round 45 - 2026-09-28 - Phase 8 (Tasks 8.1–8.2: security docs as one class, copied note kept out of clipboard history and sync), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending) — 2 LOW, both Fix-now docs, both applied in this leg; pytest owed to the composer (8.2's selection route changed code before the round)
+- Source: Claude Code (executor leg stage-8-exec-h2, claude-opus-5-5, sequential lenses in-session — no subagents)
+- Scope / baseline: the whole Phase 8 diff on top of the uncommitted Phase 4–7 tree over `7a6cbd7` (git cannot separate it, so the scope is what the 8.1 and 8.2 task lines name):
+  - docs: `docs/security/threat-model.md` (scope, trust boundary 1, the Cliniko client's callers, NOTE VERIFICATION, THE ENCOUNTER RECORD, the pause-rule residue, 3A surface 4, the new "The Chrome extension" section, out of scope, review triggers), `data-flow-map.md` (title, intro, components, flows 10, 18, 20, the non-flows, the closing block), `retention-schedule.md` (intro, clipboard, API-response, encounter rows and the four new rows), `intended-use.md`, `docs/security/README.md`, `incident-process.md`, `docs/design-system.md`, `protocol/fixtures/README.md`, `PLAN.md`, AGENTS.md, CHANGELOG;
+  - code and tests: `ui/models.py` (`CLIPBOARD_EXCLUSION_FORMATS`, `clipboard_mime_formats`, `windows_clipboard_mime_type`), `ui/note.py` (`_place_note_text`, `_NotePanel`, `_copy_note`, the module docstring), `test_ui_screens.py` (the copy section), `test_ui_prose_stage.py`'s stub, `test_ui_models.py` `TestClipboardFormats`;
+  - re-read against the claims: `extension/src/manifest.ts`, `background.ts`, `hub.ts`, `context.ts`, `connection.ts`, `page.ts`, `panel.ts`, `panel-view.ts`, `extension/dist/manifest.json`; `ui/bridge.py` (`_on_context`, `_dispatch`, `_report_state` … `build_content`); `protocol.py` (the state payload models); `encounter.py` (`ConsentAttestation`, `read_encounter_record` and its three callers).
+
+  Composer suites on the pre-round (h1) tree: desktop 4022 passed, extension 295 passed, `npm run build` OK.
+- Lenses and results:
+  - Control claims enforced by the code they name — found LOW-037; the load-bearing claims hold: the manifest (`manifest.ts:23-41`; the built `web_accessible_resources` entry with `use_dynamic_url: false`), reports from URLs only (`context.ts:55-70`, `243-259`), sender checks (`hub.ts:318-358`, `362-420`), `isTrusted` (`page.ts:383`), per-tab scoping (`context.ts:300-340`), `textContent` (`page.ts:122`), the inert/teardown lifecycle (`page.ts:215-245`) and re-injection (`hub.ts:293-313`), the worker's snapshot cleared on connect, fail and disconnect (`connection.ts:160`, `259`, `272`), the name-bearing `state` fields and the banner never named (`protocol.py:243-311`, `ui/bridge.py:938-961`), the three `encounter.enc` decrypt sites (`ui/main_window.py:988`, `session.py:1136`, `ui/models.py:977`), `ConsentAttestation` (`encounter.py:145-154`).
+  - No two docs state one control differently — found LOW-036. Discard's two clicks (desktop 10 s, block and panel 15 s), the frame colours, the badge, the clipboard formats and their residue now read the same at every site.
+  - Stale wording under `docs/`, `PLAN.md`, AGENTS.md and source docstrings — CLEAN: no "Phase 5 preview", "unwired", "shown nowhere", "until the Phase 6 extension", and no leftover h1 "a keyboard copy carries none of them" sentence. One historical match stays by design: CHANGELOG's Phase 4 part 1 entry ("refused until Phase 5") records that phase's state.
+  - `PLAN.md` — CLEAN: exactly the four listed edits (`git diff`: steps 9 and "stop", `ConsentAttestation`, the Phase 5 delivery note) and nothing more.
+  - 8.2's formats and payloads — CLEAN: three names, each `(0).to_bytes(4, "little")`, under `application/x-qt-windows-mime;value="<name>"`; one placement (`_place_note_text`) for the button and the selection; each route re-checks `_copy_ready` at the moment of copying; the selection text is `textCursor().selection().toPlainText()`, the text `QTextEditMimeData` places as `text/plain`. Class check across `ui/`: `note_body` is the only selectable surface showing note text.
+  - The round-70 pins' strength — CLEAN: `_fake_clipboard` records `setText` AND `setMimeData`; `_attempt_copy` now tries the button, the direct call and every selection route over `selectAll()`, so the flag-off pin and the pre-ratification half of the flag-on pin cover them; the exact-text assertion after ratification is unchanged.
+  - Test honesty — CLEAN: the unratified test proves a selection exists before asserting nothing is placed; the context-menu wiring test stubs the menu (no modal `exec`); the keyboard test iterates the platform's real Copy bindings and asserts Ctrl+C is among them; no test touches the real clipboard.
+  - Identifying data — CLEAN: none in any changed file.
+- Findings:
+  - **[LOW]** LOW-036: AGENTS.md Local Run Steps step 8, `docs/security/data-flow-map.md` (the no-network non-flow) and `docs/security/incident-process.md` (the network trigger) — step 8 still called Validate "the only moment the app talks to Cliniko", and the other two stated "none at startup or idle" without saying that a Chrome note report triggers a verification, so an app started while Chrome shows a Cliniko note (it verifies that note once the report arrives) read as a contract breach and an incident — materiality=assurance surface=docs — Triage: Fix-now; Decision: Applied: step 8 names both triggers; the non-flow says a call follows only a practitioner action or a Chrome note report and that the no-sockets legs measure startup and idle with no Chrome link; the incident trigger excludes a note open in Chrome. (The threat model's client section already said so since h1.)
+  - **[LOW]** LOW-037: `docs/security/data-flow-map.md` flow 20 and the retention "Chrome-side memory" row — flow 20 said the panel keeps "the one note the consent tick was given for, until the tick clears" (`panel.ts` keeps the Ready layout's KEY — tab, host, patient and note ids, verification — while that layout stands), and neither listed the worker's last-sent slice per tab (`hub.ts` `sentSlices`, change detection), which can hold that tab's clinic's patient name — materiality=assurance surface=docs — Triage: Fix-now; Decision: Applied: both sites now state the key and its lifetime and the last-sent slice (dropped when the tab closes, on a resync or on the page script's hello).
+- Checked and not raised:
+  - drag of the ratified selection out of the note panel: Qt's own drag (`createMimeDataFromSelection`, no formats) never touches the clipboard, so history and sync never see it; named as residue at every 8.2 site rather than blocked (blocking it would need Qt's private drag switch or a mouse-event override for no clipboard gain);
+  - overriding `createMimeDataFromSelection` instead of intercepting the actions: rejected — the ownership of a Python-returned `QMimeData` from that virtual could not be verified offline, and a wrongly owned object would leave the clipboard a dangling pointer;
+  - Cut and Paste on the read-only panel do nothing, and the transcript views stay `NoTextInteraction`;
+  - the extra blank line after the PLAN.md delivery note is formatting only.
+- Verification counts: 8 lenses run, 2 candidates, 0 dropped, 0 downgraded
+- Missed-issue pass (auditable): re-read after the fixes — the three contract statements against `ui/bridge.py` `_on_context` / `_dispatch` (a call only on a report or a new connection under a linked session) and the no-sockets legs' scope; flow 20 and the retention row against `panel.ts:118-121` and `hub.ts:130`, `213`, `273`, `306`, `331`, `492-493`; the h2 selection route against its three tests. Result: none.
+- ruff clean; mypy 49 files, no issues; extension typecheck and lint clean (no extension change); pytest owed to the composer (expected desktop 4022 + 3 = 4025: the three new selection tests; `_attempt_copy` changes existing tests without adding any; extension stays 295)
+- Last reviewed: 2026-09-28
+
+### Round 46 - 2026-09-28 - Phase 8 security docs and clipboard exclusion (clipboard exclusion code, tests and its doc sites), independent cross-family codex peer review (pass stage-8.p1 slice A)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-8-only slice A diff between the supplied tree objects, permitted current code/tests, plan constraints and clipboard documentation; static review only, no writes, tests or network.
+- **PR-LOW-270** (LOW, test-harness, `desktop/tests/test_ui_screens.py:6321`): The clipboard fake intercepts the Python placement helper but cannot intercept Qt’s native clipboard path, which the new keyboard tests exercise if interception regresses. Such a regression can touch the real clipboard before the positive test fails; negative assertions over the fake’s payload list cannot detect that native write. — Evidence: `monkeypatch.setattr(note_module, "QApplication", _StubApplication)` replaces only the module binding; line 6355 calls `body.keyPressEvent(cls._copy_key_event())`, while `desktop/src/scribe_desktop/ui/note.py:287` retains `super().keyPressEvent(event)`. Recommendation: Fix-now — Add a test guard that detects and prevents native Copy delegation before clipboard access, preserving fake-only execution even when the interception regresses. /fix decision: Applied — /fix notes: `desktop/tests/test_ui_screens.py` only (no production change). `_fake_clipboard` now:
+  - asserts `QGuiApplication.platformName() == "offscreen"`;
+  - replaces `QPlainTextEdit.keyPressEvent` with a guard that raises `AssertionError("a Copy key reached Qt's native copy")` on any `StandardKey.Copy` event and passes every other key to the saved original (optionally recording it in `native_keys`);
+  - replaces `QPlainTextEdit.copy` with a guard that raises.
+
+  Two new tests:
+  - `test_the_native_copy_guard_passes_other_keys_to_qt`: Key_A reaches Qt through the guard; the panel's own Ctrl+C never does and places nothing unratified.
+  - `test_an_unintercepted_copy_key_fails_before_any_clipboard`: with `_NotePanel.keyPressEvent` deleted, Ctrl+C and a direct `copy()` each raise the guard's error with the fake clipboard empty.
+
+  Verified: ruff clean; mypy 49 files. The tests are composer-run (expected +2). Sibling sites: the prose-stage stub in `test_ui_prose_stage.py` drives no key or native copy (none needed). /fix date: 2026-09-28. /fix applied by: Claude Code
+- **PR-LOW-271** (LOW, docs-only, `docs/security/intended-use.md:61`): The intended-use clipboard paragraph omits the third-party-manager, indefinite-residue/no-clearing and drag-and-drop limitations explicitly required at every clipboard documentation site. — Evidence: lines 63–66 say “Windows clipboard history and cloud clipboard sync leave it out” and “the marks do not stop other programs reading the clipboard”, then end with the cloud-sync advice and cross-reference. In contrast, `docs/security/threat-model.md:407–414` explicitly records all three missing limitations. Recommendation: Fix-now — Add those limitations to the intended-use paragraph so it matches flow 10, the retention row and the threat model. /fix decision: Applied — /fix notes: `docs/security/intended-use.md` current scope note. The clipboard paragraph now names the three limits the threat model's 3A surface 4 records:
+  - a third-party clipboard manager may ignore the marks;
+  - the copy stays until replaced, and the app never clears it;
+  - a drag of the selection carries no marks, does not use the clipboard, and lands wherever it is dropped.
+
+  Verified by re-reading it against `threat-model.md:404-418`. Sibling sites: none (flow 10, the retention row and the threat model already carry all three). /fix date: 2026-09-28. /fix applied by: Claude Code
+- Verification counts: 3 claims checked, 2 confirmed, 1 dropped as unverifiable (independent Windows interpretation of the exclusion-format payload could not be established from the permitted local sources).
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-8-exec-h3)
+
+- **PR-LOW-270** (peer: LOW, test-harness) — materiality=behavioral (test-harness side effect only, conditional) severity=LOW surface=test-harness rec=Fix-now — the peer's mechanism is real: `_fake_clipboard` replaces only `note_module.QApplication` (`test_ui_screens.py:6321`), and `_NotePanel.keyPressEvent` hands every non-Copy key to `super().keyPressEvent(event)` (`ui/note.py:287`). So a regression that dropped the Copy match would send Ctrl+C from `_attempt_copy` (`test_ui_screens.py:6355`, after `selectAll()`) into Qt's C++ `QPlainTextEdit::copy`, which calls `QGuiApplication::clipboard()` natively, and no Python patch can see that call.
+  - **Can a test run ACTUALLY place note text on the real clipboard today? No, not under the default run.**
+    - (1) The interception is in place: the h2 tree's keyboard and context-menu tests passed in the composer's run (4025), so no copy key reaches the native path.
+    - (2) Every UI test module does `os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")` before a `QApplication` exists (e.g. `test_ui_screens.py:21`). The offscreen QPA's clipboard is Qt's in-process `QPlatformClipboard`, not the Windows clipboard. This is believed, not verifiable offline.
+    - `test_hands_free.py:607` sets `windows` only in a child subprocess's environment, which runs no copy test.
+    - The real clipboard is reachable only if BOTH a native `QT_QPA_PLATFORM` is preset in the shell (`setdefault` honours it) AND the interception regresses. The test text is a mock note, never patient text.
+  - **Smallest shape that makes the tests unable to touch it:**
+    - (a) In `_fake_clipboard`, assert `QGuiApplication.platformName() == "offscreen"` and fail loudly otherwise, so a preset native platform stops the copy tests before any copy.
+    - (b) In the same fake, `monkeypatch.setattr(QPlainTextEdit, "keyPressEvent", spy)` and `monkeypatch.setattr(QPlainTextEdit, "copy", refuse)`. The spy raises `AssertionError` for any event where `event.matches(QKeySequence.StandardKey.Copy)` and otherwise calls the saved original. Python's `super()` resolves the patched attribute at call time, so a regressed panel fails in Python before native Qt runs.
+    - Regression tests:
+      - (i) Key_A through `_NotePanel.keyPressEvent` reaches the spy's pass-through. This proves the patch is not vacuous.
+      - (ii) With `_NotePanel.keyPressEvent` monkeypatched back to `QPlainTextEdit.keyPressEvent`, Ctrl+C raises the spy's `AssertionError` and the fake records nothing.
+    - Net suite +2. No production change.
+- **PR-LOW-271** (peer: LOW, docs-only) — materiality=docs-only severity=LOW surface=docs rec=Fix-now — confirmed. The Task 8.2 line requires the residue at every doc site. The `intended-use.md` clipboard paragraph names only "other programs reading the clipboard", while threat-model 3A surface 4, flow 10 and the retention clipboard row also name:
+  - third-party clipboard managers that ignore the formats;
+  - the copy staying until replaced, because nothing clears it;
+  - a drag of the selection carrying no formats.
+  - Shape: add one sentence naming those three to that paragraph. No code.
+- Cap verdict: accept — test-harness — both LOW are Fix-now within the pass; the default run is offscreen with the interception passing, so the harness gap is latent, not a live write to the practitioner's clipboard, and the fix is test-only (+2 tests) plus one docs sentence.
+- Final dispositions (leg stage-8-exec-h4 /fix; composer `OWNERSHIP: auto-disposition`):
+  - PR-LOW-270 → Applied (shape (a) + (b) and tests (i) + (ii), as above; test-only).
+  - PR-LOW-271 → Applied (one sentence in `intended-use.md`).
+- Fix-delta self-check: PASS — re-read 2 applied hunks across 2 files: the `_fake_clipboard` guards plus 2 tests, and the intended-use sentence.
+  - The guard leaves the existing copy tests' routes untouched: each goes through `_NotePanel`'s own Copy match before `super()`.
+  - The deleted-handler test restores through `monkeypatch`.
+  - The platform assert runs after `qapp` exists.
+
+### Round 47 - 2026-09-28 - Phase 8 security docs and clipboard exclusion (security docs as one class), independent cross-family codex peer review (pass stage-8.p1 slice B)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Phase-8-only diff `d07f111629e9201229bb20f482a5f6c1e0c60f57` → `a1bcc0a3a44731d4e0c67a335c90278ac23407ee`, the nine specified slice B files, selected plan constraints/decisions/tasks, and cited implementation checks; read-only, no tests or network.
+- **PR-LOW-280** (LOW, docs-only, `PLAN.md:135`): The new delivery summary overstates the recording and pause guarantees: offline-unverified starts are permitted, desktop starts remain unlinked, and switching to a separate non-Cliniko tab does not pause. — Evidence: “Recording starts only from an open treatment note that Cliniko verifies” and “any patient, note, tab or login change pauses”; `desktop/src/scribe_desktop/encounter.py:765` explicitly permits “verified or `unverified_offline`”, while `desktop/src/scribe_desktop/context_rules.py:162` checks `report.focused and report.page == "note" and not same`, followed by the login check and otherwise `return None` at line 166. Recommendation: Fix-now — Qualify the summary as Chrome-linked recording, name the offline-unverified and desktop fallbacks, and describe D5’s specific pause triggers. /fix decision: Applied — /fix notes: all four class-check sites qualified:
+  - `PLAN.md:135` (the delivery note): a Chrome-linked recording starts from a verified note or an `unverified_offline` one; a desktop Start is unlinked and cannot be written back; D5's triggers are listed; a separate non-Cliniko tab does not pause; any recording pauses on system sleep.
+  - `PLAN.md:47` (step 9): "met by construction" is scoped to a Chrome-linked recording, and the desktop exception is named.
+  - `docs/security/intended-use.md` (current scope note): the same as `PLAN.md:135`.
+  - `AGENTS.md:60` (Current Status): the same, condensed.
+
+  Verified against `encounter.py:763-770` (`start_context`), `context_rules.py:55-68` (`PauseReason`) and `162-166`. Sibling sites: `PLAN.md:128` is the original spec text, left as it is (the LEG 1 class check). /fix date: 2026-09-28. /fix applied by: Claude Code
+- **PR-LOW-281** (LOW, docs-only, `docs/security/incident-process.md:61`): The recovery checklist retains an unconditional zero-connections idle check, so legitimate Chrome-driven verification can fail its stated recovery gate. — Evidence: “connection from either desktop process while the app is idle”; `docs/security/data-flow-map.md:745` explains that an open treatment note “verifies it once that report arrives” and line 747 qualifies the no-sockets checks as “with no Chrome link”. In `desktop/src/scribe_desktop/ui/bridge.py:610`, a report’s verification request is dispatched without a recording-state condition. Recommendation: Fix-now — Require no Chrome link and no pending practitioner-triggered verification for the zero-connections check, matching the data-flow qualification. /fix decision: Applied — /fix notes: `docs/security/incident-process.md` Recover step 1. The `netstat` check now applies "with Chrome closed, so no Cliniko note report arrives, and no practitioner action such as a Validate", and it says that a note open in Chrome is verified with Cliniko when its report arrives, which is expected.
+
+  Verified: a grep for unconditional idle-zero statements across `docs/security`, `AGENTS.md` and `PLAN.md` leaves only the contract's own name (`data-flow-map.md:12`, `threat-model.md:1295`), which is qualified beside it. Sibling sites: none. /fix date: 2026-09-28. /fix applied by: Claude Code
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-8-exec-h3)
+
+- **PR-LOW-280** (peer: LOW, docs-only) — materiality=docs-only severity=LOW surface=docs rec=Fix-now — confirmed:
+  - `encounter.py:765` admits `unverified_offline`;
+  - a desktop Start makes an unlinked recording;
+  - `context_rules.py:162-166` pauses a LINKED recording only on a change to its bound tab (note, patient, leave, close), another NOTE focused, the login page, the pipe dropping or a new client. Focusing a separate non-Cliniko tab returns `None`.
+
+  **Class check** (`PLAN.md`, `docs/security/*`, `AGENTS.md`; greps for "starts only from", "only from", "verifies, behind" and "any patient, note, tab") found the same overstatement at four sites:
+  - (1) `PLAN.md:135`, the delivery note (the peer's site);
+  - (2) `PLAN.md:47`, the step 9 addendum, also a Phase 8 edit: "recording starts only from an open Cliniko treatment note";
+  - (3) `docs/security/intended-use.md:47`: "recording from an open treatment note that Cliniko verifies";
+  - (4) `AGENTS.md:60`, Current Status: "Recording starts only from an open Cliniko treatment note verified through…".
+
+  Clean at the other sites:
+  - `threat-model.md:1664` and `design-system.md:77` say the patient LABEL comes only from a verified note, which is accurate;
+  - `PLAN.md:128` ("every patient-context change") is the original Phase 5 spec text, not a Phase 8 edit, so it stays.
+
+  **Shape:** at sites (1)–(4), say "a Chrome-linked recording starts from an open Cliniko treatment note that Cliniko verifies (or, offline, `unverified_offline`); a recording started on the desktop is unlinked and cannot be written back". At (1) and (3), replace "any patient, note, tab or login change" with D5's triggers and add "switching to a non-Cliniko tab does not pause". At (2), state that the "already open" point holds for a LINKED recording. Docs only, no test.
+- **PR-LOW-281** (peer: LOW, docs-only) — materiality=docs-only severity=LOW surface=docs rec=Fix-now — confirmed:
+  - `incident-process.md:60-61`'s recovery gate says "`netstat` shows no connection from either desktop process while the app is idle", with no condition.
+  - `ui/bridge.py:607-611` dispatches a verification on a report from the bound tab whatever the recording state.
+  - The same file's own trigger bullet (lines 29-33, fixed in round 45 LOW-036) and `data-flow-map.md:745-747` already qualify it.
+
+  **Class check** for unconditional idle-zero statements: `threat-model.md:1322` ("asserts zero connections") describes the no-sockets test's own scope and is clean. There are no other hits.
+
+  **Shape:** qualify the recovery check as "with Chrome closed (no Cliniko note report) and no practitioner action, e.g. no Validate". Docs only.
+- Cap verdict: accept — docs-only — two LOW wording fixes at five named sites, no code or test change; the code behaves as D5, D4 and the offline contract state it.
+- Final dispositions (leg stage-8-exec-h4 /fix; composer `OWNERSHIP: auto-disposition`):
+  - PR-LOW-280 → Applied at all four sites (`PLAN.md:47`, `PLAN.md:135`, `intended-use.md` scope note, `AGENTS.md:60`).
+  - PR-LOW-281 → Applied (`incident-process.md` Recover step 1).
+- Fix-delta self-check: PASS — re-read 5 applied hunks across 4 files. Each trigger list matches `PauseReason` and `_rule`: system sleep is stated for ANY recording, and the rest for a LINKED one. No site claims a desktop start can be written back. The incident trigger bullet (round 45 LOW-036) and the new recovery condition agree.
+
+### Round 48 - 2026-09-28 - Phase 8 security docs and clipboard exclusion (confirmation of rounds 46-47), independent cross-family codex peer review (pass stage-8.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Scoped confirmation of the supplied fix diff and permitted current implementation; static reading only, no writes, tests or network. No new findings.
+- Confirmations: PR-LOW-270 **CONFIRMED** — `desktop/tests/test_ui_screens.py:6320` requires `platformName() == "offscreen"`; lines 6325–6336 reject native Copy and pass other keys to the saved handler, with both class patches restored by `monkeypatch`. The tests at lines 6642 and 6665 check pass-through and deliberately removed interception; line 6686 requires `payloads == [] and mimes == []`. Removing interception fails the first test at its Copy call and the second at its required `monkeypatch.delattr`. Positive tests remain substantive: line 6557 requires `len(mimes) == len(bindings)`, followed by exact text and format assertions. PR-LOW-271 **CONFIRMED** — `docs/security/intended-use.md:72` states “third-party clipboard manager may ignore them”; lines 73–75 name replacement-only retention, no clearing and unmarked drag-and-drop, matching the limitations recorded in round 46’s verified tuple. PR-LOW-280 **CONFIRMED** — `PLAN.md:47` scopes the already-open claim to “a Chrome-linked recording” and names the desktop exception; `PLAN.md:135`, `AGENTS.md:60` and `docs/security/intended-use.md:47` distinguish verified/offline starts, unlinked desktop starts and the bounded pause rule. These agree with `desktop/src/scribe_desktop/encounter.py:765` (“verified or `unverified_offline`”) and `desktop/src/scribe_desktop/context_rules.py:162`–166, where another focused note or login pauses, otherwise `return None`. PR-LOW-281 **CONFIRMED** — `docs/security/incident-process.md:61` conditions the check on “Chrome closed” and “no practitioner action such as a Validate”; lines 63–64 explicitly allow report-triggered verification, matching the data-flow qualification quoted in round 47. Cross-document comparisons used those permitted round records, without reopening excluded files.
+- Verification counts: 4 claims checked, 4 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+### Round 49 - 2026-09-28 - Smoke fix: sleep and screen-lock pause (D5 as amended 2026-09-28), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending) — 1 LOW, Fix-now, applied in this leg. Pytest is owed to the composer.
+- Source: Claude Code (executor leg stage-8-exec-h5, claude-opus-5-5, sequential lenses in-session — no subagents)
+- Scope / baseline: this fix's diff only, on top of the uncommitted Phases 4–8 tree.
+  - Code: new `system_events.py`; `context_rules.py` (`LOCKED`, `SYSTEM_REASONS`, `WM_WTSSESSION_CHANGE` / `WTS_SESSION_LOCK`, `is_lock_message`); `ui/main_window.py` (`_session_locked_q`, `attach_system_pause` / `detach_system_pause` / `_on_session_locked`, the `nativeEvent` branch, `closeEvent`); `app.py`; `ui/bridge.py` (`pause_for` clears a waiting "Resume previous" on a system reason, `set_system_pause_status`, the view); `ui/models.py` (the `locked` cue, `SYSTEM_PAUSE_FAILED_LINES`, `ChromeView.system_pause_failed`); `extension/src/panel-view.ts` and `page.ts` (the `locked` text).
+  - Tests: new `test_system_pause.py`; `test_ui_bridge.py`; `test_context_rules.py`; `test_hands_free.py` (the `app.main` start-up test now uses a fake system registrar); `panel-view.test.ts`; `page.dom.test.ts`.
+  - Docs: the plan's D5 addendum and Task 5.1 line; threat model; design system; CHANGELOG; AGENTS.md.
+- Lenses and results:
+  - **Never raises into Qt — CLEAN.**
+    - The new `nativeEvent` branch sits inside the one `try`, and every message still returns `(False, 0)` (`test_the_override_never_raises_into_qt`, with a raising `lock_matches`).
+    - The lock only emits a queued signal; the pause runs outside Windows' dispatch.
+    - `SystemPauseWatch.register` / `unregister` swallow every registrar error (the refused, raising and raising-unregister tests).
+    - `Win32SystemEventRegistrar` on a Windows without `RegisterSuspendResumeNotification` fails at `_user32()` inside `register`'s `try`, so it becomes a status.
+  - **Registration lifetime on every exit path — CLEAN.**
+    - Registered once the handle exists (`int(self.winId())`, before `show()`, as the hotkey is).
+    - Given back on an ACCEPTED close (`closeEvent`, next to `detach_hotkey`), at quit (`aboutToQuit`), and in `app.py`'s `finally` if start-up fails after this point (`test_a_start_up_failure_after_attach_gives_the_chord_back` now also pins the four registrar calls).
+    - Unregister is idempotent and gives back only what Windows accepted.
+    - A refused close keeps them, correctly, since the window stays.
+    - The bridge attached before the registration (`_start_chrome_link` runs first) receives the status from `attach_system_pause`.
+  - **No resume on unlock — CLEAN.** `is_lock_message` matches `WTS_SESSION_LOCK` only; an unlock reaches no branch (the window test and the real-dispatch child both send one). No report path resumes: the rule never resumes, and `resume_refusal` still guards every Resume.
+  - **A lock during a "Resume previous" window or a block cannot resume anything — found LOW-038; the resume half was CLEAN.**
+    - `ChromeBridge.pause_for` clears `_pending_resume` for `SYSTEM_REASONS` before anything else, so the note's report arriving behind a locked screen resumes nothing (`test_a_suspend_or_lock_ends_a_waiting_resume_previous`).
+    - Only the system reasons end the click: `test_a_chrome_reason_leaves_a_waiting_resume_previous` covers the tab passing through other pages on its way back.
+    - LOW-038 is the block's REASON, not a resume.
+  - **One pause per event — CLEAN.**
+    - Suspend is handled synchronously and the lock is queued; whichever runs second finds the session PAUSED: an unlinked one does nothing, a linked one is not a `new_block`, so there is no second cue.
+    - The classic and registered suspend are the same message (`test_both_suspend_routes_and_a_lock_make_one_pause`, which also sends the resume broadcast).
+  - **Test honesty (would a test pass with the registration removed?) — CLEAN.**
+    - `test_a_window_registers_nothing_and_ignores_a_lock_until_attached` is the control: the same lock message pauses nothing without the registration.
+    - Every lock test needs `lock_matches`, which needs an accepted registration.
+    - The real-dispatch child prints `UNREGISTERED []` before registering.
+    - Removing `app.py`'s call fails the start-up test's registrar-call pin.
+    - The Win32 argument test checks `DEVICE_NOTIFY_WINDOW_HANDLE` / `NOTIFY_FOR_THIS_SESSION` against a stand-in DLL.
+    - What no test can prove — Windows DELIVERING the messages on this hardware — is named in the new module's, the test module's and the child test's docstrings, and in the threat model's residue (3).
+- Findings:
+  - **[LOW]** LOW-038: `desktop/src/scribe_desktop/ui/bridge.py` `pause_for`. A lock (or suspend) on a linked recording already blocked for a patient change overwrote the block's reason ("latest reason wins"). The full-page block and the side panel then read "The computer was locked." instead of "This tab opened a different treatment note." when the practitioner came back. Nothing unsafe followed (both patients stay side by side, and Resume previous still needs the matching report), but it hid the reason that matters. The lock made this far more likely than suspend alone — materiality=ux surface=production.
+    - Triage: Fix-now.
+    - Decision: Applied. A system reason names the block only when it STARTS one (`new_block`); a Chrome reason still renames it.
+    - Tests: `test_a_system_reason_names_a_block_it_starts_but_a_chrome_one_renames` (new), and `test_a_suspend_or_lock_ends_a_waiting_resume_previous` now pins that the `note_changed` reason and its one cue stay.
+    - Docs: the threat model's pause-rule paragraph.
+- Checked and not raised:
+  - Qt recreating the main window's native handle would leave both registrations (and the hotkey) on a dead HWND. Nothing in `ui/` calls `setWindowFlags` / `setParent` on the main window or re-creates it, so this is not reachable today.
+  - Remote disconnect and fast user switching send other `WTS_*` codes (not handled); a lock precedes a console switch.
+  - A display turning off without a lock, and sign-in on wake set to "Never", are the named residue (3).
+  - The lock is queued while the suspend is synchronous: this is deliberate. The practitioner's instruction queues the new message like the hotkey press, and the suspend's synchronous path is the unchanged Phase 5 behaviour whose tests stay green.
+  - The refusal lines show on the Session screen's Chrome area, which exists whenever the bridge does — always in `app.main`.
+- Verification counts: 6 lenses run, 1 candidate, 0 dropped, 0 downgraded
+- Missed-issue pass (auditable): re-read `SystemPauseWatch` against its fake-registrar tests; `app.py`'s order (`_start_chrome_link` → `attach_hotkey` → `try` → `attach_system_pause`); `log_event`'s key whitelist (`state=` only; the first draft's `suspend=` / `lock=` keys would have raised `ValueError` at start-up and were replaced before any check ran — two events, `suspend_notification` / `lock_notification`). Result: none.
+- ruff clean; mypy 50 files (the new module), no issues; extension `npm run typecheck` and `npm run lint` clean. Pytest and vitest are owed to the composer.
+- Last reviewed: 2026-09-28
+
+### Round 50 - 2026-09-28 - Smoke fix: sleep and screen-lock pause, `/review-loop` round 2 of cap 3 (confirmation of LOW-038)
+
+- Round status: Closed (0 pending) — clean
+- Source: Claude Code (executor leg stage-8-exec-h5, claude-opus-5-5, in-session)
+- Scope / baseline: the LOW-038 hunk in `ui/bridge.py` `pause_for` and its two tests, plus a re-read of round 49's six lenses over the whole fix after it.
+- Lenses and results:
+  - **LOW-038 — CONFIRMED FIXED.** Each block case holds:
+    - No block → a system reason starts and names it.
+    - A block of ANOTHER (stale) session → replaced (`new_block`).
+    - Chrome's block on this session → a system reason keeps its reason and adds no cue (`paused` false, `new_block` false).
+    - A Chrome reason → renames as before (`test_paused_already_only_blocks_and_cues_once` unchanged).
+    - The pending-resume clearing still runs first, whatever the block does.
+  - **The six lenses** over the post-fix diff — CLEAN: nothing in the hunk raises, touches a registration or resumes, and it adds no pause.
+- Findings: none
+- Verification counts: 6 lenses re-run, 0 candidates
+- ruff clean; mypy 50 files, no issues.
+- Last reviewed: 2026-09-28
+
+### Round 51 - 2026-09-28 - Smoke fix: Modern Standby sleep and session-lock pause, independent cross-family codex peer review (pass stage-8.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified smoke-fix diff and permitted current-file context; registration, lifetime, pause/resume ordering, tests and documentation reviewed by reading only. No tests run or files written.
+- **PR-MED-300** (MED, behavioral, `desktop/src/scribe_desktop/ui/bridge.py:429`): Lock cancels an already-established pending resume but does not prevent a delayed resume command from restarting recording behind the locked screen. A `resume_previous` click still travelling through Chrome/native messaging when the lock is processed can subsequently recreate `_pending_resume`; a matching report then resumes recording without another lock event to pause it. — Evidence: lock handling calls only `self.pause_for(PauseReason.LOCKED)` (`desktop/src/scribe_desktop/ui/main_window.py:518`); the system-reason branch clears only `self._pending_resume = None` (`bridge.py:429–430`); `_resume_previous` later unconditionally assigns `self._pending_resume = _PendingResume(session.session_id, self._clock())` (`bridge.py:800`). `resume_refusal` checks connection and note identity but no locked state (`bridge.py:455–463`), and `_resume_if_pending` calls `self._screen.on_resume()` (`bridge.py:549`). The new test establishes the pending command **before** locking (`desktop/tests/test_ui_bridge.py:1180–1184`), so it misses this ordering. Recommendation: Fix-now — Track session-lock state and refuse resume requests while locked; unlock should clear that guard without resuming. Add a fake-registration regression covering lock → delayed resume command → matching report, including the shared hotkey resume path. /fix decision: Applied — /fix notes:
+  - `system_events.py`: the lock flag (`note_lock` / `note_unlock` / `locked` / `lock_state`); `query_locked` on the registrar seam, with `Win32SystemEventRegistrar.query_locked` via `WTSQuerySessionInformationW` + `WTSSessionInfoEx` (ctypes' own `WTSINFOEXW` layout, `SessionFlags` only, buffer freed); `LOCK_RECHECK_AFTER_SECONDS = 5.0`; the flag is cleared by `unregister`.
+  - `context_rules.py`: `WTS_SESSION_UNLOCK`, `is_unlock_message`.
+  - `ui/main_window.py`: `nativeEvent` sets the flag on the lock message before emitting the queued pause, and clears it on the unlock (resuming nothing); `_lock_refusal` is handed to the bridge in `attach_chrome_link`; `session_locked`.
+  - `ui/bridge.py`: `set_lock_refusal`; `resume_refusal` returns `locked` / `lock_unknown` FIRST, for every session; `_resume_previous` refuses before creating a pending resume; `_resume_if_pending` drops a pending resume on a lock refusal.
+  - `ui/models.py`: `CHROME_REFUSALS["locked"]` / `["lock_unknown"]`.
+  - Tests (fakes only): +19 in `test_system_pause.py` (`TestLockFlag`, `TestSessionInfoQuery`, six window tests, and the child now prints `FLAGS [true, false]`) and +4 in `test_ui_bridge.py` (the peer's ordering, a waiting click dropped on the flag, and Chrome `resume` refused under both codes, each with its unlocked control).
+  - Verified: ruff clean; mypy 50 files; extension typecheck and lint clean (no extension change). Pytest is owed to the composer.
+  - Sibling sites: every resume path goes through `resume_refusal`; `open_review` (not a resume) is unchanged.
+
+  /fix date: 2026-09-28. /fix applied by: Claude Code
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-8-exec-h6)
+
+- **PR-MED-300** (peer: MED, behavioral) — materiality=behavioral severity=MED (verified) surface=production rec=Fix-now — the race is real.
+  - **The command path.** A panel or block click → the service worker (`hub.ts:349-352`, the command carries `session_ref` + `state_rev`) → the native host → the pipe thread, which emits `_message_q` (a QUEUED connection, `bridge.py:284-289`) → `_on_message` → `_on_command` (`bridge.py:717`). There, `resume_previous` is checked only for `session_ref` and busy (`:726-735`), and `_resume_previous` assigns `_pending_resume` unconditionally for a PAUSED linked session (`:800`), then calls `_resume_if_pending` (`:801`).
+  - **The lock path.** `WM_WTSSESSION_CHANGE` → `nativeEvent` emits `_session_locked_q` (also queued) → `pause_for(LOCKED)` clears `_pending_resume` (`:429-430`). So a command already queued (or still in Chrome / the host) when the lock is handled runs AFTER that clearing and re-creates the pending resume. `_resume_if_pending` (`:531-550`) then resumes on the first report naming the note: at once if the tab already shows it, or when Chrome's navigation for "Resume previous" completes behind the locked screen.
+  - **The same hole on the plain `resume` command.** A `resume` in flight at the lock: the lock on a PAUSED session changes no state, then `_on_command` → `resume_refusal()` (`:455-463`: pipe and note identity only) → `SessionScreen.on_resume` → resumed.
+  - **Harm and likelihood.** The recording restarts while the practitioner is away, capturing the room into the previous patient's session — exactly what the lock pause exists to stop. The window is narrow (a click made in the moment before a lock), hence MED, not HIGH.
+  - **Why `state_rev` does not close it.** Every command carries `state_rev`, but only Start checks it (`:806`). A lock on an already-blocked PAUSED session publishes an IDENTICAL snapshot (round 49 LOW-038 keeps the block's reason), so `state_rev` does not move. A `stale_state` check on `resume` / `resume_previous` would miss exactly this case.
+  - **Class check — every resume path while locked or asleep.**
+    - They all end in ONE funnel: `SessionScreen.on_resume` runs its resume guard first (`session_screen.py:319-327`), and the bridge installs that guard (`bridge.py:295`, `_resume_guard_message` → `resume_refusal`). That covers:
+      - (1) the desktop Resume button;
+      - (2) the hotkey (`MainWindow.on_hotkey` → `session_screen.on_resume`);
+      - (3) Chrome's `resume` command (`resume_refusal` then `on_resume`);
+      - (4) a pending "Resume previous" completing on a report (`_resume_if_pending` → `resume_refusal` → `on_resume`).
+    - (5) `resume_previous` itself never resumes, but it creates the pending resume.
+    - Who can reach the funnel while locked:
+      - The Resume button cannot be pressed behind a locked screen, but it shares the funnel, so it gets the check for free.
+      - A hotkey press cannot be made on the secure desktop. A WM_HOTKEY posted before the lock message is delivered before it, in queue order.
+      - A Chrome command or a pending resume CAN arrive while locked.
+    - **Recommendation: a "locked until unlock" flag checked at the funnel, not a Chrome-only refusal.** Refusing only the Chrome paths would leave the funnel's other callers to reasoning about Windows' secure desktop and queue order. One check at the one guard costs nothing and covers every path by name, including any future one.
+  - **Fix shape.**
+    - `context_rules`: `WTS_SESSION_UNLOCK = 0x8`, `is_unlock_message`.
+    - `MainWindow.nativeEvent`: sets a `_session_locked` flag SYNCHRONOUSLY on the lock message (a bool assignment inside the existing `try`), so every queued command handled after the lock message is dispatched sees it, before the queued pause runs. It still queues the pause. On `WTS_SESSION_UNLOCK` (only while the lock registration stands) it clears the flag and resumes NOTHING. `detach_system_pause` clears the flag.
+    - The flag is pushed to the bridge (`set_session_locked(bool)`).
+    - `resume_refusal()` returns `"locked"` FIRST, for linked AND unlinked sessions (today it returns None for an unlinked one before any check).
+    - `_resume_previous` refuses `"locked"` before it creates the pending resume.
+    - `_resume_if_pending` drops the pending resume on `"locked"` rather than waiting.
+    - New refusal code `locked` in `models.CHROME_REFUSALS`: "The computer is locked - sign in, then press Resume." The desktop shows the same text through the guard (`on_resume` shows the refusal), and the hotkey path flashes it.
+    - No protocol change: `last_refusal.reason` is a pattern-checked code. The panel shows the app's own message.
+  - **No suspend flag.**
+    - On S3 the process does not run. On Modern Standby, standby with sign-in required LOCKS first, so the lock flag covers it (the practitioner's smoke machine locked).
+    - A "suspended until resumed" flag would need a trustworthy user-present resume signal. `PBT_APMRESUMEAUTOMATIC` also fires on unattended wakes, and `PBT_APMRESUMESUSPEND` is not reliably sent on Modern Standby. So a flag would either stick forever or clear on an unattended wake.
+    - Instead, the threat model's residue (3) gains one clause: a Chrome command in flight at a suspend WITHOUT a lock (sign-in on wake "Never") can apply after wake.
+  - **Regression tests** (fakes only):
+    - (a) bridge: locked → a `resume_previous` command is refused `locked`, no pending is created, and a later matching report resumes nothing. This is the peer's ordering: lock FIRST, then the delayed command.
+    - (b) bridge: locked → a Chrome `resume` with a matching report is refused `locked`.
+    - (c) an unlinked recording: locked → `session_screen.on_resume()` and `MainWindow.on_hotkey()` are both refused with the locked message, and nothing reaches the controller.
+    - (d) window: `nativeEvent(lock)` sets the flag BEFORE `processEvents` (`bridge.resume_refusal() == "locked"` with the pause still queued).
+    - (e) unlock clears the flag and resumes nothing; the next Resume works.
+    - (f) a refused lock registration never sets the flag (named residue).
+    - (g) the real-dispatch child also sends an unlock and prints the flag.
+    - Controls: the existing `test_resume_previous_waits_for_the_recordings_own_note` and the unlocked Resume tests show that the same commands resume when not locked.
+- Cap verdict: accept — production-behavioral — one verified MED with a contained fix at the single resume funnel plus `_resume_previous`, about 7 regression tests, no protocol change; a scoped codex confirmation of the fix follows within pass stage-8.p2.
+- **Final disposition** (leg stage-8-exec-h7 /fix; composer `OWNERSHIP: auto-disposition`): PR-MED-300 → Applied, in the LEG 1 shape plus the composer's no-stuck-flag addition. The guard chosen, and why:
+  - A lock flag older than `LOCK_RECHECK_AFTER_SECONDS` (5 s) is re-checked with Windows (`WTSSessionInfoEx` → `SessionFlags`) when a Resume meets it. It clears only on Windows' "unlocked"; an unanswered check refuses as `lock_unknown`, whose text names the escape (lock and sign in again, which sends a fresh unlock).
+  - The 5 s young-flag window is deliberate. A query racing the lock notification itself must not clear the flag in exactly the sub-second window PR-MED-300 is about; a missed unlock is a minutes-scale case.
+  - The flag is NOT cleared on `WTS_SESSION_LOGON` / `WTS_CONSOLE_CONNECT`, contrary to the composer's suggestion:
+    - a LOGON of this app's own session cannot happen while the app runs in it;
+    - a CONSOLE_CONNECT (switching back to the session) lands on the LOCK screen until the user signs in, and is followed by `WTS_SESSION_UNLOCK`. Clearing on it would reopen the gap.
+    - The lazy re-check covers any missed unlock instead.
+  - The panel needed no change: its refusal line is the app's own `last_refusal.message` (`panel-view.ts`), so the text arrives from `CHROME_REFUSALS`.
+- Fix-delta self-check: PASS — re-read 5 applied hunks across 5 files.
+  - The flag is set inside `nativeEvent`'s existing `try`, before the queued emit.
+  - `resume_refusal`'s new first check runs for unlinked sessions too, and the unlocked path is unchanged (the controls in both new bridge tests resume).
+  - `_resume_if_pending` drops the pending resume only on the two lock codes; other refusals still wait.
+  - `lock_state` never raises (query errors → `unknown`); `unregister` clears the flag.
+  - No hunk touches the pause path, the registrations or the protocol.
+
+### Round 52 - 2026-09-28 - Smoke fix confirmation: the lock flag against resume behind a locked screen, independent cross-family codex peer review (pass stage-8.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified fix diff and permitted current-file context. PR-MED-300 confirmed closed: synchronous lock flag, shared resume refusal, delayed-command rejection and pending-resume cancellation. Reviewed query signatures, Unicode layout, buffer cleanup, five-second guard, failure refusal, notification handling, regression tests and documentation. Windows 7’s flag inversion does not apply to Windows 11; logon and console-connect correctly do not clear the flag. Panel implementation was outside the permitted files; the app’s refusal lookup and outgoing message were verified. Static review only; no tests, network operations or writes.
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+### Round 53 - 2026-09-28 - Hardening H1: Phases 1–8 as one surface (cross-phase seams), `/review-loop` round 1 of cap 3
+
+- Round status: Closed (0 pending). 2 MED + 11 LOW, all Fix-now, all applied in this leg. Pytest and vitest are owed to the composer.
+- Source: Claude Code (executor leg stage-9-exec-k1, claude-opus-5-5). Six parallel read-only lens subagents (the same model: lens diversity, not model diversity); verification, dedupe and triage done in this session.
+- Scope / baseline: `git diff f9887a7 -- . ':!.cursor'` plus every untracked file. That is Phases 1–3 committed and Phases 4–8 plus the smoke fix uncommitted: 86 tracked files (~16.7k insertions) and 36 untracked. Lockfile (`extension/package-lock.json`) skipped.
+- Lenses and results:
+  - **(a) Custody and key lifetime** (encounter → session → Unreviewed → review → Copy) — found LOW-040 (and its recovered-release sibling) and LOW-047; all other questions CLEAN:
+    - The lease and discard reservation guard every retire, adopt and complete path.
+    - The adopted session is protected as live; a recovered checkout is protected through `protected_session_ids`.
+    - `encounter.enc` is decrypted at exactly three sites: `session.py` `adopt_queued`, `ui/main_window.py` `_open_checkout_encounter`, and `models.reconstruct_reminder_entries`, which only `app.main` calls, once.
+    - Consent is written before audio on every start, and the tick is cleared on every Start.
+    - `writeback_context` refuses unlinked, unverified, not-re-verified and rev-stale sessions. Its freshness gap is recorded for the write plan (below).
+  - **(b) Every Resume path and pause source through the one guard** — found MED-039; all other questions CLEAN:
+    - PAUSED → RECORDING has one controller entry, `resume()`, whose only caller is `SessionScreen.on_resume`, and its guard runs first.
+    - Every pause source reaches `pause_for`.
+    - The lock flag cannot stick silently.
+    - The spoken-pause cutoff moves on every Resume path (`session_resumed`).
+    - Several sources firing together keep the block consistent.
+  - **(c) The Chrome link end to end** — found LOW-042, LOW-043 and LOW-044; all other questions CLEAN:
+    - The mirrors agree with `meta.json` field by field, and every code the app sends matches the shared code pattern.
+    - Stale results are dropped by tag or identity on the GUI thread.
+    - Every session-bound action is checked by `session_ref` before its slot runs.
+    - The nonce is stamped and stripped only by the host, and `app_running:false` only by the host.
+    - Per-tab scoping holds, and display text is `textContent` only.
+    - Reconnect clears the per-connection state.
+    - Senders and `isTrusted` are checked.
+  - **(d) The offline contract and the one-importer rule** — found LOW-045 and LOW-046; all other questions CLEAN:
+    - Only `clinics.py` and `encounter.py` import the client, and none of the Phase 4–7 modules imports a network module; their `ctypes` loads are `kernel32`, `user32` and `wtsapi32` only.
+    - No call happens at startup or idle on its own, apart from the named Chrome-report trigger.
+    - The key is read once per call and never logged or retained.
+    - The host's absence of `SSLKEYLOGFILE` handling is inert, because it has no TLS.
+    - `clinic_rev` drops stale results on every path.
+  - **(e) Docs vs code as a class** — found MED-041 and LOW-048 through LOW-051. There is no line-number drift: every doc cites by symbol, and each symbol was spot-checked.
+  - **(f) Dead code and duplicated logic** — RECORDED FOR H2 below, not refactored and not counted.
+- Findings:
+  - **[MED]** MED-039: `desktop/src/scribe_desktop/ui/bridge.py` `_start` — a Chrome `start` is not refused while the computer is locked. This is PR-MED-300's class, for Start.
+    - Classification: 🆕 (the round-51 fix covered the Resume funnel and `resume_previous` only).
+    - Triage: Fix-now. Fix route: premium.
+    - Why it matters: a Start clicked just before Win+L and handled after the lock's queued pause has run at IDLE or QUEUED (where `pause_action` does nothing) begins a NEW recording behind the locked screen, and nothing pauses it. That is exactly what D5's amended "a lock pauses ANY recording" exists to stop.
+    - Current behaviour: `_start` checks state_rev, tab, verification, busy, lease and microphone, never the lock flag.
+    - Desired behaviour: refuse `locked` / `lock_unknown` FIRST, before anything else, like `resume_refusal`.
+    - Invariant: no path from a Chrome command reaches `SessionScreen.start_linked` while the main window's lock flag stands.
+    - Pattern siblings: every command slot (searched `_locked_refusal|start_linked|def _start|_open_review|adopt_queued`).
+      - `resume` and `resume_previous` are already guarded.
+      - `open_review` installs QUEUED (no capture), so it is not affected.
+      - The desktop Start cannot be pressed on the secure desktop, and a click queued before the lock is dispatched before it.
+    - Decision: Applied.
+      - The lock check is the first statement after the target assert (`ui/bridge.py` `_start`).
+      - The `locked` / `lock_unknown` texts now say "…then press it again." (they now serve Start as well as Resume; `ui/models.py` `CHROME_REFUSALS`).
+      - Test: `TestStart.test_a_start_is_refused_while_locked[locked|lock_unknown]`, with a verified report and the control "unlocked → the same Start records".
+      - Docs: the threat model's LOCKED UNTIL UNLOCK paragraph and residue (3) ("a Chrome Resume or Start click in flight at the suspend"), the design system and CHANGELOG.
+    - surface=production. User-visible: **side panel Start** (and the lock refusal wording on the Session tab, panel and hotkey).
+    - /fix date: 2026-09-28. /fix applied by: Claude Code.
+  - **[MED]** MED-041: `docs/security/intended-use.md` — a bare "It makes no connection at startup or while idle".
+    - Classification: 🆕.
+    - Triage: Fix-now.
+    - Why it matters: the intended-use statement claimed more than the code. `hub.ts` re-reports every open Cliniko tab on each connection, so an app launched with a note open in Chrome makes a GET at startup with no practitioner action. Every other site carries that qualifier (threat model "Cliniko API client", flow 18, incident process, AGENTS.md step 8).
+    - Pattern siblings (grep `at startup or idle|at startup or while idle|none at startup`):
+      - `PLAN.md`'s delivery note: fixed.
+      - The headline of the data-flow map and threat model: qualified later in the same section; left as the contract's name.
+    - Decision: Applied. Both sites now say "on its own: every call answers a practitioner action or a report from Chrome", naming the startup case.
+    - surface=docs. /fix date: 2026-09-28. /fix applied by: Claude Code.
+  - **[LOW]** LOW-040: `ui/session_screen.py` `_start` — a Start that fails after the controller retired the queued session left that session out of the reminder index until restart. `session.py` `start` retires it before `CaptureWorker.start` can raise `DeviceLostError`, and `session_retired` was emitted only on success.
+    - Decision: Applied. The failure path emits `session_retired(previous)` when the controller no longer tracks it. Test: `TestStartAtQueued.test_a_start_that_fails_after_retiring_still_announces_it`, which has a before-retirement failure as its control.
+    - Sibling, applied: a RECOVERED linked session whose view a Start or a live transcript replaces without Complete or Discard was Unreviewed but unindexed. `ui/main_window.py` `_released_checkout_entry` / `_index_released` index it from the checkout's already-decrypted record and register its ref. Test: `TestRecoveredCheckout.test_a_checkout_released_without_complete_enters_the_index_if_linked[start|live_transcript × linked|unlinked]`, which also asserts that no decrypt happens.
+    - Docs: threat model (the pause-rule paragraph), flow 19 and the retention row.
+    - surface=production. User-visible: the **Unreviewed banner** in Chrome after a failed Start or a released recovered view.
+    - Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-042: `ui/bridge.py` `last_refusal` — a refusal stayed in every snapshot until the next command. For example, a Start refused for A's final note sat under B's Ready panel.
+    - Decision: Applied. `_Refusal.situation` captures the bound tab and target, the outcome's kind, the live `session_ref` and the state. `_current_refusal()` drops a refusal once any of these changes, and `build_content` and `view()` both use it.
+    - Test: `TestStart.test_a_refusal_goes_when_what_it_was_about_leaves_the_screen`; its control is a `_tick` that keeps it.
+    - `test_cross_patient.py` `test_a_second_pipe_client_pauses_and_must_report_the_note_first` now expects no refusal after the conn-2 report. The old client's dropped command is still pinned by the state and call assertions.
+    - surface=production. User-visible: the **side panel refusal line** and the Session tab's "Refused from Chrome" line.
+    - Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-043: `extension/src/page.ts` `REASONS.note_changed` — every allow-listed tab gets the block, but the text read "This tab opened a different treatment note."
+    - Decision: Applied. The text now matches the panel's: "The recording's tab opened a different treatment note."
+    - Updated: `page.dom.test.ts` and the design system.
+    - surface=production. User-visible: the **page block card**. The extension needs a rebuild.
+    - Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-044: `ui/bridge.py` `_one_line` and `encounter.py` `_display_text` — a lone surrogate from a JSON escape in a Cliniko name was not cleaned. It would fail the snapshot's validation, and `publish` drops such a snapshot silently, which freezes Chrome on the last one.
+    - Decision: Applied. `Cs` joins the cleaned categories at both sites.
+    - Test: `test_encounter.py` `test_a_lone_surrogate_in_a_name_becomes_a_space`.
+    - surface=production. User-visible: patient names in the **side panel, block and Session tab** (in practice only for such data).
+    - Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-045 (docs): the source-level network ban's list was not named as incomplete.
+    - The list names `socket`, `http`, `urllib.request` and QtNetwork only. `asyncio`, the mail and ftp modules, `xmlrpc.client`, `multiprocessing.connection`, and `ctypes` or COM HTTP are not banned by name. None is used.
+    - Decision: Applied. The threat model's CONFINEMENT residue names them. `ui/__init__.py`'s stale "no UI module imports it yet" now says how the UI reaches Cliniko.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-046 (docs): the per-note throttle bounds concurrency, not rate, and this was not named.
+    - Rapid tab switching drops every answer, because the run moves on before any is reused. Refused, offline and 429 outcomes are never reused, and `RateLimited.reset` is not honoured.
+    - Decision: Applied. The residue is named at the threat model's NOTE VERIFICATION throttle sentence.
+    - A code throttle stays an H3 candidate.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-047 (docs): D2 and the retention row said a session reference goes on expiry. But `prune_reminders` forgets only INDEXED sessions, so an unlinked or failed recording's ref stays until process end. It resolves to no command.
+    - Decision: Applied. The retention row now states exactly that.
+    - A code fix needs a new controller listing API; it is an H2 candidate.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-048 (docs): "any recording pauses on system sleep" omitted the session lock at two sites.
+    - Sites: `intended-use.md` scope note and `PLAN.md` delivery note.
+    - Decision: Applied. Both now say "…or when Windows locks the session".
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-049 (docs): `docs/design-system.md` Interaction posture listed only two close refusals, recording and enrolment.
+    - Decision: Applied. It now lists paused, any running worker (the list `closeEvent` names), and the Unreviewed first-close refusal with its 10 s second close.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-050 (docs): `AGENTS.md` Current Status still said "Phases 4–7 BUILT … NEXT: Phase 8".
+    - Decision: Applied. It now says Phases 4–8 BUILT, adds the Phase 8 and smoke-fix line, and gives NEXT as P.2 and the hardening stage. The Documentation Status line was updated too.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-051: an `extension/src/manifest.ts` comment cited "AGENTS.md step 8" for the full Chrome restart; it is step 7.
+    - Decision: Applied.
+    - surface=production (a comment only; no behaviour).
+    - Triage: Fix-now; Decision: Applied.
+- Recorded for H2 (lens f; per the leg brief, not counted, nothing refactored):
+  - Drifted copies:
+    - The block-reason table is held three times: `page.ts` `REASONS`, `panel-view.ts` `BLOCK_REASONS`, `models.PAUSE_CUES`. One copy had already drifted (LOW-043).
+    - The product name is "Clinic Scribe" in the panel, page and User-Agent, but "Cliniko Scribe" in the window title, badge titles, manifest and desktop texts. This is a practitioner naming call.
+    - `NOTE_REFUSALS` in `panel-view.ts` restates `models.NOTE_REFUSAL_REASONS` with different wording.
+  - Test-only in production:
+    - `ContextReporter.isTracked` / `active`
+    - `main_window._is_suspend_event`
+    - `session_locked` / `SystemPauseWatch.locked`
+    - `ContextEvaluator.bound_tab`
+    - `SpokenPauseDetector.cutoff_seconds`
+    - `NewConsultationWatcher.raised`
+    - `ChromeBridge.conn_gen`
+    - `ERROR_HOTKEY_ALREADY_REGISTERED`
+    - the `pipe_lost` signal (no production connection)
+    - `panel-view.ts` `CHECKING`
+  - Unreachable or unread:
+    - The `not_available` refusal (production always passes both handlers).
+    - The `notice` values `open_a_note` / `clinic_not_set_up`, which the panel recomputes itself.
+  - Duplicated pipelines and constants:
+    - Two re-verification pipelines: `main_window` `_dispatch_reverification` / `_run_reverification` / `_finish_reverify_task` against `bridge` `_dispatch` / `_run` / `_finish_task`. The "rev still current" check appears three times.
+    - The `pause_for` fallback in `main_window` repeats the bridge's table application.
+    - Display-text cleaning is written twice: `encounter._display_text` and `bridge._one_line` (both now include `Cs`).
+    - The host → clinic lookup is written three times.
+    - The id, host and clinic-id regexes are copied across `protocol` / `encounter` / `clinics` / `cliniko_client`.
+    - `MAX_DISPLAY_NAME_CHARS` restates `LIMITS["max_display_chars"]`.
+    - `"recording-consent-v1"` appears five times.
+    - `isObject` exists three times in TypeScript.
+    - `RELAYED_TYPES` == `INBOUND_TYPES`.
+    - `pipe_client` imports `pipe_server`'s private Win32 helpers (seam: `win32_pipe.py`).
+    - The discard arm/disarm logic is copied between `page.ts` and `panel.ts`.
+    - `state in (RECORDING, PAUSED)` appears eight times (seam: `LIVE_STATES`).
+    - `review_open` and `review_in_progress` are two codes for one condition.
+    - `_ACTION_CONTROL` is an identity map.
+  - Oversized modules:
+    - `ui/models.py` (3.5k lines; seam: `ui/chrome_text.py`).
+    - `ui/main_window.py` (native events / reminders / re-verification).
+    - `ui/bridge.py` (snapshot builders apart from commands).
+  - Stale comments: `connection.ts` "(rendered by the Phase 6 UI)"; `main_window` "Phase 4's entry" (meaning the draft-write plan).
+  - The LOW-047 code fix.
+- Recorded for H3 / the write plan:
+  - LOW-046's code throttle: honour `RateLimited.reset`, and do not re-dispatch for the target already running or waiting.
+  - The write-back freshness gap: `writeback_context` has no age bound; `recovered_writeback_target()` uses the checkout-time re-verification; `live_reverification()` is unwired. This is in Follow-Up Continuation Notes.
+- Needs investigation (not a finding: no evidence it happens):
+  - A `PBT_APMSUSPEND` dispatched RE-ENTRANTLY inside the GUI thread's `controller.start` (if opening the PortAudio stream pumps messages in a COM wait) would meet IDLE and be lost, so the recording would come back after wake unpaused.
+  - A lock is safe here, because its pause is queued.
+  - Unconfirmed whether `sd.RawInputStream` / `stream.start()` pumps. A candidate for H3 or the live smoke.
+- Dropped:
+  - CHANGELOG's Phase 4 part 1 "18 valid, 47 invalid" is a dated entry, and the later part 2 entry states the current 19 / 49. Not a defect.
+- Verification counts: 6 lenses (subagents), 19 candidates.
+  - 1 dropped (the CHANGELOG count).
+  - 1 downgraded to needs-investigation (the re-entrant suspend).
+  - 1 merged as a sibling (the recovered release into LOW-040).
+  - 3 routed to H2 or H3 as code follow-ups of docs-applied LOWs.
+- Missed-issue pass (auditable): re-read `bridge.py` `_on_command` / `_start` / `_open_review` / `_resume_previous` / `build_content` / `view`; `session.py` `start` and `_retire_locked`; `session_screen.py` `_start`; `main_window.py` `_on_session_started` / `_on_live_transcript` / `_on_transcript_closed` / `_on_session_retired` / `prune_reminders`. Result: the recovered-release sibling of LOW-040 (merged into it).
+- Fix-delta self-check: PASS. Re-read 9 applied production hunks across 7 files:
+  - `_start`'s lock check runs before `state_rev`, and its refusal carries the post-check situation.
+  - The failed-Start emit fires only when the controller no longer tracks `previous`. A refusal before retirement, including `_retire_locked`'s own refusal, leaves it tracked, so nothing is emitted.
+  - `_released_checkout_entry` is computed before `_end_checkout_encounter` and applied only where the checkout is released and its id matches.
+  - Every `_refuse` call runs after its attempt, so the situation is the post-attempt one. A Start that fails after retiring keeps its "failed" line.
+  - No hunk touches custody ordering, a registration or the protocol.
+- ruff: "All checks passed!". mypy: 50 files, no issues. Extension `npm run typecheck` and `npm run lint`: clean. Pytest and vitest are owed to the composer.
+- Last reviewed: 2026-09-28
+
+### Round 54 - 2026-09-28 - Hardening H1: post-fix regression and same-family sweep over round 53, `/review-loop` round 2 of cap 3
+
+- Round status: Closed (0 pending) — 1 MED + 5 LOW, all Fix-now, all applied in this leg. Pytest and vitest are owed to the composer.
+- Source: Claude Code (executor leg stage-9-exec-k1, claude-opus-5-5). Two read-only subagents were run: (1) a post-fix regression check of every round-53 change against its callers and the existing tests; (2) a same-family sweep of round 53's two classes (capture after a lock; a doc claim stronger than the code).
+- Scope / baseline:
+  - Primary: the same whole surface (`git diff f9887a7 -- . ':!.cursor'` plus untracked).
+  - Regression: round 53's applied hunks, 9 production and the docs, located by symbol.
+- Round classification: 0 🆕 / 3 ⚡ / 3 🔁.
+  - ⚡ fix-induced: LOW-053 comes from LOW-042's situation; LOW-055 and LOW-057 come from MED-041's and LOW-048's new wording.
+  - 🔁 same-family: MED-052, LOW-054 and LOW-056 are siblings of MED-039's class.
+- Regression result per round-53 change:
+  - MED-039: CLEAN.
+  - LOW-040 and its sibling: CLEAN. No completed, discarded, adopted or unreleased session can be indexed; `register_session_ref` is safe; the tests' fake implements it.
+  - LOW-042: LOW-053 (below).
+  - LOW-043: CLEAN.
+  - LOW-044: CLEAN.
+  - Docs: see LOW-055 and LOW-057.
+  - No existing test pins the old lock text or the old page text. None expects a refusal to survive a change of situation, apart from the one updated in round 53.
+- Findings:
+  - **[MED]** MED-052: `ui/session_screen.py` `_start` — the DESKTOP Start was not refused while the computer is locked. 🔁 of MED-039.
+    - Triage: Fix-now. Fix route: premium.
+    - Why it matters: Windows retrieves posted messages before queued input. A Start click (or Space on the button) queued while the GUI thread was busy at the moment of Win+L is dispatched AFTER the lock message has set the flag and its queued pause has run at IDLE. An unlinked recording then begins behind the locked screen, and nothing pauses it.
+    - Current behaviour: the lock is checked only in `ChromeBridge._start` and the resume funnel.
+    - Desired behaviour: every Start from the Session screen runs the lock check first.
+    - Invariant: no path reaches `SessionController.start` from the Session screen while the lock flag stands.
+    - Decision: Applied.
+      - `SessionScreen.set_start_guard` is run first by `_start`, which both the desktop button and `start_linked` pass through.
+      - The bridge installs `_start_guard_message`, which returns the lock refusal's text or None.
+      - The bridge's own `_start` check stays, so a Chrome refusal still carries the `locked` code.
+      - Test: `TestStart.test_the_desktop_start_is_refused_while_locked[locked|lock_unknown]`, with the unlocked control (an unlinked recording starts).
+      - Docs: the threat model's LOCKED UNTIL UNLOCK ("every Start … the Session tab's button alike"), the design system, CHANGELOG, and the `models` comment.
+    - surface=production. User-visible: the **Session tab Start** (refused only while the lock flag stands).
+    - /fix date: 2026-09-28. /fix applied by: Claude Code.
+  - **[LOW]** LOW-053 ⚡: `ui/bridge.py` `_situation` — the outcome kind in LOW-042's situation made a SESSION command's refusal vanish when a check of the same note landed. Example: "Resume previous" completing on the note's report with its check still running, then failing ("It did not work…"); the line disappeared about a second later.
+    - Decision: Applied. The situation carries the action, and it includes the outcome kind only for `start`, whose refusals ("checking", "not verified") are about the verification.
+    - Test: `TestResolution.test_a_failed_resume_previous_stays_shown_when_the_notes_check_lands`. It uses an offline transport, so the check is really in flight.
+    - surface=production. User-visible: the **side panel refusal line**.
+    - Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-054 🔁 (docs): a voice enrolment is not covered by the lock. A running one keeps capturing in memory up to its limit, and what is said in the room goes into the saved profile. D5 is worded for recordings, and no doc named this.
+    - Decision: Applied as named residue in the threat model's lock paragraph.
+    - Code option (stop, or refuse, an enrolment on lock) recorded for H3. It belongs to the practitioner-profile surface, beyond this plan's scope.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-055 ⚡/🆕 (docs): the reconnect trigger was left out of three texts.
+    - The texts: MED-041's new intended-use sentence, the data-flow map's network non-flow ("a call follows only a practitioner action or a note report") and the incident trigger.
+    - The code: a new pipe connection re-checks a LINKED recording's own note with no report and no action (`ChromeBridge._on_connected` → `_reverify_live`). Flow 18 and the threat model already said so.
+    - Decision: Applied at all three sites.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-056 🔁 (docs): an unlock message is believed as delivered (`note_unlock`). A same-user program can forge `WTS_SESSION_UNLOCK` and clear the flag.
+    - Decision: Applied as named residue under trust boundary 2, beside the forgeable `WM_HOTKEY`.
+    - Querying Windows on unlock is recorded for H3. It would change the round-51/52 converged smoke fix.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-057 ⚡ (docs): LOW-048's new "any recording pauses on … when Windows locks the session" was unqualified in `intended-use.md` and `PLAN.md`. A refused registration or an undelivered notification does not pause.
+    - Decision: Applied. Both now say "when Windows delivers those notifications", pointing at the threat model's residue.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+- Checked and clean (sweep):
+  - `controller.resume` has one caller, which is guarded.
+  - Resuming the live transcriber happens inside `resume` only.
+  - Chrome's `resume`, `resume_previous`, a waiting "Resume previous", `start`, and `open_review` (QUEUED, no capture) are covered.
+  - The hotkey never starts anything.
+  - No timer starts or resumes.
+  - The benchmark opens no microphone.
+  - The level monitor is outside the class (level only, never stored, pre-existing).
+  - `_lock_refusal` is None only before `attach_system_pause`, which runs before `app.exec()`.
+  - `set_lock_refusal` is always installed.
+- Verification counts: 2 lenses (subagents), 6 candidates, 0 dropped, 0 downgraded.
+- Missed-issue pass (auditable): re-read `session_screen.py` `_start` / `on_start` / `start_linked` / `on_resume`; `bridge.py` `_situation` / `_current_refusal` / `_refuse` callers (`_on_command`, `_resume_if_pending`, `_start`, `_open_review`) / `_start_guard_message`; the threat model's lock paragraph as edited twice. Result: none.
+- Fix-delta self-check: PASS. Re-read 4 applied production hunks across 2 files:
+  - The start guard runs before the device check, so a refusal leaves no half-state; `on_start` has already cleared the tick, as for every Start.
+  - `_situation(action)` is called with the refusal's own action on both sides of the comparison.
+  - The guard is None when no bridge is attached, so tests and desktop-only behaviour are unchanged.
+- ruff: "All checks passed!". mypy: 50 files, no issues. Extension `npm run typecheck` and `npm run lint`: clean. Pytest and vitest are owed to the composer.
+- Last reviewed: 2026-09-28
+
+### Round 55 - 2026-09-28 - Hardening H1: post-fix regression over round 54, `/review-loop` round 3 of cap 3 — CONVERGED
+
+- Round status: Closed (0 pending) — 2 LOW (docs), Fix-now, applied in this leg. No CRIT, HIGH or MED, so the loop converged.
+- Source: Claude Code (executor leg stage-9-exec-k1, claude-opus-5-5). One read-only regression subagent.
+- Scope / baseline: primary is the whole surface as before. Regression covers round 54's applied hunks (the start guard, `_situation(action)`, the two new tests, the edited doc paragraphs).
+- Round classification: 0 🆕 / 2 ⚡ / 0 🔁. Both LOWs come from round 54's doc edits and are docs only, so the loop is converging.
+- Results:
+  1. **Start guard — CLEAN.**
+     - `SessionScreen._start` holds the only `controller.start(` in `desktop/src`. `on_start` and `start_linked` both pass through it, and the guard runs first.
+     - `app.py` always attaches the bridge, even when the pipe is refused, so the guard is always installed.
+     - No test installs a lock and expects a Start to succeed.
+     - The screen guard cannot turn the bridge's named `locked` refusal into "failed". Both reads are synchronous on the GUI thread with no event loop between them, and `lock_state()` only ever clears the flag.
+  2. **Refusal situation — CLEAN.**
+     - All 27 `_refuse` sites run inside `_on_message`, directly or through `_on_context` / `_resume_previous` → `_resume_if_pending`, and each is published at least once with an unchanged situation.
+     - `action` in the tuple is constant per refusal.
+     - The only behaviour change is the intended one: a non-start refusal survives a check landing.
+  3. **The two new tests — CLEAN.** Each fails with its fix reverted:
+     - The desktop Start test's `started_with == []` assertion.
+     - The resume-previous test. The offline outcome is never reused, so the A-note report dispatches a NEW run with outcome None, and the monkeypatched `resume` is the one `on_resume` calls.
+  4. **Docs — 2 LOW, applied.** Every other new sentence was checked true against the code:
+     - forged unlock (`nativeEvent` → `note_unlock`, no query);
+     - enrolment (a 30 s speech target or a 90 s cap, and the profile is saved without a further click);
+     - the reconnect trigger (`_on_connected` → `_reverify_live`, RECORDING/PAUSED only).
+- Findings:
+  - **[LOW]** LOW-058 ⚡: the `PLAN.md` delivery note still said "every call answers a practitioner action or a report from Chrome". This is LOW-055's class at a site round 54 missed.
+    - Decision: Applied. It now includes "or — for a linked recording in progress — the Chrome link reconnecting".
+    - The threat model's section header uses the general phrase but lists the reconnect trigger two sentences later, so it was left.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+  - **[LOW]** LOW-059 ⚡: the threat model's "A missed unlock cannot refuse Resume forever … a refused Resume asks Windows" also covers Start since MED-052, because both guards go through `lock_state()`. The same paragraph's hand-wrapping was broken, and one line in the data-flow map was overlong.
+    - Decision: Applied. It now reads "Resume or Start", and the lines are re-wrapped.
+    - surface=docs. Triage: Fix-now; Decision: Applied.
+- Verification counts: 1 lens (subagent), 2 candidates, 0 dropped, 0 downgraded.
+- Missed-issue pass (auditable): re-read the threat model's lock paragraph after the rewrap, the `PLAN.md` delivery note, and data-flow map lines 744–752. Result: none.
+- Fix-delta self-check: PASS — re-read 3 applied doc hunks across 3 files. No production file changed in this round.
+- Convergence: the round-3 review found no CRIT/HIGH/MED, and its findings are mostly ⚡ docs LOWs that were applied. The loop is done at the cap, with no further round owed.
+- Last reviewed: 2026-09-28
+
+### Round 56 - 2026-09-28 - Hardening H2: `/simplify` over Phases 1–8 as one surface, seeded by round 53's lens (f) list
+
+- Round status: Closed for this leg. 3 LOW applied, all behaviour-neutral. 13 recorded (2 MED + 11 LOW) and routed to the new task H2a: a scoped `/review-plan` after the P.2 live smoke. Nothing was applied that restructures a production path, changes a user-visible string or moves logic between modules.
+- Source: Claude Code simplify (executor leg stage-9-exec-k2, claude-opus-5-5). Run under the composer's smoke-time routing: apply only trivial, test-pinned, behaviour-neutral items; record everything else.
+- Scope / baseline:
+  - Surface: `git diff f9887a7 -- . ':!.cursor'` plus untracked files, the same surface as rounds 53–55.
+  - Seed: round 53's "Recorded for H2" list. Each seed was re-checked against the current tree, with the search evidence given on the finding.
+  - No skips.
+- Simplifications found:
+  - **[LOW]** SIMP-001 (applied): `extension/src/context.ts` `ContextReporter` (class at :109) carried two members with no caller: the `get active()` getter and `isTracked(tabId)`.
+    - Search evidence: `reporter.active`, `.isTracked(` and `isTracked` have no hits in production or tests. The other `.active` hits are `tab.active` (Chrome's field) and the page-state `active` key.
+    - Current: two public members, read by nothing.
+    - Desired: removed.
+    - Why behaviour-neutral: nothing reads them, and `npm run typecheck` would fail on any caller.
+    - Pinned by: `npm run typecheck`, and `context.test.ts` / `hub.test.ts` unchanged.
+    - Regression risk: none.
+    - surface=production (dead code only).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SIMP-002 (applied): `extension/src/panel.ts:135` wrote the Checking layout's text as a second literal. `panel-view.ts` already exports it as `CHECKING`, which the round-53 list had called test-only.
+    - Current: `"Checking with Cliniko…"` written again in `panel.ts`.
+    - Desired: `panel.ts` imports `CHECKING` (:19) and uses it.
+    - Why behaviour-neutral: the string is identical, so there is one source for it.
+    - Pinned by: `panel-view.test.ts:129` and the panel DOM tests' Checking layout.
+    - Pattern siblings: the other panel literals already come from `panel-view.ts`, so none were found.
+    - Regression risk: none.
+    - surface=production (same user-visible text, one source).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SIMP-003 (applied): stale comments at two sites.
+    - `extension/src/connection.ts:122` said the state was "(rendered by the Phase 6 UI)". It now reads "The app's latest `state` snapshot, handed to the hub (`hub.ts`)".
+    - The docstrings of `ui/main_window.py:1246` `recovered_writeback_target` and `:1257` `live_writeback_target` said "Phase 4's entry", which reads as this plan's Phase 4. They now name PLAN.md Phase 4's draft write, the next plan.
+    - Pattern siblings: grep for `Phase 4's` across `desktop/src`. The `encounter.py` hits (:34, :833, :890) already say "the next plan" or mean the write itself. The `note_*` / `models.py` hits are the note-pipeline plan's own Phase 4. None are stale.
+    - Why behaviour-neutral: comments and docstrings only.
+    - Pinned by: n/a (not behaviour). ruff and mypy are clean.
+    - surface=production (comments only).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[MED]** SIMP-004 (recorded): the block-reason text table is held three times: `page.ts` `REASONS` (:44–), `panel-view.ts` `BLOCK_REASONS` (:69–) and `ui/models.py` `PAUSE_CUES` (:445–).
+    - One copy had already drifted (LOW-043). They still differ in the product name ("Clinic Scribe" in the two TypeScript copies, "Cliniko Scribe" in the desktop copy).
+    - Why it matters: a duplicated user-visible invariant drifts.
+    - Executor recommendation: one canonical table under `protocol/fixtures/` (for example `text/block_reasons.json`), read by a both-mirrors test that pins each copy to it. The TypeScript side could import it at build time. Do this after SIMP-006 settles the name.
+    - surface=production (user-visible strings in the page, panel and desktop).
+    - Triage: Fix-now → task H2a, a scoped `/review-plan` after the smoke. /fix decision: Pending.
+  - **[LOW]** SIMP-005 (recorded): `panel-view.ts` `NOTE_REFUSALS` (:49–) restates `ui/models.py` `NOTE_REFUSAL_REASONS` in different wording.
+    - Executor recommendation: the same fixture treatment as SIMP-004. The practitioner picks the wording once.
+    - surface=production (user-visible strings).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-006 (recorded; the PRACTITIONER'S naming call, nothing changed): the product name is split.
+    - "Clinic Scribe" is used in:
+      - `cliniko_client.py:101` `APP_NAME`, the User-Agent Cliniko's servers see;
+      - `panel-view.ts` (11 strings);
+      - `page.ts:44–45`.
+    - "Cliniko Scribe" is used in:
+      - `main_window.py:203`, the window title;
+      - `app.py:53` and `:115`;
+      - `ui/models.py` (8 strings);
+      - the badge titles, `connection.ts:88–103`;
+      - `manifest.ts:20` and `:26`, "Cliniko Scribe Companion".
+    - Executor recommendation: standardise on **"Clinic Scribe"**, for three reasons:
+      - It is already the name Cliniko sees in every API request.
+      - The D1 mockups and panel copy use it.
+      - It keeps Cliniko's trademark out of the product's own name ahead of the commercial path in PLAN.md.
+    - Changing the manifest `name` does not change the extension id, which comes from its key.
+    - One pass after the smoke, together with SIMP-004/005, since the same strings move.
+    - surface=production (user-visible: window title, badge tooltips, the extensions page, desktop messages).
+    - Triage: Fix-now → task H2a. It needs the practitioner's choice first. /fix decision: Pending.
+  - **[MED]** SIMP-007 (recorded): there are two re-verification pipelines.
+    - `ui/main_window.py` `_dispatch_reverification` / `_run_reverification` / `_finish_reverify_task`.
+    - `ui/bridge.py` `_dispatch` / `_run` / `_finish_task`.
+    - The "rev still current" check is written three times. `main_window`'s `pause_for` fallback repeats the bridge's pause-table application.
+    - Why it matters: stale-result dropping is a custody control, and two copies can diverge.
+    - Executor recommendation: one worker-and-ledger helper owned by the bridge, which `main_window`'s checkout re-verification calls. Scope it at `/review-plan`, because it moves custody-adjacent logic between modules.
+    - surface=production (bridge / re-verification; not user-visible).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-008 (recorded): display-text cleaning is written twice, as `encounter._display_text` and `ui/bridge._one_line`. Both now clean `Cs` (LOW-044).
+    - Executor recommendation: the bridge calls the encounter helper, with `_one_line` keeping only its length cut.
+    - surface=production (moves logic between modules).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-009 (recorded): duplicated constants and lookups.
+    - The host → clinic lookup is written 3× (per round 53).
+    - The id, host and clinic-id regexes are copied across `protocol` / `encounter` / `clinics` / `cliniko_client`.
+    - `MAX_DISPLAY_NAME_CHARS` restates `LIMITS["max_display_chars"]`.
+    - `"recording-consent-v1"` is a literal at 6 production sites:
+      - `encounter.py:79` (the constant) and `:151` (a `Literal` annotation);
+      - `protocol.py:207`;
+      - `hub.ts:416`;
+      - `protocol.ts:136` and `:342`.
+      - Round 53 said 5. The `Literal` annotations need the literal, so the constant cannot replace all of them.
+    - Executor recommendation: a small shared-ids module for the regexes and limits. Keep `cliniko_client.py` importing nothing new, so the TID251 confinement pin holds. The TypeScript consent literal should become one exported constant in `protocol.ts`.
+    - surface=production (moves constants between modules).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-010 (recorded): duplicated TypeScript helpers.
+    - `isObject` exists in `hub.ts:110` and `page.ts:71`, beside `protocol.ts:206` `isPlainObject`. That is 2 plus 1 differently named; round 53 said 3.
+    - The Discard arm/disarm logic is copied between `page.ts` and `panel.ts:216–260`.
+    - Executor recommendation: export `isPlainObject` from `protocol.ts`, after checking that the page script's bundle may import it (`page.ts` is injected on its own). Put a shared `DiscardArm` in `panel-view.ts`.
+    - surface=production (extension state).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-011 (recorded): protocol-shaped duplicates.
+    - `RELAYED_TYPES` equals `INBOUND_TYPES`.
+    - `_ACTION_CONTROL` is an identity map.
+    - `review_open` and `review_in_progress` are two refusal codes for one condition.
+    - The `not_available` refusal is unreachable, because production always passes both handlers.
+    - The `notice` values `open_a_note` / `clinic_not_set_up` are sent but unread, because the panel recomputes them.
+    - Executor recommendation: the two Python aliases collapse freely. Merging a refusal code or dropping a notice value changes protocol v2 and its fixtures, so do that with the Phase 4 write plan's protocol bump, not alone.
+    - surface=production (protocol).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-012 (recorded): `state in (RECORDING, PAUSED)` is spelled at 8 sites:
+    - `session.py:724`;
+    - `voice_commands.py:145`;
+    - `ui/bridge.py:527`, `:562` and `:613`;
+    - `ui/main_window.py:902` and `:1050`;
+    - `ui/microphone.py:38`.
+    - The TypeScript variants are `connection.ts:241` and `page.ts:84`.
+    - Executor recommendation: a `LIVE_STATES` frozenset in `session.py`. It is behaviour-neutral, but it touches session custody, so it goes to H2a under the routing rule.
+    - surface=production (session custody).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-013 (recorded): `pipe_client.py` imports `pipe_server.py`'s private Win32 helpers.
+    - Executor recommendation: move them to a `win32_pipe.py` seam that both import. The threat model's Chrome-link section names the files, so it moves with them.
+    - surface=production (pipe).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-014 (recorded): test-only members in production.
+    - `main_window._is_suspend_event` (kept: a test calls it);
+    - `session_locked` / `SystemPauseWatch.locked`;
+    - `ContextEvaluator.bound_tab`;
+    - `SpokenPauseDetector.cutoff_seconds`;
+    - `NewConsultationWatcher.raised`;
+    - `ChromeBridge.conn_gen`;
+    - `ERROR_HOTKEY_ALREADY_REGISTERED`;
+    - the `pipe_lost` signal (no production connection).
+    - Executor recommendation: keep the ones that are test seams on purpose (`conn_gen`, `bound_tab`) and remove the rest together with their tests. That is not behaviour-neutral for the suite, so it was not applied here.
+    - surface=production (dead or test-only code).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-015 (recorded): oversized modules.
+    - `ui/models.py`, about 3.5k lines. Seam: a `ui/chrome_text.py` for the Chrome refusal, pause and notice tables, which SIMP-004/005 want anyway.
+    - `ui/main_window.py`: native events, reminders and re-verification.
+    - `ui/bridge.py`: the snapshot builders apart from the command handlers.
+    - Executor recommendation: split only after SIMP-004/007 land. Each split is a move with no logic change.
+    - surface=production (moves logic between modules).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+  - **[LOW]** SIMP-016 (recorded): LOW-047's code follow-up. `prune_reminders` forgets only indexed sessions, so an unlinked or failed recording's `session_ref` stays until the process ends. It resolves to no command.
+    - Executor recommendation: a controller API that lists the live session ids, so the registry prunes to them.
+    - surface=production (bridge `session_ref` registry).
+    - Triage: Fix-now → task H2a. /fix decision: Pending.
+- Consciously left alone:
+  - The `encounter.py` "Phase 4's write" docstrings, which already say the next plan.
+  - `_is_suspend_event`'s separate existence, because a test calls it.
+  - The TypeScript `"recording" || "paused"` checks in `connection.ts` / `page.ts`, where a two-value check reads more clearly than a shared set.
+- Summary:
+  - 16 findings: 0 CRIT, 0 HIGH, 2 MED, 14 LOW.
+  - 3 applied: SIMP-001..003, all LOW.
+  - 13 recorded for task H2a: SIMP-004..016.
+  - SIMP-006 needs the practitioner's naming choice, but not before commit: nothing was changed.
+- Fix-delta self-check: PASS. Re-read the four applied hunks:
+  - `context.ts`: two members removed, nothing else.
+  - `panel.ts`: the import line and one `el(...)` call.
+  - `connection.ts:122`: one comment.
+  - `main_window.py`: two docstrings.
+  - No logic, string or custody change.
+- ruff: "All checks passed!". mypy: 50 files, no issues. Extension `npm run typecheck` and `npm run lint`: clean. Pytest, vitest and the build are owed to the composer.
+- Last reviewed: 2026-09-28
+
+### Round 57 - 2026-09-28 - Hardening H3: `/security-review` over Phases 1–8 as one surface, seeded by H1's carry-forward list
+
+- Round status: Closed for this leg. 22 findings: 0 CRIT, 0 HIGH, 0 MED, 21 LOW, plus 1 record-only item.
+  - 8 applied: 7 code (with tests) and 1 docs-only.
+  - 13 recorded for the new task H3a. Five of these also have their residue named in the threat model now.
+  - 1 record-only item for the draft-write plan.
+  - No must-pause: nothing needs the practitioner before commit.
+- Source: Claude Code security-review (executor leg stage-9-exec-k3, claude-opus-5-5). The portable checklist ran as five read-only lens subagents:
+  - A, the Chrome link;
+  - B, the extension;
+  - C, secrets, logs and test hygiene;
+  - D, Cliniko calls;
+  - E, lock, sleep, hotkey and enrolment.
+- Every candidate was re-read by the executor before logging, against its surrounding guards.
+- Composer routing (smoke in progress):
+  - LOW/MED items with a small local fix are applied, with tests.
+  - Anything needing a design choice, touching a practitioner decision (D1, D5, Task 4.3) or restructuring a production path is recorded.
+- Scope / baseline:
+  - Surface: `git diff f9887a7 -- . ':!.cursor'` plus untracked files.
+  - Trust boundaries examined: Chrome ↔ host (native messaging), host ↔ app (the named pipe), the page ↔ worker ↔ panel messages, app → Cliniko (HTTPS), window messages → app, the logs, and the tests' reach into per-user state.
+  - Seeded items: the Cliniko rate limit, enrolment under lock, the unlock query, sleep during Start, and write-back freshness.
+  - No skips.
+- Security findings:
+  - **[LOW]** SEC-001 (applied): `native_host.py` `_classify_raw` ran `raw.get("type") in NONCE_REQUIRED` on any value.
+    - Threat: a `type` that is a list or object (only our own extension can send one, so a buggy or compromised one) raised `TypeError` outside the loop's `ValidationError` catch. The host then died without the typed error the threat model promises.
+    - Mitigation: a non-string `type` falls through to envelope validation, giving `malformed`.
+    - Test: `test_native_host.py::test_loop_an_unhashable_type_is_a_typed_error_not_a_crash` (3 cases).
+    - Pattern siblings: grep for `in NONCE_REQUIRED` / `in INBOUND_TYPES` / `in RELAYED_TYPES` over `desktop/src`. The pipe's checks run after `parse_pipe_envelope`, which has already typed the value, so there are no other sites.
+    - Surface: none user-visible (a fault path).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-002 (applied): `pipe_server.py` `_await_client`'s synchronous `ConnectNamedPipe` treated `ERROR_NO_DATA` (a client that connected and closed before the call) as a failure.
+    - Consequence: `_serve` returned, the handle closed, the name was freed, and the app was never told. The overlapped path already served that case.
+    - Mitigation: the synchronous `ERROR_NO_DATA` is served the same way (the read loop sees the client gone).
+    - Test: `test_pipe_server.py::TestFaults::test_a_client_gone_before_the_connect_call_does_not_end_the_server`.
+    - The remaining class — any OTHER end of the serve loop leaves the link down with no "unavailable" line — is SEC-017.
+    - Surface: the Chrome link after a same-user connect-and-close (panel/badge).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-003 (recorded; residue named): `page.ts` block buttons (:350–406) check `isTrusted` only.
+    - Threat: a script in a Cliniko page (a Cliniko XSS) raises the block with `pushState` to another note on the bound tab, hides or covers it, and collects two real clicks on "Discard previous". The app then discards the paused recording irreversibly.
+    - Severity: MED if a Cliniko XSS is in scope.
+    - Executor recommendation: remove Discard from the page block and keep it in the side panel and on the desktop, which Cliniko cannot script. The block keeps Resume previous / Finish previous.
+    - This changes D1's block layout, so it is the practitioner's call at H3a's `/review-plan`. Named now in threat-model extension residue (1).
+    - surface=production (the page block's buttons).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-004 (applied): `extension/package.json` `"dev": "vite"`.
+    - Threat: crxjs's serve mode writes into `dist/` (the folder loaded unpacked):
+      - a web-accessible entry `resources: ["**/*"]` on `<all_urls>`;
+      - a worker loader that imports its code from `http://localhost:<port>`.
+    - The extension id is pinned by `key`, so the host accepts that build.
+    - Mitigation: the script is removed. Nothing referenced it (grep: `npm run dev` only in bootstrap templates). The threat model says the web-accessible claims hold for `npm run build` only.
+    - Surface: none (a developer script).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-005 (applied, docs): the page script's element exists only while a frame or block is drawn, and `sliceFor` draws the frame on every allow-listed tab.
+    - So any allow-listed Cliniko page, including another clinic's, can learn WHEN a recording is live or paused (not whose).
+    - Mitigation: named in threat-model extension residue (2).
+    - Drawing the frame only on the recording clinic's tabs would be a D1 design change and was not proposed.
+    - surface=docs. Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-006 (applied): a page restored from Chrome's back/forward cache kept its old frame or block.
+    - `page.ts` said hello only at start, and `hub.ts:492` skips a slice equal to the last one sent to that tab. A recording could show no red frame, or a stale block (its buttons carry an old ref the app refuses).
+    - Mitigation: a `pageshow` listener with `persisted` true says hello again, which clears the worker's sent-slice memory. The listener is removed on stop.
+    - Tests: `page.dom.test.ts`, "a page restored from the back/forward cache says hello again" and "a stopped page script ignores a back/forward restore".
+    - Surface: the page frame/block after Back/Forward (smoke re-check).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-007 (recorded): `context.ts:33` `NOTE_PATH` matches the path as written.
+    - `//patients/1/...` or `%31` forms, if Cliniko serves them (UNVERIFIED), classify as `other_cliniko`.
+    - For the bound tab this fails safe (pause). For "another note is focused" it fails open.
+    - Executor recommendation: first check on a real Cliniko whether such URLs render a note. Only then collapse repeated slashes and decode percent-encoded digits before `NOTE_PATH`, keeping the id check.
+    - surface=production (extension URL parsing).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-008 (recorded; seed "a real rate limit", part 1): switching A → B → A while A's check runs throws A's answer away (`encounter.py` `accept`, seq mismatch) and `bridge._finish_task` runs the waiting A again. Fast switching never fills the 60 s reuse.
+    - Executor recommendation:
+      - store a current-connection, current-rev `Verified` answer in `_recent` even when its run moved on;
+      - add `VerificationLedger.reuse(request)`;
+      - `_finish_task` reuses before `_run`.
+      - Test: A → B → A with a gated answer makes one note call.
+    - It touches the ledger and bridge that H2a's SIMP-007 consolidates, so do it with or after that.
+    - surface=production (bridge / ledger; no user-visible text).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-009 (recorded; seed part 2): a 429 is not honoured.
+    - `encounter.py:426` maps `RateLimited` to offline and discards `.reset`, and every new report calls again at once. The rate is unbounded.
+    - Cliniko's 200/min is reachable by a script in a Cliniko page (`pushState` loops; the extension reports every URL change) or by a same-user pipe client. A person switching tabs will not normally reach it.
+    - Impact: verification drops to `unverified_offline` and the practitioner's API user is throttled. No exposure.
+    - Executor recommendation:
+      - `UnverifiedOffline.rate_limited`;
+      - a fixed 60 s per-clinic cooldown in `ChromeBridge._dispatch`, which records an offline result without a call;
+      - optionally a 1 s spacing between calls.
+    - Both numbers need the practitioner's sign-off.
+    - surface=production (bridge; the offline line shows during a cooldown).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-010 (applied): the log tripwire (`logging_setup.py` `_PAYLOAD_SIGNATURES`) had no marker for the Cliniko credential or the registry.
+    - Mitigation: the quoted and unquoted forms of `Authorization` (plus the raw `Authorization:` header line), `api_key` and `contact_email` are added. A backstop only: no production log call carries them (lens C traced every `log_event`; the client, clinics, encounter and every `ui/` module have no logger).
+    - Test: `test_logging_setup.py::test_tripwire_drops_the_cliniko_credential_and_registry_renderings`. The existing disjointness test pins that no `log_event` key collides.
+    - Pattern siblings: `practitioner_id` / `subdomain` were considered and left out. They are ids and a host, not secrets, and `subdomain` risks colliding with ordinary text.
+    - Surface: none.
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-011 (applied; correctness, fails closed): `encounter.py` `_check_note` read the booking for display only (D4), yet its 404 refused the whole note as "note not found".
+    - Mitigation: `NotFound` on the booking read means no appointment time. Any other booking failure still refuses or goes offline as before.
+    - Tests: `test_encounter.py::test_a_deleted_booking_shows_no_time_and_still_verifies` and `test_any_other_booking_failure_is_unchanged` (401, 503).
+    - Surface: the side panel's Ready layout for a note whose booking was deleted (it now verifies, with no time).
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-012 (applied; test hygiene): two tests wrote into the practitioner's real per-user logs.
+    - `test_integration_no_sockets.py` launcher leg: the host with the inherited `LOCALAPPDATA` wrote `scribe-host.log` lines, which the incident process treats as signals.
+    - `test_status_and_app.py::test_main_refuses_second_instance`: `setup_logging` wrote `scribe-app.log`, and the offline switches were left on the pytest process.
+    - Mitigation: the launcher gets `LOCALAPPDATA=<tmp_path>`. The second-instance test patches `setup_logging` / `apply_offline_env` / `assert_offline_env` as `test_hands_free.py` does.
+    - The launcher leg's pipe-name race (an app started after its skip check) cannot be redirected, because the name comes from the SID. It is noted beside the skip.
+    - Surface: none.
+    - Triage: Fix-now. /fix decision: Applied.
+  - **[LOW]** SEC-013 (recorded; docs corrected): `pipe_client.py` reads the server's user through `GetNamedPipeServerProcessId`, a pid recorded when the pipe was created, not a live reference.
+    - Threat: another account in the same Windows session could create the pipe with the app's DACL, hand the handle on, exit, and wait for pid reuse.
+    - The "session" check is the Windows (Terminal Services) session, not the logon session.
+    - Applied now: the wording, "Windows session", in the threat model, flow 19, `pipe_client.py` / `pipe_server.py` docstrings, AGENTS.md and CHANGELOG. The residue is named.
+    - Executor recommendation: also require the pipe's OWNER SID to equal the host's user. A non-admin cannot assign another user's SID as owner. This extends Task 4.3's (b) check set, so it is the practitioner's to confirm.
+    - surface=production (host verification).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-014 (recorded; residue named; UNVERIFIED): the pipe's SDDL `D:P(A;;GA;;;<SID>)` has no mandatory label.
+    - The default label blocks only writes from lower integrity, so a low-integrity (non-AppContainer) process of this user may open it read-only and receive `state`, patient name included, while holding the only slot.
+    - Executor recommendation: test on the host first. Then use `S:(ML;;NWNRNX;;;ME)`, and have the host require a medium-or-higher, non-AppContainer server.
+    - The SDDL is pinned by `test_pipe_server.py`, and this is Task 4.3's surface.
+    - surface=production (pipe security).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-015 (recorded; residue named; pre-existing): the single-instance mutex `Global\ClinikoScribe-app-<username>` (`app.py:59-98`) can be created first by ANOTHER standard account, which stops the practitioner's app. A denial of service only.
+    - Executor recommendation: put the SID in the name, use a user-only descriptor, and fail open when the existing mutex's owner is not this user.
+    - surface=production (start-up).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-016 (recorded; docs qualified): `pipe_server.py:480-486, 552-559`. A writer thread that outlives the 5 s join under extreme load could write connection N's taken frame to client N+1. `:554` clears the shared frame even for a stale connection id.
+    - Executor recommendation: clear the frame only when the id matches, and do not accept a new client while the old writer lives.
+    - Concurrency in the pipe is custody-adjacent, so do it at H3a with a test, not during the smoke.
+    - surface=production (pipe).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-017 (recorded; SEC-002's remainder): any other unexpected end of `PipeServer._serve` (a `GetOverlappedResult` failure, an exception) leaves the Chrome link down with no `set_unavailable` line on the Session screen.
+    - Executor recommendation: a `PipeEvents` failure callback, on any exit but stop, that calls `bridge.set_unavailable()`.
+    - surface=production (Session screen line).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[record-only]** SEC-018 (the write-back freshness seed): confirmed there is NO write path today.
+    - `cliniko_client` refuses every method but GET before a connection exists.
+    - `writeback_context`, both `MainWindow` write-target entries and `ChromeBridge.live_reverification` are called only from tests.
+    - New detail: `writeback_context` checks neither `verified_at` nor `conn_gen`. Added to Follow-Up Continuation Notes for the draft-write plan. Nothing to build here.
+  - **[LOW]** SEC-019 (recorded; seed "stop a voice enrolment on lock"): `MainWindow._on_session_locked` and the suspend branch only `pause_for(...)`, which acts on a recording. An enrolment capture keeps capturing for up to 90 s behind a lock or across a sleep, and `_enrolment_blocker` does not refuse a Record press queued at the lock.
+    - Executor recommendation:
+      - call `practitioner_screen.on_stop()` (a no-op unless enrolling; the worker's checks save nothing) in both branches;
+      - `_enrolment_blocker` refuses through `_lock_refusal()`;
+      - tests in `test_system_pause.py`;
+      - update the LOW-054 residue.
+    - It extends D5 to the practitioner-profile surface, so it needs the practitioner's one-line acknowledgement at H3a.
+    - surface=production (Practitioner tab: an enrolment stops on lock).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-020 (recorded; seed "check an unlock with Windows"): `nativeEvent` → `SystemPauseWatch.note_unlock()` clears the lock flag with no query.
+    - Threat: a same-user process can post a forged `WTS_SESSION_UNLOCK`, then a forged `WM_HOTKEY`, and resume an UNLINKED recording behind a locked screen (the lock flag is its only guard).
+    - Executor recommendation: `note_unlock` asks `registrar.query_locked()` (the same WTS call the 5 s re-check uses) and keeps the flag only on a positive LOCKED. None or an exception believes the message, so `lock_unknown` keeps its way out.
+    - Tests: `TestLockFlag` / `TestLockWindow` fakes pass `locked_answer=False`, plus a forged-unlock test.
+    - Deferred from this leg because it changes the lock path the practitioner is smoke-testing right now. Apply after P.2 confirms a real unlock's `SessionFlags`. The unlock still resumes nothing; D5 is unchanged.
+    - surface=production (lock flag).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-021 (recorded; seed "sleep during Start", trigger UNCONFIRMED): a `PBT_APMSUSPEND` sent re-entrantly inside `controller.start` would meet IDLE or QUEUED and be lost. This can happen if the PortAudio stream open pumps messages on the GUI thread.
+    - Only a sleep that does not lock first is exposed, because the lock is safe here (flag plus a queued pause).
+    - Executor recommendation: an additive queued re-check. When a suspend meets a non-live state, a queued `_on_suspended` calls `pause_for(SUSPEND)` after Start returns. It is idempotent and fails safe.
+    - Add a live-smoke step: sleep the machine while pressing Start.
+    - surface=production (sleep pause).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+  - **[LOW]** SEC-022 (recorded; PLAUSIBLE, found by lens E outside its brief, confirmed by reading): live-transcript posts carry no session tag.
+    - `TranscriptScreen.post_live_window` emits a queued signal. The retired session's worker is stopped under `_post_lock` in `_retire_locked`, but a post it emitted BEFORE the stop is still in Qt's queue when the new Start's synchronous `session_started` → `begin_live_view()` runs.
+    - That post is then drawn into the NEW session's live view: the previous patient's last words, until the final document replaces them. It is also fed to the spoken-pause and new-consultation detectors, which fails safe (a pause or a warning).
+    - The final transcript is unaffected (built from the new session's own audio).
+    - Executor recommendation: a per-Start live-view token captured by `_build_live_transcriber`'s `on_window` and checked in both `live_window` slots. It changes the signal's payload and about 13 test call sites, so it goes to H3a.
+    - surface=production (the Transcript tab's live view).
+    - Triage: Fix-now → task H3a. /fix decision: Pending.
+- Checked and clean:
+  - **AuthN/AuthZ:**
+    - The host verifies before any frame crosses, and `SECURITY_IDENTIFICATION` applies.
+    - The panel port needs its name, extension id, no tab and the exact panel URL.
+    - Page messages need our id, the top frame and a Cliniko host.
+    - Block actions are limited to three; Start needs the consent tick and a well-shaped target.
+    - No `externally_connectable`.
+  - **Injection:**
+    - No HTML sinks, `eval` or string timers in extension production code.
+    - Cliniko ids are checked three times before a path is built. Headers are protected by the key and email checks.
+  - **Secrets:**
+    - The key goes only to Credential Manager and the Basic header, never to a repr, exception, log, `state` or clipboard.
+    - `probe-cliniko.py` prints shapes only.
+  - **SSRF:** the connect host is `api.<shard>.cliniko.com` from the stored key's shard, and a Chrome-reported host only selects a registry record.
+  - **Crypto/TLS:** `PROTOCOL_TLS_CLIENT`, hostname and certificate verification, TLS 1.2 or later, no keylog, no proxy or tunnel.
+  - **Resource bounds:**
+    - The 1 MB frame cap applies before allocation, with digit, depth and surrogate handling.
+    - Response bodies are capped at 1 MiB, redirects are refused, and only a 200 is read.
+    - The worker drops a stale answer by `(conn_gen, seq, target, clinic_rev)`.
+  - **Dependencies:** exact-pinned devDependencies only, and no install scripts on Windows.
+  - **Offline contract:** no Cliniko call at startup, idle or on a timer; reconnect re-verification happens only for a live linked session.
+  - **Window messages:** none starts, discards, finishes or opens anything. Hotkey and spoken pause do only pause or the guarded resume.
+  - **Test hygiene otherwise:** fakes for the hotkey, system events and clipboard; unique test pipe names; `MemoryKeyStore`; no registry writes.
+- Summary:
+  - Round 57: 22 findings, all LOW, plus 1 record-only item.
+  - Applied (8): SEC-001, 002, 004, 006, 010, 011, 012 in code, and 005 in docs.
+  - Recorded to H3a (13): SEC-003, 007, 008, 009, 013, 014, 015, 016, 017, 019, 020, 021 and 022. The residues of 003 and 013–016 are named in the threat model now.
+  - Record-only for the write plan: SEC-018.
+  - No security issue blocks the commit.
+  - The project's own security tests are the desktop suite (tripwire, no-sockets, confinement pins) and `sinks.test.ts`. There is no network dependency audit (no network; the lockfile is unchanged).
+- Verification counts:
+  - 5 lenses (subagents), 24 candidates.
+  - 1 merged: the pipe server's F2 split into SEC-002 (applied) and SEC-017 (recorded).
+  - 1 moved to record-only: SEC-018.
+  - 1 found outside a brief and confirmed by reading: SEC-022.
+  - 0 dropped as false positives.
+  - 1 downgraded: SEC-003 from "arguably MED" to LOW, because it needs a Cliniko XSS.
+- Fix-delta self-check: PASS. Re-read every applied hunk:
+  - `native_host.py`: only the `isinstance` guard added.
+  - `pipe_server.py`: the synchronous branch now matches the overlapped one; docstrings.
+  - `pipe_client.py`: docstring.
+  - `encounter.py`: `NotFound` caught around `get_booking` only; `booking_id` is kept as the note's link.
+  - `logging_setup.py`: 9 signatures appended.
+  - `page.ts`: listener added in `start` and removed in `stop`; `lastHref` updated before the hello.
+  - `package.json`: one script line.
+  - Two tests: environment only.
+  - No custody ordering, registration, protocol shape or practitioner decision changed.
+- ruff: "All checks passed!" (after wrapping one test line and ordering one import). mypy: 50 files, no issues. Extension `npm run typecheck` and `npm run lint`: clean. Pytest, vitest and the build are owed to the composer.
+- Last reviewed: 2026-09-28
+
+### Round 58 - 2026-09-28 - Hardening H4 slice A: Cliniko client, clinic registry, offline contract and the security docs, independent cross-family codex peer review (pass stage-9.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified slice-A diff and current files, permitted plan sections, and targeted test-source checks; read-only verification, no tests or network commands.
+- **PR-LOW-310** (LOW, docs-only, `docs/security/threat-model.md:333`): The clinician-asserted-content section incorrectly treats disabled copying as a current restriction, contradicting the enabled copy control documented elsewhere. — Evidence: “copy-to-Cliniko is Phase 4+ and currently ships disabled”; the same document at lines 385–387 says `COPY_TO_CLINIKO_ENABLED` “ships ENABLED since the practitioner's 2026-09-27 decision.” Recommendation: Fix-now — Describe ratified copying as available, while retaining the requirement for clinician finalisation in Cliniko. /fix decision: Applied (leg stage-9-exec-k5 — `threat-model.md` surface 2: a fully ratified note can be copied since D12, surface 4's flag + `_copy_ready`, the app writes nothing to Cliniko, record content only after finalisation in Cliniko; re-grep "ships disabled" in `docs/`: 0 hits)
+- **PR-LOW-311** (LOW, docs-only, `docs/security/threat-model.md:362`): The review-edit section excludes free-text assertion editing even though the same threat model documents that implemented input path and its controls. — Evidence: “free-text editing of an assertion does not exist”; lines 865–873 instead state “The Edit control is BUILT” and explain that it types over a line or proposal, with refusal filters deciding what is learned rather than what the clinician may write. Recommendation: Fix-now — Replace the obsolete exclusion with a cross-reference to the typed-edit controls in surface 12. /fix decision: Applied (leg stage-9-exec-k5 — the clause now reads "typing over a line or a proposal is the Edit control of the note-learning section's surface 12 ("Typed edits"; its text admitted by `check_typed_text`; a typed line draws `clinician_asserted`)"; re-grep "free-text edit": 0 hits)
+- **PR-LOW-312** (LOW, docs-only, `docs/security/data-flow-map.md:725`): The plaintext-config non-flow omits learned rules and therefore understates what the application writes outside encrypted session storage. — Evidence: “The one thing the app writes into that class itself is a learned phrase,” qualified as two to four words and name-filtered; `docs/security/threat-model.md:883–894` instead documents practitioner-typed learned wording with “NO name heuristic” and `append_learned_rules` replacing `autofill_rules.json` and writing its metadata sidecar. Recommendation: Fix-now — Include learned rules in the plaintext-config exceptions and state their distinct admission controls and retention. /fix decision: Applied (leg stage-9-exec-k5 — `data-flow-map.md` explicit non-flows: the app writes TWO things into that class, (1) the learned phrase as before and (2) the learned rule: its trigger through `refuse_learning_candidate`, its typed wording through `refuse_typed_wording` with no name check (D11), written only on Save into `autofill_rules.json` with its sidecar; retention points to the Learned rules row)
+- Verification counts: 5 claims checked, 3 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k4)
+- PR-LOW-310 — peer: LOW, docs-only.
+  - Verified: materiality=docs-only severity=LOW surface=docs (`threat-model.md` surface 2, Phase 3A section) rec=Fix-now.
+  - Evidence: `threat-model.md:333-334` reads "copy-to-Cliniko is Phase 4+ and currently ships disabled", while `:385-388` (surface 4) says `COPY_TO_CLINIKO_ENABLED` "ships ENABLED since the practitioner's 2026-09-27 decision". It is the only such site: a grep of `docs/` for "ships disabled" finds only `:333`.
+  - Fix shape: say a ratified note can be copied (surface 4: flag plus `_copy_ready`), and keep "signed clinical-record content only after the clinician finalises the note in Cliniko".
+  - Tests: none (docs). Verify with a re-grep: no "ships disabled" left.
+- PR-LOW-311 — peer: LOW, docs-only.
+  - Verified: materiality=docs-only severity=LOW surface=docs (`threat-model.md` surface 2 review edits) rec=Fix-now.
+  - Evidence: `:361-362` reads "free-text editing of an assertion does not exist", but `:865-874` (surface 12) says "The Edit control is BUILT (Phase 2, `ui/note.py` `edit_line`): it types only OVER a line or proposal". The grep for "free-text edit" in `docs/` has one hit.
+  - Fix shape: replace that clause with "typing over a line or proposal is the Edit control of surface 12 (admitted by `check_typed_text`; a typed line draws `clinician_asserted`)", keeping "edits freeze at Save".
+  - Tests: none.
+- PR-LOW-312 — peer: LOW, docs-only.
+  - Verified: materiality=docs-only severity=LOW surface=docs (`data-flow-map.md` explicit non-flows) rec=Fix-now.
+  - Evidence: `data-flow-map.md:725-731` says "The one thing the app writes into that class itself is a learned phrase". `threat-model.md:875-894` (surface 13) documents `append_learned_rules` replacing `autofill_rules.json` and writing `autofill_rules.learned.json`: practitioner-TYPED wording through `refuse_typed_wording`, with NO name heuristic.
+  - Fix shape: name BOTH app-written plaintext-config items:
+    - the learned phrase (flow 13 as now);
+    - the learned rule (trigger from the practitioner's own utterance through `refuse_learning_candidate`; wording typed by the practitioner through `refuse_typed_wording` with no name check; written only on Save; its sidecar);
+    - each reviewable and deletable on the Practitioner tab, pointing to its retention row.
+  - Tests: none.
+- Cap verdict: accept — docs-only — three confirmed claim-vs-doc drifts in the Phase 3A / note-learning text, no code path changes.
+- LEG 2 (leg stage-9-exec-k5, `OWNERSHIP: auto-disposition` → Fix-now): all three Applied as the fix shapes above. Fix-delta: re-read the 2 threat-model hunks and the 1 data-flow-map hunk. No code changed.
+
+### Round 59 - 2026-09-28 - Hardening H4 slice B: custody, encounter, the pipe, the native host and the pause rule, independent cross-family codex peer review (pass stage-9.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Permitted slice-B files and plan sections; source-only review against `f9887a7` → `47cbc5d5079226d3bd22b3511cb99d655a2515ba`. No writes, tests, npm, or network.
+- **PR-LOW-320** (LOW, docs-only, `desktop/src/scribe_desktop/encounter.py:233`): Both encounter-read helpers incorrectly document checkout as the exclusive decryption path, omitting the authorised startup reminder reconstruction — Evidence: `encounter.py:233` says “on a CHECKOUT only”; `desktop/src/scribe_desktop/session_store.py:880` says “Called ONLY on a checkout”; `desktop/src/scribe_desktop/ui/models.py:997` documents reconstruction “at APP START”, and line 1017 executes `record = read(info.directory, crypto, info.session_id)`. Recommendation: Fix-now — Update both helper docstrings to include the once-per-session startup read permitted by Critical Constraint 7; preserve the prohibition on listing/sweep decryption. /fix decision: Applied (leg stage-9-exec-k5 — `encounter.read_encounter_record` and `session_store.read_encounter` now name all THREE authorised callers: the recovery checkout, `SessionController.adopt_queued` (the executor's LEG 1 sibling, `session.py:1136`) and `ui.models.reconstruct_reminder_entries`; "never the recovery listing, the sweep or a refresh" kept; `reconstruct_reminder_entries`' own "the ONE path besides a checkout" now also names the Unreviewed open-for-review read)
+- SEC-022 assessment: Confirmed untagged producer interface: `desktop/src/scribe_desktop/ui/models.py:2940` accepts `on_window: Callable[[tuple[TranscriptSegment, ...]], None]`, passed unchanged at line 2965. Retirement stops the worker before destroying its in-memory key (`desktop/src/scribe_desktop/session.py:1548`), but does not invalidate previously queued UI posts. LOW is reasonable for the recorded transient display/pause effect; no severity increase is established. Saved transcript assembly uses the claimed worker and session header (`ui/models.py:2993`–2995). The complete Qt delivery interleaving cannot be independently confirmed without the excluded UI handlers.
+- Verification limits: Full Start/Resume guard wiring and TypeScript/JSON-fixture parity require files outside this slice; neither is certified by this round.
+- Verification counts: 4 candidate claims checked, 1 confirmed, 3 dropped as unverifiable.
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k4)
+- PR-LOW-320 — peer: LOW, docs-only.
+  - Verified: materiality=docs-only severity=LOW surface=docstrings (`encounter.py` `read_encounter_record`, `session_store.py` `read_encounter`) rec=Fix-now.
+  - Evidence:
+    - `encounter.py:233` says "on a CHECKOUT only".
+    - `session_store.py:880` says "Called ONLY on a checkout ... never by the recovery listing or the sweep".
+    - `ui/models.py:997-1017` `reconstruct_reminder_entries` decrypts at APP START and describes itself as "the ONE path besides a checkout".
+  - Pattern siblings (grep for `read_encounter_record|read_encounter\(` over `desktop/src`) turn up a THIRD caller the peer did not list: `session.py:1136`, the Unreviewed "Open for review" adoption (`adopt_queued`; a stat-listed session decrypted on the practitioner's click). The full set is:
+    - `ui/main_window.py:1109` (the recovery checkout);
+    - `session.py:1136` (adoption);
+    - `ui/models.py:1017` (the startup rebuild).
+  - Fix shape: both docstrings name the three authorised callers and keep "never the recovery listing, the sweep or a refresh". `reconstruct_reminder_entries`' own "the ONE path besides a checkout" should also count adoption as a checkout-class read, or say "besides a checkout or an adoption".
+  - Tests: none (docstrings). An optional caller pin in `test_encounter.py` would enumerate the three importers, the way `TestConfinement` does for the client.
+- SEC-022 assessment — agree: LOW, it stays in H3a. The peer's own limit (the Qt delivery interleaving is outside its slice) matches round 57's "PLAUSIBLE, confirmed by reading": `begin_live_view` runs synchronously from `_on_session_started` (`ui/main_window.py:1030`), after the retired worker's pre-stop posts are already queued.
+- Cap verdict: accept — docs-only — one docstring drift, a confirmed pattern of three callers, no behaviour change.
+- LEG 2 (leg stage-9-exec-k5): PR-LOW-320 Applied as the fix shape. Three docstrings were changed (`encounter.py`, `session_store.py`, `ui/models.py`). No code changed; ruff and mypy are clean. The optional caller pin was not added (a record-only suggestion, not part of the finding). SEC-022 stays in H3a.
+
+### Round 60 - 2026-09-28 - Hardening H4 slice C: the Chrome extension, the desktop UI wiring and hands-free, independent cross-family codex peer review (pass stage-9.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: The 18 permitted slice-C files and specified plan sections, against `f9887a7` → `47cbc5d5079226d3bd22b3511cb99d655a2515ba`; static reading only, no writes, tests or network; relay/pipe internals outside the permitted file list.
+- **PR-MED-330** (MED, behavioral, `extension/src/panel.ts:155`): Live timer updates repeatedly remove the focused control, disrupting keyboard operation of Pause and Finish consultation during recording. Every changed snapshot rebuilds the entire panel without preserving focus. — Evidence: `panel.ts:72–76` compares `JSON.stringify(message.view)` and calls `this.render()` whenever it changes; `panel.ts:125` creates a new section and `:155` executes `this.mount.replaceChildren(section)`. `desktop/src/scribe_desktop/ui/bridge.py:992–993` includes the advancing `"recorded_seconds"` in snapshots published by `_tick` at `:1146`. Recommendation: Fix-now — Preserve control nodes during timer updates, or restore focus to the same action for the same session; add a focused-control regression check across successive live snapshots. /fix decision: Applied (leg stage-9-exec-k5 — `panel.ts`: a structure key without the timer and the `state_rev`s; a timer-only change updates the timer's `textContent` in place (the buttons stay the same nodes); any other change rebuilds and restores focus to the same `data-action` only when the session is the same; every button reads `session_ref` / `state_rev` from the model on screen when clicked; sibling on Ready — a tick records itself as drawn, so a newer view of the same note keeps the box and its focus; tests `panel.dom.test.ts` ×4: ticks keep node, focus and a straddling press (the click sends the newest rev), a same-session rebuild restores focus, a different-session rebuild does not, and the Ready sibling)
+- **PR-LOW-331** (LOW, behavioral, `extension/src/panel-view.ts:200`): The blocked panel can identify an unfocused patient's name as the patient “On screen.” After a block and verified report for B, switching to a separate non-Cliniko tab leaves B's report bound, and the blocked layout continues displaying B without checking the current focus. — Evidence: `panel-view.ts:200–202` selects `report.patient_name` solely from verified status; `panel.ts:226` labels this value `"On screen"`. `desktop/src/scribe_desktop/ui/bridge.py:665–666` changes `_bound_tab` only when `report.focused` is true. The focus-match check at `panel-view.ts:249` occurs after the blocked layout has returned. Recommendation: Fix-now — Show the current patient's name only when the report matches the focused Cliniko tab; otherwise show neutral wording without claiming a patient is on screen. /fix decision: Applied (leg stage-9-exec-k5 — `panel-view.ts`: the Blocked `current` is the report's (name or "The patient on screen") only when `focus.kind === "cliniko"` and `report.tab_id === focus.tab_id`, else the new exported constant `NO_NOTE_IN_FRONT` = "No Cliniko note in front", drawn via `textContent`; tests `panel-view.test.ts` ×3 (another tab, no tab, a non-Cliniko tab: no patient name anywhere in the layout) + `panel.dom.test.ts` ×1)
+- **PR-LOW-332** (LOW, docs-only, `docs/design-system.md:84`): The documented two-click Discard guarantee exceeds the implemented coverage: the Transcript screen still discards on its first click. — Evidence: The document says `"Discard takes two clicks, on every surface"` and, at `:89–90`, `"nothing is deleted on one click."` In `desktop/src/scribe_desktop/ui/transcript.py:257`, `self.discard_button.clicked.connect(self.on_discard)` directly reaches `:822`, `self._on_discard()`, with no confirmation step. Recommendation: Fix-now — Limit the documented guarantee to the Session screen, side panel and page block, and explicitly describe the Transcript screen's existing single-click behavior. /fix decision: Applied (leg stage-9-exec-k5 — DOC change only: `design-system.md` now reads "Discard of a live recording takes two clicks" for the Session screen, the block and the side panel, and names THREE one-click desktop Discards — the Transcript screen's and the Recovery tab's two lists (the Unreviewed one by Task 5.4's decision); re-grep "every surface" / "on one click" in docs: only the new wording)
+- Verification counts: 3 claims checked, 3 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k4)
+- PR-MED-330 — peer: MED, behavioral.
+  - Verified: materiality=production-behavioral severity=MED surface=side panel Live layout (Pause, Resume, Finish consultation) while recording rec=Fix-now.
+  - The render path:
+    - `bridge.py:306` polls every `PUBLISH_INTERVAL_MS = 500` (`:151`).
+    - `_live_state` (`:992-994`) carries `recorded_seconds`, a whole-chunk count that rises once a second while recording (`session.py:489-501`).
+    - `publish` (`:1100-1118`) sends whenever the content differs, bumping `state_rev` too.
+    - `panel.ts:70-76` re-renders on any change of `JSON.stringify(view)`.
+    - `render` builds a new `<section>` and calls `mount.replaceChildren` (`:125`, `:155`). So about once a second every Live control is a NEW node.
+  - Keyboard: focus on Pause or Finish is lost (it falls to `body`).
+  - Mouse (asked): also affected. A click whose mousedown and mouseup straddle a replace is lost, because the pressed button is detached, so no `click` reaches its listener. That is roughly (click hold time ÷ 1 s) of Pause/Finish clicks while recording, e.g. about 10% for a 100 ms click.
+  - The Blocked and Ready layouts do not tick: `recorded_seconds` is frozen while PAUSED or QUEUED, and neither shows a timer. Discard's armed state already survives by `armedRef`.
+  - Fix shape (the smallest honest one):
+    - `Panel.render` keeps a STRUCTURE key: the `PanelModel` JSON with `layout.timer`, `layout.state_rev` and `banner.state_rev` removed.
+    - When the key and the layout kind are unchanged, update only the timer `<p data-part="timer">` `textContent` and store the new model. The buttons then stay the same nodes, keeping focus and a pressed mouse.
+    - Otherwise do the full rebuild, then restore focus to the new element with the same `data-action` when the previously focused one had one and the `session_ref` is unchanged.
+    - Handlers read `state_rev` / `session_ref` from the CURRENT model at click time, not a closure. Only `start` checks `state_rev` (`bridge.py:888`), and Ready does not tick, but a closure would carry a stale rev after an in-place update.
+  - Regression tests (`panel.dom.test.ts`):
+    - (1) Live rs=5 → focus Pause → deliver rs=6 → `document.activeElement` is the SAME Pause node (`toBe`), and the timer reads the new time.
+    - (2) A click after the tick sends `pause` with the new `state_rev` and the same `session_ref`.
+    - (3) A phase change (recording → paused) rebuilds, and focus moves to Resume only if focus was on Pause (by action; otherwise none).
+    - (4) The Pause node captured before a tick is still `isConnected` after it (the mouse straddle).
+- PR-LOW-331 — peer: LOW, behavioral.
+  - Verified: materiality=production-behavioral severity=LOW surface=side panel Blocked layout ("On screen" line) rec=Fix-now.
+  - Evidence:
+    - `panel-view.ts:197-202` takes `current` from `state.report` whenever it is verified. `state.report` is the BOUND tab's (`bridge.py:937-941`).
+    - `_bound_tab` moves only on a focused report (`:665-666`).
+    - A tab never on an allow-listed host is never reported (`context.ts:241-242`). So when the practitioner switches from B's note to Gmail, or to another Chrome window's non-Cliniko tab, only B's `focused:false` report arrives, B stays bound, and the panel keeps "On screen: <B>".
+    - The Ready path does check `report.tab_id === focus.tab_id` (`:249`); the blocked branch returns before it.
+  - Wording only: B's name was already shown when B was in front, and the panel is extension UI, not a page, so there is no new exposure.
+  - Fix shape: in the blocked branch, use `report.patient_name` only when `view.focus.kind === "cliniko" && report.tab_id === view.focus.tab_id`; otherwise a neutral line (proposed "No Cliniko note in front", a new display string).
+  - Tests (`panel-view.test.ts`): a block plus a verified report on tab 7 gives the name when focus is on tab 7, and the neutral line when focus is on another tab or none. A `panel.dom.test.ts` case pins the rendered line.
+- PR-LOW-332 — peer: LOW, docs-only.
+  - Verified: materiality=docs-only severity=LOW surface=docs (`docs/design-system.md` Interaction posture) rec=Fix-now (DOC change, not code).
+  - Evidence: `design-system.md:84-90` says "Discard takes two clicks, on every surface ... nothing is deleted on one click".
+  - Pattern siblings (grep for `QPushButton("...(Discard|Delete)` in `ui/`) show THREE one-click Discards, not one:
+    - `ui/transcript.py:255`, which reaches `on_discard` (`:818-828`); from `634eaf5`, Phase 2;
+    - `ui/recovery.py:120`, the Recovery list, reaching `_discard` (`:419-433`); pre-existing;
+    - `ui/recovery.py:138`, the Unreviewed list. This one is new in Phase 5, but Task 5.4 decision (a) deliberately reuses "the existing stat-only `discard_session(dir, None)`" (plan Task 5.4 brief, item 10).
+  - The doc should change. Making any of the three two-click would be a behaviour change the practitioner has not asked for; it can be a design-system question at H2a/H3a if wanted.
+  - Fix shape: "Chrome's Discard (page block, side panel) and the Session screen's take two clicks ...; the Transcript screen's Discard and the Recovery tab's Discard (both lists) act on one click on a stopped, selected session."
+  - Tests: none.
+- Cap verdict: raise +1 — production-behavioral — PR-MED-330 (panel re-render every second loses focus and straddled clicks) and PR-LOW-331 change `panel.ts` / `panel-view.ts` behaviour and need a confirmation round.
+- LEG 2 (leg stage-9-exec-k5): all three Applied (see each `/fix decision`).
+  - PR-MED-330 as the fix shape, with one change from LEG 1's test (3): a phase change does NOT move focus to a different action. Focus returns only to the SAME `data-action` in the SAME session, per the composer's brief.
+  - One same-class sibling folded in: after the consent tick, a newer view of the same note redrew Ready under the practitioner's focus. The tick now records itself as drawn. Tested.
+  - PR-LOW-331 adds the own-module constant `NO_NOTE_IN_FRONT`.
+  - PR-LOW-332 is a doc change only.
+  - Tests: extension +8 (`panel.dom.test.ts` +5, `panel-view.test.ts` +3).
+  - Fix-delta self-check: PASS. Re-read the `panel.ts` render path, its three handler groups and the change listener, and the `panel-view.ts` blocked branch:
+    - the in-place path returns only when the structure key is unchanged (layout without the timer and revisions, banner text and ref, queued, refusal, warnings, tick, arming);
+    - Discard arming and the tick are in the key, so each still redraws;
+    - no string reaches a sink but `textContent`.
+  - The scoped confirmation is round 61.
+
+### Round 61 - 2026-09-28 - Hardening H4 confirmation: the side-panel render and the docs fixes, independent cross-family codex peer review (pass stage-9.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Supplied fix diff `47cbc5d` → `8502c33`, permitted current-file context and rounds 58–60; static verification only, no writes, tests or network.
+- **PR-LOW-340** (LOW, test-harness, `extension/src/panel.dom.test.ts:275`): The different-session focus test would also pass with PR-MED-330 entirely reverted, contrary to this round’s explicit test-honesty criterion. It remains useful as a negative guard against unconditional focus restoration. — Evidence: line 282 asserts `expect(document.activeElement).not.toBe(q('button[data-action="pause"]'))`; line 285 then calls `click("pause")` on the newly rendered button. The baseline `panel.ts:155` already executes `this.mount.replaceChildren(section)` without restoring focus, and its new button captures the new session reference and revision. Recommendation: Fix-now — Precede the different-session transition with a same-session rebuild and assert that Pause retains focus; then verify that changing sessions clears it. This makes the combined test fail when restoration is removed or applied across sessions. /fix decision: Applied (leg stage-9-exec-k6 — the test is rewritten IN PLACE as one sequence, "focus returns after a same-session rebuild but never across sessions": (1) Pause focused → a same-session non-timer change (a warning) → the rebuilt Pause is connected and IS `activeElement`; (2) → a different session → the new Pause is a new node and is NOT `activeElement` (body or the detached node); the click still sends the new session's ref and rev 23. Count unchanged)
+- Verification counts: 1 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k6)
+- PR-LOW-340 — peer: LOW, test-harness.
+  - Verified: materiality=test-harness severity=LOW surface=`extension/src/panel.dom.test.ts` (no production file) rec=Fix-now (composer-predisposed, `OWNERSHIP: auto-disposition`).
+  - Evidence: before PR-MED-330, `panel.ts` rebuilt with `replaceChildren` and never restored focus, so a different-session case alone passes on the unfixed panel. It only guards against UNCONDITIONAL restoration.
+  - Note: the separate same-session test ("a rebuild for the same session keeps focus on the same action") does fail on a revert, so the suite was not blind. This test on its own was, as the peer says.
+- Fail-without-the-fix reasoning (vitest not run here; from `panel.ts` `render`):
+  - (a) Restoration removed, or PR-MED-330 fully reverted: step 1's rebuild leaves `activeElement` on the detached node or the body, so `expect(document.activeElement).toBe(samePause)` FAILS.
+  - (b) Restoration applied across sessions (the `sameSession` guard dropped): step 2 focuses the new Pause, so `expect(document.activeElement).not.toBe(newPause)` FAILS.
+  - (c) With the fix, step 1's structure key changes (warnings), the session is the same (`REF`), and focus goes to the new `[data-action="pause"]`. Step 2's key changes (`session_ref`) and `sessionOf` differs, so there is no restore.
+- Checks: extension `npm run typecheck` and `npm run lint` clean. Nothing but this test file and the plan changed (the practitioner's smoke is running on the current build).
+- Cap verdict: accept — test-harness — one test made discriminating in place; no production change, and the pass converges at peer round 4 of 5.
+
 ## Tasks
 Every task's verification is the per-phase suite in `Validation / Verification` plus the test classes it names. `[executor: premium-only]` marks custody, concurrency, network-surface and security-doc work. The tier is entirely premium, so the labels record where care concentrates rather than routing.
 
@@ -2174,42 +4425,218 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - Docs: threat model "The Chrome link" section (protocol v2, the pipe, the bridge, each with its residue) and its scope and review-trigger lines; data-flow flow 1, new flow 19, flow 18's second trigger, the components table; CHANGELOG.
 
 ### Phase 5 — Pause rule, resolution, back-to-back and Unreviewed `[executor: premium-only]`
-- [ ] 🟥 5.1: **ContextEvaluator and `pause_for`**
+- [x] 🟩 5.1: **ContextEvaluator and `pause_for`**
+  - DONE 2026-09-28 (leg stage-5-exec-e7):
+    - `context_rules.py`: D5's `pause_action` table and `ContextEvaluator` (bound-tab and focused-tab reasons; re-bind by exact ids only).
+    - The bridge's `pause_for`, pipe loss and new client, and `resume_refusal` run before every Resume.
+    - Sleep via `nativeEvent`, which returns `(False, 0)` and never raises into Qt (the e2 production fix).
+    - Unlinked recordings pause only on sleep.
+
+    Suites 3922 + 105; rounds 32 (in-session) and 33–35 (codex stage-5.p1). Live-user smoke deferred to the morning.
+  - **SMOKE FINDING and FIX (2026-09-28, leg stage-8-exec-h5):** morning-smoke step 5 found that sleep did NOT pause on the practitioner's Modern Standby machine. The classic `PBT_APMSUSPEND` broadcast never reached the window, and this task's real-dispatch test had sent that broadcast itself.
+    - Fixed under D5's AS-BUILT addendum (the practitioner's "sleep + screen lock" decision): the new `system_events.py`, a `LOCKED` reason in `SYSTEM_REASONS` beside `SUSPEND`, `MainWindow.attach_system_pause` / `detach_system_pause`, and the `app.py` wiring.
+    - Reviewed in rounds 49+. The suites and the live re-smoke are pending.
   - Files: new `context_rules.py`; `ui/bridge.py`; `ui/main_window.py` (`PBT_APMSUSPEND` via `nativeEvent`).
   - Behaviour: D5 exactly, including `pause_for` per session state, sleep, a new-client pipe loss, resume refused without a current matching report, and re-binding by ids. Parameterised-tested against the D5 table.
-- [ ] 🟥 5.2: **Resolution block**
+  - Built (leg `stage-5-exec-e1`, 2026-09-27; awaiting the composer's suites):
+    - `desktop/src/scribe_desktop/context_rules.py` (new, Qt-free):
+      - `PauseReason` and `CONTEXT_REASONS` (every reason except `hotkey` and `spoken`).
+      - `LINKED_ONLY_REASONS` (the context reasons minus `suspend`).
+      - `pause_action(state, reason, *, linked)`, D5's table: RECORDING → pause, plus a block for a context reason on a linked session; PAUSED → block only; every other state → nothing. A Chrome reason does nothing to an unlinked recording.
+      - `is_suspend_message`, `names_note`.
+      - `ContextEvaluator`, which holds the linked live session's tab binding (`bind` / `lose_tab` / `forget` / `evaluate`). For the BOUND tab, `closed` → `tab_closed`, a page other than a note → `left_note`, and another note or patient → `note_changed`. For the FOCUSED tab, another note → `other_note` and a login page → `login`. It re-binds only to a report naming the session's exact host, patient and note, and only while unbound.
+    - `ui/bridge.py`:
+      - `pause_for(reason)` pauses through `SessionScreen.on_pause`, sets `_Block` only when the session is then PAUSED, and emits `pause_cue` when it paused or newly blocked.
+      - Every report goes to `_apply_rule` before the ledger. Pipe loss and a new client call `pause_for`, and `_reset_connection` calls `lose_tab`.
+      - `resume_refusal()` returns `pipe_down` / `report_mismatch` / None and is installed as the Session screen's resume guard. `_on_resumed` clears the block and binds the session to the focused tab.
+      - A linked Start binds the session to `target.tab_id`.
+    - `ui/main_window.py`:
+      - `nativeEvent` → `_is_suspend_event` (a 3-field `_MSG` head) → `pause_for(PauseReason.SUSPEND)`.
+      - `pause_for` delegates to the bridge when attached. Otherwise it applies the same table through the Session screen's slot.
+      - `_show_pause_cue` shows the status line, the Session screen's message and `QApplication.alert`.
+    - `ui/session_screen.py`: `set_resume_guard`, which every `on_resume` consults first (a named refusal, and no controller call); `session_resumed`; `show_notice`.
+    - `ui/models.py`: `PAUSE_CUES` and `pause_cue_text`, `CHROME_REFUSALS["pipe_down"]`, `BLOCK_DESKTOP_LINE`, and `ChromeView.phase` / `blocked`.
+    - Scoping reading, recorded here: D5's report and pipe reasons concern a recording bound to a note, so an UNLINKED (desktop) recording ignores them; suspend pauses every recording. The block needs the session's own clinic (`BlockState` requires it), so only a linked session gets one.
+    - Tests: `desktop/tests/test_context_rules.py` (new: the D5 table over every state × reason × linked, the evaluator over every report shape including the positive controls, re-binding, the suspend message); in `test_ui_bridge.py`, `TestPauseRule`; in `desktop/tests/test_ui_pause_and_unreviewed.py` (new), `TestResumeGuard` and `TestSuspendAndCue`.
+    - Docs: the threat model's new "THE PAUSE RULE AND THE BLOCK" paragraph with residue (1)–(4); THE BRIDGE's command sentence; pipe residue (1)(d); data-flow flow 19; the bridge module docstring; CHANGELOG.
+- [x] 🟩 5.2: **Resolution block**
+  - DONE 2026-09-28 (leg stage-5-exec-e7):
+    - `state.block` carries the reason, the live ref and the recording's own clinic, plus its own patient only when verified.
+    - `resume_previous` resumes only on a matching report within 30 s on the same connection.
+    - The Session screen's two-click Discard now drops "Confirm discard" when its window lapses or the session changes (round 32 LOW-026).
+
+    Suites 3922 + 105; rounds 32–35.
   - Files: `context_rules.py`, `ui/bridge.py`, `ui/session_screen.py`.
   - Behaviour: Flow 3, with a two-step Discard. `resume_previous` asks the extension to navigate by ids and resumes only on a matching report. The desktop Resume and the hotkey honour the block.
-- [ ] 🟥 5.3: **Back-to-back flow**
+  - Built (leg `stage-5-exec-e1`, 2026-09-27; awaiting the composer's suites):
+    - `ui/bridge.py`:
+      - `_block_state()` publishes `state.block`: the reason, the live `session_ref`, the recording's OWN clinic host and label, and its patient's name under the live-display rule. It is published only while that linked session is PAUSED, and `_tick` drops it once resolved.
+      - `resume_previous` goes through the existing `session_ref` gate, then `_resume_previous`, which needs a PAUSED linked session and otherwise refuses `not_allowed_now`. It sets `_PendingResume`, and `_resume_if_pending` (run after every report) resumes through `on_resume` only when `resume_refusal()` passes, within `RESUME_PREVIOUS_WINDOW_SECONDS` (30). A new connection or the session ending clears the pending resume; a context pause does not.
+      - `open_review` stays `not_available` until Task 5.5.
+      - The navigation itself is the extension's: it builds the URL from `state.live`'s ids and the allow-list (Task 6.2 already carries this). No protocol change.
+    - `ui/session_screen.py`: the Discard BUTTON is two-step (`on_discard_clicked`). The first click arms it for the current `session_ref` and shows `DISCARD_CONFIRM_MESSAGE` with the button reading "Confirm discard". The second click, within `DISCARD_CONFIRM_SECONDS` (10) for the same ref, calls `on_discard`. A disabled Discard disarms. `on_discard` itself stays the confirmed action, used by the bridge after Chrome's own second click, which the protocol requires as `confirmed: true`.
+    - The desktop Resume and the hotkey honour the block through the one resume guard.
+    - Tests: `TestResolution` (bridge); `TestTwoStepDiscard`.
+- [x] 🟩 5.3: **Back-to-back flow**
+  - DONE 2026-09-28 (leg stage-5-exec-e7):
+    - Start is offered at QUEUED unless a review holds the lease (desktop tooltip; `review_open` from Chrome).
+    - `session_retired` feeds the in-memory reminder index (linked and queued only).
+    - "Finishing…" shows the processing tail.
+    - Start clears the previous patient's post-Save Note tab.
+
+    Suites 3922 + 105; rounds 32–35.
   - Files: `ui/bridge.py`, `ui/session_screen.py`, `ui/main_window.py` (`_on_session_started`).
   - Behaviour: D6: "Finishing <A>…"; Start at QUEUED unless the lease is held ("Save or cancel <A>'s note review to start"); retirement fills the reminder index (a list per note, D6) from the in-memory context.
   - Measure A's tail (timing only) in the Done note.
-- [ ] 🟥 5.4: **Unreviewed review reopen** `[decision]`, then build
+  - Built (leg `stage-5-exec-e1`, 2026-09-27; awaiting the composer's suites):
+    - `ui/models.py`: `_CONTROLS[QUEUED] = ControlSet(start=True)`, `REVIEW_OPEN_START_HINT`, and the `_live_line` phases ("Finishing <A> - <clinic>...", "Ready for review: ...").
+    - `ui/session_screen.py`:
+      - Start and the consent tick are disabled while `controller.generating`, with the hint as a tooltip; `_watch_state` re-renders when the lease changes.
+      - `_start` reads the tracked session BEFORE `start()` and emits `session_retired(previous)` when a non-terminal session was retired.
+    - `ui/bridge.py`: `notice: review_open` while the lease is held. The existing `review_open` refusal now applies at QUEUED.
+    - `context_rules.py`:
+      - `ReminderIndex`: (clinic_id, note_id) → [session_id, …], newest first. `add` moves an entry rather than duplicating it, and `remove` takes out exactly one entry.
+      - `reminder_entry(session)`: only a linked QUEUED session.
+    - `ui/main_window.py`:
+      - `self.reminders`; `_on_session_retired`.
+      - `forget_unreviewed` (the index entry and `controller.forget_session_ref`), wired to the Recovery list's Discard (new `RecoveryScreen.session_removed`) and to `_on_transcript_closed` for a recovered source's `completed` / `discarded`.
+      - `prune_reminders` (a stat of `key.dpapi` only), called after each periodic sweep in `app.py`.
+    - `SessionControllerLike.forget_session_ref`.
+    - Found while building, and applied as part of D6 (it is D6's own precondition): `_on_session_started` now also clears the Note tab. Starting B at QUEUED leaves A's post-Save Note tab live. Its "delete note and complete" calls `complete_deleting_saved_note()` on whichever session the controller tracks, so once B queued — before `_on_live_transcript` clears the tab — a click would complete B, deleting B's note. Start is refused while a pre-Save review holds the lease, so no unsaved review is ever dropped. A reopens from the Unreviewed section (Task 5.4).
+    - A's tail: timing is live-only. The measurement is P.2's (the Validation list already names "the measured tail of 5.3").
+    - Tests: `TestBackToBack` (bridge); `TestStartAtQueued` and `TestReminderIndexWiring`; `TestReminderEntry` / `TestReminderIndex`; `test_ui_models.py`'s QUEUED control pin updated, plus the phase lines and the cue coverage.
+- [x] 🟩 5.4: **Unreviewed review reopen** `[decision]`, then build
+  - DONE 2026-09-28 (leg stage-5-exec-e7): DECIDED (a) under the practitioner's overnight pre-authorisation — revisable at the morning smoke.
+    - `SessionController.adopt_queued` reinstalls a retired session as the live queued one. It decrypts `encounter.enc` once, reads the transcript and any saved note (verified) before installing, and refuses by name.
+    - The Recovery tab's Unreviewed section offers "Open for review" and Discard, never "Resume processing".
+    - A saved note reopens read-only, with Copy and "Regenerate (replaces the saved note)" (the D6 reading, to confirm).
+    - A crash-recovered store keeps its unfinished-store warning (codex round 34 PR-MED-190).
+    - There is a 2-hour expiry warning and the on-close list.
+
+    Suites 3922 + 105; rounds 32–35.
   - Options:
     - (a) a new controller `adopt_queued(directory)` that unwraps the key and reinstalls the session as the live QUEUED session, refused while any session is active. This is a NEW custody consumer, so enumerate every consumer (lessons 2026-08-12).
     - (b) extend the generation lease and `with_generation_custody` to recovered checkouts.
   - Decide after: 5.3 lands.
+  - **Decision brief** (leg `stage-5-exec-e2`, 2026-09-28T00:10+10:00; 5.3 built):
+    - The problem: a retired session's transcript and saved note are on disk under its DPAPI key, but the only generation-capable path is the controller's live QUEUED session (`with_generation_custody` → `_require_state(QUEUED)`); the recovered checkout shows Complete/Discard only (`can_generate=False`), and its "Resume processing" re-transcribes, unlinking `note.enc`.
+    - (a) `SessionController.adopt_queued(directory, reader)` reinstalls the retired session as THE live QUEUED session. Cost: one new controller method (a new custody consumer, enumerated below). Everything downstream is the path that exists and is already hardened — the lease, `with_generation_custody`, `write_note`, `complete` / `complete_without_note` / `complete_deleting_saved_note` / `discard`, the D2 ref, `custody_protected_ids`, the Chrome `live` state. Limit: single-active-session holds, so adopting retires whatever queued/failed session is live, exactly as Start does, and it is refused while anything is recording, paused or processing.
+    - (b) Extend the lease and `with_generation_custody` to recovered checkouts. Cost: a second, parallel custody path — a lease that covers a NON-live session, recovered twins of the save / abandon / post-save delete (`complete_without_note`, `complete_deleting_saved_note` have no recovered form), `destroy_recovered_crypto` interplay with a held lease, the Transcript screen's committed-note state on a recovered source, and a second generation-custody consumer for the sweep to protect through `RecoveryScreen._protected` rather than the controller. Every Phase-6.3 race class would need re-proving for the new path.
+    - Custody consumers of (a), each checked against the adopted session (lessons 2026-08-12):
+      1. `start()` / `_retire_locked`: a later Start retires the adopted session like any queued one (refused while the lease is held; the in-memory key copy destroyed; `key.dpapi` stays). `adopt_queued` itself retires a live queued/failed session the same way, under the same generation and uncleared-live refusals.
+      2. `complete()`, `complete_without_note(lease)`, `complete_deleting_saved_note()`: act on `_live` at QUEUED — the adopted session — through `complete_session` (verifies `note.enc` against the on-disk transcript first).
+      3. `discard()`: key-first on the snapshot; the reservation consumers are unchanged.
+      4. `transcribe()`, `mark_queued()`, `claim_live_transcriber()`: need PROCESSING or an attached live worker; the adopted session has neither (`store`/`worker`/`live_transcriber` None, `transcribing` False).
+      5. `begin_generation` / `end_generation` / `with_generation_custody`: serve the adopted session unchanged (QUEUED + lease identity). `adopt_queued` refuses while the lease is held — adoption would retire the session a generation depends on.
+      6. `_custody_reservations`: `adopt_queued` refuses a target an in-flight Discard reserved (by id) and while any reservation is held (coarse, like `begin_generation`).
+      7. `custody_protected_ids()` / the sweep / the recovery listing: the adopted session is the live non-terminal session, so the sweep skips it and the listing excludes it (no second custody path through the Recovery list); retired again, it is listed again.
+      8. `active_session_ids()`: QUEUED is not active — unchanged.
+      9. The recovered coordinator ops (`complete_recovered`, `discard_recovered`, `destroy_recovered_crypto`): reachable only from a recovered checkout; `adopt_queued` refuses while the Recovery screen holds one (`_protected` non-empty, checked by the caller) and the listing never offers the live adopted id.
+      10. `RecoveryScreen` (`_protected`, `release_checkout`, list Discard): the Unreviewed list's Discard is the existing stat-only `discard_session(dir, None)` behind the click-time `_selection_blocked` re-check, which sees the adopted id as protected.
+      11. The D2 registry: the adopted session keeps the reference it already had (kept through retirement), else one is minted; Complete/Discard forget it as today.
+      12. `begin_enrolment` / `_on_capture_failure`: QUEUED is not active; no capture worker exists.
+      13. `MainWindow`: `_recovered_crypto` and `_checkout` — adoption is refused while a recovered checkout is open; the adopted session's link line and D4 re-verification reuse the checkout machinery from the record `adopt_queued` already decrypted (no second decrypt; Constraint 7), and `recovered_writeback_target` returns None for it (the live entry, `live_writeback_target`, governs a live session).
+      14. The Chrome bridge: publishes the adopted session as `live` at `queued` under its reference; `_tick` drops a stale display and block as for any queued session.
+      15. The reminder index: the adopted session's entry is removed on adoption and re-added when a Start retires it again.
+    - Executor recommendation: (a) — every consumer above already handles a live QUEUED session, so the new surface is one method whose refusals mirror `start()`'s; (b) duplicates the whole leased save/complete path for a second session kind, which is where rounds 27–36 found their custody races.
+    - **Decided (a) 2026-09-28T00:10+10:00 under the practitioner's overnight pre-authorisation (2026-09-27) to follow the executor's recommendation; revisable by the practitioner** (`OWNERSHIP: gate-disposition key=task-5.4-decision choice=a-adopt-queued`).
   - Then build, in `ui/recovery.py` (the Unreviewed section), `ui/models.py`, `ui/main_window.py` and `session.py`:
     - rows with a transcript offer "Open for review", never "Resume processing";
     - with no `note.enc`, review opens from `transcript.enc` with generate, save and copy available; with a `note.enc`, it opens the saved note through `session_store.read_note` with its edits, copy available and generation only as an explicit "Regenerate (replaces the saved note)"; a note that fails verification is a named refusal on the row, never a silent regenerate (D6);
     - the checkout is released when the review ends (fixing today's hold-until-restart at `main_window.py:348-354`);
     - the expiry warning (2 h, the sweep's timestamp helpers) and the on-close expiry list.
-- [ ] 🟥 5.5: **Reminder on reopening a note**
+  - Built (leg `stage-5-exec-e2`, 2026-09-28; awaiting the composer's suites):
+    - `session.py`: `adopt_queued(directory, reader) -> (session, value)` and `ReviewOpenRefused(reason)`. The refusals and their order: the lease; any reservation; an active session; outside the root or not a session id; already live; no `transcript.enc` (`no_transcript`); the unwrap (`key_unavailable`); `encounter.enc` (`consent_unavailable`); the reader (`unreadable`, cause chained); then retirement of a live queued or failed session. The key is destroyed in memory on every refusal after the unwrap. The existing reference is reused, else one is minted. The class docstring's custody list names it.
+    - `session_store.py`: `session_expires_at(dir, now)` = `_session_created_at` + the window (THE sweep's derivation).
+    - `ui/models.py`:
+      - `RecoverableSessionInfo.expires_at`, filled from `session_expires_at`.
+      - `ReviewOpening` / `ReviewReadError` / `read_for_review` (the transcript, then `read_note` when `note.enc` exists).
+      - `review_refusal_line`, `saved_note_line` (current config digest vs the note's), `unreviewed_row_text`, `expiry_text`, `expiring_soon`, `expiry_warning_line`, `close_expiry_message`.
+      - The copy constants, and `SessionControllerLike.adopt_queued`.
+    - `ui/recovery.py`: the Unreviewed list (rows with a transcript) above the recoverable list. "Open for review" emits `review_requested` behind the same blocks and click-time `_selection_blocked` re-check as a resume. Discard is shared as `_discard`. `expiry_label` plus the `expiry_warning` signal fire once per session entering the window. Also `unreviewed_infos`, `show_message` and the `clock` seam.
+    - `ui/transcript.py`: `show_document(note_committed=)` sets `_note_committed` after the reset and relabels Generate as `REGENERATE_NOTE_LABEL`.
+    - `ui/note.py`: `show_saved_note(note, document, info=, copy_enabled=, on_abandon=)` shows the note read-only (`format_note_body`, the one renderer). `_copy_ready` accepts a saved note when the flag is on and it has no unresolved error. `clear()` drops it.
+    - `ui/main_window.py`:
+      - `_on_review_requested` (named refusals on the row) and `_open_adopted`: it clears the Note tab (the 5.3 rule), shows the document on the live callbacks with `can_generate=True`, sets source "live", runs `_begin_checkout(..., adopted=True)` from the adoption's record (no second decrypt), and lands on the saved note or the transcript.
+      - `_begin_checkout`, factored out of `_open_checkout_encounter`.
+      - `recovered_writeback_target` returns None for an adopted checkout.
+      - `_on_live_transcript` releases a replaced recovered checkout (only when its key copy was destroyed).
+      - The expiry cue.
+      - `closeEvent`'s on-close list (a first close is refused with the list; a second within `CLOSE_CONFIRM_SECONDS` quits), via `_unreviewed_expiries` (the Unreviewed rows plus the live queued session).
+    - Reading recorded for the review: D6's "keeping the clinician's edits, confirmations and saved prose" is read as the saved note shown AS SAVED and read-only (a ratified note has no draft to re-edit), so changing it means Regenerate. The config-mismatch case adds its reason line to that same read-only view.
+    - Tests: `test_unreviewed_review.py` (new):
+      - `TestAdoptQueued` (13, Windows).
+      - `TestReadForReview` (4), `TestReviewCopy` (8).
+      - `TestUnreviewedSection` (5).
+      - `TestOpenForReview` (9, Windows), `TestCloseList` (3, Windows).
+      - `test_ui_screens.py`: the Recovery button-label pin, and `test_live_transcript_close_never_releases_recovered_checkout` rewritten (the replaced checkout is released; an unrelated one survives).
+    - Docs: the threat model's "OPEN FOR REVIEW" paragraph with residue (1)–(3); data-flow flow 6; the retention schedule's encounter row and 24-hour rule; CHANGELOG.
+  - Composer's suites on the e2 tree: GREEN (desktop 3865, extension 105). 5.5 and 5.6 followed in leg e3.
+- [x] 🟩 5.5: **Reminder on reopening a note**
+  - DONE 2026-09-28 (leg stage-5-exec-e7):
+    - App start rebuilds the reminder index: one `encounter.enc` decrypt per Unreviewed session, and a ref minted for each.
+    - `state.banner` carries ids and a count, never a name.
+    - `open_review` is gated by exact ref plus index membership; it is refused while a review holds the lease or a session is active (round 32 LOW-023). The window comes forward and flashes.
+
+    Suites 3922 + 105; rounds 32–35. Needs the Phase 6 panel to see from Chrome.
   - Files: `ui/bridge.py`.
   - Behaviour: a `context` for a note in the index sets the banner in `state`, carrying the banner target's `session_ref` from D2's registry (refs for indexed sessions are minted at startup reconstruction and kept through retirement). `open_review` resolves that exact ref and brings the desktop window forward on that session, flashing the taskbar where Windows refuses focus.
   - Verification: restart → banner → review opens the right session; a service-worker restart re-renders the banner from `state`; a delayed click after the entry was removed or replaced is refused.
-- [ ] 🟥 5.6: **Cross-patient matrix — context cases**
+  - Built (leg `stage-5-exec-e3`, 2026-09-28; awaiting the composer's suites):
+    - `session.py`: `session_ref_for(session_id)` (the reverse lookup, shared as `_ref_for_locked` with `adopt_queued`) and `register_session_ref(session_id)`, which returns the existing ref or mints one and refuses a non-session-id.
+    - `ui/models.py`:
+      - `reconstruct_reminder_entries(infos, *, unwrap=None, read_record=None)`, oldest first. It covers only rows with a transcript AND an encounter record: the key is unwrapped for the one read and destroyed in `finally`, any failure is skipped, and an unlinked record gives no entry. The readers resolve at call time (the spy seam).
+      - `SessionControllerLike` gains `session_ref_for`, `register_session_ref` and `resolve_session_ref`.
+      - `CHROME_REFUSALS` gains `review_in_progress` and `cannot_open`.
+    - `ui/bridge.py`:
+      - Constructor kwargs `reminders` and `open_review`.
+      - `_banner_state`: the bound (focused) tab's allow-listed note → its clinic's `(clinic_id, note_id)` in the index → the newest session still referenced, its ref and the count capped at `max_banner_count`, with no name. It is published in `build_content`.
+      - `_open_review(session_ref)` gates on: no index or opener (`not_available`); a ref that does not resolve, or resolves to a session not in the index (`session_changed`); `busy`; the lease (`review_in_progress`). It then calls the opener and reports its refusal.
+      - Module docstring: COMMANDS, THE BANNER.
+    - `ui/main_window.py`:
+      - `attach_chrome_link` passes the index and `open_unreviewed`.
+      - `reconstruct_reminders()` refreshes the listing, adds the entries and registers their refs.
+      - `open_unreviewed(session_id)` looks the session up in the Unreviewed rows (refreshing once), returning `session_changed` when absent. It then calls `_raise_window` (showNormal when minimised, raise, activate, `QApplication.alert`) and `_on_review_requested`, whose False becomes `cannot_open`.
+      - `_on_review_requested` now returns bool and lands on the Recovery tab on a refusal.
+    - `app.py`: `window.reconstruct_reminders()` once, after the start-up sweep and before the Chrome link.
+    - The banner carries no `patient_name`: a retired session keeps no display string (D3's display lifetimes), so it names ids and a count only.
+    - Tests:
+      - `test_ui_bridge.py`: `TestBanner` (8), `TestOpenReview` (6); the old `not_available` pin is kept as `test_open_review_without_an_index_is_not_available`; the Harness takes `reminders` and `open_review`.
+      - `test_unreviewed_review.py`: `TestReconstruction` (5, Windows). It covers the decrypt spy (once per Unreviewed session, never again on refresh or prune), an unreadable record skipped, `open_unreviewed` for exactly that session, `cannot_open` under the lease, and restart → banner → `open_review` end to end.
+      - `test_ui_screens.py`: `FakeController` gains the registry methods.
+    - Docs: the threat model's bridge paragraph, its "Open for review" paragraph (the banner, `open_review`, residue (4)) and pipe residue (e); data-flow flows 6 and 19; the retention schedule's encounter row; CHANGELOG.
+- [x] 🟩 5.6: **Cross-patient matrix — context cases**
+  - DONE 2026-09-28 (leg stage-5-exec-e7): `test_cross_patient.py` — 5.1's tables run through a real bridge (19 rows), delayed A commands after B, a replayed report, `resume_previous` while B is on screen, pipe down, a second client (the old-client row now discriminates, codex round 33 PR-LOW-180), `open_review`'s own rows, and the two positive restart cases. Suites 3922 + 105; rounds 32–35.
   - Files: `test_cross_patient.py`.
   - Behaviour: the remaining matrix rows (target/`state_rev` mismatch, stale-`session_ref` Discard/Finish/Resume after B starts, bound-tab departure and closure vs a separate non-Cliniko tab, a non-bound or stale tab, a replayed report, Resume previous while B is shown, resume with the pipe down, a second pipe client, and the two-recordings-one-note reminder case), reusing 5.1's table. Zero failures across 3.6 + 5.6 is PLAN.md Phase 5's completion evidence.
+  - Built (leg `stage-5-exec-e3`, 2026-09-28; awaiting the composer's suites):
+    - `test_context_rules.py`: the evaluator's two tables are lifted to module constants `BOUND_TAB_CASES` (10) and `OTHER_TAB_CASES` (9), unchanged, and its tests parametrize over them.
+    - `test_cross_patient.py` (a new section driven through the bridge `Harness` from `test_ui_bridge.py`: fake sender, injected Cliniko answers, no socket). The rows:
+      - `test_the_bound_tab_rows` (10) and `test_another_tab_rows` (9) over 5.1's tables: paused, with the block's reason, iff the table says so. In each, the session and its context are unchanged; the bound tab stays `TAB` (or unbound after it closed); another tab never takes the binding. This includes the bound tab going `not_cliniko` or `closed` versus a separate non-Cliniko tab (the positive control), and a non-bound tab.
+      - Start with a stale `state_rev` / a non-bound target.
+      - Delayed Discard (confirmed), Finish, Resume and Resume previous for A after B started: each is `session_changed`, no slot runs, and B is unchanged.
+      - A replayed report after resolution is ignored.
+      - Resume previous while B's note is on screen never resumes, even once A's note returns after the window lapses.
+      - Resume with the pipe down is `pipe_down`.
+      - A second pipe client pauses with the `new_client` block; the old client's command is ignored, the new client's resume is `report_mismatch` until it reports the note.
+      - `open_review` rows (the Phase 4 recommendation): the live ref, an unknown ref and a removed entry's ref are each `session_changed` with the opener never run.
+      - Positive (Windows): two recordings on one note stay indexed across two restarts, and completing one keeps the other; a saved note reopens as saved after a restart.
+    - What the stale-seq row covers: a report from a STALE tab or seq is ignored — `seq` is per connection (the replay row); the stale-result rows are 3.6's.
+    - The saved-edits positive case writes the finalised note directly: the saved note IS the edits, and "retire" is the reconstruction's own path.
 
 ### Phase 6 — Chrome extension UI
-- [ ] 🟥 6.0: **Extension test environment**
+- [x] 🟩 6.0: **Extension test environment**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Get the practitioner's authorisation, then add a pinned DOM-environment devDependency to `extension/package.json` and the Vitest config, with a `chrome.*` fake module.
-- [ ] 🟥 6.1: **Manifest and build**
+  - BUILT (leg `stage-6-exec-f1`, 2026-09-28): the practitioner authorised ONE pinned dev-only DOM library at 2026-09-27 21:39; the composer installed **`jsdom` 30.1.1** as an exact devDependency with `--ignore-scripts` (`package.json` + `package-lock.json`). `extension/vitest.config.ts` (new; the crx build plugin no longer loads under test) runs two projects: `node` (every `src/**/*.test.ts` except DOM tests, as before) and `dom` (`src/**/*.dom.test.ts` under jsdom). `extension/src/test/chrome-fake.ts` is the recording `chrome.*` fake (runtime, alarms, action, tabs, windows, scripting, sidePanel, storage — storage records every write so a test can prove no name is stored). jsdom's engines (`^22.22.2 || ^24.15.0 || >=26.0.0`) narrow AGENTS.md's Node 22 floor to 22.22.2 (updated). 🟨 until the composer's `npm run qa` shows both projects running.
+- [x] 🟩 6.1: **Manifest and build**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `extension/src/manifest.ts`, `extension/vite.config.ts`, a stub `extension/src/page.ts`.
   - Behaviour: `sidePanel` and `scripting` permissions (scripting limited to Cliniko hosts), `side_panel.default_path`, `content_scripts` for `https://*.cliniko.com/*`, no `tabs` permission. A manifest pin test.
   - `AGENTS.md` Local Run Steps: rebuild, reload, and fully restart Chrome after manifest changes.
-- [ ] 🟥 6.2: **Background: tab tracking, reports, relay, badge and re-injection**
+  - BUILT (leg `stage-6-exec-f1`): `manifest.ts` adds `sidePanel` + `scripting`, `side_panel.default_path: src/panel.html`, and one content script (`src/page.ts`, `https://*.cliniko.com/*` only, `all_frames: false`, `document_idle`); no `tabs`, no `<all_urls>`. `scripting` has no host scoping of its own — it reaches only `host_permissions` (Cliniko), and the hub injects only into tabs on a Cliniko host. New `src/manifest-paths.ts` holds the shared paths so the worker never bundles the crx plugin. `vite.config.ts` is UNCHANGED: crxjs builds `side_panel.default_path` and TS content scripts from the manifest. Stubs `src/panel.html` / `src/panel.ts` / `src/page.ts` build until 6.3/6.4. `manifest.test.ts` pins the four permissions, the hosts, the one top-frame content script, the panel path, and the key's extension id (`mbmhglgadhdohpgbmpbjnaifjagfdfid`, computed from the key). AGENTS.md step 8 updated (rebuild/reload/restart after a manifest change; the badge now reflects the app). 🟨 until `npm run qa` + `npm run build` pass.
+- [x] 🟩 6.2: **Background: tab tracking, reports, relay, badge and re-injection**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `extension/src/background.ts`, `extension/src/connection.ts`, new `extension/src/context.ts`.
   - Behaviour:
     - `onMessage` is rewritten: only `error` disconnects, and v2 messages are routed.
@@ -2220,30 +4647,64 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - The badge replaces `BADGES`.
     - Page-script re-injection runs on `onInstalled`.
     - State is re-requested after a worker restart by reconnecting (D2: the app sends a full snapshot on every new pipe connection). Verification: an idle app with an existing reminder and allow-list, no state change, extension reloaded — the new worker receives both.
-- [ ] 🟥 6.3: **Page script: frame, block and URL heartbeat**
+  - BUILT (leg `stage-6-exec-f1`): `context.ts` (new: `classifyUrl` / `clinikoHost` / `noteUrl`, `ContextReporter` — the one `context` producer — and `sliceFor`); `hub.ts` (new, `chrome`-free: the relay, sender checks, commands, "Resume previous", re-injection, the panel view and per-tab slices); `connection.ts` (`send` validates the whole envelope with the mirror before posting; `badgeFor` replaces `BADGES`; `onHandshake` / `onChange` hooks; `appState` / `wasLive`); `background.ts` wires Chrome's events, `setPanelBehavior({openPanelOnActionClick: true})`, and a `HubApi` over the real APIs. Tests: `context.test.ts`, `hub.test.ts`, `background.test.ts` (the worker booted against the fake), `connection.test.ts` (+ badge, `send`, hooks). Interpretation calls (each LOW, applied, revisable): (1) the badge keeps a green **OK** while the app runs idle (D1 said "nothing") — the Phase 4 executor's recommendation that the badge reflect the app; OFF when it is closed; (2) `focused` ignores `WINDOW_ID_NONE` (Chrome losing focus to another program changes nothing); (3) "Resume previous" brings forward a tracked tab already showing the note before navigating anything, and never reloads a tab already on it; (4) the login page is matched as `/users/sign_in` — UNVERIFIED on a live account (any other path reads `other_cliniko`, and the bound tab leaving its note pauses either way); (5) a tracked tab reported `not_cliniko` is untracked, so later focus changes on it send nothing; (6) with the link down, allow-listed tabs keep the page script live and show the paused frame if a session was live (the app pauses on pipe loss), and the block is dropped (its buttons could not reach the app). Unexpected host-bound types still fail the connection as before (a broken peer); a refusal never does. 🟨 until the composer's `npm run qa` + `npm run build`.
+- [x] 🟩 6.3: **Page script: frame, block and URL heartbeat**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `extension/src/page.ts`.
   - Behaviour: D1's frame and block in a closed shadow root, rendered with `textContent` only. Buttons act on `isTrusted` clicks and carry the `session_ref` of the `state` the block was rendered from; Discard needs its second click. The script is inert until allow-listed, and returns to inert (frame, block and patient data removed; reports stopped) when its host leaves the allow-list (D13). It sends only `location.href` changes to the background (the SPA backstop; the background stays the single `context` reporter) and never reads Cliniko's DOM.
-- [ ] 🟥 6.4: **Side panel**
+  - BUILT (leg `stage-6-exec-f2`): `extension/src/page.ts` — `PageScript` (hello once at start; slices accepted only from this extension's worker, never a tab; inert/teardown on an inactive slice; a 500 ms heartbeat that runs only while active and reports only an href change; the frame (`data-frame`) and the block card inside a CLOSED shadow root on one `[data-cliniko-scribe]` element, styled through the CSSOM so the page's CSP cannot refuse it; buttons act on trusted clicks only and send `{kind: "block", action, session_ref, state_rev[, confirmed]}` from the slice they were drawn from; Discard arms for 15 s and disarms on a different session's block; an element the page removes is re-attached on the next heartbeat; an orphaned copy (runtime gone after an update) tears itself down; a re-injected copy removes the old copy's element). The only DOM it reads is its own marker element. Tests: `page.dom.test.ts` (12). Residue (a cue, never the control — D13): the block overlay absorbs pointer input but not the page's keyboard shortcuts, and the page's own scripts or CSS can keep the frame and the block hidden or covered for as long as they like (restyled, clipped, moved off screen, covered from the top layer, or re-hidden on every tick); the heartbeat only puts back an element that was removed. The app's pause rule and command checks are the enforcing controls (round 38 PR-LOW-212; an `important` restyle per heartbeat was considered and not applied, because the hiding routes are an open class).
+- [x] 🟩 6.4: **Side panel**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: new `extension/src/panel.html`, `extension/src/panel.ts`.
   - Behaviour: D1's five layouts plus the banner, `textContent` only, the consent tick rules, Start sending `command{start, consent, target, state_rev}`, every other session command carrying the `session_ref` from the `state` it was rendered from (D2), and the refusal line from `last_refusal`.
   - Spike: can `sidePanel.open()` run from the action click? Record the result.
-- [ ] 🟥 6.5: **Extension tests**
+  - BUILT (leg `stage-6-exec-f2`): new `extension/src/panel-view.ts` (the pure layout model: `panelModel(view)` → Message / Checking / Ready / Live / Blocked plus the banner, the queued line, the refusal line and the warnings) and `panel.ts` (`Panel`: draws the model with `textContent` only, a port to the worker named `scribe-panel` that reconnects 1 s after a worker restart, commands built from the drawn model); `panel.html` gains the stylesheet. Rules held: Ready only when the app's bound report IS the focused tab (the hub's `PanelView.focus` now carries `tab_id`); Start sends `{action: start, state_rev, consent: true, target}` and clears the tick, the tick is never pre-ticked and is cleared when the note (tab, host, patient, note, verification) changes or Ready goes away; Live's Pause / Resume / Finish consultation and Blocked's Resume previous / Finish previous / Discard previous (second click within 15 s) carry the ref of the state they were drawn from; the banner's "Open for review" carries the banner's ref; a queued or reopened session shows no timer, only "The last recording is waiting for review in Clinic Scribe."; the refusal line is the app's `last_refusal.message` (`role="alert"`), and a refused note names D4's reason in the desktop's words. Tests: `panel-view.test.ts` (26), `panel.dom.test.ts` (10).
+  - SPIKE (recorded from `@types/chrome` 0.2.2 — no live check headless): `chrome.sidePanel.open({windowId|tabId})` (Chrome 116+) "may only be called in response to a user action". It is NOT needed for the action click: the worker calls `setPanelBehavior({openPanelOnActionClick: true})`, so the toolbar icon opens the panel natively. Content scripts cannot call `chrome.sidePanel`, so the page block's buttons send their commands directly (D1) and never open the panel. Whether a worker-side `open()` would honour a gesture forwarded from a block click was NOT tried — nothing depends on it. The morning smoke checks the icon.
+  - Interpretation calls (LOW, applied, revisable): (1) D1's "Another Chrome profile is connected to Clinic Scribe" has no protocol signal (the host sends `app_running: false` whenever it cannot reach the app), so the not-running message carries the hint "If it is open, another Chrome profile may be connected to it."; (2) "Finishing <A>…" has no timer and no buttons; (3) Live has no Discard (D1 lists Pause/Resume and Finish consultation; Discard stays on the desktop and in Blocked); (4) the banner is shown over Message and Ready only, as D1 says, and only while a Cliniko tab is in front (round 36 LOW-029); (5) warnings map known codes (`new_consultation`, Phase 7) and show nothing for an unknown code.
+- [x] 🟩 6.5: **Extension tests**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `*.test.ts`.
   - Behaviour: Validation's extension classes (layouts, the markup-name fixture, host scoping, trust checks, re-injection, badge, manifest pin, no names in storage, no key in payloads).
+  - BUILT (legs f1–f2), class by class: the URL parser, inertness and teardown, per-tab host scoping with the cross-clinic block (`context.test.ts`, `hub.test.ts`, `page.dom.test.ts`); the five layouts plus the banner (`panel-view.test.ts`, `panel.dom.test.ts`); the markup-name fixture (`page.dom.test.ts`, `panel.dom.test.ts`, `context.test.ts`); `isTrusted` and sender checks (`page.dom.test.ts`, `hub.test.ts`); re-injection on `onInstalled` (`hub.test.ts`, `background.test.ts`); the badge (`connection.test.ts`); the worker restart getting state back (`hub.test.ts`, `background.test.ts`); `resume_previous` navigation from the allow-list (`hub.test.ts`); the manifest pin (`manifest.test.ts`); no name in `chrome.storage` (`background.test.ts`, `panel.dom.test.ts`); no key in any payload (`background.test.ts`: every message to the host re-parses under the mirror, which refuses unknown fields, and an injected key-shaped field never reaches the host or a tab).
 
 ### Phase 7 — Hands-free and warnings
-- [ ] 🟥 7.1: **Global hotkey** `[executor: premium-only]`
+- [x] 🟩 7.1: **Global hotkey** `[executor: premium-only]`
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `ui/main_window.py` (`nativeEvent`), new `hotkey.py`.
   - Behaviour: D7. The chord is chosen here (AltGr-safe); pause/resume go through `pause_for` and the guarded resume; a registration failure shows in the desktop and in `state`.
-- [ ] 🟥 7.2: **Spoken pause**
+  - BUILT (leg `stage-7-exec-g1`, 2026-09-28; awaiting the composer's suites):
+    - `desktop/src/scribe_desktop/hotkey.py` (new, Qt-free): **Ctrl+Shift+F9** (`MODIFIERS` = Ctrl | Shift | `MOD_NOREPEAT`, `VK_F9`, id `0x5C51`); the `HotkeyRegistrar` seam with `Win32HotkeyRegistrar` (ctypes `RegisterHotKey` / `UnregisterHotKey`, returning the Windows error code); `HotkeyStatus` (`not_set_up` / `on` / `failed` + error); `GlobalHotkey.register` / `unregister` never raise (a refusal is a status), `matches` only while reserved.
+    - `ui/main_window.py`: `_native_msg` (the `_MSG` head, shared with `_is_suspend_event`); `nativeEvent` re-delivers the reserved chord's `WM_HOTKEY` through the queued `_hotkey_pressed_q` signal and still returns `(False, 0)`; `attach_hotkey(registrar=None)` (only `app.main` calls it; a refusal goes to the status line and the bridge), `detach_hotkey` (in `closeEvent` and at `aboutToQuit`), `hotkey_status`; `on_hotkey`: RECORDING → `pause_for(PauseReason.HOTKEY)`; PAUSED → `SessionScreen.on_resume()` (the resume guard runs — no bypass), a refusal flashed with its message; any other state nothing. `attach_chrome_link` hands the bridge the current status.
+    - `ui/bridge.py`: `set_hotkey_status` → `state.hotkey` (`{available: true, chord}` only while reserved) and the Session screen's line.
+    - `ui/models.py`: `HOTKEY_LINES`, `SPOKEN_PAUSE_LINES`, `hands_free_lines`, `HOTKEY_FAILED_STATUS`, `HOTKEY_RESUMED_STATUS`; `ChromeView.hotkey` / `hotkey_chord` / `spoken_pause` (replacing `spoken_pause_unavailable`) / `new_consultation`; `CHROME_HANDS_FREE_LINE` ("not set up") removed; `SessionControllerLike.live_transcription_attached`.
+    - `app.py`: `window.attach_hotkey()` after the Chrome link, a `hotkey` log line (state only), `aboutToQuit` → `detach_hotkey`.
+    - Side panel (`panel-view.ts` / `panel.ts`): the Live layout (recording or paused) shows "<chord> pauses and resumes." or "Pause hotkey unavailable — see Clinic Scribe's Session tab." — the chord from `state`, as text.
+    - Tests: `test_hands_free.py` `TestHotkeyModule` (fake registrar), `TestHotkeyWindow` (fake registrar; one synthetic `WM_HOTKEY` through Qt's real Windows dispatch in a child process — no real chord is ever reserved); `TestHandsFree` (bridge); `TestChromeView` hotkey lines.
+- [x] 🟩 7.2: **Spoken pause**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: new `voice_commands.py`; a slot on `TranscriptScreen.live_window` wired in `ui/main_window.py`.
   - Behaviour: D7: the leading-boundary matcher, ignoring a phrase whose first word starts before the last resume's captured-audio cutoff (word timestamps, not window end), the "unavailable" status through 4.5's accessor, and the desktop cue on every pause.
-- [ ] 🟥 7.3: **New-consultation warning**
+  - BUILT (leg `stage-7-exec-g1`, 2026-09-28; awaiting the composer's suites):
+    - `desktop/src/scribe_desktop/voice_commands.py` (new, Qt-free): `phrase_tokens` (a word split only at whitespace, hyphens and slashes, each part normalised by `note.normalise_token` — Task 1.2's ONE normaliser, pinned by `test_note.py::test_normalisation_has_exactly_one_implementation`; leg g2 replaced g1's own `normalise_tokens`, which that pin caught); `SpokenPauseDetector` — "scribe pause" as two consecutive whole-word tokens, one token carried from the previous window (joined only when the two words start ≤ `CARRY_MAX_GAP_SECONDS` = 3.0 s apart — round 41 LOW-033), a match counting only when its FIRST word's `start_seconds` ≥ the cutoff; `note_resume(captured_seconds)` sets the cutoff to that + `RESUME_CUTOFF_MARGIN_SECONDS` (one capture chunk, 1.0 s — the capture worker can still hold up to a chunk of pre-Pause audio at the Resume), never lower; `reset` per recording. `spoken_pause_state(state, attached, failure)` → `idle` / `on` / `unavailable` (4.5's `live_failure` plus the controller's existing `live_transcription_attached`; no new controller accessor was needed). The module docstring documents the latency.
+    - `ui/main_window.py`: `transcript_screen.live_window` → `_on_live_window` (only while RECORDING or PAUSED) → `pause_for(PauseReason.SPOKEN)` (the desktop cue on every pause, through the one path); `session_resumed` → `_on_session_resumed` (the cutoff from `controller.recorded_seconds`); `_on_session_started` resets both rules. The Transcript screen's own slot still renders every word.
+    - `ui/bridge.py`: `state.spoken_pause` and the Session screen's spoken line from `spoken_pause_state`; the existing unavailable line now also covers live transcription being off.
+    - Side panel: 'Say "scribe pause" to pause.' or "Spoken pause unavailable for this recording." in the Live layout.
+    - Tests: `test_hands_free.py` `TestNormalise`, `TestSpokenPauseMatcher` (positives; "prescribe, pause" and other near-misses; the cutoff; a mixed window spanning the Resume both ways; a phrase split across windows), `TestSpokenPauseState` (every state), `TestPhraseRulesInTheWindow` (pause and the phrase kept in the live view; a pre-Resume phrase ignored; a new Start clears the cutoff; windows outside a recording ignored; the unavailable line).
+- [x] 🟩 7.3: **New-consultation warning**
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `voice_commands.py`, `ui/bridge.py`.
   - Behaviour: D8. A warning only, in the panel and the desktop, test-pinned.
+  - BUILT (leg `stage-7-exec-g1`, 2026-09-28; awaiting the composer's suites):
+    - `voice_commands.py`: `CLOSING_PHRASES` (14), `GREETING_PHRASES` (12), `NEW_CONSULTATION_WINDOWS = 3`, `NEW_CONSULTATION_WARNING = "new_consultation"`; `NewConsultationWatcher.feed` returns True exactly once per recording when a greeting follows a closing phrase in the same window (after it) or within 3 windows.
+    - `ui/main_window.py` `_raise_new_consultation`: the status line, the Session screen's message and a taskbar flash; `bridge.set_new_consultation_warning(session_id)`. No pause, block or state change.
+    - `ui/bridge.py`: `state.warnings = ["new_consultation"]` and the Session screen's warning line while THAT recording is recording or paused; dropped by `_tick` once it finishes or ends.
+    - No protocol change: `state.warnings` already carries reason codes (fixtures unchanged), and the panel already mapped `new_consultation` (Phase 6); an unknown code still shows nothing.
+    - Tests: `TestNewConsultationRule` (the lists and N pinned; once per recording; the window budget 0/1/3 warn, 4 does not; near-misses), `TestPhraseRulesInTheWindow.test_the_warning_is_shown_and_never_pauses`, bridge `TestHandsFree` (published only for its live recording, dropped at Finish), `panel.dom.test.ts` (drawn as text, no control changed).
+    - Docs (Phase 7 as a class): threat model "HANDS-FREE AND WARNINGS" paragraph with residue (1)–(3), and the pause-rule paragraph's two forward references; data-flow flows 14 and 19; retention live-buffers row; CHANGELOG.
 
 ### Phase 8 — Security docs for the new surfaces and the live smoke
-- [ ] 🟥 8.1: **Security docs for the pipe, Chrome and encounter surfaces, as one class** `[executor: premium-only]`
+- [x] 🟩 8.1: **Security docs for the pipe, Chrome and encounter surfaces, as one class** `[executor: premium-only]`
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - `data-flow-map.md`: flows for the pipe, `context`/`state`, and the patient name into Chrome memory (per-tab scoping). Replace the "Phase 5 preview" block.
   - `threat-model.md` surfaces:
     - the pipe (4.3's decision and the same-user residue list);
@@ -2262,7 +4723,27 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - Phase 5 delivered with the read-only API;
     - `ConsentAttestation` as built.
   - `CHANGELOG.md`.
-- [ ] 🟥 8.2: **Copied note kept out of Windows clipboard history and cloud sync** `[executor: premium-only]`
+  - BUILT (leg `stage-8-exec-h1`, 2026-09-28; docs only, awaiting review):
+    - `threat-model.md`: title and scope (patient names now exist, in memory); trust boundary 1 points to the pipe; the Cliniko client's callers (adds the Chrome bridge and Unreviewed adoption, drops "ledger unwired"); NOTE VERIFICATION (names now shown by the bridge only); THE ENCOUNTER RECORD (every decrypt site — checkout `ui/main_window.py:988`, adoption `session.py:1136`, the start-up index pass `ui/models.py:977`; the consent record goes with its session, durable evidence is PLAN Phase 6; the tick is the extension's assertion); the pause rule's residue (1) no longer says "until the Phase 6 extension"; NEW section "The Chrome extension" — enforced (manifest `extension/src/manifest.ts:23-41`; reports from URLs only `context.ts:55-70`, 243-259; sender checks `hub.ts:318-358`, 362-420; `isTrusted` `page.ts:383`; per-tab scoping `context.ts:300-340`; `textContent` `page.ts:122`; lifecycle `page.ts:215-245`, re-injection `hub.ts:293-313`) and residues (1)–(11): the cue is not a control and keyboard input passes under the block; detectability via the web-accessible page-script module (`extension/dist/manifest.json` `web_accessible_resources`, `use_dynamic_url: false`) and the page script's own marker element; what a Cliniko page can see; the in-page session-expiry dialog; pre-navigation speech and the report-to-pause latency; the unverified login path; ONE Chrome profile; crash dumps (Chrome's and Windows Error Reporting's) possibly holding names; Chrome's memory; the text-matching sinks guard; reports as assertions. Out-of-scope and review triggers updated.
+    - `data-flow-map.md`: title; intro callers; components row for the extension; flow 10 (8.2); flow 18's triggers; NEW flow 20 (what Chrome reads, keeps and draws; per-tab scoping; memory only); the Chrome-storage non-flow; "The host↔app link (was Phase 5 preview)" replaced by "The Chrome side at a glance".
+    - `retention-schedule.md`: title and intro; clipboard row (8.2); API-response row (names shown only by the bridge); encounter row (no consent evidence outlives the session → PLAN Phase 6); NEW rows — the Unreviewed reminder index and session references, the Chrome link in the app, Chrome-side memory, crash dumps.
+    - `docs/design-system.md`: intro; the two-click Discard on every surface (desktop 10 s, block and panel 15 s); NEW "Chrome side" section (the five layouts and the banner, the never-pre-ticked panel consent box as the explicit exception, the frame as a cue, the block, the badge, text-only strings); Copy's formats.
+    - `protocol/fixtures/README.md`: which `state` fields can carry a name (`banner.patient_name` allowed by the shape, never sent — `ui/bridge.py:938-961`); `context`/`command` carry no name, URL or key.
+    - `PLAN.md` (exactly the four): "stop" means pause; flow step 9 met by construction; the Phase 5 delivery note (read-only API); `ConsentAttestation` as built (`encounter.py:145-154`).
+    - Also for consistency (same class): `docs/security/intended-use.md` scope note (2026-09-28), `docs/security/README.md`, `docs/security/incident-process.md` (pipe squatter / wrong-patient / cross-clinic-name triggers; the badge's OK), AGENTS.md pointers (the extension pointer gains the threat-model section, flow 20 and the one-profile residue; a new Copy pointer), CHANGELOG.
+- [x] 🟩 8.2: **Copied note kept out of Windows clipboard history and cloud sync** `[executor: premium-only]`
+  - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
+  - BUILT (leg `stage-8-exec-h1`, 2026-09-28; awaiting the composer's suites):
+    - `ui/models.py`: `CLIPBOARD_EXCLUSION_FORMATS` (the three names, each `(0).to_bytes(4, "little")` — the exclusion format also carries the zero DWORD so every format holds a non-empty block; the task allowed "empty/zero"), `clipboard_mime_formats()` (a fresh name → bytes dict), `windows_clipboard_mime_type(name)` (`application/x-qt-windows-mime;value="<name>"`). Qt-free.
+    - `ui/note.py` `_copy_note`: `QMimeData` with `setText(models.format_note_body(note))` — what `QClipboard.setText` itself builds, so the paste is byte-identical — plus `setData` for each format, then `setMimeData`. `_copy_ready` and the click-time re-check unchanged. Module docstring and method docstring state the button-only reach.
+    - Tests: `test_ui_screens.py` `_fake_clipboard` captures `setMimeData` (text into the same payload list; optional `mimes` list) as well as `setText`, so both round-70 pins keep their strength on either clipboard route; NEW `test_copy_keeps_the_note_out_of_clipboard_history_and_sync` (nothing before Save; one mime whose text is `format_note_body`, exactly `text/plain` + the three formats, each payload 4 zero bytes); `test_ui_prose_stage.py`'s stub gains `setMimeData`; `test_ui_models.py` `TestClipboardFormats` (+4: the map, the DWORD shape, a fresh map per call, the MIME type).
+    - Docs at every listed site, each saying what the formats do NOT do (same-user readers, third-party managers, stays until replaced, nothing cleared): threat model 3A surface 4, data-flow flow 10, the retention clipboard row, `intended-use.md`, `docs/design-system.md` (Copy), CHANGELOG.
+  - ADDED (leg `stage-8-exec-h2`, 2026-09-28; composer disposition `OWNERSHIP: gate-disposition key=task-8.2-selection-copy` — completing 8.2's own goal, the round-35 selectable panel KEPT; revisable by the practitioner): the selection route.
+    - Class check across `ui/`: `note_body` is the only widget that shows note text selectably (both transcript views are `NoTextInteraction`; `benchmark_output` and the Practitioner tab's `paste_box` hold no note).
+    - `ui/note.py`: `_place_note_text(text)` — the ONE placement (plain text + the three formats; the button's `_copy_note` now calls it). `_NotePanel(QPlainTextEdit)` replaces the plain `note_body`: `keyPressEvent` takes every binding of `QKeySequence.StandardKey.Copy` (Ctrl+C, Ctrl+Insert) and calls `copy_selection()` instead of Qt's copy; `build_context_menu()` (Copy — enabled only for a ratified note with a selection — and Select All) replaces Qt's context menu, whose Copy would bypass the formats; `copy_selection()` re-checks the screen's `_copy_ready` at the moment of copying and places `textCursor().selection().toPlainText()` — the text Qt's own copy would place. Intercepting the ACTIONS (not overriding `createMimeDataFromSelection`) was chosen because the ownership of a QMimeData returned from a Python override of that virtual could not be verified offline; a dangling clipboard pointer would crash.
+    - Named, not covered: a DRAG of the selection is Qt's own (`createMimeDataFromSelection`, no formats) but never touches the clipboard; the text lands where it is dropped. Screenshots and same-user clipboard readers as before.
+    - Tests (`test_ui_screens.py`): `_attempt_copy` now also tries the selection routes (keyboard, context menu, direct call over `selectAll()`), so both round-70 pins cover them; NEW `test_a_keyboard_copy_of_the_selection_carries_the_formats` (every Copy binding over the whole selection, then a partial selection across a line break — exact text and formats), `test_the_context_menu_copy_carries_the_formats` (the menu's two entries, Copy's placement, and a right-click opening exactly that menu through a stub — never a modal `exec`), `test_an_unratified_panel_places_nothing_even_with_a_selection`; the shared `_assert_note_mime` / `_ratified_note_screen` helpers.
+    - Docs: the residue sentence at every h1 site now states what the code does (threat model 3A surface 4, flow 10, the retention clipboard row, `intended-use.md`, design system, AGENTS.md Copy pointer, CHANGELOG, `ui/note.py` / `ui/models.py` comments).
   - Why: practitioner decision 2026-09-27, option (a) "Keep it out of history and sync (Recommended)", taken at the Task 1.4 live smoke (leg stage-1-exec-a11). It closes the residue named by round 11 MED-005.
   - Why this phase: Phase 8 already owns the security docs this task must change, and its live smoke (P.2) re-checks Copy. No earlier phase touches `ui/note.py`'s copy path, and the task has no dependency, so it can also run earlier if the composer prefers.
   - Files: `desktop/src/scribe_desktop/ui/note.py` (`_copy_note`); a pure helper in `ui/models.py` (e.g. `clipboard_mime_formats()` returning the name → bytes map, Qt-free); tests in `desktop/tests/test_ui_screens.py` (`TestNoteWiring`) and `test_ui_models.py`.
@@ -2289,20 +4770,106 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - Sites: threat-model 3A surface 4 ("Residue once copied"), data-flow flow 10, the retention row "A copied note on the Windows clipboard" (Retention and Destruction columns), `intended-use.md`'s scope note (cloud sync off stays advised but is no longer the only mitigation), `docs/design-system.md` if it describes Copy, and `CHANGELOG.md`.
   - Verification: the tests above plus ruff and mypy. P.2 adds a live check: after Copy, Win+V history does not list the note, and the paste into Notepad is unchanged.
   - Not in scope (recorded, not built): clearing the clipboard after a timeout (option (b), not chosen).
-- [ ] 🟥 P.2: **Practitioner live smoke** (practitioner-owned)
+- [ ] 🟨 P.2: **Practitioner live smoke** (practitioner-owned) — clinic 1 PASS 2026-09-28; clinic 2 waits on Task P.1 for clinic 2
+  - Clinic 1, 2026-09-28 (mock patients A and B, no patient data recorded): the consolidated 22-step smoke over Phases 4–8 PASSED, plus the re-checks R1–R5 for the morning's fixes (the Modern Standby sleep + session-lock pause, rounds 49–52; H1's Start-while-locked refusal and block wording; H3's Back/Forward redraw; H4's side-panel focus and "On screen" label). Step 2 first failed on a missing native-host registry key (fixed by re-running `register-native-host.py` from the practitioner's own terminal — `docs/lessons.md`); step 5 first failed (sleep did not pause on Modern Standby) and led to the practitioner's sleep + lock decision (D5 addendum). Optional O1–O3 not run (O2's sign-in path stays unverified).
+  - Smoke finding **S1** (LOW, production, the Recovery tab): after a Start retires a recording, the Recovery tab's Unreviewed list is not refreshed until an event that refreshes it (the practitioner pressed Refresh and A appeared, marked "note saved"). The reminder index and banner were correct. Fix: refresh the list when a Start retires a session (and when the tab is shown).
+  - The "confirm as you go" items (desktop recordings pause on sleep or lock only; Start clears the previous patient's saved note from the Note tab; a reopened saved note is read-only and Regenerate replaces it only on Save; the Ctrl+Shift+F9 chord, the 1 s grace and the 3 s gap; a refused hotkey Resume shows on the desktop only; no Discard in the panel while recording; Ctrl+C and right-click Copy protected like the Copy button) raised no objection; the overnight decisions (Tasks 4.3 (b), 5.4 (a), Task 6.0's jsdom) stand as revisable.
   - The Validation practitioner-run list, on both clinics.
   - Record the outcomes (no patient data) in the Done note.
 
 ### Hardening stage
-- [ ] 🟥 H1: `/review-loop` to convergence over Phases 1–8 as one surface
-- [ ] 🟥 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`
-- [ ] 🟥 H3: `/security-review` — log findings; same impact-tiered routing
-- [ ] 🟥 H4: a cross-family codex `/peer-review`, sliced by file group:
+- [x] 🟩 H1: `/review-loop` to convergence over Phases 1–8 as one surface
+  - Done (leg `stage-9-exec-k1`, 2026-09-28; converged at round 3 of cap 3; suites composer-run):
+    - Rounds 53–55 found 3 MED + 18 LOW, all applied:
+      - Round 53: 2 MED + 11 LOW. Six lens subagents.
+      - Round 54: 1 MED + 5 LOW. Regression and same-family sweep.
+      - Round 55: 0 MED + 2 LOW, docs only.
+    - Production changes:
+      - Every Start (Chrome's and the desktop's) is refused while the computer is locked.
+      - A failed Start, or a replaced recovered view, still puts the retired or recovered linked session in the Unreviewed index.
+      - A refusal line goes when what it was about leaves the screen, but a session command's refusal survives its note's check landing.
+      - The page block's `note_changed` wording now matches the panel's.
+      - Lone surrogates are cleaned from names.
+    - Docs: the claim-vs-code class across the threat model, intended use, the data-flow map, the incident process, the retention schedule, the design system, PLAN.md, AGENTS.md and CHANGELOG.
+    - Lens (f) dead code and duplication is recorded for H2 in round 53.
+    - For H3: the code throttle, enrolment under lock, and checking an unlock with Windows.
+    - For the write plan: the write-back freshness gap (Follow-Up Continuation Notes).
+    - Expected suites:
+      - Desktop: 4111 collected, 4110 passed + 1 skipped while `scribe-app` runs.
+      - Extension: 297.
+      - `npm run build` is required, because `page.ts` changed.
+- [x] 🟩 H2: `/simplify` — log findings; trivial → `/fix`, substantial → scoped `/review-plan`
+  - Done (leg `stage-9-exec-k2`, 2026-09-28; round 56; suites composer-run):
+    - 16 findings (2 MED + 14 LOW).
+    - 3 LOW applied, each behaviour-neutral and pinned:
+      - `ContextReporter`'s dead `active` / `isTracked` removed;
+      - the panel's Checking text taken from `CHECKING`;
+      - two stale comments.
+    - 13 recorded for H2a, each with an Executor recommendation and a `surface=`.
+    - No user-visible string changed.
+    - Expected suites:
+      - Desktop: 4111 collected, 4110 passed + 1 skipped while `scribe-app` runs.
+      - Extension: 297.
+      - `npm run build` is required, because `panel.ts`, `context.ts` and `connection.ts` changed.
+- [ ] 🟥 H2a: round 56's recorded simplifications (SIMP-004..016) — a scoped `/review-plan` on this task AFTER the P.2 live smoke, then `/fix` in the order it sets. Suggested order:
+  - SIMP-006, the practitioner's product-name choice (recommended: "Clinic Scribe").
+  - Then SIMP-004 / 005, the canonical text tables pinned by a both-mirrors test.
+  - Then SIMP-007, one re-verification pipeline.
+  - Then the rest: 008–016.
+  - SIMP-011's protocol-code merges wait for the write plan's protocol bump.
+- [x] 🟩 H3: `/security-review` — log findings; same impact-tiered routing
+  - Done (leg `stage-9-exec-k3`, 2026-09-28; round 57; suites composer-run):
+    - 22 findings: 21 LOW + 1 record-only. No CRIT, HIGH or MED; no must-pause.
+    - 8 applied:
+      - 7 code, with 8 new desktop tests + 2 extension tests: the host's type guard, the pipe server surviving a connect-and-close, the back/forward re-hello, the credential tripwire markers, a deleted booking no longer refusing its note, the `dev` script removed, and two tests off the real logs.
+      - 1 docs.
+      - The threat model also now says "Windows session" and names five new residues.
+    - 13 recorded for H3a, each with an Executor recommendation and a `surface=`.
+    - SEC-018 (write-back freshness) confirmed as record-only for the write plan, in Follow-Up Continuation Notes.
+    - Expected suites:
+      - Desktop: 4119 collected, 4118 passed + 1 skipped while `scribe-app` runs.
+      - Extension: 299.
+      - `npm run build` is required, because `page.ts` changed.
+- [ ] 🟥 H3a: round 57's recorded security items — a scoped `/review-plan` on this task AFTER the P.2 live smoke (together with H2a where they touch the same code), then `/fix`.
+  - Needs the practitioner at the review:
+    - SEC-003: Discard off the page block (D1).
+    - SEC-009: the cooldown and spacing numbers.
+    - SEC-013: the pipe-owner check (Task 4.3).
+    - SEC-019: enrolment stops on lock (extends D5 to the profile surface).
+  - Needs a host check first:
+    - SEC-014: a low-integrity open of the pipe.
+    - SEC-007: whether Cliniko serves the odd URL forms.
+    - SEC-020: a real unlock's `SessionFlags`, confirmed during P.2.
+    - SEC-021: sleep while pressing Start, added as a smoke step.
+  - Code with tests:
+    - SEC-008 (with H2a SIMP-007);
+    - SEC-015;
+    - SEC-016;
+    - SEC-017;
+    - SEC-022 (the live-view token).
+- [x] 🟩 H4: a cross-family codex `/peer-review`, sliced by file group:
   - client + registry + security docs;
   - custody + encounter + pipe + host;
   - extension + UI + hands-free.
 
   Re-check to convergence.
+  - Done (pass `stage-9.p1`, codex gpt-6-astra medium; legs stage-9-exec-k4 → k6, 2026-09-28; converged at peer round 4 of 5):
+    - Rounds 58–60, the three slices: 1 MED + 6 LOW, all confirmed by the executor's LEG 1 and fixed in LEG 2 (k5).
+      - Round 58: 3 LOW docs.
+      - Round 59: 1 LOW docstrings, plus the `adopt_queued` sibling.
+      - Round 60: PR-MED-330 and PR-LOW-331 in the side panel, and PR-LOW-332 as a doc change.
+      - SEC-022 re-assessed LOW; it stays in H3a.
+    - Round 61, the confirmation: every fix confirmed closed, plus 1 test-harness LOW (PR-LOW-340), fixed in place (k6).
+    - Production changes (the side panel):
+      - the timer updates in place, so focus and a click in progress survive;
+      - focus is restored for the same session only;
+      - buttons read their ref and revision at click time;
+      - the Ready tick records itself as drawn;
+      - "On screen" names a patient only for the focused note.
+    - Expected suites:
+      - Desktop 4119 collected (4118 passed + 1 skipped while `scribe-app` runs).
+      - Extension 307.
+      - `npm run build` is required (from k5's `panel.ts`).
 
 ## Retained Follow-Up Items
 (none yet — populated at completion by mechanical review of the Planning Extraction Summary)
@@ -2317,6 +4884,8 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
   - The periodic-decrypt class.
   - No Cliniko call at startup or idle keeps the no-sockets legs at zero.
   - One Cliniko note can own several recordings (D6's reminder list). The Phase 4 write must decide how a second session's note lands in a draft the first already filled (refuse, append, or ask); never overwrite silently.
+  - (H1 round 53, recorded for the write plan) `writeback_context` has NO freshness bound: a re-verification counts until the clinic, target or `clinic_rev` changes, however old. `MainWindow.recovered_writeback_target()` takes no argument and uses the checkout's re-verification from when the session was opened, while `live_writeback_target(reverification)` needs the caller's; `ChromeBridge.live_reverification()` exists but nothing passes it in. The write must re-verify IMMEDIATELY before writing, on both entries — or bound `verified_at` — and wire one source, not add a third.
+  - (H3 round 57 SEC-018, confirmed) There is NO write path today: `cliniko_client` refuses every method but GET before a connection exists, no POST/PATCH/PUT/DELETE appears in `desktop/src`, and `writeback_context`, both `MainWindow` write-target entries and `ChromeBridge.live_reverification` are called only from tests. One more fact for the write: `writeback_context` checks neither `verified_at` nor the request's `conn_gen` — only the target and `clinic_rev` bind it.
 
 ---
 *Plan saved to: .cursor/plans/plan-cliniko-workflow-safeguards.md*

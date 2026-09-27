@@ -391,6 +391,31 @@ class TestVerifyNoteContext:
         registry = make_registry(tmp_path, transport=NoteTransport(patient=status(503)))
         assert isinstance(verify(registry).outcome, UnverifiedOffline)
 
+    def test_a_deleted_booking_shows_no_time_and_still_verifies(self, tmp_path: Path) -> None:
+        """Round 57 SEC-011: the booking is display only (D4) — its 404 is no
+        time shown, never "note not found" for a note that passed every check."""
+        transport = NoteTransport(booking=status(404))
+        registry = make_registry(tmp_path, transport=transport)
+        result = verify(registry)
+        assert isinstance(result.outcome, Verified)
+        assert result.outcome.context == context()
+        assert result.outcome.display.appointment_starts_at is None
+
+    @pytest.mark.parametrize(
+        "answer, expected",
+        [(status(401), NoteRefused(NoteRefusal.KEY_REJECTED)), (status(503), UnverifiedOffline)],
+        ids=["401", "503"],
+    )
+    def test_any_other_booking_failure_is_unchanged(
+        self, tmp_path: Path, answer: Any, expected: Any
+    ) -> None:
+        registry = make_registry(tmp_path, transport=NoteTransport(booking=answer))
+        outcome = verify(registry).outcome
+        if isinstance(expected, type):
+            assert isinstance(outcome, expected)
+        else:
+            assert outcome == expected
+
     @pytest.mark.parametrize(
         "note",
         [
@@ -456,6 +481,18 @@ class TestVerifyNoteContext:
         assert "\n" not in name and "‮" not in name and "\u0007" not in name
         assert name.startswith("<b>Jan</b> Cit izen")  # kept as TEXT, never markup
         assert len(name) <= 120
+
+    def test_a_lone_surrogate_in_a_name_becomes_a_space(self, tmp_path: Path) -> None:
+        """H1 round 53 LOW-044: a JSON escape can carry a lone surrogate,
+        which no UTF-8 snapshot can hold; it is cleaned like a control
+        character, and the name still reads."""
+        patient = ok({"first_name": "Jan\udc00", "preferred_first_name": "", "last_name": "Cit"})
+        registry = make_registry(tmp_path, transport=NoteTransport(patient=patient))
+        result = verify(registry)
+        assert isinstance(result.outcome, Verified)
+        name = result.outcome.display.patient_display_name
+        assert name == "Jan Cit"
+        name.encode("utf-8")  # a snapshot can carry it
 
     def test_nothing_in_a_result_repr_carries_the_key(self, tmp_path: Path) -> None:
         registry = make_registry(tmp_path)

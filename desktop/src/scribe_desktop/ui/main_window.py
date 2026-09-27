@@ -27,6 +27,7 @@ from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.context_rules import (
     PauseReason,
+    ReminderEntry,
     ReminderIndex,
     is_suspend_message,
     pause_action,
@@ -618,6 +619,24 @@ class MainWindow(QMainWindow):
         if entry is not None:
             self.reminders.add(entry)
 
+    def _released_checkout_entry(self) -> ReminderEntry | None:
+        """H1 round 53 LOW-040's sibling: the index entry of a RECOVERED
+        linked session whose view is being replaced without a Complete or
+        Discard — from the record its checkout already decrypted (nothing is
+        decrypted here). It is Unreviewed from now on, exactly as the start-up
+        rebuild would index it. An adopted session is live, not released."""
+        checkout = self._checkout
+        record = checkout.record
+        context = record.context if record is not None else None
+        if checkout.adopted or checkout.session_id is None or context is None:
+            return None
+        return ReminderEntry(context.clinic_id, context.treatment_note_id, checkout.session_id)
+
+    def _index_released(self, entry: ReminderEntry | None, source: str) -> None:
+        if entry is not None and entry.session_id == source:
+            self.reminders.add(entry)
+            self._controller.register_session_ref(source)
+
     def forget_unreviewed(self, session_id: str) -> None:
         """A retired session was completed, discarded or expired: drop its
         own index entry and its reference (D2, D6) — and only those."""
@@ -966,10 +985,12 @@ class MainWindow(QMainWindow):
         # replacing the PR-round-20 hold-until-restart residual — its checkout
         # is released (scoped, by id), so it is listed and swept again.
         self._destroy_recovered_crypto()
+        entry = self._released_checkout_entry()
         self._end_checkout_encounter()
         source = self._transcript_source
         if source is not None and source != "live" and self._recovered_crypto is None:
             self.recovery_screen.release_checkout(source)
+            self._index_released(entry, source)
         self._transcript_source = "live"
         self.tabs.setCurrentWidget(self.transcript_screen)
 
@@ -992,11 +1013,13 @@ class MainWindow(QMainWindow):
         interleave with it (the controller deliberately admits a concurrent
         `start()` mid-discard — round 30 — but the GUI never issues one)."""
         self._destroy_recovered_crypto()
+        entry = self._released_checkout_entry()
         self._end_checkout_encounter()
         source = self._transcript_source
         self._transcript_source = None
         if source is not None and source != "live":
             self.recovery_screen.release_checkout(source)
+            self._index_released(entry, source)
         # Task 5.3 (D6): a Start at QUEUED retired the session a post-Save
         # Note tab still shows. Its "delete note and complete" acts on
         # WHICHEVER session the controller tracks — the new recording once it
@@ -1221,7 +1244,8 @@ class MainWindow(QMainWindow):
         )
 
     def recovered_writeback_target(self) -> VerifiedTarget | WritebackRefused | None:
-        """Constraint 6 over the recovered checkout (Phase 4's entry): None
+        """Constraint 6 over the recovered checkout (the entry for PLAN.md
+        Phase 4's draft write — the next plan): None
         when no recovered session is checked out — and for an ADOPTED one
         (Task 5.4), which is the live session: ``live_writeback_target``
         governs it."""
@@ -1233,8 +1257,9 @@ class MainWindow(QMainWindow):
     def live_writeback_target(
         self, reverification: VerificationResult | None = None
     ) -> VerifiedTarget | WritebackRefused | None:
-        """Constraint 6 over the live session (Phase 4's entry): refused
-        until ``reverification`` — Phase 4's pre-write check of the session's
+        """Constraint 6 over the live session (the entry for PLAN.md Phase
+        4's draft write): refused until ``reverification`` — that write's
+        pre-write check of the session's
         note, D4 — answers under the clinic's current rev (round 20
         MED-012). None with no non-terminal session."""
         session = self._controller.session

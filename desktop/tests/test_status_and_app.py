@@ -274,11 +274,20 @@ def test_main_refuses_second_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     """main() wiring: a refused lock shows the warning and exits 0 BEFORE any
     backend/controller/sweep exists (no MainWindow, no sessions-root touch)."""
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import logging
+
     from PySide6.QtWidgets import QApplication
 
     from scribe_desktop import app as app_module
 
     warned: list[str] = []
+    # Round 57 SEC-012: never the practitioner's real scribe-app.log, and no
+    # offline switches left set on the pytest process.
+    monkeypatch.setattr(
+        app_module, "setup_logging", lambda name: logging.getLogger("test-second-instance")
+    )
+    monkeypatch.setattr(app_module, "apply_offline_env", lambda: None)
+    monkeypatch.setattr(app_module, "assert_offline_env", lambda: None)
     monkeypatch.setattr(
         app_module, "acquire_single_instance_lock", lambda name=None: (False, 0)
     )

@@ -1,7 +1,7 @@
 """The native host's end of the host <-> app pipe (Task 4.4).
 
 Cliniko workflow safeguards plan Task 4.4 (D2), on Task 4.3's connect
-contract — decided (b) on 2026-09-27: the logon session plus the user-only
+contract — decided (b) on 2026-09-27: the Windows session plus the user-only
 DACL, with the same-user residue accepted as threat-model boundary 2.
 
 CONNECT. ``AppPipeConnector.connect`` makes one bounded attempt: a
@@ -13,10 +13,14 @@ or busy pipe is ``None`` — the caller keeps re-waiting; nothing here exits.
 VERIFIED means ALL of the following, read from the connected handle before a
 single frame crosses (``unverified_reason``):
 
-1. the server process runs in the host's own Windows logon session
-   (``GetNamedPipeServerSessionId`` equals ``ProcessIdToSessionId`` of the
-   host);
-2. the server process's token user is the host's own user SID;
+1. the server process runs in the host's own Windows (Terminal Services)
+   session (``GetNamedPipeServerSessionId`` equals ``ProcessIdToSessionId``
+   of the host) — the session, not the logon session: another account in
+   the same session passes this one (round 57);
+2. the server process's token user is the host's own user SID — read
+   through the process id Windows recorded when the pipe was created, not a
+   live reference (round 57 SEC-013 records the pipe-owner check that would
+   close the reuse of that id);
 3. the pipe's DACL is the one ``scribe-app`` creates (``pipe_server.pipe_sddl``):
    protected, exactly one entry, an ALLOW for the host's user SID with no ACE
    flags and the full access ``GA`` grants (codex round 28 PR-LOW-142: the

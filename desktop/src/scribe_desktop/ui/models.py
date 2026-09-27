@@ -406,12 +406,14 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
         "resume it."
     ),
     "not_available": "That action is not available in this version.",
-    # D5 as amended 2026-09-28 (codex round 51 PR-MED-300): every Resume is
-    # refused between a lock and the next unlock; unlocking resumes nothing.
-    "locked": "The computer is locked - sign in, then press Resume.",
+    # D5 as amended 2026-09-28 (codex round 51 PR-MED-300): every Resume —
+    # and every Start, Chrome's and the desktop's (H1 rounds 53–54, MED-039 /
+    # MED-052) — is refused between a lock and the next unlock; unlocking
+    # resumes nothing.
+    "locked": "The computer is locked - sign in, then press it again.",
     "lock_unknown": (
         "The computer was locked and Cliniko Scribe cannot confirm it is unlocked - lock it "
-        "and sign in again (Windows key + L), then press Resume."
+        "and sign in again (Windows key + L), then press it again."
     ),
     "failed": "It did not work - see the Session tab in Cliniko Scribe.",
     # Task 5.5 (D6): the banner's "Open for review".
@@ -993,7 +995,8 @@ def reconstruct_reminder_entries(
     read_record: Callable[[Path, SessionCrypto, str], EncounterRecord] | None = None,
 ) -> list[ReminderEntry]:
     """Task 5.5 (D6): rebuild the Unreviewed reminder index at APP START —
-    the ONE path besides a checkout that decrypts ``encounter.enc``, once
+    the ONE path besides a checkout or an Unreviewed recording opened for
+    review that decrypts ``encounter.enc``, once
     per session on disk that has a transcript and an encounter record. The
     key is unwrapped for that one read and destroyed at once; only the ids
     go on (``ReminderEntry``), never a name. A session whose key or record

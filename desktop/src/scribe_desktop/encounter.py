@@ -230,9 +230,14 @@ def write_encounter_record(
 def read_encounter_record(
     session_dir: Path, crypto: SessionCrypto, session_id: str
 ) -> EncounterRecord:
-    """Decrypt and parse ``encounter.enc`` — on a CHECKOUT only (Critical
-    Constraint 7). ``EncounterUnavailable`` when it is missing, unauthentic
-    or not the schema."""
+    """Decrypt and parse ``encounter.enc`` (Critical Constraint 7) — only
+    from its three authorised callers: a recovery CHECKOUT
+    (``ui/main_window.py``), an Unreviewed recording opened for review
+    (``SessionController.adopt_queued``) and the once-per-session
+    reminder rebuild at app start (``ui.models.reconstruct_reminder_entries``);
+    never the recovery listing, the sweep or a refresh (round 59
+    PR-LOW-320). ``EncounterUnavailable`` when it is missing, unauthentic or
+    not the schema."""
     try:
         plaintext = read_encounter(session_dir, crypto, session_id)
     except (SessionStoreError, ValueError):
@@ -387,12 +392,14 @@ def _note_state(note: Mapping[str, Any]) -> NoteRefusal | None:  # (a)
 
 def _display_text(value: object) -> str:
     """A name part as plain single-line text: control and format characters
-    become spaces, whitespace is collapsed. Never markup-interpreted — the
-    UI renders it as text (D1)."""
+    — and a lone surrogate, which a JSON escape can produce and no UTF-8
+    snapshot can carry (H1 round 53 LOW-044) — become spaces, whitespace is
+    collapsed. Never markup-interpreted — the UI renders it as text (D1)."""
     if not isinstance(value, str):
         return ""
     cleaned = "".join(
-        " " if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} else ch for ch in value
+        " " if unicodedata.category(ch) in {"Cc", "Cf", "Cs", "Zl", "Zp"} else ch
+        for ch in value
     )
     return " ".join(cleaned.split())
 
@@ -526,7 +533,15 @@ def _check_note(
     booking_id = _link_id(note, "booking", None)
     template_id = _link_id(note, "treatment_note_template", None)
     patient = call.get_patient(target.patient_id)
-    starts_at = _starts_at(call.get_booking(booking_id)) if booking_id is not None else None
+    starts_at: datetime | None = None
+    if booking_id is not None:
+        # The booking is display only (D4): a deleted one leaves no time
+        # shown, never a "note not found" refusal (round 57 SEC-011). Any
+        # other failure still refuses or goes offline, as before.
+        try:
+            starts_at = _starts_at(call.get_booking(booking_id))
+        except NotFound:
+            starts_at = None
     now = clock() if clock is not None else datetime.now(UTC)
     context = EncounterContext(
         clinic_id=clinic.clinic_id,

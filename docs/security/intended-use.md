@@ -23,7 +23,12 @@ API. The clinician reviews and finalises every note in Cliniko.
   fallback, silent or otherwise. The app's only network use is Cliniko's own
   API: read-only calls (validating a clinic's key, checking the treatment
   note a recording belongs to), and — in a later phase — creating the draft
-  note there. It makes no connection at startup or while idle (see the
+  note there. It makes no connection at startup or while idle on its own:
+  every call answers a practitioner action, a report from Chrome, or — for a
+  linked recording still in progress — the Chrome link reconnecting. So a
+  Cliniko treatment note already open in Chrome is checked when the app
+  starts or the link reconnects, and a linked recording's own note is
+  checked again on every reconnect even with no Cliniko tab open (see the
   threat model's "Cliniko API client" and the data-flow map, flow 18).
 - **Not a system of record.** Cliniko remains the permanent record; this
   software retains no clinical data after successful write-back.
@@ -53,7 +58,10 @@ back. A pause rule pauses a linked recording when its own tab changes note or
 patient, leaves the note or closes, when another Cliniko note is focused or
 the Cliniko login page shows, or when the Chrome link drops or a new client
 connects — switching to a separate non-Cliniko tab does not pause it — and
-any recording pauses on system sleep. Also built: back-to-back consultations
+any recording pauses on system sleep or when Windows locks the session —
+when Windows delivers those notifications and accepted the app's
+registration for them (the threat model's pause-rule residue names when it
+does not). Also built: back-to-back consultations
 with an Unreviewed list, and a pause hotkey and spoken pause.
 The app therefore handles **clinical data** — audio, transcripts and draft
 notes, encrypted at rest on this machine — **patient names** fetched from

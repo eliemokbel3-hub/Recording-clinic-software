@@ -295,6 +295,45 @@ class TestRecoveredCheckout:
         assert window.transcript_screen.link_label.text() == ""
         window.close()
 
+    @pytest.mark.parametrize("released_by", ["start", "live_transcript"])
+    @pytest.mark.parametrize("linked", [True, False], ids=["linked", "unlinked"])
+    def test_a_checkout_released_without_complete_enters_the_index_if_linked(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        released_by: str,
+        linked: bool,
+    ) -> None:
+        """H1 round 53 LOW-040's sibling: a recovered session whose view a
+        Start or a live transcript replaces is Unreviewed from then on, so a
+        LINKED one enters the reminder index (with a reference for its
+        banner) at once, as the start-up rebuild would index it — from the
+        checkout's own record, never a second decrypt. An unlinked one adds
+        nothing (the control)."""
+        import scribe_desktop.ui.main_window as main_window_mod
+
+        window = _window(tmp_path, _registry(tmp_path))
+        record = _linked_record() if linked else EncounterRecord(consent=unlinked_consent())
+        directory, crypto = _recoverable(tmp_path, record)
+        _check_out(window, directory, crypto)
+        _settled(qapp, window)
+        reads: list[str] = []
+        real = main_window_mod.read_encounter_record
+        monkeypatch.setattr(
+            main_window_mod,
+            "read_encounter_record",
+            lambda *args: reads.append(args[2]) or real(*args),
+        )
+        if released_by == "start":
+            window._on_session_started()
+        else:
+            window._on_live_transcript(_document())
+        assert (directory.name in window.reminders) is linked
+        assert (window._controller.session_ref_for(directory.name) is not None) is linked
+        assert reads == []
+        window.close()
+
     @pytest.mark.parametrize(
         "record, line, refusal",
         [

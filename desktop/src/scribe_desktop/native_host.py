@@ -197,7 +197,14 @@ def _classify_raw(raw: object) -> Envelope | None:
             ErrorCode.VERSION_BELOW_FLOOR,
             f"protocol_version below supported floor {MIN_SUPPORTED_VERSION}",
         )
-    if raw.get("type") in NONCE_REQUIRED and raw.get("session_nonce") is None:
+    # A non-string type (a list or object is unhashable) falls through to
+    # the envelope's own validation — a typed error, never a crash (round 57).
+    message_type = raw.get("type")
+    if (
+        isinstance(message_type, str)
+        and message_type in NONCE_REQUIRED
+        and raw.get("session_nonce") is None
+    ):
         return make_error(ErrorCode.BAD_NONCE, "required session_nonce missing")
     return None
 

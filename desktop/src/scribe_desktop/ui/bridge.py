@@ -173,9 +173,12 @@ class PipeSender(Protocol):
 
 def _one_line(text: str, limit: int, fallback: str) -> str:
     """Display text as the protocol allows it: one line, no control
-    character, at most ``limit`` characters."""
+    character and no lone surrogate (a snapshot that failed validation would
+    never be sent, freezing Chrome on the last one — H1 round 53 LOW-044), at
+    most ``limit`` characters."""
     cleaned = "".join(
-        " " if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") else ch for ch in text
+        " " if unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp") else ch
+        for ch in text
     )
     cleaned = " ".join(cleaned.split())[:limit]
     return cleaned or fallback
@@ -205,6 +208,11 @@ class _Refusal:
     action: str
     reason: str
     message: str
+    # H1 round 53 LOW-042: what was on screen when it was refused (the bound
+    # tab and report, for a Start its outcome's kind, the live session and
+    # its state).
+    # Once any of it changes the refusal is about something no longer shown.
+    situation: tuple[object, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -300,6 +308,8 @@ class ChromeBridge(QObject):
         self._timer.start()
         # Constraint 7: every Resume from the Session screen's slot asks first.
         session_screen.set_resume_guard(self._resume_guard_message)
+        # H1 round 54 MED-052: and every Start, the desktop's too, meets the lock.
+        session_screen.set_start_guard(self._start_guard_message)
         session_screen.session_resumed.connect(self._on_resumed)
 
     # --- the pipe's side (called on the PIPE thread: emit only) --------------
@@ -528,6 +538,10 @@ class ChromeBridge(QObject):
         reason = self.resume_refusal()
         return None if reason is None else models.chrome_refusal_message(reason)
 
+    def _start_guard_message(self) -> str | None:
+        locked = self._locked_refusal()
+        return None if locked is None else models.chrome_refusal_message(locked)
+
     def _on_resumed(self) -> None:
         """A Resume succeeded (any source): the block is resolved, and the
         session is bound to the focused tab that shows its note."""
@@ -739,8 +753,35 @@ class ChromeBridge(QObject):
         self, action: str, reason: str, note_refusal: NoteRefusal | None = None
     ) -> None:
         self._refusal = _Refusal(
-            action, reason, models.chrome_refusal_message(reason, note_refusal)
+            action,
+            reason,
+            models.chrome_refusal_message(reason, note_refusal),
+            self._situation(action),
         )
+
+    def _situation(self, action: str) -> tuple[object, ...]:
+        # The verification's outcome is part of what a START was refused on
+        # ("checking", "not verified"); a session command's refusal must not
+        # vanish when a check of the same note lands (round 54 LOW-053).
+        outcome = self._ledger.outcome() if action == "start" else None
+        return (
+            action,
+            self._bound_tab,
+            self._ledger.bound_target(),
+            None if outcome is None else type(outcome),
+            self._controller.session_ref,
+            self._controller.state,
+        )
+
+    def _current_refusal(self) -> _Refusal | None:
+        """The last refusal while what it was about is still on screen; one
+        left behind by a change of tab, note, verification, session or state
+        is dropped (H1 round 53 LOW-042: a refused Start for one patient's
+        final note must not sit under the next patient's Ready panel)."""
+        refusal = self._refusal
+        if refusal is not None and refusal.situation != self._situation(refusal.action):
+            self._refusal = refusal = None
+        return refusal
 
     def _on_command(self, command: CommandPayload) -> None:
         self._refusal = None
@@ -837,6 +878,13 @@ class ChromeBridge(QObject):
     def _start(self, command: CommandPayload) -> None:
         target = command.target
         assert target is not None  # the protocol requires it on start
+        locked = self._locked_refusal()
+        if locked is not None:
+            # H1 round 53 MED-039, PR-MED-300's class for Start: a click
+            # still on its way when the lock arrived starts nothing behind it
+            # (the lock's queued pause ran at IDLE or QUEUED and did nothing).
+            self._refuse("start", locked)
+            return
         if command.state_rev != self._state_rev:
             self._refuse("start", "stale_state")
             return
@@ -1040,13 +1088,12 @@ class ChromeBridge(QObject):
         ):
             if value is not None:
                 content[key] = value
-        if self._refusal is not None:
+        refusal = self._current_refusal()
+        if refusal is not None:
             content["last_refusal"] = {
-                "action": self._refusal.action,
-                "reason": self._refusal.reason,
-                "message": _one_line(
-                    self._refusal.message, LIMITS["max_message_chars"], "Refused."
-                ),
+                "action": refusal.action,
+                "reason": refusal.reason,
+                "message": _one_line(refusal.message, LIMITS["max_message_chars"], "Refused."),
             }
         return content
 
@@ -1117,13 +1164,14 @@ class ChromeBridge(QObject):
             check = self._live_check
             if check is not None and check.session_id == session.session_id:
                 recheck, recheck_reason = self._recheck_line(check)
+        refusal = self._current_refusal()
         return models.ChromeView(
             link=self._link,
             patient=patient,
             clinic=clinic,
             recheck=recheck,
             recheck_reason=recheck_reason,
-            refusal=self._refusal.message if self._refusal is not None else None,
+            refusal=refusal.message if refusal is not None else None,
             phase=_PHASES[session.state] if live and session is not None else None,
             blocked=self._current_block() is not None,
             hotkey=self._hotkey.state,

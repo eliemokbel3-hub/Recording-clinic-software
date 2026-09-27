@@ -558,6 +558,65 @@ class TestStart:
         h.start()
         self._refused(h, "no_microphone")
 
+    @pytest.mark.parametrize("code", ["locked", "lock_unknown"])
+    def test_a_start_is_refused_while_locked(self, harness: Any, code: str) -> None:
+        """H1 round 53 MED-039 (PR-MED-300's class): a Start still on its
+        way when the lock arrived records nothing behind the locked screen,
+        even with a verified report; once unlocked the same Start records
+        (the control)."""
+        h = harness()
+        h.verified_report()
+        lock: list[str | None] = [code]
+        h.bridge.set_lock_refusal(lambda: lock[0])
+        h.start()
+        self._refused(h, code)
+        assert h.sender.last.last_refusal is not None
+        assert h.sender.last.last_refusal.message == models.CHROME_REFUSALS[code]
+        lock[0] = None
+        h.start()
+        assert h.sender.last.last_refusal is None
+        assert len(h.controller.started_with) == 1
+
+    @pytest.mark.parametrize("code", ["locked", "lock_unknown"])
+    def test_the_desktop_start_is_refused_while_locked(self, harness: Any, code: str) -> None:
+        """H1 round 54 MED-052 (the same class as MED-039): a desktop Start
+        click still queued when the computer locked starts nothing; the
+        Session screen names the lock. Once unlocked the same press records
+        (the control)."""
+        h = harness()
+        lock: list[str | None] = [code]
+        h.bridge.set_lock_refusal(lambda: lock[0])
+        h.screen.consent_checkbox.setChecked(True)
+        h.screen.on_start()
+        assert h.controller.started_with == []
+        assert h.screen.message_label.text() == models.CHROME_REFUSALS[code]
+        lock[0] = None
+        h.screen.consent_checkbox.setChecked(True)  # every Start clears the tick
+        h.screen.on_start()
+        assert len(h.controller.started_with) == 1
+        _, context = h.controller.started_with[0]
+        assert context is None  # the desktop Start is unlinked
+
+    def test_a_refusal_goes_when_what_it_was_about_leaves_the_screen(
+        self, harness: Any
+    ) -> None:
+        """H1 round 53 LOW-042: a refused Start for one note stays while that
+        note is in front (the poll keeps it), and goes when another tab's
+        note comes to the front — it never sits under another patient's
+        Ready panel."""
+        h = harness(transport=NoteTransport(note=status(404)))
+        h.connect()
+        h.report()
+        h.settle()
+        h.start()
+        self._refused(h, "not_verified")
+        h.bridge._tick()
+        assert h.sender.last.last_refusal is not None  # nothing changed: it stays
+        h.report(tab_id=OTHER_TAB, note_id=OTHER_NOTE)
+        h.settle()
+        assert h.sender.last.last_refusal is None
+        assert "Refused from Chrome" not in h.screen.chrome_label.text()
+
     def test_a_refusal_is_state_never_an_error_and_clears_on_the_next_command(
         self, harness: Any
     ) -> None:
@@ -1252,6 +1311,33 @@ class TestResolution:
         lock[0] = None  # unlocked: the same click works again (the control)
         h.command("resume_previous", session_ref=h.controller.session_ref)
         assert ("resume",) in h.controller.calls
+
+    def test_a_failed_resume_previous_stays_shown_when_the_notes_check_lands(
+        self, harness: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 54 LOW-053: "Resume previous" completes on the note's report
+        while that report's check is still running; if the Resume then
+        fails, the refusal stays when the check lands (it was not about the
+        verification). An offline outcome is never reused, so the check is
+        really in flight."""
+        h = harness(transport=NoteTransport(note=status(503)))
+        h.connect()
+        h.report()
+        h.settle()
+        h.start()
+        assert h.controller.state is SessionState.RECORDING
+        h.report(note_id=OTHER_NOTE)  # the recording's tab opened B's note
+        h.settle()
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+
+        def fails() -> Any:
+            raise RuntimeError("the device went away")
+
+        monkeypatch.setattr(h.controller, "resume", fails)
+        h.report()  # back on the recording's note: a new check starts
+        assert _refusal_of(h) == ("resume_previous", "failed")
+        h.settle()  # the check lands
+        assert _refusal_of(h) == ("resume_previous", "failed")
 
     def test_a_waiting_resume_previous_ends_when_the_lock_is_flagged(self, harness: Any) -> None:
         """The lock flag is set before the queued pause runs: a waiting

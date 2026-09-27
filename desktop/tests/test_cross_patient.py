@@ -605,7 +605,9 @@ def test_a_second_pipe_client_pauses_and_must_report_the_note_first(harness: Any
     h.command("resume", conn_id=1, session_ref=ref)
     assert h.controller.state is SessionState.PAUSED
     assert h.controller.calls == calls
-    assert _refusal(h) == ("resume", "report_mismatch")  # still the conn-2 one
+    # Nothing of its own either (H1 round 53 LOW-042: the conn-2 refusal went
+    # when that connection's report bound the note it was about).
+    assert _refusal(h) is None
     h.command("resume", conn_id=2, session_ref=ref)
     assert h.controller.state is SessionState.RECORDING and _refusal(h) is None
     _assert_unchanged(h, before)

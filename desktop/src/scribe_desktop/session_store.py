@@ -877,8 +877,12 @@ def write_encounter(
 
 
 def read_encounter(session_dir: Path, crypto: SessionCrypto, session_id: str) -> bytes:
-    """Decrypt ``encounter.enc``. Called ONLY on a checkout (Critical
-    Constraint 7) — never by the recovery listing or the sweep. A missing,
+    """Decrypt ``encounter.enc``. Called ONLY through
+    ``encounter.read_encounter_record`` by its three authorised callers — a
+    recovery checkout, an Unreviewed recording opened for review, and the
+    once-per-session reminder rebuild at app start (Critical Constraint 7;
+    round 59 PR-LOW-320) — never by the recovery listing, the sweep or a
+    refresh. A missing,
     unreadable or unauthentic file raises ``StoreCorruptError`` (terse), and
     the caller treats the session as unlinked."""
     try:

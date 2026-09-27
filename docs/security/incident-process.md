@@ -28,9 +28,11 @@ When in doubt, stop using the software and investigate before resuming.
   retention window or reached the network
 - Any network connection from `scribe-host`, or from `scribe-app` to anything
   other than `api.<shard>.cliniko.com:443`, or from `scribe-app` at startup or
-  while idle with no practitioner action and no Cliniko note open in Chrome
-  (the offline contract: no connection except Cliniko's API, and none at
-  startup or idle; a note open in Chrome is verified when its report arrives)
+  while idle with no practitioner action, no Cliniko note open in Chrome and
+  no linked recording in progress (the offline contract: no connection
+  except Cliniko's API, and none at startup or idle; a note open in Chrome is
+  verified when its report arrives, and a linked recording's own note is
+  re-checked whenever the Chrome link reconnects)
 
 ## Immediate steps
 

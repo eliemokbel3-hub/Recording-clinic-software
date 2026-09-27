@@ -9,6 +9,7 @@ import {
   CLINIC_NOT_SET_UP,
   CONNECTING,
   HOTKEY_UNAVAILABLE,
+  NO_NOTE_IN_FRONT,
   NOT_RUNNING,
   OFFLINE_LINE,
   OPEN_A_NOTE,
@@ -230,6 +231,21 @@ describe("Blocked", () => {
       state_rev: 21,
     });
     expect(model.banner).toBeUndefined(); // the banner shows over Message or Ready only
+  });
+
+  test.each([
+    ["another tab is focused", { kind: "cliniko" as const, restoring: false, tab_id: 9 }],
+    ["a tab the extension never tracked", { kind: "none" as const, restoring: false }],
+    ["a non-Cliniko tab", { kind: "not_cliniko" as const, restoring: false }],
+  ])("round 60 PR-LOW-331: with %s, On screen names no patient", (_name, focus) => {
+    const s = state({
+      live: { ...LIVE, phase: "paused" },
+      block: { reason: "note_changed", session_ref: REF, clinic_host: HOST, clinic_label: "Example Clinic", patient_name: "Alex Example" },
+      report: { ...REPORT, patient_id: "1003", note_id: "2004", patient_name: "Sam Example" },
+    });
+    const layout = panelModel(view(s, focus), FMT).layout;
+    expect(layout).toMatchObject({ kind: "blocked", previous: "Alex Example", current: NO_NOTE_IN_FRONT });
+    expect(JSON.stringify(layout)).not.toContain("Sam Example");
   });
 
   test("an unverified screen patient and an unknown reason stay generic", () => {

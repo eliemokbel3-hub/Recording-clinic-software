@@ -116,10 +116,6 @@ export class ContextReporter {
 
   constructor(private readonly send: (payload: ContextPayload) => boolean) {}
 
-  get active(): boolean {
-    return this.allowList !== null;
-  }
-
   get allowed(): readonly string[] {
     return this.allowList ?? [];
   }
@@ -154,10 +150,6 @@ export class ContextReporter {
   /** Tracked tabs whose page names this note. */
   tabsShowing(key: string): number[] {
     return [...this.tabs.keys()].filter((id) => this.reported.has(id) && noteKey(this.view(id)) === key);
-  }
-
-  isTracked(tabId: number): boolean {
-    return this.reported.has(tabId);
   }
 
   /** Go inert (no app, or a new connection pending): nothing is reported. */

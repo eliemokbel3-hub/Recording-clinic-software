@@ -381,6 +381,36 @@ class TestFaults:
         finally:
             good.close()
 
+    def test_a_client_gone_before_the_connect_call_does_not_end_the_server(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        # Round 57 SEC-002: ConnectNamedPipe raising ERROR_NO_DATA (a client
+        # that connected and closed before the call) is served like the
+        # overlapped case — the server waits on for the next client instead
+        # of returning and freeing the name.
+        real = pipe_server.win32pipe.ConnectNamedPipe
+        calls: list[int] = []
+
+        def gone_once(handle: Any, overlapped: Any) -> Any:
+            calls.append(1)
+            if len(calls) == 1:
+                raise pywintypes.error(232, "ConnectNamedPipe", "the client came and went")
+            return real(handle, overlapped)
+
+        monkeypatch.setattr(pipe_server.win32pipe, "ConnectNamedPipe", gone_once)
+        recorder = Recorder()
+        server = PipeServer(name, recorder, sddl=pipe_sddl(current_user_sid()))
+        server.start()
+        try:
+            recorder.wait_for("disconnected")
+            good = _connect(name)
+            try:
+                assert recorder.wait_for("connected", 2)[-1] == ("connected", 2, None)
+            finally:
+                good.close()
+        finally:
+            assert server.stop(), "the pipe server did not stop in time"
+
 
 # --- stopping --------------------------------------------------------------------
 

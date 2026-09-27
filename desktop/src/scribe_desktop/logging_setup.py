@@ -234,6 +234,21 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"note_id"',
     "'note_id'",
     "note_id=",
+    # Round 57 SEC-010 (backstop only — no production log call carries
+    # these): the Cliniko credential and the clinic registry. The request
+    # headers carry the Basic-encoded key under ``Authorization``; a
+    # ``ValidationRequest`` holds ``api_key`` (kept out of its repr, but a
+    # dict or JSON rendering would show it); ``ClinicRecord`` / ``clinics.json``
+    # carry the practitioner's ``contact_email``.
+    '"Authorization"',
+    "'Authorization'",
+    "Authorization:",
+    '"api_key"',
+    "'api_key'",
+    "api_key=",
+    '"contact_email"',
+    "'contact_email'",
+    "contact_email=",
 )
 
 # THE production log format — one string, used to build every handler's

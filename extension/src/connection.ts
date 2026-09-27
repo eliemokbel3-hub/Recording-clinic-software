@@ -119,7 +119,7 @@ export class ConnectionManager {
 
   constructor(
     private readonly api: ChromeLike,
-    // The app's latest `state` snapshot (rendered by the Phase 6 UI).
+    // The app's latest `state` snapshot, handed to the hub (`hub.ts`).
     private readonly onState: (state: StatePayload) => void = () => undefined,
     private readonly hooks: ConnectionHooks = {},
   ) {}

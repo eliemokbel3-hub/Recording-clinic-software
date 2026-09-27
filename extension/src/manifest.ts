@@ -12,7 +12,7 @@ import { CLINIKO_MATCH, PANEL_PATH } from "./manifest-paths";
 // script into open Cliniko tabs after an update or reload; it reaches only the
 // hosts in `host_permissions`. Without `tabs`, a tab's URL is readable only
 // while it is on a Cliniko host. Every change here needs `npm run build`, a
-// reload in chrome://extensions and a full Chrome restart (AGENTS.md step 8).
+// reload in chrome://extensions and a full Chrome restart (AGENTS.md step 7).
 
 export default defineManifest({
   manifest_version: 3,

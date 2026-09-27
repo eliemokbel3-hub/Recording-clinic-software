@@ -195,6 +195,46 @@ class TestStartAtQueued:
         assert screen.start_button.toolTip() == ""
         screen.deleteLater()
 
+    def test_a_start_that_fails_after_retiring_still_announces_it(
+        self, qapp: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """H1 round 53 LOW-040: the controller retires the queued session
+        before the new device opens; a Start that then fails (the microphone
+        busy) still announces the retirement, so the session reaches the
+        reminder index. A failure that retired nothing announces nothing
+        (the control)."""
+        controller = FakeController()
+        previous = _queued_linked()
+        controller.session_value = previous
+        controller.state_value = SessionState.QUEUED
+        screen = _session_screen(controller)
+        retired: list[object] = []
+        screen.session_retired.connect(retired.append)
+
+        attempts: list[str] = []
+
+        def refused_before_retiring(*_args: Any, **_kwargs: Any) -> RecordingSession:
+            attempts.append("refused")
+            raise RuntimeError("refused")
+
+        monkeypatch.setattr(controller, "start", refused_before_retiring)
+        screen.on_start()
+        assert attempts == ["refused"]
+        assert retired == []  # still tracked: nothing was retired
+
+        def fails_after_retiring(*_args: Any, **_kwargs: Any) -> RecordingSession:
+            attempts.append("failed")
+            controller.session_value = None  # retired, then the device failed
+            raise RuntimeError("the microphone could not be opened")
+
+        monkeypatch.setattr(controller, "start", fails_after_retiring)
+        screen.consent_checkbox.setChecked(True)  # every Start clears the tick
+        screen.on_start()
+        assert attempts == ["refused", "failed"]
+        assert retired == [previous]
+        assert "Start failed" in screen.message_label.text()
+        screen.deleteLater()
+
     def test_no_previous_session_retires_nothing(self, qapp: Any) -> None:
         controller = FakeController()
         screen = _session_screen(controller)

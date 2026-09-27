@@ -39,6 +39,9 @@ export const DISCARD_CONFIRM = "Discard this recording? This cannot be undone. P
 export const HOTKEY_UNAVAILABLE = "Pause hotkey unavailable — see Clinic Scribe's Session tab.";
 export const SPOKEN_PAUSE_ON = 'Say "scribe pause" to pause.';
 export const SPOKEN_PAUSE_UNAVAILABLE = "Spoken pause unavailable for this recording.";
+// The Blocked layout's "On screen" line when the app's report is not the
+// focused tab's (round 60 PR-LOW-331): never another tab's patient.
+export const NO_NOTE_IN_FRONT = "No Cliniko note in front";
 
 export function hotkeyLine(chord: string): string {
   return `${chord} pauses and resumes.`;
@@ -195,11 +198,18 @@ function contentLayout(view: PanelView, state: StatePayload, fmt: Formatters): L
   const live = state.live;
   const block = state.block;
   if (block !== undefined) {
+    // "On screen" names the report's patient only while that report's tab is
+    // the focused one — the app keeps the last focused note bound when the
+    // practitioner moves to a tab it never tracked (round 60 PR-LOW-331).
     const report = state.report;
-    const current =
-      report?.verification === "verified" && report.patient_name !== undefined
-        ? report.patient_name
-        : "The patient on screen";
+    const focus = view.focus;
+    let current = NO_NOTE_IN_FRONT;
+    if (report !== undefined && focus.kind === "cliniko" && report.tab_id === focus.tab_id) {
+      current =
+        report.verification === "verified" && report.patient_name !== undefined
+          ? report.patient_name
+          : "The patient on screen";
+    }
     return {
       kind: "blocked",
       reason: blockReasonText(block.reason),

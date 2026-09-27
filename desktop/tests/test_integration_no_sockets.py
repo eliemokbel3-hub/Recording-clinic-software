@@ -183,7 +183,10 @@ def _real_app_pipe_exists() -> bool:
     return True
 
 
-def test_full_handshake_via_launcher_with_no_sockets() -> None:
+def test_full_handshake_via_launcher_with_no_sockets(tmp_path: Path) -> None:
+    # The skip is checked once, before the launch: an app started in between
+    # would still see this host connect (the pipe name is the user's SID and
+    # cannot be redirected) — run this leg with scribe-app closed.
     if _real_app_pipe_exists():
         pytest.skip("scribe-app is running on this host: close it to run the launcher leg")
     host = subprocess.Popen(
@@ -192,6 +195,9 @@ def test_full_handshake_via_launcher_with_no_sockets() -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         cwd=os.environ.get("SystemRoot", "C:\\Windows"),  # Chrome uses an arbitrary cwd
+        # Round 57 SEC-012: the host logs under a test folder, never into the
+        # practitioner's real scribe-host.log (an incident-process signal).
+        env={**os.environ, "LOCALAPPDATA": str(tmp_path)},
         creationflags=CREATE_NO_WINDOW,
     )
     try:

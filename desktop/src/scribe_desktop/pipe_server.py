@@ -219,12 +219,14 @@ def pipe_peer_pid(handle: Any, *, server: bool) -> int | None:
 
 
 def pipe_server_session_id(handle: Any) -> int | None:
-    """The Windows logon session of a connected pipe's server process."""
+    """The Windows (Terminal Services) session of a connected pipe's server
+    process — the session, not the logon session: another account signed in
+    to the same session shares it (round 57)."""
     return _ulong_call(_kernel32().GetNamedPipeServerSessionId, int(handle))
 
 
 def process_session_id(pid: int) -> int | None:
-    """The Windows logon session of process ``pid``."""
+    """The Windows (Terminal Services) session of process ``pid``."""
     return _ulong_call(_kernel32().ProcessIdToSessionId, pid)
 
 
@@ -500,7 +502,10 @@ class PipeServer:
         try:
             result = win32pipe.ConnectNamedPipe(self._handle, overlapped)
         except pywintypes.error as error:
-            if error.winerror == _ERROR_PIPE_CONNECTED:
+            # NO_DATA: a client came and went before this call — served like
+            # the overlapped case below (the read loop sees it gone), never an
+            # end of the server that would free the name (round 57 SEC-002).
+            if error.winerror in (_ERROR_PIPE_CONNECTED, _ERROR_NO_DATA):
                 return True
             self._log("pipe_server", state="connect_failed", error_code=str(error.winerror))
             return False

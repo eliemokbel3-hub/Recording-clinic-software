@@ -45,6 +45,44 @@ def test_log_event_rejects_unknown_fields(logger: logging.Logger) -> None:
         log_event(logger, "oops", transcript="never")
 
 
+def test_tripwire_drops_the_cliniko_credential_and_registry_renderings() -> None:
+    """Round 57 SEC-010: the backstop registers the key's header, a
+    ``ValidationRequest`` and the registry's contact email, so a rendering of
+    any of them is dropped — the primary control is still that no log call
+    carries them."""
+    from dataclasses import asdict
+
+    from scribe_desktop.clinics import ValidationRequest
+
+    request = ValidationRequest(
+        clinic_id="c1",
+        display_name="Clinic",
+        contact_email="someone@example.test",
+        api_key="not-a-real-key",
+        typed_host=None,
+        expected=None,
+        rev=0,
+    )
+    headers = {"Authorization": "Basic bm90LWEta2V5Og==", "Accept": "application/json"}
+    renderings = [
+        repr(request),
+        str(asdict(request)),
+        json.dumps(asdict(request)),
+        repr(headers),
+        json.dumps(headers),
+        "Authorization: Basic bm90LWEta2V5Og==",
+        json.dumps({"schema_version": 1, "contact_email": "someone@example.test"}),
+    ]
+    tripwire = PayloadTripwireFilter()
+    for rendered in renderings:
+        record = logging.LogRecord(
+            "test_credential", logging.INFO, __file__, 1, rendered, None, None
+        )
+        before = dropped_record_count()
+        assert tripwire.filter(record) is False, rendered
+        assert dropped_record_count() == before + 1
+
+
 def test_tripwire_drops_interpolated_envelope(logger: logging.Logger, tmp_path: Path) -> None:
     """The classic misuse: formatting a whole message into the log line."""
     envelope = {

@@ -89,6 +89,9 @@ class SessionScreen(QWidget):
         # Task 5.1 (D5): the Chrome bridge's resume check — a refusal message,
         # or None when Resume may run. None: no bridge (Resume as before).
         self._resume_guard: Callable[[], str | None] | None = None
+        # H1 round 54 MED-052: the bridge's lock check, run first by every
+        # Start from this screen (the desktop button and a Chrome Start).
+        self._start_guard: Callable[[], str | None] | None = None
         # Task 5.2: the first Discard click's session ref and time.
         self._discard_armed: tuple[str | None, float] | None = None
         self.live_status.connect(self._on_live_status)
@@ -235,6 +238,13 @@ class SessionScreen(QWidget):
         hotkey. It returns the refusal to show, or None to go ahead."""
         self._resume_guard = guard
 
+    def set_start_guard(self, guard: Callable[[], str | None] | None) -> None:
+        """H1 round 54 MED-052 (D5 as amended 2026-09-28): the check every
+        Start from this screen runs first — a click already queued when the
+        computer locked must not begin a recording behind the lock. It
+        returns the refusal to show, or None to go ahead."""
+        self._start_guard = guard
+
     def set_chrome_view(self, text: str) -> None:
         """Task 4.5: the bridge's Chrome lines (hidden when empty)."""
         self.chrome_label.setText(text)
@@ -277,6 +287,12 @@ class SessionScreen(QWidget):
         return self._start(consent, context)
 
     def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> bool:
+        guard = self._start_guard
+        refusal = guard() if guard is not None else None
+        if refusal is not None:
+            self._show_message(refusal)
+            self.refresh()
+            return False
         device_id = self._device_provider()
         if device_id is None:
             self._show_message("Select an input device on the Microphone screen first.")
@@ -299,6 +315,15 @@ class SessionScreen(QWidget):
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
             self._show_message(f"Start failed: {type(exc).__name__}: {exc}")
+            if (
+                previous is not None
+                and not previous.is_terminal
+                and self._controller.session is None
+            ):
+                # H1 round 53 LOW-040: the controller retires the previous
+                # session BEFORE the new recording's device opens, so a Start
+                # that fails there still retired it — it waits for review.
+                self.session_retired.emit(previous)
         self.refresh()
         return started
 

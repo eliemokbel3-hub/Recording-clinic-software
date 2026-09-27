@@ -611,7 +611,7 @@ rendering the language model does (flow 17).
     clients rejected, and a protected DACL granting only the current user.
     Its client is the native host (Task 4.4), which relays flow 1's v2
     messages, and which connects only after VERIFYING the server — the same
-    logon session, the same user, and exactly that DACL (Task 4.3, decided
+    Windows session, the same user, and exactly that DACL (Task 4.3, decided
     (b): any process of this user can still connect or squat the name — the
     threat model's accepted residue). Frames are flow 1's framing, WITHOUT a
     nonce (the host strips and stamps it), and only `context` and `command`
@@ -655,7 +655,9 @@ rendering the language model does (flow 17).
     recording finishes or ends); and the
     last snapshot sent, for change detection. The main window keeps the
     Unreviewed reminder index (Task 5.3: clinic id, note id and session id
-    per retired linked queued session, never persisted; rebuilt at app start
+    per retired linked queued session — and per recovered linked session
+    whose view is replaced without a Complete or Discard, from its
+    checkout's record (H1 round 53) — never persisted; rebuilt at app start
     from each Unreviewed session's `encounter.enc`, Task 5.5), which loses an
     entry when that session is completed, discarded, expires or is opened
     for review.
@@ -720,13 +722,20 @@ rendering the language model does (flow 17).
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
   semantically (it validates structure only), so it is NOT a content guarantee —
-  whatever a clinician hand-edits in is retained verbatim. The one thing the
-  app writes into that class itself is a learned phrase (flow 13): two to
-  four words from the start of a line the PRACTITIONER said and added or
-  moved during review, by consent — structurally never a patient's line, and
-  shape-filtered against names, numbers, dates and medication names — but
-  the filter cannot judge meaning, so a learned phrase is reviewable and
-  deletable on the Practitioner tab rather than guaranteed non-clinical.
+  whatever a clinician hand-edits in is retained verbatim. The app itself
+  writes TWO things into that class, both by consent and both reviewable and
+  deletable on the Practitioner tab rather than guaranteed non-clinical:
+  (1) a learned phrase (flow 13): two to four words from the start of a line
+  the PRACTITIONER said and added or moved during review — structurally never
+  a patient's line, and shape-filtered against names, numbers, dates and
+  medication names, but the filter cannot judge meaning; (2) a learned rule
+  (threat-model note-learning surface 13): its trigger is taken from the
+  practitioner's OWN utterance through the same refusal filter
+  (`refuse_learning_candidate`), and its wording is text the practitioner
+  TYPED over a line, through the narrower `refuse_typed_wording` — numbers,
+  dates and medication names refused, and NO name check (D11) — written
+  only on the Note tab's Save into `autofill_rules.json`, with its metadata
+  sidecar `autofill_rules.learned.json` (retention: the learned-rules row).
   Since the note-learning-and-styles plan's Phase 0 there is a SECOND encrypted
   practitioner store beside the voice profile: `style\style.enc` under its own
   DPAPI-wrapped key (`practitioner_profile.save_style_profile`; the session,
@@ -741,9 +750,11 @@ rendering the language model does (flow 17).
   (content untouched; codex round 31 PR-LOW-048).
 - No network traffic from either desktop process at runtime EXCEPT
   `scribe-app`'s read-only calls to Cliniko's API (flow 18), and none at
-  startup or idle — a call follows only a practitioner action or a note
-  report from Chrome, so an app started while Chrome shows a Cliniko
-  treatment note verifies it once that report arrives, and the no-sockets
+  startup or idle — a call follows only a practitioner action, a note
+  report from Chrome, or a new Chrome link connection while a LINKED
+  recording is in progress (its own note is re-checked, with or without a
+  Cliniko tab open — round 54 LOW-055), so an app started while Chrome
+  shows a Cliniko treatment note verifies it once that report arrives, and the no-sockets
   legs measure startup and idle with no Chrome link (no-sockets integration test on host and app, plus offline
   env kill-switches set and asserted; the during-capture/during-transcription
   poll and the network-stubbed transcription test landed with Step 13, and the

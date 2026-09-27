@@ -89,6 +89,30 @@ test("it says hello once and draws nothing until its host is allow-listed", asyn
   expect(fake.runtimeMessages).toHaveLength(1); // inert: no href report
 });
 
+function pageshow(persisted: boolean): void {
+  window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted }));
+}
+
+test("a page restored from the back/forward cache says hello again (round 57 SEC-006)", async () => {
+  await booted();
+  const first = location.href;
+  pageshow(false); // an ordinary load: the start's hello already covered it
+  expect(fake.runtimeMessages).toEqual([{ kind: "hello", href: first }]);
+  history.pushState({}, "", "/patients/1001/treatment_notes/2003/edit");
+  pageshow(true);
+  expect(fake.runtimeMessages).toEqual([
+    { kind: "hello", href: first },
+    { kind: "hello", href: location.href },
+  ]);
+});
+
+test("a stopped page script ignores a back/forward restore", async () => {
+  const script = await booted();
+  script.stop();
+  pageshow(true);
+  expect(fake.runtimeMessages).toHaveLength(1);
+});
+
 test("the frame is drawn red while recording and amber while paused, in a closed shadow root", async () => {
   const script = await booted();
   deliver({ active: true, frame: "recording" });
@@ -109,7 +133,9 @@ test("a markup-bearing patient name is rendered as text, never parsed", async ()
   expect(part(script, "current")?.textContent).toBe("Sam Example");
   expect(script.shadowForTests?.querySelector("img")).toBeNull();
   expect(script.shadowForTests?.querySelector("b")).toBeNull();
-  expect(part(script, "reason")?.textContent).toBe("This tab opened a different treatment note.");
+  expect(part(script, "reason")?.textContent).toBe(
+    "The recording's tab opened a different treatment note.",
+  );
 });
 
 test("an inherited name as the reason code shows the generic line (round 38 PR-LOW-211)", async () => {
