@@ -1039,7 +1039,10 @@ class TestPauseRule:
         block = h.sender.last.block
         assert block is not None and block.reason == "new_client"
 
-    def test_an_unlinked_recording_ignores_chrome_but_not_suspend(self, harness: Any) -> None:
+    @pytest.mark.parametrize("reason", [PauseReason.SUSPEND, PauseReason.LOCKED])
+    def test_an_unlinked_recording_ignores_chrome_but_not_suspend_or_lock(
+        self, harness: Any, reason: PauseReason
+    ) -> None:
         h: Harness = harness()
         h.connect()
         h.screen.consent_checkbox.setChecked(True)
@@ -1048,12 +1051,26 @@ class TestPauseRule:
         h.bridge.disconnected(1, "closed")
         h.pump()
         assert h.controller.state is SessionState.RECORDING and h.cues == []
-        h.bridge.pause_for(PauseReason.SUSPEND)
+        h.bridge.pause_for(reason)
         assert h.controller.state is SessionState.PAUSED
-        assert h.cues == [models.pause_cue_text("suspend", linked=False)]
+        assert h.cues == [models.pause_cue_text(reason.value, linked=False)]
         assert h.bridge._block is None  # no note, so no block
         assert h.screen.on_resume() is True  # no report needed for an unlinked one
         h.settle()
+
+    def test_a_lock_pauses_and_blocks_a_linked_recording(self, harness: Any) -> None:
+        """D5 as amended 2026-09-28: a lock is a system reason — exactly like
+        suspend it pauses a linked recording and puts up the block."""
+        h = _recording(harness)
+        h.bridge.pause_for(PauseReason.LOCKED)
+        h.settle()
+        assert h.controller.state is SessionState.PAUSED
+        block = h.sender.last.block
+        assert block is not None and block.reason == "locked"
+        assert h.cues == [models.pause_cue_text("locked", linked=True)]
+        h.report()  # its own note again: a report alone never resumes
+        h.settle()
+        assert ("resume",) not in h.controller.calls
 
     @pytest.mark.parametrize(
         "state", [SessionState.PROCESSING, SessionState.QUEUED, SessionState.IDLE]
@@ -1090,6 +1107,27 @@ class TestPauseRule:
         assert h.screen.on_resume() is True
         h.report(note_id=OTHER_NOTE, seq=stale)  # replayed: ignored
         assert h.controller.state is SessionState.RECORDING
+
+    @pytest.mark.parametrize("code", ["locked", "lock_unknown"])
+    def test_a_resume_command_is_refused_while_locked(self, harness: Any, code: str) -> None:
+        """Codex round 51 PR-MED-300: a Chrome ``resume`` arriving after the
+        lock is refused by name even with the note's current report — and
+        the same command resumes once unlocked (the control)."""
+        h = _recording(harness)
+        ref = h.controller.session_ref
+        h.command("pause", session_ref=ref)
+        lock: list[str | None] = [code]
+        h.bridge.set_lock_refusal(lambda: lock[0])
+        h.report()  # its own note, focused: everything but the lock is satisfied
+        h.settle()
+        h.command("resume", session_ref=ref)
+        assert _refusal_of(h) == ("resume", code)
+        assert ("resume",) not in h.controller.calls
+        assert h.screen.on_resume() is False  # the desktop slot meets it too
+        assert h.screen.message_label.text() == models.CHROME_REFUSALS[code]
+        lock[0] = None
+        h.command("resume", session_ref=ref)
+        assert _refusal_of(h) is None and h.controller.state is SessionState.RECORDING
 
     def test_resume_command_needs_the_focused_report_of_its_own_note(self, harness: Any) -> None:
         h = _recording(harness)
@@ -1149,6 +1187,96 @@ class TestResolution:
         h.settle()
         assert h.controller.state is SessionState.PAUSED
         assert h.bridge._pending_resume is None
+
+    @pytest.mark.parametrize("reason", [PauseReason.SUSPEND, PauseReason.LOCKED])
+    def test_a_suspend_or_lock_ends_a_waiting_resume_previous(
+        self, harness: Any, reason: PauseReason
+    ) -> None:
+        """D5 as amended 2026-09-28: a "Resume previous" still waiting for
+        its note's report ends when the machine sleeps or locks, so the
+        report arriving behind a locked screen resumes nothing (the control
+        is ``test_resume_previous_waits_for_the_recordings_own_note``: the
+        same report without the lock resumes)."""
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        assert h.bridge._pending_resume is not None
+        h.bridge.pause_for(reason)
+        assert h.bridge._pending_resume is None
+        h.report()  # the extension took the tab back to the recording's note
+        h.settle()
+        assert ("resume",) not in h.controller.calls
+        assert h.controller.state is SessionState.PAUSED
+        block = h.sender.last.block
+        # Round 49 LOW-038: the block Chrome put up keeps its own reason.
+        assert block is not None and block.reason == "note_changed"
+        assert h.cues == [models.pause_cue_text("note_changed", linked=True)]
+
+    def test_a_system_reason_names_a_block_it_starts_but_a_chrome_one_renames(
+        self, harness: Any
+    ) -> None:
+        """Round 49 LOW-038: a lock or suspend never renames a block Chrome
+        put up, but a later Chrome reason still does (the latest page
+        change is what the practitioner must see)."""
+        h = _recording(harness)
+        h.bridge.pause_for(PauseReason.LOCKED)  # starts the block: named by the lock
+        h.settle()
+        block = h.sender.last.block
+        assert block is not None and block.reason == "locked"
+        h.report(note_id=OTHER_NOTE)
+        h.settle()
+        block = h.sender.last.block
+        assert block is not None and block.reason == "note_changed"
+        h.bridge.pause_for(PauseReason.SUSPEND)
+        h.settle()
+        block = h.sender.last.block
+        assert block is not None and block.reason == "note_changed"
+
+    def test_a_resume_previous_arriving_after_the_lock_creates_nothing(
+        self, harness: Any
+    ) -> None:
+        """Codex round 51 PR-MED-300, the peer's ordering: the lock is
+        handled FIRST, then the click that was already on its way arrives —
+        refused by name, no waiting resume, and the note's report resumes
+        nothing."""
+        h = self._blocked(harness)
+        lock: list[str | None] = ["locked"]
+        h.bridge.set_lock_refusal(lambda: lock[0])
+        h.bridge.pause_for(PauseReason.LOCKED)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        assert _refusal_of(h) == ("resume_previous", "locked")
+        assert h.bridge._pending_resume is None
+        h.report()  # the recording's own note, behind the locked screen
+        h.settle()
+        assert ("resume",) not in h.controller.calls
+        assert h.controller.state is SessionState.PAUSED
+        lock[0] = None  # unlocked: the same click works again (the control)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        assert ("resume",) in h.controller.calls
+
+    def test_a_waiting_resume_previous_ends_when_the_lock_is_flagged(self, harness: Any) -> None:
+        """The lock flag is set before the queued pause runs: a waiting
+        click whose note report arrives in between is dropped, not
+        completed."""
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        assert h.bridge._pending_resume is not None  # B still on screen: waiting
+        h.bridge.set_lock_refusal(lambda: "locked")  # flagged; pause still queued
+        h.report()
+        h.settle()
+        assert ("resume",) not in h.controller.calls
+        assert h.bridge._pending_resume is None
+
+    def test_a_chrome_reason_leaves_a_waiting_resume_previous(self, harness: Any) -> None:
+        """Only the system reasons end the click: the tab passing through
+        other pages on its way back to the note must not."""
+        h = self._blocked(harness)
+        h.command("resume_previous", session_ref=h.controller.session_ref)
+        h.report(page="other_cliniko")
+        h.settle()
+        assert h.bridge._pending_resume is not None
+        h.report()
+        h.settle()
+        assert ("resume",) in h.controller.calls
 
     def test_resume_previous_lapses_on_a_new_connection(self, harness: Any) -> None:
         h = self._blocked(harness)

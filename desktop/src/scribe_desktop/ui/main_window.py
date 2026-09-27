@@ -66,6 +66,13 @@ from scribe_desktop.session import (
 )
 from scribe_desktop.session_store import KEY_FILENAME, session_expires_at
 from scribe_desktop.status import read_registration_status, run_self_test
+from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
+from scribe_desktop.system_events import (
+    SystemEventRegistrar,
+    SystemPauseStatus,
+    SystemPauseWatch,
+    Win32SystemEventRegistrar,
+)
 from scribe_desktop.transcription import (
     LiveTranscriber,
     RecoveryOutcome,
@@ -170,6 +177,8 @@ class MainWindow(QMainWindow):
     # Task 7.1: a hotkey press, re-delivered from ``nativeEvent`` as a queued
     # call so the pause or resume runs outside Windows' message dispatch.
     _hotkey_pressed_q = Signal()
+    # D5 as amended 2026-09-28: the session locked, re-delivered the same way.
+    _session_locked_q = Signal()
 
     def __init__(
         self,
@@ -326,6 +335,13 @@ class MainWindow(QMainWindow):
         self._hotkey_pressed_q.connect(
             self._on_hotkey_pressed, Qt.ConnectionType.QueuedConnection
         )
+        # D5 as amended 2026-09-28: the suspend and lock notifications
+        # (registered only by `attach_system_pause`, which only `app.py`
+        # calls — a test's window registers nothing with Windows).
+        self._system_events: SystemPauseWatch | None = None
+        self._session_locked_q.connect(
+            self._on_session_locked, Qt.ConnectionType.QueuedConnection
+        )
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -404,6 +420,8 @@ class MainWindow(QMainWindow):
             self.clinics_screen.clinics_changed.connect(bridge.on_clinics_changed)
             bridge.pause_cue.connect(self._show_pause_cue)
             bridge.set_hotkey_status(self.hotkey_status)
+            bridge.set_system_pause_status(self.system_pause_status)
+            bridge.set_lock_refusal(self._lock_refusal)
             self.chrome_bridge = bridge
         return self.chrome_bridge
 
@@ -460,10 +478,78 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(self.session_screen.message_label.text())
         QApplication.alert(self)
 
+    # --- suspend and lock notifications (D5 as amended 2026-09-28) ------------
+
+    @property
+    def system_pause_status(self) -> SystemPauseStatus:
+        if self._system_events is None:
+            return SYSTEM_PAUSE_NOT_SET_UP
+        return self._system_events.status
+
+    def attach_system_pause(
+        self, registrar: SystemEventRegistrar | None = None
+    ) -> SystemPauseStatus:
+        """Ask Windows for this window's suspend (Modern-Standby aware) and
+        session-lock notifications (``app.main`` only; a test passes a fake
+        ``registrar``). Never raises; a refusal is shown on the status line
+        and the Session screen (``SYSTEM_PAUSE_FAILED_LINES``)."""
+        if self._system_events is None:
+            self._system_events = SystemPauseWatch(
+                registrar if registrar is not None else Win32SystemEventRegistrar()
+            )
+        status = self._system_events.register(int(self.winId()))
+        if status.failed:
+            self.statusBar().showMessage(models.SYSTEM_PAUSE_FAILED_LINES[status.failed[0]])
+        if self.chrome_bridge is not None:
+            self.chrome_bridge.set_system_pause_status(status)
+        return status
+
+    def detach_system_pause(self) -> None:
+        """Give both registrations back (on close, at quit and after a
+        failed start; idempotent)."""
+        if self._system_events is not None:
+            self._system_events.unregister()
+            if self.chrome_bridge is not None:
+                self.chrome_bridge.set_system_pause_status(self._system_events.status)
+
+    @property
+    def session_locked(self) -> bool:
+        """The session locked and no unlock has been seen since."""
+        return self._system_events is not None and self._system_events.locked
+
+    def _lock_refusal(self) -> str | None:
+        """The bridge's first Resume check (codex round 51 PR-MED-300):
+        ``locked`` between a lock and the unlock, ``lock_unknown`` when a
+        flag Windows was asked about could not be confirmed either way."""
+        watch = self._system_events
+        if watch is None:
+            return None
+        state = watch.lock_state()
+        if state == "locked":
+            return "locked"
+        if state == "unknown":
+            return "lock_unknown"
+        return None
+
+    def _on_session_locked(self) -> None:
+        # A lock queued before ``detach_system_pause`` is dropped, like a
+        # hotkey press: it acts only while the registration stands.
+        if self._system_events is not None and self._system_events.status.lock == "on":
+            self.pause_for(PauseReason.LOCKED)
+
     # --- the pause rule (Task 5.1, D5) ----------------------------------------
 
     def nativeEvent(self, eventType: object, message: object) -> object:  # noqa: N802, N803
-        """D5: the machine suspending pauses a recording. D7 (Task 7.1): a
+        """D5: the machine suspending pauses a recording — the classic
+        broadcast or, on a Modern Standby machine, the one Windows sends
+        because ``attach_system_pause`` registered for it (either way the
+        same ``PBT_APMSUSPEND``, handled here synchronously; a second finds
+        the recording already paused). D5 as amended 2026-09-28: the session
+        LOCKING (``WM_WTSSESSION_CHANGE`` / ``WTS_SESSION_LOCK``, only while
+        registered) sets the lock flag at once — every Resume is refused
+        until the unlock (codex round 51 PR-MED-300) — and is re-delivered as
+        a queued call that pauses with ``PauseReason.LOCKED``; the unlock
+        (``WTS_SESSION_UNLOCK``) only clears the flag. D7 (Task 7.1): a
         ``WM_HOTKEY`` for the chord this window reserved is re-delivered as
         a queued call to ``on_hotkey`` (only while it is reserved).
 
@@ -475,14 +561,24 @@ class MainWindow(QMainWindow):
         message address ("called with wrong argument values", seen
         2026-09-28), and a real ``MSG*`` on 64-bit Windows is such an
         address. Qt does nothing with ``WM_HOTKEY`` itself, so the hotkey's
-        message is answered the same way. ``TestSuspendAndCue`` and
-        ``TestHotkeyWindow`` drive real messages through Qt's dispatch in a
-        child process."""
+        message is answered the same way, and so is the session change.
+        ``TestSuspendAndCue``, ``TestHotkeyWindow`` and ``TestLockWindow``
+        drive real messages through Qt's dispatch in a child process."""
         try:
             head = _native_msg(eventType, message)
             if head is not None:
                 if is_suspend_message(*head):
                     self.pause_for(PauseReason.SUSPEND)
+                elif self._system_events is not None and self._system_events.lock_matches(*head):
+                    # Codex round 51 PR-MED-300: refuse every Resume from
+                    # this moment — before the queued pause, and before any
+                    # command already queued behind this message runs.
+                    self._system_events.note_lock()
+                    self._session_locked_q.emit()
+                elif self._system_events is not None and self._system_events.unlock_matches(
+                    *head
+                ):
+                    self._system_events.note_unlock()  # resumes nothing
                 elif self._hotkey is not None and self._hotkey.matches(*head):
                     self._hotkey_pressed_q.emit()
         except Exception:  # noqa: BLE001 - nothing may raise into Qt's dispatch
@@ -490,8 +586,8 @@ class MainWindow(QMainWindow):
         return False, 0
 
     def pause_for(self, reason: PauseReason) -> None:
-        """D5's ``pause_for`` for app-level reasons (suspend now; Phase 7's
-        hotkey and spoken pause). The Chrome bridge applies it when attached
+        """D5's ``pause_for`` for app-level reasons (suspend and the session
+        lock; Phase 7's hotkey and spoken pause). The Chrome bridge applies it when attached
         (it owns the block); otherwise the same table pauses through the
         Session screen's slot."""
         if self.chrome_bridge is not None:
@@ -845,8 +941,10 @@ class MainWindow(QMainWindow):
         # Release the idle level-monitor's device before the window goes away
         # (smoke round 21) — never leave a PortAudio stream running teardown.
         self.microphone_screen.stop_monitor()
-        # Task 7.1: the chord goes back to Windows with the window.
+        # Task 7.1: the chord goes back to Windows with the window, and so do
+        # the suspend and lock notifications (D5 as amended 2026-09-28).
         self.detach_hotkey()
+        self.detach_system_pause()
         super().closeEvent(event)
 
     def _on_live_transcript(self, document: object) -> None:

@@ -112,10 +112,13 @@ class TestPauseForTable:
     ) -> None:
         assert pause_action(state, reason, linked=False) == PauseAction(False, False)
 
-    def test_suspend_pauses_an_unlinked_recording_without_a_block(self) -> None:
-        assert pause_action(
-            SessionState.RECORDING, PauseReason.SUSPEND, linked=False
-        ) == PauseAction(pause=True, block=False)
+    @pytest.mark.parametrize("reason", [PauseReason.SUSPEND, PauseReason.LOCKED])
+    def test_suspend_and_lock_pause_an_unlinked_recording_without_a_block(
+        self, reason: PauseReason
+    ) -> None:
+        assert pause_action(SessionState.RECORDING, reason, linked=False) == PauseAction(
+            pause=True, block=False
+        )
 
     @pytest.mark.parametrize("reason", [PauseReason.HOTKEY, PauseReason.SPOKEN])
     def test_hands_free_reasons_pause_but_never_block(self, reason: PauseReason) -> None:
@@ -135,6 +138,7 @@ class TestPauseForTable:
             PauseReason.PIPE_LOST,
             PauseReason.NEW_CLIENT,
             PauseReason.SUSPEND,
+            PauseReason.LOCKED,  # D5 as amended 2026-09-28
         }
 
 

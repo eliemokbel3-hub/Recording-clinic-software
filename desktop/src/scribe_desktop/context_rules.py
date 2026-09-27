@@ -20,8 +20,11 @@ bound to:
   never reported at all); the bound tab leaving its note for such a page is
   the first rule above.
 
-Pipe loss, a new pipe client and machine suspend come from the bridge and
-the main window. The rule is a pause rule only: nothing here resumes. A
+Pipe loss, a new pipe client, machine suspend and — since 2026-09-28 (the
+practitioner's decision after the Phase 5 smoke: a Modern Standby machine
+did not pause on sleep) — the Windows session LOCKING come from the bridge
+and the main window; unlock resumes nothing. The rule is a pause rule only:
+nothing here resumes. A
 linked session resumes only on a current report of its own note (the
 bridge's ``resume_refusal``), and a tab is re-bound only to a report naming
 the session's exact clinic host, patient and note (D5's re-bind by ids).
@@ -44,9 +47,17 @@ from scribe_desktop.protocol import ContextPayload
 from scribe_desktop.session import RecordingSession, SessionState
 
 # Windows power broadcast (the main window's ``nativeEvent``): the machine
-# is about to suspend (D5). Resume-from-suspend pauses nothing.
+# is about to suspend (D5). Resume-from-suspend pauses nothing. On a Modern
+# Standby machine it arrives only for a window registered with
+# ``RegisterSuspendResumeNotification`` (``system_events``).
 WM_POWERBROADCAST: Final = 0x0218
 PBT_APMSUSPEND: Final = 0x0004
+# The Windows session changed (``WTSRegisterSessionNotification``): only a
+# LOCK pauses (D5 as amended 2026-09-28); an unlock resumes nothing — it only
+# ends the lock's refusal of every Resume (codex round 51 PR-MED-300).
+WM_WTSSESSION_CHANGE: Final = 0x02B1
+WTS_SESSION_LOCK: Final = 0x7
+WTS_SESSION_UNLOCK: Final = 0x8
 # How long a "Resume previous" waits for Chrome to report the recording's
 # own note before it lapses (the click then has to be made again).
 RESUME_PREVIOUS_WINDOW_SECONDS: Final = 30.0
@@ -64,6 +75,7 @@ class PauseReason(StrEnum):
     PIPE_LOST = "pipe_lost"
     NEW_CLIENT = "new_client"
     SUSPEND = "suspend"
+    LOCKED = "locked"
     HOTKEY = "hotkey"
     SPOKEN = "spoken"
 
@@ -72,10 +84,16 @@ CONTEXT_REASONS: Final[frozenset[PauseReason]] = frozenset(PauseReason) - {
     PauseReason.HOTKEY,
     PauseReason.SPOKEN,
 }
+# The machine's own reasons: they apply to EVERY recording, linked or not,
+# and — the practitioner having left or the machine sleeping — they also end
+# a clicked "Resume previous" (the bridge), so nothing resumes behind them.
+SYSTEM_REASONS: Final[frozenset[PauseReason]] = frozenset(
+    {PauseReason.SUSPEND, PauseReason.LOCKED}
+)
 # Chrome's reasons. They concern a recording bound to a Cliniko note, so an
-# UNLINKED (desktop) recording ignores them; suspend and the hands-free
+# UNLINKED (desktop) recording ignores them; the system and the hands-free
 # reasons apply to every recording.
-LINKED_ONLY_REASONS: Final[frozenset[PauseReason]] = CONTEXT_REASONS - {PauseReason.SUSPEND}
+LINKED_ONLY_REASONS: Final[frozenset[PauseReason]] = CONTEXT_REASONS - SYSTEM_REASONS
 
 
 @dataclass(frozen=True)
@@ -105,6 +123,16 @@ def pause_action(state: SessionState, reason: PauseReason, *, linked: bool) -> P
 def is_suspend_message(message: int, wparam: int) -> bool:
     """A ``WM_POWERBROADCAST`` announcing suspend (``PBT_APMSUSPEND``)."""
     return message == WM_POWERBROADCAST and wparam == PBT_APMSUSPEND
+
+
+def is_lock_message(message: int, wparam: int) -> bool:
+    """A ``WM_WTSSESSION_CHANGE`` announcing a lock (``WTS_SESSION_LOCK``)."""
+    return message == WM_WTSSESSION_CHANGE and wparam == WTS_SESSION_LOCK
+
+
+def is_unlock_message(message: int, wparam: int) -> bool:
+    """A ``WM_WTSSESSION_CHANGE`` announcing an unlock (``WTS_SESSION_UNLOCK``)."""
+    return message == WM_WTSSESSION_CHANGE and wparam == WTS_SESSION_UNLOCK
 
 
 def names_note(report: ContextPayload, target: NoteTarget) -> bool:

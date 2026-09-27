@@ -278,11 +278,25 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   and nothing depends on it being seen.
 - **A patient change blocks the whole page until the practitioner chooses.** The block
   dims the page and shows a card: "Recording paused", the reason in plain words ("This
-  tab opened a different treatment note.", "The computer went to sleep.", …), the two
+  tab opened a different treatment note.", "The computer went to sleep.", "The computer
+  was locked.", …), the two
   patients side by side (the recording's and this tab's — for a recording in another
   clinic only "Recording belongs to a patient in <clinic>"), and **Resume previous**,
   **Finish previous** and **Discard previous** (two clicks, above). Its buttons act only
   on a real click.
+- **The machine's own pauses say so on the desktop, and waking or unlocking resumes
+  nothing** (D5 as amended 2026-09-28). Sleep and the Windows session locking pause any
+  recording, with the same desktop cue as every pause — the status line, the Session
+  screen's message and a taskbar flash: "Paused - the computer went to sleep." / "Paused -
+  the computer was locked.", followed by "Press Resume to carry on recording." (or, for a
+  linked recording, the resume-on-its-own-note line). Resume stays a deliberate press.
+  Between a lock and signing back in, every Resume — the Session tab's, the hotkey's and
+  the side panel's — is refused by name: "The computer is locked - sign in, then press
+  Resume." (or, if the app cannot confirm the unlock, "…lock it and sign in again (Windows
+  key + L), then press Resume."); the panel shows the app's own refusal line
+  (`CHROME_REFUSALS["locked"]` / `["lock_unknown"]`). If Windows refuses either notification, the Session screen says so in plain words and
+  names what to do instead ("Pause the recording before you leave the computer.")
+  (`ui/models.py` `PAUSE_CUES`, `SYSTEM_PAUSE_FAILED_LINES`).
 - **The toolbar badge reflects the APP, not only the link**: green **OK** while it runs
   idle, grey **OFF** while it is closed, red **REC** while recording, amber **PAUSED**
   while paused or blocked, red **!** when the link drops under a live recording, **ERR**

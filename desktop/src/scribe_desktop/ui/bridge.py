@@ -35,17 +35,23 @@ THE PAUSE RULE (D5, Task 5.1). Every report — from any tab — is first put to
 ``context_rules.ContextEvaluator`` for the linked live session, against the
 tab THAT SESSION is bound to (set at its Start, re-bound by exact ids after a
 reconnect, moved to the focused tab on a Resume); pipe loss and a new client
-are reasons too, and the main window adds suspend. ``pause_for`` applies
+are reasons too, and the main window adds suspend and — since 2026-09-28 —
+the session locking. ``pause_for`` applies
 ``context_rules.pause_action``: it pauses through the Session screen's slot,
 sets the resolution block for a linked session, and emits ``pause_cue`` for
 the desktop cue. Nothing here ever resumes on a report alone, except a
 "Resume previous" the practitioner clicked, and only once Chrome reports the
 session's own note in the focused tab within
-``RESUME_PREVIOUS_WINDOW_SECONDS``.
+``RESUME_PREVIOUS_WINDOW_SECONDS`` — and a suspend or lock ends such a click
+(``SYSTEM_REASONS``), so no report arriving behind a locked screen resumes.
 
-RESUME (Constraint 7). ``resume_refusal`` is the one check: a linked session
-resumes only while a pipe client is connected and the focused tab's current
-report on this connection names the session's own note. The Session screen
+RESUME (Constraint 7). ``resume_refusal`` is the one check: no session
+resumes while the computer is locked (the main window's lock flag, set the
+moment the lock message is dispatched and cleared by the unlock — codex
+round 51 PR-MED-300; ``resume_previous`` is refused then too, and a waiting
+one ends), and a linked session resumes only while a pipe client is
+connected and the focused tab's current report on this connection names the
+session's own note. The Session screen
 runs it before EVERY Resume (its button, a Chrome command, Phase 7's
 hotkey), and a successful Resume clears the block.
 
@@ -77,7 +83,9 @@ status (``state.hotkey``; ``available`` with its chord only while Windows has
 reserved it), whether the spoken pause works for the live recording
 (``state.spoken_pause``) and the new-consultation warning, kept for the
 recording it was raised on while that recording is live (``state.warnings``).
-None of the three changes a session.
+None of the three changes a session. The suspend and lock registrations'
+refusals (D5 as amended 2026-09-28) are shown on the Session screen only —
+they are not in ``state``.
 
 DISPLAY. The patient's name reaches the snapshot only from a note Cliniko
 verified, with two lifetimes (codex round 29 PR-LOW-151): the BOUND REPORT's
@@ -102,6 +110,7 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.context_rules import (
     RESUME_PREVIOUS_WINDOW_SECONDS,
+    SYSTEM_REASONS,
     ContextEvaluator,
     PauseReason,
     ReminderIndex,
@@ -132,12 +141,16 @@ from scribe_desktop.protocol import (
     typed_payload,
 )
 from scribe_desktop.session import ACTIVE_STATES, SessionState
+from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
+from scribe_desktop.system_events import SystemPauseStatus
 from scribe_desktop.ui import models
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.voice_commands import NEW_CONSULTATION_WARNING, spoken_pause_state
 
 PUBLISH_INTERVAL_MS: Final = 500
+# The main window's lock refusals (codex round 51 PR-MED-300).
+_LOCK_REFUSALS: Final = frozenset({"locked", "lock_unknown"})
 _PHASES: Final[dict[SessionState, str]] = {
     SessionState.RECORDING: "recording",
     SessionState.PAUSED: "paused",
@@ -272,6 +285,8 @@ class ChromeBridge(QObject):
         self._live_display: _LiveDisplay | None = None
         # Phase 7 (D7, D8): shown only — the main window owns both.
         self._hotkey: HotkeyStatus = NOT_SET_UP
+        self._system_pause: SystemPauseStatus = SYSTEM_PAUSE_NOT_SET_UP
+        self._lock_refusal: Callable[[], str | None] | None = None
         self._warning_session: str | None = None
         for signal, slot in (
             (self._connected_q, self._on_connected),
@@ -412,7 +427,14 @@ class ChromeBridge(QObject):
         """D5's ``pause_for``: RECORDING pauses (through the Session screen's
         slot) and, for a context reason on a linked session, sets the block;
         PAUSED only sets the block; any other state does nothing. Emits
-        ``pause_cue`` when it paused or newly blocked."""
+        ``pause_cue`` when it paused or newly blocked. A suspend or lock
+        also ends a clicked "Resume previous" still waiting for its note's
+        report (D5 as amended 2026-09-28): nothing resumes behind it; and it
+        names the block only when it starts one — a block Chrome already put
+        up keeps its reason (round 49 LOW-038: "the computer was locked" must
+        not hide "a different treatment note")."""
+        if reason in SYSTEM_REASONS:
+            self._pending_resume = None
         session = self._controller.session
         linked = session is not None and session.encounter_context is not None
         action = pause_action(self._controller.state, reason, linked=linked)
@@ -425,17 +447,35 @@ class ChromeBridge(QObject):
         ):
             block = self._block
             new_block = block is None or block.session_id != session.session_id
-            self._block = _Block(session.session_id, reason)
+            if new_block or reason not in SYSTEM_REASONS:
+                self._block = _Block(session.session_id, reason)
         if paused or new_block:
             self.pause_cue.emit(models.pause_cue_text(reason.value, linked=linked))
         self.publish()
         self._refresh_view()
 
+    def set_lock_refusal(self, check: Callable[[], str | None] | None) -> None:
+        """D5 as amended 2026-09-28 (codex round 51 PR-MED-300): the main
+        window's lock check — ``locked`` / ``lock_unknown`` between a lock
+        and the next unlock, else None."""
+        self._lock_refusal = check
+
+    def _locked_refusal(self) -> str | None:
+        check = self._lock_refusal
+        return check() if check is not None else None
+
     def resume_refusal(self) -> str | None:
         """Constraint 7: why a Resume of the tracked session is refused now
-        (a ``CHROME_REFUSALS`` code), or None. An unlinked session has no
-        note to match; a linked one needs a pipe client and the focused
-        tab's current report on this connection naming its own note."""
+        (a ``CHROME_REFUSALS`` code), or None. FIRST, for every session
+        linked or not: the computer is locked (codex round 51 PR-MED-300 —
+        every Resume path runs this one check, so a click still on its way
+        when the lock arrived cannot restart the recording behind it). Then
+        an unlinked session has no note to match; a linked one needs a pipe
+        client and the focused tab's current report on this connection
+        naming its own note."""
+        locked = self._locked_refusal()
+        if locked is not None:
+            return locked
         session = self._controller.session
         context = session.encounter_context if session is not None else None
         if context is None:
@@ -453,6 +493,12 @@ class ChromeBridge(QObject):
         and the Session screen."""
         self._hotkey = status
         self.publish()
+        self._refresh_view()
+
+    def set_system_pause_status(self, status: SystemPauseStatus) -> None:
+        """D5 as amended 2026-09-28: which of the suspend and lock
+        registrations Windows refused, for the Session screen only."""
+        self._system_pause = status
         self._refresh_view()
 
     def set_new_consultation_warning(self, session_id: str) -> None:
@@ -521,7 +567,11 @@ class ChromeBridge(QObject):
         ):
             self._pending_resume = None
             return
-        if self.resume_refusal() is not None:
+        refusal = self.resume_refusal()
+        if refusal in _LOCK_REFUSALS:
+            self._pending_resume = None  # the click ends; it never waits out a lock
+            return
+        if refusal is not None:
             return  # not yet: wait for the note's report
         self._pending_resume = None
         if not self._screen.on_resume():
@@ -774,6 +824,12 @@ class ChromeBridge(QObject):
             or self._controller.state is not SessionState.PAUSED
         ):
             self._refuse("resume_previous", "not_allowed_now")
+            return
+        locked = self._locked_refusal()
+        if locked is not None:
+            # Codex round 51 PR-MED-300: a click still on its way when the
+            # lock arrived creates nothing to complete behind the lock.
+            self._refuse("resume_previous", locked)
             return
         self._pending_resume = _PendingResume(session.session_id, self._clock())
         self._resume_if_pending()
@@ -1074,6 +1130,7 @@ class ChromeBridge(QObject):
             hotkey_chord=self._hotkey.chord,
             spoken_pause=self._spoken_pause(),
             new_consultation=self._warning_live(),
+            system_pause_failed=self._system_pause.failed,
         )
 
     def _recheck_line(self, check: _LiveCheck) -> tuple[str, NoteRefusal | None]:

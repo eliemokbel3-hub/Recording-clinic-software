@@ -42,6 +42,7 @@ const REASONS: Readonly<Record<string, string>> = {
   pipe_lost: "Chrome disconnected from Clinic Scribe.",
   new_client: "Chrome reconnected to Clinic Scribe.",
   suspend: "The computer went to sleep.",
+  locked: "The computer was locked.",
 };
 
 export function reasonText(reason: string): string {

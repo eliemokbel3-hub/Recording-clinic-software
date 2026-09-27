@@ -69,6 +69,7 @@ const BLOCK_REASONS: Readonly<Record<string, string>> = {
   pipe_lost: "Chrome disconnected from Clinic Scribe.",
   new_client: "Chrome reconnected to Clinic Scribe.",
   suspend: "The computer went to sleep.",
+  locked: "The computer was locked.",
 };
 
 // `state.warnings` codes (Phase 7, D8: a warning only — the app never pauses

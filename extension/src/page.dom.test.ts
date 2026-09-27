@@ -122,6 +122,16 @@ test("an inherited name as the reason code shows the generic line (round 38 PR-L
   }
 });
 
+test("the machine's own pause reasons have their text (D5 as amended 2026-09-28)", async () => {
+  const script = await booted();
+  const block = BLOCK.block;
+  if (!block) throw new Error("BLOCK has a block");
+  deliver({ ...BLOCK, block: { ...block, reason: "suspend" } });
+  expect(part(script, "reason")?.textContent).toBe("The computer went to sleep.");
+  deliver({ ...BLOCK, block: { ...block, reason: "locked" } });
+  expect(part(script, "reason")?.textContent).toBe("The computer was locked.");
+});
+
 test("a block for another clinic's recording names that clinic by label only", async () => {
   const script = await booted();
   deliver({

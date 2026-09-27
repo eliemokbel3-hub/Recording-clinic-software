@@ -207,6 +207,15 @@ def main() -> int:
     try:
         log_event(logger, "hotkey", state=hotkey.state)
         app.aboutToQuit.connect(window.detach_hotkey)
+        # D5 as amended 2026-09-28 (the practitioner's decision after the
+        # Phase 5 smoke on a Modern Standby machine): Windows' suspend and
+        # session-lock notifications for this window. A refusal is shown and
+        # logged, never fatal; given back like the hotkey (close, quit, and
+        # the ``finally`` below if start-up fails after this point).
+        system_pause = window.attach_system_pause()
+        log_event(logger, "suspend_notification", state=system_pause.suspend)
+        log_event(logger, "lock_notification", state=system_pause.lock)
+        app.aboutToQuit.connect(window.detach_system_pause)
 
         sweep_timer = QTimer(window)
         sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
@@ -226,6 +235,7 @@ def main() -> int:
         code = app.exec()
     finally:
         window.detach_hotkey()
+        window.detach_system_pause()
     log_event(logger, "app_exit", state="closed")
     return code
 

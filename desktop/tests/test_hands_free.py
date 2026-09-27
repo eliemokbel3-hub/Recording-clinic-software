@@ -52,6 +52,7 @@ from scribe_desktop.voice_commands import (  # noqa: E402
     phrase_tokens,
     spoken_pause_state,
 )
+from test_system_pause import SUSPEND_HANDLE, FakeSystemRegistrar  # noqa: E402
 from test_ui_screens import FakeController, _main_window  # noqa: E402
 
 
@@ -547,6 +548,13 @@ class TestHotkeyWindow:
         registrar = FakeRegistrar()
         attach = window.attach_hotkey
         monkeypatch.setattr(window, "attach_hotkey", lambda: attach(registrar))
+        # D5 as amended 2026-09-28: main() also registers the suspend and
+        # lock notifications — through a fake here, never Windows.
+        system_registrar = FakeSystemRegistrar()
+        attach_system = window.attach_system_pause
+        monkeypatch.setattr(
+            window, "attach_system_pause", lambda: attach_system(system_registrar)
+        )
 
         def fail_show() -> None:
             raise RuntimeError("start-up failed")
@@ -570,8 +578,16 @@ class TestHotkeyWindow:
         with pytest.raises(RuntimeError, match="start-up failed"):
             app_module.main()
         qapp.aboutToQuit.disconnect(window.detach_hotkey)  # main() wired the shared app
+        qapp.aboutToQuit.disconnect(window.detach_system_pause)
         assert len(registrar.registered) == 1
         assert registrar.unregistered == [(int(window.winId()), HOTKEY_ID)]
+        hwnd = int(window.winId())
+        assert system_registrar.calls == [
+            ("register_suspend", hwnd),
+            ("register_lock", hwnd),
+            ("unregister_suspend", SUSPEND_HANDLE),
+            ("unregister_lock", hwnd),
+        ]
         window.deleteLater()
 
     @pytest.mark.parametrize("detach", [False, True])

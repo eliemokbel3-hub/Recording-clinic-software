@@ -1690,7 +1690,33 @@ leaving its note (any other page, including one off the allow-list) or
 closing, and the focused tab reporting another note or Cliniko's login
 page, each pause a recording and set the resolution block; so do pipe loss
 and a new pipe client; machine suspend (`PBT_APMSUSPEND`, the main window)
-pauses any recording. Every pause runs through the Session screen's slot
+and — D5 as amended by the practitioner on 2026-09-28 — the Windows session
+LOCKING (`WM_WTSSESSION_CHANGE` / `WTS_SESSION_LOCK`) pause ANY recording,
+linked or not (a linked one also gets the block). The Phase 5 smoke found
+that a Modern Standby machine (S0 low power idle, no S3) never sent the
+window the classic suspend broadcast, so the main window now registers for
+both (`system_events.py`: `RegisterSuspendResumeNotification` with the
+window handle, and `WTSRegisterSessionNotification` for this session) after
+it exists, and gives both back on close, at quit and after a failed start;
+a refused registration never raises and is shown on the status line and
+the Session screen. An UNLOCK resumes nothing, and a suspend or lock also
+ends a clicked "Resume previous" still waiting for its note's report, so no
+report arriving behind a locked screen resumes. LOCKED UNTIL UNLOCK (codex
+round 51 PR-MED-300): a Resume or "Resume previous" click already on its way
+through Chrome when the lock arrived would otherwise be handled after the
+lock's pause, so the lock message sets a flag during its own dispatch —
+before the queued pause runs — and the one resume check every path runs
+(the Session screen's Resume, the hotkey, Chrome's `resume`, a waiting
+"Resume previous") refuses `locked` FIRST, for linked and unlinked
+recordings alike, until `WTS_SESSION_UNLOCK` clears it; `resume_previous`
+creates nothing while it stands. A missed unlock cannot refuse Resume
+forever: once the flag is five seconds old a refused Resume asks Windows
+(`WTSQuerySessionInformationW`, `WTSSessionInfoEx` → `SessionFlags`) and
+clears it only on "unlocked"; if Windows cannot say, the refusal is
+`lock_unknown` and names the escape (lock and sign in again). The young-flag
+window keeps a query racing the lock itself from reopening the gap; a suspend or lock names the
+block only when it starts one, so a block Chrome already put up for a
+patient change keeps that reason. Every pause runs through the Session screen's slot
 and shows a desktop cue. A PAUSED session only gains the block; nothing
 else changes state. A tab that is neither bound nor focused never pauses,
 and neither does a SEPARATE tab showing a page that is not Cliniko's (the
@@ -1717,9 +1743,21 @@ pre-navigation-speech assumption), and a change the extension never reports
 is never seen — the page-level limits (an in-page session-expiry dialog, the
 report-to-pause latency, a page that hides the cue) are under "The Chrome
 extension" below. (2) An UNLINKED (desktop) recording ignores
-Chrome's reasons by design; only suspend and the hands-free reasons (the
-hotkey and the spoken phrase, below) pause it. (3) Suspend is Windows' broadcast: a power cut, a crash
-or a hibernation that sends none is crash recovery's case. (4) Every report
+Chrome's reasons by design; only suspend, the session lock and the
+hands-free reasons (the hotkey and the spoken phrase, below) pause it. (3)
+Suspend and lock are Windows' notifications: a power cut, a crash or a
+hibernation that sends none is crash recovery's case; a machine that sleeps
+WITHOUT locking (sign-in on wake set to "Never") and without delivering the
+registered suspend notification is not paused at all; there is NO suspend
+flag like the lock's — no Windows signal says a person woke the machine
+(`PBT_APMRESUMEAUTOMATIC` also fires on unattended wakes) — so on such a
+machine a Chrome Resume click in flight at the suspend can apply after wake;
+a refused lock registration sets no lock flag at all; and the audio captured
+between the lock or suspend and the app handling it (the lock is a queued
+call on the GUI thread; the suspend is handled in the message itself) is
+recorded into the session. No automated test can prove Windows delivers
+either message on a given machine — the real-dispatch tests prove only that
+Qt hands a delivered one to the app; the live smoke is the proof. (4) Every report
 and command is the extension's assertion (pipe residue (1)): a same-user
 process on the pipe can forge the report the resume check and
 `resume_previous` accept.

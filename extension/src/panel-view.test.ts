@@ -286,6 +286,11 @@ describe("the banner, refusals and warnings", () => {
     expect(model.warnings).toEqual(["This sounds like a new consultation — finish this recording before the next patient."]);
   });
 
+  test("the machine's own pause reasons have their text (D5 as amended 2026-09-28)", () => {
+    expect(blockReasonText("suspend")).toBe("The computer went to sleep.");
+    expect(blockReasonText("locked")).toBe("The computer was locked.");
+  });
+
   test.each(["constructor", "toString", "__proto__"])("an inherited name %s is an unknown code everywhere (round 38 PR-LOW-211)", (code) => {
     expect(noteRefusalText(code)).toBe("no reason given");
     expect(blockReasonText(code)).toBe("The recording was paused.");

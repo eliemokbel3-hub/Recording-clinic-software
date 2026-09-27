@@ -340,6 +340,18 @@ HOTKEY_FAILED_STATUS: Final = (
     "Resume still work on the Session tab and in Chrome's side panel."
 )
 HOTKEY_RESUMED_STATUS: Final = "Recording resumed by the hotkey."
+# D5 as amended 2026-09-28: a registration Windows refused, keyed by
+# ``system_events.SystemPauseStatus`` field. Shown only when it failed.
+SYSTEM_PAUSE_FAILED_LINES: Final[Mapping[str, str]] = {
+    "suspend": (
+        "Sleep pause may not work - Windows would not report sleep to Cliniko Scribe. Pause "
+        "the recording before the computer sleeps."
+    ),
+    "lock": (
+        "Lock pause unavailable - Windows would not report the screen locking. Pause the "
+        "recording before you leave the computer."
+    ),
+}
 # Task 7.3 (D8): a WARNING only — nothing is paused, blocked or changed.
 NEW_CONSULTATION_WARNING_LINE: Final = (
     "Warning: this sounds like a new consultation (a goodbye, then a greeting). If the next "
@@ -394,6 +406,13 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
         "resume it."
     ),
     "not_available": "That action is not available in this version.",
+    # D5 as amended 2026-09-28 (codex round 51 PR-MED-300): every Resume is
+    # refused between a lock and the next unlock; unlocking resumes nothing.
+    "locked": "The computer is locked - sign in, then press Resume.",
+    "lock_unknown": (
+        "The computer was locked and Cliniko Scribe cannot confirm it is unlocked - lock it "
+        "and sign in again (Windows key + L), then press Resume."
+    ),
     "failed": "It did not work - see the Session tab in Cliniko Scribe.",
     # Task 5.5 (D6): the banner's "Open for review".
     "review_in_progress": (
@@ -424,6 +443,7 @@ PAUSE_CUES: Final[Mapping[str, str]] = {
     "pipe_lost": "Paused - Chrome disconnected from Cliniko Scribe.",
     "new_client": "Paused - Chrome reconnected to Cliniko Scribe.",
     "suspend": "Paused - the computer went to sleep.",
+    "locked": "Paused - the computer was locked.",
     "hotkey": "Paused by the hotkey.",
     "spoken": "Paused - \"scribe pause\" was heard.",
 }
@@ -473,6 +493,9 @@ class ChromeView:
     hotkey_chord: str = CHORD_TEXT
     spoken_pause: str = "idle"
     new_consultation: bool = False
+    # D5 as amended 2026-09-28: which system registrations Windows refused
+    # (``suspend`` / ``lock``), in that order.
+    system_pause_failed: tuple[str, ...] = ()
 
 
 def _live_line(who: str, clinic: str, phase: str | None) -> str:
@@ -503,6 +526,11 @@ def chrome_view_text(view: ChromeView) -> str:
         reason = note_refusal_line(view.recheck_reason) if view.recheck_reason else ""
         lines.append(CHROME_RECHECK_LINES[view.recheck].format(reason=reason))
     lines.extend(hands_free_lines(view.hotkey, view.hotkey_chord, view.spoken_pause))
+    lines.extend(
+        SYSTEM_PAUSE_FAILED_LINES[key]
+        for key in view.system_pause_failed
+        if key in SYSTEM_PAUSE_FAILED_LINES
+    )
     if view.new_consultation:
         lines.append(NEW_CONSULTATION_WARNING_LINE)
     if view.refusal is not None:
