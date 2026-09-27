@@ -1,0 +1,36 @@
+{
+  "protocol_version": 2,
+  "type": "state",
+  "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+  "payload": {
+    "state_rev": 21,
+    "app_running": true,
+    "allow_list": ["example-clinic.au1.cliniko.com", "other-clinic.au2.cliniko.com"],
+    "hotkey": {"available": false},
+    "spoken_pause": false,
+    "warnings": [],
+    "report": {
+      "tab_id": 412,
+      "clinic_host": "example-clinic.au1.cliniko.com",
+      "patient_id": "1001",
+      "note_id": "2002",
+      "verification": "verified",
+      "clinic_label": "Example Clinic",
+      "patient_name": "Alex Example",
+      "appointment_starts_at": "2026-09-27T01:30:00Z"
+    },
+    "live": {
+      "session_ref": "AbCdEfGhIjKlMnOpQrStUv_-",
+      "phase": "recording",
+      "linked": true,
+      "recorded_seconds": 95,
+      "consent_confirmed_at": "2026-09-27T01:31:02.125000+00:00",
+      "clinic_host": "example-clinic.au1.cliniko.com",
+      "patient_id": "1001",
+      "note_id": "2002",
+      "verification": "verified",
+      "clinic_label": "Example Clinic",
+      "patient_name": "Alex Example"
+    }
+  }
+}

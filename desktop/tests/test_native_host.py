@@ -3,6 +3,7 @@
 import io
 import logging
 import struct
+import sys
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from scribe_desktop.native_host import (
     run_host,
     verify_origin,
 )
-from scribe_desktop.protocol import parse_envelope
+from scribe_desktop.protocol import PROTOCOL_VERSION, parse_envelope
 
 
 def make_session() -> HostSession:
@@ -99,7 +100,7 @@ def test_inbound_pong_violates() -> None:
     session = make_session()
     session.handle(parse_envelope(hello()))
     bad = {
-        "protocol_version": 1,
+        "protocol_version": PROTOCOL_VERSION,
         "type": "pong",
         "request_id": "r",
         "session_nonce": NONCE,
@@ -139,7 +140,12 @@ def test_loop_foreign_nonce_gets_typed_error(tmp_path: Path) -> None:
 
 def test_loop_missing_nonce_gets_bad_nonce(tmp_path: Path) -> None:
     """MED-001 alignment: a ping with NO nonce yields bad_nonce (as TS does)."""
-    no_nonce = {"protocol_version": 1, "type": "ping", "request_id": "r", "payload": {}}
+    no_nonce = {
+        "protocol_version": PROTOCOL_VERSION,
+        "type": "ping",
+        "request_id": "r",
+        "payload": {},
+    }
     code, frames = run(frame(hello()) + frame(no_nonce), tmp_path)
     assert code == 1
     assert frames[1]["payload"]["code"] == "bad_nonce"
@@ -153,21 +159,62 @@ def test_loop_framing_violation_sends_typed_error(tmp_path: Path) -> None:
     assert frames[0]["payload"]["code"] == "oversized"
 
 
+def test_loop_deeply_nested_json_is_a_typed_error_not_a_hang(tmp_path: Path) -> None:
+    """Round 25 LOW-020: the frame is read on the stdin THREAD; a RecursionError
+    there once killed that thread silently and left the main loop waiting
+    forever. It is now the ordinary ``malformed`` framing fault."""
+    depth = 200_000
+    body = b"[" * depth + b"]" * depth
+    code, frames = run(frame(hello()) + struct.pack("=I", len(body)) + body, tmp_path)
+    assert code == 1
+    assert [f["type"] for f in frames] == ["hello_ack", "error"]
+    assert frames[1]["payload"]["code"] == "malformed"
+
+
+def test_loop_an_integer_past_the_digit_limit_is_a_typed_error(tmp_path: Path) -> None:
+    """Codex round 27 PR-MED-131: the digit-limit ValueError on the stdin
+    THREAD is the ordinary ``malformed`` fault, not a silent thread death."""
+    body = b'{"n": ' + b"9" * 5000 + b"}"
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        code, frames = run(frame(hello()) + struct.pack("=I", len(body)) + body, tmp_path)
+    finally:
+        sys.set_int_max_str_digits(previous)
+    assert code == 1
+    assert [f["type"] for f in frames] == ["hello_ack", "error"]
+    assert frames[1]["payload"]["code"] == "malformed"
+
+
 def test_loop_invalid_envelope_sends_typed_error(tmp_path: Path) -> None:
-    bad = frame({"protocol_version": 1, "type": "nope", "payload": {}})
+    bad = frame({"protocol_version": PROTOCOL_VERSION, "type": "nope", "payload": {}})
     code, frames = run(bad, tmp_path)
     assert code == 1
     assert frames[0]["payload"]["code"] == "malformed"
 
 
-def test_loop_version_below_floor_typed_code(tmp_path: Path) -> None:
-    """MED-001: below-floor version yields the version_below_floor code."""
+@pytest.mark.parametrize("version", [0, 1])
+def test_loop_version_below_floor_typed_code(tmp_path: Path, version: int) -> None:
+    """MED-001: below-floor version yields the version_below_floor code —
+    since protocol v2 (Task 4.1) that includes a v1 extension's hello."""
     msg = hello()
-    msg["protocol_version"] = 0
+    msg["protocol_version"] = version
     code, frames = run(frame(msg), tmp_path)
     assert code == 1
     assert frames[0]["type"] == "error"
     assert frames[0]["payload"]["code"] == "version_below_floor"
+
+
+@pytest.mark.parametrize("version", [True, False, "2", 2.5])
+def test_loop_a_non_integer_version_is_malformed(tmp_path: Path, version: object) -> None:
+    """Round 25 LOW-021: a boolean is not below the floor (``True < 2`` in
+    Python) — it is no version at all, ``malformed``, as the TypeScript
+    mirror classifies it; nor is a numeric string."""
+    msg = hello()
+    msg["protocol_version"] = version
+    code, frames = run(frame(msg), tmp_path)
+    assert code == 1
+    assert frames[0]["payload"]["code"] == "malformed"
 
 
 def test_loop_survives_dead_peer_on_write(tmp_path: Path) -> None:

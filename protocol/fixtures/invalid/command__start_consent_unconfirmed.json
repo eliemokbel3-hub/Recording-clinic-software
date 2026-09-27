@@ -1,0 +1,22 @@
+{
+  "reason": "the consent is carried only as confirmed: true",
+  "message": {
+    "protocol_version": 2,
+    "type": "command",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+    "payload": {
+      "action": "start",
+      "state_rev": 12,
+      "consent": {
+        "confirmed": false,
+        "text_version": "recording-consent-v1"
+      },
+      "target": {
+        "tab_id": 412,
+        "clinic_host": "example-clinic.au1.cliniko.com",
+        "patient_id": "1001",
+        "note_id": "2002"
+      }
+    }
+  }
+}

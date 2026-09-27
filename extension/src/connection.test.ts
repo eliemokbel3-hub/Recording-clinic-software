@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import type { ChromeLike, PortLike } from "./connection";
 import { ConnectionManager, PING_ALARM, RECONNECT_ALARM, WATCHDOG_ALARM } from "./connection";
+import type { StatePayload } from "./protocol";
 import { PROTOCOL_VERSION } from "./protocol";
 
 const NONCE = "n".repeat(32);
@@ -74,6 +75,25 @@ function ack(requestId: string, nonce: string = NONCE) {
   };
 }
 
+function state(nonce: string, refused: boolean) {
+  const payload: Record<string, unknown> = {
+    state_rev: 3,
+    app_running: true,
+    allow_list: ["example-clinic.au1.cliniko.com"],
+    hotkey: { available: false },
+    spoken_pause: false,
+    warnings: [],
+  };
+  if (refused) {
+    payload["last_refusal"] = {
+      action: "start",
+      reason: "not_verified",
+      message: "Recording was not started: Cliniko did not verify the note.",
+    };
+  }
+  return { protocol_version: PROTOCOL_VERSION, type: "state", session_nonce: nonce, payload };
+}
+
 function handshake(): { api: FakeChrome; manager: ConnectionManager } {
   const api = new FakeChrome();
   const manager = new ConnectionManager(api);
@@ -104,7 +124,7 @@ describe("handshake", () => {
     const api = new FakeChrome();
     const manager = new ConnectionManager(api);
     manager.connect();
-    api.lastPort.receive({ protocol_version: 1, type: "hello_ack", request_id: "req-1", payload: {} });
+    api.lastPort.receive({ protocol_version: PROTOCOL_VERSION, type: "hello_ack", request_id: "req-1", payload: {} });
     expect(manager.state).toBe("error");
   });
 
@@ -121,7 +141,7 @@ describe("ping/pong", () => {
     manager.onAlarm(PING_ALARM);
     expect(api.lastPort.sent[1]).toMatchObject({ type: "ping", session_nonce: NONCE });
     api.lastPort.receive({
-      protocol_version: 1,
+      protocol_version: PROTOCOL_VERSION,
       type: "pong",
       request_id: "req-2",
       session_nonce: NONCE,
@@ -134,7 +154,7 @@ describe("ping/pong", () => {
     const { api, manager } = handshake();
     manager.onAlarm(PING_ALARM);
     api.lastPort.receive({
-      protocol_version: 1,
+      protocol_version: PROTOCOL_VERSION,
       type: "pong",
       request_id: "req-2",
       session_nonce: "x".repeat(32),
@@ -184,7 +204,7 @@ describe("disconnect and reconnect", () => {
     api.lastPort.receive(ack("req-2", "m".repeat(32))); // fresh nonce
     manager.onAlarm(PING_ALARM);
     api.lastPort.receive({
-      protocol_version: 1,
+      protocol_version: PROTOCOL_VERSION,
       type: "pong",
       request_id: "req-3",
       session_nonce: NONCE, // stale nonce from the previous session
@@ -224,7 +244,7 @@ describe("disconnect and reconnect", () => {
     for (const requestId of ["req-2", "req-3"]) {
       manager.onAlarm(PING_ALARM);
       api.lastPort.receive({
-        protocol_version: 1,
+        protocol_version: PROTOCOL_VERSION,
         type: "pong",
         request_id: requestId,
         session_nonce: NONCE,
@@ -245,10 +265,45 @@ describe("disconnect and reconnect", () => {
     expect(delays.at(-1)).toBe(0.5);
   });
 
+  test("a state carrying a refusal is delivered and keeps the connection (Constraint 9)", () => {
+    const api = new FakeChrome();
+    const states: StatePayload[] = [];
+    const manager = new ConnectionManager(api, (state) => states.push(state));
+    manager.connect();
+    api.lastPort.receive(ack("req-1"));
+    api.lastPort.receive(state(NONCE, true));
+    expect(manager.state).toBe("connected");
+    expect(api.lastPort.disconnected).toBe(false);
+    expect(states).toHaveLength(1);
+    expect(states[0]?.last_refusal).toMatchObject({ action: "start", reason: "not_verified" });
+    expect(api.alarms.some((a) => a.name === RECONNECT_ALARM)).toBe(false);
+  });
+
+  test("a state with a foreign nonce disconnects and is not delivered", () => {
+    const api = new FakeChrome();
+    const states: StatePayload[] = [];
+    const manager = new ConnectionManager(api, (s) => states.push(s));
+    manager.connect();
+    api.lastPort.receive(ack("req-1"));
+    api.lastPort.receive(state("x".repeat(32), false));
+    expect(manager.state).toBe("error");
+    expect(states).toHaveLength(0);
+  });
+
+  test("a state before the handshake completes is a broken peer", () => {
+    const api = new FakeChrome();
+    const states: StatePayload[] = [];
+    const manager = new ConnectionManager(api, (s) => states.push(s));
+    manager.connect();
+    api.lastPort.receive(state(NONCE, false));
+    expect(manager.state).toBe("error");
+    expect(states).toHaveLength(0);
+  });
+
   test("typed error envelope from host disconnects and schedules reconnect", () => {
     const { api, manager } = handshake();
     api.lastPort.receive({
-      protocol_version: 1,
+      protocol_version: PROTOCOL_VERSION,
       type: "error",
       payload: { code: "internal", message: "boom" },
     });

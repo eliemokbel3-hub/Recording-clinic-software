@@ -8,6 +8,7 @@ import struct
 from typing import Any
 
 from scribe_desktop.encounter import unlinked_consent
+from scribe_desktop.protocol import PROTOCOL_VERSION
 
 NONCE = "f" * 32
 
@@ -35,12 +36,17 @@ def read_frames(data: bytes) -> list[dict]:
 
 
 def hello(request_id: str = "req-1") -> dict:
-    return {"protocol_version": 1, "type": "hello", "request_id": request_id, "payload": {}}
+    return {
+        "protocol_version": PROTOCOL_VERSION,
+        "type": "hello",
+        "request_id": request_id,
+        "payload": {},
+    }
 
 
 def ping(nonce: str, request_id: str = "req-2") -> dict:
     return {
-        "protocol_version": 1,
+        "protocol_version": PROTOCOL_VERSION,
         "type": "ping",
         "request_id": request_id,
         "session_nonce": nonce,

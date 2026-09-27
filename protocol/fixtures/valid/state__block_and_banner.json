@@ -1,0 +1,35 @@
+{
+  "protocol_version": 2,
+  "type": "state",
+  "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+  "payload": {
+    "state_rev": 23,
+    "app_running": true,
+    "allow_list": ["example-clinic.au1.cliniko.com"],
+    "hotkey": {"available": true, "chord": "Ctrl+Shift+F9"},
+    "spoken_pause": true,
+    "warnings": ["new_consultation"],
+    "notice": "review_open",
+    "live": {
+      "session_ref": "AbCdEfGhIjKlMnOpQrStUv_-",
+      "phase": "paused",
+      "linked": false,
+      "recorded_seconds": 0,
+      "consent_confirmed_at": "2026-09-27T01:31:02Z"
+    },
+    "block": {
+      "reason": "patient_changed",
+      "session_ref": "AbCdEfGhIjKlMnOpQrStUv_-",
+      "clinic_host": "example-clinic.au1.cliniko.com",
+      "clinic_label": "Example Clinic",
+      "patient_name": "Alex Example"
+    },
+    "banner": {
+      "session_ref": "ZyXwVuTsRqPoNmLkJiHgFe01",
+      "clinic_host": "example-clinic.au1.cliniko.com",
+      "note_id": "2003",
+      "count": 2,
+      "patient_name": "Sam Example"
+    }
+  }
+}

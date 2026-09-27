@@ -1,0 +1,9 @@
+{
+  "reason": "protocol v1 is below the v2 floor: a v1 extension or host is refused, never half-understood",
+  "message": {
+    "protocol_version": 1,
+    "type": "hello",
+    "request_id": "req-0001",
+    "payload": {}
+  }
+}

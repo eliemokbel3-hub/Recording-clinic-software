@@ -1484,28 +1484,170 @@ same class as (2). Clearing the frames in the client
 (`traceback.clear_frames`) was rejected: it would also wipe the caller's
 finished frames and still miss the pre-`yield` `InvalidKey`.
 
+## The Chrome link: protocol v2, the named pipe, the bridge and the host's relay (Cliniko workflow safeguards plan D2/D4; BUILT at Tasks 4.1, 4.2, 4.4 and 4.5, 2026-09-27; Task 4.3 decided (b))
+
+What exists: the v2 message contract, the app's pipe server, the bridge that
+turns reports and commands into the app's decisions, and the native host's
+two-way relay between Chrome and that pipe (data-flow map flows 1 and 19).
+TASK 4.3, DECIDED (b) on 2026-09-27 under the practitioner's overnight
+pre-authorisation to follow the executor's recommendation (revisable by the
+practitioner): no peer-identity gate beyond the logon session and the
+user-only DACL; the same-user residue below is accepted as boundary 2. The
+optional log-only tripwire was built: each end logs the other's executable
+path at connect (`pipe_peer`), gating nothing.
+
+PROTOCOL v2 (Task 4.1, both mirrors tested against `protocol/fixtures/`).
+Enforced by the parsers: `context`, `command` and `state` require the nonce on
+the Chrome wire and carry none on the pipe; every payload has a closed key
+set (extra keys and an explicit `null` refused), strict booleans and
+integers, and every string and array bounded by `meta.json`'s `limits`
+(lengths in code points); Cliniko ids are digit strings matching
+`^[1-9][0-9]{0,18}$`; a clinic host must be a `<subdomain>.<shard>.cliniko.com`
+name. Shape rules: a host exactly on a Cliniko page, ids exactly on a
+treatment-note page; `start` carries a target and the consent tick and no
+session reference; `resume`, `finish`, `discard`, `resume_previous` and
+`open_review` must name their session; only `discard` carries the confirming
+second click; display strings only on a VERIFIED report; an unlinked live
+session names no ids; an app that is not running reports nothing else.
+RESIDUE: (1) these are SHAPE checks — a well-formed id can name any note,
+and a well-formed host any Cliniko account; the allow-list check and the
+verification are the bridge's. (2) The TypeScript mirror cannot tell `1.0`
+from `1` (a JSON number); Python refuses the float.
+
+THE PIPE (Task 4.2, `pipe_server.py`). Enforced by the OS: the name
+`\\.\pipe\ClinikoScribe-<user SID>` is created with
+`FILE_FLAG_FIRST_PIPE_INSTANCE`, so a name already held — by an earlier app or
+by anything else — makes creation FAIL (`PipeUnavailable("name_taken")`) and
+the app never shares it; `nMaxInstances = 1`, so one client at a time;
+`PIPE_REJECT_REMOTE_CLIENTS`; and a PROTECTED DACL with one entry granting the
+current user (nothing inherited). Enforced by the code: inbound frames are
+bounded at 1 MB (flow 1's framing) and must be nonce-free `context` or
+`command` envelopes — anything else closes that connection; a frame queued
+for one connection is never written to the next; stop is prompt in every
+state. RESIDUE (accepted under Task 4.3 (b) as boundary 2 — these are
+things the design does NOT prevent, not controls): (1) the DACL admits
+every process of THIS user — the same-user attacker of boundary 2 — which,
+while the slot is free, can:
+  (a) forge a `start` with the consent tick set — the app cannot see the
+      side panel, so a forged tick is indistinguishable from a real one;
+  (b) read the patient's name for a note id of its choosing through
+      `state` — it reports that note on an allow-listed host, and the bridge
+      verifies it with Cliniko and publishes the name;
+  (c) hold the only pipe slot — the Chrome link is then down (the host sees
+      the pipe busy and tells Chrome the app is not running);
+  (d) drive `resume_previous` once Phase 5 builds it — ids only; the
+      extension builds the URL from the allow-list.
+The same attacker already has more without the pipe: it can read the
+Cliniko key from Credential Manager and query `/patients/<id>` itself, use
+the microphone, and repoint the host registration. (2) A same-user process
+that creates the name BEFORE the app, with the app's own DACL, PASSES the
+host's verification (below: same session, same user, same DACL) — the host
+then relays Chrome's reports and commands to it and its `state` to the
+panel. The app, finding the name held, says the Chrome link is unavailable
+on the Session screen, and both ends log the other's executable path
+(`pipe_peer`) — a tripwire, not a gate. A squatter of ANOTHER user, or one
+with any other DACL, fails verification: a hard error in the host.
+(3) Administrators and SYSTEM are outside this boundary (OS trust).
+
+THE HOST'S RELAY (Task 4.4, `native_host.py` + `pipe_client.py`). Enforced:
+before a single frame crosses, the host VERIFIES the pipe's server — its
+process runs in the host's own logon session
+(`GetNamedPipeServerSessionId` = the host's `ProcessIdToSessionId`), its
+token user is the host's user SID, and the pipe's DACL is exactly the one
+the app creates (protected, one ALLOW entry for that SID with no ACE flags
+and the full access `GA` grants — type, flags, mask and SID all compared,
+codex round 28 PR-LOW-142). A pipe that
+exists but fails any check, whose check cannot be made (an elevated or
+another user's server whose token the host may not query), or whose DACL
+shuts the host out, is `ServerUnverified`: a typed `error` to Chrome and
+exit 1, never a retry. The host opens the pipe with
+`SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION`, so a server can identify
+the host but never impersonate it. Chrome -> app, a `context` or `command`
+is relayed only with THIS session's nonce (a wrong or missing one is the
+fatal `bad_nonce`, as for `ping`), and with the nonce stripped; app ->
+Chrome, only a valid nonce-free `state` is relayed, re-validated and
+stamped with the nonce — anything else ends that pipe connection. A write
+to the app that fails or times out ENDS that connection too (part of a frame
+may be on the pipe): the message is dropped, never retried or followed on
+the same stream, and the host reconnects. Only the relay thread closes the
+pipe handle, after its read has settled; the host's shutdown and a failed
+write only signal it (codex round 28 PR-MED-140/141) — even a shutdown
+that outlives its join timeout closes nothing (the handle then goes when
+the read settles or, at the latest, at process exit), and a retired or
+stopped connection refuses every further write BEFORE any I/O, the retiring
+write also making the link non-current at once (codex round 30
+PR-LOW-160/PR-MED-161). While the
+app is absent or the slot busy, the host sends `state{app_running:false}`
+once and re-waits (one bounded attempt at a time); it exits on Chrome's
+EOF. It logs message types, states and the peer's path — never a relayed
+payload. RESIDUE: (1) pipe residue (2) — verification cannot tell this
+user's programs apart. (2) An app run ELEVATED while Chrome's host is not
+fails verification wherever Windows refuses the host a query of the app's
+token (not measured on this host): the Chrome link then stays down with the
+host's error until the app runs normally — fail closed.
+(3) A message from Chrome while the app is absent is dropped, not queued;
+the panel shows "not running" meanwhile.
+
+THE BRIDGE (Task 4.5, `ui/bridge.py`). Enforced: the pipe thread only emits
+queued signals, so every decision runs on the GUI thread, which alone
+touches the controller and the screens; a new client or a disconnect bumps
+the verification ledger's `conn_gen` and clears every report, so a result
+tagged with an earlier `(conn_gen, seq, target, clinic_rev)` is dropped and
+Start needs a fresh report on the new connection (D4); only the latest
+focused tab's report feeds the ledger, and only a note page on an
+allow-listed host is verified. `start` is refused unless its `state_rev` is
+the last one sent, its target is that bound report, the report is verified
+or `unverified_offline`, no session is active, no note review holds the
+generation lease and a microphone is selected; an `unverified_offline` Start
+records with write-back blocked (Constraint 6). `resume`, `finish` and
+`discard` are refused BEFORE their slot runs unless their `session_ref` is
+the live session's, and resuming a LINKED session also needs the bound
+report to be its own note; `pause` needs no reference (fail-safe);
+`resume_previous` and `open_review` are refused until Phase 5 builds them.
+Refusals travel in `state.last_refusal`, never as `error` (Constraint 9).
+The patient's name reaches `state` and the Session screen (a plain-text
+label) only from a note Cliniko verified, and has TWO in-memory lifetimes
+(codex round 29 PR-LOW-151): the BOUND REPORT's name is published while that
+verified report stays bound — before any Start, and after a recording ends
+— and is no longer published once the report changes (another note or tab,
+a closed tab) or its `clinic_rev` moves; in memory it stays in the ledger's
+reuse entry until that entry is pruned (at the first check dispatched after
+its 60 s window) or the connection ends; the LIVE
+SESSION's name (from the verification its Start used, and its reconnect
+re-check's) is held for that session and goes when it ends (round 25
+LOW-019). The bridge holds no logger. The reconnect re-check counts only
+while its clinic is unchanged (D9): a Replace key or Remove voids it and
+checks again under the current key, or reports the clinic gone (codex round
+29 PR-MED-150). RESIDUE: (1) the consent tick is the extension's assertion
+(pipe residue (1)(a) above). (2) The reconnect re-check of a linked live
+session is shown on the Session screen only; the write-back guard does not
+read it and still requires its own current re-verification (MED-012). (3)
+The name is on screen while the session records — the same exposure as
+Cliniko's own page. (4) The snapshot is rebuilt every 500 ms and on every
+event, so what the panel shows can trail the controller by that long; the
+controller still refuses any transition that is no longer legal.
+
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
 3A's provenance check already derives speaker roles from COORDINATES, never the
 assertion's display `speaker` field, as the spoken-injection defence for
 clinician-owned sections; the ML model's own injection resistance is 3B),
-consent workflow and recording indicators (Phase 5), the host↔app named pipe
-(deferred from Phase 2 to Phase 5 — its consent/command flow is the real
-consumer; the locked topology and pipe-hardening notes are recorded in the
-Phase 2 plan), OneDrive/backup exclusions and audit records (Phase 6),
+consent workflow and recording indicators (Phase 5; the host↔app named pipe
+and the host's relay they ride on are covered above), OneDrive/backup
+exclusions and audit records (Phase 6),
 packaging/signing (Phase 7).
 
 ## Review triggers
 
-Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
-deferred from Phase 2); the transcript becomes input to the local ML note model
+Re-review this model when: the practitioner revises Task 4.3's decision (b)
+(the Chrome link, covered above, was built on it); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
 Cliniko keys are first stored (the Clinics tab of the Cliniko workflow
 safeguards plan's Phase 2 is built; the practitioner's first Validate is the
-event); a note report from Chrome first reaches note verification (Phase 4's
-pipe — the Phase 3 verification is built and today runs only on a recovered
-checkout) or anything first SHOWS the verification's display strings;
+event); a note report from Chrome first reaches note verification on a real
+install (the practitioner's first live smoke of Phase 4 — the relay and the
+bridge are built and described above);
 or the software is installed on the
 second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next

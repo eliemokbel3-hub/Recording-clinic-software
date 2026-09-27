@@ -1,6 +1,23 @@
 {
-  "protocol_version": 1,
-  "min_supported_version": 1,
+  "protocol_version": 2,
+  "min_supported_version": 2,
   "host_name": "com.scribe.cliniko_host",
-  "max_frame_bytes": 1048576
+  "max_frame_bytes": 1048576,
+  "limits": {
+    "max_seq": 9007199254740991,
+    "max_state_rev": 9007199254740991,
+    "max_tab_id": 2147483647,
+    "max_recorded_seconds": 1000000,
+    "max_banner_count": 99,
+    "max_request_id_chars": 128,
+    "max_display_chars": 120,
+    "max_label_chars": 80,
+    "max_message_chars": 300,
+    "max_reason_chars": 48,
+    "max_timestamp_chars": 40,
+    "max_chord_chars": 40,
+    "max_allow_list": 16,
+    "max_warnings": 8,
+    "session_ref_chars": 24
+  }
 }

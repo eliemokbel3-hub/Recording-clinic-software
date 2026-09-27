@@ -1521,3 +1521,77 @@ class TestStyleOptions:
         assert models.language_model_available() is True
         monkeypatch.setattr(models, "language_runtime_importable", lambda: False)
         assert models.language_model_available() is False  # no runtime
+
+
+class TestChromeView:
+    """Cliniko workflow safeguards plan Task 4.5: the Session screen's
+    Chrome lines and the refusal wording."""
+
+    def test_no_bridge_shows_nothing(self) -> None:
+        assert models.chrome_view_text(models.ChromeView()) == ""
+
+    @pytest.mark.parametrize(
+        "link, first",
+        [
+            ("waiting", models.CHROME_WAITING_LINE),
+            ("connected", models.CHROME_CONNECTED_LINE),
+            ("unavailable", models.CHROME_UNAVAILABLE_LINE),
+        ],
+    )
+    def test_the_link_line_leads_and_hands_free_follows(self, link: str, first: str) -> None:
+        lines = models.chrome_view_text(models.ChromeView(link=link)).split("\n")
+        assert lines == [first, models.CHROME_HANDS_FREE_LINE]
+
+    def test_a_linked_live_session_names_patient_and_clinic(self) -> None:
+        text = models.chrome_view_text(
+            models.ChromeView(link="connected", patient="Jan Citizen", clinic="Northside")
+        )
+        assert "Recording for Jan Citizen - Northside." in text
+        unverified = models.chrome_view_text(
+            models.ChromeView(link="connected", clinic="Northside")
+        )
+        assert "Recording for a patient (name not verified) - Northside." in unverified
+
+    def test_recheck_spoken_pause_and_refusal_lines(self) -> None:
+        from scribe_desktop.encounter import NoteRefusal
+
+        text = models.chrome_view_text(
+            models.ChromeView(
+                link="connected",
+                clinic="Northside",
+                recheck="refused",
+                recheck_reason=NoteRefusal.NOTE_NOT_FOUND,
+                spoken_pause_unavailable=True,
+                refusal="Open the patient's treatment note in Cliniko first.",
+            )
+        )
+        lines = text.split("\n")
+        assert lines[2].startswith("Cliniko did not verify the note after Chrome reconnected: ")
+        assert "{reason}" not in text
+        assert models.CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE in lines
+        assert models.CHROME_HANDS_FREE_LINE not in lines
+        assert lines[-1] == (
+            "Refused from Chrome: Open the patient's treatment note in Cliniko first."
+        )
+
+    def test_every_recheck_line_formats(self) -> None:
+        for key in models.CHROME_RECHECK_LINES:
+            text = models.chrome_view_text(
+                models.ChromeView(link="connected", clinic="Northside", recheck=key)
+            )
+            assert "{" not in text
+
+    def test_refusal_codes_fit_the_protocol_and_cover_start_refusals(self) -> None:
+        import re
+
+        from scribe_desktop.encounter import NoteRefusal, StartRefusal
+        from scribe_desktop.protocol import LIMITS, REASON_PATTERN
+
+        assert {r.value for r in StartRefusal} <= set(models.CHROME_REFUSALS)
+        for code in models.CHROME_REFUSALS:
+            assert re.fullmatch(REASON_PATTERN, code)
+            for note_refusal in (None, *NoteRefusal):
+                message = models.chrome_refusal_message(code, note_refusal)
+                assert "{" not in message and "\n" not in message
+                assert len(message) <= LIMITS["max_message_chars"]
+        assert models.chrome_refusal_message("no-such-code") == models.CHROME_REFUSALS["failed"]

@@ -15,6 +15,7 @@ from scribe_desktop.logging_setup import (
     log_event,
     setup_logging,
 )
+from scribe_desktop.protocol import PROTOCOL_VERSION
 
 
 @pytest.fixture()
@@ -27,7 +28,13 @@ def read_log(tmp_path: Path) -> str:
 
 
 def test_log_event_whitelisted_fields(logger: logging.Logger, tmp_path: Path) -> None:
-    log_event(logger, "handshake_ok", message_type="hello_ack", protocol_version=1, byte_size=42)
+    log_event(
+        logger,
+        "handshake_ok",
+        message_type="hello_ack",
+        protocol_version=PROTOCOL_VERSION,
+        byte_size=42,
+    )
     text = read_log(tmp_path)
     assert "handshake_ok" in text
     assert "message_type=hello_ack" in text
@@ -40,7 +47,12 @@ def test_log_event_rejects_unknown_fields(logger: logging.Logger) -> None:
 
 def test_tripwire_drops_interpolated_envelope(logger: logging.Logger, tmp_path: Path) -> None:
     """The classic misuse: formatting a whole message into the log line."""
-    envelope = {"protocol_version": 1, "type": "ping", "session_nonce": "n" * 32, "payload": {}}
+    envelope = {
+        "protocol_version": PROTOCOL_VERSION,
+        "type": "ping",
+        "session_nonce": "n" * 32,
+        "payload": {},
+    }
     before = dropped_record_count()
     logger.info("got %s", json.dumps(envelope))  # bypasses log_event on purpose
     assert dropped_record_count() == before + 1
@@ -53,7 +65,7 @@ def test_tripwire_drops_pydantic_repr_leak(logger: logging.Logger, tmp_path: Pat
     from scribe_desktop.protocol import Envelope
 
     envelope = Envelope(
-        protocol_version=1,
+        protocol_version=PROTOCOL_VERSION,  # a real, current envelope (v2 floor)
         type="ping",
         request_id="req-leak",
         session_nonce="n" * 32,

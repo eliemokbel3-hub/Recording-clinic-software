@@ -18,11 +18,19 @@ from __future__ import annotations
 import json
 import struct
 import sys
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, Protocol
 
 from scribe_desktop.protocol import MAX_FRAME_BYTES
 
 _LENGTH = struct.Struct("=I")  # 4-byte native-order unsigned
+
+
+class ByteReader(Protocol):
+    """What ``read_frame`` reads from: stdin's binary buffer, or the pipe
+    server's overlapped ``ReadFile`` adapter (Task 4.2). ``read(n)`` returns
+    at most ``n`` bytes — possibly fewer — and ``b""`` at end of stream."""
+
+    def read(self, size: int, /) -> bytes: ...
 
 
 class FramingError(Exception):
@@ -47,7 +55,7 @@ def set_binary_stdio() -> None:
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
 
 
-def _read_exact(stream: BinaryIO, size: int) -> bytes:
+def _read_exact(stream: ByteReader, size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
     while remaining > 0:
@@ -59,7 +67,7 @@ def _read_exact(stream: BinaryIO, size: int) -> bytes:
     return b"".join(chunks)
 
 
-def read_frame(stream: BinaryIO) -> Any:
+def read_frame(stream: ByteReader) -> Any:
     """Read one frame; returns the decoded JSON value.
 
     Raises EndOfStream on clean EOF, FramingError on any violation.
@@ -88,8 +96,16 @@ def read_frame(stream: BinaryIO) -> Any:
         raise FramingError("malformed", "frame body is not valid UTF-8") from exc
     try:
         return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise FramingError("malformed", "frame body is not valid JSON") from exc
+    except ValueError:
+        # JSONDecodeError, and (codex round 27 PR-MED-131) the plain
+        # ValueError of an integer past the int-string digit limit — the
+        # same set ``cliniko_client`` catches. Fixed text: never the value.
+        raise FramingError("malformed", "frame body is not valid JSON") from None
+    except RecursionError:
+        # Round 25 LOW-020: a frame nested past the interpreter's limit is a
+        # framing fault like any other — never an exception that kills the
+        # host's stdin thread, its relay thread or the app's pipe thread.
+        raise FramingError("malformed", "frame body is nested too deeply") from None
 
 
 def write_frame(stream: BinaryIO, value: Any) -> None:

@@ -1,0 +1,9 @@
+{
+  "reason": "hello, hello_ack, ping and pong carry an empty payload",
+  "message": {
+    "protocol_version": 2,
+    "type": "hello",
+    "request_id": "req-0001",
+    "payload": {"debug": true}
+  }
+}

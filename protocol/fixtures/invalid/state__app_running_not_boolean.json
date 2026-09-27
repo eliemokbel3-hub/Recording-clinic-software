@@ -1,0 +1,16 @@
+{
+  "reason": "booleans are JSON booleans, never 0/1",
+  "message": {
+    "protocol_version": 2,
+    "type": "state",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+    "payload": {
+      "state_rev": 0,
+      "app_running": 0,
+      "allow_list": [],
+      "hotkey": {"available": false},
+      "spoken_pause": false,
+      "warnings": []
+    }
+  }
+}

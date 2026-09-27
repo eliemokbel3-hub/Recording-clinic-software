@@ -1370,3 +1370,63 @@ class TestSessionRefs:
         start_unlinked(controller)
         assert controller.resolve_session_ref("not-a-ref") is None
         controller.discard()
+
+
+def _wait_for_seconds(controller: SessionController, expected: int) -> None:
+    deadline = time.monotonic() + 5.0
+    while controller.recorded_seconds != expected:
+        if time.monotonic() > deadline:
+            raise AssertionError(f"recorded_seconds={controller.recorded_seconds} != {expected}")
+        time.sleep(0.005)
+
+
+@windows_only
+class TestRecordedSeconds:
+    """Cliniko workflow safeguards Task 4.5: the timer the panel and the
+    Session screen show — one second per stored chunk (the patched chunk
+    size here keeps the count, not the byte length, under test)."""
+
+    def test_no_session_reads_zero_and_no_live_worker(self, tmp_path: Path) -> None:
+        controller, _ = _controller(tmp_path)
+        assert controller.recorded_seconds == 0
+        assert controller.live_failure is None
+        assert not controller.live_transcription_attached
+
+    def test_counts_chunks_never_the_pause_and_freezes_after_finish(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, backend = _controller(tmp_path)
+        _start_small_chunks(controller, monkeypatch)
+        assert controller.recorded_seconds == 0
+        for _ in range(3):
+            backend.feed(b"\x01" * CHUNK)
+        _wait_for_seconds(controller, 3)
+        controller.pause()
+        backend.feed(b"\x02" * CHUNK)  # dropped while paused: no time added
+        time.sleep(0.05)
+        assert controller.recorded_seconds == 3
+        controller.resume()
+        backend.feed(b"\x03" * CHUNK)
+        backend.feed(b"\x04" * (CHUNK // 2))  # the partial tail counts at Finish
+        controller.finish()
+        assert controller.recorded_seconds == 5
+        controller.mark_queued()
+        assert controller.recorded_seconds == 5
+        # no live transcriber factory: nothing attached, nothing failed
+        assert controller.live_failure is None
+        assert not controller.live_transcription_attached
+        controller.discard()
+        assert controller.recorded_seconds == 0
+
+    def test_a_failed_session_keeps_its_closing_count(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller, backend = _controller(tmp_path)
+        _start_small_chunks(controller, monkeypatch)
+        backend.feed(b"\x01" * CHUNK)
+        backend.feed(b"\x02" * CHUNK)
+        _wait_for_seconds(controller, 2)
+        backend.fail()
+        _wait_for_state(controller, SessionState.FAILED)
+        assert controller.recorded_seconds == 2
+        controller.discard()

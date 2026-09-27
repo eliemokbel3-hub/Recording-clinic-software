@@ -135,6 +135,7 @@ from scribe_desktop.speaker_embedding import (
 from scribe_desktop.speech import SileroVad, vad_model_available
 from scribe_desktop.transcription import (
     DEFAULT_WHISPER_MODEL,
+    LiveFailure,
     LiveFailureKind,
     LiveTranscriber,
     LiveTranscriptionError,
@@ -294,6 +295,112 @@ def session_link_line(session: RecordingSession | None) -> str:
     return LINKED_UNVERIFIED_LABEL
 
 
+# Cliniko workflow safeguards plan Task 4.5: the Chrome link on the Session
+# screen. Plain text only; the patient's name appears only for the live
+# session linked to a note Cliniko verified, and only in memory.
+CHROME_WAITING_LINE: Final = (
+    "Chrome: not connected - open Cliniko in Chrome with the Cliniko Scribe Companion "
+    "extension to record from a treatment note."
+)
+CHROME_CONNECTED_LINE: Final = "Chrome: connected."
+CHROME_UNAVAILABLE_LINE: Final = (
+    "Chrome link unavailable - another program is using its channel. Close Cliniko Scribe "
+    "and open it again; recording from the Session tab still works."
+)
+CHROME_HANDS_FREE_LINE: Final = "Pause hotkey: not set up. Spoken pause: not set up."
+CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE: Final = (
+    "Spoken pause unavailable for this recording - live transcription has stopped."
+)
+CHROME_RECHECK_LINES: Final[Mapping[str, str]] = {
+    "checking": "Checking the note with Cliniko again after Chrome reconnected...",
+    "verified": "Cliniko verified the note again after Chrome reconnected.",
+    "offline": (
+        "Cliniko could not be reached after Chrome reconnected - writing to Cliniko stays "
+        "blocked until it verifies the note."
+    ),
+    "refused": "Cliniko did not verify the note after Chrome reconnected: {reason}.",
+    "clinic_gone": (
+        "This recording's clinic is no longer set up - it cannot be written back to Cliniko."
+    ),
+}
+# Why a command from Chrome was refused (D2: sent in ``state.last_refusal``,
+# never as an error). Each names what to do next.
+CHROME_REFUSALS: Final[Mapping[str, str]] = {
+    "stale_state": (
+        "The side panel was out of date - check the patient shown and press it again."
+    ),
+    "no_report": "Open the patient's treatment note in Cliniko first.",
+    "target_mismatch": (
+        "The side panel no longer matches the note on screen - check the patient and press "
+        "Start again."
+    ),
+    "checking": "Still checking the note with Cliniko - wait a moment, then press Start.",
+    "not_verified": "Cliniko did not verify this note: {reason}.",
+    "session_active": "A recording is already in progress - finish it first.",
+    "review_open": "Save or cancel the open note review on the Note tab to start.",
+    "no_microphone": "Select an input device on the Microphone tab first.",
+    "busy": "The app is still transcribing - wait for it to finish.",
+    "session_changed": (
+        "That recording has already ended or changed - the side panel shows the current one."
+    ),
+    "not_allowed_now": "That is not possible for this recording right now.",
+    "report_mismatch": (
+        "Open this recording's own treatment note in Cliniko to resume it."
+    ),
+    "not_available": "That action is not available in this version.",
+    "failed": "It did not work - see the Session tab in Cliniko Scribe.",
+}
+
+
+def chrome_refusal_message(reason: str, note_refusal: NoteRefusal | None = None) -> str:
+    """The plain line for a refused Chrome command (``reason`` is a code)."""
+    template = CHROME_REFUSALS.get(reason, CHROME_REFUSALS["failed"])
+    detail = note_refusal_line(note_refusal) if note_refusal is not None else "no reason given"
+    return template.format(reason=detail)
+
+
+@dataclass(frozen=True)
+class ChromeView:
+    """What the Session screen shows about the Chrome link (Task 4.5).
+    ``link`` is ``off`` (no bridge), ``waiting``, ``connected`` or
+    ``unavailable``. ``patient`` is a display string held in memory only."""
+
+    link: str = "off"
+    patient: str | None = None
+    clinic: str | None = None
+    recheck: str | None = None
+    recheck_reason: NoteRefusal | None = None
+    spoken_pause_unavailable: bool = False
+    refusal: str | None = None
+
+
+def chrome_view_text(view: ChromeView) -> str:
+    """The Session screen's Chrome lines; empty when there is no bridge."""
+    if view.link == "off":
+        return ""
+    lines = [
+        {
+            "waiting": CHROME_WAITING_LINE,
+            "connected": CHROME_CONNECTED_LINE,
+            "unavailable": CHROME_UNAVAILABLE_LINE,
+        }.get(view.link, CHROME_WAITING_LINE)
+    ]
+    if view.clinic is not None:
+        who = view.patient if view.patient is not None else "a patient (name not verified)"
+        lines.append(f"Recording for {who} - {view.clinic}.")
+    if view.recheck is not None:
+        reason = note_refusal_line(view.recheck_reason) if view.recheck_reason else ""
+        lines.append(CHROME_RECHECK_LINES[view.recheck].format(reason=reason))
+    lines.append(
+        CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE
+        if view.spoken_pause_unavailable
+        else CHROME_HANDS_FREE_LINE
+    )
+    if view.refusal is not None:
+        lines.append(f"Refused from Chrome: {view.refusal}")
+    return "\n".join(lines)
+
+
 class SessionControllerLike(Protocol):
     """The controller surface the screens depend on (fakes in tests)."""
 
@@ -305,6 +412,21 @@ class SessionControllerLike(Protocol):
 
     @property
     def session(self) -> RecordingSession | None: ...
+
+    # Cliniko workflow safeguards plan Task 4.5 (D2, D7): the tracked
+    # session's opaque reference, its recorded time (pauses excluded), and
+    # its live transcriber's failure state — read by the Chrome bridge.
+    @property
+    def session_ref(self) -> str | None: ...
+
+    @property
+    def recorded_seconds(self) -> int: ...
+
+    @property
+    def live_failure(self) -> LiveFailure | None: ...
+
+    @property
+    def generating(self) -> bool: ...
 
     # Cliniko workflow safeguards plan Task 3.3: consent is required on every
     # Start (Constraint 4); ``context`` None is an unlinked recording.
@@ -2838,6 +2960,16 @@ __all__ = [
     "LINKED_VERIFIED_LABEL",
     "LINKED_UNVERIFIED_LABEL",
     "session_link_line",
+    "CHROME_WAITING_LINE",
+    "CHROME_CONNECTED_LINE",
+    "CHROME_UNAVAILABLE_LINE",
+    "CHROME_HANDS_FREE_LINE",
+    "CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE",
+    "CHROME_RECHECK_LINES",
+    "CHROME_REFUSALS",
+    "chrome_refusal_message",
+    "ChromeView",
+    "chrome_view_text",
     "RECOVERY_NO_ENCOUNTER_LINE",
     "RECOVERY_ENCOUNTER_LINE",
     "CHECKOUT_CONSENT_UNAVAILABLE_LINE",

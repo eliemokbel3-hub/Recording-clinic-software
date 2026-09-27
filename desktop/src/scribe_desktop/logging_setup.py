@@ -224,6 +224,16 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"patient_display_name"',
     "'patient_display_name'",
     "patient_display_name=",
+    # Task 4.1 (protocol v2, D2): the ``state`` payload's display strings
+    # travel as ``patient_name`` (report, live, block, banner) and a
+    # ``context`` / ``command`` names ``note_id``. A payload or model of any
+    # of them is dropped, quoted or unquoted.
+    '"patient_name"',
+    "'patient_name'",
+    "patient_name=",
+    '"note_id"',
+    "'note_id'",
+    "note_id=",
 )
 
 # THE production log format — one string, used to build every handler's

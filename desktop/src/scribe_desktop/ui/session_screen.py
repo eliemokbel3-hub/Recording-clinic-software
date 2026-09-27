@@ -77,6 +77,12 @@ class SessionScreen(QWidget):
         self.consent_checkbox = QCheckBox(models.RECORDING_CONSENT_LABEL)
         self.consent_checkbox.setChecked(False)
         self.consent_checkbox.toggled.connect(lambda _checked: self.refresh())
+        # Task 4.5: the Chrome link, as the bridge reports it (plain text —
+        # it may carry a patient's name for the linked live session).
+        self.chrome_label = QLabel()
+        self.chrome_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.chrome_label.setWordWrap(True)
+        self.chrome_label.hide()
         self.message_label = QLabel()
         # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
         # exception detail (config validation errors, save/compose failures),
@@ -116,6 +122,7 @@ class SessionScreen(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(self.state_label)
         layout.addWidget(self.link_label)
+        layout.addWidget(self.chrome_label)
         layout.addWidget(self.consent_checkbox)
         layout.addLayout(buttons)
         layout.addWidget(self.progress_label)
@@ -175,6 +182,16 @@ class SessionScreen(QWidget):
     def _show_message(self, text: str) -> None:
         self.message_label.setText(text)
 
+    def set_chrome_view(self, text: str) -> None:
+        """Task 4.5: the bridge's Chrome lines (hidden when empty)."""
+        self.chrome_label.setText(text)
+        self.chrome_label.setVisible(bool(text))
+
+    def has_input_device(self) -> bool:
+        """Whether Start has a microphone (the bridge names a missing one
+        as a refusal before it asks for a linked Start)."""
+        return self._device_provider() is not None
+
     def report_live_status(self, text: str) -> None:
         """Thread-safe: called by the transcriber callable on the processing
         thread; the queued ``live_status`` signal delivers it to the slot."""
@@ -197,51 +214,64 @@ class SessionScreen(QWidget):
         self.consent_checkbox.setChecked(False)
         self._start(unlinked_consent(), None)
 
-    def start_linked(self, consent: ConsentAttestation, context: EncounterContext) -> None:
-        """A linked Start (Task 4.5 wires it from the Chrome side panel): the
-        panel's own consent tick produced ``consent``, and the context is the
-        one the bound report's verification produced. The controller refuses
-        a consent that does not name the context's note."""
+    def start_linked(self, consent: ConsentAttestation, context: EncounterContext) -> bool:
+        """A linked Start, from the Chrome side panel (Task 4.5): the panel's
+        own consent tick produced ``consent``, and the context is the one the
+        bound report's verification produced. The controller refuses a
+        consent that does not name the context's note. True when it started.
+        The desktop tick is cleared too (every Start clears it)."""
         self.consent_checkbox.setChecked(False)
-        self._start(consent, context)
+        return self._start(consent, context)
 
-    def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> None:
+    def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> bool:
         device_id = self._device_provider()
         if device_id is None:
             self._show_message("Select an input device on the Microphone screen first.")
             self.refresh()
-            return
+            return False
+        started = False
         try:
             self._controller.start(device_id, consent=consent, context=context)
+            started = True
             self.session_started.emit()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
             self._show_message(f"Start failed: {type(exc).__name__}: {exc}")
         self.refresh()
+        return started
 
-    def on_pause(self) -> None:
+    # Each control below returns True when it did what it says (the Chrome
+    # bridge, Task 4.5, reports a False as a refusal); a button ignores it.
+
+    def on_pause(self) -> bool:
         try:
             self._controller.pause()
             self._show_message("Paused.")
         except Exception as exc:  # noqa: BLE001
             self._show_message(f"Pause failed: {type(exc).__name__}: {exc}")
+            self.refresh()
+            return False
         self.refresh()
+        return True
 
-    def on_resume(self) -> None:
+    def on_resume(self) -> bool:
         try:
             self._controller.resume()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001
             self._show_message(f"Resume failed: {type(exc).__name__}: {exc}")
+            self.refresh()
+            return False
         self.refresh()
+        return True
 
-    def on_finish(self) -> None:
+    def on_finish(self) -> bool:
         try:
             session = self._controller.finish()
         except Exception as exc:  # noqa: BLE001
             self._show_message(f"Finish failed: {type(exc).__name__}: {exc}")
             self.refresh()
-            return
+            return False
         if session.state != SessionState.PROCESSING:
             # Disk failure during the final flush: failed but RECOVERABLE.
             self._show_message(
@@ -249,17 +279,21 @@ class SessionScreen(QWidget):
                 "from the Recovery screen after an app restart, or can be discarded."
             )
             self.refresh()
-            return
+            return False
         self._begin_transcription()
+        return True
 
-    def on_discard(self) -> None:
+    def on_discard(self) -> bool:
         try:
             self._controller.discard()
             self.session_discarded.emit()
             self._show_message("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
             self._show_message(f"Discard failed: {type(exc).__name__}: {exc}")
+            self.refresh()
+            return False
         self.refresh()
+        return True
 
     # --- transcription (Finish -> processing -> queued) -------------------------
 

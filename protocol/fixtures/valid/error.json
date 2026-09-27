@@ -1,5 +1,5 @@
 {
-  "protocol_version": 1,
+  "protocol_version": 2,
   "type": "error",
   "payload": {
     "code": "bad_nonce",

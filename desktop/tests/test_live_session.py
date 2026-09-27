@@ -597,6 +597,7 @@ class TestLiveSessionController:
         controller, backend = _controller(tmp_path, workers)
         start_unlinked(controller)
         worker = workers.last
+        assert controller.live_transcription_attached and controller.live_failure is None
 
         def broken_feed(data: bytes) -> None:
             raise RuntimeError("tee broke")
@@ -609,6 +610,10 @@ class TestLiveSessionController:
         failure = worker.failed_reason
         assert failure is not None and failure.kind == LiveFailureKind.WORKER_ERROR
         assert "RuntimeError: tee broke" in failure.detail
+        # Task 4.5: the controller surfaces it (the panel's "spoken pause
+        # unavailable" line) while the worker stays attached until Finish.
+        assert controller.live_failure == failure
+        assert controller.live_transcription_attached
         assert controller.finish().state is SessionState.PROCESSING
         statuses: list[str] = []
         document, directory, crypto = _transcribe(controller, statuses)

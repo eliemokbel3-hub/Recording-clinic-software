@@ -1,0 +1,18 @@
+{
+  "reason": "a Cliniko id has no leading zero (^[1-9][0-9]{0,18}$)",
+  "message": {
+    "protocol_version": 2,
+    "type": "context",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+    "payload": {
+      "seq": 7,
+      "tab_id": 412,
+      "window_id": 3,
+      "focused": true,
+      "page": "note",
+      "host": "example-clinic.au1.cliniko.com",
+      "patient_id": "0123",
+      "note_id": "2002"
+    }
+  }
+}

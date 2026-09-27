@@ -1,0 +1,15 @@
+{
+  "reason": "state requires the session nonce on the Chrome wire (the host stamps it)",
+  "message": {
+    "protocol_version": 2,
+    "type": "state",
+    "payload": {
+      "state_rev": 0,
+      "app_running": false,
+      "allow_list": [],
+      "hotkey": {"available": false},
+      "spoken_pause": false,
+      "warnings": []
+    }
+  }
+}

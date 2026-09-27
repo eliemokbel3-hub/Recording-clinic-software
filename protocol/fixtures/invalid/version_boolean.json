@@ -1,0 +1,9 @@
+{
+  "reason": "protocol_version is a JSON integer: a boolean is refused on both mirrors (malformed, never below the floor)",
+  "message": {
+    "protocol_version": true,
+    "type": "hello",
+    "request_id": "req-0001",
+    "payload": {}
+  }
+}

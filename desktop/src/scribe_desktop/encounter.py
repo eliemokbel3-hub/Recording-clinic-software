@@ -779,19 +779,21 @@ class VerificationLedger:
 
 
 def reverification_request(
-    context: EncounterContext, clinics: ClinicDirectory, *, seq: int
+    context: EncounterContext, clinics: ClinicDirectory, *, seq: int, conn_gen: int = 0
 ) -> VerificationRequest | None:
-    """D4's re-verification of a checked-out session's stored note (Task
-    3.4): the same check, for the stored target, under the clinic's CURRENT
-    key and rev. None when the clinic is gone (or has no contact email): the
-    session cannot count as linked. ``conn_gen`` 0 marks a checkout request
-    (it answers no pipe report); ``seq`` is the caller's checkout number."""
+    """D4's re-verification of a session's stored note: the same check, for
+    the stored target, under the clinic's CURRENT key and rev. None when the
+    clinic is gone (or has no contact email): the session cannot count as
+    linked. ``conn_gen`` 0 marks a checkout request (Task 3.4 — it answers no
+    pipe report); the Chrome bridge passes the pipe connection it re-checks
+    a linked live session for (Task 4.5). ``seq`` is the caller's own
+    number for the request."""
     clinic = clinics.record(context.clinic_id)
     email = clinics.contact_email
     if clinic is None or email is None:
         return None
     return VerificationRequest(
-        conn_gen=0,
+        conn_gen=conn_gen,
         seq=seq,
         target=context.target,
         clinic=clinic,

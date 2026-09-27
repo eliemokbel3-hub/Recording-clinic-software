@@ -8,13 +8,16 @@ must never run its own controller/sweep over the shared sessions root);
 then the 24-hour expiry sweep (Flow 3) before the recovery screen lists
 anything; a periodic sweep re-runs the expiry rule on a best-effort
 cadence while the app stays open (round 47 PR-LOW-001 — "keeps the cap
-enforced" overstated it: see ``_SWEEP_INTERVAL_MS``).
+enforced" overstated it: see ``_SWEEP_INTERVAL_MS``). Last, the Chrome link
+(Cliniko workflow safeguards plan Tasks 4.2 + 4.5): the named pipe the
+native host connects to, behind the single-instance guard.
 """
 
 from __future__ import annotations
 
 import ctypes
 import getpass
+import logging
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -22,6 +25,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 from scribe_desktop.logging_setup import log_event, setup_logging
+from scribe_desktop.pipe_server import PipeServer, PipeUnavailable
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import default_sessions_root, sweep_sessions
 from scribe_desktop.ui.main_window import MainWindow
@@ -136,6 +140,26 @@ def sweep_protected_ids(
     return controller.custody_protected_ids() | extra
 
 
+def _start_chrome_link(window: MainWindow, logger: logging.Logger) -> PipeServer | None:
+    """Cliniko workflow safeguards plan Tasks 4.2 + 4.5: the named pipe the
+    native host connects to, and the bridge behind it. Created AFTER the
+    single-instance guard, so a refused second instance never touches the
+    pipe name. A held name is refused, never shared (``PipeUnavailable``):
+    the Session screen says so and desktop recording still works. A named
+    pipe opens no socket; nothing here contacts Cliniko."""
+    bridge = window.attach_chrome_link()
+    try:
+        server = PipeServer.for_current_user(bridge, logger=logger)
+        bridge.attach(server)  # before start: the first client finds a sender
+        server.start()
+    except PipeUnavailable as exc:
+        bridge.set_unavailable()
+        log_event(logger, "pipe_server", state=exc.reason)
+        return None
+    log_event(logger, "pipe_server", state="listening")
+    return server
+
+
 def main() -> int:
     logger = setup_logging("scribe-app")
     # Offline kill-switches: set AND asserted before any ML code can run
@@ -168,6 +192,9 @@ def main() -> int:
 
     run_sweep()  # Flow 3: app start -> sweep BEFORE the recovery list renders
     window = MainWindow(controller, backend, sessions_root=sessions_root)
+    pipe = _start_chrome_link(window, logger)
+    if pipe is not None:
+        app.aboutToQuit.connect(pipe.stop)
 
     sweep_timer = QTimer(window)
     sweep_timer.setInterval(_SWEEP_INTERVAL_MS)

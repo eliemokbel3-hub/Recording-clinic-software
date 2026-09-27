@@ -4,7 +4,9 @@ no-socket proof for every path that must stay offline.
 Scope since the Cliniko workflow safeguards plan (D9, Task 1.2): the app's
 offline contract is "no connection except Cliniko's API, and none at startup
 or idle". Every leg here covers a path that must open NO connection at all —
-the host, the app's startup and idle, capture, transcription, prose — and
+the host, the app's startup and idle, the app with the Chrome link's named
+pipe open and a client connected (Tasks 4.2 + 4.5), the host relaying to an
+open app pipe (Task 4.4), capture, transcription, prose — and
 asserts exactly zero, with no allow-list. The Cliniko client
 (``cliniko_client.py``, the one network-capable module) has no caller on any
 of these paths; its own tests (``test_cliniko_client.py``) inject a fake
@@ -74,8 +76,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 import psutil
 import pytest
@@ -83,6 +86,7 @@ import pytest
 from scribe_desktop.benchmark import apply_offline_env
 from scribe_desktop.identity import EXPECTED_ORIGIN as ORIGIN
 from scribe_desktop.identity import NONCE_HEX_LENGTH
+from scribe_desktop.protocol import PROTOCOL_VERSION
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -163,7 +167,25 @@ def _amplitude_vad(frame_bytes: bytes) -> float:
 # ---------------------------------------------------------------------------
 
 
+def _real_app_pipe_exists() -> bool:
+    """Whether a scribe-app is listening on THIS user's real pipe (Task 4.4):
+    the launcher leg's host relays to that name, so it must never reach a
+    practitioner's running app (it would count as a new Chrome connection)."""
+    import pywintypes
+    import win32pipe
+
+    from scribe_desktop.pipe_server import current_user_sid, pipe_name
+
+    try:
+        win32pipe.WaitNamedPipe(pipe_name(current_user_sid()), 1)
+    except pywintypes.error as error:
+        return error.winerror != 2  # ERROR_FILE_NOT_FOUND: no app
+    return True
+
+
 def test_full_handshake_via_launcher_with_no_sockets() -> None:
+    if _real_app_pipe_exists():
+        pytest.skip("scribe-app is running on this host: close it to run the launcher leg")
     host = subprocess.Popen(
         [str(LAUNCHER), ORIGIN, "--parent-window=0"],
         stdin=subprocess.PIPE,
@@ -177,13 +199,25 @@ def test_full_handshake_via_launcher_with_no_sockets() -> None:
         assert host.stdin and host.stdout
 
         host.stdin.write(
-            frame({"protocol_version": 1, "type": "hello", "request_id": "it-1", "payload": {}})
+            frame(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "type": "hello",
+                    "request_id": "it-1",
+                    "payload": {},
+                }
+            )
         )
         host.stdin.flush()
         ack = read_one_frame(host.stdout)
         assert ack["type"] == "hello_ack"
         nonce = ack["session_nonce"]
         assert len(nonce) == NONCE_HEX_LENGTH
+        # Task 4.4: with no app, the relay says so once, stamped, and waits on.
+        not_running = read_one_frame(host.stdout)
+        assert not_running["type"] == "state", not_running["type"]
+        assert not_running["session_nonce"] == nonce
+        assert not_running["payload"]["app_running"] is False
 
         # Poll the whole process tree (the .bat wraps cmd -> python) mid-session.
         procs = [ps_host, *ps_host.children(recursive=True)]
@@ -196,7 +230,7 @@ def test_full_handshake_via_launcher_with_no_sockets() -> None:
         host.stdin.write(
             frame(
                 {
-                    "protocol_version": 1,
+                    "protocol_version": PROTOCOL_VERSION,
                     "type": "ping",
                     "request_id": "it-2",
                     "session_nonce": nonce,
@@ -269,6 +303,249 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
     finally:
         app.kill()
         app.wait(timeout=15)  # PR round 31: reap uniformly
+
+
+# Cliniko workflow safeguards Tasks 4.2 + 4.5: the app with the Chrome link
+# OPEN — the named pipe listening, a client connected, a report in and the
+# state snapshot out. The pipe name is unique to the child (never the real
+# per-user name), the registry is empty (the report's host is not on the
+# allow-list, so no Cliniko check is due), and the process must hold no
+# socket while the pipe is connected: a named pipe is not a network endpoint.
+_PIPE_APP_CHILD = """\
+import json, struct, tempfile, threading, time, uuid
+from pathlib import Path
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+apply_offline_env()
+assert_offline_env()
+import win32con, win32file
+from PySide6.QtWidgets import QApplication
+from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
+from scribe_desktop.protocol import PROTOCOL_VERSION
+from scribe_desktop.session import SessionController
+from scribe_desktop.ui.main_window import MainWindow
+app = QApplication([])
+base = Path(tempfile.mkdtemp())
+root = base / 'sessions'
+backend = MockCaptureBackend()
+controller = SessionController(backend, sessions_root=root)
+w = MainWindow(controller, backend, sessions_root=root,
+               profile_root=base / 'profile', config_root=base / 'config',
+               style_root=base / 'style', language_model_available=lambda: False,
+               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+bridge = w.attach_chrome_link()
+name = '\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
+server = PipeServer(name, bridge, sddl=pipe_sddl(current_user_sid()))
+bridge.attach(server)
+server.start()
+frames = []
+handles = []
+def client():
+    h = win32file.CreateFile(name, win32con.GENERIC_READ | win32con.GENERIC_WRITE,
+                             0, None, win32con.OPEN_EXISTING, 0, None)
+    handles.append(h)
+    body = json.dumps({'protocol_version': PROTOCOL_VERSION, 'type': 'context',
+                       'payload': {'seq': 1, 'tab_id': 7, 'window_id': 1, 'focused': True,
+                                   'page': 'note', 'host': 'example-clinic.au1.cliniko.com',
+                                   'patient_id': '1001', 'note_id': '2002'}}).encode()
+    win32file.WriteFile(h, struct.pack('=I', len(body)) + body)
+    def read(n):
+        data = b''
+        while len(data) < n:
+            _, chunk = win32file.ReadFile(h, n - len(data))
+            data += chunk
+        return data
+    # The writer is latest-wins: the snapshot on connect may be superseded by
+    # the one after the report, so read until that one arrives.
+    while not frames or frames[-1]['payload'].get('notice') != 'clinic_not_set_up':
+        (length,) = struct.unpack('=I', read(4))
+        frames.append(json.loads(read(length)))
+threading.Thread(target=client, daemon=True).start()
+deadline = time.monotonic() + 20
+while not frames or frames[-1]['payload'].get('notice') != 'clinic_not_set_up':
+    if time.monotonic() > deadline:
+        break
+    app.processEvents()
+    time.sleep(0.01)
+last = frames[-1] if frames else {'type': 'none', 'payload': {}}
+print('READY ' + last['type'] + ':' + str(last['payload'].get('notice')), flush=True)
+end = time.monotonic() + 5
+while time.monotonic() < end:
+    app.processEvents()
+    time.sleep(0.02)
+"""
+
+
+def test_scribe_app_with_the_chrome_link_open_has_no_sockets(tmp_path: Path) -> None:
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    script = tmp_path / "pipe_app_child.py"
+    script.write_text(_PIPE_APP_CHILD, encoding="utf-8")
+    app = subprocess.Popen(
+        [sys.executable, str(script)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        cwd=str(REPO),
+    )
+    try:
+        assert app.stdout
+        line = app.stdout.readline().strip().decode()
+        assert line == "READY state:clinic_not_set_up", line
+        ps_app = psutil.Process(app.pid)
+        for _ in range(5):  # the pipe client is still connected here
+            assert_no_connections(ps_app, "scribe-app with the Chrome link open")
+            time.sleep(0.1)
+    finally:
+        app.kill()
+        app.wait(timeout=15)
+
+
+# Task 4.4: the whole relay, process to process — a real app (the bridge on a
+# unique pipe name) and a real host process relaying to it, both polled with
+# the host mid-session. The report's host is not on the (empty) allow-list,
+# so no Cliniko check is due.
+_APP_SERVER_CHILD = """\
+import sys, tempfile, time
+from pathlib import Path
+from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+apply_offline_env()
+assert_offline_env()
+from PySide6.QtWidgets import QApplication
+from scribe_desktop.audio_capture import MockCaptureBackend
+from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
+from scribe_desktop.session import SessionController
+from scribe_desktop.ui.main_window import MainWindow
+app = QApplication([])
+base = Path(tempfile.mkdtemp())
+root = base / 'sessions'
+backend = MockCaptureBackend()
+controller = SessionController(backend, sessions_root=root)
+w = MainWindow(controller, backend, sessions_root=root,
+               profile_root=base / 'profile', config_root=base / 'config',
+               style_root=base / 'style', language_model_available=lambda: False,
+               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+bridge = w.attach_chrome_link()
+server = PipeServer(sys.argv[1], bridge, sddl=pipe_sddl(current_user_sid()))
+bridge.attach(server)
+server.start()
+print('READY', flush=True)
+end = time.monotonic() + 60
+while time.monotonic() < end:
+    app.processEvents()
+    time.sleep(0.01)
+"""
+
+_HOST_RELAY_CHILD = """\
+import logging, sys
+from scribe_desktop.framing import set_binary_stdio
+from scribe_desktop.native_host import app_relay_factory, run_host
+set_binary_stdio()
+logger = logging.getLogger('host-relay-child')
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
+sys.exit(run_host(sys.stdin.buffer, sys.stdout.buffer, logger,
+                  relay_factory=app_relay_factory(sys.argv[1])))
+"""
+
+
+def _read_state_until(
+    stream: IO[bytes], predicate: Callable[[dict[str, Any]], bool], limit: int = 20
+) -> dict[str, Any]:
+    for _ in range(limit):
+        message = read_one_frame(stream)
+        assert message["type"] == "state", message["type"]
+        if predicate(message):
+            return message
+    raise AssertionError("the expected state never arrived")
+
+
+def test_host_relays_to_an_open_app_pipe_with_no_sockets(tmp_path: Path) -> None:
+    import uuid
+
+    pipe = f"\\\\.\\pipe\\ClinikoScribe-test-{uuid.uuid4().hex}"
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    app_script = tmp_path / "app_server_child.py"
+    app_script.write_text(_APP_SERVER_CHILD, encoding="utf-8")
+    host_script = tmp_path / "host_relay_child.py"
+    host_script.write_text(_HOST_RELAY_CHILD, encoding="utf-8")
+    app = subprocess.Popen(
+        [sys.executable, str(app_script), pipe],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        env=env,
+        cwd=str(REPO),
+    )
+    host: subprocess.Popen[bytes] | None = None
+    try:
+        assert app.stdout
+        assert app.stdout.readline().strip() == b"READY"
+        host = subprocess.Popen(
+            [sys.executable, str(host_script), pipe],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            cwd=str(REPO),
+            creationflags=CREATE_NO_WINDOW,
+        )
+        assert host.stdin and host.stdout
+        host.stdin.write(
+            frame(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "type": "hello",
+                    "request_id": "it-1",
+                    "payload": {},
+                }
+            )
+        )
+        host.stdin.flush()
+        ack = read_one_frame(host.stdout)
+        assert ack["type"] == "hello_ack"
+        nonce = ack["session_nonce"]
+        # The app's snapshot on connect, relayed with this session's nonce.
+        first = _read_state_until(host.stdout, lambda m: m["payload"]["app_running"] is True)
+        assert first["session_nonce"] == nonce
+        host.stdin.write(
+            frame(
+                {
+                    "protocol_version": PROTOCOL_VERSION,
+                    "type": "context",
+                    "session_nonce": nonce,
+                    "payload": {
+                        "seq": 1,
+                        "tab_id": 7,
+                        "window_id": 1,
+                        "focused": True,
+                        "page": "note",
+                        "host": "example-clinic.au1.cliniko.com",
+                        "patient_id": "1001",
+                        "note_id": "2002",
+                    },
+                }
+            )
+        )
+        host.stdin.flush()
+        # The report reached the app, and its answer came back through the host.
+        answer = _read_state_until(
+            host.stdout, lambda m: m["payload"].get("notice") == "clinic_not_set_up"
+        )
+        assert answer["session_nonce"] == nonce
+        for proc in (psutil.Process(app.pid), psutil.Process(host.pid)):
+            for _ in range(5):
+                assert_no_connections(proc, f"relay leg pid={proc.pid}")
+                time.sleep(0.05)
+        host.stdin.close()
+        assert host.wait(timeout=15) == 0
+    finally:
+        if host is not None and host.poll() is None:
+            host.kill()
+            host.wait(timeout=15)
+        app.kill()
+        app.wait(timeout=15)
 
 
 # ---------------------------------------------------------------------------

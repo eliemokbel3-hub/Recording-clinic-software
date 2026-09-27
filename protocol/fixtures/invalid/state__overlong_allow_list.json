@@ -1,0 +1,23 @@
+{
+  "reason": "the allow-list has at most 16 hosts",
+  "message": {
+    "protocol_version": 2,
+    "type": "state",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+    "payload": {
+      "state_rev": 21,
+      "app_running": true,
+      "allow_list": [
+        "c1.au1.cliniko.com", "c2.au1.cliniko.com", "c3.au1.cliniko.com",
+        "c4.au1.cliniko.com", "c5.au1.cliniko.com", "c6.au1.cliniko.com",
+        "c7.au1.cliniko.com", "c8.au1.cliniko.com", "c9.au1.cliniko.com",
+        "c10.au1.cliniko.com", "c11.au1.cliniko.com", "c12.au1.cliniko.com",
+        "c13.au1.cliniko.com", "c14.au1.cliniko.com", "c15.au1.cliniko.com",
+        "c16.au1.cliniko.com", "c17.au1.cliniko.com"
+      ],
+      "hotkey": {"available": false},
+      "spoken_pause": false,
+      "warnings": []
+    }
+  }
+}

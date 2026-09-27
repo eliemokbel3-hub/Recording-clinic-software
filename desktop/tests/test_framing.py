@@ -3,19 +3,20 @@
 import io
 import json
 import struct
+import sys
 
 import pytest
 
 from conftest import frame as frame_bytes
 from scribe_desktop.framing import EndOfStream, FramingError, read_frame, write_frame
-from scribe_desktop.protocol import MAX_FRAME_BYTES
+from scribe_desktop.protocol import MAX_FRAME_BYTES, PROTOCOL_VERSION
 
 
 def test_round_trip() -> None:
     out = io.BytesIO()
-    write_frame(out, {"protocol_version": 1, "type": "hello", "payload": {}})
+    write_frame(out, {"protocol_version": PROTOCOL_VERSION, "type": "hello", "payload": {}})
     assert read_frame(io.BytesIO(out.getvalue())) == {
-        "protocol_version": 1,
+        "protocol_version": PROTOCOL_VERSION,
         "type": "hello",
         "payload": {},
     }
@@ -77,6 +78,37 @@ def test_malformed_json_rejected() -> None:
     data = struct.pack("=I", len(body)) + body
     with pytest.raises(FramingError, match="not valid JSON"):
         read_frame(io.BytesIO(data))
+
+
+def test_json_nested_past_the_recursion_limit_is_a_framing_fault() -> None:
+    """Round 25 LOW-020: within the size bound, deep nesting makes the JSON
+    decoder raise RecursionError — which must surface as the ordinary
+    ``malformed`` fault every reader handles, not escape a reader thread."""
+    depth = 200_000
+    body = b"[" * depth + b"]" * depth
+    assert len(body) <= MAX_FRAME_BYTES
+    data = struct.pack("=I", len(body)) + body
+    with pytest.raises(FramingError, match="nested too deeply") as caught:
+        read_frame(io.BytesIO(data))
+    assert caught.value.code == "malformed"
+
+
+def test_an_integer_past_the_digit_limit_is_a_framing_fault() -> None:
+    """Codex round 27 PR-MED-131: past the int-string digit limit the JSON
+    decoder raises a plain ValueError (not a JSONDecodeError) — the LOW-020
+    class's sibling. The limit is pinned to the interpreter default (the
+    host could move it) and restored, as ``test_cliniko_client`` does."""
+    body = b'{"n": ' + b"9" * 5000 + b"}"
+    data = struct.pack("=I", len(body)) + body
+    previous = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(4300)
+    try:
+        with pytest.raises(FramingError, match="not valid JSON") as caught:
+            read_frame(io.BytesIO(data))
+    finally:
+        sys.set_int_max_str_digits(previous)
+    assert caught.value.code == "malformed"
+    assert "9999" not in str(caught.value)
 
 
 def test_back_to_back_frames_in_one_stream() -> None:

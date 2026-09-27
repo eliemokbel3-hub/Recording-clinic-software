@@ -1,0 +1,17 @@
+{
+  "reason": "context requires the session nonce on the Chrome wire",
+  "message": {
+    "protocol_version": 2,
+    "type": "context",
+    "payload": {
+      "seq": 7,
+      "tab_id": 412,
+      "window_id": 3,
+      "focused": true,
+      "page": "note",
+      "host": "example-clinic.au1.cliniko.com",
+      "patient_id": "1001",
+      "note_id": "2002"
+    }
+  }
+}

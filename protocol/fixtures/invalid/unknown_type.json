@@ -1,7 +1,7 @@
 {
   "reason": "unknown message type",
   "message": {
-    "protocol_version": 1,
+    "protocol_version": 2,
     "type": "shutdown",
     "payload": {}
   }

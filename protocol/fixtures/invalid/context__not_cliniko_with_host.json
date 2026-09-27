@@ -1,0 +1,16 @@
+{
+  "reason": "a tab that left the allow-list reports not_cliniko with NO host",
+  "message": {
+    "protocol_version": 2,
+    "type": "context",
+    "session_nonce": "9f2c4a8e1b7d3f6a5c0e8b2d4f7a9c1e3b5d7f0a2c4e6b8d1f3a5c7e9b0d2f4a",
+    "payload": {
+      "seq": 9,
+      "tab_id": 412,
+      "window_id": 3,
+      "focused": true,
+      "page": "not_cliniko",
+      "host": "example-clinic.au1.cliniko.com"
+    }
+  }
+}

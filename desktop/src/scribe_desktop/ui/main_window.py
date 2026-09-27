@@ -49,6 +49,7 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
 )
 from scribe_desktop.ui import models
+from scribe_desktop.ui.bridge import ChromeBridge
 from scribe_desktop.ui.clinics import ClinicsScreen
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
@@ -241,6 +242,9 @@ class MainWindow(QMainWindow):
         # D9: a Replace key or Remove moves the clinic's rev — a checkout's
         # re-verification under the old rev no longer counts; check again.
         self.clinics_screen.clinics_changed.connect(self._on_clinics_changed)
+        # Task 4.5: the Chrome link, attached by `app.main` with the pipe
+        # (`attach_chrome_link`); None in tests that build a window alone.
+        self.chrome_bridge: ChromeBridge | None = None
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -287,6 +291,20 @@ class MainWindow(QMainWindow):
         self.transcript_screen.generation_active_changed.connect(
             self._on_generation_active
         )
+
+    # --- the Chrome link (Task 4.5) ------------------------------------------
+
+    def attach_chrome_link(self) -> ChromeBridge:
+        """Build the Chrome bridge over this window's controller, Session
+        screen and clinic registry (``app.main`` then hands it the pipe). A
+        Replace key or Remove re-checks its bound report (D9)."""
+        if self.chrome_bridge is None:
+            bridge = ChromeBridge(
+                self._controller, self.session_screen, self._clinic_registry, parent=self
+            )
+            self.clinics_screen.clinics_changed.connect(bridge.on_clinics_changed)
+            self.chrome_bridge = bridge
+        return self.chrome_bridge
 
     # --- routing -----------------------------------------------------------
 
@@ -384,6 +402,7 @@ class MainWindow(QMainWindow):
             or self.note_screen.is_busy
             or self.clinics_screen.is_busy
             or self.is_reverifying
+            or (self.chrome_bridge is not None and self.chrome_bridge.is_busy)
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "

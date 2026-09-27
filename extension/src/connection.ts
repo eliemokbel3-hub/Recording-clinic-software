@@ -10,8 +10,13 @@
 //
 // The session nonce is a session identifier, not authentication (plan Key
 // Design Decision) — a mismatch means a broken/mixed session, so disconnect.
+//
+// Protocol v2 (Cliniko workflow safeguards plan D2, Task 4.1): a `state`
+// carrying this session's nonce is handed to the state listener and the
+// connection STAYS up — a refused command arrives as `state.last_refusal`,
+// never as `error` (which stays fatal and disconnects).
 
-import type { Envelope } from "./protocol";
+import type { Envelope, StatePayload } from "./protocol";
 import { HOST_NAME, makeHello, makePing, parseEnvelope } from "./protocol";
 
 export const RECONNECT_ALARM = "scribe-reconnect";
@@ -57,7 +62,11 @@ export class ConnectionManager {
   private backoffIndex = 0;
   private reconnectScheduled = false; // LOW-007: fail()+onDisconnect must not double-step backoff
 
-  constructor(private readonly api: ChromeLike) {}
+  constructor(
+    private readonly api: ChromeLike,
+    // The app's latest `state` snapshot (rendered by the Phase 6 UI).
+    private readonly onState: (state: StatePayload) => void = () => undefined,
+  ) {}
 
   /** Full fresh handshake. Safe to call repeatedly (idempotent while connecting/connected). */
   connect(): void {
@@ -133,11 +142,20 @@ export class ConnectionManager {
       this.pingOutstanding = false;
       return;
     }
+    if (envelope.type === "state") {
+      if (this.state !== "connected" || envelope.session_nonce !== this.sessionNonce) {
+        this.fail();
+        return;
+      }
+      // parseEnvelope validated the payload against the v2 state shape.
+      this.onState(envelope.payload as unknown as StatePayload);
+      return;
+    }
     if (envelope.type === "error") {
       this.fail();
       return;
     }
-    // hello/ping are host-bound; receiving one here is a broken peer.
+    // hello/ping/context/command are host-bound; receiving one here is a broken peer.
     this.fail();
   }
 

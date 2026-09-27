@@ -1,0 +1,743 @@
+"""The app's side of the Chrome link (Cliniko workflow safeguards plan Task 4.5).
+
+``ChromeBridge`` sits between the named pipe (``pipe_server.PipeServer``, on
+its own thread) and the GUI. It owns nothing the controller owns: the app
+stays the single owner of state (Constraint 3), and the bridge only turns
+what Chrome reports into the app's decisions and the app's view back into
+one ``state`` snapshot.
+
+THREADS. The pipe server calls ``connected`` / ``message`` / ``disconnected``
+from its thread; each only emits a signal connected with
+``Qt.QueuedConnection``, so every handler below runs on the GUI thread —
+the only thread allowed to touch the controller or the screens. A
+verification runs on a ``TaskThread`` (holder pattern: the thread object
+keeps no request once it has run) and comes back as a queued signal.
+
+CONNECTIONS (D4). A client connecting or going away bumps the ledger's
+``conn_gen`` and clears the bound report, the per-tab reports and the
+per-connection snapshot, and emits ``pipe_lost`` (Phase 5's pause rule
+listens; this phase pauses nothing). So a verification answering an
+earlier connection is dropped by ``VerificationLedger.accept``, Start needs
+a fresh report on the new connection, and the first ``publish`` on every
+connection sends the full snapshot even when nothing changed. A LINKED live
+session (recording or paused) is re-verified with Cliniko on every new
+connection; that result is kept for the session (``live_reverification``) and
+dropped when it ends, and — D9, as for the bound report — it counts only while
+its clinic is unchanged: a Replace key or Remove voids it and checks again
+under the current key (codex round 29 PR-MED-150). The re-check has its own
+waiting slot, so a report's check never displaces it (round 25 MED-018).
+
+REPORTS. ``seq`` must rise on a connection (a replay is ignored). The BOUND
+tab is the one whose latest report said ``focused``; only its reports feed
+the ledger, and only a note page on an allow-listed host becomes a target.
+
+COMMANDS (D2, Constraint 5). ``start`` is refused unless its ``state_rev`` is
+the last one sent, its target is the bound tab's report, that report's
+verification is ``verified`` or ``unverified_offline``
+(``VerificationLedger.start_context``), no session is active, no note
+review holds the generation lease, and a microphone is selected; then the
+Session screen's ``start_linked`` runs with a consent bound to the verified
+note. ``resume``, ``finish`` and ``discard`` are refused BEFORE their slot
+runs unless their ``session_ref`` is the live session's; ``resume`` of a
+linked session also needs the bound report to be that session's own note.
+``pause`` needs no ref (fail-safe). ``resume_previous`` and ``open_review``
+are refused until Phase 5 builds them. Every refusal travels in
+``state.last_refusal`` — never as ``error`` (Constraint 9). Commands reach
+the Session screen's slots, never the controller directly.
+
+DISPLAY. The patient's name reaches the snapshot only from a note Cliniko
+verified, with two lifetimes (codex round 29 PR-LOW-151): the BOUND REPORT's
+name is published while that verified report is bound (before a Start and
+after one) and held by the ledger as its outcome and reuse entry; the LIVE
+SESSION's name — from its Start's verification and its reconnect re-check —
+is held for that session and dropped when it ends. Nothing here logs.
+"""
+
+from __future__ import annotations
+
+import unicodedata
+from dataclasses import dataclass
+from datetime import UTC
+from typing import Any, Final, Protocol
+
+from pydantic import ValidationError
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
+
+from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.encounter import (
+    NoteDisplay,
+    NoteRefusal,
+    NoteRefused,
+    NoteTarget,
+    StartRefused,
+    UnverifiedOffline,
+    VerificationLedger,
+    VerificationRequest,
+    VerificationResult,
+    Verified,
+    linked_consent,
+    reverification_request,
+    verify_note_context,
+)
+from scribe_desktop.protocol import (
+    LIMITS,
+    CommandPayload,
+    ContextPayload,
+    Envelope,
+    make_pipe_envelope,
+    typed_payload,
+)
+from scribe_desktop.session import SessionState
+from scribe_desktop.ui import models
+from scribe_desktop.ui.session_screen import SessionScreen
+from scribe_desktop.ui.tasks import TaskThread
+
+PUBLISH_INTERVAL_MS: Final = 500
+_PHASES: Final[dict[SessionState, str]] = {
+    SessionState.RECORDING: "recording",
+    SessionState.PAUSED: "paused",
+    SessionState.PROCESSING: "finishing",
+    SessionState.QUEUED: "queued",
+}
+_ACTION_CONTROL: Final[dict[str, str]] = {
+    "pause": "pause",
+    "resume": "resume",
+    "finish": "finish",
+    "discard": "discard",
+}
+
+
+class PipeSender(Protocol):
+    """The pipe server's sending surface (``PipeServer.send``)."""
+
+    def send(self, conn_id: int, envelope: Envelope) -> bool: ...
+
+
+def _one_line(text: str, limit: int, fallback: str) -> str:
+    """Display text as the protocol allows it: one line, no control
+    character, at most ``limit`` characters."""
+    cleaned = "".join(
+        " " if unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") else ch for ch in text
+    )
+    cleaned = " ".join(cleaned.split())[:limit]
+    return cleaned or fallback
+
+
+@dataclass
+class _LiveCheck:
+    """D4's re-verification of the linked live session on a new pipe
+    connection. ``request`` None: the clinic is gone (it cannot count)."""
+
+    session_id: str
+    request: VerificationRequest | None
+    result: VerificationResult | None = None
+
+
+@dataclass(frozen=True)
+class _LiveDisplay:
+    """The live session's display strings, from the verification it was
+    started on. In memory only; dropped when that session ends."""
+
+    session_id: str
+    display: NoteDisplay
+
+
+@dataclass(frozen=True)
+class _Refusal:
+    action: str
+    reason: str
+    message: str
+
+
+class ChromeBridge(QObject):
+    """See the module docstring."""
+
+    _connected_q = Signal(int)
+    _message_q = Signal(int, object)
+    _disconnected_q = Signal(int, str)
+    # A client went away or a new one connected (D5's pipe-loss input).
+    pipe_lost = Signal()
+
+    def __init__(
+        self,
+        controller: models.SessionControllerLike,
+        session_screen: SessionScreen,
+        clinics: ClinicRegistry,
+        *,
+        parent: QObject | None = None,
+        publish_interval_ms: int = PUBLISH_INTERVAL_MS,
+    ) -> None:
+        super().__init__(parent)
+        self._controller = controller
+        self._screen = session_screen
+        self._clinics = clinics
+        self._ledger = VerificationLedger(clinics)
+        self._sender: PipeSender | None = None
+        self._link = "off"
+        self._conn: int | None = None
+        self._last_seq = 0
+        self._tabs: dict[int, ContextPayload] = {}
+        self._bound_tab: int | None = None
+        self._state_rev = 0
+        self._last_content: dict[str, Any] | None = None
+        self._refusal: _Refusal | None = None
+        self._task: TaskThread | None = None
+        self._running: VerificationRequest | None = None
+        self._running_live = False
+        # One waiting slot per KIND (round 25 MED-018): the ledger's latest
+        # report, and the live session's re-check — neither replaces the other.
+        self._waiting: VerificationRequest | None = None
+        self._waiting_live: VerificationRequest | None = None
+        self._live_check: _LiveCheck | None = None
+        self._live_check_seq = 0
+        self._live_display: _LiveDisplay | None = None
+        for signal, slot in (
+            (self._connected_q, self._on_connected),
+            (self._message_q, self._on_message),
+            (self._disconnected_q, self._on_disconnected),
+        ):
+            signal.connect(slot, Qt.ConnectionType.QueuedConnection)
+        self._timer = QTimer(self)
+        self._timer.setInterval(publish_interval_ms)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
+
+    # --- the pipe's side (called on the PIPE thread: emit only) --------------
+
+    def connected(self, conn_id: int) -> None:
+        self._connected_q.emit(conn_id)
+
+    def message(self, conn_id: int, envelope: Envelope) -> None:
+        self._message_q.emit(conn_id, envelope)
+
+    def disconnected(self, conn_id: int, reason: str) -> None:
+        self._disconnected_q.emit(conn_id, reason)
+
+    # --- lifecycle (GUI thread) ---------------------------------------------
+
+    def attach(self, sender: PipeSender) -> None:
+        """The pipe is up and waiting for the native host."""
+        self._sender = sender
+        self._link = "waiting"
+        self._refresh_view()
+
+    def set_unavailable(self) -> None:
+        """The pipe could not be created (its name is held elsewhere)."""
+        self._sender = None
+        self._link = "unavailable"
+        self._refresh_view()
+
+    @property
+    def is_busy(self) -> bool:
+        """A verification is running (the window must not close under it)."""
+        return self._task is not None
+
+    @property
+    def state_rev(self) -> int:
+        return self._state_rev
+
+    @property
+    def conn_gen(self) -> int:
+        return self._ledger.conn_gen
+
+    def live_reverification(self) -> VerificationResult | None:
+        """The linked live session's re-verification from the latest pipe
+        connection (D4), for the session it was made for; None otherwise."""
+        check = self._live_check
+        session = self._controller.session
+        if check is None or session is None or session.session_id != check.session_id:
+            return None
+        result = check.result
+        if result is None or not self._rev_current(result.request):
+            return None  # D9: a result under a replaced or removed key is void
+        return result
+
+    def _rev_current(self, request: VerificationRequest) -> bool:
+        """D9 (codex round 29 PR-MED-150): a re-check counts only while its
+        clinic still exists at the ``clinic_rev`` it was dispatched under —
+        the rule ``VerificationLedger`` applies to the bound report."""
+        clinic_id = request.clinic.clinic_id
+        return (
+            self._clinics.record(clinic_id) is not None
+            and self._clinics.rev(clinic_id) == request.clinic_rev
+        )
+
+    def on_clinics_changed(self) -> None:
+        """A Replace key or Remove (D9): the allow-list may have changed, and
+        the bound report's clinic rev — or the live re-check's — may have
+        moved: each is checked again under the clinic's current key (a
+        removed clinic's re-check becomes "clinic_gone")."""
+        request = self._ledger.reverify_after_clinic_change()
+        if request is not None:
+            self._dispatch(request)
+        check = self._live_check
+        if check is not None and check.request is not None and not self._rev_current(
+            check.request
+        ):
+            self._reverify_live()  # same connection: conn_gen does not move
+        self.publish()
+        self._refresh_view()
+
+    # --- connections -----------------------------------------------------------
+
+    def _reset_connection(self) -> None:
+        self._ledger.new_connection()
+        self._tabs.clear()
+        self._bound_tab = None
+        self._last_seq = 0
+        self._last_content = None
+        self._refusal = None
+        # A waiting report check answers the old connection: it would only be
+        # dropped. A waiting re-check is NOT cleared here (round 26 LOW-022):
+        # it answers its session, not the connection — a reconnect replaces
+        # it (``_reverify_live``) and ``_finish_task`` skips one no longer
+        # current, but a bare disconnect must not strand it on "Checking".
+        self._waiting = None
+
+    def _on_connected(self, conn_id: int) -> None:
+        self._conn = conn_id
+        self._reset_connection()
+        if self._sender is not None:
+            self._link = "connected"
+        self.pipe_lost.emit()  # a NEW client is pipe loss too (D5)
+        self._reverify_live()
+        self.publish()
+        self._refresh_view()
+
+    def _on_disconnected(self, conn_id: int, _reason: str) -> None:
+        if conn_id != self._conn:
+            return
+        self._conn = None
+        self._reset_connection()
+        if self._sender is not None:
+            self._link = "waiting"
+        self.pipe_lost.emit()
+        self._refresh_view()
+
+    def _reverify_live(self) -> None:
+        session = self._controller.session
+        context = session.encounter_context if session is not None else None
+        if (
+            session is None
+            or context is None
+            or session.state not in (SessionState.RECORDING, SessionState.PAUSED)
+        ):
+            self._live_check = None
+            return
+        self._live_check_seq += 1
+        request = reverification_request(
+            context, self._clinics, seq=self._live_check_seq, conn_gen=self._ledger.conn_gen
+        )
+        self._live_check = _LiveCheck(session_id=session.session_id, request=request)
+        if request is not None:
+            self._dispatch(request, live=True)
+
+    # --- messages ----------------------------------------------------------------
+
+    def _on_message(self, conn_id: int, envelope: object) -> None:
+        if conn_id != self._conn or not isinstance(envelope, Envelope):
+            return
+        payload = typed_payload(envelope)
+        if isinstance(payload, ContextPayload):
+            self._on_context(payload)
+        elif isinstance(payload, CommandPayload):
+            self._on_command(payload)
+        self.publish()
+        self._refresh_view()
+
+    def _allow_list(self) -> list[str]:
+        hosts = sorted({record.host for record in self._clinics.records})
+        return hosts[: LIMITS["max_allow_list"]]
+
+    def _target_of(self, report: ContextPayload) -> NoteTarget | None:
+        host, patient_id, note_id = report.host, report.patient_id, report.note_id
+        if (
+            report.page != "note"
+            or host is None
+            or patient_id is None
+            or note_id is None
+            or host not in self._allow_list()
+        ):
+            return None
+        try:
+            return NoteTarget(clinic_host=host, patient_id=patient_id, note_id=note_id)
+        except ValidationError:
+            return None
+
+    def _on_context(self, report: ContextPayload) -> None:
+        if report.seq <= self._last_seq:
+            return  # replayed or out of order
+        self._last_seq = report.seq
+        if report.page == "closed":
+            self._tabs.pop(report.tab_id, None)
+        else:
+            self._tabs[report.tab_id] = report
+            if report.focused:
+                self._bound_tab = report.tab_id
+        if report.tab_id != self._bound_tab:
+            return
+        request = self._ledger.report(report.seq, self._target_of(report))
+        if report.page == "closed":
+            self._bound_tab = None
+        if request is not None:
+            self._dispatch(request)
+
+    # --- verification (worker thread, holder pattern) ---------------------------
+
+    def _dispatch(self, request: VerificationRequest, *, live: bool = False) -> None:
+        """One check at a time. A newer request waits for the running one and
+        replaces only a waiting request of its OWN kind — the ledger's
+        (``live`` False) or the live session's re-check — so a report never
+        drops the re-check (round 25 MED-018). A stale answer is dropped by
+        the ledger (its tags) or by identity (the re-check)."""
+        if self._task is None:
+            self._run(request, live=live)
+        elif live:
+            self._waiting_live = request
+        else:
+            self._waiting = request
+
+    def _run(self, request: VerificationRequest, *, live: bool) -> None:
+        registry = self._clinics
+        holder = [request]
+        task = TaskThread(
+            lambda: verify_note_context(
+                holder.pop(), key_store=registry.key_store, transport=registry.transport
+            ),
+            self,
+        )
+        task.succeeded.connect(self._on_verified)
+        task.failed.connect(self._on_verify_failed)
+        self._task = task
+        self._running = request
+        self._running_live = live
+        task.start()
+
+    def _finish_task(self) -> None:
+        if self._task is not None:
+            self._task.finish()
+            self._task = None
+        self._running = None
+        # The bound report first: the practitioner is waiting on it to Start.
+        if self._waiting is not None:
+            request, self._waiting = self._waiting, None
+            self._run(request, live=False)
+        elif self._waiting_live is not None:
+            request, self._waiting_live = self._waiting_live, None
+            check = self._live_check
+            if check is not None and request is check.request:  # else: its session ended
+                self._run(request, live=True)
+
+    def _on_verified(self, result: object) -> None:
+        if isinstance(result, VerificationResult):
+            if self._running_live:
+                # A re-check counts only for the check still current, and
+                # only while its clinic's rev has not moved (D9, codex round
+                # 29 PR-MED-150); one replaced or dropped since never
+                # reaches the ledger.
+                check = self._live_check
+                if (
+                    check is not None
+                    and result.request is check.request
+                    and self._rev_current(result.request)
+                ):
+                    check.result = result
+            else:
+                self._ledger.accept(result)
+        self._finish_task()
+        self.publish()
+        self._refresh_view()
+
+    def _on_verify_failed(self, _message: str) -> None:
+        # `verify_note_context` never raises; if it did, nothing is applied.
+        self._finish_task()
+        self.publish()
+        self._refresh_view()
+
+    # --- commands ------------------------------------------------------------------
+
+    def _refuse(
+        self, action: str, reason: str, note_refusal: NoteRefusal | None = None
+    ) -> None:
+        self._refusal = _Refusal(
+            action, reason, models.chrome_refusal_message(reason, note_refusal)
+        )
+
+    def _on_command(self, command: CommandPayload) -> None:
+        self._refusal = None
+        action = command.action
+        if action in ("resume_previous", "open_review"):
+            self._refuse(action, "not_available")  # Phase 5
+            return
+        if action == "start":
+            self._start(command)
+            return
+        if action != "pause" and command.session_ref != self._controller.session_ref:
+            # D2: refused BEFORE the slot runs — a stale click for a session
+            # that ended can never act on a newer one.
+            self._refuse(action, "session_changed")
+            return
+        if self._screen.is_busy:
+            self._refuse(action, "busy")
+            return
+        controls = models.controls_for_state(self._controller.state)
+        if not getattr(controls, _ACTION_CONTROL[action]):
+            self._refuse(action, "not_allowed_now")
+            return
+        if action == "resume" and not self._report_matches_live():
+            self._refuse(action, "report_mismatch")
+            return
+        done = {
+            "pause": self._screen.on_pause,
+            "resume": self._screen.on_resume,
+            "finish": self._screen.on_finish,
+            "discard": self._screen.on_discard,
+        }[action]()
+        if not done:
+            self._refuse(action, "failed")
+
+    def _report_matches_live(self) -> bool:
+        """Constraint 7: a LINKED session resumes only while the bound report
+        is its own note on this connection (an unlinked one has no note)."""
+        session = self._controller.session
+        context = session.encounter_context if session is not None else None
+        return context is None or self._ledger.bound_target() == context.target
+
+    def _start(self, command: CommandPayload) -> None:
+        target = command.target
+        assert target is not None  # the protocol requires it on start
+        if command.state_rev != self._state_rev:
+            self._refuse("start", "stale_state")
+            return
+        if target.tab_id != self._bound_tab:
+            self._refuse("start", "target_mismatch")
+            return
+        try:
+            note = NoteTarget(
+                clinic_host=target.clinic_host,
+                patient_id=target.patient_id,
+                note_id=target.note_id,
+            )
+        except ValidationError:
+            self._refuse("start", "target_mismatch")
+            return
+        context = self._ledger.start_context(note)
+        if isinstance(context, StartRefused):
+            self._refuse("start", context.reason.value, context.note_refusal)
+            return
+        if self._screen.is_busy or not models.controls_for_state(self._controller.state).start:
+            self._refuse("start", "session_active")
+            return
+        if self._controller.generating:
+            self._refuse("start", "review_open")
+            return
+        if not self._screen.has_input_device():
+            self._refuse("start", "no_microphone")
+            return
+        outcome = self._ledger.outcome()
+        if not self._screen.start_linked(linked_consent(context), context):
+            self._refuse("start", "failed")
+            return
+        session = self._controller.session
+        if isinstance(outcome, Verified) and session is not None:
+            self._live_display = _LiveDisplay(session.session_id, outcome.display)
+        self._live_check = None
+
+    # --- the snapshot ------------------------------------------------------------
+
+    def _clinic_label(self, host: str) -> str | None:
+        record = next((r for r in self._clinics.records if r.host == host), None)
+        if record is None:
+            return None
+        return _one_line(record.display_name, LIMITS["max_label_chars"], "Clinic")
+
+    def _report_state(self) -> dict[str, Any] | None:
+        report = self._tabs.get(self._bound_tab) if self._bound_tab is not None else None
+        target = self._target_of(report) if report is not None else None
+        if report is None or target is None or self._ledger.bound_target() != target:
+            return None
+        state: dict[str, Any] = {
+            "tab_id": report.tab_id,
+            "clinic_host": target.clinic_host,
+            "patient_id": target.patient_id,
+            "note_id": target.note_id,
+            "verification": "checking",
+        }
+        label = self._clinic_label(target.clinic_host)
+        if label is not None:
+            state["clinic_label"] = label
+        outcome = self._ledger.outcome()
+        if isinstance(outcome, Verified):
+            state["verification"] = "verified"
+            state["patient_name"] = _one_line(
+                outcome.display.patient_display_name,
+                LIMITS["max_display_chars"],
+                "Unnamed patient",
+            )
+            starts_at = outcome.display.appointment_starts_at
+            if starts_at is not None:
+                state["appointment_starts_at"] = starts_at.astimezone(UTC).isoformat()
+        elif isinstance(outcome, UnverifiedOffline):
+            state["verification"] = "unverified_offline"
+        elif isinstance(outcome, NoteRefused):
+            state["verification"] = "refused"
+            state["refusal"] = outcome.reason.value
+        return state
+
+    def _notice(self) -> str | None:
+        report = self._tabs.get(self._bound_tab) if self._bound_tab is not None else None
+        if report is None or report.page != "note":
+            return "open_a_note"
+        if report.host not in self._allow_list():
+            return "clinic_not_set_up"
+        return None
+
+    def _live_state(self) -> dict[str, Any] | None:
+        session = self._controller.session
+        ref = self._controller.session_ref
+        if session is None or ref is None or session.state not in _PHASES:
+            return None
+        context = session.encounter_context
+        state: dict[str, Any] = {
+            "session_ref": ref,
+            "phase": _PHASES[session.state],
+            "linked": context is not None,
+            "recorded_seconds": min(
+                max(self._controller.recorded_seconds, 0), LIMITS["max_recorded_seconds"]
+            ),
+            "consent_confirmed_at": session.consent.confirmed_at.astimezone(UTC).isoformat(),
+        }
+        if context is not None:
+            state.update(
+                clinic_host=context.clinic_host,
+                patient_id=context.patient_id,
+                note_id=context.treatment_note_id,
+                verification=context.verification.value,
+            )
+            label = self._clinic_label(context.clinic_host)
+            if label is not None:
+                state["clinic_label"] = label
+            display = self._live_display
+            if display is not None and display.session_id == session.session_id:
+                state["patient_name"] = _one_line(
+                    display.display.patient_display_name,
+                    LIMITS["max_display_chars"],
+                    "Unnamed patient",
+                )
+        return state
+
+    def build_content(self) -> dict[str, Any]:
+        """The ``state`` snapshot without its ``state_rev`` (D2: one builder
+        for the poll, the events and every (re)connect)."""
+        content: dict[str, Any] = {
+            "app_running": True,
+            "allow_list": self._allow_list(),
+            "hotkey": {"available": False},  # Phase 7
+            "spoken_pause": False,  # Phase 7
+            "warnings": [],
+        }
+        for key, value in (
+            ("report", self._report_state()),
+            ("live", self._live_state()),
+            ("notice", self._notice()),
+        ):
+            if value is not None:
+                content[key] = value
+        if self._refusal is not None:
+            content["last_refusal"] = {
+                "action": self._refusal.action,
+                "reason": self._refusal.reason,
+                "message": _one_line(
+                    self._refusal.message, LIMITS["max_message_chars"], "Refused."
+                ),
+            }
+        return content
+
+    def publish(self) -> None:
+        """Send the snapshot when it differs from the last one sent on THIS
+        connection (D2). A snapshot that fails the protocol's own validation
+        is never sent."""
+        sender, conn = self._sender, self._conn
+        if sender is None or conn is None:
+            return
+        content = self.build_content()
+        if content == self._last_content:
+            return
+        try:
+            envelope = make_pipe_envelope(
+                "state", payload={"state_rev": self._state_rev + 1, **content}
+            )
+        except ValidationError:
+            return
+        self._state_rev += 1
+        self._last_content = content
+        sender.send(conn, envelope)
+
+    # --- the poll and the Session screen -------------------------------------------
+
+    def _tick(self) -> None:
+        session = self._controller.session
+
+        def ended(session_id: str) -> bool:
+            return session is None or session.session_id != session_id or session.is_terminal
+
+        display = self._live_display
+        if display is not None and ended(display.session_id):
+            self._live_display = None  # the name goes with its session
+        check = self._live_check
+        if check is not None and ended(check.session_id):
+            # Round 25 LOW-019: the re-check's result names the patient too.
+            self._live_check = None
+        self.publish()
+        self._refresh_view()
+
+    def view(self) -> models.ChromeView:
+        session = self._controller.session
+        context = session.encounter_context if session is not None else None
+        live = session is not None and session.state in _PHASES and context is not None
+        patient = clinic = recheck = None
+        recheck_reason: NoteRefusal | None = None
+        if live and session is not None and context is not None:
+            clinic = self._clinic_label(context.clinic_host) or "a clinic no longer set up"
+            display = self._live_display
+            if display is not None and display.session_id == session.session_id:
+                patient = _one_line(
+                    display.display.patient_display_name,
+                    LIMITS["max_display_chars"],
+                    "Unnamed patient",
+                )
+            check = self._live_check
+            if check is not None and check.session_id == session.session_id:
+                recheck, recheck_reason = self._recheck_line(check)
+        spoken_unavailable = (
+            session is not None
+            and session.state in (SessionState.RECORDING, SessionState.PAUSED)
+            and self._controller.live_failure is not None
+        )
+        return models.ChromeView(
+            link=self._link,
+            patient=patient,
+            clinic=clinic,
+            recheck=recheck,
+            recheck_reason=recheck_reason,
+            spoken_pause_unavailable=spoken_unavailable,
+            refusal=self._refusal.message if self._refusal is not None else None,
+        )
+
+    def _recheck_line(self, check: _LiveCheck) -> tuple[str, NoteRefusal | None]:
+        if check.request is None:
+            return "clinic_gone", None
+        result = check.result
+        # D9: never "verified" under a replaced or removed key (PR-MED-150).
+        stale = result is None or not self._rev_current(result.request)
+        outcome = None if stale or result is None else result.outcome
+        if outcome is None:
+            return "checking", None
+        if isinstance(outcome, Verified):
+            return "verified", None
+        if isinstance(outcome, UnverifiedOffline):
+            return "offline", None
+        return "refused", outcome.reason
+
+    def _refresh_view(self) -> None:
+        self._screen.set_chrome_view(models.chrome_view_text(self.view()))

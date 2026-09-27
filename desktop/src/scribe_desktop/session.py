@@ -52,7 +52,14 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from scribe_desktop.audio_capture import CaptureBackend, CaptureWorker
+from scribe_desktop.audio_capture import (
+    CHANNELS,
+    CHUNK_BYTES,
+    SAMPLE_RATE,
+    SAMPLE_WIDTH,
+    CaptureBackend,
+    CaptureWorker,
+)
 from scribe_desktop.encounter import (
     ConsentAttestation,
     EncounterContext,
@@ -77,7 +84,10 @@ from scribe_desktop.session_store import (
     discard_session,
     wrap_key_to_file,
 )
-from scribe_desktop.transcription import LiveTranscriber
+from scribe_desktop.transcription import LiveFailure, LiveTranscriber
+
+# Task 4.5: the audio one stored chunk holds (1.0 s at 16 kHz mono PCM16).
+_CHUNK_SECONDS: Final = CHUNK_BYTES / (SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH)
 
 # Note-learning plan D2: how long an IN-LOCK stop of the live worker waits
 # for its thread (``_fail_locked`` / retirement — paths that do NOT destroy
@@ -340,6 +350,9 @@ class _LiveSession:
     # Cliniko workflow safeguards plan D2: this session's opaque reference in
     # the controller's reference registry (minted at start).
     session_ref: str | None = None
+    # Task 4.5: the store's chunk count when Finish sealed it or a failure
+    # closed it (``recorded_seconds`` reads the open store until then).
+    closed_chunks: int = 0
 
 
 class SessionController:
@@ -452,6 +465,41 @@ class SessionController:
         """The tracked session's D2 reference (None with no session)."""
         with self._lock:
             return self._live.session_ref if self._live is not None else None
+
+    @property
+    def recorded_seconds(self) -> int:
+        """Seconds of audio the tracked session has written (Task 4.5; the
+        panel's and the Session screen's timer). Counted from the store's
+        chunks — one second each (``CHUNK_BYTES``), the final partial chunk
+        of a Finish counting as a whole one — so a pause, during which no
+        chunk is written, never adds time, and audio still buffered in the
+        capture worker (under a second) is not yet counted. Frozen at the
+        closing count after Finish or a failure; 0 with no session."""
+        with self._lock:
+            live = self._live
+            if live is None:
+                return 0
+            chunks = live.store.next_index if live.store is not None else live.closed_chunks
+        return int(chunks * _CHUNK_SECONDS)
+
+    @property
+    def live_failure(self) -> LiveFailure | None:
+        """Why the tracked session's live transcriber switched itself off
+        (D7: "Spoken pause unavailable for this recording"), or None while
+        it runs or when none is attached — ``live_transcription_attached``
+        tells those two apart."""
+        with self._lock:
+            live = self._live
+            worker = live.live_transcriber if live is not None else None
+        return worker.failed_reason if worker is not None else None
+
+    @property
+    def live_transcription_attached(self) -> bool:
+        """True while a live transcriber is attached to the tracked session
+        (from Start until the processing run claims it at Finish)."""
+        with self._lock:
+            live = self._live
+            return live is not None and live.live_transcriber is not None
 
     def resolve_session_ref(self, session_ref: str) -> str | None:
         """The session id ``session_ref`` names, or None when it no longer
@@ -659,6 +707,8 @@ class SessionController:
                 self._fail_locked(live)  # stops an attached live worker too
                 return live.session
             finally:
+                if live.store is not None:
+                    live.closed_chunks = live.store.next_index
                 live.store = None
             if live.live_transcriber is not None:
                 # D2: seal only — one queue sentinel, no drain here. The tail
@@ -1307,6 +1357,7 @@ class SessionController:
         leaves it attached for Discard to retry (the ONE caller of the stop
         helper that may ignore its verdict: no custody is destroyed here)."""
         if live.store is not None:
+            live.closed_chunks = live.store.next_index
             live.store.close()
             live.store = None
         self._stop_live_locked(live)

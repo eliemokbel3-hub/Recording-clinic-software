@@ -115,6 +115,11 @@ module = [
     "win32pipe",
     "win32file",
     "win32security",
+    # Cliniko workflow safeguards plan Tasks 4.2 / 7.1: the named pipe's
+    # overlapped I/O events, and (Phase 7) the hotkey and process checks.
+    "win32event",
+    "win32gui",
+    "win32process",
     "pywintypes",
     "win32com",
     "win32com.*",

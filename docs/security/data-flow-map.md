@@ -39,7 +39,7 @@ rendering the language model does (flow 17).
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18) | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 | Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
@@ -50,7 +50,16 @@ rendering the language model does (flow 17).
    Framed JSON (4-byte native-order length prefix + UTF-8, ≤1 MB per frame,
    project policy both directions). Phase-1 messages: `hello`, `hello_ack`,
    `ping`, `pong`, `error`. Contains: protocol version, request IDs, a random
-   per-session nonce. Contains NO secrets, NO clinical data.
+   per-session nonce — the handshake itself carries NO secrets and NO
+   clinical data. Since protocol v2 (Cliniko workflow safeguards plan Tasks
+   4.1 and 4.4, D2) the same wire also carries `context`, `command` and
+   `state`, which the host RELAYS to and from `scribe-app`'s pipe (flow 19,
+   which says what they contain — patient and note ids, and in `state` a
+   verified patient's display name); the host stamps and checks this
+   session's nonce on them and strips it toward the app. The host
+   originates one message of its own, `state{app_running:false}`, while the
+   app's pipe is absent. A v1 extension is refused at `hello`
+   (`version_below_floor`).
 
 2. **Host/app → log files.** `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-host.log`
    and `scribe-app.log`, rotating at 1 MB with 3 backups. Content is
@@ -551,12 +560,66 @@ rendering the language model does (flow 17).
     a verification state and time, or a reason code — and, beside it, a
     separate display value (the patient's name, cleaned to one line of at
     most 120 characters, and the appointment time) that no model, record,
-    log or file holds and this phase shows nowhere; the note's content and
+    log or file holds and Phase 3 showed nowhere; the note's content and
     the rest of each answer are dropped with the call. The outcome is
     dropped when the checkout ends. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
     same client that prints structure only — never a name, id value, answer
-    text or the key.
+    text or the key. Since Task 4.5 the Chrome bridge (flow 19) is a second
+    trigger for the same call: a note report from the bound Chrome tab on an
+    allow-listed host, and — once per new pipe connection — the linked live
+    session's own note; the display value then reaches the pipe's `state`
+    and the Session screen, for the verified note only (flow 19).
+
+19. **Native host ↔ `scribe-app` over a named pipe (Cliniko workflow
+    safeguards plan D2/D4; BUILT at Tasks 4.1, 4.2, 4.4 and 4.5,
+    2026-09-27; memory only).** Local IPC, not a network endpoint: the
+    no-sockets legs poll the app with the pipe listening AND a client
+    connected (`test_scribe_app_with_the_chrome_link_open_has_no_sockets`),
+    and a real host process relaying to a real app over it
+    (`test_host_relays_to_an_open_app_pipe_with_no_sockets`).
+    The app creates `\\.\pipe\ClinikoScribe-<user SID>` after its
+    single-instance guard (`pipe_server.py`): first instance only (a held name
+    is refused, never shared — the Session screen then says the Chrome link is
+    unavailable and desktop recording still works), one instance, remote
+    clients rejected, and a protected DACL granting only the current user.
+    Its client is the native host (Task 4.4), which relays flow 1's v2
+    messages, and which connects only after VERIFYING the server — the same
+    logon session, the same user, and exactly that DACL (Task 4.3, decided
+    (b): any process of this user can still connect or squat the name — the
+    threat model's accepted residue). Frames are flow 1's framing, WITHOUT a
+    nonce (the host strips and stamps it), and only `context` and `command`
+    are accepted inbound — any other frame, a framing fault or an invalid
+    payload closes that connection; the host likewise relays only a valid
+    `state` back.
+    WHAT CROSSES, inbound: a `context` report per Chrome tab (a sequence
+    number, tab and window numbers, focus, the page kind, and for a Cliniko
+    page its host, plus the patient and note ids on a treatment-note page —
+    never a URL) and a `command` (the action, the snapshot revision it
+    answers, the session reference it acts on, and for `start` the target
+    ids and the panel's consent tick). Outbound, one `state` snapshot, sent on
+    change and in full to every new connection: the allow-list of clinic
+    hosts, the bound report (ids, the verification state or refusal code, the
+    clinic's label, and ONLY for a note Cliniko verified the patient's display
+    name and the appointment time), the live session (an opaque 24-character
+    reference — never the session id — its phase, recorded seconds, consent
+    time, and when linked its ids, verification and clinic label, plus the
+    patient's name when that session was started from a verified note), a
+    notice code and the last refusal (a code and a fixed message). Every
+    field is bounded by `protocol/fixtures/meta.json`'s `limits`, and ids
+    match `^[1-9][0-9]{0,18}$`. WHAT IS KEPT: in the bridge's memory only —
+    the latest report per open tab and the bound tab, cleared on every new
+    connection or disconnect; the bound report's verification outcome (flow
+    18's display value beside it); the live session's display name, dropped
+    when that session ends; and the last snapshot sent, for change detection.
+    Nothing is written to disk, and nothing is logged beyond a connection's
+    state or close reason with its connection number (`pipe_client`), the
+    server's own state (`pipe_server`), a failed connect's Windows error
+    code and, at each end, the OTHER end's executable path (`pipe_peer`,
+    Task 4.3's tripwire) — never a frame. The host is a pass-through: it
+    keeps no message, and its log holds message types, relay states and that
+    path only (`scribe-host.log`). `patient_name` and `note_id` are
+    registered tripwire markers.
 
 ## Explicit non-flows
 
@@ -666,11 +729,8 @@ rendering the language model does (flow 17).
   — and skips BY NAME until the wheel and the file exist, so that evidence is
   conditional.
 
-## Phase 5 preview (locked topology — pipe deferred)
+## The host↔app link (was "Phase 5 preview")
 
-The Chrome-spawned host stays a thin, stateless relay; nothing new crosses
-the Chrome boundary in Phase 2. The host↔app link — a user-ACL'd Windows
-**named pipe** (local IPC, still zero network sockets) — was deliberately
-deferred to Phase 5, whose consent/command flow is its real consumer; the
-pipe-hardening notes live in the Phase 2 plan. This map must be updated when
-that flow exists.
+The host↔app named pipe deferred here since Phase 2 exists since the Cliniko
+workflow safeguards plan's Tasks 4.2, 4.4 and 4.5 — flow 19. The
+Chrome-spawned host stays a thin, stateless relay (flow 1).

@@ -1,0 +1,11 @@
+{
+  "reason": "an error message is at most 300 characters",
+  "message": {
+    "protocol_version": 2,
+    "type": "error",
+    "payload": {
+      "code": "internal",
+      "message": "abcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijabcdefghijk"
+    }
+  }
+}

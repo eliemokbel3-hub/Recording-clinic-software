@@ -202,6 +202,11 @@ class FakeController:
         self.end_enrolment_hook: Callable[[], None] | None = None
         # Cliniko safeguards Task 3.3: the consent and context of every Start.
         self.started_with: list[tuple[ConsentAttestation, EncounterContext | None]] = []
+        # Task 4.5: what the Chrome bridge reads (SessionControllerLike).
+        self.session_ref: str | None = None
+        self.recorded_seconds = 0
+        self.live_failure: Any = None
+        self.generating = False
 
     @property
     def state(self) -> SessionState:
@@ -2101,6 +2106,50 @@ class TestSessionScreenConsent:
         assert screen.link_label.text() == expected
         for identifier in ("10", "20", "30", "northside"):
             assert identifier not in screen.link_label.text()
+        screen.deleteLater()
+
+    def test_the_chrome_line_is_plain_text_and_hidden_when_empty(self, qapp: Any) -> None:
+        from PySide6.QtCore import Qt
+
+        screen = self._screen(FakeController())
+        assert screen.chrome_label.isHidden()  # no bridge: nothing shown
+        assert screen.chrome_label.textFormat() == Qt.TextFormat.PlainText
+        screen.set_chrome_view("Chrome: connected.\n<b>not bold</b>")
+        assert not screen.chrome_label.isHidden()
+        assert screen.chrome_label.text() == "Chrome: connected.\n<b>not bold</b>"
+        screen.set_chrome_view("")
+        assert screen.chrome_label.isHidden()
+        screen.deleteLater()
+
+    def test_controls_report_whether_they_acted(self, qapp: Any) -> None:
+        """Task 4.5: the bridge turns a False into a named refusal."""
+        controller = FakeController()
+        screen = self._screen(controller)
+        assert screen.has_input_device()
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is True
+        assert screen.on_pause() is True and screen.on_resume() is True
+        assert screen.on_discard() is True
+
+        def refuse(*_args: Any, **_kwargs: Any) -> Any:
+            raise SessionActivityError("refused")
+
+        for name in ("start", "pause", "resume", "finish", "discard"):
+            setattr(controller, name, refuse)
+        assert screen.start_linked(linked_consent(context), context) is False
+        assert screen.on_pause() is False and screen.on_resume() is False
+        assert screen.on_finish() is False and screen.on_discard() is False
+        screen.deleteLater()
+
+    def test_no_microphone_means_no_linked_start(self, qapp: Any) -> None:
+        from scribe_desktop.ui.session_screen import SessionScreen
+
+        controller = FakeController()
+        screen = SessionScreen(controller, device_provider=lambda: None)
+        assert not screen.has_input_device()
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is False
+        assert controller.started_with == []
         screen.deleteLater()
 
 
