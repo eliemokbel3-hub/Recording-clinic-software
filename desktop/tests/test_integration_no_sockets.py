@@ -1,5 +1,14 @@
 """Steps 10 + 13: end-to-end integration through REAL processes + the
-no-network proof.
+no-socket proof for every path that must stay offline.
+
+Scope since the Cliniko workflow safeguards plan (D9, Task 1.2): the app's
+offline contract is "no connection except Cliniko's API, and none at startup
+or idle". Every leg here covers a path that must open NO connection at all —
+the host, the app's startup and idle, capture, transcription, prose — and
+asserts exactly zero, with no allow-list. The Cliniko client
+(``cliniko_client.py``, the one network-capable module) has no caller on any
+of these paths; its own tests (``test_cliniko_client.py``) inject a fake
+transport and never open a socket.
 
 Step 10 legacy coverage (kept):
 - the venv's `scribe-host.exe` spawned exactly as Chrome does, full

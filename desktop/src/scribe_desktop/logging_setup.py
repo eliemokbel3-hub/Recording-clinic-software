@@ -9,7 +9,8 @@ Enforcement is STRUCTURAL (plan Key Design Decision):
    record would actually put on disk — its message, its exception rendering,
    and its stack rendering — and DROPS the record when a registered
    signature appears, counting the violation.
-3. Ruff G004 bans f-strings in logging calls; TID251 bans network imports.
+3. Ruff G004 bans f-strings in logging calls; TID251 bans network imports
+   everywhere but the Cliniko client's one exempted import.
 
 What (2) does and does NOT guarantee — stated precisely, because an
 over-claim here invites the misuse it appears to cover:

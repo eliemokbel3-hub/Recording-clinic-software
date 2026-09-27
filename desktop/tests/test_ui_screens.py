@@ -3507,13 +3507,14 @@ class TestNoteScreen:
         screen.deleteLater()
 
     def test_copy_enabled_only_for_a_ratified_note(self, qapp: Any) -> None:
-        """Round 35 PR-MED-002: the 9.1 gate is necessary but NOT sufficient —
-        copy shares Complete's ratification bar. An unresolved-error / pending
-        / unsaved note is never copyable, even with the gate on."""
+        """Round 35 PR-MED-002: the recorded copy flag is necessary but NOT
+        sufficient — copy shares Complete's ratification bar. An
+        unresolved-error / pending / unsaved note is never copyable, even with
+        the flag on."""
         from PySide6.QtCore import Qt
 
         screen, _record = self._screen(copy_enabled=True)
-        # Gate on, but proposals pending -> copy stays disabled + display-only.
+        # Flag on, but proposals pending -> copy stays disabled + display-only.
         assert not screen.copy_button.isEnabled()
         assert (
             screen.note_body.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
@@ -3529,9 +3530,15 @@ class TestNoteScreen:
         assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
         screen.deleteLater()
 
-    def test_default_copy_binding_ships_disabled(self, qapp: Any) -> None:
-        # The recorded 9.1 decision (COPY_TO_CLINIKO_ENABLED) is False.
-        assert models.COPY_TO_CLINIKO_ENABLED is False
+    def test_default_copy_binding_ships_enabled(self, qapp: Any) -> None:
+        """The recorded decision (COPY_TO_CLINIKO_ENABLED) is True since the
+        practitioner's 2026-09-27 decision (safeguards plan D12, Task 1.4) —
+        and the flag is still not sufficient: an UNRATIFIED note under the
+        default binding shows the button but can neither be copied nor
+        selected."""
+        from PySide6.QtCore import Qt
+
+        assert models.COPY_TO_CLINIKO_ENABLED is True
         from scribe_desktop.ui.note import NoteScreen
 
         screen = NoteScreen()
@@ -3540,12 +3547,17 @@ class TestNoteScreen:
             on_save=lambda note: None,
             on_abandon=lambda: None,
         )
+        assert not screen.copy_button.isHidden()
         assert not screen.copy_button.isEnabled()
+        assert (
+            screen.note_body.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
+        )
         screen.deleteLater()
 
     def test_default_copy_binding_equals_the_recorded_flag(self, qapp: Any) -> None:
-        """Task 9.1a, decision-agnostic: whatever Task 9.1 records, the Note
-        tab's default binding IS the recorded flag - the value bound into
+        """Task 9.1a, decision-agnostic: whatever copy decision is recorded
+        (the practitioner's, D12 since 2026-09-27), the Note tab's default
+        binding IS the recorded flag - the value bound into
         ``begin_review``'s ``copy_enabled`` default at import is the module
         constant itself, so the shipped-state pin above and the window wiring
         tests can never disagree with the flag. (A monkeypatch of the constant
@@ -5927,7 +5939,8 @@ class TestNoteWiring:
     def test_recorded_fail_keeps_copy_hidden_through_the_window(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Task 9.1a, the FAIL outcome: with the recorded
+        """Task 9.1a, the FAIL outcome — now the flag-OFF outcome (copy
+        withdrawn by a recorded practitioner decision, D12): with the recorded
         decision False, the Note tab reached through the window's own wiring
         shows no copy affordance at all - the button is hidden AND disabled
         and the note body is display-only - and full ratification changes
@@ -5959,7 +5972,8 @@ class TestNoteWiring:
     def test_recorded_pass_enables_copy_only_for_a_ratified_note_through_the_window(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Task 9.1a, the PASS outcome: with the recorded decision True, the
+        """Task 9.1a, the PASS outcome — now the flag-ON outcome, the shipped
+        state since 2026-09-27 (D12): with the recorded decision True, the
         Note tab reached through the window's own wiring SHOWS the copy
         button but keeps it disabled - and the note body display-only - while
         any proposal is pending, while a review warning is unacknowledged, and
@@ -5975,7 +5989,7 @@ class TestNoteWiring:
         window, controller = self._generate_through_window(qapp, tmp_path)
         note_screen = window.note_screen
         no_interaction = Qt.TextInteractionFlag.NoTextInteraction
-        # Gate on: shown, but proposals are pending -> disabled, display-only.
+        # Flag on: shown, but proposals are pending -> disabled, display-only.
         assert not note_screen.copy_button.isHidden()
         assert not note_screen.copy_button.isEnabled()
         assert note_screen.note_body.textInteractionFlags() == no_interaction
@@ -6039,7 +6053,7 @@ class TestNoteWiring:
     def test_copy_never_reaches_the_clipboard_under_a_recorded_fail(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Round 70 PR-HIGH-002 (FAIL outcome): nothing reaches the clipboard on
+        """Round 70 PR-HIGH-002 (FAIL outcome, i.e. the flag off): nothing reaches the clipboard on
         either route - the hidden button's click or a direct ``_copy_note``
         call - at any point of the review, full ratification included. The
         presentation pins above say the affordance is absent; this pins that
@@ -6061,7 +6075,7 @@ class TestNoteWiring:
     def test_copy_delivers_exactly_the_ratified_note_under_a_recorded_pass(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
     ) -> None:
-        """Round 70 PR-HIGH-002 (PASS outcome): the clipboard receives nothing
+        """Round 70 PR-HIGH-002 (PASS outcome, i.e. the flag on): the clipboard receives nothing
         while a proposal is pending, a review warning is unacknowledged, or the
         note is unsaved - on the button route AND the direct-call route - and
         once ratified the Copy click delivers EXACTLY ``format_note_body`` of

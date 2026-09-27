@@ -437,13 +437,16 @@ def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> 
 # gating all live here. Nothing below logs or persists clinical text.
 # ---------------------------------------------------------------------------
 
-# Task 7.1 / 9.1: the note is the RATIFIED copyable surface, but ONLY once
-# the Task 9.1 shipping gate passes (the practitioner judging the extractive
-# output acceptable over a real-transcript set — plan Shipping Gate). That
-# gate has NOT passed, so copy ships DISABLED: the Note tab binds its copy
-# affordance to THIS recorded decision, never unconditionally. The transcript
-# stays display-only ALWAYS, regardless of this flag (Critical Constraint).
-COPY_TO_CLINIKO_ENABLED: Final[bool] = False
+# Task 7.1 / 9.1: the note is the RATIFIED copyable surface. The Note tab
+# binds its copy affordance to THIS recorded decision, never unconditionally.
+# Practitioner decision 2026-09-27 (Cliniko workflow safeguards plan D12,
+# Task 1.4): copy is ENABLED without waiting for the Task 9.1 run, which
+# becomes a quality measurement rather than an enablement gate. Ratification
+# still gates every copy (`ui/note.py` `_copy_ready`: every proposal decided,
+# no blocking error, every warning acknowledged, the note saved), re-checked
+# at click time. The transcript stays display-only ALWAYS, regardless of this
+# flag (Critical Constraint).
+COPY_TO_CLINIKO_ENABLED: Final[bool] = True
 
 # Task 7.7 (round 45 MED-001) — the third clause of the consent Critical
 # Constraint: "the note view renders it as a manual reminder only". The first
@@ -518,7 +521,8 @@ def format_note_body(note: GeneratedNote) -> str:
     ``note.render_note(note, note.style)``, THE one rendering path (D7):
     the Note tab's body, a reloaded ``note.enc`` and Copy all read this, so
     display, reload and Copy cannot disagree. This is the copyable surface
-    (gated on the 9.1 shipping decision); it is display text only, never
+    (gated on the recorded copy flag and full ratification — ``ui/note.py``
+    ``_copy_ready``); it is display text only, never
     persisted or logged here."""
     return render_note(note, note.style)
 

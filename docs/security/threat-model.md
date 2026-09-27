@@ -74,8 +74,9 @@ session is sweep-exempt (see the retention schedule for the exemption).
   tripwire, tested including the pydantic-repr misuse case). Paths logged by
   the startup tripwire are not sensitive.
 - **Credential Manager** entries are protected by Windows at user-session
-  granularity — same-user access is by design (the host must read keys
-  unattended in Phase 4).
+  granularity — same-user access is by design (`scribe-app` reads a clinic's
+  Cliniko API key unattended for each Cliniko call; see "Cliniko API client"
+  below).
 
 ## Phase 2: audio, transcripts, and session-key custody
 
@@ -115,8 +116,12 @@ remains an accepted residual.
    and transcription. The idle-app no-sockets polling test already runs,
    but env enforcement is the primary control — short-lived telemetry
    connections can dodge a poll.
-   The ONLY sanctioned network user is `scripts/setup-models.py`, a separate
-   explicit setup process (SHA-pinned downloads).
+   This control keeps the ML stack off the network; it says nothing about
+   the Cliniko client, which is the app's ONE network-capable module and
+   has its own surface ("Cliniko API client" below). Outside the app, the
+   network users are two explicit setup-time steps the user runs:
+   `scripts/setup-models.py` (SHA-pinned downloads) and the pinned
+   prose-runtime wheel install (surface 17 of the note-learning section).
 4. **Clipboard / same-user UI surface.** The transcript-inspection view is
    display-only (`NoTextInteraction`) so clinical text cannot drift into the
    Windows clipboard (clipboard history / cloud clipboard sync) through
@@ -353,20 +358,33 @@ note inherit exactly that posture.
    boundary 2 (a same-user process can already read process memory); the Note
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual
    selection cannot drift clinical text into the Windows clipboard, and the tab's
-   plaintext is cleared when a new transcript loads over a stale note. No new
-   on-disk plaintext and no new logging channel are introduced —
+   plaintext is cleared when a new transcript loads over a stale note. The app
+   introduces no new on-disk plaintext and no new logging channel (the one
+   route out of its custody is the clinician's Copy of a ratified note, whose
+   clipboard residue surface 4 names) —
    the note models carry registered tripwire signatures, so a stray repr/dump is
    dropped by the log filter.
 4. **The ratified copyable-note change.** The generated note is the app's first
-   copyable clinical surface — but copy is bound to the Task 9.1 shipping gate
-   and currently ships DISABLED (`ui/models.py`
-   `COPY_TO_CLINIKO_ENABLED = False`). Even once that flag flips, copy
-   additionally requires a fully ratified note (no pending proposal, no blocking
-   error, saved, no unacknowledged review warning), enforced by one predicate
-   (`ui/note.py` `_copy_ready`) applied to BOTH the copy button and the note
-   panel's text-selection flags and re-checked at click time — disabling the
-   button alone is insufficient because selectable text keeps native copy
-   shortcuts. The transcript panel is never copyable regardless of the flag.
+   copyable clinical surface — copy is bound to a recorded flag (`ui/models.py`
+   `COPY_TO_CLINIKO_ENABLED`), which ships ENABLED since the practitioner's
+   2026-09-27 decision (Cliniko workflow safeguards plan D12; the Task 9.1 run
+   is now a quality measurement, not an enablement gate). The flag is
+   necessary, never sufficient: copy additionally requires a fully ratified
+   note (no pending proposal, no blocking error, saved, no unacknowledged
+   review warning), enforced by one predicate (`ui/note.py` `_copy_ready`)
+   applied to BOTH the copy button and the note panel's text-selection flags
+   and re-checked at click time — disabling the button alone is insufficient
+   because selectable text keeps native copy shortcuts. The transcript panel
+   is never copyable regardless of the flag. **Residue once copied (named
+   2026-09-27, Task 1.4):** a copy puts the ratified note's plaintext on the
+   Windows clipboard by the clinician's own action, and from there it is
+   outside the app's custody — it stays until something replaces it, any
+   same-user process can read it (boundary 2), and Windows clipboard history
+   and cloud clipboard sync, when the user has turned them on, keep it past
+   the next copy or send it to the user's Microsoft account. The app neither
+   clears the clipboard nor detects those settings, so keeping cloud clipboard
+   sync off on the clinic machine is an operating rule for the clinician
+   (`docs/security/intended-use.md`, current scope note), not a control.
 
 **The checker's honest limit (stated plainly, not implied).** The four checks
 in `note_check.py` do NOT establish that a confirmed assertion is grounded in
@@ -1032,8 +1050,9 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     THE RUNTIME. `llama-cpp-python` 0.3.35 is installed ONLY from the prebuilt
     CPU wheel pinned by URL and SHA-256 in
     `desktop/requirements-ml-prose.txt` (`--require-hashes --no-deps`, a
-    GitHub release asset) — a SECOND sanctioned network step beside
-    `setup-models.py`, run once by the practitioner from a normal terminal —
+    GitHub release asset) — a SECOND setup-time network step beside
+    `setup-models.py` (the app's own network use is the Cliniko client
+    alone), run once by the practitioner from a normal terminal —
     and it is deliberately NOT in the `[ml]` extra, because PyPI carries only
     an sdist and a plain `[dev,ml]` install would BUILD it from source, which
     D8 forbids (`desktop/pyproject.toml`, the comment under
@@ -1239,6 +1258,124 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     exactly as onnxruntime does — the OS-level socket polls of the real leg
     are what covers it, when that leg runs.
 
+## Cliniko API client (Cliniko workflow safeguards plan, D9; BUILT at Task 1.1, 2026-09-27)
+
+The app's offline contract is now **no connection except Cliniko's API, and
+none at startup or idle**. `scribe-app` holds exactly one network-capable
+module, `desktop/src/scribe_desktop/cliniko_client.py` (flow 18 of the
+data-flow map); the native host has none and never imports it. As of Task 1.1
+no app code path calls the client — the clinic-key Validate and note
+verification add the callers in the plan's Phases 2–3 and extend this section.
+
+CONFINEMENT. Ruff TID251 bans `socket`, `http`, `urllib.request` and
+`PySide6.QtNetwork` across `desktop/`; the ONE exemption is the client's
+`http.client` import. `tests/test_cliniko_client.py::TestConfinement` pins the
+count at exactly one, that no other module under `desktop/src` imports
+`http`, `ssl`, `socket`, `urllib.request` or `PySide6.QtNetwork`, that the
+native host's import closure never reaches the client, and that no app module
+imports the client yet. Residue: these are SOURCE checks, so a dynamic import
+(`importlib.import_module`) is outside them; the runtime check is the
+no-sockets integration test (host, app startup and idle, capture,
+transcription, prose), which asserts zero connections.
+
+WHAT IT CAN SEND. `GET` only: `HTTPSTransport.request` refuses any other
+method before a connection exists, the client passes only `GET`, and the
+module has no write method (Critical Constraint 1: drafts only, by
+construction, and this plan writes nothing). The host is
+`api.<shard>.cliniko.com`, built ONLY from a documented shard taken from the
+key's `-<shard>` suffix; a missing or unknown suffix, or a key with any
+character outside the key alphabet (CR/LF included), is `InvalidKey` before a
+request — never defaulted to `au1`. Ids in a path are validated as 1–19
+digits with no leading zero. Headers are fixed: HTTP Basic auth (the key as
+username, empty password), `Accept: application/json`, and
+`User-Agent: Clinic Scribe (<contact email>)` with the email refused on CR/LF
+or a failed shape check.
+
+TRANSPORT. One `http.client.HTTPSConnection` per request, closed after, on
+port 443. Every socket step (connect, each TLS/send/receive step) times out
+at 15 s; the request as a whole has a 30 s deadline, checked after the
+request is sent and before every body read, and every body read is
+`HTTPResponse.read1` — at most one socket receive — never `read(n)`, which
+loops receives until it has `n` bytes (codex round 8 PR-MED-010). A
+slow-drip body is therefore abandoned as `Unreachable` at most one receive
+timeout past the deadline. Bounded only per step (the named residue): a
+library call that is not a body read — the connect + handshake + send, the
+status line and headers, and a chunked body's framing (chunk-size lines,
+their CRLF, the trailer). No redirects (`http.client` never follows one
+and a 3xx is `RedirectRefused`); no proxy (`HTTPSConnection` reads no proxy
+variable and `set_tunnel` is never called); `set_debuglevel(0)` pinned, so the
+library never prints a request line or header. TLS: a `PROTOCOL_TLS_CLIENT`
+context (certificate and hostname verified) with a TLS 1.2 minimum and the
+Windows certificate store (`load_default_certs`). It is NOT
+`ssl.create_default_context`, which opens the file `SSLKEYLOGFILE` names and
+appends every session's secrets to it; the client's context never reads the
+variable and pins `keylog_filename = None`, and
+`benchmark.apply_offline_env` deletes the variable at startup while
+`assert_offline_env` refuses it by name (surface 17's handling of
+`LLAMA_CPP_LIB_PATH`, same shape).
+
+UNTRUSTED ANSWERS. A body is read ONLY for a 200: every other status is
+final from its status line and headers, so a 401/403/404/429/3xx/5xx whose
+body stalls or is cut keeps its own named error (and a 429 its reset) rather
+than becoming `Unreachable` (codex round 8 PR-MED-012); the unread body goes
+with the closed connection. A 200's body is read in pieces that never ask
+the library for more than what is left of `MAX_BODY_BYTES + 1` (1 MiB + 1
+byte) in total, plus the stdlib reader's own buffer; a body longer than
+1 MiB is `Malformed` and never parsed. The status line and headers are bounded by
+`http.client`'s own limits (at most 100 header lines of at most 64 KiB
+each), which are the stdlib's, not this module's. A `RawResponse`'s repr
+omits the body. A body that is not UTF-8 JSON, is nested past the parser's recursion
+limit, carries an integer over the interpreter's digit limit, or is not a JSON
+object is `Malformed`. Statuses map to named errors: 401/403
+`CredentialsRejected`, 404 `NotFound`, 429 `RateLimited` (the reset header kept
+only when it is short plain text), 3xx `RedirectRefused`, 5xx `Unreachable`,
+anything else but 200 `UnexpectedStatus`. Library failures are classified
+from the stdlib raise set, each call wrapped on its own (construction,
+request, `getresponse`, the status and header read, every body read):
+`ssl.SSLCertVerificationError` is `CertificateRejected`; any other `OSError`
+— DNS, refused, reset, timeout, every other `ssl.SSLError`, and
+`RemoteDisconnected` / `IncompleteRead` — is `Unreachable`; any other failure
+(`HTTPException`, `ValueError`, the unforeseen) is `Malformed`.
+
+SECRETS. The key is read from its source ONCE per logical call (one
+verification or one Validate), shared by that call's requests, and on exit
+the call drops its `Authorization` value and refuses further use; the client
+object never holds it. What an exception raised by the module RENDERS — its
+message, its repr, its formatted traceback, a log record of it — carries no
+key, path, id, email or response byte: each named error's text is a fixed
+sentence, and it is raised outside the `except` block that classified the
+library's exception, so there is no chained context to render (a formatted
+traceback prints source lines, never local values). The module holds no
+logger. All pinned by `tests/test_cliniko_client.py::TestNothingLeaks` and the
+per-stage cases. The exception OBJECT is another matter — RESIDUE (6).
+
+RESIDUE. (1) The TLS trust decision is the Windows store's: a root installed
+there — a TLS-inspection proxy's, or a same-user attacker's — is trusted like
+any other, and the key then crosses that proxy (inside boundary 2 for the
+same-user case; OS hygiene otherwise). (2) The key is a Python `str` and the
+Basic token is derived from it; neither can be zeroed, so "dropped" means the
+module's own references go and the bytes live until the allocator reuses
+them — the same residual as session keys (LOW-009); (6) lengthens that
+lifetime. (3) Credential Manager access is
+same-user by design (boundary 2): any process in the user's session can read
+the key. (4) Once the Clinics tab exists (Phase 2), a key is typed or pasted
+into the app; a paste passes through the Windows clipboard, whose history and
+cloud sync are OS features outside the app. (5) The contact email and the
+requested ids leave the machine to Cliniko by design, inside TLS. (6) An
+exception raised during a call keeps, through its `__traceback__`, every frame
+it unwound through with that frame's locals — `raise … from None` removes the
+chained CONTEXT, not the frame chain. While that exception object is alive
+(bound past its `except`, stored by a caller, `sys.last_exc`, a debugger), it
+references the key (an `InvalidKey` raised by `shard_of_key` before
+`ClinikoClient.call` deletes its local), or the Basic token (`ClinikoCall._get`'s
+local `headers`, in the traceback of every error raised through the transport
+or `_interpret`), with the path, ids and response bytes — past the logical
+call's end, until the exception is dropped (codex round 9 PR-MED-030). Nothing
+RENDERS them (SECRETS above); this is memory lifetime inside boundary 2, the
+same class as (2). Clearing the frames in the client
+(`traceback.clear_frames`) was rejected: it would also wipe the caller's
+finished frames and still miss the pre-`yield` `InvalidKey`.
+
 ## Out of scope for Phases 1–3A (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -1256,7 +1393,9 @@ packaging/signing (Phase 7).
 Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
 deferred from Phase 2); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
-Cliniko keys are first stored (Phase 4); or the software is installed on the
+Cliniko keys are first stored (the Cliniko workflow safeguards plan's
+Phase 2) or the first app code path calls the Cliniko client (its Phases 2–3);
+or the software is installed on the
 second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next
 trigger on that surface is a change of MODEL or of RUNTIME — a new pin, a new

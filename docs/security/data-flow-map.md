@@ -8,15 +8,29 @@ per-session keys; an unprotected recovery store expires at ~24 h (eligible at
 session is sweep-exempt (flow 10; retention schedule). Phase 3A also adds **clinician-authored config** (plaintext,
 INTENDED as non-patient boilerplate — an unenforced operational rule, flow 11).
 There is
-**no status file** (that design was cut in plan hardening) and **no network
-sockets** on either desktop process at runtime (enforced by
-`desktop/tests/test_integration_no_sockets.py`, ruff import bans, and the
-offline env kill-switches in flow 7) — the sanctioned network users are TWO
-explicit SETUP-TIME steps outside the running app, the model-setup script and
-the one-off pinned prose-runtime wheel install, both in flow 9. The note
-pipeline (flows 10–11) is in-process and adds no network surface and no new
-logging channel, and so is the prose rendering the language model does
-(flow 17).
+**no status file** (that design was cut in plan hardening). **Network: no
+connection except Cliniko's API, and none at startup or idle** (Cliniko
+workflow safeguards plan, D9; rewritten as a class at Task 1.2, 2026-09-27).
+The native host has no network code at all. `scribe-app` holds exactly ONE
+network-capable module, the read-only Cliniko client (`cliniko_client.py`,
+flow 18): HTTPS `GET` to `api.<shard>.cliniko.com` only. What enforces that:
+ruff's import bans (`socket`, `http`, `urllib.request`, `PySide6.QtNetwork`)
+with exactly one exemption, on that module's `http.client` import, and a test
+that no other module imports a network module (both in
+`desktop/tests/test_cliniko_client.py`; a DYNAMIC import is outside what a
+source check sees — the named residue). What the process does at runtime is
+pinned separately: `desktop/tests/test_integration_no_sockets.py` asserts zero
+connections from the host, from `scribe-app` at startup and idle, and during
+capture, transcription and prose generation, and the offline env
+kill-switches (flow 7) keep the ML stack off the network. As of Task 1.1 no
+app code path calls the client; its callers arrive with the clinic keys
+(Validate on the Clinics tab) and note verification (a context report from
+Chrome), each on a practitioner action or a report, never on startup or a
+timer. The other network users are TWO explicit SETUP-TIME steps outside the
+running app, the model-setup script and the one-off pinned prose-runtime
+wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
+and adds no network surface and no new logging channel, and so is the prose
+rendering the language model does (flow 17).
 
 ## Components
 
@@ -24,7 +38,7 @@ logging channel, and so is the prose rendering the language model does
 |---|---|---|
 | Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 | Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
@@ -48,7 +62,11 @@ logging channel, and so is the prose rendering the language model does
 3. **Desktop → Windows Credential Manager.** Durable secrets via `keyring`,
    keyed `ClinikoScribe/<clinic_id>` + secret name. Phase 1 stores only the
    transient self-test credential (`test/probe`), deleted by the test itself.
-   Real Cliniko API keys arrive in Phase 4 and live ONLY here.
+   Real Cliniko API keys arrive with the Cliniko workflow safeguards plan's
+   Clinics tab (its Phase 2) and, at rest, live ONLY here; the Cliniko client
+   reads one per logical call and its own references go when the call ends —
+   in memory only, and a still-live exception from the call keeps its frames
+   (and so the key or token) referenced until it is dropped (flow 18).
 
 4. **Session crypto.** AES-256-GCM keys from `os.urandom`; `destroy()`
    drops the in-memory key, making anything encrypted under it
@@ -138,8 +156,8 @@ logging channel, and so is the prose rendering the language model does
    inside an auto-deleted temp directory — no clinical content ever takes
    that path.
 
-9. **The TWO sanctioned network steps (both setup-time, separate processes,
-   never the app).**
+9. **The TWO setup-time network steps (separate processes the user runs;
+   the app's own network use is flow 18 alone).**
    (a) `scripts/setup-models.py`. Explicit one-time HTTPS downloads into
    the model cache: silero-vad from its pinned GitHub release tag
    (SHA-256-verified), whisper snapshots from Hugging Face pinned to
@@ -163,8 +181,8 @@ logging channel, and so is the prose rendering the language model does
    alike — must be https on every redirect hop: a redirect to http is
    refused before it is fetched (the same handler class serves both; silero-
    vad and the whisper snapshots rely on their pre-existing pins, not on a
-   redirect guard). Idempotent; never invoked by the app;
-   runtime processes stay socketless. It must be run BY THE USER from a normal
+   redirect guard). Idempotent; never invoked by the app, and the app never
+   downloads a model. It must be run BY THE USER from a normal
    terminal — agent/MSIX-virtualized shells write to a package-private
    location invisible to user-launched processes (see `docs/lessons.md`).
    (b) The prose runtime's wheel install, `pip install --require-hashes
@@ -203,10 +221,17 @@ logging channel, and so is the prose rendering the language model does
     note along with the audio and transcript (same custody and retention posture
     as the audio and transcript — the 24 h cap governs unprotected recovery
     stores; see the retention schedule).
-    Plaintext note and the full transcript coexist in memory only for the review
-    window (threat model, Phase 3A §3); the note is never logged and never
-    written outside the encrypted store. Copy-to-Cliniko is gated (Task 9.1) and
-    ships DISABLED — see the threat model.
+    Inside the app, the plaintext note and the full transcript coexist in memory
+    only for the review window (threat model, Phase 3A §3), and the app never
+    logs the note and never writes it outside the encrypted store — with ONE
+    exception the app does not hold: the clinician-initiated Copy below, whose
+    clipboard copy (and any clipboard-history or cloud-sync copy of it)
+    outlives the review. Copy-to-Cliniko ships enabled since the
+    practitioner's 2026-09-27 decision and is offered only for a fully ratified
+    note; the copied text goes to the Windows clipboard by the clinician's own
+    action and is outside the app's custody from there (clipboard history and
+    cloud clipboard sync are OS features the app neither clears nor detects)
+    — see the threat model, Phase 3A surface 4, and the retention schedule.
 
 11. **Config load (Phase 3A, read-only, plaintext, intended non-patient boilerplate — unenforced).**
     `note_config.load_note_config` reads clinician-authored config from
@@ -456,6 +481,43 @@ logging channel, and so is the prose rendering the language model does
     tripwire markers), and no socket is opened — pinned by the prose legs of
     `desktop/tests/test_integration_no_sockets.py`.
 
+18. **Cliniko API reads (Cliniko workflow safeguards plan, D9; client BUILT
+    at Task 1.1, 2026-09-27; memory only).** `scribe-app` → HTTPS `GET` →
+    `https://api.<shard>.cliniko.com/v1/...` through `cliniko_client.py`, the
+    app's one network-capable module. Resources: `/user`,
+    `/practitioners?q[]=user_id:=<id>`, `/settings/public`, `/settings`,
+    `/treatment_notes/<id>`, `/patients/<id>`, `/bookings/<id>` — reads only;
+    the transport refuses any method but `GET` and the module has no write
+    method. WHAT LEAVES the machine: the clinic's API key (HTTP Basic
+    username, inside TLS), the requested ids in the path (digits only,
+    validated), and the practitioner's contact email in the required
+    `User-Agent: Clinic Scribe (<email>)` (refused on CR/LF or a failed shape
+    check). WHAT RETURNS: the key user's role and practitioner record, the
+    account subdomain, and for a note its draft state, links (patient,
+    practitioner, booking, template) and content, the patient's record (the
+    display name) and the booking's time. Every answer is held in memory
+    only: the client writes nothing, logs nothing and returns the parsed JSON
+    object to its caller; only a 200's body is read (any other status is
+    classified from its status line and headers), and a body over 1 MiB is
+    refused unread past 1 MiB + 1 byte. Controls (threat-model "Cliniko API
+    client"): the host only from a documented shard (an unknown or missing
+    key suffix is refused, never defaulted), TLS 1.2+ verified against the
+    Windows certificate store, a 15 s per-step timeout and a 30 s request
+    deadline over the body read (one socket receive per read), no redirects,
+    no proxy, `http.client` debug output pinned off, `SSLKEYLOGFILE` removed
+    at startup and refused, the key read once per logical call and never in a
+    log line, the client's state, or any exception's rendered text (message,
+    repr, formatted traceback) — a still-live exception from the call does
+    keep its frames, and so the key or Basic token, the path, ids and
+    response bytes, referenced in memory until it is dropped (threat-model
+    residue (6)). NOT YET CALLED: as of Task 1.1 no app code path imports
+    the client (pinned by `test_cliniko_client.py`); the clinic-key Validate
+    and note verification add the callers in the plan's Phases 2–3 and extend
+    this flow. The practitioner-run feasibility script
+    `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
+    same client that prints structure only — never a name, id value, answer
+    text or the key.
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -484,14 +546,17 @@ logging channel, and so is the prose rendering the language model does
   that tab's per-item Remove re-saving the same profile (flow 16), and by its
   "Confirm consent" re-saving the same profile with a current consent record
   (content untouched; codex round 31 PR-LOW-048).
-- No network traffic from either desktop process at runtime (no-sockets
-  integration test on host and app, plus offline env kill-switches set and
-  asserted; the during-capture/during-transcription poll and the
-  network-stubbed transcription test landed with Step 13, and the manual
-  completion gate's independent monitor run passed 2026-08-02; since Phase 4
-  the poll also runs inside a prose generation). Model downloads and the
-  prose-runtime install happen only in the separate setup-time processes
-  (flow 9).
+- No network traffic from either desktop process at runtime EXCEPT
+  `scribe-app`'s read-only calls to Cliniko's API (flow 18), and none at
+  startup or idle (no-sockets integration test on host and app, plus offline
+  env kill-switches set and asserted; the during-capture/during-transcription
+  poll and the network-stubbed transcription test landed with Step 13, and the
+  manual completion gate's independent monitor run passed 2026-08-02; since
+  the note-learning plan's Phase 4 the poll also runs inside a prose
+  generation). No other destination: the client's host is built only from a
+  documented Cliniko shard, and no other module may import a network module
+  (flow 18). Model downloads and the prose-runtime install happen only in the
+  separate setup-time processes (flow 9).
 - No cloud AI services; no telemetry (HF telemetry disabled; onnxruntime
   telemetry off).
 - No clinical content in logs — the whitelist + tripwire now also drops

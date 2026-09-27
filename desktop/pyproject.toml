@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scribe-desktop"
 version = "0.1.0"
-description = "Windows desktop companion for the Cliniko clinical scribe (Phase 1: security foundation)"
+description = "Windows desktop companion for the Cliniko clinical scribe"
 # Plan targets 3.12+; dev machine runs 3.14 (recorded in plan Key Findings)
 requires-python = ">=3.12"
 dependencies = [
@@ -88,11 +88,15 @@ select = [
 ]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-# Critical Constraint: neither desktop process may open a network socket.
-"PySide6.QtNetwork" = { msg = "Network APIs are banned: no sockets in the desktop app (plan Critical Constraints)" }
-"socket" = { msg = "The socket module is banned: no network sockets in the desktop app (plan Critical Constraints)" }
-"http" = { msg = "HTTP client/server APIs are banned in Phase 1 (plan Critical Constraints)" }
-"urllib.request" = { msg = "Network APIs are banned in Phase 1 (plan Critical Constraints)" }
+# Offline contract (Cliniko workflow safeguards plan D9): no connection except
+# Cliniko's API, and none at startup or idle. Every network module is banned
+# everywhere; the ONE exemption is the `http.client` import in
+# `scribe_desktop/cliniko_client.py`, pinned (count and site) by
+# `tests/test_cliniko_client.py::TestConfinement`.
+"PySide6.QtNetwork" = { msg = "Network APIs are banned: only scribe_desktop/cliniko_client.py talks to the network (plan D9)" }
+"socket" = { msg = "The socket module is banned: only scribe_desktop/cliniko_client.py talks to the network (plan D9)" }
+"http" = { msg = "HTTP APIs are banned: only scribe_desktop/cliniko_client.py talks to Cliniko's API (plan D9)" }
+"urllib.request" = { msg = "Network APIs are banned: only scribe_desktop/cliniko_client.py talks to the network (plan D9)" }
 
 [tool.mypy]
 python_version = "3.12"

@@ -16,8 +16,8 @@ What is pinned here, per the plan's Done-when clauses:
 - Task 6.4: the extractive provider runs compose -> confirm -> finalise ->
   write -> read -> Complete end to end over a fixture transcript, and the
   note's concrete section contents are asserted (the usability evidence the
-  plan's handoff note records; the BINDING real-transcript judgment stays
-  Task 9.1's shipping gate).
+  plan's handoff note records; the real-transcript judgment is Task 9.1's
+  shipping gate, a quality measurement since 2026-09-27).
 """
 
 from __future__ import annotations

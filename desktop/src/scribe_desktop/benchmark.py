@@ -64,6 +64,15 @@ OFFLINE_ENV: dict[str, str] = {
 # ADDS them as DLL search directories, the CPU wheel's bundled library has no
 # CUDA/HIP dependency, and they are ordinary system variables on a GPU host.
 FORBIDDEN_NATIVE_OVERRIDES: tuple[str, ...] = ("LLAMA_CPP_LIB_PATH",)
+# TLS-secret exports the offline contract REFUSES (Cliniko workflow safeguards
+# plan D9, Task 1.1): `ssl.create_default_context()` appends every session's
+# TLS secrets to the file `SSLKEYLOGFILE` names, which would let anyone who
+# can read that file decrypt the app's Cliniko traffic — the API key included.
+# The Cliniko client builds its own context and never reads the variable; this
+# closes it for every other context too. Same handling as the native
+# overrides: deleted by `apply_offline_env`, refused BY NAME (its value is a
+# path, never read) by `assert_offline_env`.
+FORBIDDEN_TLS_OVERRIDES: tuple[str, ...] = ("SSLKEYLOGFILE",)
 
 # Fixed, deliberately non-clinical benchmark script (~45 s of speech at
 # default SAPI rate). Plain descriptive prose with numbers and names so the
@@ -104,17 +113,17 @@ class OfflineEnvError(RuntimeError):
 
 def apply_offline_env() -> None:
     """Set the offline kill-switch environment variables for this process and
-    delete the forbidden native-library overrides."""
+    delete the forbidden native-library and TLS-secret overrides."""
     for key, value in OFFLINE_ENV.items():
         os.environ[key] = value
-    for key in FORBIDDEN_NATIVE_OVERRIDES:
+    for key in FORBIDDEN_NATIVE_OVERRIDES + FORBIDDEN_TLS_OVERRIDES:
         os.environ.pop(key, None)
 
 
 def assert_offline_env() -> None:
     """Raise OfflineEnvError unless every offline kill-switch is set to '1'
-    and no forbidden native-library override is present (the variable is
-    named; its value — a path — is never read or touched)."""
+    and no forbidden native-library or TLS-secret override is present (the
+    variable is named; its value — a path — is never read or touched)."""
     missing = [k for k, v in OFFLINE_ENV.items() if os.environ.get(k) != v]
     if missing:
         raise OfflineEnvError(
@@ -125,6 +134,9 @@ def assert_offline_env() -> None:
         raise OfflineEnvError(
             "native-library override present, refused: " + ", ".join(sorted(present))
         )
+    tls = [k for k in FORBIDDEN_TLS_OVERRIDES if k in os.environ]
+    if tls:
+        raise OfflineEnvError("TLS key log export present, refused: " + ", ".join(sorted(tls)))
 
 
 def default_models_root() -> Path:

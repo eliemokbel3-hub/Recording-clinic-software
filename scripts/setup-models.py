@@ -1,9 +1,12 @@
 """One-time ML model setup for Cliniko Scribe.
 
-This script is the ONLY sanctioned network user in the project (see
-docs/security/data-flow-map.md and the Phase 2 plan). It runs as a separate,
-explicit setup step -- never at runtime. Runtime processes load models from
-the local cache with network access disabled and asserted off.
+This script is one of the project's two SETUP-TIME network steps (the other is
+the pinned prose-runtime wheel install, desktop/requirements-ml-prose.txt; see
+flow 9 of docs/security/data-flow-map.md). It runs as a separate, explicit
+setup step -- never at runtime, and the app never downloads a model. Runtime
+processes load models from the local cache with the ML stack's network access
+disabled and asserted off; the app's only network use is its read-only Cliniko
+API client (flow 18).
 
 Downloads into %LOCALAPPDATA%\\ClinikoScribe\\models\\:
   - silero-vad ONNX model (voice activity detection)

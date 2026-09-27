@@ -16,8 +16,9 @@
 # `py3-none-win_amd64`: a bundled DLL, independent of the Python minor version
 # (3.14 confirmed at Task P.0).
 #
-# Install (the SECOND sanctioned network step beside scripts/setup-models.py,
-# run from a normal terminal at the repository root):
+# Install (the SECOND setup-time network step beside scripts/setup-models.py —
+# the app's own only network use is its read-only Cliniko API client — run
+# from a normal terminal at the repository root):
 #
 #     .venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r desktop\requirements-ml-prose.txt
 #     .venv\Scripts\python.exe -m pip install --only-binary=:all: "diskcache>=5.6.1" "jinja2>=2.11.3"

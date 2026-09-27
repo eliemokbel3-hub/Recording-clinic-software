@@ -218,15 +218,17 @@ was said, uncertainty marks and all — so it is DISPLAY-ONLY and never leaves t
 is not the artefact the clinician signs. The **note is ratified content** — every
 non-transcript line confirmed by the clinician against the exact shown wording and passed
 through the checking stage (`note_check.py`) — so it, and only it, may become copyable to
-Cliniko, and only once the shipping gate allows.
+Cliniko, and only once the clinician has ratified it.
 - Transcript text is display-only (`NoTextInteraction`) and cleared on close —
   `ui/transcript.py`. It is never logged, never written outside the encrypted store.
-- The generated NOTE is the copyable surface — but ONLY after the Task-9.1 shipping gate
-  passes AND the note is fully ratified (no pending proposal, no blocking error, saved,
-  no unacknowledged review warning). Until both hold, the note panel is `NoTextInteraction`
+- The generated NOTE is the copyable surface — but ONLY while the recorded copy flag is on
+  AND the note is fully ratified (no pending proposal, no blocking error, saved, no
+  unacknowledged review warning). Until both hold, the note panel is `NoTextInteraction`
   and Copy is disabled; the guard lives in one predicate applied to both the button and
   the text-selection flags and re-checked at click time — `ui/note.py` `_copy_ready()`
-  (`COPY_TO_CLINIKO_ENABLED` in `ui/models.py` is the 9.1 flag). The transcript panel is
+  (`COPY_TO_CLINIKO_ENABLED` in `ui/models.py` is the recorded flag, `True` since the
+  practitioner's 2026-09-27 decision; the Task-9.1 run is now a quality measurement, not an
+  enablement gate — `docs/testing/shipping-gate.md`). The transcript panel is
   never copyable. Never widen copy to only-the-flag; disabling the button alone is
   insufficient because selectable text keeps native copy shortcuts.
 - Provenance is visibly distinguished in the note — transcript-derived vs

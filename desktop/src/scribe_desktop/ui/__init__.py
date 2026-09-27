@@ -6,7 +6,8 @@ controls, recovery list (Flow 3), and the transcript-inspection view
 (Complete/Discard). GUI-free view logic lives in ``ui.models`` so it is
 unit-testable without Qt; the screens are thin wiring over it.
 
-Critical Constraints honoured here: no QtNetwork, no clinical text in
-logs, and transcript content is DISPLAYED only — never written anywhere
-except the encrypted store.
+Critical Constraints honoured here: no network code (no QtNetwork; the app's
+one network-capable module is ``scribe_desktop.cliniko_client``, and no UI
+module imports it yet), no clinical text in logs, and transcript content is
+DISPLAYED only — never written anywhere except the encrypted store.
 """

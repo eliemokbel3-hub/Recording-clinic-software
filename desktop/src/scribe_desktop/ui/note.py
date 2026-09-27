@@ -118,10 +118,12 @@ Clinical-content discipline (Critical Constraints, design-system):
   Complete, Discard, cancel, a new transcript or a new generation); an accepted
   window close ends the process — ``MainWindow.closeEvent`` refuses to close
   while a review is busy and calls no separate tab-clear (round 70 PR-LOW-013).
-- The note is the RATIFIED copyable surface, but only once the Task 9.1
-  shipping gate passes: copy is bound to ``models.COPY_TO_CLINIKO_ENABLED``,
-  which ships False, so copy is DISABLED and the note panel is display-only
-  until that recorded decision flips.
+- The note is the RATIFIED copyable surface: copy is bound to
+  ``models.COPY_TO_CLINIKO_ENABLED``, which ships True since the
+  practitioner's 2026-09-27 decision (safeguards plan D12; the Task 9.1 run
+  is now a quality measurement, not an enablement gate). The flag is
+  necessary, not sufficient: the Copy button stays disabled and the note
+  panel display-only until the note is fully ratified (``_copy_ready``).
 - Nothing here logs or persists clinical text. Confirmation evidence
   (``shown_text_digest``) is computed from the text the widget ACTUALLY
   rendered — read back from the proposal label, never copied from the
@@ -1995,13 +1997,14 @@ class NoteScreen(QWidget):
 
     def _copy_ready(self) -> bool:
         """The single predicate copy enablement derives from (round 35
-        PR-MED-002): the 9.1 shipping flag is NECESSARY but not sufficient —
-        copy shares Complete's ratification bar. A note may reach any
-        clipboard path only when the gate is on AND the review is fully
-        ratified (no pending proposal, no blocking error, saved, no
+        PR-MED-002): the recorded copy flag (``models.COPY_TO_CLINIKO_ENABLED``,
+        on since the practitioner's 2026-09-27 decision, D12) is NECESSARY but
+        not sufficient — copy shares Complete's ratification bar. A note may
+        reach any clipboard path only when the flag is on AND the review is
+        fully ratified (no pending proposal, no blocking error, saved, no
         unacknowledged review — exactly what ``complete_block_reason``
-        enforces), so an unresolved-error note can never be copied even after
-        Task 9.1 flips the flag."""
+        enforces), so an unresolved-error note can never be copied with the
+        flag on."""
         return (
             self._copy_enabled
             and self._note is not None
@@ -2009,8 +2012,8 @@ class NoteScreen(QWidget):
         )
 
     def _apply_copy_binding(self) -> None:
-        """Bind the copy affordance: the Copy BUTTON is visible per the 9.1
-        shipping flag, but both the button's ENABLED state and the note
+        """Bind the copy affordance: the Copy BUTTON is visible per the
+        recorded copy flag, but both the button's ENABLED state and the note
         panel's selectability derive from ``_copy_ready()`` — so selectable
         text (which carries native copy shortcuts) and the button share one
         predicate. The transcript panel is display-only always."""

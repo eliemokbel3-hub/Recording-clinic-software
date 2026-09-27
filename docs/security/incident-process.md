@@ -13,17 +13,22 @@ When in doubt, stop using the software and investigate before resuming.
 - Any sign of payload content in log files (the tripwire also counts drops —
   a nonzero drop count means misuse of the logger somewhere)
 - A Cliniko API key exposed anywhere outside Windows Credential Manager
-  (Phase 4+), or an unexpected Credential Manager entry under `ClinikoScribe/`
+  (once clinic keys are stored — the Cliniko workflow safeguards plan's
+  Phase 2), or an unexpected Credential Manager entry under `ClinikoScribe/`
 - Extension behaving on non-Cliniko pages, or an extension ID mismatch
 - (Phase 2+) any indication audio/transcripts persisted beyond their
   retention window or reached the network
+- Any network connection from `scribe-host`, or from `scribe-app` to anything
+  other than `api.<shard>.cliniko.com:443`, or from `scribe-app` at startup or
+  while idle (the offline contract: no connection except Cliniko's API, and
+  none at startup or idle)
 
 ## Immediate steps
 
 1. **Stop the software.** Close Chrome (kills the host), close `scribe-app`.
 2. **Disconnect the channel:** `scripts/register-native-host.py --unregister`
    and remove/disable the unpacked extension in `chrome://extensions`.
-3. **Revoke secrets (Phase 4+):** regenerate the affected clinic's Cliniko
+3. **Revoke secrets (once clinic keys are stored):** regenerate the affected clinic's Cliniko
    API key(s) in Cliniko itself, then delete the local entries from Windows
    Credential Manager.
 4. **Preserve evidence:** copy `%LOCALAPPDATA%\ClinikoScribe\logs\` somewhere
@@ -43,7 +48,8 @@ When in doubt, stop using the software and investigate before resuming.
 1. Rebuild trust bottom-up on a machine you trust: fresh `git pull` from
    GitHub, fresh venv, `pip install -e desktop`, re-run
    `scripts/register-native-host.py`, reload the extension, and confirm the
-   Step-12 gate checks (badge connects, self-test passes, `netstat` clean).
+   Step-12 gate checks (badge connects, self-test passes, `netstat` shows no
+   connection from either desktop process while the app is idle).
 2. Re-enter secrets only after the machine is trusted again.
 3. Record what happened and what changed in `CHANGELOG.md` (Security) and,
    if it revealed a systemic gap, add it to the threat model.

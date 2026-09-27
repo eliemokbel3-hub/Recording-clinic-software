@@ -25,3 +25,13 @@
   Task 0.4 matrix), and prints the model's I/O shapes, the embedding dimension
   and the cosine matrix. Text-free: file names, durations and numbers only. Run
   by the practitioner from a normal terminal (Task 0.4).
+- `probe-cliniko.py` (Cliniko workflow safeguards plan Task 1.3, run at Task
+  P.1) — read-only feasibility check of one clinic through the app's own Cliniko
+  client (`scribe_desktop.cliniko_client`: GET only, host pinned from the key's
+  shard). Asks for the contact email, the open treatment note's URL and the API
+  key (the key via `getpass` only — never an argument or environment variable),
+  then prints ONLY structure: each call's status, field names with values
+  reduced to their kind, and yes/no facts (draft state, links, practitioner and
+  patient matches, whether `/settings/public` answered). Never a name, id value,
+  answer text, the URL, the email or the key. Run by the practitioner from a
+  normal terminal at the repo root with a treatment note open in Cliniko.
