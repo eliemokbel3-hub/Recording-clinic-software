@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -25,9 +25,11 @@ capture, transcription and prose generation, and the offline env
 kill-switches (flow 7) keep the ML stack off the network. The client has two
 app callers (flow 18): the clinic registry, on a Validate or Replace key
 pressed on the Clinics tab, and note verification (the plan's Phase 3), on a
-recovered session opened for checkout whose encounter record names a Cliniko
-note (a context report from Chrome reaches it only with Phase 4's pipe); each
-runs on a practitioner action, never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
+recovered or Unreviewed session opened for checkout or review whose encounter
+record names a Cliniko note, and — through the Chrome bridge (flow 19) — on a
+note report from the focused Chrome tab and on a new pipe connection under a
+linked live session; each runs on a practitioner action or a Chrome report,
+never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
 running app, the model-setup script and the one-off pinned prose-runtime
 wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
@@ -37,7 +39,7 @@ rendering the language model does (flow 17).
 
 | Component | Process | Trust context |
 |---|---|---|
-| Chrome extension (`extension/`) | Chrome renderer/service worker | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` |
+| Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid`; host access `https://*.cliniko.com/*` only, no `tabs` permission |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
 | Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
@@ -257,13 +259,22 @@ rendering the language model does (flow 17).
     only for the review window (threat model, Phase 3A §3), and the app never
     logs the note and never writes it outside the encrypted store — with ONE
     exception the app does not hold: the clinician-initiated Copy below, whose
-    clipboard copy (and any clipboard-history or cloud-sync copy of it)
-    outlives the review. Copy-to-Cliniko ships enabled since the
+    clipboard copy outlives the review. Copy-to-Cliniko ships enabled since the
     practitioner's 2026-09-27 decision and is offered only for a fully ratified
     note; the copied text goes to the Windows clipboard by the clinician's own
-    action and is outside the app's custody from there (clipboard history and
-    cloud clipboard sync are OS features the app neither clears nor detects)
-    — see the threat model, Phase 3A surface 4, and the retention schedule.
+    action and is outside the app's custody from there. Since Task 8.2 every
+    copy of note text — the Copy button, and the keyboard's Copy or the
+    context menu's Copy over the ratified note panel's selection — carries
+    three registered Windows formats
+    (`ExcludeClipboardContentFromMonitorProcessing`,
+    `CanIncludeInClipboardHistory` = 0, `CanUploadToCloudClipboard` = 0) that
+    Windows clipboard history and cloud clipboard sync honour, so the copy is
+    not kept in history or uploaded. They do NOT stop any same-user process
+    reading the current clipboard, a third-party clipboard manager may ignore
+    the first of them, the note stays on the clipboard until something
+    replaces it and nothing is cleared; a drag of the selected text is Qt's own
+    (no formats, no clipboard — the text lands where it is dropped) — see the
+    threat model, Phase 3A surface 4, and the retention schedule.
 
 11. **Config load (Phase 3A, read-only, plaintext, intended non-patient boilerplate — unenforced).**
     `note_config.load_note_config` reads clinician-authored config from
@@ -568,15 +579,16 @@ rendering the language model does (flow 17).
     `verify_note_context`) is ONE client call on a worker thread with the
     key read once from Credential Manager: `GET /treatment_notes/<id>`,
     `GET /patients/<id>` and, when the note links one, `GET /bookings/<id>`.
-    Today it runs only when the practitioner opens a recovered session whose
-    encounter record (flow 6) names a note, and again if a clinic changes
-    while that checkout is open. What it keeps: an outcome in memory — ids,
+    It runs when the practitioner opens a recovered session for checkout, or
+    an Unreviewed session for review, whose encounter record (flow 6) names a
+    note, again if a clinic changes while that checkout is open, and for the
+    Chrome triggers below. What it keeps: an outcome in memory — ids,
     a verification state and time, or a reason code — and, beside it, a
     separate display value (the patient's name, cleaned to one line of at
     most 120 characters, and the appointment time) that no model, record,
     log or file holds and Phase 3 showed nowhere; the note's content and
-    the rest of each answer are dropped with the call. The outcome is
-    dropped when the checkout ends. The practitioner-run feasibility script
+    the rest of each answer are dropped with the call. A checkout's outcome
+    is dropped when the checkout ends. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
     same client that prints structure only — never a name, id value, answer
     text or the key. Since Task 4.5 the Chrome bridge (flow 19) is a second
@@ -654,7 +666,50 @@ rendering the language model does (flow 17).
     Task 4.3's tripwire) — never a frame. The host is a pass-through: it
     keeps no message, and its log holds message types, relay states and that
     path only (`scribe-host.log`). `patient_name` and `note_id` are
-    registered tripwire markers.
+    registered tripwire markers. What Chrome does with `state` is flow 20.
+
+20. **`state` inside Chrome: the service worker, the page script and the side
+    panel (Cliniko workflow safeguards plan D1/D2/D13; BUILT at Tasks
+    6.0–6.5, 2026-09-28; memory only).** WHAT CHROME READS: the URL of a tab
+    only while it is on a `*.cliniko.com` host (the extension holds no `tabs`
+    permission), and — from the page script — that page's `location.href`;
+    never Cliniko's DOM or content. The service worker turns those into
+    `context` reports (flow 19; no URL leaves Chrome) and sends the app's
+    `command`s for the panel's and the block's clicks. WHAT THE APP'S `state`
+    BECOMES: the service worker keeps the LATEST snapshot of the current
+    connection (`ConnectionManager.appState`) — so, while the app publishes
+    them, the verified patient's name and appointment time of the bound
+    report and of the live or blocked session — and a table of open tabs
+    (ids, window, whether active, and a Cliniko tab's URL), plus the report
+    it last sent for each tracked tab and the text of the slice it last sent
+    to each Cliniko tab (for change detection — so it may hold that tab's
+    clinic's patient name; dropped when the tab closes, on a resync or when
+    the tab's page script says hello). From that it sends: to the SIDE PANEL
+    (this extension's own page), the whole snapshot with the focused tab's
+    kind, over a port the worker accepts only from that page; to EACH page
+    tab on an allow-listed host, only that tab's slice (`context.ts`
+    `sliceFor`): the frame colour and, while a block stands, the block —
+    naming the recording's patient only when the recording belongs to that
+    tab's own clinic host (else that clinic's label only, with no name or ids
+    of that patient), and the patient on the tab itself only when the app's
+    bound report is that tab's and Cliniko verified it. A page tab never
+    receives the report, the live session, the banner or a refusal. The panel
+    and the page script draw every string with `textContent` (the page script
+    inside a closed shadow root); the side panel also keeps, while its Ready
+    layout stands, that note's key (the tab number, host, patient and note
+    ids and the verification state) so that any change clears the consent
+    tick. WHAT IS KEPT: memory
+    only — the worker's snapshot until the next one, a disconnect or the
+    worker's stop; the panel's view until it closes; a page script's slice
+    until the next slice, its return to inert (its host leaves the
+    allow-list, the app stops) or the page unloads. Nothing is written to
+    `chrome.storage` or other browser storage and nothing is logged but the
+    native host's disconnect diagnostic (no payload) — pinned by
+    `extension/src/sinks.test.ts`, a text-matching guard with named limits.
+    OUTSIDE THE APP'S CUSTODY: a Chrome crash dump of those processes may
+    hold what they held (threat model, "The Chrome extension" residue (8)),
+    and a Cliniko page can see the page script's own element and detect the
+    installed extension through its web-accessible module (residue (2)).
 
 ## Explicit non-flows
 
@@ -686,7 +741,10 @@ rendering the language model does (flow 17).
   (content untouched; codex round 31 PR-LOW-048).
 - No network traffic from either desktop process at runtime EXCEPT
   `scribe-app`'s read-only calls to Cliniko's API (flow 18), and none at
-  startup or idle (no-sockets integration test on host and app, plus offline
+  startup or idle — a call follows only a practitioner action or a note
+  report from Chrome, so an app started while Chrome shows a Cliniko
+  treatment note verifies it once that report arrives, and the no-sockets
+  legs measure startup and idle with no Chrome link (no-sockets integration test on host and app, plus offline
   env kill-switches set and asserted; the during-capture/during-transcription
   poll and the network-stubbed transcription test landed with Step 13, and the
   manual completion gate's independent monitor run passed 2026-08-02; since
@@ -726,9 +784,12 @@ rendering the language model does (flow 17).
   Pinned with a mock backend under a temporary `LOCALAPPDATA`
   (`desktop/tests/test_enrolment.py`) and at the tab level with a fake capture
   over a temporary profile root (`desktop/tests/test_ui_screens.py`).
-- No data in Chrome extension storage (plan: credentials/models/audio never
-  enter extension storage); no Chrome-side recording surface at all until
-  Phase 5.
+- No data in Chrome extension storage: credentials, models, audio,
+  transcripts and patient names never enter `chrome.storage` or any browser
+  storage (flow 20; `extension/src/sinks.test.ts`, a text-matching guard).
+  The Chrome-side recording surface — the side panel, the page frame and the
+  block — holds what it shows in memory only; the Cliniko API key never
+  reaches Chrome at all (no protocol field carries it).
 - Log/temp locations are user-local; exclusion from OneDrive/backup sweep is
   a Phase 6 task (`PLAN.md`), noted in the retention schedule.
 - No uploaded sample note on disk (note-learning-and-styles plan, D9; BUILT,
@@ -764,8 +825,11 @@ rendering the language model does (flow 17).
   — and skips BY NAME until the wheel and the file exist, so that evidence is
   conditional.
 
-## The host↔app link (was "Phase 5 preview")
+## The Chrome side at a glance
 
-The host↔app named pipe deferred here since Phase 2 exists since the Cliniko
-workflow safeguards plan's Tasks 4.2, 4.4 and 4.5 — flow 19. The
-Chrome-spawned host stays a thin, stateless relay (flow 1).
+Chrome ↔ native host over stdio (flow 1) ↔ `scribe-app` over the per-user
+named pipe (flow 19), with what Chrome keeps and draws in flow 20. The
+Chrome-spawned host is a thin, stateless relay; the app alone decides every
+pause, Start, Resume and refusal; a patient's name crosses only for a note
+Cliniko verified, lives in memory only on both sides, and reaches a Cliniko
+tab only for that tab's own clinic.

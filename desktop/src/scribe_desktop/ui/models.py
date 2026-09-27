@@ -1089,6 +1089,41 @@ def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> 
 # flag (Critical Constraint).
 COPY_TO_CLINIKO_ENABLED: Final[bool] = True
 
+# Task 8.2 (Cliniko workflow safeguards plan; practitioner decision
+# 2026-09-27, option (a) "keep it out of history and sync"): every copy of
+# note text — the Copy button and a copy of the ratified note panel's
+# selection (`ui/note.py` `_place_note_text`) — places it together with three
+# registered Windows clipboard formats.
+# Windows clipboard history and cloud clipboard sync honour them, so the
+# copied note is neither kept in history nor uploaded. They do NOT stop any
+# same-user process reading the current clipboard (threat-model boundary 2),
+# a third-party clipboard manager may ignore
+# `ExcludeClipboardContentFromMonitorProcessing`, the note stays on the
+# clipboard until something replaces it, and nothing is ever cleared. The
+# exclusion format's PRESENCE is the signal; it carries the same zero DWORD
+# as the other two so that every format holds a non-empty block. Off Windows
+# the formats mean nothing and the text is still what a paste yields.
+_CLIPBOARD_DWORD_ZERO: Final[bytes] = (0).to_bytes(4, "little")
+CLIPBOARD_EXCLUSION_FORMATS: Final[tuple[tuple[str, bytes], ...]] = (
+    ("ExcludeClipboardContentFromMonitorProcessing", _CLIPBOARD_DWORD_ZERO),
+    ("CanIncludeInClipboardHistory", _CLIPBOARD_DWORD_ZERO),
+    ("CanUploadToCloudClipboard", _CLIPBOARD_DWORD_ZERO),
+)
+
+
+def clipboard_mime_formats() -> dict[str, bytes]:
+    """Task 8.2: the registered Windows clipboard formats a copied note
+    carries, name -> payload (see `CLIPBOARD_EXCLUSION_FORMATS`). Qt-free;
+    ``ui/note.py`` `_copy_note` sets each under `windows_clipboard_mime_type`."""
+    return dict(CLIPBOARD_EXCLUSION_FORMATS)
+
+
+def windows_clipboard_mime_type(format_name: str) -> str:
+    """The MIME type under which Qt's Windows clipboard places a REGISTERED
+    clipboard format of this name (Qt's `application/x-qt-windows-mime`
+    convention)."""
+    return f'application/x-qt-windows-mime;value="{format_name}"'
+
 # Task 7.7 (round 45 MED-001) — the third clause of the consent Critical
 # Constraint: "the note view renders it as a manual reminder only". The first
 # two clauses are structural (`TemplateProfile` refuses attestation-typed

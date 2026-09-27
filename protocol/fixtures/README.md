@@ -1,7 +1,8 @@
 # Protocol fixtures — canonical contract
 
 These JSON fixture files are the **canonical protocol contract** between the
-Chrome extension and the desktop native host (plan Key Design Decision:
+Chrome extension and the desktop native host — and, through the host's relay
+over the named pipe, `scribe-app` (plan Key Design Decision:
 fixtures-canonical protocol). The TypeScript types (`extension/src/protocol.ts`)
 and pydantic models (`desktop/src/scribe_desktop/protocol.py`) are hand-mirrored,
 and each side's tests validate against these same files — fixture drift is a
@@ -50,6 +51,17 @@ booleans are JSON booleans and integers JSON integers — the envelope's
 `protocol_version` too (a numeric string or a boolean is `malformed`). Lengths
 count characters (code points) on both sides, the envelope's `request_id` and
 `session_nonce` included (`ping__astral_request_id.json`).
+
+Display text and privacy (Cliniko workflow safeguards plan D2, Constraint 8;
+see the data-flow map, flows 19–20). A patient's name can appear only in
+`state` — `report.patient_name` (with `appointment_starts_at`, refused unless
+the report is `verified`), `live.patient_name` (refused on an unlinked
+session) and `block.patient_name`; `banner.patient_name` is allowed by the
+shape but the app never sends it (a retired session keeps no display
+string). `context` and `command` carry ids and codes only, never a name or a
+URL, and no message carries a Cliniko API key. What each Chrome tab is then
+told is the extension's per-tab slice, not a protocol message
+(`extension/src/context.ts` `sliceFor`).
 
 `context`, `command` and `state` require the session nonce on the Chrome
 wire. On the host ↔ app pipe the host strips it from `context` and `command`

@@ -124,6 +124,9 @@ Clinical-content discipline (Critical Constraints, design-system):
   is now a quality measurement, not an enablement gate). The flag is
   necessary, not sufficient: the Copy button stays disabled and the note
   panel display-only until the note is fully ratified (``_copy_ready``).
+  Every copy of note text — the button and a copy of the panel's selection —
+  goes through ``_place_note_text``, which adds the formats that keep the
+  note out of Windows clipboard history and cloud sync (Task 8.2).
 - Nothing here logs or persists clinical text. Confirmation evidence
   (``shown_text_digest``) is computed from the text the widget ACTUALLY
   rendered — read back from the proposal label, never copied from the
@@ -140,8 +143,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
+from PySide6.QtGui import QContextMenuEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -151,6 +154,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLayout,
     QLineEdit,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -229,6 +233,80 @@ class _LineEditor(QLineEdit):
             self.escape_pressed.emit()
             return
         super().keyPressEvent(event)
+
+
+def _place_note_text(text: str) -> bool:
+    """Put note text on the clipboard (Task 8.2): ``text`` as plain text —
+    what ``QClipboard.setText`` would place — plus the three registered
+    Windows formats that keep it out of Windows clipboard history and cloud
+    clipboard sync (``models.clipboard_mime_formats``). The ONE placement of
+    note text, shared by the Copy button and a copy of the note panel's
+    selection; callers gate it on ratification first. False when there is no
+    clipboard."""
+    clipboard = QApplication.clipboard()
+    if clipboard is None:
+        return False
+    mime = QMimeData()
+    mime.setText(text)
+    for name, payload in models.clipboard_mime_formats().items():
+        mime.setData(models.windows_clipboard_mime_type(name), QByteArray(payload))
+    clipboard.setMimeData(mime)
+    return True
+
+
+class _NotePanel(QPlainTextEdit):
+    """The note body (Task 8.2). Once the note is ratified the panel is
+    selectable (``_apply_copy_binding``), and a copy of the selection — the
+    keyboard's Copy (Ctrl+C, Ctrl+Insert) or this panel's own context menu —
+    goes through ``_place_note_text``, so it carries the same formats as the
+    Copy button. The text is the selection as Qt's own copy renders it
+    (``QTextCursor.selection().toPlainText()``). Both routes re-check
+    ``copy_ready`` (the screen's ``_copy_ready``) at the moment of copying, so
+    nothing reaches the clipboard before ratification. Qt's own context menu
+    is replaced (its Copy would bypass the formats); Cut and Paste do nothing
+    on a read-only panel. A drag of the selection is Qt's own and does not
+    touch the clipboard (the named residue in the threat model)."""
+
+    def __init__(self, copy_ready: Callable[[], bool]) -> None:
+        super().__init__()
+        self._copy_ready = copy_ready
+
+    def copy_selection(self) -> bool:
+        """Copy the selection with the formats; False (nothing placed) unless
+        the note is ratified and something is selected."""
+        cursor = self.textCursor()
+        if not self._copy_ready() or not cursor.hasSelection():
+            return False
+        return _place_note_text(cursor.selection().toPlainText())
+
+    def keyPressEvent(self, event: QKeyEvent, /) -> None:
+        if event.matches(QKeySequence.StandardKey.Copy):
+            self.copy_selection()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def build_context_menu(self) -> QMenu:
+        """The panel's context menu: Copy (only for a ratified note with a
+        selection) and Select All (only while the panel is selectable)."""
+        menu = QMenu(self)
+        shortcut = QKeySequence(QKeySequence.StandardKey.Copy).toString(
+            QKeySequence.SequenceFormat.NativeText
+        )
+        copy_action = menu.addAction(f"&Copy\t{shortcut}")
+        copy_action.setEnabled(self._copy_ready() and self.textCursor().hasSelection())
+        copy_action.triggered.connect(self.copy_selection)
+        select_all = menu.addAction("Select &All")
+        select_all.setEnabled(
+            self.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction
+        )
+        select_all.triggered.connect(self.selectAll)
+        return menu
+
+    def contextMenuEvent(self, event: QContextMenuEvent, /) -> None:
+        menu = self.build_context_menu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
 
 
 class NoteScreen(QWidget):
@@ -416,7 +494,7 @@ class NoteScreen(QWidget):
         self.acknowledge_all_button.clicked.connect(self._acknowledge_all)
         self.acknowledge_all_button.hide()
 
-        self.note_body = QPlainTextEdit()
+        self.note_body = _NotePanel(self._copy_ready)
         self.note_body.setReadOnly(True)
         self.note_body.setPlaceholderText("No note generated.")
         # The style line (Task 4.4, C8): rendering in flight, what landed,
@@ -2023,12 +2101,17 @@ class NoteScreen(QWidget):
         self.clear()
 
     def _copy_note(self) -> None:
+        """The Copy button's action. The text is exactly what ``setText``
+        placed before Task 8.2 (``format_note_body``); beside it the mime
+        data carries the three registered Windows formats that keep the note
+        out of Windows clipboard history and cloud clipboard sync
+        (``models.clipboard_mime_formats`` — what they do not do is stated
+        there). A selection copied from the note body goes through the same
+        placement (``_NotePanel``)."""
         note = self._note if self._note is not None else self._saved
         if not self._copy_ready() or note is None:  # click-time re-check (fail closed)
             return
-        clipboard = QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText(models.format_note_body(note))
+        if _place_note_text(models.format_note_body(note)):
             self.message_label.setText("Note copied.")
 
     def _copy_ready(self) -> bool:

@@ -1,9 +1,10 @@
 # Design system — desktop app
 
 The desktop companion's UI conventions, as built in Phase 2 and extended by the Phase-3A
-note review UI. Each cue points at the code that owns it; the code wins on any
-disagreement. Chrome-side UI (Phase 5) should follow the same interaction posture even
-though the toolkit differs.
+note review UI, plus the Chrome-side UI of the Cliniko workflow safeguards plan (the side
+panel, the page frame and the block — "Chrome side" below), which follows the same
+interaction posture in a different toolkit. Each cue points at the code that owns it; the
+code wins on any disagreement.
 
 Suggested sections as this grows: surfaces & layout · dialogs · menus · forms & inputs ·
 view patterns · tokens · microcopy.
@@ -73,8 +74,17 @@ view patterns · tokens · microcopy.
   belongs to one patient's recording and nothing stored may stand in for it. Above the
   box a plain-text line says whether the recording is linked to a Cliniko note; a desktop
   Start is always "Not linked to a Cliniko note", with a line saying it cannot be written
-  back. No id or patient name is ever shown there. A recovered session names its link
+  back. No id is ever shown there, and a patient's name only from a note Cliniko verified
+  (the Chrome link line, `ui/bridge.py`). A recovered session names its link
   status only after it is opened (the listing says "Cliniko link checked when opened").
+  The side panel's box follows the same rule (Chrome side below).
+- **Discard takes two clicks, on every surface.** The Session screen's Discard becomes
+  "Confirm discard" for 10 seconds for the same session (`ui/session_screen.py`); the
+  block's and the side panel's Discard previous become "Confirm discard" with the line
+  "Discard this recording? This cannot be undone. Press Confirm discard to delete it." for
+  15 seconds, and the second click travels to the app as `confirmed: true`
+  (`extension/src/page.ts`, `panel.ts`). A disarmed button reverts silently; nothing is
+  deleted on one click.
 - **Edits over whole lines, with typing only OVER a line.** The Note tab's "Edit the note"
   group offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
   transcript utterances under the router's ownership rule as before; Edit opens a one-line
@@ -234,6 +244,54 @@ view patterns · tokens · microcopy.
   and the final transcript replaces it wholesale (`ui/transcript.py`, `ui/models.py`
   `format_live_segments`; note-learning plan Task 1.4).
 
+## Chrome side (Cliniko workflow safeguards plan D1, D13; Phase 6)
+The extension REPORTS and the app DECIDES: every button becomes a command the app may
+refuse, and a refusal comes back as a line in the panel, never an error dialog.
+- **The side panel carries consent and every control; Cliniko's page carries only the
+  cue.** Chrome's global side panel (opened from the pinned icon) shows one of five
+  layouts (`extension/src/panel-view.ts` `panelModel`, drawn by `panel.ts`):
+  **Message** ("Clinic Scribe is not running — open it to record", with the hint that
+  another Chrome profile may be connected; "Connecting to Clinic Scribe…"; "This clinic
+  is not set up — add its key in Clinic Scribe's Clinics tab"; "Open a patient's
+  treatment note to record"; "Save or cancel <patient>'s note review to start";
+  "Restoring the safeguards on this tab…"; "Cliniko did not verify this note: <reason>.");
+  **Checking** ("Checking with Cliniko…"); **Ready** — the patient, the appointment in
+  local time with its zone ("No linked appointment" when none), the clinic, the
+  verification line ("Note verified with Cliniko. It is checked again before anything is
+  written back." or the could-not-be-reached wording), the consent box and Start;
+  **Live** — "Recording" / "Paused" with a timer, the patient, "Consent confirmed
+  <time>", Pause or Resume, Finish consultation and the hands-free lines, or
+  "Finishing <patient>…" with NO timer; **Blocked** — mirrors the page block and names
+  both patients. The **banner** "Unreviewed note for <patient> — Open for review" (or
+  "Unreviewed recording for this note", or a count) shows only over Message or Ready
+  and only while a Cliniko tab is in front. Ready shows only for the note in FRONT of the
+  practitioner. A queued session shows "The last recording is waiting for review in
+  Clinic Scribe." and never a timer.
+- **Recording consent in the panel is never pre-ticked** — the same explicit exception
+  as the Session screen's box (Interaction posture above): the box sits directly above
+  Start under PLAN.md's verbatim text, Start is disabled until it is ticked, and the tick
+  is cleared by every Start press, whenever the note it was given for changes, and when
+  the Ready layout goes away (`panel.ts`). Nothing stored ever ticks it.
+- **The frame is a cue: red while recording, amber while paused or blocked.** A 3 px
+  border round the Cliniko page, drawn by the page script in a closed shadow root
+  (`extension/src/page.ts`). It is not a control — Cliniko's page can hide or cover it —
+  and nothing depends on it being seen.
+- **A patient change blocks the whole page until the practitioner chooses.** The block
+  dims the page and shows a card: "Recording paused", the reason in plain words ("This
+  tab opened a different treatment note.", "The computer went to sleep.", …), the two
+  patients side by side (the recording's and this tab's — for a recording in another
+  clinic only "Recording belongs to a patient in <clinic>"), and **Resume previous**,
+  **Finish previous** and **Discard previous** (two clicks, above). Its buttons act only
+  on a real click.
+- **The toolbar badge reflects the APP, not only the link**: green **OK** while it runs
+  idle, grey **OFF** while it is closed, red **REC** while recording, amber **PAUSED**
+  while paused or blocked, red **!** when the link drops under a live recording, **ERR**
+  when the link failed, "…" while connecting (`extension/src/connection.ts` `badgeFor`).
+- **Every string from the app is text.** The panel and the page script set every display
+  string with `textContent`; a note-refusal or block-reason code the panel does not know
+  shows a fallback line and an unknown warning code shows nothing — never the code itself
+  (`panel-view.ts` `lookUp`); a refused command shows the app's own one-line message.
+
 ## Clinical-content rules (non-negotiable)
 The two clinical surfaces are deliberately ASYMMETRIC, and the rationale drives every
 rule below. The **transcript is raw evidence** — the model's best-effort record of what
@@ -253,7 +311,13 @@ Cliniko, and only once the clinician has ratified it.
   practitioner's 2026-09-27 decision; the Task-9.1 run is now a quality measurement, not an
   enablement gate — `docs/testing/shipping-gate.md`). The transcript panel is
   never copyable. Never widen copy to only-the-flag; disabling the button alone is
-  insufficient because selectable text keeps native copy shortcuts.
+  insufficient because selectable text keeps native copy shortcuts. Every copy of note
+  text — the Copy button, and Ctrl+C / Ctrl+Insert or the panel's own right-click Copy
+  over the ratified note's selection (`ui/note.py` `_NotePanel`, whose menu replaces
+  Qt's) — also carries the registered Windows formats that keep it out of Windows
+  clipboard history and cloud clipboard sync (`ui/models.py` `clipboard_mime_formats`,
+  Task 8.2); they do not stop another program of the same user reading the clipboard,
+  and the note stays there until something replaces it.
 - Provenance is visibly distinguished in the note — transcript-derived vs
   clinician-authored vs autofill/prefill — so the clinician can see the source of every
   line at a glance (`ui/note.py` / `ui/models.py` rendering).

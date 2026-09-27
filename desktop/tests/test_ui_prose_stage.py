@@ -170,6 +170,9 @@ class TestSaveWhileRendering:
             def setText(self, text: str) -> None:  # noqa: N802 - Qt spelling
                 payloads.append(text)
 
+            def setMimeData(self, mime: Any) -> None:  # noqa: N802 - Qt spelling
+                payloads.append(mime.text())  # Task 8.2: the Copy button's route
+
         class _StubApplication:
             @staticmethod
             def clipboard() -> _Clipboard:

@@ -6289,20 +6289,62 @@ class TestNoteWiring:
 
     # --- Round 70 PR-HIGH-002 (verified MED): the clipboard contract itself ---
 
-    def _fake_clipboard(self, monkeypatch: Any) -> list[str]:
+    def _fake_clipboard(
+        self,
+        monkeypatch: Any,
+        mimes: list[Any] | None = None,
+        native_keys: list[Any] | None = None,
+    ) -> list[str]:
         """Stand in for ``QApplication.clipboard()`` inside ``ui.note`` so the
         copy action is observable WITHOUT touching the real Windows clipboard
-        (history / cloud sync would retain even fixture text); returns every
-        payload ``setText`` received. ``ui.note`` uses ``QApplication`` for
-        nothing else, so the module name is replaced rather than the Qt class
-        patched."""
+        (history / cloud sync would retain even fixture text); returns the
+        text of every placement on EITHER route — ``setText`` or, since Task
+        8.2, ``setMimeData`` (whose ``QMimeData`` is also appended to
+        ``mimes`` when given). ``ui.note`` uses ``QApplication`` for nothing
+        else, so the module name is replaced rather than the Qt class
+        patched.
+
+        Round 46 PR-LOW-270: that stub cannot see Qt's NATIVE copy, so the
+        tests must never reach it. The platform must be ``offscreen`` (whose
+        clipboard is Qt's in-process one, never the Windows clipboard), and
+        ``QPlainTextEdit``'s own ``keyPressEvent`` / ``copy`` are replaced by
+        guards that fail the test on any Copy key or copy call BEFORE native
+        Qt runs — so a panel whose interception regressed fails here instead
+        of writing a clipboard. Every other key passes through to Qt (its
+        key is appended to ``native_keys`` when given)."""
+        from PySide6.QtGui import QGuiApplication, QKeySequence
+        from PySide6.QtWidgets import QPlainTextEdit
+
         from scribe_desktop.ui import note as note_module
+
+        assert QGuiApplication.platformName() == "offscreen", (
+            "the copy tests run only on the offscreen platform; unset QT_QPA_PLATFORM"
+        )
+        native_key_press = QPlainTextEdit.keyPressEvent
+
+        def _refuse_native_copy_key(widget: Any, event: Any) -> None:
+            if event.matches(QKeySequence.StandardKey.Copy):
+                raise AssertionError("a Copy key reached Qt's native copy")
+            if native_keys is not None:
+                native_keys.append(event.key())
+            native_key_press(widget, event)
+
+        def _refuse_native_copy(widget: Any) -> None:
+            raise AssertionError("Qt's native copy was called")
+
+        monkeypatch.setattr(QPlainTextEdit, "keyPressEvent", _refuse_native_copy_key)
+        monkeypatch.setattr(QPlainTextEdit, "copy", _refuse_native_copy)
 
         payloads: list[str] = []
 
         class _Clipboard:
             def setText(self, text: str) -> None:  # noqa: N802 - Qt spelling
                 payloads.append(text)
+
+            def setMimeData(self, mime: Any) -> None:  # noqa: N802 - Qt spelling
+                payloads.append(mime.text())
+                if mimes is not None:
+                    mimes.append(mime)
 
         clipboard = _Clipboard()
 
@@ -6315,11 +6357,39 @@ class TestNoteWiring:
         return payloads
 
     @staticmethod
-    def _attempt_copy(note_screen: Any) -> None:
-        """Both copy routes: the button (inert while disabled or hidden) and a
-        direct ``_copy_note`` call (the click-time re-check must refuse)."""
+    def _copy_key_event(combination: Any = None) -> Any:
+        """A key press of Copy (Ctrl+C unless another binding is given)."""
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        if combination is None:
+            return QKeyEvent(
+                QEvent.Type.KeyPress, Qt.Key.Key_C, Qt.KeyboardModifier.ControlModifier
+            )
+        return QKeyEvent(
+            QEvent.Type.KeyPress, combination.key(), combination.keyboardModifiers()
+        )
+
+    @staticmethod
+    def _menu_copy_action(note_body: Any) -> Any:
+        """The Copy entry of the note panel's own context menu (Task 8.2)."""
+        menu = note_body.build_context_menu()
+        return next(a for a in menu.actions() if a.text().startswith("&Copy"))
+
+    @classmethod
+    def _attempt_copy(cls, note_screen: Any) -> None:
+        """Every copy route: the button (inert while disabled or hidden), a
+        direct ``_copy_note`` call (the click-time re-check must refuse), and —
+        since Task 8.2 — a copy of the note panel's WHOLE selection by the
+        keyboard, by its context menu's Copy and by a direct call (each
+        re-checks ratification, even over a selection made in code)."""
         note_screen.copy_button.click()
         note_screen._copy_note()
+        body = note_screen.note_body
+        body.selectAll()
+        body.keyPressEvent(cls._copy_key_event())
+        cls._menu_copy_action(body).trigger()
+        body.copy_selection()
 
     def test_copy_never_reaches_the_clipboard_under_a_recorded_fail(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
@@ -6394,6 +6464,226 @@ class TestNoteWiring:
             assert line in titles or line in ratified, line
         note_screen._copy_note()
         assert payloads == [expected, expected]  # the direct route agrees
+        window.close()
+
+    def test_copy_keeps_the_note_out_of_clipboard_history_and_sync(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 8.2: the ratified note is placed as ONE ``QMimeData`` whose text
+        is exactly ``format_note_body`` (what ``setText`` placed before) and
+        which carries the three registered Windows formats with exactly their
+        payloads — nothing more, and nothing before ratification."""
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        mimes: list[Any] = []
+        payloads = self._fake_clipboard(monkeypatch, mimes)
+        self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        self._attempt_copy(note_screen)
+        assert payloads == [] and mimes == []  # not yet saved
+        note_screen.save()
+        note_screen.copy_button.click()
+        note = note_screen.current_note()
+        assert note is not None
+        (mime,) = mimes
+        assert mime.text() == models.format_note_body(note)
+        zero = b"\x00\x00\x00\x00"
+        names = (
+            "ExcludeClipboardContentFromMonitorProcessing",
+            "CanIncludeInClipboardHistory",
+            "CanUploadToCloudClipboard",
+        )
+        expected = {f'application/x-qt-windows-mime;value="{name}"': zero for name in names}
+        assert set(mime.formats()) == {"text/plain", *expected}
+        for mime_type, payload in expected.items():
+            assert bytes(mime.data(mime_type).data()) == payload, mime_type
+        window.close()
+
+    @staticmethod
+    def _assert_note_mime(mime: Any, text: str) -> None:
+        """Task 8.2: exactly the text plus the three formats, each 4 zero bytes."""
+        zero = b"\x00\x00\x00\x00"
+        names = (
+            "ExcludeClipboardContentFromMonitorProcessing",
+            "CanIncludeInClipboardHistory",
+            "CanUploadToCloudClipboard",
+        )
+        expected = {f'application/x-qt-windows-mime;value="{name}"': zero for name in names}
+        assert mime.text() == text
+        assert set(mime.formats()) == {"text/plain", *expected}
+        for mime_type, payload in expected.items():
+            assert bytes(mime.data(mime_type).data()) == payload, mime_type
+
+    def _ratified_note_screen(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any, mimes: list[Any]
+    ) -> tuple[Any, Any, list[str]]:
+        """A window whose note is fully ratified and saved, with the fake
+        clipboard installed (flag on)."""
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        payloads = self._fake_clipboard(monkeypatch, mimes)
+        self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        return window, note_screen, payloads
+
+    def test_a_keyboard_copy_of_the_selection_carries_the_formats(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 8.2 (the selection route): every binding of the platform's
+        Copy key (Ctrl+C, and Ctrl+Insert where the scheme has it) places the
+        selection exactly as Qt's own copy renders it — whole or a part that
+        spans a line break — with the three formats; Qt's own copy never runs."""
+        from PySide6.QtGui import QKeySequence, QTextCursor
+
+        mimes: list[Any] = []
+        window, note_screen, payloads = self._ratified_note_screen(
+            qapp, tmp_path, monkeypatch, mimes
+        )
+        body = note_screen.note_body
+        note = note_screen.current_note()
+        assert note is not None
+        bindings = QKeySequence.keyBindings(QKeySequence.StandardKey.Copy)
+        assert any(seq.toString() == "Ctrl+C" for seq in bindings)
+        body.selectAll()
+        for sequence in bindings:
+            body.keyPressEvent(self._copy_key_event(sequence[0]))
+        assert len(mimes) == len(bindings)
+        for mime in mimes:
+            self._assert_note_mime(mime, models.format_note_body(note))
+        text = body.toPlainText()
+        start = max(0, text.index("\n") - 3)  # just before the first line break
+        end = min(len(text), start + 10)
+        assert "\n" in text[start:end]
+        cursor = body.textCursor()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        body.setTextCursor(cursor)
+        mimes.clear()
+        body.keyPressEvent(self._copy_key_event())
+        (mime,) = mimes
+        self._assert_note_mime(mime, text[start:end])
+        assert cursor.selection().toPlainText() == text[start:end]  # Qt's own rendering
+        assert payloads[-1] == text[start:end]
+        window.close()
+
+    def test_the_context_menu_copy_carries_the_formats(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 8.2: the panel's context menu is its own (Qt's Copy would
+        bypass the formats); its Copy places the selection with the formats,
+        and a right-click opens exactly that menu."""
+        from PySide6.QtCore import QPoint
+        from PySide6.QtGui import QContextMenuEvent
+
+        mimes: list[Any] = []
+        window, note_screen, _payloads = self._ratified_note_screen(
+            qapp, tmp_path, monkeypatch, mimes
+        )
+        body = note_screen.note_body
+        note = note_screen.current_note()
+        assert note is not None
+        body.selectAll()
+        menu = body.build_context_menu()
+        labels = [action.text().split("\t")[0] for action in menu.actions()]
+        assert labels == ["&Copy", "Select &All"]
+        assert all(action.isEnabled() for action in menu.actions())
+        self._menu_copy_action(body).trigger()
+        (mime,) = mimes
+        self._assert_note_mime(mime, models.format_note_body(note))
+
+        opened: list[Any] = []
+
+        class _Menu:
+            def exec(self, position: Any) -> None:
+                opened.append(position)
+
+            def deleteLater(self) -> None:  # noqa: N802 - Qt spelling
+                opened.append("deleted")
+
+        monkeypatch.setattr(body, "build_context_menu", _Menu)
+        body.contextMenuEvent(
+            QContextMenuEvent(QContextMenuEvent.Reason.Mouse, QPoint(1, 1), QPoint(5, 5))
+        )
+        assert opened == [QPoint(5, 5), "deleted"]
+        window.close()
+
+    def test_an_unratified_panel_places_nothing_even_with_a_selection(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Task 8.2: before ratification the panel is display-only and every
+        selection route — keyboard, context menu, direct call — places
+        nothing, even over a selection made in code; the menu's Copy and
+        Select All are disabled."""
+        from PySide6.QtCore import Qt
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        note_screen = window.note_screen
+        mimes: list[Any] = []
+        payloads = self._fake_clipboard(monkeypatch, mimes)
+        body = note_screen.note_body
+        assert body.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
+        body.selectAll()
+        assert body.textCursor().hasSelection()
+        assert not any(action.isEnabled() for action in body.build_context_menu().actions())
+        body.keyPressEvent(self._copy_key_event())
+        self._menu_copy_action(body).trigger()
+        assert body.copy_selection() is False
+        assert payloads == [] and mimes == []
+        window.close()
+
+    def test_the_native_copy_guard_passes_other_keys_to_qt(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 46 PR-LOW-270: the guard is not vacuous — a non-Copy key on
+        the note panel reaches Qt's own handler through it, while the panel's
+        Copy key is intercepted and never gets there."""
+        from PySide6.QtCore import QEvent, Qt
+        from PySide6.QtGui import QKeyEvent
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        native_keys: list[Any] = []
+        payloads = self._fake_clipboard(monkeypatch, native_keys=native_keys)
+        body = window.note_screen.note_body
+        key_a = QKeyEvent(QEvent.Type.KeyPress, Qt.Key.Key_A, Qt.KeyboardModifier.NoModifier)
+        body.keyPressEvent(key_a)
+        assert native_keys == [Qt.Key.Key_A]
+        body.selectAll()
+        body.keyPressEvent(self._copy_key_event())
+        assert native_keys == [Qt.Key.Key_A]  # the panel's own Copy took it
+        assert payloads == []  # and refused it: the note is not ratified
+        window.close()
+
+    def test_an_unintercepted_copy_key_fails_before_any_clipboard(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 46 PR-LOW-270: a note panel whose Copy interception
+        regressed (its ``keyPressEvent`` removed, so Qt's own handler gets the
+        key) fails the test before Qt's native copy runs, with nothing placed
+        on the fake clipboard; a direct native ``copy()`` fails the same way."""
+        from scribe_desktop.ui import note as note_module
+
+        mimes: list[Any] = []
+        window, note_screen, payloads = self._ratified_note_screen(
+            qapp, tmp_path, monkeypatch, mimes
+        )
+        body = note_screen.note_body
+        assert isinstance(body, note_module._NotePanel)
+        monkeypatch.delattr(note_module._NotePanel, "keyPressEvent")
+        body.selectAll()
+        with pytest.raises(AssertionError, match="reached Qt's native copy"):
+            body.keyPressEvent(self._copy_key_event())
+        with pytest.raises(AssertionError, match="native copy was called"):
+            body.copy()
+        assert payloads == [] and mimes == []
         window.close()
 
 

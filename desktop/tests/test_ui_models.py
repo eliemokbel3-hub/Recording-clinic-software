@@ -1380,6 +1380,34 @@ class TestReviewEditModels:
         assert copy.blocks is None  # review, never a block (D14)
 
 
+class TestClipboardFormats:
+    """Cliniko workflow safeguards plan Task 8.2: the formats a copied note
+    carries to keep it out of Windows clipboard history and cloud sync."""
+
+    def test_the_name_to_payload_map_is_pinned(self) -> None:
+        zero = b"\x00\x00\x00\x00"
+        assert models.clipboard_mime_formats() == {
+            "ExcludeClipboardContentFromMonitorProcessing": zero,
+            "CanIncludeInClipboardHistory": zero,
+            "CanUploadToCloudClipboard": zero,
+        }
+
+    def test_the_payloads_are_little_endian_dword_zero(self) -> None:
+        for payload in models.clipboard_mime_formats().values():
+            assert len(payload) == 4 and int.from_bytes(payload, "little") == 0
+
+    def test_each_call_returns_a_fresh_map(self) -> None:
+        first = models.clipboard_mime_formats()
+        first.clear()
+        assert len(models.clipboard_mime_formats()) == 3
+
+    def test_the_qt_windows_mime_type(self) -> None:
+        assert (
+            models.windows_clipboard_mime_type("CanUploadToCloudClipboard")
+            == 'application/x-qt-windows-mime;value="CanUploadToCloudClipboard"'
+        )
+
+
 # ---------------------------------------------------------------------------
 # Writing styles (note-learning plan D7; Phase 3 Task 3.1): which of the four
 # styles may be chosen and why not, the fallback line for a style the app

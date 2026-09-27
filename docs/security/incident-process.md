@@ -18,12 +18,19 @@ When in doubt, stop using the software and investigate before resuming.
   `ClinikoScribe/` (one `cliniko_api_key` per clinic listed on the Clinics tab
   is expected)
 - Extension behaving on non-Cliniko pages, or an extension ID mismatch
+- (Cliniko workflow safeguards) the Session screen says the Chrome link is
+  unavailable because the pipe name is taken while no other `scribe-app` runs,
+  or a `pipe_peer` log line names an executable you did not expect (threat
+  model, "The Chrome link" — a same-user squatter); a recording that ended up
+  under the wrong patient or note; or a patient's name shown on another
+  clinic's Cliniko tab
 - (Phase 2+) any indication audio/transcripts persisted beyond their
   retention window or reached the network
 - Any network connection from `scribe-host`, or from `scribe-app` to anything
   other than `api.<shard>.cliniko.com:443`, or from `scribe-app` at startup or
-  while idle (the offline contract: no connection except Cliniko's API, and
-  none at startup or idle)
+  while idle with no practitioner action and no Cliniko note open in Chrome
+  (the offline contract: no connection except Cliniko's API, and none at
+  startup or idle; a note open in Chrome is verified when its report arrives)
 
 ## Immediate steps
 
@@ -50,8 +57,11 @@ When in doubt, stop using the software and investigate before resuming.
 1. Rebuild trust bottom-up on a machine you trust: fresh `git pull` from
    GitHub, fresh venv, `pip install -e desktop`, re-run
    `scripts/register-native-host.py`, reload the extension, and confirm the
-   Step-12 gate checks (badge connects, self-test passes, `netstat` shows no
-   connection from either desktop process while the app is idle).
+   Step-12 gate checks (the badge shows **OK** with the app running, self-test passes, and —
+   with Chrome closed, so no Cliniko note report arrives, and no practitioner
+   action such as a Validate — `netstat` shows no connection from either
+   desktop process while the app is idle; a note open in Chrome is verified
+   with Cliniko when its report arrives, which is expected).
 2. Re-enter secrets only after the machine is trusted again.
 3. Record what happened and what changed in `CHANGELOG.md` (Security) and,
    if it revealed a systemic gap, add it to the threat model.
