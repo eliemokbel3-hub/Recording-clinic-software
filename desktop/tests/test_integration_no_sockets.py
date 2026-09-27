@@ -230,20 +230,24 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from PySide6.QtWidgets import QApplication\n"
         "from scribe_desktop.audio_capture import MockCaptureBackend\n"
         "from scribe_desktop.session import SessionController\n"
+        "from scribe_desktop.clinics import ClinicRegistry\n"
         "from scribe_desktop.ui.main_window import MainWindow\n"
         "import tempfile, time\n"
         "from pathlib import Path\n"
         "app = QApplication([])\n"
         # Peer round 55 PR-LOW-041: every store root under the temp parent, so
         # the child never unwraps the developer's real profile or reads their
-        # real config (the PR-REG-005 class).
+        # real config (the PR-REG-005 class). The clinic registry keeps its
+        # REAL transport (Cliniko safeguards Task 2.2): the Clinics tab is
+        # built, and startup + idle must still open no connection.
         "base = Path(tempfile.mkdtemp())\n"
         "root = base / 'sessions'\n"
         "backend = MockCaptureBackend()\n"
         "controller = SessionController(backend, sessions_root=root)\n"
         "w = MainWindow(controller, backend, sessions_root=root,\n"
         "               profile_root=base / 'profile', config_root=base / 'config',\n"
-        "               style_root=base / 'style', language_model_available=lambda: False)\n"
+        "               style_root=base / 'style', language_model_available=lambda: False,\n"
+        "               clinic_registry=ClinicRegistry(base / 'clinics.json'))\n"
         "w.status_panel.on_self_test()\n"
         "print('READY', flush=True)\n"
         "time.sleep(5)\n"

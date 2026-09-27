@@ -1263,17 +1263,20 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
 The app's offline contract is now **no connection except Cliniko's API, and
 none at startup or idle**. `scribe-app` holds exactly one network-capable
 module, `desktop/src/scribe_desktop/cliniko_client.py` (flow 18 of the
-data-flow map); the native host has none and never imports it. As of Task 1.1
-no app code path calls the client — the clinic-key Validate and note
-verification add the callers in the plan's Phases 2–3 and extend this section.
+data-flow map); the native host has none and never imports it. Its one app
+caller is the clinic registry (`clinics.py`, Phase 2): a Validate or Replace
+key pressed on the Clinics tab makes ONE client call, on a worker thread;
+nothing calls it at startup, on a timer or while idle (CLINIC KEYS below).
+Note verification (the plan's Phase 3) adds the next caller and extends this
+section.
 
 CONFINEMENT. Ruff TID251 bans `socket`, `http`, `urllib.request` and
 `PySide6.QtNetwork` across `desktop/`; the ONE exemption is the client's
 `http.client` import. `tests/test_cliniko_client.py::TestConfinement` pins the
 count at exactly one, that no other module under `desktop/src` imports
 `http`, `ssl`, `socket`, `urllib.request` or `PySide6.QtNetwork`, that the
-native host's import closure never reaches the client, and that no app module
-imports the client yet. Residue: these are SOURCE checks, so a dynamic import
+native host's import closure never reaches the client, and that `clinics.py`
+is the only module that imports it. Residue: these are SOURCE checks, so a dynamic import
 (`importlib.import_module`) is outside them; the runtime check is the
 no-sockets integration test (host, app startup and idle, capture,
 transcription, prose), which asserts zero connections.
@@ -1349,6 +1352,48 @@ traceback prints source lines, never local values). The module holds no
 logger. All pinned by `tests/test_cliniko_client.py::TestNothingLeaks` and the
 per-stage cases. The exception OBJECT is another matter — RESIDUE (6).
 
+CLINIC KEYS (Phase 2, Tasks 2.1a–2.2, D9/D10; `clinics.py`, `ui/clinics.py`).
+The key is typed or pasted into a password-masked field on the Clinics tab,
+read once per Validate / Replace key press and cleared at once with
+`setText("")` (which also clears the field's undo history); the tab never
+shows it again and no status line carries it. The check is ONE client call
+on a `TaskThread` whose key source is that typed key: `GET /user` (an active
+login; its role is not read — D10 as amended 2026-09-27) → `GET /practitioners`
+for that user (exactly one record, and it active — a login with no
+practitioner record, such as a receptionist's, is refused) →
+`GET /settings/public` for the subdomain, or — when Cliniko refuses that read
+to the key — a web address the practitioner types, recorded UNCONFIRMED until
+a note verifies with that key on that host. The worker never raises: every
+failure is a named refusal carrying a reason code and a clinic id only. Only
+a validated key is stored, and only in Credential Manager
+(`ClinikoScribe/<clinic_id>` / `cliniko_api_key`); `clinics.json` holds
+non-secret records and the contact email, loaded fail-closed (a damaged file
+empties the registry and blocks every change rather than being overwritten).
+Each clinic has an in-memory `clinic_rev`: a Replace key bumps it at dispatch
+and at commit, every commit and Remove bump it, and a result commits on the
+GUI thread only when its captured rev is still current — so a delayed result
+after a Replace or a Remove, or a check whose key was replaced between its
+requests, commits nothing and cannot restore a removed clinic. Remove takes
+a second, confirming click and is refused while the live session is linked
+to that clinic (until Phase 3 links sessions to clinics, none is). Write
+order, so no failure leaves a key at rest that the registry does not list: a
+new clinic writes the file, then stores the key (a failed store deletes
+whatever it may have written, then rewrites the file without it — if either
+step fails the clinic stays listed for Remove); Remove deletes the key, then
+rewrites the file. Residue: a
+Replace whose file write fails leaves the NEW key in Credential Manager under
+the OLD record (the rev is bumped so nothing pending commits; the stored
+practitioner id is then checked against what the new key reports at the next
+verification, Phase 3); a new clinic whose key store fails and whose cleanup
+(the key delete or the file rewrite) also fails stays listed — with no key,
+or with whatever the failed store wrote — until Remove; the typed key has
+two lifetimes, both never zeroed, as (2): as a Python `str` it is held in
+the dispatched request until the result is committed and the request
+dropped (the check thread's closure keeps no reference, round 15 MED-006),
+and separately the line edit's own storage, which `setText("")` releases
+but does not zero, may keep the bytes until Qt or the allocator reuses
+them, whatever the commit does.
+
 RESIDUE. (1) The TLS trust decision is the Windows store's: a root installed
 there — a TLS-inspection proxy's, or a same-user attacker's — is trusted like
 any other, and the key then crosses that proxy (inside boundary 2 for the
@@ -1358,9 +1403,10 @@ module's own references go and the bytes live until the allocator reuses
 them — the same residual as session keys (LOW-009); (6) lengthens that
 lifetime. (3) Credential Manager access is
 same-user by design (boundary 2): any process in the user's session can read
-the key. (4) Once the Clinics tab exists (Phase 2), a key is typed or pasted
-into the app; a paste passes through the Windows clipboard, whose history and
-cloud sync are OS features outside the app. (5) The contact email and the
+the key. (4) A key is typed or pasted into the Clinics tab; a paste passes
+through the Windows clipboard, whose history and cloud sync are OS features
+outside the app — the tab says so beside the field and asks the practitioner
+to clear it there; the app does not clear it. (5) The contact email and the
 requested ids leave the machine to Cliniko by design, inside TLS. (6) An
 exception raised during a call keeps, through its `__traceback__`, every frame
 it unwound through with that frame's locals — `raise … from None` removes the
@@ -1393,8 +1439,9 @@ packaging/signing (Phase 7).
 Re-review this model when: the named-pipe host↔app channel lands (Phase 5,
 deferred from Phase 2); the transcript becomes input to the local ML note model
 (Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
-Cliniko keys are first stored (the Cliniko workflow safeguards plan's
-Phase 2) or the first app code path calls the Cliniko client (its Phases 2–3);
+Cliniko keys are first stored (the Clinics tab of the Cliniko workflow
+safeguards plan's Phase 2 is built; the practitioner's first Validate is the
+event) or note verification first calls the Cliniko client (its Phase 3);
 or the software is installed on the
 second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next

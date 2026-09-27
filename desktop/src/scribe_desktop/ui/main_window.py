@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
+from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
@@ -34,6 +35,7 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
 )
 from scribe_desktop.ui import models
+from scribe_desktop.ui.clinics import ClinicsScreen
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
 from scribe_desktop.ui.practitioner import PractitionerScreen
@@ -92,6 +94,7 @@ class MainWindow(QMainWindow):
         config_root: Path | None = None,
         style_root: Path | None = None,
         language_model_available: Callable[[], bool] | None = None,
+        clinic_registry: ClinicRegistry | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Cliniko Scribe")
@@ -190,6 +193,14 @@ class MainWindow(QMainWindow):
         self.practitioner_screen.profile_changed.connect(
             self.microphone_screen.refresh_profile_line
         )
+        # Cliniko workflow safeguards plan Task 2.2: the clinic keys. The
+        # registry reads `clinics.json` at construction and nothing else — no
+        # key, no Cliniko call (a call happens only on Validate / Replace key).
+        # `clinic_registry` is the test seam: a test never reads the real file.
+        self.clinics_screen = ClinicsScreen(
+            clinic_registry if clinic_registry is not None else ClinicRegistry(),
+            live_session_clinic=self._live_session_clinic,
+        )
         self.status_panel = StatusPanel()
 
         self.tabs = QTabWidget()
@@ -199,6 +210,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.transcript_screen, "Transcript")
         self.tabs.addTab(self.note_screen, "Note")
         self.tabs.addTab(self.practitioner_screen, "Practitioner")
+        self.tabs.addTab(self.clinics_screen, "Clinics")
         self.tabs.addTab(self.status_panel, "Status")
         self.setCentralWidget(self.tabs)
 
@@ -261,6 +273,13 @@ class MainWindow(QMainWindow):
         worker must not overlap the enrolment capture."""
         return "a benchmark is running" if self.microphone_screen.is_busy else None
 
+    def _live_session_clinic(self) -> str | None:
+        """The clinic the live session is linked to, for the Clinics tab's
+        Remove refusal (D10). Until the plan's Phase 3 links a session to a
+        clinic (`EncounterContext`), no session is ever linked, so this is
+        None; Phase 3 must answer from the live session here."""
+        return None
+
     def _recovery_in_flight(self) -> bool:
         """Round 33 MED-001: a recovery resume is running, so a note
         generation must not start (they must stay mutually exclusive — see
@@ -319,10 +338,12 @@ class MainWindow(QMainWindow):
             or self.microphone_screen.is_busy
             or self.transcript_screen.is_busy
             or self.note_screen.is_busy
+            or self.clinics_screen.is_busy
         ):
             self.statusBar().showMessage(
                 "Work in progress - wait for transcription, note generation, "
-                "prose rendering or benchmark to finish before closing."
+                "prose rendering, a benchmark or a clinic key check to finish "
+                "before closing."
             )
             event.ignore()
             return

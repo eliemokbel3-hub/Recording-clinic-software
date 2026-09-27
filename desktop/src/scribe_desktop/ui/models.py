@@ -16,6 +16,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
+from scribe_desktop.clinics import (
+    ClinicRecord,
+    ClinicRefusal,
+    Committed,
+    LoadProblem,
+    Refused,
+    Removed,
+)
 from scribe_desktop.language_model import (
     LanguageModel,
     LanguageModelError,
@@ -2391,8 +2399,227 @@ def build_recovery_runner(
     return runner
 
 
+# ---------------------------------------------------------------------------
+# Clinics tab copy (Cliniko workflow safeguards plan Task 2.2, D10). Every
+# line names what happened and the control that fixes it; none carries the
+# key (the tab never shows it after entry).
+# ---------------------------------------------------------------------------
+
+ClinicOperation = Literal["add", "replace", "remove"]
+
+CLINICS_INTRO: Final = (
+    "Add each clinic's Cliniko API key so the scribe can check, with Cliniko, that "
+    "a recording belongs to the treatment note open in Cliniko. The key is kept in "
+    "Windows Credential Manager and is never shown again. Nothing is sent to Cliniko "
+    "until you press Validate or Replace key."
+)
+CLINIC_KEY_CLIPBOARD_ADVICE: Final = (
+    "If you paste the key, Windows can keep a copy in clipboard history (Windows key + V) "
+    "and, with clipboard sync on, on your other devices - clear it there once the key is "
+    "validated."
+)
+CLINIC_ADDRESS_HINT: Final = (
+    "Clinic web address - only needed if the scribe asks for it: copy "
+    "yourclinic.au2.cliniko.com from the address bar while Cliniko is open."
+)
+CLINIC_CHECKING_LINE: Final = "Checking the key with Cliniko..."
+CLINIC_CHECK_STOPPED_LINE: Final = (
+    "The check with Cliniko stopped unexpectedly, so nothing was saved - press the same "
+    "button again."
+)
+CLINIC_NO_SELECTION_LINE: Final = "Select a clinic in the list first."
+CLINIC_REMOVE_CONFIRM_LABEL: Final = "Confirm remove"
+CLINIC_REMOVE_LABEL: Final = "Remove"
+
+_CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
+    ClinicRefusal.NAME_INVALID: (
+        "Type a name for the clinic (one line, up to 60 characters), then press Validate."
+    ),
+    ClinicRefusal.EMAIL_INVALID: (
+        "Type your contact email as a plain address (name@example.com) - Cliniko asks for "
+        "it with every request."
+    ),
+    ClinicRefusal.KEY_FORMAT: (
+        "That is not a Cliniko API key - a key ends in its region, such as -au2. Copy it "
+        "again from your Cliniko user's API keys page and paste it in."
+    ),
+    ClinicRefusal.ADDRESS_INVALID: (
+        "The clinic web address should look like yourclinic.au2.cliniko.com - copy it from "
+        "the address bar while Cliniko is open."
+    ),
+    ClinicRefusal.TOO_MANY_CLINICS: (
+        "Two clinics are already set up - remove one before adding another."
+    ),
+    ClinicRefusal.KEY_REJECTED: (
+        "Cliniko refused this key. Check it is the current key of your own Cliniko user, "
+        "then paste it again. Nothing was saved."
+    ),
+    ClinicRefusal.USER_INACTIVE: (
+        "This key's Cliniko user is inactive - use the key of your own active user. "
+        "Nothing was saved."
+    ),
+    ClinicRefusal.NO_PRACTITIONER_RECORD: (
+        "Cliniko has no practitioner record for this key's user (a reception or "
+        "bookkeeping login has none) - use the key of your own login, the one your "
+        "treatment notes are written under. Nothing was saved."
+    ),
+    ClinicRefusal.SEVERAL_PRACTITIONER_RECORDS: (
+        "Cliniko lists more than one practitioner record for this key's user, so the "
+        "scribe cannot tell which is yours. Nothing was saved."
+    ),
+    ClinicRefusal.PRACTITIONER_INACTIVE: (
+        "This key's practitioner record is inactive in Cliniko - make it active there, "
+        "or use the key of your own active practitioner login. Nothing was saved."
+    ),
+    ClinicRefusal.ADDRESS_NEEDED: (
+        "Cliniko did not share this clinic's web address with this key. Type it in the "
+        "clinic web address field, paste the key again and press Validate - the address "
+        "is confirmed the first time a note is checked with Cliniko. Nothing was saved."
+    ),
+    ClinicRefusal.SHARD_MISMATCH: (
+        "The web address and the key are for different Cliniko regions - check both are "
+        "for the same clinic. Nothing was saved."
+    ),
+    ClinicRefusal.ADDRESS_MISMATCH: (
+        "The web address you typed does not match this key's clinic - check you pasted "
+        "the right clinic's key, or clear the web address field. Nothing was saved."
+    ),
+    ClinicRefusal.DIFFERENT_ACCOUNT: (
+        "This key is for a different Cliniko account than {clinic} - add it with Validate "
+        "as a new clinic instead. Nothing was changed."
+    ),
+    ClinicRefusal.DUPLICATE_SUBDOMAIN: (
+        "That Cliniko account is already set up as another clinic. Nothing was added."
+    ),
+    ClinicRefusal.UNREACHABLE: (
+        "Cliniko could not be reached - check the internet connection and press the same "
+        "button again. Nothing was saved."
+    ),
+    ClinicRefusal.RATE_LIMITED: (
+        "Cliniko is limiting requests right now - wait a minute and press the same button "
+        "again. Nothing was saved."
+    ),
+    ClinicRefusal.CERTIFICATE_REJECTED: (
+        "Cliniko's security certificate was not trusted, so the key was not checked - "
+        "check the network (a proxy or a hotel/guest sign-in page) and try again. Nothing "
+        "was saved."
+    ),
+    ClinicRefusal.ANSWER_UNREADABLE: (
+        "Cliniko's answer was not what the scribe expected, so nothing was saved - try "
+        "again, and if it repeats the scribe may need an update."
+    ),
+    ClinicRefusal.SUPERSEDED: (
+        "The clinic changed while its key was being checked, so that check's result was "
+        "not used and nothing was changed by it."
+    ),
+    ClinicRefusal.CLINIC_GONE: (
+        "That clinic is no longer set up, so the result was not used and nothing was "
+        "changed by it."
+    ),
+    ClinicRefusal.KEY_STORE_FAILED: (
+        "The key could not be saved in Windows Credential Manager - press the same button "
+        "again. If a new clinic still shows in the list, Remove it before adding it again."
+    ),
+    ClinicRefusal.REGISTRY_UNREADABLE: (
+        "The clinic list could not be read, so clinics cannot be changed here - fix or "
+        "delete {path}, then restart the scribe."
+    ),
+    ClinicRefusal.LINKED_TO_LIVE_SESSION: (
+        "Finish or discard the recording for {clinic} first."
+    ),
+    ClinicRefusal.KEY_DELETE_FAILED: (
+        "The key could not be deleted from Windows Credential Manager, so {clinic} was "
+        "kept - press Remove again."
+    ),
+}
+_CLINIC_WRITE_FAILED_COPY: Final[Mapping[ClinicOperation, str]] = {
+    "add": "The clinic list could not be saved, so nothing was added - press Validate again.",
+    "replace": (
+        "The new key was saved, but the clinic list could not be updated - press Replace "
+        "key again."
+    ),
+    "remove": (
+        "The key was deleted, but {clinic} could not be taken off the list - press Remove "
+        "again."
+    ),
+}
+_CLINIC_LOAD_PROBLEM_COPY: Final[Mapping[LoadProblem, str]] = {
+    LoadProblem.UNREADABLE: "The clinic list at {path} could not be opened.",
+    LoadProblem.TOO_LARGE: "The clinic list at {path} is too large to be a clinic list.",
+    LoadProblem.NOT_VALID: "The clinic list at {path} is damaged or not in the expected form.",
+}
+
+
+def clinic_refusal_line(
+    refusal: Refused, *, operation: ClinicOperation, clinic_name: str, path: Path
+) -> str:
+    """The status line for a refused Validate / Replace key / Remove."""
+    if refusal.reason is ClinicRefusal.REGISTRY_WRITE_FAILED:
+        template = _CLINIC_WRITE_FAILED_COPY[operation]
+    else:
+        template = _CLINIC_REFUSAL_COPY[refusal.reason]
+    return template.format(clinic=clinic_name or "that clinic", path=path)
+
+
+def clinic_load_problem_line(problem: LoadProblem, path: Path) -> str:
+    return (
+        _CLINIC_LOAD_PROBLEM_COPY[problem].format(path=path)
+        + " "
+        + _CLINIC_REFUSAL_COPY[ClinicRefusal.REGISTRY_UNREADABLE].format(path=path)
+    )
+
+
+def clinic_row(record: ClinicRecord) -> str:
+    """One clinic in the list: never the key, never an id."""
+    row = f"{record.display_name} - {record.host} - checked {record.validated_at:%Y-%m-%d}"
+    if not record.subdomain_confirmed:
+        row += " - web address not yet confirmed by a note"
+    return row
+
+
+def clinic_success_line(outcome: Committed | Removed) -> str:
+    if isinstance(outcome, Removed):
+        return (
+            f"{outcome.record.display_name} removed, and its key deleted from Windows "
+            "Credential Manager."
+        )
+    record = outcome.record
+    if outcome.replaced:
+        return f"The key for {record.display_name} was replaced and checked with Cliniko."
+    if record.subdomain_confirmed:
+        return (
+            f"{record.display_name} added - Cliniko confirmed the key, your practitioner "
+            f"record and {record.host}."
+        )
+    return (
+        f"{record.display_name} added with the typed address {record.host} - it is "
+        "confirmed the first time a note is checked with Cliniko."
+    )
+
+
+def clinic_remove_prompt(clinic_name: str) -> str:
+    return (
+        f"Press {CLINIC_REMOVE_CONFIRM_LABEL} to remove {clinic_name} and delete its key "
+        "from this computer."
+    )
+
+
 __all__ = [
     "ATTRIBUTION_DID_NOT_RUN_REASON",
+    "CLINICS_INTRO",
+    "CLINIC_ADDRESS_HINT",
+    "CLINIC_CHECKING_LINE",
+    "CLINIC_CHECK_STOPPED_LINE",
+    "CLINIC_KEY_CLIPBOARD_ADVICE",
+    "CLINIC_NO_SELECTION_LINE",
+    "CLINIC_REMOVE_CONFIRM_LABEL",
+    "CLINIC_REMOVE_LABEL",
+    "ClinicOperation",
+    "clinic_load_problem_line",
+    "clinic_refusal_line",
+    "clinic_remove_prompt",
+    "clinic_row",
+    "clinic_success_line",
     "CONFIRM_CONSENT_BUTTON_LABEL",
     "CONSENT_CHECKBOX_LABEL",
     "CONSENT_MANUAL_REMINDER",

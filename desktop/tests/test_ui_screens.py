@@ -773,11 +773,32 @@ def _practitioner_screen(
     return PractitionerScreen(controller, backend, **kwargs)
 
 
+class _NoKeyStore:
+    """A key store no MainWindow test may touch."""
+
+    def store(self, clinic_id: str, secret_name: str, value: str) -> None:
+        pytest.fail("a MainWindow test stored a clinic key")
+
+    def retrieve(self, clinic_id: str, secret_name: str) -> str | None:
+        pytest.fail("a MainWindow test read a clinic key")
+
+    def delete(self, clinic_id: str, secret_name: str) -> None:
+        pytest.fail("a MainWindow test deleted a clinic key")
+
+
+class _NoTransport:
+    """A Cliniko transport no MainWindow test may call."""
+
+    def request(self, *args: Any, **kwargs: Any) -> Any:
+        pytest.fail("a MainWindow test called Cliniko")
+
+
 def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any) -> Any:
     """Every `MainWindow` a test builds (Phase H round 24 MED-006): the
     learned-style store and the language model's presence are SEAMS — a
     test never decrypts the real `style.enc` or stats the real 2.3 GiB
     model (docs/lessons.md 2026-09-24); overrides still win."""
+    from scribe_desktop.clinics import ClinicRegistry
     from scribe_desktop.ui.main_window import MainWindow
 
     kwargs: dict[str, Any] = {
@@ -786,6 +807,11 @@ def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any
         "config_root": tmp_path / "config",
         "style_root": tmp_path / "style",
         "language_model_available": lambda: False,
+        # Cliniko safeguards Task 2.2: never the real clinics.json, never the
+        # real Credential Manager, and a transport that fails any request.
+        "clinic_registry": ClinicRegistry(
+            tmp_path / "clinics.json", storage=_NoKeyStore(), transport=_NoTransport()
+        ),
         "benchmark_runner": list,
         "recovery_runner": lambda d: pytest.fail("not called"),
     }
@@ -2333,7 +2359,7 @@ class TestTranscriptScreen:
 class TestMainWindow:
     def test_constructs_all_screens(self, qapp: Any, tmp_path: Path) -> None:
         window = _main_window(tmp_path)
-        assert window.tabs.count() == 7
+        assert window.tabs.count() == 8
         titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
         assert titles == [
             "Microphone",
@@ -2342,6 +2368,7 @@ class TestMainWindow:
             "Transcript",
             "Note",
             "Practitioner",
+            "Clinics",
             "Status",
         ]
         window.close()

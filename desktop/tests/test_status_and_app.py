@@ -58,6 +58,7 @@ def test_window_offscreen_smoke(tmp_path) -> None:
     from PySide6.QtWidgets import QApplication
 
     from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.clinics import ClinicRegistry
     from scribe_desktop.session import SessionController
     from scribe_desktop.ui.main_window import MainWindow
 
@@ -72,6 +73,8 @@ def test_window_offscreen_smoke(tmp_path) -> None:
         config_root=tmp_path / "config",  # peer round 55 PR-LOW-041: off the real config
         style_root=tmp_path / "style",  # Phase H round 24 MED-006: never the real store
         language_model_available=lambda: False,  # nor the real model's presence
+        # Cliniko safeguards Task 2.2: never the real clinics.json.
+        clinic_registry=ClinicRegistry(tmp_path / "clinics.json"),
     )
     panel = window.status_panel
     assert "Registration:" in panel.registration_label.text()

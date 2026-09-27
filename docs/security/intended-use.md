@@ -41,12 +41,15 @@ review is required before any deployment beyond the developing practitioner
 Built: the security foundation (Chrome extension shell, native-messaging host,
 credential and session-crypto foundations), local recording and transcription,
 the local note pipeline with clinician confirmation, the practitioner's voice
-profile and learned writing style, and a read-only Cliniko API client that no
-part of the app calls yet. The app therefore handles **clinical data** — audio,
-transcripts and draft notes, encrypted at rest on this machine — but stores
-**no real Cliniko API keys** and makes **no call to Cliniko** yet: the clinic
-keys, note verification and the recording safeguards are the Cliniko workflow
-safeguards plan, and writing the draft into Cliniko is the plan after it.
+profile and learned writing style, a read-only Cliniko API client, and the
+Clinics tab where each clinic's API key is validated with Cliniko and stored in
+Windows Credential Manager. The app therefore handles **clinical data** —
+audio, transcripts and draft notes, encrypted at rest on this machine — and,
+once the practitioner adds them, **the clinics' Cliniko API keys**; its only
+calls to Cliniko are the key checks the practitioner starts on that tab. Note
+verification and the recording safeguards are the rest of the Cliniko
+workflow safeguards plan, and writing the draft into Cliniko is the plan after
+it.
 Until then the clinician moves a note into Cliniko by hand: since 2026-09-27
 (practitioner decision) a fully ratified note can be copied from the Note tab
 and pasted into the Cliniko treatment note. The copy goes through the Windows

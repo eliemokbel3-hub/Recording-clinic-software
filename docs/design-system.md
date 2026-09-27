@@ -10,7 +10,9 @@ view patterns · tokens · microcopy.
 
 ## Surfaces & layout
 - One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
-  **Practitioner** / Status — `desktop/src/scribe_desktop/ui/main_window.py`. No secondary
+  **Practitioner** / **Clinics** / Status — `desktop/src/scribe_desktop/ui/main_window.py`.
+  The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
+  replaced or removed. No secondary
   windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
@@ -160,6 +162,17 @@ view patterns · tokens · microcopy.
   (no model, a stale profile), a status line outside the controls says why and names the
   remedy, on every view that could show the transcript (`ui/models.py`, the D2 reason
   constants).
+- **A secret is entered once and never shown again.** The Clinics tab's API-key field
+  is password-masked, read once when Validate or Replace key is pressed and cleared at
+  once (`setText("")`, which also clears its undo history); no list row or status line
+  carries the key, and a line beside the field says that a PASTED key stays in Windows
+  clipboard history until the practitioner clears it there (`ui/clinics.py`,
+  `ui/models.py` `CLINIC_KEY_CLIPBOARD_ADVICE`). Nothing on the tab talks to Cliniko
+  until one of those two buttons is pressed. Remove asks for a second click on the same
+  button, relabelled "Confirm remove" (changing the selection disarms it), and is
+  refused — with the reason, "Finish or discard the recording for <clinic> first." —
+  while the live recording is linked to that clinic; every refusal names what to do
+  (`ui/models.py` `clinic_refusal_line`; plan D10).
 - **Never auto-resume recording.** Recovery offers resume-processing or discard only —
   `ui/recovery.py`. Restarting a microphone without the clinician's say-so is out of
   bounds.

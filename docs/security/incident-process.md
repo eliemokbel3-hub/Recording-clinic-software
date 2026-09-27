@@ -13,8 +13,10 @@ When in doubt, stop using the software and investigate before resuming.
 - Any sign of payload content in log files (the tripwire also counts drops —
   a nonzero drop count means misuse of the logger somewhere)
 - A Cliniko API key exposed anywhere outside Windows Credential Manager
-  (once clinic keys are stored — the Cliniko workflow safeguards plan's
-  Phase 2), or an unexpected Credential Manager entry under `ClinikoScribe/`
+  (clinic keys are stored from the Clinics tab — the Cliniko workflow
+  safeguards plan's Phase 2), or an unexpected Credential Manager entry under
+  `ClinikoScribe/` (one `cliniko_api_key` per clinic listed on the Clinics tab
+  is expected)
 - Extension behaving on non-Cliniko pages, or an extension ID mismatch
 - (Phase 2+) any indication audio/transcripts persisted beyond their
   retention window or reached the network

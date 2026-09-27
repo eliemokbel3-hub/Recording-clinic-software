@@ -53,9 +53,9 @@ separately (construction, request, getresponse, every read) because a
 library can fail on first use rather than at construction (lessons
 2026-09-24). This module never logs.
 
-The key: ``ClinikoClient.call(read_key)`` calls ``read_key`` ONCE (from the
-clinic-key phase that source is Credential Manager — one read per logical
-call, one verification or one Validate) and every
+The key: ``ClinikoClient.call(read_key)`` calls ``read_key`` ONCE per logical
+call (a Clinics-tab Validate or Replace key reads the key just typed; note
+verification will read Credential Manager) and every
 request inside that ``with`` block shares it; on exit the call drops its
 reference to the Authorization header and refuses further use. A Python
 ``str`` cannot be zeroed, so "dropped" means this module's own references

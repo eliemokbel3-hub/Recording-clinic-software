@@ -22,11 +22,11 @@ source check sees — the named residue). What the process does at runtime is
 pinned separately: `desktop/tests/test_integration_no_sockets.py` asserts zero
 connections from the host, from `scribe-app` at startup and idle, and during
 capture, transcription and prose generation, and the offline env
-kill-switches (flow 7) keep the ML stack off the network. As of Task 1.1 no
-app code path calls the client; its callers arrive with the clinic keys
-(Validate on the Clinics tab) and note verification (a context report from
-Chrome), each on a practitioner action or a report, never on startup or a
-timer. The other network users are TWO explicit SETUP-TIME steps outside the
+kill-switches (flow 7) keep the ML stack off the network. The client's one
+app caller today is the clinic registry: a Validate or Replace key pressed on
+the Clinics tab (flow 18). Note verification (a context report from Chrome,
+the plan's Phase 3) adds the next; each runs on a practitioner action or a
+report, never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
 running app, the model-setup script and the one-off pinned prose-runtime
 wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
@@ -62,11 +62,15 @@ rendering the language model does (flow 17).
 3. **Desktop → Windows Credential Manager.** Durable secrets via `keyring`,
    keyed `ClinikoScribe/<clinic_id>` + secret name. Phase 1 stores only the
    transient self-test credential (`test/probe`), deleted by the test itself.
-   Real Cliniko API keys arrive with the Cliniko workflow safeguards plan's
-   Clinics tab (its Phase 2) and, at rest, live ONLY here; the Cliniko client
-   reads one per logical call and its own references go when the call ends —
-   in memory only, and a still-live exception from the call keeps its frames
-   (and so the key or token) referenced until it is dropped (flow 18).
+   Real Cliniko API keys are entered on the Clinics tab (the Cliniko workflow
+   safeguards plan's Phase 2) and, at rest, live ONLY here, under
+   `ClinikoScribe/<clinic_id>` / `cliniko_api_key` — stored only after
+   Cliniko has validated them, deleted by the tab's Remove, overwritten by
+   its Replace key. A Validate or Replace key reads the TYPED key (never
+   this store); note verification (Phase 3) will read the stored one, once
+   per logical call. Either way the client's own references go when the call
+   ends — in memory only, and a still-live exception from the call keeps its
+   frames (and so the key or token) referenced until it is dropped (flow 18).
 
 4. **Session crypto.** AES-256-GCM keys from `os.urandom`; `destroy()`
    drops the in-memory key, making anything encrypted under it
@@ -510,10 +514,23 @@ rendering the language model does (flow 17).
     repr, formatted traceback) — a still-live exception from the call does
     keep its frames, and so the key or Basic token, the path, ids and
     response bytes, referenced in memory until it is dropped (threat-model
-    residue (6)). NOT YET CALLED: as of Task 1.1 no app code path imports
-    the client (pinned by `test_cliniko_client.py`); the clinic-key Validate
-    and note verification add the callers in the plan's Phases 2–3 and extend
-    this flow. The practitioner-run feasibility script
+    residue (6)). CALLERS: `clinics.py` is the only app module that imports
+    the client (pinned by `test_cliniko_client.py`). A Validate or Replace
+    key on the Clinics tab is ONE client call on a worker thread, with the
+    key the practitioner just typed: `GET /user`, `GET /practitioners` for
+    that user and `GET /settings/public`. What it keeps: on success, the
+    key (Credential Manager only, flow 3) and a non-secret record in
+    `clinics.json` — the clinic id, the name the practitioner typed, the
+    subdomain and shard, the key user's user and practitioner ids, the
+    validation time, whether the subdomain is confirmed, and the contact
+    email; on a refusal by Cliniko or a local check, nothing. A failed
+    Credential Manager store or file write can leave the partial states the
+    threat model's CLINIC KEYS paragraph names (a listed clinic with no key;
+    a replaced key under the old record). The role, the practitioner list and the
+    rest of each answer are dropped with the call. Nothing calls the client
+    at startup, on a timer or while idle (the registry's construction reads
+    `clinics.json` only). Note verification (Phase 3) adds the next caller
+    and extends this flow. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
     same client that prints structure only — never a name, id value, answer
     text or the key.
