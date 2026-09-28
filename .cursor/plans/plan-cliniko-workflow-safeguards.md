@@ -638,6 +638,7 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
 See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write is the next plan and needs no rediscovery: `.cursor/plans/explore-cliniko-integration.md` carries its findings and assumptions, and this plan's `writeback_context` and `ClinikoClient` are its entry points.
 
 ## Current State / Handoff Note
+- **COMPOSER (2026-09-29): the practitioner's live re-check of everything since the 2026-09-28 smoke PASSED (all 8 steps: the "Clinic Scribe" name with the same extension id and saved keys; note verification and the OK badge through the pipe-owner check and Medium label; "already running" and a clean relaunch with `app.lock`; Win+L then Resume and sleep pause; the page block without Discard; enrolment stopped on lock; S1 and the live-view tag in back-to-back; SEC-007 — Cliniko rewrites both odd URL forms, not built).** The plan is complete except P.1/P.2 for clinic 2 (DEFERRED — waiting on Cliniko API-key permission). NEXT: the draft-write plan (PLAN.md Phase 4) from `.cursor/plans/explore-cliniko-integration.md`.
 - **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
 - **EXECUTOR HANDOFF (leg `stage-9-exec-k12`, 2026-09-28T11:00+10:00, run stage-9) — H2a + H3a BUILT (the round-67 dispositions, steps 1–10 + SEC-020); `/review-loop` round 68 converged (1 LOW, test only, applied); H2a and H3a 🟩; `reason=composer-run`.**
   - What changed:
@@ -5662,6 +5663,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - If it prints `True`: do not build. Record that on this machine the unlock message stays the only thing that clears the flag.
       - If it prints `None`: do not build, because the check would change nothing. Record it.
     - **SEC-007: odd Cliniko URL forms.**
+      - **ANSWERED 2026-09-29 by the practitioner: for both (a) and (b), "Cliniko changed the address back" — Cliniko normalises both forms to the canonical note URL, so the extension only ever sees the canonical path. NOT built; the SEC-007 residue is closed by Cliniko's own behaviour.**
       - Only Cliniko's servers can answer it.
       - **Step:** in Chrome, on an open treatment note:
         - (a) double the slash before `patients` in the address (`…cliniko.com//patients/…`) and press Enter;
