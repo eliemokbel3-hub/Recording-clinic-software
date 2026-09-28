@@ -377,6 +377,9 @@ class TestVerifyNoteContext:
         registry = make_registry(tmp_path, transport=NoteTransport(note=answer))
         result = verify(registry)
         assert isinstance(result.outcome, UnverifiedOffline)
+        # Round 57 SEC-009: only a 429 starts the bridge's cooldown.
+        is_429 = isinstance(answer, cc.RawResponse) and answer.status == 429
+        assert result.outcome.rate_limited is is_429
         ctx = result.outcome.context
         assert ctx.verification is Verification.UNVERIFIED_OFFLINE
         assert ctx.verified_at is None and ctx.booking_id is None

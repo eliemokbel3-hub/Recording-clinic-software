@@ -296,9 +296,12 @@ class Verified:
 @dataclass(frozen=True)
 class UnverifiedOffline:
     """Cliniko could not be asked (a connection error, timeout, 5xx or 429):
-    recording is allowed, write-back is blocked (D4)."""
+    recording is allowed, write-back is blocked (D4). ``rate_limited``: the
+    answer was a 429, or the bridge's cooldown after one answered without a
+    call (round 57 SEC-009)."""
 
     context: EncounterContext
+    rate_limited: bool = False
 
 
 @dataclass(frozen=True)
@@ -452,6 +455,16 @@ def _offline_context(request: VerificationRequest) -> EncounterContext:
     )
 
 
+def rate_limited_result(request: VerificationRequest) -> VerificationResult:
+    """The answer the bridge records WITHOUT a call while its clinic is in
+    the cooldown after a 429 (round 57 SEC-009): ``unverified_offline``, as
+    the 429 itself was."""
+    return VerificationResult(
+        request=request,
+        outcome=UnverifiedOffline(_offline_context(request), rate_limited=True),
+    )
+
+
 class _KeyUnavailable(Exception):
     pass
 
@@ -478,8 +491,12 @@ def verify_note_context(
         outcome = NoteRefused(NoteRefusal.KEY_UNAVAILABLE)
     except ClinikoError as error:
         reason = _refusal_for(error)
-        outcome = UnverifiedOffline(_offline_context(request)) if reason is None else (
-            NoteRefused(reason)
+        outcome = (
+            UnverifiedOffline(
+                _offline_context(request), rate_limited=isinstance(error, RateLimited)
+            )
+            if reason is None
+            else NoteRefused(reason)
         )
     except Exception:  # noqa: BLE001 - _Shape, InvalidId, the unforeseen: never raise
         outcome = NoteRefused(NoteRefusal.ANSWER_UNREADABLE)
@@ -718,10 +735,11 @@ class VerificationLedger:
             return None
         return record
 
-    def accept(self, result: VerificationResult) -> bool:
-        request = result.request
+    def _is_run_request(self, request: VerificationRequest) -> bool:
+        """``request`` is the one the current run dispatched, under its
+        clinic's current rev — the guard ``accept`` and ``awaits`` share."""
         run = self._run
-        if (
+        return not (
             run is None
             or request.conn_gen != self._conn_gen
             or request.seq != run.seq_start
@@ -729,7 +747,22 @@ class VerificationLedger:
             or run.clinic_id != request.clinic.clinic_id
             or run.clinic_rev != request.clinic_rev
             or self._current_clinic(request.clinic.clinic_id, request.clinic_rev) is None
-        ):
+        )
+
+    def awaits(self, request: VerificationRequest) -> bool:
+        """A WAITING check is still wanted: it is the current run's request
+        and the run has no outcome yet. Checked before a waiting check starts
+        (codex round 65 PR-LOW-350), so a tab that closed or moved on — to a
+        page that is no note, a note reused from the throttle, another clinic
+        or one not set up — or a clinic change leaves no call behind; its
+        answer would only have been dropped by ``accept``."""
+        run = self._run
+        return run is not None and run.outcome is None and self._is_run_request(request)
+
+    def accept(self, result: VerificationResult) -> bool:
+        request = result.request
+        run = self._run
+        if run is None or not self._is_run_request(request):
             return False
         run.outcome = result.outcome
         if isinstance(result.outcome, Verified):

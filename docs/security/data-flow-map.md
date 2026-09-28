@@ -595,7 +595,12 @@ rendering the language model does (flow 17).
     trigger for the same call: a note report from the bound Chrome tab on an
     allow-listed host, and — once per new pipe connection — the linked live
     session's own note; the display value then reaches the pipe's `state`
-    and the Session screen, for the verified note only (flow 19).
+    and the Session screen, for the verified note only (flow 19). The
+    bridge's calls start at least one second apart, and for 60 s after a
+    429 that clinic's bridge checks (Chrome reports, a reconnect's re-check,
+    a clinic change) make no call and read `unverified_offline` until the
+    note is checked again (round 57 SEC-009) — fewer calls, never a new
+    trigger.
 
 19. **Native host ↔ `scribe-app` over a named pipe (Cliniko workflow
     safeguards plan D2/D4; BUILT at Tasks 4.1, 4.2, 4.4 and 4.5,
@@ -611,7 +616,8 @@ rendering the language model does (flow 17).
     clients rejected, and a protected DACL granting only the current user.
     Its client is the native host (Task 4.4), which relays flow 1's v2
     messages, and which connects only after VERIFYING the server — the same
-    Windows session, the same user, and exactly that DACL (Task 4.3, decided
+    Windows session, the same user, exactly that DACL, and the user as the
+    pipe's owner, which the app sets explicitly (round 57 SEC-013; Task 4.3, decided
     (b): any process of this user can still connect or squat the name — the
     threat model's accepted residue). Frames are flow 1's framing, WITHOUT a
     nonce (the host strips and stamps it), and only `context` and `command`
@@ -677,7 +683,9 @@ rendering the language model does (flow 17).
     permission), and — from the page script — that page's `location.href`;
     never Cliniko's DOM or content. The service worker turns those into
     `context` reports (flow 19; no URL leaves Chrome) and sends the app's
-    `command`s for the panel's and the block's clicks. WHAT THE APP'S `state`
+    `command`s for the panel's and the block's clicks — the block's only
+    Resume previous and Finish previous, never a discard (round 57 SEC-003).
+    WHAT THE APP'S `state`
     BECOMES: the service worker keeps the LATEST snapshot of the current
     connection (`ConnectionManager.appState`) — so, while the app publishes
     them, the verified patient's name and appointment time of the bound

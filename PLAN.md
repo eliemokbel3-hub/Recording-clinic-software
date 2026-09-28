@@ -51,7 +51,7 @@ The product is documentation-only. It must not invent diagnoses, examination fin
 
 - Do not use appointment times to change patients.
 - If Cliniko changes to another patient or appointment, pause immediately.
-- Display the previous and new patient and require **Finish previous**, **Resume previous** or **Discard previous**.
+- Display the previous and new patient and require **Finish previous**, **Resume previous** or **Discard previous**. Discard is offered only on surfaces Cliniko's page cannot script (the side panel and the desktop); the block drawn on Cliniko's page offers Finish previous and Resume previous (practitioner decision 2026-09-28).
 - Never automatically move recorded speech between patients.
 - Use local semantic detection to warn when a finished conversation appears to be followed by a new greeting.
 - Treat that detection only as a warning; it cannot identify or switch patients.

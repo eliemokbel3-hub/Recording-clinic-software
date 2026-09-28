@@ -83,10 +83,13 @@ view patterns · tokens · microcopy.
   The side panel's box follows the same rule (Chrome side below).
 - **Discard of a live recording takes two clicks.** The Session screen's Discard becomes
   "Confirm discard" for 10 seconds for the same session (`ui/session_screen.py`); the
-  block's and the side panel's Discard previous become "Confirm discard" with the line
+  side panel's Discard previous becomes "Confirm discard" with the line
   "Discard this recording? This cannot be undone. Press Confirm discard to delete it." for
   15 seconds, and the second click travels to the app as `confirmed: true`
-  (`extension/src/page.ts`, `panel.ts`). A disarmed button reverts silently; none of these
+  (`extension/src/panel.ts`). The page block on Cliniko's page has NO Discard (round 57
+  SEC-003, practitioner decision 2026-09-28): a script in Cliniko's page could collect
+  clicks on a hidden block, so discarding stays on surfaces Cliniko cannot script — the
+  side panel and the desktop. A disarmed button reverts silently; none of these
   deletes on one click. THREE desktop Discards act on ONE click, on a stopped session the
   practitioner has already selected or opened (round 60 PR-LOW-332): the Transcript
   screen's Discard (`ui/transcript.py`), and the Recovery tab's Discard in both its lists —
@@ -265,10 +268,14 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   **Checking** ("Checking with Cliniko…"); **Ready** — the patient, the appointment in
   local time with its zone ("No linked appointment" when none), the clinic, the
   verification line ("Note verified with Cliniko. It is checked again before anything is
-  written back." or the could-not-be-reached wording), the consent box and Start;
+  written back." or the could-not-be-reached wording — also the answer for a note checked in
+  the minute after Cliniko says "too many requests", when that clinic's checks make no
+  call; like any offline answer it stays until the note is checked again (open another
+  note and come back), never clearing by itself; round 57 SEC-009), the consent box and
+  Start;
   **Live** — "Recording" / "Paused" with a timer, the patient, "Consent confirmed
   <time>", Pause or Resume, Finish consultation and the hands-free lines, or
-  "Finishing <patient>…" with NO timer; **Blocked** — mirrors the page block and names
+  "Finishing <patient>…" with NO timer; **Blocked** — mirrors the page block, plus the two-click Discard previous only the panel offers, and names
   both patients, the one "On screen" only while that note's tab is the one in front
   ("No Cliniko note in front" otherwise — round 60 PR-LOW-331). The **banner** "Unreviewed note for <patient> — Open for review" (or
   "Unreviewed recording for this note", or a count) shows only over Message or Ready
@@ -294,9 +301,9 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   recording's tab opened a different treatment note.", "The computer went to sleep.", "The computer
   was locked.", …), the two
   patients side by side (the recording's and this tab's — for a recording in another
-  clinic only "Recording belongs to a patient in <clinic>"), and **Resume previous**,
-  **Finish previous** and **Discard previous** (two clicks, Interaction posture above). Its buttons act only
-  on a real click.
+  clinic only "Recording belongs to a patient in <clinic>"), and **Resume previous** and
+  **Finish previous** — never Discard, which stays in the side panel's Blocked layout and on
+  the desktop (round 57 SEC-003). Its buttons act only on a real click.
 - **The machine's own pauses say so on the desktop, and waking or unlocking resumes
   nothing** (D5 as amended 2026-09-28). Sleep and the Windows session locking pause any
   recording, with the same desktop cue as every pause — the status line, the Session
@@ -307,7 +314,10 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   the side panel's — and every Start (the Session tab's and the side panel's) are refused by name: "The computer is
   locked - sign in, then press it again." (or, if the app cannot confirm the unlock, "…lock
   it and sign in again (Windows key + L), then press it again."); the panel shows the app's own refusal line
-  (`CHROME_REFUSALS["locked"]` / `["lock_unknown"]`). If Windows refuses either notification, the Session screen says so in plain words and
+  (`CHROME_REFUSALS["locked"]` / `["lock_unknown"]`). A voice enrolment on the Practitioner
+  tab stops on sleep or a lock as if Stop were pressed — "Enrolment stopped - nothing was
+  saved." — and Record is refused while locked with "Cannot record now - voice enrolment
+  refused: The computer is locked - sign in, then press it again." (round 57 SEC-019). If Windows refuses either notification, the Session screen says so in plain words and
   names what to do instead ("Pause the recording before you leave the computer.")
   (`ui/models.py` `PAUSE_CUES`, `SYSTEM_PAUSE_FAILED_LINES`).
 - **The toolbar badge reflects the APP, not only the link**: green **OK** while it runs

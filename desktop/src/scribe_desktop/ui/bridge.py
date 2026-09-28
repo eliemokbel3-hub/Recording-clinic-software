@@ -97,6 +97,7 @@ is held for that session and dropped when it ends. Nothing here logs.
 
 from __future__ import annotations
 
+import math
 import time
 import unicodedata
 from collections.abc import Callable
@@ -128,6 +129,7 @@ from scribe_desktop.encounter import (
     VerificationResult,
     Verified,
     linked_consent,
+    rate_limited_result,
     reverification_request,
     verify_note_context,
 )
@@ -149,6 +151,14 @@ from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.voice_commands import NEW_CONSULTATION_WARNING, spoken_pause_state
 
 PUBLISH_INTERVAL_MS: Final = 500
+# Cliniko's rate limit (round 57 SEC-009, practitioner decision 2026-09-28):
+# after a 429 a clinic's checks are answered `unverified_offline` WITHOUT a
+# call for this long (a fixed window from the 429; only a real 429 starts
+# one), and no two verification calls start closer together than the
+# spacing — a check inside it waits in its slot for a single-shot timer,
+# coalesced like any waiting check, never blocking the GUI thread.
+RATE_LIMIT_COOLDOWN_SECONDS: Final = 60.0
+MIN_CALL_SPACING_SECONDS: Final = 1.0
 # The main window's lock refusals (codex round 51 PR-MED-300).
 _LOCK_REFUSALS: Final = frozenset({"locked", "lock_unknown"})
 _PHASES: Final[dict[SessionState, str]] = {
@@ -254,6 +264,7 @@ class ChromeBridge(QObject):
         clock: Callable[[], float] = time.monotonic,
         reminders: ReminderIndex | None = None,
         open_review: Callable[[str], str | None] | None = None,
+        call_spacing_seconds: float = MIN_CALL_SPACING_SECONDS,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
@@ -290,6 +301,18 @@ class ChromeBridge(QObject):
         self._waiting_live: VerificationRequest | None = None
         self._live_check: _LiveCheck | None = None
         self._live_check_seq = 0
+        # SEC-009: per-clinic cooldown ends (clinic_id -> clock time), the
+        # last call's start, and the spacing timer that starts a deferred one.
+        self._cooldown_until: dict[str, float] = {}
+        self._last_call_at: float | None = None
+        self._call_spacing = call_spacing_seconds
+        self._spacing_served = False
+        self._spacing = QTimer(self)
+        self._spacing.setSingleShot(True)
+        # A coarse timer may fire up to 5 % early, and its firing IS the
+        # spacing (``_spacing_served``): precise, so a second is a second.
+        self._spacing.setTimerType(Qt.TimerType.PreciseTimer)
+        self._spacing.timeout.connect(self._on_spacing_elapsed)
         self._live_display: _LiveDisplay | None = None
         # Phase 7 (D7, D8): shown only — the main window owns both.
         self._hotkey: HotkeyStatus = NOT_SET_UP
@@ -339,8 +362,9 @@ class ChromeBridge(QObject):
 
     @property
     def is_busy(self) -> bool:
-        """A verification is running (the window must not close under it)."""
-        return self._task is not None
+        """A verification is running, or spaced to start within
+        ``MIN_CALL_SPACING_SECONDS`` (the window must not close under it)."""
+        return self._task is not None or self._spacing.isActive()
 
     @property
     def state_rev(self) -> int:
@@ -682,8 +706,9 @@ class ChromeBridge(QObject):
         replaces only a waiting request of its OWN kind — the ledger's
         (``live`` False) or the live session's re-check — so a report never
         drops the re-check (round 25 MED-018). A stale answer is dropped by
-        the ledger (its tags) or by identity (the re-check)."""
-        if self._task is None:
+        the ledger (its tags) or by identity (the re-check). A request made
+        while the spacing timer runs waits the same way."""
+        if self._task is None and not self._spacing.isActive():
             self._run(request, live=live)
         elif live:
             self._waiting_live = request
@@ -691,6 +716,25 @@ class ChromeBridge(QObject):
             self._waiting = request
 
     def _run(self, request: VerificationRequest, *, live: bool) -> None:
+        """With no check running: answer ``request`` from its clinic's
+        cooldown with no call; or, inside the spacing, put it back in its
+        slot and start the timer; or start the call (SEC-009)."""
+        now = self._clock()
+        until = self._cooldown_until.get(request.clinic.clinic_id)
+        if until is not None and now < until:
+            self._apply_result(rate_limited_result(request), live=live)
+            return
+        if self._last_call_at is not None and not self._spacing_served:
+            elapsed = now - self._last_call_at
+            remaining = min(self._call_spacing, self._call_spacing - elapsed)
+            if remaining > 0:
+                if live:
+                    self._waiting_live = request
+                else:
+                    self._waiting = request
+                self._spacing.start(max(1, math.ceil(remaining * 1000)))
+                return
+        self._last_call_at = now
         registry = self._clinics
         holder = [request]
         task = TaskThread(
@@ -711,32 +755,67 @@ class ChromeBridge(QObject):
             self._task.finish()
             self._task = None
         self._running = None
-        # The bound report first: the practitioner is waiting on it to Start.
-        if self._waiting is not None:
-            request, self._waiting = self._waiting, None
-            self._run(request, live=False)
-        elif self._waiting_live is not None:
-            request, self._waiting_live = self._waiting_live, None
+        self._next()
+
+    def _next(self) -> None:
+        """Start the next waiting check — the bound report first: the
+        practitioner is waiting on it to Start. One answered by the cooldown
+        starts no call, so the loop goes on to the next (each pass empties a
+        slot, starts the call or starts the spacing timer). A waiting REPORT
+        check starts only while the ledger still awaits it (codex round 65
+        PR-LOW-350): one whose tab closed or moved on while it waited —
+        behind a running check or inside the spacing — is dropped, never
+        called; the current target, if any, was dispatched on its own."""
+        while self._task is None and not self._spacing.isActive():
+            if self._waiting is not None:
+                request, self._waiting = self._waiting, None
+                if self._ledger.awaits(request):
+                    self._run(request, live=False)
+            elif self._waiting_live is not None:
+                request, self._waiting_live = self._waiting_live, None
+                check = self._live_check
+                if check is not None and request is check.request:  # else: its session ended
+                    self._run(request, live=True)
+            else:
+                return
+
+    def _on_spacing_elapsed(self) -> None:
+        # The timer's wait IS the spacing: the next call starts now, whatever
+        # the injectable clock reads.
+        self._spacing_served = True
+        try:
+            self._next()
+        finally:
+            self._spacing_served = False
+        self.publish()
+        self._refresh_view()
+
+    def _apply_result(self, result: VerificationResult, *, live: bool) -> None:
+        if live:
+            # A re-check counts only for the check still current, and only
+            # while its clinic's rev has not moved (D9, codex round 29
+            # PR-MED-150); one replaced or dropped since never reaches the
+            # ledger.
             check = self._live_check
-            if check is not None and request is check.request:  # else: its session ended
-                self._run(request, live=True)
+            if (
+                check is not None
+                and result.request is check.request
+                and self._rev_current(result.request)
+            ):
+                check.result = result
+        else:
+            self._ledger.accept(result)
 
     def _on_verified(self, result: object) -> None:
         if isinstance(result, VerificationResult):
-            if self._running_live:
-                # A re-check counts only for the check still current, and
-                # only while its clinic's rev has not moved (D9, codex round
-                # 29 PR-MED-150); one replaced or dropped since never
-                # reaches the ledger.
-                check = self._live_check
-                if (
-                    check is not None
-                    and result.request is check.request
-                    and self._rev_current(result.request)
-                ):
-                    check.result = result
-            else:
-                self._ledger.accept(result)
+            outcome = result.outcome
+            if isinstance(outcome, UnverifiedOffline) and outcome.rate_limited:
+                # A real 429 (the cooldown's own answers never come here):
+                # this clinic's checks make no call for the next minute.
+                self._cooldown_until[result.request.clinic.clinic_id] = (
+                    self._clock() + RATE_LIMIT_COOLDOWN_SECONDS
+                )
+            self._apply_result(result, live=self._running_live)
         self._finish_task()
         self.publish()
         self._refresh_view()

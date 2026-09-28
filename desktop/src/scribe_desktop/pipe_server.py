@@ -15,7 +15,10 @@ THE PIPE, as created (``PipeServer.start``; every flag pinned by test):
   client sees ``ERROR_PIPE_BUSY``) until the first has gone;
 - ``PIPE_REJECT_REMOTE_CLIENTS``: no connection from another machine;
 - a protected DACL from SDDL granting access to the current user's SID only
-  (``D:P(A;;GA;;;<SID>)``) — no other account, no inherited entries.
+  (``O:<SID>D:P(A;;GA;;;<SID>)``) — no other account, no inherited entries —
+  and that SID as the pipe's OWNER, set explicitly so an elevated start
+  (whose default owner would be Administrators) still passes the host's
+  owner check (round 57 SEC-013).
 
 What that does NOT stop, stated as the residue (Task 4.3 decided (b) on
 2026-09-27: accepted as threat-model boundary 2, no peer gate): any process
@@ -161,10 +164,11 @@ def pipe_name(sid: str) -> str:
 
 
 def pipe_sddl(sid: str) -> str:
-    """A PROTECTED DACL with one entry: full access for ``sid`` only."""
+    """``sid`` as the owner, and a PROTECTED DACL with one entry: full access
+    for ``sid`` only."""
     if _SID_RE.fullmatch(sid) is None:
         raise ValueError("not a SID string")
-    return f"D:P(A;;GA;;;{sid})"
+    return f"O:{sid}D:P(A;;GA;;;{sid})"
 
 
 # --- the process at the other end (Task 4.3's checks and tripwire) ----------

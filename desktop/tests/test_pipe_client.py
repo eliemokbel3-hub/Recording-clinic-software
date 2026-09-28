@@ -79,6 +79,7 @@ def _identity(**overrides: Any) -> ServerIdentity:
         "user_sid": OWN_SID,
         "dacl_protected": True,
         "dacl_entries": ((ACCESS_ALLOWED_ACE_TYPE, 0, FILE_ALL_ACCESS, OWN_SID),),
+        "owner_sid": OWN_SID,
     }
     fields.update(overrides)
     return ServerIdentity(**fields)
@@ -115,6 +116,10 @@ class TestContract:
             # Codex round 28 PR-LOW-142: the flags and the mask count too.
             ({"dacl_entries": ((ACCESS_ALLOWED_ACE_TYPE, 0, 0x0012019F, OWN_SID),)}, "dacl"),
             ({"dacl_entries": ((ACCESS_ALLOWED_ACE_TYPE, 1, FILE_ALL_ACCESS, OWN_SID),)}, "dacl"),
+            # Round 57 SEC-013: the pipe's owner must be the host's user.
+            ({"owner_sid": None}, "owner"),
+            ({"owner_sid": OTHER_SID}, "owner"),
+            ({"owner_sid": "S-1-5-32-544"}, "owner"),  # Administrators
         ],
         ids=[
             "session_unreadable",
@@ -128,6 +133,9 @@ class TestContract:
             "wider",
             "read_write_mask",
             "inherit_flag",
+            "owner_unreadable",
+            "other_owner",
+            "administrators_owner",
         ],
     )
     def test_any_failed_check_names_itself(
@@ -189,6 +197,10 @@ class TestConnect:
             ((ace_type, ace_flags, mask, sid),) = identity.dacl_entries
             assert (ace_type, ace_flags, sid) == (ACCESS_ALLOWED_ACE_TYPE, 0, current_user_sid())
             assert mask in APP_ACE_MASKS  # what `GA` became on the real pipe
+            # SEC-013: the owner as created. Unelevated, the default owner is the
+            # user too, so this cannot tell a reverted `O:` apart — the SDDL pin
+            # in test_pipe_server.py is that guard (round 63 LOW-062).
+            assert identity.owner_sid == current_user_sid()
             assert link.write_frame(pipe_message("context", CONTEXT_PAYLOAD))
             ((_kind, _conn, envelope),) = server.recorder.wait_for("message")
             assert envelope.payload == CONTEXT_PAYLOAD
@@ -229,6 +241,18 @@ class TestConnect:
             assert caught.value.reason == "dacl"
         finally:
             win32file.CloseHandle(handle)
+
+    def test_the_apps_pipe_under_another_owner_is_unverified_and_closed(
+        self, server: Any, name: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 57 SEC-013: everything else verified, but the owner the host
+        reads is not its user — a hard error, and the handle is closed (the
+        server sees the client go)."""
+        monkeypatch.setattr(pipe_client, "_pipe_owner", lambda _handle: "S-1-5-21-9-9-9-1003")
+        with pytest.raises(ServerUnverified) as caught:
+            AppPipeConnector(name).connect()
+        assert caught.value.reason == "owner"
+        server.recorder.wait_for("disconnected")
 
     def test_a_pipe_that_shuts_this_user_out_is_unverified(self, name: str) -> None:
         handle = _raw_pipe(name, "D:P(A;;GA;;;SY)")  # SYSTEM only

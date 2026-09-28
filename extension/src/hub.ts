@@ -11,7 +11,8 @@
 // - SENDERS (D2). A command is accepted only from the side panel — this
 //   extension's own panel page, not a tab — or from the page script in the
 //   top frame of a tab whose URL is on an allow-listed host; the page script
-//   may send only the block's three actions. Everything is rebuilt from
+//   may send only the block's two actions, Resume previous and Finish
+//   previous — never a discard (round 57 SEC-003). Everything is rebuilt from
 //   named fields, and `ConnectionManager.send` refuses an envelope the
 //   extension's own protocol mirror does not accept.
 // - NAMES. A patient's name is held only in the latest `state` in memory and
@@ -40,7 +41,7 @@ export type ToPage = { kind: "slice"; slice: PageSlice };
 export type FromPage =
   | { kind: "hello"; href: string }
   | { kind: "href"; href: string }
-  | { kind: "block"; action: "finish" | "resume_previous" | "discard"; session_ref: string; state_rev: number; confirmed?: true };
+  | { kind: "block"; action: "finish" | "resume_previous"; session_ref: string; state_rev: number };
 
 export type FocusKind = "none" | "not_cliniko" | "clinic_not_set_up" | "cliniko";
 
@@ -103,7 +104,10 @@ export interface LinkLike {
   send(type: "command", payload: CommandPayload): boolean;
 }
 
-const BLOCK_ACTIONS: ReadonlySet<string> = new Set(["finish", "resume_previous", "discard"]);
+// A page may never discard (round 57 SEC-003, practitioner decision
+// 2026-09-28): a script in Cliniko's page could collect real clicks on a
+// hidden block. Discard comes only from the side panel.
+const BLOCK_ACTIONS: ReadonlySet<string> = new Set(["finish", "resume_previous"]);
 const MAX_HREF_CHARS = 2048;
 const RESYNC_ATTEMPTS = 3;
 
@@ -349,12 +353,7 @@ export class Hub {
     const rev = message["state_rev"];
     if (!state?.app_running || !state.allow_list.includes(host)) return;
     if (typeof action !== "string" || !BLOCK_ACTIONS.has(action) || !isSessionRef(ref) || !isStateRev(rev)) return;
-    const command: CommandPayload = { action: action as CommandAction, state_rev: rev, session_ref: ref };
-    if (action === "discard") {
-      if (message["confirmed"] !== true) return; // the second click is required
-      command.confirmed = true;
-    }
-    this.sendCommand(command, tabId);
+    this.sendCommand({ action: action as CommandAction, state_rev: rev, session_ref: ref }, tabId);
   }
 
   // --- the side panel ----------------------------------------------------------------

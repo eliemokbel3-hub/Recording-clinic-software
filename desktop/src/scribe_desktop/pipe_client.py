@@ -19,12 +19,17 @@ single frame crosses (``unverified_reason``):
    the same session passes this one (round 57);
 2. the server process's token user is the host's own user SID — read
    through the process id Windows recorded when the pipe was created, not a
-   live reference (round 57 SEC-013 records the pipe-owner check that would
-   close the reuse of that id);
+   live reference (check 4 closes the reuse of that id by another account);
 3. the pipe's DACL is the one ``scribe-app`` creates (``pipe_server.pipe_sddl``):
    protected, exactly one entry, an ALLOW for the host's user SID with no ACE
    flags and the full access ``GA`` grants (codex round 28 PR-LOW-142: the
-   flags and the mask are compared too, not only the type and the SID).
+   flags and the mask are compared too, not only the type and the SID);
+4. the pipe object's OWNER is the host's own user SID (round 57 SEC-013,
+   practitioner decision 2026-09-28): ``pipe_sddl`` sets it explicitly, and
+   a standard account cannot make another user's SID the owner of what it
+   creates, so a pipe made by another account in the same session — whose
+   creator's process id was later reused — fails here. Read from the pipe
+   itself, not from a process.
 
 A pipe that exists but fails any of these — including one whose check cannot
 be made (a server whose token the host may not query), or one whose DACL
@@ -97,7 +102,7 @@ _WAIT_OBJECT_0: Final = 0
 
 class ServerUnverified(Exception):
     """The pipe exists but its server is not verified (see the module
-    docstring). ``reason``: ``session``, ``user``, ``dacl``,
+    docstring). ``reason``: ``session``, ``user``, ``dacl``, ``owner``,
     ``access_denied`` or ``own_identity``."""
 
     def __init__(self, reason: str) -> None:
@@ -114,6 +119,7 @@ class ServerIdentity:
     dacl_protected: bool
     # (ACE type, ACE flags, access mask, SID string)
     dacl_entries: tuple[tuple[int, int, int, str], ...]
+    owner_sid: str | None
 
 
 def unverified_reason(identity: ServerIdentity, *, own_session: int, own_sid: str) -> str | None:
@@ -134,6 +140,8 @@ def unverified_reason(identity: ServerIdentity, *, own_session: int, own_sid: st
         or sid != own_sid
     ):
         return "dacl"
+    if identity.owner_sid is None or identity.owner_sid != own_sid:
+        return "owner"
     return None
 
 
@@ -162,9 +170,22 @@ def _pipe_dacl(handle: Any) -> tuple[bool, tuple[tuple[int, int, int, str], ...]
     return bool(control & SE_DACL_PROTECTED), tuple(entries)
 
 
+def _pipe_owner(handle: Any) -> str | None:
+    try:
+        descriptor = win32security.GetSecurityInfo(
+            handle, win32security.SE_KERNEL_OBJECT, win32security.OWNER_SECURITY_INFORMATION
+        )
+        owner = descriptor.GetSecurityDescriptorOwner()
+        if owner is None:
+            return None
+        return str(win32security.ConvertSidToStringSid(owner))
+    except (pywintypes.error, TypeError, ValueError):
+        return None
+
+
 def read_server_identity(handle: Any) -> ServerIdentity:
-    """Read the three facts ``unverified_reason`` judges from a connected
-    client handle. Never raises: an unreadable fact is None / empty."""
+    """Read the facts ``unverified_reason`` judges from a connected client
+    handle. Never raises: an unreadable fact is None / empty."""
     pid = pipe_peer_pid(handle, server=True)
     protected, entries = _pipe_dacl(handle)
     return ServerIdentity(
@@ -172,6 +193,7 @@ def read_server_identity(handle: Any) -> ServerIdentity:
         user_sid=process_user_sid(pid) if pid is not None else None,
         dacl_protected=protected,
         dacl_entries=entries,
+        owner_sid=_pipe_owner(handle),
     )
 
 

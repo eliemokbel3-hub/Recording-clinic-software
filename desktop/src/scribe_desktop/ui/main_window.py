@@ -540,6 +540,11 @@ class MainWindow(QMainWindow):
         # hotkey press: it acts only while the registration stands.
         if self._system_events is not None and self._system_events.status.lock == "on":
             self.pause_for(PauseReason.LOCKED)
+            # Round 57 SEC-019 (D5 extended to the Practitioner tab,
+            # practitioner decision 2026-09-28): a voice enrolment stops too —
+            # Stop's own path, so nothing is saved unless the worker had
+            # already passed its final check.
+            self.practitioner_screen.on_stop()
 
     # --- the pause rule (Task 5.1, D5) ----------------------------------------
 
@@ -573,6 +578,7 @@ class MainWindow(QMainWindow):
             if head is not None:
                 if is_suspend_message(*head):
                     self.pause_for(PauseReason.SUSPEND)
+                    self.practitioner_screen.on_stop()  # SEC-019: an enrolment stops too
                 elif self._system_events is not None and self._system_events.lock_matches(*head):
                     # Codex round 51 PR-MED-300: refuse every Resume from
                     # this moment — before the queued pause, and before any
@@ -870,7 +876,12 @@ class MainWindow(QMainWindow):
     def _enrolment_blocker(self) -> str | None:
         """The activity `begin_enrolment` cannot see for itself (D15): a
         benchmark run saturates every core and owns no microphone, but its
-        worker must not overlap the enrolment capture."""
+        worker must not overlap the enrolment capture. And (round 57
+        SEC-019) the session lock: a Record press queued behind the lock
+        message is refused like a Resume, until the unlock."""
+        refusal = self._lock_refusal()
+        if refusal is not None:
+            return models.chrome_refusal_message(refusal)
         return "a benchmark is running" if self.microphone_screen.is_busy else None
 
     def _live_session_clinic(self) -> str | None:

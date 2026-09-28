@@ -225,7 +225,7 @@ class TestHardening:
 
     def test_the_sddl_is_protected_and_single_entry(self) -> None:
         sid = current_user_sid()
-        assert pipe_sddl(sid) == f"D:P(A;;GA;;;{sid})"
+        assert pipe_sddl(sid) == f"O:{sid}D:P(A;;GA;;;{sid})"
         assert pipe_name(sid) == f"\\\\.\\pipe\\ClinikoScribe-{sid}"
 
     @pytest.mark.parametrize("bad", ["", "S-1", "S-1-5-21-1;(A;;GA;;;WD)", "not-a-sid"])

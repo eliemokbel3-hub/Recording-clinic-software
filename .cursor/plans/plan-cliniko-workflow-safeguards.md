@@ -15,7 +15,7 @@
 - Follow-up plans: None
 
 ## Goal
-Build PLAN.md Phase 5 (workflow safeguards) in full, before Phase 4. Recording starts only from an open Cliniko treatment note, and the note is verified with Cliniko's API. The encounter is locked to the session at Start behind a consent tick. A Chrome side panel carries consent and every control, and a red or amber frame marks the Cliniko page while recording or paused. Any patient, note, account, tab or login change pauses immediately, and a full-page block asks Finish previous / Resume previous / Discard previous. A hotkey pauses and resumes; a spoken phrase pauses. A phrase-rule warning flags a likely new consultation. Write-back is refused whenever the context cannot be verified. Back-to-back consultations work: each finished note waits in an Unreviewed list, with a reminder when its note is reopened. This plan ALSO brings in the clinic API keys and a read-only Cliniko client, so the app's "no network" claim becomes "only to Cliniko's API". Writing the draft into Cliniko is the next plan (PLAN.md Phase 4).
+Build PLAN.md Phase 5 (workflow safeguards) in full, before Phase 4. Recording starts only from an open Cliniko treatment note, and the note is verified with Cliniko's API. The encounter is locked to the session at Start behind a consent tick. A Chrome side panel carries consent and every control, and a red or amber frame marks the Cliniko page while recording or paused. Any patient, note, account, tab or login change pauses immediately, and a full-page block asks Finish previous / Resume previous (Discard previous is in the side panel and on the desktop — D1 addendum, 2026-09-28). A hotkey pauses and resumes; a spoken phrase pauses. A phrase-rule warning flags a likely new consultation. Write-back is refused whenever the context cannot be verified. Back-to-back consultations work: each finished note waits in an Unreviewed list, with a reminder when its note is reopened. This plan ALSO brings in the clinic API keys and a read-only Cliniko client, so the app's "no network" claim becomes "only to Cliniko's API". Writing the draft into Cliniko is the next plan (PLAN.md Phase 4).
 
 ## Planning Extraction Summary
 Source: `/explore` scratch `.cursor/plans/explore-cliniko-integration.md` (2026-09-27, code baseline `main @ 33bd35e`), the Phase 5 half, plus the `/create-plan` session's decisions (2026-09-27). The Phase 4 half of that scratch is carried below under Deferred as the next plan's input.
@@ -31,7 +31,7 @@ Source: `/explore` scratch `.cursor/plans/explore-cliniko-integration.md` (2026-
 - A typed `EncounterContext` and `ConsentAttestation`, verified against Cliniko, locked at Start, and persisted encrypted before the first audio chunk.
 - The consent tick required before EVERY recording, on the side panel and on the kept desktop Start ("Not linked to a Cliniko note").
 - The host↔app named pipe with the Phase 2 hardening list; protocol v2 (`context`, `command`, `state`); a two-way native-host relay; and an app-side state publisher.
-- The pause rule, owned by the app: the bound tab leaves the note, the bound tab closes, Chrome disconnects, or the active tab shows another Cliniko patient or note. Then the resolution block: Finish previous / Resume previous / Discard previous.
+- The pause rule, owned by the app: the bound tab leaves the note, the bound tab closes, Chrome disconnects, or the active tab shows another Cliniko patient or note. Then the resolution block: Finish previous / Resume previous, with Discard previous in the side panel and on the desktop only (D1 addendum, 2026-09-28).
 - Back-to-back consultations: patient B's Start unlocks once A's processing tail finishes; A joins an "Unreviewed notes" list and reopens straight into review; the side panel reminds when A's note is reopened; a warning fires before any unreviewed note reaches the 24 h limit.
 - The Chrome UI: the side panel, the red/amber page frame, the full-page block, the icon badge, and a URL-only page script with a clinic-host allow-list delivered by the app.
 - Hands-free controls: a Windows hotkey pauses and resumes; the spoken phrase "scribe pause" only pauses. Plus phrase-rule new-consultation warnings (warning only).
@@ -357,7 +357,7 @@ Open the desktop app's Clinics tab, paste a clinic's Cliniko API key and a conta
 Opening another patient's note (or leaving the note, closing the tab, logging out, Chrome disconnecting, or the computer going to sleep) pauses the recording at once. The frame turns amber and a full-page block covers Cliniko, showing "Recording belongs to <A>" beside "You opened <B>" (when A is in the other clinic, the page block names only the clinic and the panel names A), with three choices:
 - **Finish previous (<A>)** finishes A's consultation.
 - **Resume previous** returns the tab to A's note, and resumes only when Chrome reports A's note again.
-- **Discard previous** asks "Discard <A>'s recording? This cannot be undone." and needs a second click.
+- **Discard previous** asks "Discard <A>'s recording? This cannot be undone." and needs a second click. Since 2026-09-28 (D1 addendum, round 57 SEC-003) it is offered in the side panel's block view and on the desktop only, never on Cliniko's page.
 
 No session is ever re-bound to another patient. A linked session cannot resume, from the desktop, the hotkey or the panel, while Chrome is disconnected or its note is not reported.
 
@@ -377,7 +377,7 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
   - Consent and every control live in Chrome's global side panel (`chrome.sidePanel`), never in Cliniko's DOM.
   - The only in-page elements, rendered by the page script from its tab's slice of the app's `state` inside a closed shadow root, are:
     - (a) a 3 px viewport frame: red while recording, amber while paused or blocked;
-    - (b) the full-page block: a dimmed page and a centred card with the two patients side by side and Finish previous / Resume previous / Discard previous. Discard needs a second confirming click. When the recording belongs to ANOTHER clinic, the block names only this tab's patient and says "Recording belongs to a patient in <other clinic's label>"; the previous patient's name appears only in the panel (peer r2 PR-MED-002).
+    - (b) the full-page block: a dimmed page and a centred card with the two patients side by side and Finish previous / Resume previous / Discard previous. Discard needs a second confirming click. (AMENDED 2026-09-28 — see the addendum below: the page block has no Discard.) When the recording belongs to ANOTHER clinic, the block names only this tab's patient and says "Recording belongs to a patient in <other clinic's label>"; the previous patient's name appears only in the panel (peer r2 PR-MED-002).
   - Five panel layouts plus one banner:
     1. **Message** — "Clinic Scribe is not running — open it to record" / "This clinic is not set up — add its key in Clinic Scribe's Clinics tab" / "Open a patient's treatment note to record" / "Another Chrome profile is connected to Clinic Scribe" / "Save or cancel <A>'s note review to start" / "Restoring the safeguards on this tab…".
     2. **Checking** — "Checking with Cliniko…".
@@ -390,9 +390,10 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
   - Every string from the app is rendered with `textContent` only, never `innerHTML`.
   - Content scripts cannot call `chrome.sidePanel`, so the block's buttons send commands directly and the panel mirrors them. Task 6.4 spikes whether `sidePanel.open()` can run from an action-click gesture.
   - Rejected: a strip inside Cliniko's layout; a corner pill alone; desktop-led.
+  - **AS-BUILT ADDENDUM — no Discard on the page block (practitioner decision 2026-09-28, `OWNERSHIP: gate-disposition key=h3a-sec-003`; round 57 SEC-003, built in leg stage-9-exec-k9).** (b) above now reads: the block's buttons are Resume previous and Finish previous only. A script in Cliniko's page could raise the block, hide it and collect real clicks on it, so the destructive action stays on surfaces Cliniko cannot script: the side panel's Blocked layout keeps its two-click Discard previous, and the desktop keeps its Discards. The worker refuses a `discard` from a page whatever it carries (`hub.ts` `BLOCK_ACTIONS`), so no page can trigger a discard at all. The panel's Blocked layout now mirrors the page block PLUS that Discard.
 - **D2 — Protocol v2: three new message types; refusals travel in `state`.**
   - `context` (extension→app): `{seq, tab_id, window_id, focused, host?, page: note|login|other_cliniko|not_cliniko|closed, patient_id?, note_id?}`. `host` is present only for allow-listed hosts. A tab the extension has already reported that navigates off the allow-list sends `page: not_cliniko` with NO host and NO URL; its removal sends `page: closed`. An untracked non-Cliniko tab is never reported (peer r1 PR-HIGH-002).
-  - `command` (extension→app): `{action: start|pause|resume|finish|discard|resume_previous|open_review, state_rev, session_ref?, consent?: {confirmed: true, text_version}, target?: {tab_id, clinic_host, patient_id, note_id}}`. `start` MUST carry `target` and `state_rev`, and the app refuses unless both match its latest bound report AND that report's verification outcome is `verified` or `unverified_offline` (never pending or a named refusal); the check runs on the GUI thread. `resume`, `finish`, `discard`, `resume_previous` and `open_review` MUST carry the `session_ref` they act on, and the app refuses (named, in `last_refusal`) unless it equals the current live session's (or, for `open_review`, the indexed session's) `session_ref`, checked on the GUI thread before the slot runs. `pause` is fail-safe and acts on the current live session without a ref. `discard` from the block must also carry `confirmed: true` from the second click, bound to the same `session_ref` (peer r1 PR-HIGH-001).
+  - `command` (extension→app): `{action: start|pause|resume|finish|discard|resume_previous|open_review, state_rev, session_ref?, consent?: {confirmed: true, text_version}, target?: {tab_id, clinic_host, patient_id, note_id}}`. `start` MUST carry `target` and `state_rev`, and the app refuses unless both match its latest bound report AND that report's verification outcome is `verified` or `unverified_offline` (never pending or a named refusal); the check runs on the GUI thread. `resume`, `finish`, `discard`, `resume_previous` and `open_review` MUST carry the `session_ref` they act on, and the app refuses (named, in `last_refusal`) unless it equals the current live session's (or, for `open_review`, the indexed session's) `session_ref`, checked on the GUI thread before the slot runs. `pause` is fail-safe and acts on the current live session without a ref. `discard` from the block must also carry `confirmed: true` from the second click, bound to the same `session_ref` (peer r1 PR-HIGH-001). (Since 2026-09-28, SEC-003 — D1 addendum: the block that carries Discard is the side panel's Blocked view; the page block sends no discard.)
   - **Reference registry (peer r2 PR-MED-001).** The app keeps ONE in-memory map `session_ref → session_id` for its lifetime, never persisted. A ref is minted when a session starts, and for each session the reminder index gains at startup reconstruction. It is kept through retirement and checkout (the live ref becomes the indexed ref), and removed when its session is completed, discarded or expired. A command resolves to exactly the entry its ref names, never to "the newest"; a ref that no longer resolves is a named refusal. After an app restart every ref is new, so a click rendered before the restart is refused and the panel re-renders from the next `state`.
   - `state` (app→extension): a FULL snapshot of the app's view, built by one `build_state()`, compared with the last snapshot sent ON THE CURRENT PIPE CONNECTION, and sent only if different. The poll, the events and every (re)connect call the same `publish()`. The last-sent snapshot belongs to the connection: it is cleared when a pipe client connects, so the first `publish()` on every new connection sends the full snapshot even when the app's state is unchanged (peer r3 PR-MED-002). A service-worker restart closes the native port, so the extension "re-requests state" by reconnecting; there is no separate state-request message. It carries `state_rev`, `app_running`, the live session's `session_ref` and, separately, the banner target's `session_ref` (opaque random tokens from the app-lifetime reference registry below, never a session directory name), the allow-list, display strings, the block, reminder flags, hotkey and spoken-pause availability, warnings and `last_refusal` (the named reason for a refused command).
   - `error` is for FATAL protocol faults only. The extension disconnects on it (`connection.ts:136`). A refused command never uses `error`.
@@ -416,6 +417,7 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
     - a named refusal — a mismatch, a final note, the wrong practitioner, 401/403/404, or a TLS certificate failure (Start refused, reason shown).
   - The app numbers pipe connections: a `conn_gen` counter bumped on every new pipe client (the app's own count, never sent to Chrome). `seq` restarts per connection. Each verification carries the `(conn_gen, seq, clinic_host, patient_id, note_id)` it answered, and is applied only if that is still the latest report of the CURRENT connection for the same target AND the clinic's `clinic_rev` is unchanged; anything else, including every result pending from an earlier connection, is dropped without touching the target, display strings or Start eligibility. A new connection also clears the bound report, so Start and Resume need a fresh report on the new connection (peer r3 PR-MED-001). Context-triggered calls are throttled per note.
   - Re-verification runs on recovery or Unreviewed checkout, on pipe reconnect for a linked live session, and in Phase 4 before the write. The panel copy says so.
+  - **AS-BUILT ADDENDUM — Cliniko's rate limit (practitioner decision 2026-09-28, `OWNERSHIP: gate-disposition key=h3a-sec-009`; round 57 SEC-009, built in leg stage-9-exec-k9).** In `ChromeBridge`: after a real 429 (`UnverifiedOffline.rate_limited`), that clinic's checks are answered `unverified_offline` WITHOUT a call for `RATE_LIMIT_COOLDOWN_SECONDS` = 60 s from the 429 (`encounter.rate_limited_result`; the cooldown's own answers never extend it); and no two calls start less than `MIN_CALL_SPACING_SECONDS` = 1 s apart — a check inside the spacing waits in its kind's slot (coalesced; its stale-result tags unchanged) for a single-shot timer, never a sleep on the GUI thread, and `is_busy` covers the wait so close waits too. Neither timer starts a call nobody asked for (the offline contract holds). Checkout re-verification in the main window is outside the bridge and unchanged.
 - **D5 — The pause rule, evaluated only in the app** (`ContextEvaluator`). Pause when:
   - the bound report changes note or patient, or `page ≠ note` (including the bound tab navigating off the allow-list, which arrives as `page: not_cliniko` per D2);
   - the bound tab is removed (`page: closed`);
@@ -445,6 +447,10 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
     - audio captured between the event and its handling;
     - a machine that sleeps without locking and without delivering the registered notification;
     - no automated test can prove Windows delivers either message on a given machine — the live re-smoke is the proof.
+  - **AS-BUILT ADDENDUM — a voice enrolment stops on lock and sleep (practitioner decision 2026-09-28, `OWNERSHIP: gate-disposition key=h3a-sec-019`; round 57 SEC-019, built in leg stage-9-exec-k9).** D5 extends to the Practitioner tab:
+    - the lock's queued call and the suspend branch each call `practitioner_screen.on_stop()` — the tab's own Stop, a no-op unless enrolling, whose worker checks save nothing;
+    - `MainWindow._enrolment_blocker` refuses a Record press through `_lock_refusal()` (`locked` / `lock_unknown`) from the lock message until the unlock;
+    - residue: a Stop landing after the worker's final check does not undo the save (round 28 PR-LOW-032); the tab then shows the profile and Delete removes it. This replaces round 54 LOW-054's "enrolment is not covered" residue.
   - `pause_for(reason)` by state:
     - RECORDING → pause and set the block when the reason is a context reason;
     - PAUSED → set the block only;
@@ -633,6 +639,59 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 
 ## Current State / Handoff Note
 - **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k10`, 2026-09-28T10:17+10:00, run stage-9) — codex round 65 VERIFIED and FIXED (PR-LOW-350), round 65 closed; the pipe-creation fallback verified and pinned; `reason=composer-run`.**
+  - What changed:
+    - `encounter.py` `VerificationLedger.awaits` (with `_is_run_request`, the tag guard now shared with `accept`).
+    - `ui/bridge.py` `_next`: a waiting REPORT check starts only while `awaits` holds. The live re-check is unchanged.
+    - The threat model's "THE RATE" paragraph and `CHANGELOG.md`.
+  - Class checked (the LEG 1 block under round 65): tab closed, non-note page, a reused or not-set-up note, a clinic change are FIXED by the guard. Link drop, cooldown and window close were already covered. The older wait behind a running check had the same hole and is fixed too.
+  - Item 3: the Phase 4 contract HOLDS.
+    - `app.py:151-158` turns `PipeUnavailable` into the unavailable line, and desktop recording still works.
+    - The explicit owner can only fail inside `CreateNamedPipe`, which maps to `create_failed`.
+    - Now pinned by `TestPipeUnavailableFallback` (2).
+    - One pre-existing robustness gap is recorded for H3a with an Executor recommendation: the SDDL conversion sits outside the `try`. It is unreachable with a validated SID.
+  - P.1 and P.2: clinic 2 is recorded as DEFERRED by the practitioner.
+  - Checks: ruff "All checks passed!"; mypy "no issues found in 50 source files"; `loop-history-check` OK (59 entries + 65 headings).
+  - Expected (composer-run):
+    - `cd desktop && ../.venv/Scripts/pytest.exe -q` → **4142 passed** with the app closed (4135 + 7: stale waiting checks 5, fallback 2).
+    - Extension unchanged at 306; no rebuild needed.
+  - Live re-check: none new beyond k9's (the fix only drops calls nobody wants).
+  - Next: the scoped codex confirmation.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k9`, 2026-09-28T10:06+10:00, run stage-9) — H3a's four practitioner-decided items BUILT (SEC-003, 009, 013, 019; round 57 `/fix decision: Applied`); `/review-loop` rounds 63–64 converged (7 + 2 LOW, all applied); `reason=composer-run`.** H3a stays 🟥: 9 items remain.
+  - **What changed:**
+    - SEC-003:
+      - `extension/src/page.ts`: the block draws Resume previous and Finish previous only; Discard's arming and confirm line are removed.
+      - `extension/src/hub.ts:110`: `BLOCK_ACTIONS` no longer includes `discard`, and `blockCommand` never forwards `confirmed`.
+    - SEC-009:
+      - `encounter.py:304`: `UnverifiedOffline.rate_limited`; `:458` `rate_limited_result`.
+      - `ui/bridge.py:160`: the two constants.
+      - `ui/bridge.py:718` `_run`: the cooldown answer, or the spacing deferral with a precise single-shot `QTimer`.
+      - `ui/bridge.py:760` `_next` and `:804` `_on_verified`: the cooldown starts only on a real 429.
+      - `is_busy` now covers the spacing wait.
+    - SEC-013:
+      - `pipe_client.py:173` `_pipe_owner`, and `:144` `owner`, checked after the DACL.
+      - `pipe_server.py:166` `pipe_sddl`: `O:<SID>D:P(A;;GA;;;<SID>)`.
+    - SEC-019: `ui/main_window.py:547` (lock) and `:581` (suspend) call `practitioner_screen.on_stop()`; `:876` `_enrolment_blocker` refuses through the lock refusal.
+    - Docs:
+      - plan: the D1, D4 and D5 addenda, Task 4.3 extended, and dated amendments to the Goal, the pause summary, Flow 3 and the Phase 6 smoke;
+      - `PLAN.md:54`;
+      - the threat model: senders, extension residue (1), THE RATE, the pipe, the relay and residue (2), and the pause rule, where the LOW-054 residue is replaced;
+      - data-flow flows 18–20;
+      - the design system: Discard posture, the block, the Blocked layout, the Ready line, the lock line;
+      - `CHANGELOG.md` Security.
+  - **Checks in-leg:**
+    - ruff "All checks passed!"; mypy "no issues found in 50 source files";
+    - extension `npm run typecheck` and `npm run lint` clean;
+    - `loop-history-check` OK (58 entries + 64 headings).
+  - **Expected (composer-run):**
+    - desktop **4135 passed** with the app closed (4124 + 11: `TestRateLimit` 4, pipe-owner contract 3, real-pipe owner refusal 1, relay `owner` 1, enrolment on lock and sleep 2);
+    - extension **306** (307 − 1: the page's two Discard tests became one);
+    - `npm run build` is required, because `page.ts` and `hub.ts` changed.
+  - **Live re-check** (rebuild, then reload the extension, fully restart Chrome and relaunch the app):
+    1. Start a linked recording, then open another patient's note in the same tab. The page block shows only **Resume previous** and **Finish previous**, and the side panel's block view still offers **Discard previous** (two clicks).
+    2. On the Practitioner tab, start a voice enrolment, press Win+L and sign back in. The tab reads "Enrolment stopped - nothing was saved.", and the voice profile is unchanged.
+    3. A normal Validate on the Clinics tab and a note check (open the test note: "Note verified with Cliniko") still work, and the Chrome badge is green **OK**. That proves the owner check passes for the real app.
+  - **Next:** the codex confirmation round, then the rest of H3a.
 - **EXECUTOR HANDOFF (leg `stage-9-exec-k8`, 2026-09-28T09:09+10:00, run stage-9) — display name "Clinic Scribe" (practitioner decision; H2a SIMP-006 DONE); `reason=composer-run`.**
   - Renamed display strings only:
     - `app.py` (2), `ui/main_window.py` (the window title) and `ui/models.py` (8, including "Clinic Scribe Companion");
@@ -989,13 +1048,13 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
     3. **Linked Start, Pause and Resume from the panel.** Tick the box, press Start and speak a few sentences. *Expect:* a thin red frame round the Cliniko page; badge **REC**; the panel reads "Recording" with a counting timer and "Consent confirmed <time>"; the box is unticked. Press Pause. *Expect:* amber frame, **PAUSED**, "Paused". Press Resume. *Expect:* red again, **REC**.
     4. **A patient change pauses and blocks.** In the SAME tab, open B's note. *Expect:*
        - the frame turns amber and a full-page card says "This tab opened a different treatment note.";
-       - the card names A as the recording's patient and B as this tab's, with Resume previous / Finish previous / Discard previous;
+       - the card names A as the recording's patient and B as this tab's, with Resume previous / Finish previous / Discard previous (since 2026-09-28, SEC-003: Resume previous / Finish previous only — Discard previous is in the panel's block view);
        - badge **PAUSED**; the panel shows the same block;
        - the desktop shows its pause cue.
        Say whether the amber badge is legible.
     5. **Resume previous.** Click Resume previous on the card. *Expect:* the tab goes back to A's note, and within a few seconds recording resumes (red frame, **REC**, card gone). No other tab moves.
     6. **Chrome closing mid-recording.** Quit Chrome fully (no `chrome.exe` left). *Expect:* the desktop shows the recording paused. Reopen Chrome and open B's note. *Expect:* the amber card on B's page. Resume previous takes you back to A and resumes.
-    7. **Discard takes two clicks.** Open B's note again. On the card, click Discard previous once. *Expect:* "Confirm discard" and "Discard this recording? This cannot be undone. Press Confirm discard to delete it."; after 15 s it reverts. Now click twice. *Expect:* the recording is discarded, the frame goes, and the panel shows B's Ready with the box unticked.
+    7. **Discard takes two clicks.** (Since 2026-09-28, SEC-003: use the SIDE PANEL's block view — the card has no Discard; confirm the card shows only Resume previous and Finish previous.) Open B's note again. On the card, click Discard previous once. *Expect:* "Confirm discard" and "Discard this recording? This cannot be undone. Press Confirm discard to delete it."; after 15 s it reverts. Now click twice. *Expect:* the recording is discarded, the frame goes, and the panel shows B's Ready with the box unticked.
     8. **Finish and the Unreviewed banner.** On A's note, tick, Start, speak, then press Finish consultation. *Expect:* "Finishing <A>…" with NO timer, then Ready with "The last recording is waiting for review in Clinic Scribe." Close the app (twice within 10 s, as the desktop asks), relaunch it, and reload A's note. *Expect:* the panel's banner "Unreviewed recording for this note — Open for review". Pressing it brings that recording's review up in the app. Complete or discard it there.
     9. **Extension reload mid-recording.** On A's note, Start a new recording from the panel. Reload the extension in `chrome://extensions` and return to the Cliniko tab. *Expect:* the panel briefly says "Restoring the safeguards on this tab…" or "Connecting to Clinic Scribe…", then the recording shows paused with the amber card. Resume previous resumes it.
     10. **Lost link under a recording.** With that recording running, end Cliniko Scribe in Task Manager. *Expect:*
@@ -1012,7 +1071,7 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
     2. The badge shows green **OK** while the app runs idle (D1 said nothing) and grey **OFF** when it is closed; red **!** means the link dropped under a live recording.
     3. "Resume previous" first brings forward a tab already showing the note. Otherwise it navigates only a tab on an allow-listed Cliniko page, and anything else opens the note in a new tab.
     4. With the link to the app down, Cliniko tabs keep an amber frame if a recording was live, and the block's card is dropped, because its buttons could not reach the app. With the app closed, nothing is drawn.
-    5. The side panel has no Discard while recording (D1 lists Pause/Resume and Finish consultation). Discard stays on the desktop and on the block.
+    5. The side panel has no Discard while recording (D1 lists Pause/Resume and Finish consultation). Discard stays on the desktop and on the block. (Since 2026-09-28, SEC-003: on the side panel's block view, not the page block.)
     6. The panel's banner shows only over the Message and Ready layouts, and only while a Cliniko tab is in front.
     7. D1's "Another Chrome profile is connected" has no signal, so the not-running message carries a hint instead.
     8. The page script's cue can be hidden or covered by Cliniko's own page. The heartbeat only puts back a removed element, and a per-heartbeat `important` restyle was considered and NOT applied, because the hiding routes are an open class. The app's pause rule and command checks are the enforcing controls.
@@ -1057,7 +1116,7 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
   - WATCH (first run): `page.dom.test.ts` and `panel.dom.test.ts` import their module per test after `vi.resetModules()` (both boot at import); two tests use `vi.useFakeTimers()` (Discard's 15 s disarm, the panel's 1 s reconnect) — the fake's ports deliver by `queueMicrotask`, which fake timers leave alone. jsdom events from `click()` are untrusted by design; the trusted path injects `isTrusted`.
   - Interpretation calls this leg: five for the panel (6.4's task line) and the page-script residue (6.3's task line). None is CRIT/HIGH or production-impacting beyond the planned UI; no Defer/Accept.
   - Next: `/review-loop` from round **36** over the whole Phase 6 diff (`extension/` + AGENTS.md + CHANGELOG), then the composer's codex pass; then my phase-complete handoff with the final smoke.
-  - **DRAFT MORNING SMOKE — Phase 6, AFTER the Phase 4 and Phase 5 smokes** (finalised at phase-complete). Mock consultations only, clinic 1 only, on a draft treatment note made for testing; report step number + PASS/FAIL and on-screen text with names and ids blanked. First: `cd extension && npm run build`, reload the extension in `chrome://extensions`, fully restart Chrome (no `chrome.exe` left), then double-click `scribe-app.exe`.
+  - **DRAFT MORNING SMOKE — Phase 6, AFTER the Phase 4 and Phase 5 smokes** (finalised at phase-complete; superseded — and since 2026-09-28 the page card has no Discard, SEC-003, so steps 4 and 7 are historical). Mock consultations only, clinic 1 only, on a draft treatment note made for testing; report step number + PASS/FAIL and on-screen text with names and ids blanked. First: `cd extension && npm run build`, reload the extension in `chrome://extensions`, fully restart Chrome (no `chrome.exe` left), then double-click `scribe-app.exe`.
     1. **Icon and panel.** Click the pinned icon. *Expect:* the side panel opens; the badge is green **OK**; the panel says "Open a patient's treatment note to record". Close the app: badge grey **OFF**, panel "Clinic Scribe is not running — open it to record". Relaunch the app: **OK** again.
     2. **Ready.** Open the test note in Cliniko. *Expect:* "Checking with Cliniko…", then the patient's name, the appointment (or "No linked appointment"), the clinic, "Note verified with Cliniko…", an UNticked consent box and a greyed Start.
     3. **Linked Start.** Tick the box, press Start, speak a few sentences. *Expect:* a thin red frame round the Cliniko page, badge **REC**, the panel's timer counting and "Consent confirmed <time>"; the box is unticked again.
@@ -1590,6 +1649,10 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 - 2026-09-28 round 60 (codex gpt-6-astra medium, pass stage-9.p1 H4 slice C): 0 CRIT / 0 HIGH / 1 MED / 2 LOW; fixed (PR-MED-330 the side panel's timer updates in place, focus and a straddling click survive, same-session focus restore, click-time refs, plus the Ready tick sibling; PR-LOW-331 "On screen" names a patient only for the focused note; PR-LOW-332 the three one-click desktop Discards named — doc only); skew=pre-existing; action=none — scoped confirmation round 61 follows
 - 2026-09-28 round 61 (codex gpt-6-astra medium, pass stage-9.p1 H4 confirmation, peer round 4 of 5): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-MED-330, PR-LOW-331 and the five docs fixes confirmed closed; PR-LOW-340 the different-session focus test made discriminating — one sequence, same-session keeps focus then a new session clears it; test only); skew=fix-induced; action=none — H4 pass stage-9.p1 converged
 - 2026-09-28 round 62 (practitioner live smoke S1, fixed by executor leg stage-9-exec-k7, claude-opus-5-5): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (LOW-060 the Recovery tab's Unreviewed list re-lists when a Start retires a recording and when the tab is opened — stat-only, custody exclusion unchanged; +3 tests; in-session review pass clean); skew=pre-existing; action=none
+- 2026-09-28 round 63 (Claude Code /review-loop round 1 of cap 3, leg stage-9-exec-k9, three lenses over the SEC-003/009/013/019 diff): 0 CRIT / 0 HIGH / 0 MED / 7 LOW; all applied (LOW-061 elevated-app wording; LOW-062 owner-assertion blind spot named; LOW-063 stale page-block Discard in plan + PLAN.md; LOW-064 page-channel command discard test; LOW-065 precise spacing timer; LOW-066 offline line and timer triggers wording; LOW-067 live re-check cooldown test); skew=fix-induced; action=none
+- 2026-09-28 round 64 (Claude Code /review-loop round 2 of cap 3, leg stage-9-exec-k9, regression over round 63): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; applied (LOW-068/069 stale test counts in CHANGELOG and the SEC-009 record, plus D2's block-discard note); skew=fix-induced; action=none — converged
+- 2026-09-28 round 65 (codex gpt-6-astra medium, pass stage-9.p2 over the H3a items, peer round 1 of 3; verified and fixed by executor leg stage-9-exec-k10): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-350 a waiting report check is started only while the ledger still awaits it — `VerificationLedger.awaits` gates `_next`, covering the spacing deferral and the older wait behind a running check; +5 tests; plus the pipe-creation fallback verified and pinned, +2 tests); skew=fix-induced; action=none — scoped codex confirmation follows
+- 2026-09-28 round 66 (codex gpt-6-astra medium, pass stage-9.p2 confirmation): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-350 confirmed closed); skew=none; action=none
 
 ## Review Findings Log
 ### Round 1 - 2026-09-27 - cliniko-workflow-safeguards plan, independent cross-family codex plan peer-review (round 1)
@@ -3748,6 +3811,8 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
   - 13 recorded for the new task H3a. Five of these also have their residue named in the threat model now.
   - 1 record-only item for the draft-write plan.
   - No must-pause: nothing needs the practitioner before commit.
+  - Update (leg stage-9-exec-k9, 2026-09-28): SEC-003, SEC-009, SEC-013 and SEC-019 Applied on the practitioner's decisions; 9 remain Pending for H3a (SEC-007, 008, 014, 015, 016, 017, 020, 021, 022). Their review is rounds 63+.
+  - Fix-delta self-check (leg stage-9-exec-k9): PASS. Re-read the bridge hunks (`_run` / `_next` / `_apply_result` / `_on_verified` and the stale-result guard's untouched tags), the `main_window.py` stop and blocker hunks, `pipe_client.unverified_reason`'s check order, and the `page.ts` / `hub.ts` removals.
 - Source: Claude Code security-review (executor leg stage-9-exec-k3, claude-opus-5-5). The portable checklist ran as five read-only lens subagents:
   - A, the Chrome link;
   - B, the extension;
@@ -3784,7 +3849,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Executor recommendation: remove Discard from the page block and keep it in the side panel and on the desktop, which Cliniko cannot script. The block keeps Resume previous / Finish previous.
     - This changes D1's block layout, so it is the practitioner's call at H3a's `/review-plan`. Named now in threat-model extension residue (1).
     - surface=production (the page block's buttons).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k9, 2026-09-28, Claude Code; practitioner decision `h3a-sec-003`). `page.ts`: the block draws Resume previous and Finish previous only; the Discard button, its arming state, 15 s timer and confirm line are gone (`DISARM_MS` removed). `hub.ts`: `BLOCK_ACTIONS` without `discard` and the page's `confirmed` path removed, so a page-origin discard is dropped whatever it carries; the panel's `panelMessage` discard path unchanged. Tests: `page.dom.test.ts` (the two Discard tests replaced by "offers Resume previous and Finish previous only", the untrusted-click test now clicks Resume previous), `hub.test.ts` (a page discard with or without `confirmed` is refused; the panel's confirmed discard still reaches the app). Docs: D1 addendum, threat-model SENDERS and residue (1), flow 20, design-system (Discard posture, the block, the Blocked layout). Siblings: none — `panel.ts` is the only other Discard and stays.
   - **[LOW]** SEC-004 (applied): `extension/package.json` `"dev": "vite"`.
     - Threat: crxjs's serve mode writes into `dist/` (the folder loaded unpacked):
       - a web-accessible entry `resources: ["**/*"]` on `<all_urls>`;
@@ -3829,7 +3894,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
       - optionally a 1 s spacing between calls.
     - Both numbers need the practitioner's sign-off.
     - surface=production (bridge; the offline line shows during a cooldown).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k9, 2026-09-28, Claude Code; practitioner decision `h3a-sec-009`: 60 s cooldown + 1 s spacing). `encounter.py`: `UnverifiedOffline.rate_limited` (set only for `RateLimited`) and `rate_limited_result(request)`. `ui/bridge.py`: `RATE_LIMIT_COOLDOWN_SECONDS` / `MIN_CALL_SPACING_SECONDS`; `_run` answers a clinic in its cooldown with no call, or defers a check inside the spacing to its kind's slot plus a single-shot `QTimer`; `_next` (the old `_finish_task` tail as a loop, since a cooldown answer starts no call); `_apply_result` shared by the worker's answer and the cooldown's; `_on_verified` starts the cooldown only for a real 429; `is_busy` covers the spacing wait; the timer's pass (`_spacing_served`) lets exactly the deferred check through whatever the injectable clock reads; a `call_spacing_seconds` ctor seam (the test harness passes 0 except in `TestRateLimit`). Tests: `test_ui_bridge.py::TestRateLimit` (4: the 60 s window with no call and not extended by its own answers; the linked live session's reconnect re-check answered by the cooldown with no call — added at round 63; a 503 starts none; spacing defers without blocking, coalesces to the newest report, and the pass is spent after one call), `test_encounter.py` (only a 429 is `rate_limited`). Docs: D4 addendum, threat-model rate paragraph, flow 18, design-system Ready line.
   - **[LOW]** SEC-010 (applied): the log tripwire (`logging_setup.py` `_PAYLOAD_SIGNATURES`) had no marker for the Cliniko credential or the registry.
     - Mitigation: the quoted and unquoted forms of `Authorization` (plus the raw `Authorization:` header line), `api_key` and `contact_email` are added. A backstop only: no production log call carries them (lens C traced every `log_event`; the client, clinics, encounter and every `ui/` module have no logger).
     - Test: `test_logging_setup.py::test_tripwire_drops_the_cliniko_credential_and_registry_renderings`. The existing disjointness test pins that no `log_event` key collides.
@@ -3854,7 +3919,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Applied now: the wording, "Windows session", in the threat model, flow 19, `pipe_client.py` / `pipe_server.py` docstrings, AGENTS.md and CHANGELOG. The residue is named.
     - Executor recommendation: also require the pipe's OWNER SID to equal the host's user. A non-admin cannot assign another user's SID as owner. This extends Task 4.3's (b) check set, so it is the practitioner's to confirm.
     - surface=production (host verification).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k9, 2026-09-28, Claude Code; practitioner decision `h3a-sec-013`). `pipe_client.py`: `ServerIdentity.owner_sid`, `_pipe_owner` (`GetSecurityInfo` with `OWNER_SECURITY_INFORMATION`; unreadable → None), `unverified_reason` → `owner` after the DACL checks (so a squatter DACL still names `dacl`); the host's existing `relay_refused state=<reason>` log names it, no identifiers. `pipe_server.py`: `pipe_sddl` sets the owner explicitly, `O:<SID>D:P(A;;GA;;;<SID>)`, so the owner check adds no refusal of its own for an elevated app (whose default owner is Administrators); such an app still meets the pre-existing user-check residue (round 63 LOW-061). Tests: `test_pipe_client.py` (contract: owner unreadable / another user / Administrators → `owner`; the real app pipe's owner is the user; a monkeypatched other owner on the real pipe is refused and the handle closed), `test_pipe_server.py` (the SDDL pin), `test_native_host_relay.py` (`owner` is a hard error). Docs: Task 4.3 extension, threat-model pipe + relay paragraphs and residue (2), flow 19, the `pipe_client.py` docstring.
   - **[LOW]** SEC-014 (recorded; residue named; UNVERIFIED): the pipe's SDDL `D:P(A;;GA;;;<SID>)` has no mandatory label.
     - The default label blocks only writes from lower integrity, so a low-integrity (non-AppContainer) process of this user may open it read-only and receive `state`, patient name included, while holding the only slot.
     - Executor recommendation: test on the host first. Then use `S:(ML;;NWNRNX;;;ME)`, and have the host require a medium-or-higher, non-AppContainer server.
@@ -3886,7 +3951,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
       - update the LOW-054 residue.
     - It extends D5 to the practitioner-profile surface, so it needs the practitioner's one-line acknowledgement at H3a.
     - surface=production (Practitioner tab: an enrolment stops on lock).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k9, 2026-09-28, Claude Code; practitioner decision `h3a-sec-019`). `ui/main_window.py`: `_on_session_locked` (inside its registration guard) and the `nativeEvent` suspend branch call `practitioner_screen.on_stop()`; `_enrolment_blocker` returns the lock refusal's text first. Tests: `test_system_pause.py::TestLockWindow` +2 (an unregistered lock stops nothing, a registered lock stops on its queued call, a suspend stops synchronously; Record is refused from the lock message until the unlock). The Stop path saving nothing is pinned by `test_ui_screens.py`'s Stop tests. Docs: D5 addendum, threat-model pause-rule paragraph (the LOW-054 residue replaced by the narrower post-final-check one), design-system lock line.
   - **[LOW]** SEC-020 (recorded; seed "check an unlock with Windows"): `nativeEvent` → `SystemPauseWatch.note_unlock()` clears the lock flag with no query.
     - Threat: a same-user process can post a forged `WTS_SESSION_UNLOCK`, then a forged `WM_HOTKEY`, and resume an UNLINKED recording behind a locked screen (the lock flag is its only guard).
     - Executor recommendation: `note_unlock` asks `registrar.query_locked()` (the same WTS call the 5 s re-check uses) and keeps the flag only on a positive LOCKED. None or an exception believes the message, so `lock_unknown` keeps its way out.
@@ -4136,6 +4201,128 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
 - Checks: ruff clean; mypy clean (50 source files). Suite composer-run.
 - Last reviewed: 2026-09-28
 
+### Round 63 - 2026-09-28 - H3a's four practitioner-decided items (SEC-003, 009, 013, 019): `/review-loop` round 1 of cap 3 over this leg's diff
+
+- Round status: Closed (0 pending) — 7 LOW, all Fix-now, all applied in this leg. No CRIT, HIGH or MED.
+- Source: Claude Code (executor leg stage-9-exec-k9, claude-opus-5-5). Three read-only lens subagents:
+  - A, no path left for a page to discard;
+  - B, the cooldown and the spacing (no call suppressed forever or started at startup or idle; no GUI-thread block; no reordering against the stale-result guard);
+  - C, the owner check (fails closed, no lock-out of the real app) and the enrolment stop (saves nothing, no race with a save).
+  - Each lens also checked test honesty and the docs.
+- Scope / baseline: `git diff HEAD` (`7504ee6`) — round 57's four `/fix` applications and their docs.
+- Clean by the lenses (evidence in each lens report):
+  - Only the panel's port can send a discard. A page's `kind:"command"` is ignored, a content-script port with the panel's name is disconnected (it has a tab), and there is no `externally_connectable`.
+  - The cooldown is set only from a real 429, and its own answers never extend it. Clinic ids are random per add, so a re-added clinic starts fresh.
+  - `_next` terminates, and `_spacing_served` lets exactly one call through before resetting.
+  - Every `_dispatch` caller publishes afterwards, and `ledger.accept` re-enters the registry only for a Verified outcome.
+  - `is_busy` has one consumer (close) and waits at most 1 s.
+  - The owner is read with the handle's `READ_CONTROL`, and any unreadable owner fails closed.
+  - The raw-pipe tests still name `dacl`, and the monkeypatched owner test reaches the handle close.
+  - `on_stop` does nothing when idle; the Record-refusal ordering holds; the lock query cannot deadlock.
+  - Every new test fails with its fix reverted.
+- Findings:
+  - **[LOW]** LOW-061 (lens C, docs): the threat model and the plan said an app started elevated "still passes" / "is not locked out". It is refused earlier, at the unchanged user check (its token cannot be queried). The explicit `O:` only means the owner check adds no refusal of its own.
+    - Decision: Applied. Reworded in the threat-model relay paragraph, Task 4.3's extension, round 57's SEC-013 record and CHANGELOG.
+    - surface=docs. Triage: Fix-now.
+  - **[LOW]** LOW-062 (lens C, test-harness): the real-pipe owner assertion cannot tell a reverted `O:` apart when tests run unelevated, because the default owner is then the user.
+    - Decision: Applied. A comment at the assertion names the SDDL pin in `test_pipe_server.py` as the revert guard.
+    - A behavioural guard would need an elevated test run, which this suite never does.
+    - surface=test-harness. Triage: Fix-now.
+  - **[LOW]** LOW-063 (lens A, docs): these still showed Discard on the page block:
+    - the plan's Goal (:18), its pause summary (:34), Flow 3 (:360) and D1 (b);
+    - the Phase 6 smoke steps (4, 7 and interpretation call 5, and the superseded draft);
+    - Task 6.3's behaviour line;
+    - `PLAN.md:54`.
+    - Decision: Applied. Each carries a dated SEC-003 amendment pointing to the D1 addendum; `PLAN.md` states that Discard is offered only off Cliniko's page.
+    - surface=docs. Triage: Fix-now.
+  - **[LOW]** LOW-064 (lens A, test-gap): no test sent a panel-shaped `kind:"command"` discard through the page channel.
+    - Decision: Applied. `hub.test.ts`'s SEC-003 test now sends one and expects no command.
+    - surface=test-harness. Triage: Fix-now.
+  - **[LOW]** LOW-065 (lens B, production): the spacing `QTimer` was a coarse timer, which Qt lets fire up to about 5 % early. Because the timer's firing IS the spacing, two calls could start about 950 ms apart, against the documented 1 s.
+    - Decision: Applied. The timer is set to `Qt.TimerType.PreciseTimer`.
+    - surface=production (bridge timing; no user-visible text). Triage: Fix-now.
+  - **[LOW]** LOW-066 (lens B, docs): the wording implied the offline line clears by itself after the minute. In fact a cooldown answer is the run's outcome until the note is checked again. The threat model and flow 18 also left a clinic change out of the timer's triggers.
+    - Decision: Applied in design-system (the Ready line), the threat model ("THE RATE") and flow 18.
+    - surface=docs. Triage: Fix-now.
+  - **[LOW]** LOW-067 (lens B, test-gap): nothing covered the cooldown's `live=True` branch (a linked session's reconnect re-check).
+    - Decision: Applied. `TestRateLimit::test_a_live_recheck_inside_the_cooldown_makes_no_call`.
+    - The lens's two spacing sub-cases were not added. A live re-check deferred and then replaced, and a ledger check deferred across a reconnect, both reuse the unchanged waiting-slot semantics, which are already pinned by `test_a_report_check_never_displaces_the_live_recheck` and `test_a_result_for_an_earlier_connection_is_dropped`; the deferral writes the same slots.
+    - surface=test-harness. Triage: Fix-now.
+- Verification counts: 3 lenses (subagents), 7 candidates, 7 confirmed by reading, 0 dropped, 0 downgraded.
+- Fix-delta self-check: PASS. Re-read the timer line, the new test (including the pause-rule path its OTHER_NOTE report takes), the `hub.test.ts` line, and every edited doc sentence.
+- Last reviewed: 2026-09-28
+
+### Round 64 - 2026-09-28 - Post-fix regression over round 63, `/review-loop` round 2 of cap 3 — CONVERGED
+
+- Round status: Closed (0 pending) — 2 LOW (docs), applied. No CRIT, HIGH or MED.
+- Source: Claude Code (executor leg stage-9-exec-k9). One read-only regression subagent over round 63's applied hunks.
+- Round classification: 0 🆕 / 2 ⚡ / 0 🔁.
+- Clean:
+  - `Qt.TimerType.PreciseTimer` is the right PySide6 path, `Qt` is already imported, and only `isActive()` reads the timer.
+  - The live re-check test passes as written. The OTHER_NOTE report pauses the session, and the 429 starts the cooldown. On reconnect, `_reverify_live` sees PAUSED; `_run` answers from the cooldown with the same request object; the rev is unmoved. The test fails if the cooldown branch or the `live` flag is removed.
+  - `hub.test.ts` type-checks (`pageMessage(message: unknown)`).
+  - The comment's indentation is fine.
+  - The docs are consistent with the code.
+- Findings:
+  - **[LOW]** LOW-068 ⚡ (docs): CHANGELOG said "desktop +10 (`TestRateLimit` 3…)", but round 63's test makes it +11 with `TestRateLimit` 4. Round 57's SEC-009 record listed 3 tests; it now lists 4.
+    - One optional sibling applied: D2's "`discard` from the block must carry `confirmed`" now notes that the block which carries Discard is the side panel's.
+    - Decision: Applied. surface=docs. Triage: Fix-now.
+  - **[LOW]** LOW-069 ⚡ (docs): the same stale count in the plan's SEC-009 `/fix` record. Decision: Applied with LOW-068. surface=docs. Triage: Fix-now.
+- Verification counts: 1 lens, 2 candidates, 0 dropped.
+- Fix-delta self-check: PASS. Re-read the three edited sentences.
+- Convergence: round 2 found only ⚡ docs-count LOWs, all applied, and no production or test change. The loop is done; no round 65 is owed. The codex confirmation follows as the composer's.
+- Last reviewed: 2026-09-28
+
+### Round 65 - 2026-09-28 - H3a practitioner-decided items (page Discard, Cliniko rate limit, pipe owner, enrolment on lock), independent cross-family codex peer review (pass stage-9.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Supplied diff and permitted current files; static review only. Enrolment-worker save races, panel two-click implementation, and app startup fallback after `PipeUnavailable` remain unverified because their implementations are outside the file allow-list.
+- **PR-LOW-350** (LOW, behavioral, `desktop/src/scribe_desktop/ui/bridge.py:768`): A deferred report check still starts after its bound tab closes or leaves the note. For example, verify A, defer B inside the spacing interval, then close the tab: the ledger clears its target but `_waiting` retains B, so the timer makes an unnecessary Cliniko call. The stale-result guard rejects its answer but does not prevent the call — Evidence: `_on_context` only dispatches when `"if request is not None:"` (lines 698–699); `_next` unconditionally executes `"self._run(request, live=False)"` (line 768); `encounter.py:702–703` returns no replacement request when `"target is None"`. Recommendation: Fix-now — Validate a deferred report request against the current ledger before starting it, preserving the separate live-session recheck semantics; cover tab closure and navigation to a non-note during spacing. /fix decision: Applied (leg stage-9-exec-k10, 2026-09-28, Claude Code). `encounter.py`: `VerificationLedger.awaits(request)` — the current run's own request (the tag guard `accept` uses, now shared as `_is_run_request`) with no outcome yet. `ui/bridge.py` `_next`: a waiting REPORT check starts only while `awaits` holds, else it is dropped with no call; the live re-check keeps its identity check. This covers the spacing deferral AND the pre-existing wait behind a running check. Tests (`test_ui_bridge.py::TestRateLimit`, +5): a check deferred by the spacing is dropped once its tab closes, shows a page that is no note, or returns to a note reused from the throttle (3 ids; no call); a check waiting behind a running one is dropped once its tab closes; a deferred live re-check still runs. Navigating to ANOTHER note calls only the new one (the existing coalescing test, `…_waits_without_blocking_and_is_coalesced`).
+- Verification counts: 4 claims checked, 1 confirmed, 3 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k10)
+- PR-LOW-350 — peer: LOW, behavioral. Verified: materiality=production-behavioral severity=LOW surface=`ui/bridge.py` `_next` (a Cliniko call that should not be made; no user-visible text) rec=Fix-now (composer-predisposed, `OWNERSHIP: auto-disposition`).
+  - Evidence:
+    - `_on_context` dispatches only when `ledger.report` returns a request. A closed tab or any non-note page gives `target=None`, which starts a new run and returns None (`encounter.py` `report` → `_dispatch`).
+    - So `_waiting` kept the old request, and `_next` ran it unconditionally. `accept` dropped the answer (the run's target and seq had moved), but only after the call.
+  - The class is wider than codex's example. Every reason a waiting report check goes stale, checked:
+    - tab closed, or a page that is no note (login, other Cliniko, off the allow-list): the new run returns no request. Stale; FIXED.
+    - another note on a registered host: the new request replaces the waiting one. Already correct; now also gated.
+    - another note that is REUSED from the 60 s throttle, or whose clinic is not set up: the new run sets its outcome with no request. Stale; FIXED.
+    - clinic changed (Replace key) or removed: the run's rev or clinic moves, so the old request's `clinic_rev` no longer matches. Stale; FIXED by the same guard.
+    - link dropped or new client: `_reset_connection` already clears `_waiting`, and `conn_gen` moves anyway.
+    - cooldown began: `_run` answers from the cooldown before any call.
+    - window closing: close is refused while `is_busy`, which covers the spacing timer.
+  - The same hole existed BEFORE the spacing, for a check waiting behind a running one (`_finish_task`'s tail). The fix sits in `_next`, so both paths are gated.
+  - The live re-check keeps its own semantics: it answers its session, not the bound report, and stays gated by `request is check.request`.
+- Cap verdict: accept — production-behavioral LOW, fixed in one guard with tests; the scoped codex confirmation follows.
+- Fix-delta self-check: PASS. Re-read these hunks:
+  - `accept`: behaviour unchanged. The same conditions, now through `_is_run_request`, and `run.outcome` is still set only after it.
+  - `awaits`: the run must exist, have no outcome yet, and pass the same tags.
+  - `_next`'s ledger branch: a dropped request empties the slot, so the loop still terminates.
+  - The live branch is unchanged.
+  - The new tests' report sequences walk through the pause rule and the reuse throttle.
+- Item 3 (composer-asked; codex could not see it): does a failed pipe creation still leave a working app? YES, the Phase 4 contract holds.
+  - `app.py:151-158` `_start_chrome_link` catches `PipeUnavailable` from `PipeServer.for_current_user` or `start`, calls `bridge.set_unavailable()` (the Session screen's "Chrome link unavailable" line) and returns None. `main` carries on.
+  - The explicit owner is applied only by `CreateNamedPipe` (`pipe_server.py:402-416`). An unassignable owner fails there (a Windows error that is not access-denied), which becomes `PipeUnavailable("create_failed")`, the same path.
+  - `ConvertStringSecurityDescriptorToSecurityDescriptor` parses `O:<SID>` syntactically only. The SID has already passed `_SID_RE` in `current_user_sid` and `pipe_sddl`.
+  - The contract had no end-to-end pin, so one was added: `test_ui_bridge.py::TestPipeUnavailableFallback` (2 ids, `name_taken` and `create_failed`). The link reads unavailable, and a desktop Start reaches the controller.
+  - Recorded, not fixed (pre-existing since Task 4.2, not a regression): the SDDL conversion at `pipe_server.py:395-400` sits OUTSIDE the `try`, so a `pywintypes.error` there would escape `_start_chrome_link` (which catches only `PipeUnavailable`) and stop the app starting. It cannot happen with a SID that has passed `_SID_RE`.
+    - Executor recommendation: move the conversion inside the `try` and map its error to `create_failed` (one line), with a monkeypatched test.
+    - surface=production (start-up robustness; H3a, with SEC-015/017's start-up items).
+
+### Round 66 - 2026-09-28 - Confirmation: a deferred Cliniko check is dropped once its note is no longer wanted, independent cross-family codex peer review (pass stage-9.p2)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Permitted diff and current context, read-only; no tests run. PR-LOW-350 closed across the specified stale reasons; newer same-target reports and clinic-revision replacements retain wanted checks. Live rechecks remain unchanged. `app.py:155–158` catches `PipeUnavailable` and returns normally. Owner-error translation remains unverifiable within the allow-list. Removing the `awaits` guard would fail the four stale-request cases (`test_ui_bridge.py:575,595`); the live-recheck case and two fallback cases intentionally preserve separate behavior and would still pass.
+- Verification counts: 13 claims checked, 12 confirmed, 1 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
 ## Tasks
 Every task's verification is the per-phase suite in `Validation / Verification` plus the test classes it names. `[executor: premium-only]` marks custody, concurrency, network-surface and security-doc work. The tier is entirely premium, so the labels record where care concentrates rather than routing.
 
@@ -4188,6 +4375,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - `tests/test_probe_cliniko.py` (new): `TestRedaction` (fixture responses carrying names, ids, answer text, phone, DOB, subdomain, email, key — none printed; the expected fact lines present; GET only; one secret prompt), `TestNothingSent`, `TestShape`.
     - `scripts/README.md` entry.
 - [ ] 🟨 P.1: **Practitioner runs the feasibility check on both clinics** (practitioner-owned) — clinic 1 DONE 2026-09-27; clinic 2 OWED
+  - Clinic 2 DEFERRED 2026-09-28 by the practitioner — waiting on Cliniko API-key permission for that account; does not block other work.
   - **Clinic 1 Done note (2026-09-27, two runs by the practitioner from a normal terminal; structure only, relayed by the composer — no ids, names, URL, subdomain or key recorded here):**
     - Key shard = the note URL's shard: yes (confirms D10's shard rule and `clinics.py` item (d)).
     - `GET /user` 200: `id`, `role`, `active` present; role `administrator`, active yes (confirms item (a); the role finding drove D10's 2026-09-27 amendment).
@@ -4388,6 +4576,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - Tests: `desktop/tests/test_pipe_server.py` (new, 26, real uniquely named pipes — never the real per-user name): the flags and the exact `CreateNamedPipe` arguments, the DACL's single user entry, a held name refused, one client at a time, short writes assembled, a new connection number per client, a frame for an old connection never reaching the next, each fault closing the connection and the server waiting for the next client, stop in every state.
 - [x] 🟩 4.3: **Pipe peer identity** `[decision]`
   - **Decided (b) 2026-09-27 under the practitioner's overnight pre-authorisation to follow the executor's recommendation; revisable by the practitioner.** Composer record: `OWNERSHIP: gate-disposition key=task-4.3-decision`. The four residue items are stated AS RESIDUE in the threat model's Chrome-link section (pipe residue (1)(a)–(d)), with the squatter case as residue (2). Under (b), "verified" means the server runs in the host's logon session, its token user is the host's user SID, and the pipe's DACL is exactly the protected single-entry DACL the app creates (`pipe_client.unverified_reason`); anything else is the hard error. The optional log-only tripwire was built (leg `stage-4-exec-d2`): each end logs the other's executable path at connect (`pipe_peer`) — a path only, no gate, no new dependency, no new capability.
+  - **EXTENDED 2026-09-28 (practitioner decision, `OWNERSHIP: gate-disposition key=h3a-sec-013`; round 57 SEC-013, built in leg stage-9-exec-k9):** "verified" also requires the pipe object's OWNER to be the host's user SID (`unverified_reason` → `owner`, checked after the DACL; `_pipe_owner` reads it from the pipe itself). `pipe_sddl` now sets the owner explicitly (`O:<SID>D:P(A;;GA;;;<SID>)`), so the owner check adds no refusal of its own for an elevated app (which still meets the existing user-check residue — round 63 LOW-061). This closes the process-id reuse gap: the user check reads the token of the pid Windows recorded at creation, and a standard account cannot make another user's SID the owner of what it creates. A refusal is the hard error, logged as `relay_refused state=owner` (no identifiers).
   - Default (b): session id plus the user-only DACL, with the residue documented as `app.py:76-77` does for the mutex. The residue list must name what a same-user process on the pipe can do:
     - forge a start with consent;
     - read names for chosen note ids through `state`;
@@ -4704,7 +4893,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
 - [x] 🟩 6.3: **Page script: frame, block and URL heartbeat**
   - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
   - Files: `extension/src/page.ts`.
-  - Behaviour: D1's frame and block in a closed shadow root, rendered with `textContent` only. Buttons act on `isTrusted` clicks and carry the `session_ref` of the `state` the block was rendered from; Discard needs its second click. The script is inert until allow-listed, and returns to inert (frame, block and patient data removed; reports stopped) when its host leaves the allow-list (D13). It sends only `location.href` changes to the background (the SPA backstop; the background stays the single `context` reporter) and never reads Cliniko's DOM.
+  - Behaviour: D1's frame and block in a closed shadow root, rendered with `textContent` only. Buttons act on `isTrusted` clicks and carry the `session_ref` of the `state` the block was rendered from; Discard needs its second click (AMENDED 2026-09-28, round 57 SEC-003: the page block has no Discard — Resume previous and Finish previous only; the BUILT line below is the Phase 6 record). The script is inert until allow-listed, and returns to inert (frame, block and patient data removed; reports stopped) when its host leaves the allow-list (D13). It sends only `location.href` changes to the background (the SPA backstop; the background stays the single `context` reporter) and never reads Cliniko's DOM.
   - BUILT (leg `stage-6-exec-f2`): `extension/src/page.ts` — `PageScript` (hello once at start; slices accepted only from this extension's worker, never a tab; inert/teardown on an inactive slice; a 500 ms heartbeat that runs only while active and reports only an href change; the frame (`data-frame`) and the block card inside a CLOSED shadow root on one `[data-cliniko-scribe]` element, styled through the CSSOM so the page's CSP cannot refuse it; buttons act on trusted clicks only and send `{kind: "block", action, session_ref, state_rev[, confirmed]}` from the slice they were drawn from; Discard arms for 15 s and disarms on a different session's block; an element the page removes is re-attached on the next heartbeat; an orphaned copy (runtime gone after an update) tears itself down; a re-injected copy removes the old copy's element). The only DOM it reads is its own marker element. Tests: `page.dom.test.ts` (12). Residue (a cue, never the control — D13): the block overlay absorbs pointer input but not the page's keyboard shortcuts, and the page's own scripts or CSS can keep the frame and the block hidden or covered for as long as they like (restyled, clipped, moved off screen, covered from the top layer, or re-hidden on every tick); the heartbeat only puts back an element that was removed. The app's pause rule and command checks are the enforcing controls (round 38 PR-LOW-212; an `important` restyle per heartbeat was considered and not applied, because the hiding routes are an open class).
 - [x] 🟩 6.4: **Side panel**
   - DONE 2026-09-28: live smoke PASS (the consolidated morning smoke over Phases 4–8, clinic 1, mock patients; practitioner-reported in chat).
@@ -4824,6 +5013,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
   - Verification: the tests above plus ruff and mypy. P.2 adds a live check: after Copy, Win+V history does not list the note, and the paste into Notepad is unchanged.
   - Not in scope (recorded, not built): clearing the clipboard after a timeout (option (b), not chosen).
 - [ ] 🟨 P.2: **Practitioner live smoke** (practitioner-owned) — clinic 1 PASS 2026-09-28; clinic 2 waits on Task P.1 for clinic 2
+  - Clinic 2 DEFERRED 2026-09-28 by the practitioner — waiting on Cliniko API-key permission for that account; does not block other work.
   - Clinic 1, 2026-09-28 (mock patients A and B, no patient data recorded): the consolidated 22-step smoke over Phases 4–8 PASSED, plus the re-checks R1–R5 for the morning's fixes (the Modern Standby sleep + session-lock pause, rounds 49–52; H1's Start-while-locked refusal and block wording; H3's Back/Forward redraw; H4's side-panel focus and "On screen" label). Step 2 first failed on a missing native-host registry key (fixed by re-running `register-native-host.py` from the practitioner's own terminal — `docs/lessons.md`); step 5 first failed (sleep did not pause on Modern Standby) and led to the practitioner's sleep + lock decision (D5 addendum). Optional O1–O3 not run (O2's sign-in path stays unverified).
   - Smoke finding **S1** (LOW, production, the Recovery tab): after a Start retires a recording, the Recovery tab's Unreviewed list is not refreshed until an event that refreshes it (the practitioner pressed Refresh and A appeared, marked "note saved"). The reminder index and banner were correct. Fix: refresh the list when a Start retires a session (and when the tab is shown). **FIXED 2026-09-28 (round 62, LOW-060, leg stage-9-exec-k7):** a retire and opening the Recovery tab both re-list it (stat-only; custody exclusion unchanged). Re-check: back-to-back with A saved → the Recovery tab lists A without pressing Refresh.
   - The "confirm as you go" items (desktop recordings pause on sleep or lock only; Start clears the previous patient's saved note from the Note tab; a reopened saved note is read-only and Regenerate replaces it only on Save; the Ctrl+Shift+F9 chord, the 1 s grace and the 3 s gap; a refused hotkey Resume shows on the desktop only; no Discard in the panel while recording; Ctrl+C and right-click Copy protected like the Copy button) raised no objection; the overnight decisions (Tasks 4.3 (b), 5.4 (a), Task 6.0's jsdom) stand as revisable.
@@ -4885,11 +5075,11 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - Extension: 299.
       - `npm run build` is required, because `page.ts` changed.
 - [ ] 🟥 H3a: round 57's recorded security items — a scoped `/review-plan` on this task AFTER the P.2 live smoke (together with H2a where they touch the same code), then `/fix`.
-  - Needs the practitioner at the review:
-    - SEC-003: Discard off the page block (D1).
-    - SEC-009: the cooldown and spacing numbers.
-    - SEC-013: the pipe-owner check (Task 4.3).
-    - SEC-019: enrolment stops on lock (extends D5 to the profile surface).
+  - Needs the practitioner at the review — **all four DECIDED 2026-09-28 (each the recommended option, `OWNERSHIP: gate-disposition key=h3a-sec-…`) and DONE in leg stage-9-exec-k9 (round 57 `/fix decision: Applied`; review rounds 63+):**
+    - [x] SEC-003: Discard off the page block (D1 addendum).
+    - [x] SEC-009: a 60 s cooldown after a 429 and 1 s call spacing (D4 addendum).
+    - [x] SEC-013: the pipe-owner check (Task 4.3 extended).
+    - [x] SEC-019: enrolment stops on lock and sleep (D5 addendum).
   - Needs a host check first:
     - SEC-014: a low-integrity open of the pipe.
     - SEC-007: whether Cliniko serves the odd URL forms.
@@ -4901,6 +5091,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - SEC-016;
     - SEC-017;
     - SEC-022 (the live-view token).
+    - Round 65's recorded start-up item: `pipe_server.py` `start`'s SDDL conversion outside the `try` (map its error to `create_failed`; with SEC-015/017).
 - [x] 🟩 H4: a cross-family codex `/peer-review`, sliced by file group:
   - client + registry + security docs;
   - custody + encounter + pipe + host;

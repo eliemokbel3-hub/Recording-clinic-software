@@ -17,9 +17,13 @@
 // - It draws inside a CLOSED shadow root on its own element, styled through
 //   the CSSOM (never an inline <style> the page's CSP could refuse). Every
 //   string from the app is set with `textContent`, never parsed as HTML.
-// - The block's buttons act only on trusted (user) clicks, carry the
-//   `session_ref` and `state_rev` of the slice they were drawn from, and
-//   Discard needs a second click within 15 s.
+// - The block's buttons act only on trusted (user) clicks and carry the
+//   `session_ref` and `state_rev` of the slice they were drawn from. The
+//   block offers Resume previous and Finish previous only: Discard is never
+//   drawn here, because a script in Cliniko's page could hide the block and
+//   collect real clicks on it (round 57 SEC-003, practitioner decision
+//   2026-09-28). Discard stays in the side panel and on the desktop, and the
+//   worker refuses a page's `discard`.
 // - After an extension update the old copy is orphaned (its runtime is
 //   gone); the re-injected copy removes the old copy's element and takes over,
 //   and an orphaned copy tears itself down when it notices.
@@ -28,7 +32,6 @@ import type { PageBlock, PageSlice } from "./context";
 
 export const MARKER = "data-cliniko-scribe";
 export const HEARTBEAT_MS = 500;
-export const DISARM_MS = 15_000;
 
 const RED = "#c62828";
 const AMBER = "#b26a00";
@@ -52,7 +55,7 @@ export function reasonText(reason: string): string {
   return (Object.hasOwn(REASONS, reason) ? REASONS[reason] : undefined) ?? "The recording was paused.";
 }
 
-type BlockAction = "finish" | "resume_previous" | "discard";
+type BlockAction = "finish" | "resume_previous";
 
 export interface RuntimeLike {
   readonly id: string | undefined;
@@ -143,8 +146,6 @@ export class PageScript {
   private slice: PageSlice | null = null;
   private lastHref: string;
   private timer: ReturnType<typeof setInterval> | null = null;
-  private armedRef: string | null = null;
-  private disarmTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = false;
   private readonly trusted: (event: Event) => boolean;
   private readonly listener = (message: unknown, sender: { id?: string | undefined; tab?: unknown }): false => {
@@ -247,7 +248,6 @@ export class PageScript {
 
   private goInert(): void {
     this.slice = null;
-    this.disarm();
     if (this.timer !== null) {
       clearInterval(this.timer);
       this.timer = null;
@@ -255,14 +255,6 @@ export class PageScript {
     this.host?.remove();
     this.host = null;
     this.root = null;
-  }
-
-  private disarm(): void {
-    this.armedRef = null;
-    if (this.disarmTimer !== null) {
-      clearTimeout(this.disarmTimer);
-      this.disarmTimer = null;
-    }
   }
 
   private ensureRoot(): ShadowRoot {
@@ -307,12 +299,7 @@ export class PageScript {
       frame.setAttribute("data-frame", slice.frame);
       root.append(frame);
     }
-    if (slice.block !== undefined) {
-      if (this.armedRef !== null && this.armedRef !== slice.block.session_ref) this.disarm();
-      root.append(this.blockCard(slice.block));
-    } else {
-      this.disarm();
-    }
+    if (slice.block !== undefined) root.append(this.blockCard(slice.block));
   }
 
   private blockCard(block: PageBlock): HTMLElement {
@@ -355,22 +342,12 @@ export class PageScript {
     );
     card.append(patients);
 
-    const armed = this.armedRef === block.session_ref;
     const buttons = node(doc, "div", undefined, { display: "flex", gap: "8px", "flex-wrap": "wrap" });
     buttons.append(
       this.button("Resume previous", "resume_previous", block),
       this.button("Finish previous", "finish", block),
-      this.button(armed ? "Confirm discard" : "Discard previous", "discard", block),
     );
     card.append(buttons);
-    if (armed) {
-      const confirm = node(doc, "p", "Discard this recording? This cannot be undone. Press Confirm discard to delete it.", {
-        margin: "10px 0 0",
-        color: RED,
-      });
-      confirm.setAttribute("data-part", "confirm");
-      card.append(confirm);
-    }
     overlay.append(card);
     return overlay;
   }
@@ -394,26 +371,7 @@ export class PageScript {
 
   private onClick(event: Event, action: BlockAction, block: PageBlock): void {
     if (!this.trusted(event) || this.slice?.block?.session_ref !== block.session_ref) return;
-    const message: Record<string, unknown> = {
-      kind: "block",
-      action,
-      session_ref: block.session_ref,
-      state_rev: block.state_rev,
-    };
-    if (action === "discard") {
-      if (this.armedRef !== block.session_ref) {
-        this.armedRef = block.session_ref;
-        this.disarmTimer = setTimeout(() => {
-          this.disarm();
-          this.render();
-        }, DISARM_MS);
-        this.render();
-        return;
-      }
-      message["confirmed"] = true;
-    }
-    this.disarm();
-    this.send(message);
+    this.send({ kind: "block", action, session_ref: block.session_ref, state_rev: block.state_rev });
     this.render();
   }
 }

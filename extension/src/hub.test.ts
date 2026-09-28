@@ -362,13 +362,17 @@ describe("page script senders", () => {
     expect(link.commands).toEqual([]);
   });
 
-  test("a page may send only the block's actions, and discard only with its second click", async () => {
+  test("a page may send only Resume previous and Finish previous — never a discard (SEC-003)", async () => {
     const { link, hub } = await started([TAB_A], state({ block: BLOCK_A, live: LIVE_A }));
     for (const action of ["start", "pause", "resume", "open_review"]) hub.pageMessage({ ...block, action }, good);
     hub.pageMessage({ ...block, action: "discard" }, good);
     hub.pageMessage({ ...block, action: "discard", confirmed: "yes" }, good);
-    expect(link.commands).toEqual([]);
     hub.pageMessage({ ...block, action: "discard", confirmed: true }, good);
+    // Nor as a panel-shaped command sent from a page (round 63 LOW).
+    hub.pageMessage({ kind: "command", action: "discard", confirmed: true, state_rev: 10, session_ref: REF }, good);
+    expect(link.commands).toEqual([]);
+    // The side panel's two-click Discard is unchanged.
+    panel(hub).send({ kind: "command", action: "discard", confirmed: true, state_rev: 10, session_ref: REF });
     expect(link.commands).toEqual([{ action: "discard", state_rev: 10, session_ref: REF, confirmed: true }]);
   });
 

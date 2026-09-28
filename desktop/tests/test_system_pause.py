@@ -653,6 +653,41 @@ class TestLockWindow:
         bridge.deleteLater()
         window.deleteLater()
 
+    # --- a voice enrolment (round 57 SEC-019, practitioner decision 2026-09-28) ---
+
+    def test_a_lock_and_a_suspend_each_stop_a_voice_enrolment(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both go through the Practitioner tab's own Stop — the path whose
+        worker checks save nothing (``test_ui_screens``' Stop tests)."""
+        window = _main_window(tmp_path, FakeController())
+        stops: list[int] = []
+        monkeypatch.setattr(window.practitioner_screen, "on_stop", lambda: stops.append(1))
+        _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK)  # not registered yet
+        qapp.processEvents()
+        assert stops == []
+        window.attach_system_pause(FakeSystemRegistrar())
+        _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK)
+        assert stops == []  # queued with the lock's pause
+        qapp.processEvents()
+        assert stops == [1]
+        _send(window, WM_POWERBROADCAST, PBT_APMSUSPEND)
+        assert stops == [1, 1]  # synchronously, with the suspend's pause
+        window.deleteLater()
+
+    def test_a_record_press_is_refused_while_locked(self, qapp: Any, tmp_path: Path) -> None:
+        """``begin_enrolment``'s blocker meets the lock like a Resume does:
+        from the lock message until the unlock."""
+        window = _main_window(tmp_path, FakeController())
+        assert window._enrolment_blocker() is None
+        window.attach_system_pause(FakeSystemRegistrar())
+        _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK)
+        assert window._enrolment_blocker() == models.CHROME_REFUSALS["locked"]
+        qapp.processEvents()
+        _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK)
+        assert window._enrolment_blocker() is None
+        window.deleteLater()
+
     def test_the_override_never_raises_into_qt(
         self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

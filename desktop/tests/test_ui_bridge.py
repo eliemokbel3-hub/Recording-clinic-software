@@ -34,6 +34,7 @@ from scribe_desktop.context_rules import PauseReason  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     ConsentAttestation,
     EncounterContext,
+    UnverifiedOffline,
     Verification,
     Verified,
     unlinked_consent,
@@ -48,7 +49,11 @@ from scribe_desktop.protocol import (  # noqa: E402
 from scribe_desktop.session import RecordingSession, SessionState  # noqa: E402
 from scribe_desktop.transcription import LiveFailure, LiveFailureKind  # noqa: E402
 from scribe_desktop.ui import models  # noqa: E402
-from scribe_desktop.ui.bridge import ChromeBridge  # noqa: E402
+from scribe_desktop.ui.bridge import (  # noqa: E402
+    MIN_CALL_SPACING_SECONDS,
+    RATE_LIMIT_COOLDOWN_SECONDS,
+    ChromeBridge,
+)
 from scribe_desktop.ui.session_screen import SessionScreen  # noqa: E402
 from test_ui_screens import FakeController, _document, _process_until  # noqa: E402
 
@@ -151,6 +156,7 @@ class Harness:
         device: int | None = 1,
         reminders: Any = None,
         open_review: Any = None,
+        call_spacing: float = 0.0,
     ) -> None:
         self.qapp = qapp
         self.transport = transport if transport is not None else NoteTransport()
@@ -172,6 +178,9 @@ class Harness:
             clock=lambda: self.now,
             reminders=reminders,
             open_review=open_review,
+            # SEC-009's call spacing is off here (this clock never moves on
+            # its own) and on in `TestRateLimit`, which pins it.
+            call_spacing_seconds=call_spacing,
         )
         self.cues: list[str] = []
         self.bridge.pause_cue.connect(self.cues.append)
@@ -351,6 +360,42 @@ class TestLinkAndSnapshot:
         assert h.transport.calls == []
 
 
+class TestPipeUnavailableFallback:
+    """Phase 4's contract, re-checked after round 57 SEC-013 gave the pipe an
+    explicit owner (k10): when the pipe cannot be created — its name held, or
+    ``CreateNamedPipe`` refusing, which is where an unassignable owner would
+    fail — ``scribe-app`` still starts, the Chrome link reads unavailable and
+    the desktop still records (``app._start_chrome_link``)."""
+
+    @pytest.mark.parametrize("reason", ["name_taken", "create_failed"])
+    def test_the_link_is_unavailable_and_the_desktop_still_records(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reason: str
+    ) -> None:
+        from scribe_desktop import app
+        from scribe_desktop.pipe_server import PipeUnavailable
+        from test_ui_screens import _main_window
+
+        class _Refused:
+            def start(self) -> None:
+                raise PipeUnavailable(reason)
+
+        monkeypatch.setattr(
+            app.PipeServer, "for_current_user", staticmethod(lambda _events, **_kw: _Refused())
+        )
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        assert app._start_chrome_link(window, logging.getLogger("test-pipe-fallback")) is None
+        screen = window.session_screen
+        assert screen.chrome_label.text().startswith(models.CHROME_UNAVAILABLE_LINE)
+        screen._device_provider = lambda: 7
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert any(call[0] == "start" for call in controller.calls)
+        assert window.chrome_bridge is not None
+        window.chrome_bridge.deleteLater()
+        window.deleteLater()
+
+
 class TestReports:
     def test_a_note_report_is_verified_and_named(self, harness: Any) -> None:
         h = harness()
@@ -451,6 +496,156 @@ class TestReports:
         assert len(notes) == 2  # the stale answer was not reused for the new report
         report = h.sender.last.report
         assert report is not None and report.verification == "verified"
+
+
+def _note_calls(h: Harness) -> int:
+    return len([c for c in h.transport.calls if c[2].startswith("/v1/treatment_notes/")])
+
+
+class TestRateLimit:
+    """Round 57 SEC-009 (practitioner decision 2026-09-28): after a 429 the
+    clinic's checks make no call for ``RATE_LIMIT_COOLDOWN_SECONDS``, and no
+    two calls start closer than ``MIN_CALL_SPACING_SECONDS``."""
+
+    def test_a_429_answers_the_clinic_offline_without_a_call_for_a_minute(
+        self, harness: Any
+    ) -> None:
+        h = harness(transport=NoteTransport(note=status(429)))
+        h.connect()
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 1
+        report = h.sender.last.report
+        assert report is not None and report.verification == "unverified_offline"
+        h.transport.routes["/v1/treatment_notes/"] = ok(note_body())
+        h.now += RATE_LIMIT_COOLDOWN_SECONDS - 1
+        h.report(note_id=OTHER_NOTE)  # a new run inside the cooldown: no call
+        h.settle()
+        assert _note_calls(h) == 1
+        report = h.sender.last.report
+        assert report is not None and report.note_id == OTHER_NOTE
+        assert report.verification == "unverified_offline"  # recording stays allowed
+        # The cooldown's own answer did not extend it: a minute after the 429
+        # the next run is checked again.
+        h.now += 1
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 2
+        report = h.sender.last.report
+        assert report is not None and report.verification == "verified"
+
+    def test_a_live_recheck_inside_the_cooldown_makes_no_call(self, harness: Any) -> None:
+        """Round 63 LOW: the cooldown answers the linked live session's
+        reconnect re-check too (the ``live`` branch), offline and by identity."""
+        h: Harness = harness()
+        h.verified_report()
+        h.start()
+        h.transport.routes["/v1/treatment_notes/"] = status(429)
+        h.report(note_id=OTHER_NOTE)  # a 429 starts the clinic's cooldown
+        h.settle()
+        calls = len(h.transport.calls)
+        h.connect(2)  # the re-check: answered offline without a call
+        h.settle()
+        assert len(h.transport.calls) == calls
+        result = h.bridge.live_reverification()
+        assert result is not None and result.request.conn_gen == h.bridge.conn_gen
+        assert isinstance(result.outcome, UnverifiedOffline) and result.outcome.rate_limited
+
+    # --- a waiting check that went stale makes no call (codex round 65 PR-LOW-350) ---
+
+    @pytest.mark.parametrize(
+        "moved_on",
+        [{"page": "closed"}, {"page": "other_cliniko"}, {}],
+        ids=["tab_closed", "not_a_note", "back_to_a_reused_note"],
+    )
+    def test_a_check_deferred_by_the_spacing_is_dropped_once_its_tab_moves_on(
+        self, harness: Any, moved_on: dict[str, Any]
+    ) -> None:
+        h = harness(call_spacing=MIN_CALL_SPACING_SECONDS)
+        h.connect()
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 1
+        h.report(note_id=OTHER_NOTE)  # deferred by the spacing
+        assert h.bridge.is_busy and _note_calls(h) == 1
+        # The tab closes, shows a page that is no note, or returns to the
+        # first note (verified moments ago: reused, no call of its own).
+        h.report(**moved_on)
+        h.settle()  # the timer fires and finds nothing the ledger awaits
+        assert _note_calls(h) == 1
+        if not moved_on:
+            report = h.sender.last.report
+            assert report is not None and report.note_id == NOTE
+            assert report.verification == "verified"
+
+    def test_a_check_waiting_behind_a_running_one_is_dropped_once_its_tab_closes(
+        self, harness: Any
+    ) -> None:
+        """The same class without the spacing: a report check waiting in its
+        slot behind a check in flight."""
+        answer = _GatedAnswer()
+        h = harness(transport=NoteTransport(note=answer))
+        h.connect()
+        h.report()
+        assert answer.entered.wait(5)
+        h.report(note_id=OTHER_NOTE)  # waits behind the running check
+        h.report(page="closed")
+        answer.gate.set()
+        h.settle()
+        assert _note_calls(h) == 1
+
+    def test_a_deferred_live_recheck_still_runs(self, harness: Any) -> None:
+        """The linked live session's re-check keeps its own semantics: it
+        answers its session, not the bound report, so no report run gates
+        it — deferred by the spacing, it still runs."""
+        h: Harness = harness(call_spacing=MIN_CALL_SPACING_SECONDS)
+        h.verified_report()
+        h.start()
+        calls = _note_calls(h)
+        h.connect(2)  # the re-check, inside the spacing: deferred
+        assert h.bridge.is_busy and _note_calls(h) == calls
+        h.settle()
+        assert _note_calls(h) == calls + 1
+        result = h.bridge.live_reverification()
+        assert result is not None and isinstance(result.outcome, Verified)
+
+    def test_an_offline_answer_that_is_not_a_429_starts_no_cooldown(self, harness: Any) -> None:
+        h = harness(transport=NoteTransport(note=status(503)))
+        h.connect()
+        h.report()
+        h.settle()
+        h.transport.routes["/v1/treatment_notes/"] = ok(note_body())
+        h.report(note_id=OTHER_NOTE)
+        h.settle()
+        assert _note_calls(h) == 2
+        report = h.sender.last.report
+        assert report is not None and report.verification == "verified"
+
+    def test_a_check_inside_the_spacing_waits_without_blocking_and_is_coalesced(
+        self, harness: Any
+    ) -> None:
+        h = harness(call_spacing=MIN_CALL_SPACING_SECONDS)
+        h.connect()
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 1
+        h.report(note_id=OTHER_NOTE)  # inside the spacing: returns, no call yet
+        assert _note_calls(h) == 1 and h.bridge.is_busy
+        h.bridge.publish()
+        report = h.sender.last.report
+        assert report is not None and report.verification == "checking"
+        h.report(note_id="2003")  # a newer report replaces the waiting one
+        h.settle()  # the single-shot timer starts the ONE deferred call
+        assert _note_calls(h) == 2
+        assert h.transport.calls[-3][2] == "/v1/treatment_notes/2003"
+        report = h.sender.last.report
+        assert report is not None and report.note_id == "2003"
+        assert report.verification == "verified"
+        # The timer's pass is spent: the next report is spaced again.
+        h.report(note_id=OTHER_NOTE)
+        assert _note_calls(h) == 2 and h.bridge.is_busy
+        h.settle()
+        assert _note_calls(h) == 3
 
 
 class TestStart:

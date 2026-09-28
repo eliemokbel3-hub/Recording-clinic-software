@@ -361,7 +361,7 @@ class TestLinkOwnership:
 
 
 class TestHardErrors:
-    @pytest.mark.parametrize("reason", ["session", "user", "dacl", "access_denied"])
+    @pytest.mark.parametrize("reason", ["session", "user", "dacl", "owner", "access_denied"])
     def test_an_unverified_server_is_a_hard_error(
         self, logger: logging.Logger, reason: str
     ) -> None:

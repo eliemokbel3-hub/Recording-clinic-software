@@ -1481,15 +1481,33 @@ the current report run, the same target and an unmoved `clinic_rev`; its
 per-note throttle reuses a VERIFIED outcome for the same note, connection
 and `clinic_rev` for at most 60 s (never a refusal or an offline outcome),
 and drops expired entries — with their display strings — at the next
-report. Residue (H1 round 53 LOW-046): the throttle bounds CONCURRENCY
-(one check in flight, one waiting per kind), not the rate — a report for a
-different note starts a new run, an answer for a run that has moved on is
-dropped before it can be reused, a refused or offline outcome (a 429
-included; `RateLimited.reset` is parsed but not honoured) is never reused,
-and a new pipe connection empties the reuse entries. So switching Chrome
-tabs between notes faster than Cliniko answers keeps calls running back to
-back — one logical call (up to three GETs) at a time — for as long as the
-switching lasts, none of them accepted, and they stop when it stops. The logging tripwire refuses `patient_id`, `treatment_note_id` and
+report. THE RATE (round 57 SEC-009, practitioner decision 2026-09-28;
+`ui/bridge.py`; the bridge's checks only — a checkout's one re-verification
+is a practitioner action outside it): no two verification calls START less than 1 s apart — a
+check inside that spacing waits in its kind's slot, where a newer check of
+the same kind replaces it, and a single-shot timer starts it; nothing sleeps
+on the GUI thread, a waiting check keeps the tags the stale-result guard
+checks, a waiting REPORT check starts only while the ledger still awaits it
+(`VerificationLedger.awaits`; codex round 65 PR-LOW-350 — a tab that closed
+or moved on while it waited leaves no call behind, whether it waited inside
+the spacing or behind a running check), and the window's close waits for it
+like a running check. After a
+429 the clinic's checks are answered `unverified_offline` WITHOUT a call for
+60 s from that 429 (a fixed window: only a real 429 starts one, the
+window's own answers never extend it, and `RateLimited.reset` is not read);
+recording stays allowed, and — as with any offline answer — the outcome
+stands until the note is checked again (a new run, a reconnect or a clinic
+change); nothing re-checks when the minute ends. Neither timer ever starts a
+call on its own: the spacing timer (a precise single-shot timer) only starts
+a check a report, a reconnect or a clinic change (Replace key / Remove)
+already asked for, so the offline contract (no call at startup or idle)
+holds. Residue (H1 round 53 LOW-046, narrowed): the throttle still
+bounds concurrency and now the rate — at most one logical call (up to three
+GETs) per second — but a report for a different note still starts a new
+run, an answer for a run that has moved on is still dropped before it can
+be reused (SEC-008, recorded for H3a), and a refused or offline outcome is
+never reused, so fast switching between notes keeps one call a second
+running for as long as it lasts. The logging tripwire refuses `patient_id`, `treatment_note_id` and
 `patient_display_name` field names in a log payload.
 
 THE ENCOUNTER RECORD. `SessionController.start` refuses without a
@@ -1594,7 +1612,8 @@ THE PIPE (Task 4.2, `pipe_server.py`). Enforced by the OS: the name
 by anything else — makes creation FAIL (`PipeUnavailable("name_taken")`) and
 the app never shares it; `nMaxInstances = 1`, so one client at a time;
 `PIPE_REJECT_REMOTE_CLIENTS`; and a PROTECTED DACL with one entry granting the
-current user (nothing inherited). Enforced by the code: inbound frames are
+current user (nothing inherited), with that user as the pipe's explicit
+owner (round 57 SEC-013). Enforced by the code: inbound frames are
 bounded at 1 MB (flow 1's framing) and must be nonce-free `context` or
 `command` envelopes — anything else closes that connection; a frame queued
 for one connection is never written to the next while the writer settles
@@ -1626,18 +1645,18 @@ The same attacker already has more without the pipe: it can read the
 Cliniko key from Credential Manager and query `/patients/<id>` itself, use
 the microphone, and repoint the host registration. (2) A same-user process
 that creates the name BEFORE the app, with the app's own DACL, PASSES the
-host's verification (below: same session, same user, same DACL) — the host
+host's verification (below: same session, same user, same DACL, same owner) — the host
 then relays Chrome's reports and commands to it and its `state` to the
 panel. The app, finding the name held, says the Chrome link is unavailable
 on the Session screen, and both ends log the other's executable path
 (`pipe_peer`) — a tripwire, not a gate. A squatter of ANOTHER user, or one
-with any other DACL, fails verification: a hard error in the host — with
-one gap (round 57 SEC-013, recorded for H3a): the user check reads the
-token of the process id Windows recorded when the pipe was CREATED, so
-another account in the same Windows session that creates the pipe with the
-app's DACL, hands the handle on and exits, then waits for that id to be
-reused by one of this user's processes, would pass; checking the pipe's
-OWNER closes it. (3) Administrators and SYSTEM are outside this boundary
+with any other DACL, fails verification: a hard error in the host. The user
+check reads the token of the process id Windows recorded when the pipe was
+CREATED, so another account in the same Windows session that created the
+pipe with the app's DACL, handed the handle on and exited, then waited for
+that id to be reused by one of this user's processes, would pass that check
+— the OWNER check closes it (round 57 SEC-013): a standard account cannot
+make another user's SID the owner of what it creates. (3) Administrators and SYSTEM are outside this boundary
 (OS trust). (4) The pipe carries Windows' default integrity label, which
 blocks only WRITES from lower integrity: a LOW-integrity (sandboxed, not
 AppContainer) process of this user may be able to open it read-only and
@@ -1655,7 +1674,13 @@ session shares it), its
 token user is the host's user SID, and the pipe's DACL is exactly the one
 the app creates (protected, one ALLOW entry for that SID with no ACE flags
 and the full access `GA` grants — type, flags, mask and SID all compared,
-codex round 28 PR-LOW-142). A pipe that
+codex round 28 PR-LOW-142), and the pipe object's OWNER is the host's user
+SID (round 57 SEC-013, practitioner decision 2026-09-28, extending Task 4.3
+(b)'s checks; the app sets it explicitly, `O:<SID>` in `pipe_sddl`, so the
+owner check adds no refusal of its own for an app started elevated — whose
+default owner would be Administrators — which still meets the unchanged
+user-check residue (2) below; a refusal is logged as `relay_refused` with
+`state=owner`, no identifiers). A pipe that
 exists but fails any check, whose check cannot be made (an elevated or
 another user's server whose token the host may not query), or whose DACL
 shuts the host out, is `ServerUnverified`: a typed `error` to Chrome and
@@ -1760,10 +1785,16 @@ Session tab's button alike (the Session screen's start guard, installed by
 the bridge) — is refused `locked` the same way (H1 rounds 53–54, MED-039 and
 MED-052: a Start still on its way, or a click still queued, when the lock
 arrived would otherwise begin a new recording after the lock's pause had run
-at IDLE or QUEUED and done nothing). A voice enrolment on the Practitioner
-tab is not a recording and is NOT covered: one running when the computer
-locks keeps capturing (in memory, up to its time limit) and whatever is said
-in the room goes into the voice profile it saves (round 54 LOW-054). A
+at IDLE or QUEUED and done nothing). A VOICE ENROLMENT on the Practitioner
+tab stops too (round 57 SEC-019, practitioner decision 2026-09-28, D5
+extended to that tab; it replaces round 54 LOW-054's residue): the lock's
+queued call and the suspend each press the tab's own Stop, whose worker
+checks save nothing, and `begin_enrolment`'s blocker refuses a Record press
+with the same `locked` / `lock_unknown` refusal from the lock message until
+the unlock. The residue: a Stop that lands after the worker's final check
+(the embedding done, the save begun) does not undo the save — the audio was
+captured before the lock — and the tab shows the saved profile, which Delete
+removes (round 28 PR-LOW-032). A
 missed unlock cannot refuse Resume or Start forever: once the flag is five
 seconds old a refused Resume or Start asks Windows
 (`WTSQuerySessionInformationW`, `WTSSessionInfoEx` → `SessionFlags`) and
@@ -1970,9 +2001,11 @@ host equals the sender tab's own host (`hub.ts` `pageMessage`).
 SENDERS — a message from a page script is taken only from this extension's
 content script in the TOP frame of a tab whose URL is on a Cliniko host, and a
 block command only while the app runs and that host is allow-listed; a page
-script can send only Finish previous, Resume previous or Discard previous for
-a `session_ref` and `state_rev` of the shape the protocol allows, Discard
-only with its second click (`hub.ts` `pageMessage`, `blockCommand`). The
+script can send only Finish previous or Resume previous for a `session_ref`
+and `state_rev` of the shape the protocol allows — NEVER a discard, which
+the worker refuses from a page whatever it carries (round 57 SEC-003,
+practitioner decision 2026-09-28; `hub.ts` `pageMessage`, `blockCommand`).
+Discard comes only from the side panel (two clicks) and the desktop. The
 side panel's port is accepted only from this extension's own panel page, not
 a tab (`panelConnected`); Start is relayed only with the consent tick and a
 target of the protocol's shape (`panelMessage`). The page script's buttons act
@@ -2015,11 +2048,14 @@ reaches the page. The app's pause rule and command checks are the enforcing
 controls. A hidden or covered block STILL TAKES the pointer (round 57
 SEC-003): a script running in a Cliniko page (an XSS in Cliniko) can raise
 the block itself — a `pushState` to another note on the bound tab — hide it
-or put a decoy over it, and collect two real clicks on "Discard previous"
-within 15 s: the app then discards the paused recording, which cannot be
-undone. The block's buttons check only that a click is trusted, never that
-the button was visible. Recorded for H3a (the recommendation: keep Discard
-on the side panel and the desktop only).
+or put a decoy over it, and collect real clicks on its buttons, which check
+only that a click is trusted, never that the button was visible. What such
+clicks can reach is now Resume previous (which resumes only once the
+session's own note is reported in the focused tab, and never behind a lock)
+and Finish previous (which ends the recording into review — nothing is
+deleted). The block no longer carries Discard, and the worker refuses a
+page's `discard` (practitioner decision 2026-09-28), so a Cliniko page can
+no longer destroy a recording.
 (2) DETECTABILITY. The build tool adds a `web_accessible_resources` entry for
 the page-script module on `https://*.cliniko.com/*` with `use_dynamic_url:
 false` (see `extension/dist/manifest.json` after a build), so a page on any

@@ -1,13 +1,13 @@
 // Cliniko workflow safeguards plan Tasks 6.3 / 6.5: the page script under
 // jsdom — inert until allow-listed, the frame and the block in a closed
-// shadow root, text only, trusted clicks only, Discard's second click, the
+// shadow root, text only, trusted clicks only, no Discard on the block, the
 // href heartbeat, teardown when the host leaves the allow-list, and the
 // takeover after an extension update.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import type { PageSlice } from "./context";
 import type { PageScript } from "./page";
-import { DISARM_MS, MARKER } from "./page";
+import { MARKER } from "./page";
 import type { FakeChrome } from "./test/chrome-fake";
 import { EXTENSION_ID, installChromeFake, removeChromeFake } from "./test/chrome-fake";
 
@@ -181,9 +181,8 @@ test("a click the user did not make does nothing", async () => {
   const script = await booted();
   deliver(BLOCK);
   button(script, "finish").click(); // jsdom's click() is not trusted
-  button(script, "discard").click();
+  button(script, "resume_previous").click();
   expect(blockMessages()).toEqual([]);
-  expect(button(script, "discard").textContent).toBe("Discard previous");
 });
 
 test("trusted clicks carry the rendered session_ref and state_rev", async () => {
@@ -197,30 +196,15 @@ test("trusted clicks carry the rendered session_ref and state_rev", async () => 
   ]);
 });
 
-test("Discard needs a second click, and disarms after 15 seconds", async () => {
-  vi.useFakeTimers();
+test("the block offers Resume previous and Finish previous only — never Discard (round 57 SEC-003)", async () => {
   const script = await trustedScript();
   deliver(BLOCK);
-  button(script, "discard").click();
-  expect(blockMessages()).toEqual([]);
-  expect(button(script, "discard").textContent).toBe("Confirm discard");
-  expect(part(script, "confirm")?.textContent).toContain("cannot be undone");
-  vi.advanceTimersByTime(DISARM_MS);
-  expect(button(script, "discard").textContent).toBe("Discard previous");
-  button(script, "discard").click();
-  button(script, "discard").click();
-  expect(blockMessages()).toEqual([{ kind: "block", action: "discard", session_ref: REF, state_rev: 12, confirmed: true }]);
-});
-
-test("an armed Discard does not carry over to another session's block", async () => {
-  const script = await trustedScript();
-  deliver(BLOCK);
-  button(script, "discard").click();
-  const other = "ZyXwVuTsRqPoNmLkJiHgFe01";
-  deliver({ ...BLOCK, block: { ...(BLOCK.block as NonNullable<PageSlice["block"]>), session_ref: other } });
-  expect(button(script, "discard").textContent).toBe("Discard previous");
-  button(script, "discard").click();
-  expect(blockMessages()).toEqual([]);
+  const actions = [...(script.shadowForTests?.querySelectorAll("button") ?? [])].map((b) =>
+    b.getAttribute("data-action"),
+  );
+  expect(actions).toEqual(["resume_previous", "finish"]);
+  expect(part(script, "confirm")).toBeNull();
+  expect(script.shadowForTests?.textContent).not.toMatch(/discard/i);
 });
 
 test("while active, an href change is reported; leaving the allow-list tears everything down", async () => {
