@@ -138,20 +138,51 @@ remains an accepted residual.
    Windows clipboard (clipboard history / cloud clipboard sync) through
    casual selection. This is cheap defense-in-depth, not a boundary — a
    same-user process can still read process memory (boundary 2).
-5. **Single-instance guard (named mutex) — convenience guard, NOT a
-   boundary.** A per-user `Global\ClinikoScribe-app-<user>` mutex makes a
-   second `scribe-app` show "already running" and exit before it constructs
-   a controller or sweep (two instances over one sessions root produced
-   real, confusing split-brain state in the 2026-07-28 live smoke). The
-   guard fails OPEN on unexpected mutex errors, and a same-user process can
-   squat the name — that is a denial-of-convenience inside boundary 2, not
-   a data exposure. So can ANOTHER standard account on the same PC (round
-   57 SEC-015): `Global\` needs no privilege and the name is built from the
-   guessable user name, so that account can create it first and the
-   practitioner's app then says "already running" and exits — desktop
-   recording included. A denial of service only, no data exposure;
-   recorded for H3a (the recommendation: the SID in the name, a user-only
-   descriptor, and fail open when the existing mutex is not this user's).
+5. **Single-instance guard (per-user lock file behind a named mutex) —
+   convenience guard, NOT a boundary.** A second `scribe-app` shows
+   "already running" and exits before it constructs a controller, sweep or
+   pipe (two instances over one sessions root produced real, confusing
+   split-brain state in the 2026-07-28 live smoke).
+
+   The rule (codex rounds 69–70, PR-MED-370 and PR-MED-380): ONE exclusion
+   every admitted instance shares.
+   - **The lock file is required.** `%LOCALAPPDATA%\ClinikoScribe\app.lock`
+     is empty, opened with no sharing and held for the process lifetime. It
+     sits inside this user's profile, where another standard account can
+     neither open nor create it. No instance ever starts without it.
+     - Busy (another instance holds it, after a short retry for a scanner) →
+       "already running".
+     - Unopenable for any other reason (permissions, path, disk) → the app
+       refuses to start ("Clinic Scribe could not start"), before the
+       controller, the sweep or the pipe.
+     - Windows closes a crashed instance's handle, so the next launch starts.
+   - **The named mutex** `Global\ClinikoScribe-app-<user>` is only the fast,
+     friendly check in front of the file.
+     - This user's own mutex refuses a normal second launch as before.
+     - It admits nothing on its own. A mutex-only instance could otherwise run
+       beside a file-only one (round 70).
+     - A mutex that is another account's (round 57 SEC-015: `Global\` needs no
+       privilege and the name is guessable), or that `CreateMutexW` refuses,
+       neither admits nor refuses by itself; the file decides.
+     - The app creates the mutex OWNED by this user with a user-only DACL.
+       The name is unchanged, so an old build (mutex only) and a new one still
+       exclude each other through it.
+     - A launch refused after creating the mutex closes it again, so the name
+       is not pinned.
+
+   What remains, all inside boundary 2 or plain inconvenience, never a data
+   exposure:
+   - a same-user process can squat the mutex name or hold the lock file, and
+     the app then says "already running" (denial of convenience);
+   - a scanner holding the file beyond the retry reads as "already running"
+     (launch again);
+   - an old build started while a new instance runs on the file alone
+     (another account holding the name) is refused by that foreign mutex, as
+     it always was.
+
+   Tests simulate the foreign owner and use a tmp lock path. A real second
+   account's squat, and the profile ACL that keeps such an account away from
+   the file, are not proved by the suite.
 6. **24 h recovery cap expires at the next SUCCESSFUL sweep, not on a hard
    deadline (ACCEPTED RESIDUAL).** The cap is enforced by the startup sweep, a
    periodic sweep on a 15-minute QTimer CADENCE (`app._SWEEP_INTERVAL_MS`), and
@@ -840,7 +871,12 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     the batch stage (flow 7). THE LIVE VIEW (C2): the worker posts each
     window through a queued Qt signal to the same display-only
     `NoTextInteraction` transcript widget (`ui/transcript.py`); a post after
-    the view closed is dropped, the view is cleared on the Session screen's
+    the view closed is dropped, and so is a post carrying an earlier Start's
+    token — each Start's worker posts under its own, so a window the
+    RETIRED worker emitted before it was stopped, still queued when the next
+    Start opens its view, is neither drawn in the next patient's view nor
+    fed to the spoken-pause and new-consultation rules (round 57 SEC-022);
+    the view is cleared on the Session screen's
     Discard, the final document replaces it wholesale, and live segments
     carry `LIVE_SPEAKER_PENDING`, never a cluster label. LOGGING (C9): the
     worker holds no logger; the ONE new log record is
@@ -1613,16 +1649,23 @@ by anything else — makes creation FAIL (`PipeUnavailable("name_taken")`) and
 the app never shares it; `nMaxInstances = 1`, so one client at a time;
 `PIPE_REJECT_REMOTE_CLIENTS`; and a PROTECTED DACL with one entry granting the
 current user (nothing inherited), with that user as the pipe's explicit
-owner (round 57 SEC-013). Enforced by the code: inbound frames are
+owner (round 57 SEC-013), and a Medium mandatory label with no-write-up,
+no-read-up and no-execute-up, so a LOWER-integrity process of this user
+cannot open it at all (round 57 SEC-014; a test proves a low-integrity
+child is refused). Enforced by the code: inbound frames are
 bounded at 1 MB (flow 1's framing) and must be nonce-free `context` or
 `command` envelopes — anything else closes that connection; a frame queued
-for one connection is never written to the next while the writer settles
-within its 5 s join (a writer that outlives it under extreme load could
-still write its taken frame to the next client — round 57 SEC-016, recorded
-for H3a); stop is prompt in every state; a client that connects and closes
-before the server's connect call no longer ends the server (round 57
-SEC-002), but any other unexpected end of the serve loop still leaves the
-Chrome link down with no "unavailable" line (recorded for H3a). RESIDUE
+for one connection is never written to the next: a connection's writer only
+takes its own connection's frame, and the server waits until the old writer
+has ENDED before it disconnects, closes or accepts anything (round 57
+SEC-016; a writer slow to be scheduled delays the next client, never
+reaches it); stop is prompt in every state; a client that connects and closes
+before the server's connect call does not end the server (round 57
+SEC-002), a descriptor Windows refuses at creation is `create_failed` like
+any creation failure (round 65), and any other end of the serve loop — a
+failed connect, an unexpected error — reports the current connection lost
+(a linked recording pauses) and then tells the app, whose Session screen
+shows the "Chrome link unavailable" line (round 57 SEC-017). RESIDUE
 (accepted under Task 4.3 (b) as boundary 2 — these are things the design
 does NOT prevent, not controls): (1) the DACL admits
 every process of THIS user — the same-user attacker of boundary 2 — which,
@@ -1657,13 +1700,14 @@ pipe with the app's DACL, handed the handle on and exited, then waited for
 that id to be reused by one of this user's processes, would pass that check
 — the OWNER check closes it (round 57 SEC-013): a standard account cannot
 make another user's SID the owner of what it creates. (3) Administrators and SYSTEM are outside this boundary
-(OS trust). (4) The pipe carries Windows' default integrity label, which
-blocks only WRITES from lower integrity: a LOW-integrity (sandboxed, not
-AppContainer) process of this user may be able to open it read-only and
-receive `state` — a patient name included — while taking the only slot
-(round 57 SEC-014, unverified on a real machine; a no-read-up label is
-recorded for H3a). Unlike (1), such a process does NOT already hold the
-key or the microphone.
+(OS trust). (4) Since H3a (round 57 SEC-014) the pipe's Medium no-read-up
+label keeps a LOW-integrity process of this user from opening it (Windows'
+default label blocked only writes, so such a process could have received
+`state` and held the only slot). What remains is (2)'s case for such a
+process: one that creates the name BEFORE the app, with its own low label.
+The host does not yet check the server's integrity level — extending Task
+4.3's checks is the practitioner's, recorded for the next Task 4.3
+revision.
 
 THE HOST'S RELAY (Task 4.4, `native_host.py` + `pipe_client.py`). Enforced:
 before a single frame crosses, the host VERIFIES the pipe's server — its
@@ -1770,7 +1814,11 @@ both (`system_events.py`: `RegisterSuspendResumeNotification` with the
 window handle, and `WTSRegisterSessionNotification` for this session) after
 it exists, and gives both back on close, at quit and after a failed start;
 a refused registration never raises and is shown on the status line and
-the Session screen. An UNLOCK resumes nothing, and a suspend or lock also
+the Session screen. A suspend that finds no recording — as one delivered
+INSIDE a Start would, while the device opens — is looked at once more
+after that dispatch returns, and pauses the recording the Start made
+(round 57 SEC-021; nothing happens when there is still no recording). An
+UNLOCK resumes nothing, and a suspend or lock also
 ends a clicked "Resume previous" still waiting for its note's report, so no
 report arriving behind a locked screen resumes. LOCKED UNTIL UNLOCK (codex
 round 51 PR-MED-300): a Resume or "Resume previous" click already on its way
@@ -1800,10 +1848,13 @@ seconds old a refused Resume or Start asks Windows
 (`WTSQuerySessionInformationW`, `WTSSessionInfoEx` → `SessionFlags`) and
 clears it only on "unlocked"; if Windows cannot say, the refusal is
 `lock_unknown` and names the escape (lock and sign in again). An unlock
-message is believed as delivered, never checked with Windows: a program
-running as the same user can send the window a forged `WTS_SESSION_UNLOCK`
-and clear the flag behind a locked screen (trust boundary 2, like the
-forgeable `WM_HOTKEY` and the pipe's same-user residue; round 54 LOW-056).
+message is checked with Windows (round 57 SEC-020, built once this machine
+was shown to read an unlocked session as unlocked): an unlock Windows
+contradicts — a forged `WTS_SESSION_UNLOCK` sent by a program running as
+the same user behind a locked screen — leaves the flag set, and the
+re-check above clears it once Windows agrees. The residue (trust boundary
+2, like the forgeable `WM_HOTKEY`; round 54 LOW-056): if Windows cannot
+answer, the unlock is believed as delivered.
 The young-flag window keeps a query racing the lock itself from reopening
 the gap; a suspend or lock names the
 block only when it starts one, so a block Chrome already put up for a

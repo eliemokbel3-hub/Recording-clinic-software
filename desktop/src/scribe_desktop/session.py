@@ -125,6 +125,12 @@ ACTIVE_STATES: frozenset[SessionState] = frozenset(
     {SessionState.RECORDING, SessionState.PAUSED, SessionState.PROCESSING}
 )
 
+# The states in which a recording is under way — capture running or paused
+# (H2a SIMP-012: one name for the check spelled at every such site).
+CAPTURING_STATES: frozenset[SessionState] = frozenset(
+    {SessionState.RECORDING, SessionState.PAUSED}
+)
+
 # PLAN.md lifecycle documentation: states a crashed session may conceptually
 # be recovered from. NOTE the recovery screen lists by ON-DISK custody
 # (key.dpapi presence), not by state — session state is not persisted
@@ -721,7 +727,7 @@ class SessionController:
         silent loss."""
         with self._lock:
             live = self._require_live()
-            if live.session.state not in (SessionState.RECORDING, SessionState.PAUSED):
+            if live.session.state not in CAPTURING_STATES:
                 raise SessionActivityError(
                     f"cannot finish a session in state {live.session.state}"
                 )

@@ -41,7 +41,7 @@ rendering the language model does (flow 17).
 |---|---|---|
 | Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid`; host access `https://*.cliniko.com/*` only, no `tabs` permission |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a named mutex; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 | Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
@@ -388,8 +388,10 @@ rendering the language model does (flow 17).
     per window as it is transcribed; VAD segments with their embeddings and
     enrolment cosines stay in process memory for the session. Each transcribed
     window is posted through a queued Qt signal to the display-only transcript
-    widget (`ui/transcript.py`; a post after the view closed is dropped; the
-    view is cleared on the Session screen's Discard and replaced wholesale by
+    widget (`ui/transcript.py`; a post after the view closed is dropped, and
+    so is one carrying an earlier Start's token — round 57 SEC-022: a window
+    the retired worker posted never reaches the next patient's view or the
+    phrase rules; the view is cleared on the Session screen's Discard and replaced wholesale by
     the final document). The same queued signal also reaches the main
     window's phrase rules (Cliniko workflow safeguards plan Tasks 7.2–7.3,
     `voice_commands.py`) while the recording is live: they read each window's
@@ -613,7 +615,12 @@ rendering the language model does (flow 17).
     single-instance guard (`pipe_server.py`): first instance only (a held name
     is refused, never shared — the Session screen then says the Chrome link is
     unavailable and desktop recording still works), one instance, remote
-    clients rejected, and a protected DACL granting only the current user.
+    clients rejected, a protected DACL granting only the current user, and a
+    Medium no-read-up integrity label, so no lower-integrity process can open
+    it (round 57 SEC-014). If the server stops serving for any reason but the
+    app's own stop, the current connection is reported lost and the Session
+    screen shows the Chrome link unavailable (round 57 SEC-017); a frame for
+    one connection never reaches the next (round 57 SEC-016).
     Its client is the native host (Task 4.4), which relays flow 1's v2
     messages, and which connects only after VERIFYING the server — the same
     Windows session, the same user, exactly that DACL, and the user as the

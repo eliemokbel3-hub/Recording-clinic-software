@@ -6,6 +6,8 @@ peer round 18 PR4 — priority raised by the 2026-07-28 live smoke).
 
 import os
 import sys
+from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -259,6 +261,73 @@ class TestSingleInstanceLock:
         assert acquired and handle, "busy probe leaked a handle and pinned the mutex name"
         release_single_instance_lock(handle)
 
+    def test_the_mutex_is_owned_by_this_user(self) -> None:
+        # Round 57 SEC-015: created with an explicit owner (an elevated start
+        # too), read back from the real mutex.
+        import win32security
+
+        from scribe_desktop.app import (
+            _mutex_owner_sid,
+            acquire_single_instance_lock,
+            release_single_instance_lock,
+        )
+        from scribe_desktop.pipe_server import current_user_sid
+
+        acquired, handle = acquire_single_instance_lock(_unique_mutex_name())
+        assert acquired and handle
+        try:
+            assert _mutex_owner_sid(handle) == current_user_sid()
+            # The owner alone matches a default mutex too (for a non-elevated
+            # run); the protected, single-entry DACL is the descriptor's own.
+            descriptor = win32security.GetSecurityInfo(
+                handle, win32security.SE_KERNEL_OBJECT, win32security.DACL_SECURITY_INFORMATION
+            )
+            control, _revision = descriptor.GetSecurityDescriptorControl()
+            assert control & 0x1000  # SE_DACL_PROTECTED
+            dacl = descriptor.GetSecurityDescriptorDacl()
+            assert dacl.GetAceCount() == 1
+            (_ace_type, _flags), _mask, sid = dacl.GetAce(0)
+            assert win32security.ConvertSidToStringSid(sid) == current_user_sid()
+        finally:
+            release_single_instance_lock(handle)
+
+    def test_another_accounts_mutex_is_reported_not_held(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 57 SEC-015: an existing mutex owned by ANOTHER account (a
+        # squat) does not refuse; our own instance's still refuses (the
+        # control). Round 69 PR-MED-370: (True, 0) is "not held" — the lock
+        # file then decides (TestInstanceExclusion), never a bare start.
+        from scribe_desktop import app
+
+        name = _unique_mutex_name()
+        acquired, handle = app.acquire_single_instance_lock(name)
+        assert acquired and handle
+        try:
+            assert app.acquire_single_instance_lock(name) == (False, 0)
+            monkeypatch.setattr(app, "_mutex_owner_sid", lambda _handle: "S-1-5-21-1-2-3-1001")
+            assert app.acquire_single_instance_lock(name) == (True, 0)
+        finally:
+            app.release_single_instance_lock(handle)
+
+    def test_an_unreadable_sid_keeps_the_plain_guard(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from scribe_desktop import app
+        from scribe_desktop.pipe_server import PipeUnavailable
+
+        def unreadable() -> str:
+            raise PipeUnavailable("create_failed")
+
+        monkeypatch.setattr(app, "current_user_sid", unreadable)
+        monkeypatch.setattr(app, "_mutex_owner_sid", lambda _handle: "S-1-5-21-1-2-3-1001")
+        name = _unique_mutex_name()
+        acquired, handle = app.acquire_single_instance_lock(name)
+        assert acquired and handle
+        try:
+            # No SID: no owner check, so even a "foreign" owner still refuses.
+            assert app.acquire_single_instance_lock(name) == (False, 0)
+        finally:
+            app.release_single_instance_lock(handle)
+
     def test_default_name_is_per_user_and_namespace_safe(self) -> None:
         from scribe_desktop.app import _single_instance_mutex_name
 
@@ -267,6 +336,322 @@ class TestSingleInstanceLock:
         # Backslash is the kernel object-namespace separator — the user part
         # must never introduce one.
         assert "\\" not in name.removeprefix("Global\\")
+
+
+_FOREIGN_SID = "S-1-5-21-1-2-3-1001"
+
+# Takes the exclusion in a separate process, says so with ITS OWN pid, and
+# waits to be killed. The pid matters (round 70, the k15 run): the venv's
+# python.exe is a launcher that runs the real interpreter as a CHILD, so
+# `Popen.kill()` ends only the launcher while the interpreter — the process
+# holding the handles — dies later (docs/lessons.md).
+_HOLDER_CHILD = """
+import os, sys, time
+from pathlib import Path
+from scribe_desktop import app
+state = app.acquire_instance_exclusion(sys.argv[1], Path(sys.argv[2])).state
+print(state, os.getpid(), flush=True)
+time.sleep(120)
+"""
+
+
+def _read_line_within(stream: Any, seconds: float) -> bytes:
+    """One line from ``stream``, or b"" if none arrives in ``seconds``."""
+    import threading
+
+    lines: list[bytes] = []
+    reader = threading.Thread(target=lambda: lines.append(stream.readline()), daemon=True)
+    reader.start()
+    reader.join(seconds)
+    return lines[0] if lines else b""
+
+
+def _end_descendants(launcher: Any, seconds: float) -> None:
+    """Kill every process ``launcher`` (a ``psutil.Process``) started, and
+    wait (bounded) until each has exited. Nothing to do once the launcher
+    itself is gone: it outlives its interpreter unless killed."""
+    import psutil
+
+    try:
+        descendants = launcher.children(recursive=True)
+    except psutil.NoSuchProcess:
+        return
+    for process in descendants:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+    _gone, alive = psutil.wait_procs(descendants, timeout=seconds)
+    assert not alive, f"still running after the kill: {alive}"
+
+
+def _terminate_and_wait(pid: int, seconds: float) -> bool:
+    """End process ``pid`` and wait until it has exited (its handles closed).
+    False if it had already gone; raises if it is still alive afterwards."""
+    import pywintypes
+    import win32api
+    import win32con
+    import win32event
+
+    try:
+        handle = win32api.OpenProcess(win32con.PROCESS_TERMINATE | win32con.SYNCHRONIZE, False, pid)
+    except pywintypes.error:
+        return False
+    try:
+        try:
+            win32api.TerminateProcess(handle, 1)
+        except pywintypes.error:
+            pass  # already exiting; the wait below decides
+        waited = win32event.WaitForSingleObject(handle, int(seconds * 1000))
+        assert waited == win32event.WAIT_OBJECT_0, f"process {pid} did not exit"
+        return True
+    finally:
+        win32api.CloseHandle(handle)
+
+
+@windows_only
+class TestInstanceExclusion:
+    """Rounds 69-70 (PR-MED-370, PR-MED-380): exactly one instance of this
+    user's app runs in EVERY case. The per-user lock file is required for
+    every admitted instance; the named mutex only refuses a normal second
+    launch early, and admits nothing on its own.
+
+    Every test uses a tmp lock path, never the real ``%LOCALAPPDATA%`` (an
+    agent shell's is virtualized — docs/lessons.md). Another account's squat
+    is simulated by reading this user's own mutex as foreign-owned. What no
+    test here can prove: a REAL second Windows account's mutex, and that
+    such an account cannot open or create the lock file inside this user's
+    profile (that rests on the profile's ACL)."""
+
+    def test_the_normal_path_holds_both_and_refuses_a_second_launch(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop import app
+
+        name, lock = _unique_mutex_name(), tmp_path / "app.lock"
+        first = app.acquire_instance_exclusion(name, lock)
+        try:
+            assert first.state == "acquired" and len(first.handles) == 2
+            assert app.acquire_instance_exclusion(name, lock) == ("already_running", ())
+        finally:
+            app.release_instance_exclusion(first)
+        again = app.acquire_instance_exclusion(name, lock)
+        assert again.state == "acquired"
+        app.release_instance_exclusion(again)
+
+    def test_a_squatted_name_admits_exactly_one_instance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app
+
+        name, lock = _unique_mutex_name(), tmp_path / "app.lock"
+        squatter, squat_handle = app.acquire_single_instance_lock(name)
+        assert squatter and squat_handle
+        monkeypatch.setattr(app, "_mutex_owner_sid", lambda _handle: _FOREIGN_SID)
+        try:
+            first = app.acquire_instance_exclusion(name, lock)
+            assert first.state == "acquired" and len(first.handles) == 1  # the file only
+            try:
+                # The PR-MED-370 case: before the fix this launch ran too.
+                assert app.acquire_instance_exclusion(name, lock).state == "already_running"
+            finally:
+                app.release_instance_exclusion(first)
+            later = app.acquire_instance_exclusion(name, lock)
+            assert later.state == "acquired"
+            app.release_instance_exclusion(later)
+        finally:
+            app.release_single_instance_lock(squat_handle)
+
+    def test_the_squatter_leaving_does_not_admit_a_second_instance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An instance that started on the lock file alone keeps a later launch
+        # out even once the name is free and that launch holds the mutex —
+        # and the refused launch gives the name back.
+        from scribe_desktop import app
+
+        name, lock = _unique_mutex_name(), tmp_path / "app.lock"
+        _, squat_handle = app.acquire_single_instance_lock(name)
+        monkeypatch.setattr(app, "_mutex_owner_sid", lambda _handle: _FOREIGN_SID)
+        first = app.acquire_instance_exclusion(name, lock)
+        app.release_single_instance_lock(squat_handle)  # the squatter leaves
+        try:
+            assert first.state == "acquired"
+            assert app.acquire_instance_exclusion(name, lock).state == "already_running"
+            probe, probe_handle = app.acquire_single_instance_lock(name)
+            assert probe and probe_handle, "the refused launch pinned the mutex name"
+            app.release_single_instance_lock(probe_handle)
+        finally:
+            app.release_instance_exclusion(first)
+
+    def test_no_mutex_and_no_lock_file_refuses_to_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app
+
+        # CreateMutexW failed (or the name is another account's), and the lock
+        # file cannot be created: its parent is a file.
+        monkeypatch.setattr(app, "acquire_single_instance_lock", lambda name=None: (True, 0))
+        blocker = tmp_path / "not-a-folder"
+        blocker.write_bytes(b"")
+        assert app.acquire_instance_exclusion(None, blocker / "app.lock") == ("unavailable", ())
+
+    def test_no_mutex_with_the_lock_file_held_starts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app
+
+        monkeypatch.setattr(app, "acquire_single_instance_lock", lambda name=None: (True, 0))
+        lock = tmp_path / "app.lock"
+        first = app.acquire_instance_exclusion(None, lock)
+        try:
+            assert first.state == "acquired" and len(first.handles) == 1
+            assert app.acquire_instance_exclusion(None, lock).state == "already_running"
+        finally:
+            app.release_instance_exclusion(first)
+
+    def test_a_held_mutex_with_a_failed_lock_file_refuses_to_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 70 PR-MED-380, the overlapping-lifetimes regression. Before
+        # the fix, A started on the mutex alone while the file would not open;
+        # later B, whose CreateMutexW failed, opened the file and started too.
+        # A must now refuse, so B can never run beside it. A's refusal also
+        # gives the name back.
+        from scribe_desktop import app
+
+        name, lock = _unique_mutex_name(), tmp_path / "app.lock"
+        blocker = tmp_path / "not-a-folder"
+        blocker.write_bytes(b"")
+        assert app.acquire_instance_exclusion(name, blocker / "app.lock") == ("unavailable", ())
+        probe, probe_handle = app.acquire_single_instance_lock(name)
+        assert probe and probe_handle, "the refused launch pinned the mutex name"
+        app.release_single_instance_lock(probe_handle)
+        # B: the file now opens and its mutex failed — it is the only one.
+        monkeypatch.setattr(app, "acquire_single_instance_lock", lambda name=None: (True, 0))
+        b = app.acquire_instance_exclusion(name, lock)
+        try:
+            assert b.state == "acquired"
+            assert app.acquire_instance_exclusion(name, lock).state == "already_running"
+        finally:
+            app.release_instance_exclusion(b)
+
+    @pytest.mark.parametrize("mutex", ["created", "foreign_or_failed"])
+    def test_a_lock_file_held_by_another_instance_is_already_running(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutex: str
+    ) -> None:
+        # Whatever the mutex does, the file decides: the holder here took it
+        # under a DIFFERENT mutex name, so the launch's own mutex is free.
+        from scribe_desktop import app
+
+        lock = tmp_path / "app.lock"
+        holder = app.acquire_instance_exclusion(_unique_mutex_name(), lock)
+        assert holder.state == "acquired"
+        try:
+            name = _unique_mutex_name()
+            if mutex == "foreign_or_failed":
+                monkeypatch.setattr(
+                    app, "acquire_single_instance_lock", lambda name=None: (True, 0)
+                )
+            assert app.acquire_instance_exclusion(name, lock) == ("already_running", ())
+            if mutex == "created":
+                probe, probe_handle = app.acquire_single_instance_lock(name)
+                assert probe and probe_handle, "the refused launch pinned the mutex name"
+                app.release_single_instance_lock(probe_handle)
+        finally:
+            app.release_instance_exclusion(holder)
+
+    def test_a_killed_instances_lock_is_released_by_windows(self, tmp_path: Path) -> None:
+        # A crash never strands the lock: Windows closes a dead process's
+        # handles, so the next launch starts. The process killed is the one
+        # that HOLDS the handles (its own pid), and the next launch runs only
+        # once it has provably exited.
+        import subprocess
+
+        import psutil
+
+        from scribe_desktop import app
+
+        name, lock = _unique_mutex_name(), tmp_path / "app.lock"
+        child = subprocess.Popen(
+            [sys.executable, "-c", _HOLDER_CHILD, name, str(lock)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            # Taken at once, while the launcher certainly runs. Its pid cannot
+            # be reused while `child` holds its process handle (until the
+            # end of this test), so its descendants below are ours.
+            launcher = psutil.Process(child.pid)
+            try:
+                assert child.stdout is not None
+                words = _read_line_within(child.stdout, 60).split()
+                assert words[:1] == [b"acquired"] and len(words) == 2, words
+                holder_pid = int(words[1])
+                assert app.acquire_instance_exclusion(name, lock).state == "already_running"
+                assert _terminate_and_wait(holder_pid, 30), "the holder exited before the kill"
+            finally:
+                # Round 71 PR-LOW-391: whatever failed above — before the pid
+                # handshake too — no process the launcher started survives.
+                _end_descendants(launcher, 30)
+        finally:
+            # Nested: a failing descendant kill never skips the launcher's.
+            child.kill()
+            child.wait(timeout=60)
+            if child.stdout is not None:
+                child.stdout.close()
+        after = app.acquire_instance_exclusion(name, lock)
+        try:
+            assert after.state == "acquired"
+        finally:
+            app.release_instance_exclusion(after)
+
+    def test_the_default_lock_file_is_in_this_users_app_folder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        assert app.default_instance_lock_path() == tmp_path / "ClinikoScribe" / "app.lock"
+        assert not (tmp_path / "ClinikoScribe").exists()  # computing it creates nothing
+
+
+@windows_only
+def test_main_refuses_to_start_without_an_exclusion(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 69 PR-MED-370: neither the mutex nor the lock file held -> a
+    plain refusal and exit 1 BEFORE any backend, controller or sweep."""
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    import logging
+
+    from PySide6.QtWidgets import QApplication
+
+    from scribe_desktop import app as app_module
+
+    warned: list[str] = []
+    monkeypatch.setattr(
+        app_module, "setup_logging", lambda name: logging.getLogger("test-no-exclusion")
+    )
+    monkeypatch.setattr(app_module, "apply_offline_env", lambda: None)
+    monkeypatch.setattr(app_module, "assert_offline_env", lambda: None)
+    monkeypatch.setattr(
+        app_module,
+        "acquire_instance_exclusion",
+        lambda name=None, lock_path=None: app_module.InstanceExclusion("unavailable"),
+    )
+    monkeypatch.setattr(app_module, "_show_cannot_start_warning", lambda: warned.append("cannot"))
+    monkeypatch.setattr(
+        app_module, "_show_already_running_warning", lambda: warned.append("running")
+    )
+    monkeypatch.setattr(
+        app_module, "QApplication", lambda argv: QApplication.instance() or QApplication(argv)
+    )
+    monkeypatch.setattr(
+        app_module,
+        "SoundDeviceBackend",
+        lambda: (_ for _ in ()).throw(AssertionError("refused start touched the backend")),
+    )
+    assert app_module.main() == 1
+    assert warned == ["cannot"]
 
 
 @windows_only
@@ -289,7 +674,9 @@ def test_main_refuses_second_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_module, "apply_offline_env", lambda: None)
     monkeypatch.setattr(app_module, "assert_offline_env", lambda: None)
     monkeypatch.setattr(
-        app_module, "acquire_single_instance_lock", lambda name=None: (False, 0)
+        app_module,
+        "acquire_instance_exclusion",
+        lambda name=None, lock_path=None: app_module.InstanceExclusion("already_running"),
     )
     monkeypatch.setattr(
         app_module, "_show_already_running_warning", lambda: warned.append("warned")

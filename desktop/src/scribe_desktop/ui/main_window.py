@@ -58,6 +58,7 @@ from scribe_desktop.note_config import NoteConfig, load_note_config
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
+    CAPTURING_STATES,
     GenerationInProgressError,
     RecordingSession,
     ReviewOpenRefused,
@@ -180,6 +181,9 @@ class MainWindow(QMainWindow):
     _hotkey_pressed_q = Signal()
     # D5 as amended 2026-09-28: the session locked, re-delivered the same way.
     _session_locked_q = Signal()
+    # Round 57 SEC-021: a suspend that met no recording, looked at again once
+    # the dispatch it arrived in has returned (it may have been inside Start).
+    _suspend_recheck_q = Signal()
 
     def __init__(
         self,
@@ -342,6 +346,9 @@ class MainWindow(QMainWindow):
         self._system_events: SystemPauseWatch | None = None
         self._session_locked_q.connect(
             self._on_session_locked, Qt.ConnectionType.QueuedConnection
+        )
+        self._suspend_recheck_q.connect(
+            self._on_suspend_recheck, Qt.ConnectionType.QueuedConnection
         )
         self.status_panel = StatusPanel()
 
@@ -579,6 +586,8 @@ class MainWindow(QMainWindow):
                 if is_suspend_message(*head):
                     self.pause_for(PauseReason.SUSPEND)
                     self.practitioner_screen.on_stop()  # SEC-019: an enrolment stops too
+                    if self._controller.state not in CAPTURING_STATES:
+                        self._suspend_recheck_q.emit()  # SEC-021: maybe inside Start
                 elif self._system_events is not None and self._system_events.lock_matches(*head):
                     # Codex round 51 PR-MED-300: refuse every Resume from
                     # this moment — before the queued pause, and before any
@@ -594,6 +603,15 @@ class MainWindow(QMainWindow):
         except Exception:  # noqa: BLE001 - nothing may raise into Qt's dispatch
             pass
         return False, 0
+
+    def _on_suspend_recheck(self) -> None:
+        """Round 57 SEC-021: a suspend delivered re-entrantly INSIDE
+        ``controller.start`` (a device open that pumps messages) read the old
+        state — the controller's lock is an ``RLock`` — and paused nothing.
+        Once that Start has returned, pause the recording it made. Fails safe:
+        at IDLE or QUEUED ``pause_for`` does nothing, and a recording already
+        paused is not paused again."""
+        self.pause_for(PauseReason.SUSPEND)
 
     def pause_for(self, reason: PauseReason) -> None:
         """D5's ``pause_for`` for app-level reasons (suspend and the session
@@ -870,8 +888,9 @@ class MainWindow(QMainWindow):
     def _build_live_transcriber(self) -> LiveTranscriber:
         """The controller calls this on the GUI thread inside ``start()``:
         build the worker whose posts the Transcript screen renders. It only
-        builds — the view opens on ``session_started`` (round 7 LOW-003)."""
-        return models.build_live_transcriber(on_window=self.transcript_screen.post_live_window)
+        builds — the view opens on ``session_started`` (round 7 LOW-003),
+        which adopts this worker's token (round 57 SEC-022)."""
+        return models.build_live_transcriber(on_window=self.transcript_screen.live_poster())
 
     def _enrolment_blocker(self) -> str | None:
         """The activity `begin_enrolment` cannot see for itself (D15): a
@@ -922,7 +941,7 @@ class MainWindow(QMainWindow):
         destroying a running QThread aborts the process. A force-kill is
         still safe — crash recovery (Flow 3) covers it — but a normal close
         must not tear down a live transcription/benchmark thread."""
-        if self._controller.state in (SessionState.RECORDING, SessionState.PAUSED):
+        if self._controller.state in CAPTURING_STATES:
             # Round 42 MED-002 (guard-only, pending user ratification;
             # sibling of the PR-round-18 PR6 thread guard below): closing
             # would kill the daemon capture worker mid-chunk and silently
@@ -1067,14 +1086,16 @@ class MainWindow(QMainWindow):
         Resume pauses through ``pause_for`` (which does nothing unless the
         recording is running); a goodbye then a greeting raises the
         new-consultation WARNING, which changes nothing. The transcript keeps
-        every word either way."""
-        if not isinstance(payload, tuple):
+        every word either way. Only the current Start's posts count (round 57
+        SEC-022): a retired worker's late window reaches neither rule."""
+        segments = self.transcript_screen.live_segments(payload)
+        if segments is None:
             return
-        if self._controller.state not in (SessionState.RECORDING, SessionState.PAUSED):
+        if self._controller.state not in CAPTURING_STATES:
             return
-        if self._spoken_pause.feed(payload):
+        if self._spoken_pause.feed(segments):
             self.pause_for(PauseReason.SPOKEN)
-        if self._new_consultation.feed(payload):
+        if self._new_consultation.feed(segments):
             self._raise_new_consultation()
 
     def _raise_new_consultation(self) -> None:

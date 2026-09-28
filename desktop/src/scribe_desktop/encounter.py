@@ -393,11 +393,13 @@ def _note_state(note: Mapping[str, Any]) -> NoteRefusal | None:  # (a)
     return None
 
 
-def _display_text(value: object) -> str:
-    """A name part as plain single-line text: control and format characters
+def display_text(value: object) -> str:
+    """Display text as plain single-line text: control and format characters
     — and a lone surrogate, which a JSON escape can produce and no UTF-8
     snapshot can carry (H1 round 53 LOW-044) — become spaces, whitespace is
-    collapsed. Never markup-interpreted — the UI renders it as text (D1)."""
+    collapsed; a non-string is "". Never markup-interpreted — the UI renders
+    it as text (D1). The ONE cleaner: the bridge's snapshot text uses it too
+    (H2a SIMP-008)."""
     if not isinstance(value, str):
         return ""
     cleaned = "".join(
@@ -408,10 +410,10 @@ def _display_text(value: object) -> str:
 
 
 def _patient_name(patient: Mapping[str, Any]) -> str:  # (c)
-    first = _display_text(patient.get("preferred_first_name")) or _display_text(
+    first = display_text(patient.get("preferred_first_name")) or display_text(
         patient.get("first_name")
     )
-    name = " ".join(part for part in (first, _display_text(patient.get("last_name"))) if part)
+    name = " ".join(part for part in (first, display_text(patient.get("last_name"))) if part)
     return name[:MAX_DISPLAY_NAME_CHARS] or "Unnamed patient"
 
 

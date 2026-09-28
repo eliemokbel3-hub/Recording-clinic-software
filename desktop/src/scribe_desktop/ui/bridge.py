@@ -99,7 +99,6 @@ from __future__ import annotations
 
 import math
 import time
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC
@@ -128,6 +127,7 @@ from scribe_desktop.encounter import (
     VerificationRequest,
     VerificationResult,
     Verified,
+    display_text,
     linked_consent,
     rate_limited_result,
     reverification_request,
@@ -142,7 +142,7 @@ from scribe_desktop.protocol import (
     make_pipe_envelope,
     typed_payload,
 )
-from scribe_desktop.session import ACTIVE_STATES, SessionState
+from scribe_desktop.session import ACTIVE_STATES, CAPTURING_STATES, SessionState
 from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
 from scribe_desktop.system_events import SystemPauseStatus
 from scribe_desktop.ui import models
@@ -185,13 +185,9 @@ def _one_line(text: str, limit: int, fallback: str) -> str:
     """Display text as the protocol allows it: one line, no control
     character and no lone surrogate (a snapshot that failed validation would
     never be sent, freezing Chrome on the last one — H1 round 53 LOW-044), at
-    most ``limit`` characters."""
-    cleaned = "".join(
-        " " if unicodedata.category(ch) in ("Cc", "Cf", "Cs", "Zl", "Zp") else ch
-        for ch in text
-    )
-    cleaned = " ".join(cleaned.split())[:limit]
-    return cleaned or fallback
+    most ``limit`` characters. The cleaning is ``encounter.display_text``'s
+    (H2a SIMP-008: one cleaner); only the cut and the fallback are here."""
+    return display_text(text)[:limit] or fallback
 
 
 @dataclass
@@ -247,6 +243,7 @@ class ChromeBridge(QObject):
     _connected_q = Signal(int)
     _message_q = Signal(int, object)
     _disconnected_q = Signal(int, str)
+    _ended_q = Signal()
     # A client went away or a new one connected (D5's pipe-loss input).
     pipe_lost = Signal()
     # D5: the pause rule paused the recording or put up the block — the
@@ -323,6 +320,7 @@ class ChromeBridge(QObject):
             (self._connected_q, self._on_connected),
             (self._message_q, self._on_message),
             (self._disconnected_q, self._on_disconnected),
+            (self._ended_q, self.set_unavailable),
         ):
             signal.connect(slot, Qt.ConnectionType.QueuedConnection)
         self._timer = QTimer(self)
@@ -346,6 +344,12 @@ class ChromeBridge(QObject):
     def disconnected(self, conn_id: int, reason: str) -> None:
         self._disconnected_q.emit(conn_id, reason)
 
+    def ended(self) -> None:
+        """The pipe server stopped serving for good (round 57 SEC-017). A
+        current connection was reported disconnected first, so a linked
+        recording has already paused with ``pipe_lost``."""
+        self._ended_q.emit()
+
     # --- lifecycle (GUI thread) ---------------------------------------------
 
     def attach(self, sender: PipeSender) -> None:
@@ -355,7 +359,9 @@ class ChromeBridge(QObject):
         self._refresh_view()
 
     def set_unavailable(self) -> None:
-        """The pipe could not be created (its name is held elsewhere)."""
+        """The pipe could not be created (its name is held elsewhere, or
+        Windows refused it), or its server stopped serving (SEC-017): the
+        Session screen shows the unavailable line and nothing is sent."""
         self._sender = None
         self._link = "unavailable"
         self._refresh_view()
@@ -548,7 +554,7 @@ class ChromeBridge(QObject):
             self._warning_session is not None
             and session is not None
             and session.session_id == self._warning_session
-            and session.state in (SessionState.RECORDING, SessionState.PAUSED)
+            and session.state in CAPTURING_STATES
         )
 
     def _spoken_pause(self) -> str:
@@ -583,7 +589,7 @@ class ChromeBridge(QObject):
         if (
             session is None
             or context is None
-            or session.state not in (SessionState.RECORDING, SessionState.PAUSED)
+            or session.state not in CAPTURING_STATES
         ):
             return
         reason = self._rules.evaluate(session.session_id, context.target, report)
@@ -634,7 +640,7 @@ class ChromeBridge(QObject):
         if (
             session is None
             or context is None
-            or session.state not in (SessionState.RECORDING, SessionState.PAUSED)
+            or session.state not in CAPTURING_STATES
         ):
             self._live_check = None
             return

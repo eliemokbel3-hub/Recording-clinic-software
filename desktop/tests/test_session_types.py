@@ -29,6 +29,7 @@ from scribe_desktop.logging_setup import (
 )
 from scribe_desktop.session import (
     ACTIVE_STATES,
+    CAPTURING_STATES,
     RECOVERABLE_STATES,
     TERMINAL_STATES,
     RecordingSession,
@@ -77,6 +78,11 @@ class TestSessionState:
         assert ACTIVE_STATES <= RECOVERABLE_STATES
         assert not (RECOVERABLE_STATES & TERMINAL_STATES)
         assert SessionState.QUEUED not in TERMINAL_STATES  # key retained while queued
+
+    def test_the_capturing_states_are_recording_and_paused(self) -> None:
+        # H2a SIMP-012: the one name for the check nine sites used to spell out.
+        assert CAPTURING_STATES == {SessionState.RECORDING, SessionState.PAUSED}
+        assert CAPTURING_STATES < ACTIVE_STATES
 
     def test_phase1_connection_state_is_retired(self) -> None:
         assert not hasattr(protocol, "ConnectionState")

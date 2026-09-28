@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import os
 import secrets
+import sys
 import threading
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,7 @@ from scribe_desktop.ui.bridge import (  # noqa: E402
     MIN_CALL_SPACING_SECONDS,
     RATE_LIMIT_COOLDOWN_SECONDS,
     ChromeBridge,
+    _one_line,
 )
 from scribe_desktop.ui.session_screen import SessionScreen  # noqa: E402
 from test_ui_screens import FakeController, _document, _process_until  # noqa: E402
@@ -68,6 +70,25 @@ def qapp() -> Any:
 
     app = QApplication.instance() or QApplication([])
     yield app
+
+
+@pytest.mark.parametrize(
+    ("text", "limit", "expected"),
+    [
+        ("Ann\ud800Lee", 40, "Ann Lee"),  # a lone surrogate (H1 round 53 LOW-044)
+        ("Ann Lee", 40, "Ann Lee"),  # a line separator
+        ("Ann\x00Lee", 40, "Ann Lee"),  # a control character
+        ("Ann  Marie   Lee", 8, "Ann Mari"),  # collapsed, then cut
+        ("\x00 \ud800", 8, "Fallback"),  # nothing left: the fallback
+    ],
+    ids=["lone-surrogate", "line-separator", "nul", "over-limit", "all-control"],
+)
+def test_display_text_in_a_snapshot_is_one_clean_line(
+    text: str, limit: int, expected: str
+) -> None:
+    """H2a SIMP-008's pin, written against the code before the refactor:
+    what the protocol allows in a snapshot's display text."""
+    assert _one_line(text, limit, "Fallback") == expected
 
 
 class FakeSender:
@@ -394,6 +415,59 @@ class TestPipeUnavailableFallback:
         assert window.chrome_bridge is not None
         window.chrome_bridge.deleteLater()
         window.deleteLater()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="Windows named pipes")
+    def test_a_refused_descriptor_leaves_a_working_app(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """H3a step 1 (round 65's start-up gap): the REAL server's start with
+        Windows refusing the pipe's descriptor. The conversion now fails
+        before any pipe exists, so the real per-user name is never touched."""
+        import pywintypes
+
+        from scribe_desktop import app, pipe_server
+        from test_ui_screens import _main_window
+
+        def refuse(*_args: Any) -> Any:
+            raise pywintypes.error(
+                1336, "ConvertStringSecurityDescriptorToSecurityDescriptor", "refused by the test"
+            )
+
+        monkeypatch.setattr(
+            pipe_server.win32security, "ConvertStringSecurityDescriptorToSecurityDescriptor", refuse
+        )
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        assert app._start_chrome_link(window, logging.getLogger("test-pipe-fallback")) is None
+        screen = window.session_screen
+        assert screen.chrome_label.text().startswith(models.CHROME_UNAVAILABLE_LINE)
+        screen._device_provider = lambda: 7
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert any(call[0] == "start" for call in controller.calls)
+        assert window.chrome_bridge is not None
+        window.chrome_bridge.deleteLater()
+        window.deleteLater()
+
+
+class TestServerEnded:
+    def test_a_server_that_stops_serving_reads_unavailable_and_sends_nothing(
+        self, harness: Any
+    ) -> None:
+        """Round 57 SEC-017: the pipe server's ``ended`` (after its current
+        connection was reported ``server_failed``) turns the link line to
+        unavailable, and no snapshot is sent after it."""
+        h = harness()
+        h.verified_report()
+        h.bridge.disconnected(1, "server_failed")
+        h.bridge.ended()
+        h.pump()
+        assert h.screen.chrome_label.text().startswith(models.CHROME_UNAVAILABLE_LINE)
+        count = len(h.sender.sent)
+        h.bridge.connected(2)  # nothing can arrive now; if it did, still no sender
+        h.pump()
+        h.bridge.publish()
+        assert len(h.sender.sent) == count
 
 
 class TestReports:

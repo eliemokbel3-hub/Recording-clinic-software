@@ -78,7 +78,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, NamedTuple
 
 import psutil
 import pytest
@@ -151,9 +151,95 @@ def read_one_frame(stream) -> dict:
     return json.loads(body.decode("utf-8"))
 
 
-def assert_no_connections(proc: psutil.Process, label: str) -> None:
-    conns = proc.net_connections(kind="all")
-    assert conns == [], f"{label} has network connections: {conns}"
+class _ChildTree(NamedTuple):
+    """A spawned child as the socket polls must see it.
+
+    Round 70 (leg stage-9-exec-k16, docs/lessons.md): a child started with
+    ``sys.executable`` is the venv's LAUNCHER, and the interpreter that runs
+    the child's code — the process that would hold a socket — is the
+    launcher's own child. ``root`` is the ``Popen`` process; ``interpreter_pid``
+    is the process that runs the code, as the child itself reported it (or,
+    for the entry-point host, the one leaf of its launcher chain)."""
+
+    root: psutil.Process
+    interpreter_pid: int
+
+
+def assert_no_connections(tree: _ChildTree, label: str) -> None:
+    """A MANDATORY poll: no connection in the root or ANY descendant, and the
+    interpreter must be among them and actually inspected (round 71
+    PR-LOW-390: a launcher-only sample is never a pass). A descendant other
+    than the interpreter that exits mid-walk holds no socket and is skipped;
+    the root vanishing raises ``psutil.NoSuchProcess``."""
+    members = [tree.root, *tree.root.children(recursive=True)]
+    inspected = False
+    for member in members:
+        try:
+            conns = member.net_connections(kind="all")
+        except psutil.NoSuchProcess:
+            if member is tree.root:
+                raise
+            if member.pid == tree.interpreter_pid:
+                raise AssertionError(
+                    f"{label}: the interpreter (pid={tree.interpreter_pid}) exited mid-poll"
+                ) from None
+            continue
+        assert conns == [], f"{label} (pid={member.pid}) has network connections: {conns}"
+        if member.pid == tree.interpreter_pid:
+            inspected = True
+    assert inspected, (
+        f"{label}: the interpreter (pid={tree.interpreter_pid}) is not in the process tree "
+        f"{[m.pid for m in members]} - the poll would have checked only the launcher"
+    )
+
+
+def _sample_after_exit(tree: _ChildTree, label: str) -> None:
+    """An OPTIONAL sample once the child was released to finish: whatever is
+    still alive holds no connection, and an exited process (the root
+    included) is skipped. Never a substitute for the mandatory polls."""
+    try:
+        members = [tree.root, *tree.root.children(recursive=True)]
+    except psutil.NoSuchProcess:
+        return
+    for member in members:
+        try:
+            conns = member.net_connections(kind="all")
+        except psutil.NoSuchProcess:
+            continue
+        assert conns == [], f"{label} (pid={member.pid}) has network connections: {conns}"
+
+
+def _reported_tree(popen: subprocess.Popen[bytes], line: bytes, marker: bytes) -> _ChildTree:
+    """The tree for a child whose readiness line is ``<marker> <pid> …``."""
+    words = line.split()
+    assert words[:1] == [marker] and len(words) >= 2, line
+    return _ChildTree(psutil.Process(popen.pid), int(words[1]))
+
+
+def _leaf_interpreter(root: psutil.Process) -> int:
+    """The entry-point host (``scribe-host.exe``) cannot report its pid on
+    stdout (that is the framed channel): its interpreter is the one Python
+    leaf of its launcher chain. (A windowless console child may also own a
+    hidden ``conhost.exe``, which runs none of our code.)"""
+    def is_python(process: psutil.Process) -> bool:
+        return process.name().lower().startswith("python")
+
+    leaves = [
+        p
+        for p in root.children(recursive=True)
+        if is_python(p) and not any(is_python(c) for c in p.children())
+    ]
+    assert len(leaves) == 1, f"expected one interpreter under the launcher, got {leaves}"
+    return leaves[0].pid
+
+
+def _read_line_within(stream: IO[bytes], seconds: float) -> bytes:
+    """One line from ``stream``, or b"" if none arrives in ``seconds``."""
+    lines: list[bytes] = []
+    reader = threading.Thread(target=lambda: lines.append(stream.readline()), daemon=True)
+    reader.start()
+    reader.join(seconds)
+    return lines[0] if lines else b""
 
 
 def _amplitude_vad(frame_bytes: bytes) -> float:
@@ -225,12 +311,11 @@ def test_full_handshake_via_launcher_with_no_sockets(tmp_path: Path) -> None:
         assert not_running["session_nonce"] == nonce
         assert not_running["payload"]["app_running"] is False
 
-        # Poll the whole process tree (the .bat wraps cmd -> python) mid-session.
-        procs = [ps_host, *ps_host.children(recursive=True)]
+        # Poll the whole process tree mid-session: the host stays alive until
+        # its stdin closes below, and its interpreter must be inspected.
+        host_tree = _ChildTree(ps_host, _leaf_interpreter(ps_host))
         for _ in range(5):
-            for proc in procs:
-                if proc.is_running():
-                    assert_no_connections(proc, f"host tree pid={proc.pid}")
+            assert_no_connections(host_tree, "host tree")
             time.sleep(0.1)
 
         host.stdin.write(
@@ -289,11 +374,15 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "               style_root=base / 'style', language_model_available=lambda: False,\n"
         "               clinic_registry=ClinicRegistry(base / 'clinics.json'))\n"
         "w.status_panel.on_self_test()\n"
-        "print('READY', flush=True)\n"
-        "time.sleep(5)\n"
+        # Round 71 PR-LOW-390: report the interpreter's own pid, then stay up
+        # until the parent releases the gate (stdin), not on a timer.
+        "import os, sys\n"
+        "print('READY', os.getpid(), flush=True)\n"
+        "sys.stdin.readline()\n"
     )
     app = subprocess.Popen(
         [sys.executable, "-c", code],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         env=env,
@@ -301,12 +390,11 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
     )
     try:
         assert app.stdout
-        assert app.stdout.readline().strip() == b"READY"
-        ps_app = psutil.Process(app.pid)
+        app_tree = _reported_tree(app, _read_line_within(app.stdout, 60), b"READY")
         for _ in range(5):
-            assert_no_connections(ps_app, "scribe-app")
+            assert_no_connections(app_tree, "scribe-app")
             time.sleep(0.1)
-    finally:
+    finally:  # the gate never opens on its own: the kill is the release
         app.kill()
         app.wait(timeout=15)  # PR round 31: reap uniformly
 
@@ -375,9 +463,14 @@ while not frames or frames[-1]['payload'].get('notice') != 'clinic_not_set_up':
     app.processEvents()
     time.sleep(0.01)
 last = frames[-1] if frames else {'type': 'none', 'payload': {}}
-print('READY ' + last['type'] + ':' + str(last['payload'].get('notice')), flush=True)
-end = time.monotonic() + 5
-while time.monotonic() < end:
+# Round 71 PR-LOW-390: the interpreter's own pid, then up until the parent's
+# gate (a line on stdin) opens; 120 s is only a safety cap.
+import os, sys
+released = threading.Event()
+threading.Thread(target=lambda: (sys.stdin.readline(), released.set()), daemon=True).start()
+print('READY', os.getpid(), last['type'] + ':' + str(last['payload'].get('notice')), flush=True)
+end = time.monotonic() + 120
+while not released.is_set() and time.monotonic() < end:
     app.processEvents()
     time.sleep(0.02)
 """
@@ -390,6 +483,7 @@ def test_scribe_app_with_the_chrome_link_open_has_no_sockets(tmp_path: Path) -> 
     script.write_text(_PIPE_APP_CHILD, encoding="utf-8")
     app = subprocess.Popen(
         [sys.executable, str(script)],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         env=env,
@@ -397,13 +491,13 @@ def test_scribe_app_with_the_chrome_link_open_has_no_sockets(tmp_path: Path) -> 
     )
     try:
         assert app.stdout
-        line = app.stdout.readline().strip().decode()
-        assert line == "READY state:clinic_not_set_up", line
-        ps_app = psutil.Process(app.pid)
+        line = _read_line_within(app.stdout, 90)
+        assert line.split()[2:] == [b"state:clinic_not_set_up"], line
+        app_tree = _reported_tree(app, line, b"READY")
         for _ in range(5):  # the pipe client is still connected here
-            assert_no_connections(ps_app, "scribe-app with the Chrome link open")
+            assert_no_connections(app_tree, "scribe-app with the Chrome link open")
             time.sleep(0.1)
-    finally:
+    finally:  # the gate never opens on its own: the kill is the release
         app.kill()
         app.wait(timeout=15)
 
@@ -437,15 +531,23 @@ bridge = w.attach_chrome_link()
 server = PipeServer(sys.argv[1], bridge, sddl=pipe_sddl(current_user_sid()))
 bridge.attach(server)
 server.start()
-print('READY', flush=True)
-end = time.monotonic() + 60
-while time.monotonic() < end:
+# Round 71 PR-LOW-390: the interpreter's own pid, then up until the parent's
+# gate (a line on stdin) opens; 120 s is only a safety cap.
+import os, threading
+released = threading.Event()
+threading.Thread(target=lambda: (sys.stdin.readline(), released.set()), daemon=True).start()
+print('READY', os.getpid(), flush=True)
+end = time.monotonic() + 120
+while not released.is_set() and time.monotonic() < end:
     app.processEvents()
     time.sleep(0.01)
 """
 
+# stdout is the framed channel, so the interpreter's pid goes to stderr.
 _HOST_RELAY_CHILD = """\
-import logging, sys
+import logging, os, sys
+sys.stderr.write('PID %d\\n' % os.getpid())
+sys.stderr.flush()
 from scribe_desktop.framing import set_binary_stdio
 from scribe_desktop.native_host import app_relay_factory, run_host
 set_binary_stdio()
@@ -480,6 +582,7 @@ def test_host_relays_to_an_open_app_pipe_with_no_sockets(tmp_path: Path) -> None
     host_script.write_text(_HOST_RELAY_CHILD, encoding="utf-8")
     app = subprocess.Popen(
         [sys.executable, str(app_script), pipe],
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         env=env,
@@ -488,16 +591,17 @@ def test_host_relays_to_an_open_app_pipe_with_no_sockets(tmp_path: Path) -> None
     host: subprocess.Popen[bytes] | None = None
     try:
         assert app.stdout
-        assert app.stdout.readline().strip() == b"READY"
+        app_tree = _reported_tree(app, _read_line_within(app.stdout, 90), b"READY")
         host = subprocess.Popen(
             [sys.executable, str(host_script), pipe],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
             cwd=str(REPO),
             creationflags=CREATE_NO_WINDOW,
         )
-        assert host.stdin and host.stdout
+        assert host.stdin and host.stdout and host.stderr
+        host_tree = _reported_tree(host, _read_line_within(host.stderr, 60), b"PID")
         host.stdin.write(
             frame(
                 {
@@ -540,9 +644,10 @@ def test_host_relays_to_an_open_app_pipe_with_no_sockets(tmp_path: Path) -> None
             host.stdout, lambda m: m["payload"].get("notice") == "clinic_not_set_up"
         )
         assert answer["session_nonce"] == nonce
-        for proc in (psutil.Process(app.pid), psutil.Process(host.pid)):
+        # The app is gated on stdin and the host lives until its stdin closes.
+        for tree, name in ((app_tree, "app"), (host_tree, "host")):
             for _ in range(5):
-                assert_no_connections(proc, f"relay leg pid={proc.pid}")
+                assert_no_connections(tree, f"relay leg {name}")
                 time.sleep(0.05)
         host.stdin.close()
         assert host.wait(timeout=15) == 0
@@ -632,9 +737,18 @@ def _await_marker(
     return line
 
 
+def _child_tree(
+    proc: subprocess.Popen[bytes], reader: _PipeReader, stderr_path: Path
+) -> _ChildTree:
+    """The tree of a ``_write_child`` child: its prelude's first line is
+    ``PID <the interpreter's own pid>`` (round 71 PR-LOW-390)."""
+    line = _await_marker(reader, proc, stderr_path, "PID ", 60)
+    return _ChildTree(psutil.Process(proc.pid), int(line.split()[1]))
+
+
 def _poll_no_connections(
     proc: subprocess.Popen[bytes],
-    ps: psutil.Process,
+    ps: _ChildTree,
     reader: _PipeReader,
     stderr_path: Path,
     label: str,
@@ -653,14 +767,21 @@ def _write_child(tmp_path: Path, name: str, code: str) -> Path:
     # Children run from a temp dir with cwd=REPO, so the tests directory is not
     # importable by default; adding it lets them share `sapi_fixture` (the
     # SAPI-renders-22050 Hz correction must exist in exactly ONE place, not
-    # re-copied into every child). Two stdlib statements, no imports of our own
+    # re-copied into every child). Stdlib statements only, no imports of our own
     # — the socket-stub child still stubs before anything else loads.
     # SEC-001: APPEND, never insert(0, ...). At position 0 the tests directory
     # would precede the stdlib, so a future tests/socket.py or _socket.py would
     # be what the no-network-proof child imports and stubs — the proof would go
     # green while testing nothing. Appending resolves `sapi_fixture` (no other
     # source provides that name) and leaves stdlib resolution untouched.
-    prelude = f"import sys\nsys.path.append({str(TESTS_DIR)!r})\n"
+    # Round 71 PR-LOW-390: the first line reports the interpreter's OWN pid
+    # (the venv's python.exe is a launcher; its child runs this code), which
+    # every mandatory socket poll must find and inspect. `os` is already
+    # loaded by interpreter start-up and opens nothing.
+    prelude = (
+        f"import os, sys\nsys.path.append({str(TESTS_DIR)!r})\n"
+        "print('PID %d' % os.getpid(), flush=True)\n"
+    )
     script = tmp_path / name
     script.write_text(prelude + code, encoding="utf-8")
     return script
@@ -833,7 +954,7 @@ def test_recorder_no_sockets_during_capture_and_transcription(tmp_path: Path) ->
         # Binding custody ordering, observed externally mid-recording:
         # key.dpapi is durably on disk while chunks are still arriving.
         assert (root / session_id / KEY_FILENAME).is_file()
-        ps = psutil.Process(proc.pid)
+        ps = _child_tree(proc, reader, stderr_path)
         # PR round 30: the poll window must provably overlap live capture —
         # the encrypted store must GROW across it, or the poll is vacuous.
         audio_path = root / session_id / AUDIO_FILENAME
@@ -861,10 +982,8 @@ def test_recorder_no_sockets_during_capture_and_transcription(tmp_path: Path) ->
         assert_no_connections(ps, "recorder after transcription")
         _send(proc, reader, stderr_path, b"CONTINUE")
         _await_marker(reader, proc, stderr_path, "COMPLETED-OK", 60)
-        try:  # bonus post-Complete sample; the child may already have exited
-            assert_no_connections(ps, "recorder after Complete")
-        except psutil.NoSuchProcess:
-            pass  # an exited process holds no sockets
+        # Optional post-Complete sample; the child may already have exited.
+        _sample_after_exit(ps, "recorder after Complete")
         assert proc.wait(timeout=30) == 0
     finally:
         if proc.poll() is None:
@@ -1066,7 +1185,7 @@ def test_recorder_no_sockets_during_live_transcription(tmp_path: Path) -> None:
         capturing = _await_marker(reader, proc, stderr_path, "CAPTURING", 60)
         session_id = capturing.split()[1]
         assert (root / session_id / KEY_FILENAME).is_file()
-        ps = psutil.Process(proc.pid)
+        ps = _child_tree(proc, reader, stderr_path)
         audio_path = root / session_id / AUDIO_FILENAME
         # The child's live worker is blocked INSIDE its first provider call
         # (a window transcribed DURING capture) until GO: the polls below
@@ -1099,10 +1218,8 @@ def test_recorder_no_sockets_during_live_transcription(tmp_path: Path) -> None:
         assert_no_connections(ps, "recorder after the live drain")
         _send(proc, reader, stderr_path, b"CONTINUE")
         _await_marker(reader, proc, stderr_path, "COMPLETED-OK", 60)
-        try:
-            assert_no_connections(ps, "recorder after Complete (live leg)")
-        except psutil.NoSuchProcess:
-            pass  # an exited process holds no sockets
+        # Optional post-Complete sample; the child may already have exited.
+        _sample_after_exit(ps, "recorder after Complete (live leg)")
         assert proc.wait(timeout=30) == 0
     finally:
         if proc.poll() is None:
@@ -1234,7 +1351,7 @@ def test_recorder_no_sockets_during_real_whisper_transcription(tmp_path: Path) -
         _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 120)
         capturing = _await_marker(reader, proc, stderr_path, "CAPTURING", 120)
         session_id = capturing.split()[1]
-        ps = psutil.Process(proc.pid)
+        ps = _child_tree(proc, reader, stderr_path)
         # PR round 30: the poll window must provably overlap live capture.
         audio_path = root / session_id / AUDIO_FILENAME
         size_before = audio_path.stat().st_size if audio_path.exists() else 0
@@ -1274,10 +1391,8 @@ def test_recorder_no_sockets_during_real_whisper_transcription(tmp_path: Path) -
         assert_no_connections(ps, "recorder after real transcription")
         _send(proc, reader, stderr_path, b"CONTINUE")
         _await_marker(reader, proc, stderr_path, "COMPLETED-OK", 120)
-        try:
-            assert_no_connections(ps, "recorder after Complete (real leg)")
-        except psutil.NoSuchProcess:
-            pass  # an exited process holds no sockets
+        # Optional post-Complete sample; the child may already have exited.
+        _sample_after_exit(ps, "recorder after Complete (real leg)")
         assert proc.wait(timeout=60) == 0
     finally:
         if proc.poll() is None:
@@ -1351,7 +1466,7 @@ def test_prose_generation_no_sockets_with_the_mock_model(tmp_path: Path) -> None
     proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
     try:
         _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 60)
-        ps = psutil.Process(proc.pid)
+        ps = _child_tree(proc, reader, stderr_path)
         _await_marker(reader, proc, stderr_path, "MID-PROSE", 60)
         _poll_no_connections(
             proc, ps, reader, stderr_path, "inside a prose generation (mock model)", polls=10
@@ -1425,7 +1540,7 @@ def test_prose_generation_no_sockets_with_the_real_model(tmp_path: Path) -> None
     proc, reader = _spawn_child(script, tmp_path / "unused", stderr_path)
     try:
         _await_marker(reader, proc, stderr_path, "OFFLINE-OK", 120)
-        ps = psutil.Process(proc.pid)
+        ps = _child_tree(proc, reader, stderr_path)
         assert_no_connections(ps, "before the language model load")
         _send(proc, reader, stderr_path, b"GO")
         polls = 0

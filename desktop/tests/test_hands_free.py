@@ -88,6 +88,14 @@ def _window(*parts: tuple[str, float]) -> tuple[TranscriptSegment, ...]:
     return tuple(_say(text, start) for text, start in parts)
 
 
+def _open_live_view(window: Any) -> Any:
+    """What a Start does (round 57 SEC-022): build the worker's poster, then
+    open the live view, which adopts its token. Returns the poster."""
+    post = window.transcript_screen.live_poster()
+    window.transcript_screen.begin_live_view()
+    return post
+
+
 class FakeRegistrar:
     """``HotkeyRegistrar`` that records calls and never touches Windows."""
 
@@ -565,7 +573,9 @@ class TestHotkeyWindow:
             "apply_offline_env": lambda: None,
             "assert_offline_env": lambda: None,
             "QApplication": lambda argv: QApplication.instance() or QApplication(argv),
-            "acquire_single_instance_lock": lambda name=None: (True, 0),
+            "acquire_instance_exclusion": lambda name=None, lock_path=None: (
+                app_module.InstanceExclusion("acquired")
+            ),
             "SoundDeviceBackend": lambda: object(),
             "SessionController": lambda *args, **kwargs: controller,
             "default_sessions_root": lambda: tmp_path / "sessions",
@@ -700,12 +710,30 @@ class TestPhraseRulesInTheWindow:
         controller = FakeController()
         window = _main_window(tmp_path, controller)
         _recording(controller)
-        window.transcript_screen.begin_live_view()
-        window.transcript_screen.live_window.emit(_window(("okay, scribe pause", 4.0)))
+        post = _open_live_view(window)
+        post(_window(("okay, scribe pause", 4.0)))
         assert _actions(controller) == [("pause",)]
         cue = models.pause_cue_text("spoken", linked=False)
         assert window.statusBar().currentMessage() == cue
         assert "scribe pause" in window.transcript_screen.transcript_view.toPlainText()
+        window.deleteLater()
+
+    def test_a_previous_starts_late_window_does_not_pause_the_new_recording(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 57 SEC-022: a window the RETIRED worker posted, delivered
+        after the next Start opened its view, reaches neither phrase rule;
+        the new worker's same words pause (the control)."""
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        old_post = _open_live_view(window)
+        _recording(controller)
+        new_post = _open_live_view(window)
+        old_post(_window(("okay, scribe pause", 4.0)))
+        assert _actions(controller) == []
+        assert "scribe pause" not in window.transcript_screen.transcript_view.toPlainText()
+        new_post(_window(("okay, scribe pause", 4.0)))
+        assert _actions(controller) == [("pause",)]
         window.deleteLater()
 
     def test_a_phrase_from_before_the_resume_does_not_pause_again(
@@ -714,14 +742,13 @@ class TestPhraseRulesInTheWindow:
         controller = FakeController()
         window = _main_window(tmp_path, controller)
         _recording(controller)
+        post = _open_live_view(window)
         controller.state_value = SessionState.PAUSED
         controller.recorded_seconds = 10
         assert window.session_screen.on_resume()  # cutoff: 10 s + one chunk
-        window.transcript_screen.live_window.emit(
-            _window(("scribe pause", 9.0), ("and we carry on", 12.0))
-        )
+        post(_window(("scribe pause", 9.0), ("and we carry on", 12.0)))
         assert ("pause",) not in controller.calls
-        window.transcript_screen.live_window.emit(_window(("scribe pause", 11.5)))
+        post(_window(("scribe pause", 11.5)))
         assert ("pause",) in controller.calls
         window.deleteLater()
 
@@ -732,9 +759,10 @@ class TestPhraseRulesInTheWindow:
         controller.state_value = SessionState.PAUSED
         controller.recorded_seconds = 100
         window.session_screen.on_resume()
+        post = window.transcript_screen.live_poster()  # built inside the new Start
         window.session_screen.session_started.emit()
         controller.state_value = SessionState.RECORDING
-        window.transcript_screen.live_window.emit(_window(("scribe pause", 2.0)))
+        post(_window(("scribe pause", 2.0)))
         assert ("pause",) in controller.calls
         window.deleteLater()
 
@@ -747,9 +775,8 @@ class TestPhraseRulesInTheWindow:
         controller = FakeController()
         window = _main_window(tmp_path, controller)
         controller.state_value = state
-        window.transcript_screen.live_window.emit(
-            _window(("scribe pause", 1.0), ("bye", 5.0), ("hello", 9.0))
-        )
+        post = _open_live_view(window)  # a current post: only the state refuses it
+        post(_window(("scribe pause", 1.0), ("bye", 5.0), ("hello", 9.0)))
         assert _actions(controller) == []
         assert window.statusBar().currentMessage() == ""
         window.deleteLater()
@@ -759,8 +786,9 @@ class TestPhraseRulesInTheWindow:
         window = _main_window(tmp_path, controller)
         bridge = window.attach_chrome_link()
         session = _recording(controller)
-        window.transcript_screen.live_window.emit(_window(("see you next week", 1.0)))
-        window.transcript_screen.live_window.emit(_window(("good morning, take a seat", 8.0)))
+        post = _open_live_view(window)
+        post(_window(("see you next week", 1.0)))
+        post(_window(("good morning, take a seat", 8.0)))
         assert _actions(controller) == []  # a WARNING: no pause, no block
         assert controller.state_value is SessionState.RECORDING
         assert window.statusBar().currentMessage() == models.NEW_CONSULTATION_WARNING_LINE

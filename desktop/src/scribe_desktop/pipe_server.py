@@ -18,7 +18,13 @@ THE PIPE, as created (``PipeServer.start``; every flag pinned by test):
   (``O:<SID>D:P(A;;GA;;;<SID>)``) — no other account, no inherited entries —
   and that SID as the pipe's OWNER, set explicitly so an elevated start
   (whose default owner would be Administrators) still passes the host's
-  owner check (round 57 SEC-013).
+  owner check (round 57 SEC-013);
+- a mandatory label at Medium integrity with no-write-up, no-read-up and
+  no-execute-up (``S:(ML;;NWNRNX;;;ME)``, round 57 SEC-014): a LOWER-integrity
+  process of this user cannot open the pipe at all (the implicit label
+  blocked writes only, so it could have opened it read-only, received
+  ``state`` and held the only slot). A medium process may set a label at or
+  below its own level, and Chrome starts the native host at medium.
 
 What that does NOT stop, stated as the residue (Task 4.3 decided (b) on
 2026-09-27: accepted as threat-model boundary 2, no peer gate): any process
@@ -61,6 +67,7 @@ import logging
 import re
 import sys
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
@@ -134,6 +141,12 @@ class PipeEvents(Protocol):
 
     def disconnected(self, conn_id: int, reason: str) -> None: ...
 
+    def ended(self) -> None:
+        """The server stopped serving for a reason other than ``stop()`` (a
+        failed connect, an unexpected error — round 57 SEC-017); the pipe
+        name is released and no further client will be served."""
+        ...
+
 
 def current_user_sid() -> str:
     """The current Windows user's SID as a string (``S-1-5-21-...``);
@@ -164,11 +177,12 @@ def pipe_name(sid: str) -> str:
 
 
 def pipe_sddl(sid: str) -> str:
-    """``sid`` as the owner, and a PROTECTED DACL with one entry: full access
-    for ``sid`` only."""
+    """``sid`` as the owner, a PROTECTED DACL with one entry (full access for
+    ``sid`` only), and a Medium mandatory label that refuses every access
+    from a lower integrity level (round 57 SEC-014)."""
     if _SID_RE.fullmatch(sid) is None:
         raise ValueError("not a SID string")
-    return f"O:{sid}D:P(A;;GA;;;{sid})"
+    return f"O:{sid}D:P(A;;GA;;;{sid})S:(ML;;NWNRNX;;;ME)"
 
 
 # --- the process at the other end (Task 4.3's checks and tripwire) ----------
@@ -271,6 +285,15 @@ def process_user_sid(pid: int) -> str | None:
         return None
     finally:
         process.Close()
+
+
+def _notify(call: Callable[..., object], *args: object) -> None:
+    """Report to the app from the serve loop's ``finally``: nothing may raise
+    out of the server thread."""
+    try:
+        call(*args)
+    except Exception:  # noqa: BLE001, S110 - the report is best effort; the thread is ending
+        pass
 
 
 class _Stopped(Exception):
@@ -392,14 +415,18 @@ class PipeServer:
         failed) and start serving. Nothing here opens a socket."""
         if self._thread is not None:
             raise RuntimeError("the pipe server is already started")
-        attributes = win32security.SECURITY_ATTRIBUTES()
-        attributes.SECURITY_DESCRIPTOR = (
-            win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
-                self._sddl, win32security.SDDL_REVISION_1
-            )
-        )
-        attributes.bInheritHandle = False
         try:
+            # Inside the `try` (round 65 / H3a step 1): a descriptor Windows
+            # refuses is a creation failure like any other, never an exception
+            # that stops the app starting (`app._start_chrome_link` catches
+            # only `PipeUnavailable`).
+            attributes = win32security.SECURITY_ATTRIBUTES()
+            attributes.SECURITY_DESCRIPTOR = (
+                win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+                    self._sddl, win32security.SDDL_REVISION_1
+                )
+            )
+            attributes.bInheritHandle = False
             self._handle = win32pipe.CreateNamedPipe(
                 self._name,
                 OPEN_MODE,
@@ -465,25 +492,37 @@ class PipeServer:
             self._log("pipe_peer", path=path)
 
     def _serve(self) -> None:
+        """Serve one client at a time until ``stop()``. Any other end — a
+        failed connect, an unexpected error (round 57 SEC-017) — tells the
+        app: the current connection (if any) is reported disconnected with
+        ``server_failed``, then ``ended()``; never an exception out of the
+        thread, and never a silent end that leaves the link reading
+        "waiting"."""
+        conn_id: int | None = None  # the current connection, None between clients
+        writer: threading.Thread | None = None  # its writer, until joined
+        requested = False
         try:
             while True:
                 if not self._await_client():
+                    requested = self._stop_requested()
                     return
                 self._conn_counter += 1
                 conn_id = self._conn_counter
                 win32event.ResetEvent(self._closed_event)
                 with self._lock:
                     self._mailbox = _Mailbox(conn_id=conn_id)
-                writer = threading.Thread(
+                thread = threading.Thread(
                     target=self._write_loop, args=(conn_id,), name="scribe-pipe-writer", daemon=True
                 )
-                writer.start()
+                thread.start()
+                writer = thread
                 self._log("pipe_client", state="connected", count=conn_id)
                 self._log_peer()
                 self._events.connected(conn_id)
                 reason = self._read_loop(conn_id)
                 win32event.SetEvent(self._closed_event)
-                writer.join(_JOIN_TIMEOUT_S)
+                self._join_writer(writer)
+                writer = None
                 with self._lock:
                     self._mailbox = _Mailbox()
                 try:
@@ -491,14 +530,46 @@ class PipeServer:
                 except pywintypes.error:
                     pass
                 self._log("pipe_client", state=reason, count=conn_id)
-                self._events.disconnected(conn_id, reason)
+                ended_conn, conn_id = conn_id, None
+                self._events.disconnected(ended_conn, reason)
                 if reason == "stopped":
+                    requested = True
                     return
+        except Exception:  # noqa: BLE001 - the thread ends with the app told
+            self._log("pipe_server", state="serve_failed")  # never the error's text
         finally:
+            if writer is not None:
+                # The handle is never closed under a live writer (SEC-016).
+                win32event.SetEvent(self._closed_event)
+                self._join_writer(writer)
+            with self._lock:
+                self._mailbox = _Mailbox()
             try:
                 win32file.CloseHandle(self._handle)
             except pywintypes.error:
                 pass
+            if conn_id is not None:
+                _notify(self._events.disconnected, conn_id, "server_failed")
+            if not requested:
+                self._log("pipe_server", state="ended")
+                _notify(self._events.ended)
+
+    def _stop_requested(self) -> bool:
+        return bool(win32event.WaitForSingleObject(self._stop_event, 0) == _WAIT_OBJECT_0)
+
+    def _join_writer(self, writer: threading.Thread) -> None:
+        """Round 57 SEC-016: wait until ``writer`` has ENDED before the pipe
+        is disconnected, reset or closed, so no new client is accepted — and
+        no handle reused — while an old writer lives: frame N can never reach
+        client N+1. This always ends: every writer wait includes
+        ``_closed_event`` (set before this join) and ``_stop_event``, and
+        neither ``WriteFile`` nor ``GetOverlappedResult`` blocks there — a
+        live writer is only one not yet scheduled."""
+        writer.join(_JOIN_TIMEOUT_S)
+        if writer.is_alive():
+            self._log("pipe_server", state="writer_slow")
+            while writer.is_alive():
+                writer.join(_JOIN_TIMEOUT_S)
 
     def _await_client(self) -> bool:
         """Wait for a client. False when the stop event fires first."""
@@ -551,6 +622,16 @@ class PipeServer:
                 return "unexpected_type"
             self._events.message(conn_id, envelope)
 
+    def _take_frame(self, conn_id: int) -> bytes | None:
+        """Take (and clear) connection ``conn_id``'s pending frame. Another
+        connection's frame is left where it is (round 57 SEC-016: a stale
+        writer that wakes must not drop the current client's frame)."""
+        with self._lock:
+            if self._mailbox.conn_id != conn_id:
+                return None
+            frame, self._mailbox.frame = self._mailbox.frame, None
+            return frame
+
     def _write_loop(self, conn_id: int) -> None:
         overlapped = _new_overlapped()
         waits = [self._send_event, self._closed_event, self._stop_event]
@@ -558,9 +639,7 @@ class PipeServer:
             fired = win32event.WaitForMultipleObjects(waits, False, _INFINITE)
             if fired != _WAIT_OBJECT_0:
                 return
-            with self._lock:
-                frame = self._mailbox.frame if self._mailbox.conn_id == conn_id else None
-                self._mailbox.frame = None
+            frame = self._take_frame(conn_id)
             if frame is None:
                 continue
             win32event.ResetEvent(overlapped.hEvent)

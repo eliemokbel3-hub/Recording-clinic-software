@@ -301,13 +301,50 @@ class TestLockFlag:
         return watch, registrar, clock
 
     def test_locked_from_the_lock_until_the_unlock(self) -> None:
-        watch, registrar, _clock = self._watch()
+        watch, registrar, _clock = self._watch(locked_answer=False)  # a real unlock
         assert not watch.locked and watch.lock_state() == "unlocked"
         watch.note_lock()
         assert watch.locked and watch.lock_state() == "locked"
         assert registrar.queries == 0  # a young flag is trusted without asking
         watch.note_unlock()
+        assert registrar.queries == 1  # the unlock is checked with Windows (SEC-020)
         assert not watch.locked and watch.lock_state() == "unlocked"
+
+    # --- the unlock checked with Windows (round 57 SEC-020) ---------------------
+
+    def test_a_forged_unlock_while_windows_says_locked_keeps_the_flag(self) -> None:
+        watch, registrar, _clock = self._watch(locked_answer=True)
+        watch.note_lock()
+        watch.note_unlock()
+        assert registrar.queries == 1
+        assert watch.locked and watch.lock_state() == "locked"
+
+    def test_an_unlock_windows_confirms_clears_the_flag(self) -> None:
+        watch, _registrar, _clock = self._watch(locked_answer=False)
+        watch.note_lock()
+        watch.note_unlock()
+        assert not watch.locked
+
+    @pytest.mark.parametrize("raises", [False, True])
+    def test_an_unanswered_query_believes_the_unlock(self, raises: bool) -> None:
+        watch, registrar, _clock = self._watch(locked_answer=None)
+        watch.note_lock()
+        registrar.raises = raises
+        watch.note_unlock()
+        assert not watch.locked and watch.lock_state() == "unlocked"
+
+    def test_a_kept_flag_clears_once_windows_says_unlocked(self) -> None:
+        """A real unlock whose query raced the message heals itself: the kept
+        flag keeps its lock time, and the re-check clears it once Windows
+        agrees (and not before the flag is old enough to be re-checked)."""
+        watch, registrar, clock = self._watch(locked_answer=True)
+        watch.note_lock()
+        watch.note_unlock()  # Windows still said locked: kept
+        registrar.locked_answer = False
+        assert watch.lock_state() == "locked"  # young: not asked again yet
+        clock.now += system_events.LOCK_RECHECK_AFTER_SECONDS
+        assert watch.lock_state() == "unlocked"
+        assert not watch.locked
 
     def test_a_young_flag_is_never_cleared_by_a_query(self) -> None:
         """A query racing the lock notification itself must not reopen the
@@ -598,7 +635,7 @@ class TestLockWindow:
     def test_the_unlock_clears_the_refusal_and_resumes_nothing(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        window, bridge, controller = self._locked_window(qapp, tmp_path)
+        window, bridge, controller = self._locked_window(qapp, tmp_path, locked_answer=False)
         qapp.processEvents()
         assert _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK) == (False, 0)
         qapp.processEvents()
@@ -680,7 +717,7 @@ class TestLockWindow:
         from the lock message until the unlock."""
         window = _main_window(tmp_path, FakeController())
         assert window._enrolment_blocker() is None
-        window.attach_system_pause(FakeSystemRegistrar())
+        window.attach_system_pause(FakeSystemRegistrar(locked_answer=False))  # a real unlock
         _send(window, WM_WTSSESSION_CHANGE, WTS_SESSION_LOCK)
         assert window._enrolment_blocker() == models.CHROME_REFUSALS["locked"]
         qapp.processEvents()
@@ -732,10 +769,66 @@ class TestLockWindow:
             "UNREGISTERED []",
             "FLAGS [true, false]",  # set by the lock's dispatch, cleared by the unlock
             'SENT ["locked"]',
-            'SEEN ["locked", "locked", "suspend"]',
+            # The posted suspend met an idle controller, so SEC-021's queued
+            # re-check asks once more (the real `pause_for` does nothing at IDLE).
+            'SEEN ["locked", "locked", "suspend", "suspend"]',
         ]
         for marker in (b"Traceback", b"TypeError", b"ValueError", b"wrong argument"):
             assert marker not in child.stderr, child.stderr.decode(errors="replace")
+
+
+class TestSuspendDuringStart:
+    """Round 57 SEC-021: a ``PBT_APMSUSPEND`` delivered re-entrantly INSIDE
+    ``controller.start`` (a device open that pumps messages) reads the old
+    state and pauses nothing; a queued re-check pauses the new recording once
+    Start has returned — once, and never a session that is not recording."""
+
+    def test_a_suspend_inside_start_pauses_the_new_recording_once_start_returns(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        real_start = controller.start
+
+        def start_with_a_suspend(device_id: int, *, consent: Any, context: Any = None) -> Any:
+            # Delivered before the new recording exists: the state read inside
+            # is the OLD one, as under the real controller's RLock.
+            _send(window, WM_POWERBROADCAST, PBT_APMSUSPEND)
+            return real_start(device_id, consent=consent, context=context)
+
+        monkeypatch.setattr(controller, "start", start_with_a_suspend)
+        screen = window.session_screen
+        screen._device_provider = lambda: 7
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert controller.state_value is SessionState.RECORDING
+        assert _pauses(controller) == 0  # the suspend inside Start paused nothing
+        qapp.processEvents()
+        assert _pauses(controller) == 1
+        assert controller.state_value is SessionState.PAUSED
+        cue = models.pause_cue_text("suspend", linked=False)
+        assert window.statusBar().currentMessage() == cue
+        qapp.processEvents()
+        assert _pauses(controller) == 1  # once
+        window.deleteLater()
+
+    @pytest.mark.parametrize("state", [SessionState.IDLE, SessionState.QUEUED])
+    def test_a_suspend_with_no_recording_pauses_nothing(
+        self, qapp: Any, tmp_path: Path, state: SessionState
+    ) -> None:
+        controller = FakeController()
+        controller.state_value = state
+        window = _main_window(tmp_path, controller)
+        # The window's own setup calls the controller (the enrolment blocker,
+        # the live-transcriber factory). Snapshot after it, so ANY call the
+        # suspend makes — a pause above all — fails the test.
+        before = list(controller.calls)
+        _send(window, WM_POWERBROADCAST, PBT_APMSUSPEND)
+        qapp.processEvents()
+        qapp.processEvents()
+        assert controller.calls == before and controller.state_value is state
+        assert window.statusBar().currentMessage() == ""
+        window.deleteLater()
 
 
 _LOCK_DISPATCH_CHILD = """\
@@ -758,6 +851,8 @@ class FakeSystemRegistrar:
         return True
     def unregister_lock(self, hwnd):
         pass
+    def query_locked(self):
+        return False
 app = QApplication([])
 base = Path(sys.argv[1])
 root = base / 'sessions'

@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** cliniko-workflow-safeguards
-**Overall Progress:** `91%` (39 of 43 tasks: every build task 1.1–8.2 and H1–H4; open: P.1 (clinic 2), P.2 (clinic 2), H2a and H3a — the last two added 2026-09-28 by the hardening stage; the Phases 4–8 live smoke PASSED on clinic 1 on 2026-09-28 and those phases are committed)
+**Overall Progress:** `95%` (41 of 43 tasks: every build task 1.1–8.2, H1–H4, and H2a + H3a (built 2026-09-28, leg stage-9-exec-k12; two practitioner re-checks owed at the next smoke); open: P.1 (clinic 2), P.2 (clinic 2); the Phases 4–8 live smoke PASSED on clinic 1 on 2026-09-28 and those phases are committed)
 
 ## Lifecycle State
 - Active
@@ -639,6 +639,77 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 
 ## Current State / Handoff Note
 - **COMPOSER (2026-09-28, run stage-9 close): the Phases 4–8 LIVE SMOKE PASSED on clinic 1; Phases 4–8, the sleep/lock smoke fix and the hardening stage H1–H4 are committed locally (one commit each; not pushed).** Tasks 6.0–8.2 🟩; P.2 🟨 (clinic 2 waits on P.1 for clinic 2). NEXT: smoke finding S1 (the Recovery list is not refreshed when a Start retires a session — P.2's line), then H2a + H3a through one scoped `/review-plan` (four H3a items need the practitioner: removing Discard from the page block, the Cliniko call-rate numbers, an extra pipe ownership check, stopping a voice enrolment on lock; plus the "Clinic Scribe" vs "Cliniko Scribe" naming decision), then the draft-write plan.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k12`, 2026-09-28T11:00+10:00, run stage-9) — H2a + H3a BUILT (the round-67 dispositions, steps 1–10 + SEC-020); `/review-loop` round 68 converged (1 LOW, test only, applied); H2a and H3a 🟩; `reason=composer-run`.**
+  - What changed:
+    - `pipe_server.py`:
+      - `start` :413 — the descriptor build sits inside the creation `try`, so a refusal becomes `create_failed` (round 65's gap).
+      - `PipeEvents.ended` :144 and `_serve` :494 — any error ends in `disconnected(…, "server_failed")` then `ended()` (SEC-017).
+      - `_join_writer` :560 and `_take_frame` :625 — SEC-016.
+      - `pipe_sddl` :179 — the Medium label (SEC-014).
+    - `app.py`: `acquire_single_instance_lock` :131 and `_mutex_owner_sid` :117 — a user-only descriptor, and another account's mutex fails open (SEC-015).
+    - `ui/main_window.py` `_on_suspend_recheck` :607 — SEC-021.
+    - `ui/transcript.py` `live_poster` :296, `live_segments` :311 and `begin_live_view` :326 — SEC-022.
+    - `system_events.py` `note_unlock` :315 — SEC-020.
+    - `session.py` `CAPTURING_STATES` :130 at 9 sites (SIMP-012).
+    - `encounter.py` `display_text` :396 behind `ui/bridge.py` `_one_line` (SIMP-008).
+    - `ui/bridge.py` `_ended_q` :246 / `ended` :347.
+    - Tests: new `test_chrome_text_tables.py` (SIMP-004/005).
+    - Docs: the threat model (mutex item 5, the pipe paragraph, residue (4), the forged-unlock residue, the pause-rule and live-view sentences), data-flow map flows 14 and 19, and CHANGELOG. The design system needed no change: no user-visible text changed.
+  - User-visible surfaces:
+    - The existing "Chrome link unavailable" line now also shows if the link's server ends on an error.
+    - The live view shows only the current recording's words.
+    - A sleep during a Start press still pauses.
+    - After Win+L, only a real unlock clears the lock refusal.
+    - No new strings.
+  - Expected suites:
+    - Desktop: 4176 passed with `scribe-app` closed (4142 + 34), or 4175 + 1 skipped if the low-integrity probe cannot start its child, plus the usual skip while the app runs.
+    - Update (leg `stage-9-exec-k13`): the composer's k12 run gave 3 failed and 4173 passed. All three were test defects, fixed test-only as round 68 LOW-071 (the label test now parses the SACL around Windows' `AI` control flag; the idle-suspend test snapshots the window's setup calls). Expected now: 4176 passed with the app closed. The low-integrity probe ran and passed on this machine.
+    - Update (leg `stage-9-exec-k14`, 2026-09-28T11:20+10:00): codex round 69 was verified and fixed.
+      - PR-MED-370: `app.py` `acquire_instance_exclusion`. The mutex plus a per-user `%LOCALAPPDATA%\ClinikoScribe\app.lock` held with no sharing; no start without one of them held, which gives the new "Clinic Scribe could not start" box and exit 1.
+      - PR-LOW-371: the CHANGELOG's unlock line.
+      - +8 desktop tests. Expected: **4184 passed** with the app closed (4176 + 8), with the same skips as above if they apply. Extension unchanged (306); no extension source changed.
+      - Live re-check step 2 now covers this: a second launch still says "already running". The first launch now creates an empty `app.lock` in the app's folder.
+    - Update (leg `stage-9-exec-k15`, 2026-09-28T11:30+10:00): codex round 70 PR-MED-380 verified and fixed.
+      - `app.py` `acquire_instance_exclusion` now REQUIRES `app.lock` for every admitted instance. The mutex only refuses a normal second launch early, and an unopenable file refuses the start.
+      - Tests +3 net. Expected: **4187 passed** with the app closed (4184 + 3), with the same skips as above if they apply. Extension unchanged (306).
+      - Live re-check step 2 is unchanged: a second launch says "already running".
+    - Update (leg `stage-9-exec-k16`): the k15 run gave 1 failed and 4186 passed, a test defect. Round 70 LOW-072, test-only:
+      - the killed-instance test now kills and waits on the interpreter's own pid, not the venv launcher's;
+      - the same-class sweep also made `test_integration_no_sockets.py`'s `assert_no_connections` walk the process tree (its app and recorder polls had been checking the launcher);
+      - `docs/lessons.md` has a new entry.
+      - Expected: **4187 passed** with the app closed. The integration legs now also poll the real interpreters, so a socket there would now fail them.
+    - Update (leg `stage-9-exec-k17`, 2026-09-28T11:50+10:00): codex round 71, the pass's last round (peer round 3 of 3), was verified and fixed test-only. Pass stage-9.p3 is accept-closed.
+      - PR-LOW-390: every mandatory socket poll now requires the interpreter pid the child reports, the timed children wait on stdin, and post-exit samples are separate.
+      - PR-LOW-391: the killed-instance test ends the launcher's descendants on every path, in a nested `finally` ahead of the launcher kill.
+      - No count change. Expected: **4187 passed** with the app closed (the same skips as above if they apply). This run IS the confirmation, since no codex round follows.
+    - Extension: 306, unchanged. No extension source changed, so the build is only a check.
+  - Named risk: the pipe's Medium label means a shell or app running BELOW medium integrity cannot create the pipe. That gives `create_failed` and the app runs without the Chrome link. The normal desktop, Chrome's host and the suite all run at medium.
+  - Live re-check (practitioner, next smoke; consolidated for everything since `44daa67`; 7 steps):
+    1. Launch `scribe-app` and open a treatment note in Chrome: the pinned icon shows green **OK** and the side panel links. This covers the pipe's Medium label (SEC-014) and its failure paths (SEC-016 and SEC-017).
+    2. Launch `scribe-app` a second time: it says "already running" and exits, and the first window is untouched (SEC-015 and rounds 69–70).
+    3. Close the app fully, then launch it again: it opens normally, with no "could not start" box (`app.lock` is released at exit).
+    4. Start a recording, press Win+L, sign back in and press Resume: it resumes (SEC-020).
+    5. Sleep the laptop while recording: on wake it is paused with the sleep cue (SEC-021's path unchanged).
+    6. Back-to-back: finish recording A, then Start B. B's live view shows none of A's words (SEC-022).
+    7. SEC-007: on an open note, (a) double the slash before `patients` and press Enter, then go back; (b) replace the first digit after `/patients/` with `%3` followed by that digit, and press Enter. For each, report "the same note opened", "Cliniko changed the address back", or "another page or an error".
+  - Still owed at the close: `AGENTS.md`'s Current Status still lists H2a + H3a as open. It needs the close update (the composer does it): H2a + H3a 🟩, rounds 67–71, the one-lock single-instance rule, and suites 4187 + 306.
+  - Next: the composer's suites (the pass's confirmation), then the close.
+- **EXECUTOR HANDOFF (leg `stage-9-exec-k11`, 2026-09-28T10:38+10:00, run stage-9) — scoped `/review-plan` over H2a + H3a DONE (round 67); plan only; `reason=phase-complete`.**
+  - Every item has one disposition, written into the H2a and H3a task lines:
+    - 9 build-now;
+    - 2 refactor;
+    - 9 deferred, each with `Risk if deferred` · `Revisit by`;
+    - 2 practitioner/host.
+  - Build order: H3a steps 1–10.
+    - Steps 1–3 are the pipe server: the SDDL gap, then SEC-017, then SEC-016.
+    - Step 4 is the SEC-014 label. Steps 5–7 are SEC-015, SEC-021 and SEC-022.
+    - Steps 8–10 are H2a SIMP-004/005, SIMP-012 and SIMP-008.
+    - About 28 new desktop test items (32 with SEC-020), and about 16 edited.
+  - Practitioner or host steps:
+    - SEC-020: one read-only `python -c` line that prints the session's lock state. `False` means build the forged-unlock check.
+    - SEC-007: two address-bar edits on an open note. "The same note opened" means build the URL normalisation.
+  - No production, test or doc file changed. `loop-history-check`: see the brief.
+  - Next: `/fix` of H3a steps 1–10, in as many legs as the composer chooses, and the two practitioner or host steps whenever convenient.
 - **EXECUTOR HANDOFF (leg `stage-9-exec-k10`, 2026-09-28T10:17+10:00, run stage-9) — codex round 65 VERIFIED and FIXED (PR-LOW-350), round 65 closed; the pipe-creation fallback verified and pinned; `reason=composer-run`.**
   - What changed:
     - `encounter.py` `VerificationLedger.awaits` (with `_is_run_request`, the tag guard now shared with `accept`).
@@ -1653,6 +1724,11 @@ See `Planning Extraction Summary` → Deferred, and Excluded. The Phase 4 write 
 - 2026-09-28 round 64 (Claude Code /review-loop round 2 of cap 3, leg stage-9-exec-k9, regression over round 63): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; applied (LOW-068/069 stale test counts in CHANGELOG and the SEC-009 record, plus D2's block-discard note); skew=fix-induced; action=none — converged
 - 2026-09-28 round 65 (codex gpt-6-astra medium, pass stage-9.p2 over the H3a items, peer round 1 of 3; verified and fixed by executor leg stage-9-exec-k10): 0 CRIT / 0 HIGH / 0 MED / 1 LOW; fixed (PR-LOW-350 a waiting report check is started only while the ledger still awaits it — `VerificationLedger.awaits` gates `_next`, covering the spacing deferral and the older wait behind a running check; +5 tests; plus the pipe-creation fallback verified and pinned, +2 tests); skew=fix-induced; action=none — scoped codex confirmation follows
 - 2026-09-28 round 66 (codex gpt-6-astra medium, pass stage-9.p2 confirmation): 0 CRIT / 0 HIGH / 0 MED / 0 LOW; clean (PR-LOW-350 confirmed closed); skew=none; action=none
+- 2026-09-28 round 67 (Claude Code scoped /review-plan over H2a + H3a, leg stage-9-exec-k11): 0 CRIT / 0 HIGH / 0 MED / 0 LOW new; 22 items disposed into the task lines — 9 build-now (round 65's SDDL gap, SEC-014 label, 015, 016, 017, 021, 022, SIMP-004/005 guard tests), 2 refactor (SIMP-008, 012), 9 deferred (SEC-008, SIMP-007, 009, 010, 011, 013, 014, 015, 016), 2 practitioner/host (SEC-020 one read-only command, SEC-007 two address-bar edits); SEC-021 and SEC-014 moved from host-check to build-now, SEC-020 kept as a host step (bad SessionFlags would refuse every Resume); ordered build steps 1–10, about 28 new desktop test items; skew=none; action=amend
+- 2026-09-28 round 68 (Claude Code /review-loop round 1 of cap 3, leg stage-9-exec-k12, eight lenses over the H2a + H3a build): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; applied (LOW-070 the SEC-015 owner test also asserts the protected single-entry DACL, since a non-elevated default mutex has the same owner; LOW-071 from the composer's suite run: the label test parses the SACL, since Windows adds the `AI` control flag, and the idle-suspend test snapshots the window's setup calls; test only); skew=fix-induced; action=none — converged at round 1
+- 2026-09-28 round 69 (codex gpt-6-astra medium, pass stage-9.p3 over the H2a + H3a build, peer round 1 of 3; verified and fixed by executor leg stage-9-exec-k14): 0 CRIT / 0 HIGH / 1 MED / 1 LOW; fixed (PR-MED-370 a foreign-owned or failed mutex no longer admits two instances: a per-user lock file held with no sharing always backs the mutex, and the app refuses to start when neither can be held — its pre-existing NULL-mutex sibling included, +8 tests; PR-LOW-371 the CHANGELOG's unlock claim matches the code); skew=fix-induced; action=none — scoped codex confirmation follows
+- 2026-09-28 round 70 (codex gpt-6-astra medium, pass stage-9.p3 confirmation, peer round 2 of 3; verified and fixed by executor leg stage-9-exec-k15): 0 CRIT / 0 HIGH / 1 MED / 0 LOW; fixed (PR-MED-380 a mutex-only and a file-only instance could overlap: the per-user lock file is now required for every admitted instance, the mutex only refuses a normal second launch early, an unopenable file refuses the start; the old mutex-only admission test replaced by the overlap regression, +3 tests net incl. a killed instance's lock released; LOW-072 from the composer's k15 run: that test killed the venv launcher, not the interpreter holding the lock — it now kills and waits on the child's own pid, and the no-sockets polls walk the process tree, since they had been checking the launcher; test only); skew=fix-induced; action=none — confirmation is peer round 3 of 3
+- 2026-09-28 round 71 (codex gpt-6-astra medium, pass stage-9.p3 confirmation, peer round 3 of 3; verified and fixed by executor leg stage-9-exec-k17): 0 CRIT / 0 HIGH / 0 MED / 2 LOW; fixed test-only (PR-MED-380 confirmed closed; PR-LOW-390 every mandatory socket poll requires the child-reported interpreter pid to be present and inspected, the timed children are gated on stdin, post-exit samples separate; PR-LOW-391 the launcher's descendants are ended before or after the pid handshake, in a nested finally ahead of the launcher kill); skew=fix-induced; action=none — pass stage-9.p3 accept-closed at peer round 3 of 3, its last two LOWs confirmed by the composer's suite run
 
 ## Review Findings Log
 ### Round 1 - 2026-09-27 - cliniko-workflow-safeguards plan, independent cross-family codex plan peer-review (round 1)
@@ -3648,6 +3724,11 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
 ### Round 56 - 2026-09-28 - Hardening H2: `/simplify` over Phases 1–8 as one surface, seeded by round 53's lens (f) list
 
 - Round status: Closed for this leg. 3 LOW applied, all behaviour-neutral. 13 recorded (2 MED + 11 LOW) and routed to the new task H2a: a scoped `/review-plan` after the P.2 live smoke. Nothing was applied that restructures a production path, changes a user-visible string or moves logic between modules.
+  - Update (round 67, the scoped `/review-plan`, leg stage-9-exec-k11, 2026-09-28): every Pending item now has a disposition in task H2a.
+    - Build now: SIMP-004 and 005 (guard tests only; no text changes).
+    - Build now (refactor): SIMP-008 and 012.
+    - Deferred, each with `Risk if deferred` · `Revisit by`: SIMP-007, 009, 010, 011, 013, 014, 015 and 016.
+    - Each `/fix decision` below stays Pending until its item is built, or reads Deferred per H2a.
 - Source: Claude Code simplify (executor leg stage-9-exec-k2, claude-opus-5-5). Run under the composer's smoke-time routing: apply only trivial, test-pinned, behaviour-neutral items; record everything else.
 - Scope / baseline:
   - Surface: `git diff f9887a7 -- . ':!.cursor'` plus untracked files, the same surface as rounds 53–55.
@@ -3685,11 +3766,11 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Why it matters: a duplicated user-visible invariant drifts.
     - Executor recommendation: one canonical table under `protocol/fixtures/` (for example `text/block_reasons.json`), read by a both-mirrors test that pins each copy to it. The TypeScript side could import it at build time. Do this after SIMP-006 settles the name.
     - surface=production (user-visible strings in the page, panel and desktop).
-    - Triage: Fix-now → task H2a, a scoped `/review-plan` after the smoke. /fix decision: Pending.
+    - Triage: Fix-now → task H2a, a scoped `/review-plan` after the smoke. /fix decision: Applied (leg stage-9-exec-k12, 2026-09-28, round-67 disposition "guard tests"): `desktop/tests/test_chrome_text_tables.py` pins the page's and the panel's block-reason tables equal and their keys to `PauseReason` minus `hotkey` / `spoken`. No text changed; the desktop's own wording stays (already key-pinned).
   - **[LOW]** SIMP-005 (recorded): `panel-view.ts` `NOTE_REFUSALS` (:49–) restates `ui/models.py` `NOTE_REFUSAL_REASONS` in different wording.
     - Executor recommendation: the same fixture treatment as SIMP-004. The practitioner picks the wording once.
     - surface=production (user-visible strings).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Applied (leg stage-9-exec-k12, round-67 disposition "key-set guard"): the same file pins the panel's `NOTE_REFUSALS` keys and the desktop's `NOTE_REFUSAL_REASONS` to `NoteRefusal`. The per-surface wording is deliberate and unchanged.
   - **[LOW]** SIMP-006 (recorded; the PRACTITIONER'S naming call, nothing changed): the product name is split.
     - "Clinic Scribe" is used in:
       - `cliniko_client.py:101` `APP_NAME`, the User-Agent Cliniko's servers see;
@@ -3716,11 +3797,11 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Why it matters: stale-result dropping is a custody control, and two copies can diverge.
     - Executor recommendation: one worker-and-ledger helper owned by the bridge, which `main_window`'s checkout re-verification calls. Scope it at `/review-plan`, because it moves custody-adjacent logic between modules.
     - surface=production (bridge / re-verification; not user-visible).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's freshness task` — see task H2a).
   - **[LOW]** SIMP-008 (recorded): display-text cleaning is written twice, as `encounter._display_text` and `ui/bridge._one_line`. Both now clean `Cs` (LOW-044).
     - Executor recommendation: the bridge calls the encounter helper, with `_one_line` keeping only its length cut.
     - surface=production (moves logic between modules).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Applied (leg stage-9-exec-k12, refactor): `encounter.display_text` (public, same body), and `ui/bridge.py` `_one_line` = `display_text(text)[:limit] or fallback` (its `unicodedata` import dropped). Pinned first by `test_ui_bridge.py::test_display_text_in_a_snapshot_is_one_clean_line` (5 ids, expected values from the code before), plus `test_encounter.py`'s lone-surrogate test.
   - **[LOW]** SIMP-009 (recorded): duplicated constants and lookups.
     - The host → clinic lookup is written 3× (per round 53).
     - The id, host and clinic-id regexes are copied across `protocol` / `encounter` / `clinics` / `cliniko_client`.
@@ -3733,13 +3814,13 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
       - Round 53 said 5. The `Literal` annotations need the literal, so the constant cannot replace all of them.
     - Executor recommendation: a small shared-ids module for the regexes and limits. Keep `cliniko_client.py` importing nothing new, so the TID251 confinement pin holds. The TypeScript consent literal should become one exported constant in `protocol.ts`.
     - surface=production (moves constants between modules).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's protocol bump`).
   - **[LOW]** SIMP-010 (recorded): duplicated TypeScript helpers.
     - `isObject` exists in `hub.ts:110` and `page.ts:71`, beside `protocol.ts:206` `isPlainObject`. That is 2 plus 1 differently named; round 53 said 3.
     - The Discard arm/disarm logic is copied between `page.ts` and `panel.ts:216–260`.
     - Executor recommendation: export `isPlainObject` from `protocol.ts`, after checking that the page script's bundle may import it (`page.ts` is injected on its own). Put a shared `DiscardArm` in `panel-view.ts`.
     - surface=production (extension state).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the next change to hub.ts's message parsing`).
   - **[LOW]** SIMP-011 (recorded): protocol-shaped duplicates.
     - `RELAYED_TYPES` equals `INBOUND_TYPES`.
     - `_ACTION_CONTROL` is an identity map.
@@ -3748,7 +3829,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - The `notice` values `open_a_note` / `clinic_not_set_up` are sent but unread, because the panel recomputes them.
     - Executor recommendation: the two Python aliases collapse freely. Merging a refusal code or dropping a notice value changes protocol v2 and its fixtures, so do that with the Phase 4 write plan's protocol bump, not alone.
     - surface=production (protocol).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's protocol bump`).
   - **[LOW]** SIMP-012 (recorded): `state in (RECORDING, PAUSED)` is spelled at 8 sites:
     - `session.py:724`;
     - `voice_commands.py:145`;
@@ -3758,11 +3839,11 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - The TypeScript variants are `connection.ts:241` and `page.ts:84`.
     - Executor recommendation: a `LIVE_STATES` frozenset in `session.py`. It is behaviour-neutral, but it touches session custody, so it goes to H2a under the routing rule.
     - surface=production (session custody).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Applied (leg stage-9-exec-k12, refactor): `session.CAPTURING_STATES` (named "capturing", since `_live` means any tracked session) at all 9 sites — the 8 listed plus H3a step 6's new one; pinned by the existing suites at each site and `test_session_types.py::test_the_capturing_states_are_recording_and_paused`.
   - **[LOW]** SIMP-013 (recorded): `pipe_client.py` imports `pipe_server.py`'s private Win32 helpers.
     - Executor recommendation: move them to a `win32_pipe.py` seam that both import. The threat model's Chrome-link section names the files, so it moves with them.
     - surface=production (pipe).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's hardening /simplify`).
   - **[LOW]** SIMP-014 (recorded): test-only members in production.
     - `main_window._is_suspend_event` (kept: a test calls it);
     - `session_locked` / `SystemPauseWatch.locked`;
@@ -3774,18 +3855,18 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - the `pipe_lost` signal (no production connection).
     - Executor recommendation: keep the ones that are test seams on purpose (`conn_gen`, `bound_tab`) and remove the rest together with their tests. That is not behaviour-neutral for the suite, so it was not applied here.
     - surface=production (dead or test-only code).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's hardening /simplify`).
   - **[LOW]** SIMP-015 (recorded): oversized modules.
     - `ui/models.py`, about 3.5k lines. Seam: a `ui/chrome_text.py` for the Chrome refusal, pause and notice tables, which SIMP-004/005 want anyway.
     - `ui/main_window.py`: native events, reminders and re-verification.
     - `ui/bridge.py`: the snapshot builders apart from the command handlers.
     - Executor recommendation: split only after SIMP-004/007 land. Each split is a move with no logic change.
     - surface=production (moves logic between modules).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's hardening /simplify`).
   - **[LOW]** SIMP-016 (recorded): LOW-047's code follow-up. `prune_reminders` forgets only indexed sessions, so an unlinked or failed recording's `session_ref` stays until the process ends. It resolves to no command.
     - Executor recommendation: a controller API that lists the live session ids, so the registry prunes to them.
     - surface=production (bridge `session_ref` registry).
-    - Triage: Fix-now → task H2a. /fix decision: Pending.
+    - Triage: Fix-now → task H2a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan`).
 - Consciously left alone:
   - The `encounter.py` "Phase 4's write" docstrings, which already say the next plan.
   - `_is_suspend_event`'s separate existence, because a test calls it.
@@ -3812,6 +3893,10 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
   - 1 record-only item for the draft-write plan.
   - No must-pause: nothing needs the practitioner before commit.
   - Update (leg stage-9-exec-k9, 2026-09-28): SEC-003, SEC-009, SEC-013 and SEC-019 Applied on the practitioner's decisions; 9 remain Pending for H3a (SEC-007, 008, 014, 015, 016, 017, 020, 021, 022). Their review is rounds 63+.
+  - Update (round 67, the scoped `/review-plan`, leg stage-9-exec-k11, 2026-09-28): the 9 have dispositions in task H3a.
+    - Build now: SEC-014 (the label only), SEC-015, 016, 017, 021 and 022, plus round 65's start-up gap.
+    - Needs the practitioner or the host, one step each: SEC-020 and SEC-007.
+    - Deferred: SEC-008.
   - Fix-delta self-check (leg stage-9-exec-k9): PASS. Re-read the bridge hunks (`_run` / `_next` / `_apply_result` / `_on_verified` and the stale-result guard's untouched tags), the `main_window.py` stop and blocker hunks, `pipe_client.unverified_reason`'s check order, and the `page.ts` / `hub.ts` removals.
 - Source: Claude Code security-review (executor leg stage-9-exec-k3, claude-opus-5-5). The portable checklist ran as five read-only lens subagents:
   - A, the Chrome link;
@@ -3874,7 +3959,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - For the bound tab this fails safe (pause). For "another note is focused" it fails open.
     - Executor recommendation: first check on a real Cliniko whether such URLs render a note. Only then collapse repeated slashes and decode percent-encoded digits before `NOTE_PATH`, keeping the id check.
     - surface=production (extension URL parsing).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Pending — the practitioner's step (round 67; two address-bar edits at the next smoke, see task H3a); built only if Cliniko renders either form.
   - **[LOW]** SEC-008 (recorded; seed "a real rate limit", part 1): switching A → B → A while A's check runs throws A's answer away (`encounter.py` `accept`, seq mismatch) and `bridge._finish_task` runs the waiting A again. Fast switching never fills the 60 s reuse.
     - Executor recommendation:
       - store a current-connection, current-rev `Verified` answer in `_recent` even when its run moved on;
@@ -3883,7 +3968,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
       - Test: A → B → A with a gated answer makes one note call.
     - It touches the ledger and bridge that H2a's SIMP-007 consolidates, so do it with or after that.
     - surface=production (bridge / ledger; no user-visible text).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Deferred (round 67; `Revisit by: the draft-write plan's freshness task, with H2a SIMP-007`).
   - **[LOW]** SEC-009 (recorded; seed part 2): a 429 is not honoured.
     - `encounter.py:426` maps `RateLimited` to offline and discards `.reset`, and every new report calls again at once. The rate is unbounded.
     - Cliniko's 200/min is reachable by a script in a Cliniko page (`pushState` loops; the extension reports every URL change) or by a same-user pipe client. A person switching tabs will not normally reach it.
@@ -3925,20 +4010,20 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Executor recommendation: test on the host first. Then use `S:(ML;;NWNRNX;;;ME)`, and have the host require a medium-or-higher, non-AppContainer server.
     - The SDDL is pinned by `test_pipe_server.py`, and this is Task 4.3's surface.
     - surface=production (pipe security).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 4, the label only): `pipe_server.pipe_sddl` → `O:<SID>D:P(A;;GA;;;<SID>)S:(ML;;NWNRNX;;;ME)`. Tests: the SDDL pin, the label read back from the real pipe, and a low-integrity child refused with access denied (skipped by name if such a child cannot run). The host-side integrity check is a Follow-Up Continuation Note for the next Task 4.3 revision.
   - **[LOW]** SEC-015 (recorded; residue named; pre-existing): the single-instance mutex `Global\ClinikoScribe-app-<username>` (`app.py:59-98`) can be created first by ANOTHER standard account, which stops the practitioner's app. A denial of service only.
     - Executor recommendation: put the SID in the name, use a user-only descriptor, and fail open when the existing mutex's owner is not this user.
     - surface=production (start-up).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 5): `app.py` creates the mutex with `O:<sid>D:P(A;;GA;;;<sid>)` (ctypes; the proven last-error read kept), and on "already exists" reads the owner (`_mutex_owner_sid`), failing open only when it is readable and another account's. Name unchanged. Tests +3 (the owner and the protected single-entry DACL; another account's mutex; an unreadable SID keeps the plain guard).
   - **[LOW]** SEC-016 (recorded; docs qualified): `pipe_server.py:480-486, 552-559`. A writer thread that outlives the 5 s join under extreme load could write connection N's taken frame to client N+1. `:554` clears the shared frame even for a stale connection id.
     - Executor recommendation: clear the frame only when the id matches, and do not accept a new client while the old writer lives.
     - Concurrency in the pipe is custody-adjacent, so do it at H3a with a test, not during the smoke.
     - surface=production (pipe).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 3): `_take_frame` (a writer takes and clears only its own connection's frame) and `_join_writer` (every join waits until the writer has ended, logging `writer_slow` once). Tests +2.
   - **[LOW]** SEC-017 (recorded; SEC-002's remainder): any other unexpected end of `PipeServer._serve` (a `GetOverlappedResult` failure, an exception) leaves the Chrome link down with no `set_unavailable` line on the Session screen.
     - Executor recommendation: a `PipeEvents` failure callback, on any exit but stop, that calls `bridge.set_unavailable()`.
     - surface=production (Session screen line).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 2): `PipeEvents.ended`; `_serve` catches any error (logged `serve_failed`, no text), reports a current connection `disconnected(…, "server_failed")` and then `ended()` unless `stop()` asked; the bridge's queued `_ended_q` → `set_unavailable()` (the existing line, text unchanged). Tests +4.
   - **[record-only]** SEC-018 (the write-back freshness seed): confirmed there is NO write path today.
     - `cliniko_client` refuses every method but GET before a connection exists.
     - `writeback_context`, both `MainWindow` write-target entries and `ChromeBridge.live_reverification` are called only from tests.
@@ -3958,20 +4043,20 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
     - Tests: `TestLockFlag` / `TestLockWindow` fakes pass `locked_answer=False`, plus a forged-unlock test.
     - Deferred from this leg because it changes the lock path the practitioner is smoke-testing right now. Apply after P.2 confirms a real unlock's `SessionFlags`. The unlock still resumes nothing; D5 is unchanged.
     - surface=production (lock flag).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, 2026-09-28). The round-67 host step was answered `False` — composer-run from its shell in the practitioner's unlocked Windows session (`OWNERSHIP: gate-disposition key=h3a-sec-020-host-check choice=build`). `system_events.SystemPauseWatch.note_unlock` asks `query_locked()` and keeps the flag (with its lock time) only on `True`; None or a raising query believes the unlock. Tests +5 in `TestLockFlag`; three existing tests now fake a real unlock (`locked_answer=False`), and the lock-dispatch child's registrar gained `query_locked`. The practitioner's live re-check confirms it.
   - **[LOW]** SEC-021 (recorded; seed "sleep during Start", trigger UNCONFIRMED): a `PBT_APMSUSPEND` sent re-entrantly inside `controller.start` would meet IDLE or QUEUED and be lost. This can happen if the PortAudio stream open pumps messages on the GUI thread.
     - Only a sleep that does not lock first is exposed, because the lock is safe here (flag plus a queued pause).
     - Executor recommendation: an additive queued re-check. When a suspend meets a non-live state, a queued `_on_suspended` calls `pause_for(SUSPEND)` after Start returns. It is idempotent and fails safe.
     - Add a live-smoke step: sleep the machine while pressing Start.
     - surface=production (sleep pause).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 6): a suspend that finds no capturing session emits the queued `_suspend_recheck_q` → `_on_suspend_recheck` → `pause_for(SUSPEND)`. Tests +3; two real-dispatch children now expect the extra no-op re-check at IDLE.
   - **[LOW]** SEC-022 (recorded; PLAUSIBLE, found by lens E outside its brief, confirmed by reading): live-transcript posts carry no session tag.
     - `TranscriptScreen.post_live_window` emits a queued signal. The retired session's worker is stopped under `_post_lock` in `_retire_locked`, but a post it emitted BEFORE the stop is still in Qt's queue when the new Start's synchronous `session_started` → `begin_live_view()` runs.
     - That post is then drawn into the NEW session's live view: the previous patient's last words, until the final document replaces them. It is also fed to the spoken-pause and new-consultation detectors, which fails safe (a pause or a warning).
     - The final transcript is unaffected (built from the new session's own audio).
     - Executor recommendation: a per-Start live-view token captured by `_build_live_transcriber`'s `on_window` and checked in both `live_window` slots. It changes the signal's payload and about 13 test call sites, so it goes to H3a.
     - surface=production (the Transcript tab's live view).
-    - Triage: Fix-now → task H3a. /fix decision: Pending.
+    - Triage: Fix-now → task H3a. /fix decision: Applied (leg stage-9-exec-k12, H3a step 7): `TranscriptScreen.live_poster` / `live_segments` and the adopt-at-`begin_live_view` token. One refinement of the round-67 spec: `live_segments` checks the TOKEN only, and the view-is-open check stays in the drawing slot, so the phrase rules keep following the recording's state as before. Tests +3; 13 call sites moved to the poster.
 - Checked and clean:
   - **AuthN/AuthZ:**
     - The host verifies before any frame crosses, and `SECURITY_IDENTIFICATION` applies.
@@ -4313,6 +4398,7 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
   - Recorded, not fixed (pre-existing since Task 4.2, not a regression): the SDDL conversion at `pipe_server.py:395-400` sits OUTSIDE the `try`, so a `pywintypes.error` there would escape `_start_chrome_link` (which catches only `PipeUnavailable`) and stop the app starting. It cannot happen with a SID that has passed `_SID_RE`.
     - Executor recommendation: move the conversion inside the `try` and map its error to `create_failed` (one line), with a monkeypatched test.
     - surface=production (start-up robustness; H3a, with SEC-015/017's start-up items).
+    - Applied (leg stage-9-exec-k12, H3a step 1): the SECURITY_ATTRIBUTES build and the conversion now sit inside the `try` around `CreateNamedPipe`, so a `pywintypes.error` there becomes `PipeUnavailable("create_failed")`. Tests: `test_pipe_server.py::test_a_refused_descriptor_is_a_creation_failure`, plus `test_ui_bridge.py::test_a_refused_descriptor_leaves_a_working_app` (the real server).
 
 ### Round 66 - 2026-09-28 - Confirmation: a deferred Cliniko check is dropped once its note is no longer wanted, independent cross-family codex peer review (pass stage-9.p2)
 
@@ -4322,6 +4408,288 @@ Cap verdict: accept — production-behavioral — both claims verified true but 
 - Scope: Permitted diff and current context, read-only; no tests run. PR-LOW-350 closed across the specified stale reasons; newer same-target reports and clinic-revision replacements retain wanted checks. Live rechecks remain unchanged. `app.py:155–158` catches `PipeUnavailable` and returns normally. Owner-error translation remains unverifiable within the allow-list. Removing the `awaits` guard would fail the four stale-request cases (`test_ui_bridge.py:575,595`); the live-recheck case and two fallback cases intentionally preserve separate behavior and would still pass.
 - Verification counts: 13 claims checked, 12 confirmed, 1 dropped as unverifiable
 - Last reviewed: 2026-09-28
+
+### Round 67 - 2026-09-28 - Scoped `/review-plan` over tasks H2a and H3a (round 56's SIMP-004..016 minus SIMP-006, round 57's open SEC items, round 65's start-up gap)
+
+- Round status: Closed. Plan edits only; no production or test file changed.
+- Source: Claude Code scoped `/review-plan` (executor leg stage-9-exec-k11, claude-opus-5-5).
+  - Full scoped critique: 22 items, including a MED, so no fast path.
+  - Run in one seat, with no subagents.
+  - Headless, so no Step 3 questions: every item was disposed on the brief's four categories.
+- Scope / baseline: `44daa67`.
+  - Read the whole plan context (D1, D4, D5, Task 4.3, Constraint 7, the Follow-Up Continuation Notes) and each item's round 56, 57 or 65 record.
+  - Re-read on the current tree:
+    - `pipe_server.py` (`start`, `_serve`, `_write_loop`, `pipe_sddl`, `current_user_sid`, `process_user_sid`) and `pipe_client.py` (`unverified_reason`, the imports);
+    - `app.py` (the mutex, `_start_chrome_link`);
+    - `system_events.py` (`note_unlock`, `lock_state`, `query_locked`, `lock_state_from_info`);
+    - `ui/main_window.py` (`nativeEvent`, `pause_for`, `_build_live_transcriber`, `_on_session_started`, `_on_live_window`, the checkout re-verification);
+    - `ui/transcript.py` (the live view), `session.py` (the lock, `start`'s live-worker build, the state sets), `ui/bridge.py` (the pipe events, `_one_line`, `_ACTION_CONTROL`);
+    - `encounter.py` (`_display_text`, `NoteRefusal`), `context_rules.PauseReason`;
+    - the three block-reason tables, the two note-refusal tables, the TypeScript `isObject` copies, and each item's test call sites.
+- Lenses:
+  - **Coverage.** Every item named in the brief has one disposition; none was dropped or merged.
+    - SIMP-010's Discard half is already gone (SEC-003, k9).
+    - SIMP-004's third copy is a deliberate desktop wording, already key-pinned.
+    - One sibling surfaced: the checkout re-verification is not under SEC-009's cooldown and spacing. It is recorded under SIMP-007's deferral (one call per practitioner-opened recovered session). No new task.
+  - **Practicality.** Each Build-now step names its files, lines as of `44daa67`, its shape and its tests, and steps 1–3 are ordered because they share `_serve`.
+    - Round 57's recommendation for SEC-020 carried an unstated risk: bad `SessionFlags` would refuse every Resume and Start after the first lock. Neither code nor a suite run can rule that out, so SEC-020 needs one host step instead of a build.
+    - SEC-021 moved the other way: the guard is additive and safe whatever the answer, and a person cannot time the smoke step.
+    - SEC-014 moved to Build now: the label is correct by Windows' documented label rules, and an integration probe proves it.
+    - The host half of SEC-014 extends Task 4.3's (b), so it was split out to a Follow-Up Continuation Note for the practitioner. Not built.
+  - **Simplicity.**
+    - SIMP-004 and 005 become guard tests, not a shared table, because a shared table would change text.
+    - SIMP-012 is named `CAPTURING_STATES`, since `_live` is overloaded in `session.py`.
+    - SEC-015 keeps the mutex name (upgrade continuity), and its owner check alone closes the squat.
+    - SEC-016 uses a join-until-ended rule rather than a new error path.
+    - SEC-017 reuses the existing unavailable line.
+- Proposed adjustments (all applied to the H2a and H3a task lines):
+  - Conflicts with Code / Docs:
+    - SIMP-004's one canonical table would change the desktop's deliberately different wording, so it became guard tests.
+    - SIMP-005's wording differences are per surface, so it became a key-set guard.
+    - SIMP-010's Discard half is moot.
+  - Added for fresh-session handoff: line-anchored shapes, the test lists, the build order, and a new-test estimate (about 28 desktop test items; 32 with SEC-020).
+  - Validation additions: one live re-check pass after the build (badge OK, a second launch refused, the back-to-back live view, and lock/unlock if SEC-020 is built).
+  - Simpler / safer alternative:
+    - SEC-008 is deferred: since SEC-009 and PR-LOW-350 it saves at most one call per A → B → A switch, and it would change the stale-result guard.
+    - SIMP-007 is deferred to the draft-write plan's freshness task, since merging would put the cooldown on the checkout check.
+- Dispositions (22 items):
+  - Build now (9): round 65's start-up gap, SEC-017, SEC-016, SEC-014 (the label), SEC-015, SEC-021, SEC-022, SIMP-004 and SIMP-005.
+  - Build now (refactor) (2): SIMP-012 and SIMP-008.
+  - Deferred (9): SEC-008, SIMP-007, 009, 010, 011, 013, 014, 015 and 016.
+  - Needs the practitioner or the host (2): SEC-020 (one read-only command) and SEC-007 (two address-bar edits).
+- Deferral gate (Step 3.5, headless): every deferral is non-production-impacting, with no dependency, environment variable, migration or deploy config.
+  - They were not auto-disposed as do-the-work. Each is recorded with `Risk if deferred` and `Revisit by`, as the composer's brief directs, and is listed in the handoff for the composer to confirm.
+  - No item needs a practitioner DECISION to build. SEC-017's unchanged line and SEC-014's host half are recorded, not proposed.
+- Amendment discipline: each edit was re-read from disk.
+  - Siblings reconciled:
+    - round 56 and round 57 gained dated Update lines;
+    - the Follow-Up Continuation Notes gained the SEC-014 host note.
+  - Left unchanged:
+    - earlier handoff bullets that say "Next: … scoped `/review-plan`" (historical, superseded by this leg's handoff);
+    - D1, D4, D5 and Task 4.3 (no amendment is needed: every Build-now item stays inside them).
+- Last reviewed: 2026-09-28
+
+### Round 68 - 2026-09-28 - `/review-loop` round 1 of cap 3 over the H2a + H3a build (leg stage-9-exec-k12)
+
+- Round status: Closed (2 LOW, both applied, test-only; LOW-071 added by leg stage-9-exec-k13 from the composer's suite run). Converged at round 1: no CRIT, HIGH or MED.
+- Source: Claude Code `/review-loop`, in-session (executor leg stage-9-exec-k12, claude-opus-5-5), one seat, no subagents.
+- Scope: the k12 working-tree diff over `44daa67`: `pipe_server.py`, `app.py`, `system_events.py`, `session.py`, `encounter.py`, `voice_commands.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/microphone.py`, `ui/transcript.py`, their tests, the new `test_chrome_text_tables.py`, and the threat model, data-flow map and CHANGELOG.
+- Lenses (the composer's brief) and what each found:
+  - **The pipe at Medium integrity.** Clean. A medium process may label its own object at or below its level, and `pipe_sddl`'s `ME` equals it. Chrome starts the host at medium, and the host's client open is unaffected: no-read-up and no-write-up bind only a LOWER caller. The relay and client integration tests run from a medium test process. A failed conversion is now `create_failed`, which reaches the existing unavailable line (pinned end-to-end with the real server).
+    - Named risk: a test shell or app below Medium would fail to create the pipe; the app then runs without the Chrome link, as for any creation failure.
+  - **The mutex owner check.** Clean.
+    - A normal second launch meets our own mutex: the owner reads as this user, so the result stays `(False, 0)`.
+    - An elevated first instance still stamps the explicit user owner.
+    - A failed owner read returns None, and so `(False, 0)`.
+    - An unreadable SID skips both the descriptor and the check: the first launch behaves as before.
+    - `CreateMutexW` returning NULL still fails open, as before.
+    - The descriptor is `LocalFree`d on every path.
+  - **No writer reaches a new client.** Clean.
+    - `_take_frame` matches the connection id under the lock.
+    - `_join_writer` returns only when the writer has ended. It always ends, because each writer wait includes `_closed_event` (set first) and `_stop_event`.
+    - The failure path in `_serve`'s `finally` joins before `CloseHandle`.
+  - **The SEC-021 re-check.** Clean.
+    - It is emitted only when the suspend found the controller not capturing.
+    - `pause_for(SUSPEND)` does nothing at IDLE or QUEUED, and a paused recording is not paused again. So there is no double pause and no pause of a recording that should run.
+    - A lock-then-suspend during Start shows the sleep cue rather than the lock cue. That is cosmetic: both refuse Resume until the practitioner acts.
+  - **The SEC-022 tag.** Clean.
+    - `session_started` is delivered synchronously inside `start()`, so `begin_live_view` adopts the new token before any queued post from the new worker is delivered.
+    - Only posts carrying the old token (or any token when no poster was made) are dropped.
+  - **SEC-020 cannot strand the flag.** Clean.
+    - The flag is kept only on a `True` answer, and it keeps its lock time.
+    - `lock_state`'s 5 s re-check clears it once Windows says unlocked.
+    - None and a raising query believe the unlock, as before.
+  - **The refactors are behaviour-neutral.** Clean.
+    - `CAPTURING_STATES` equals the replaced pairs at all 9 sites, and `_MONITOR_STATES` keeps the same members.
+    - `display_text` has the same body, pinned first by 5 ids computed from the code before.
+  - **Test honesty.** One finding (below). The other new tests are discriminating against the code before:
+    - a default pipe carries no stored label and admits a low-integrity reader;
+    - the old `note_unlock` cleared on any unlock;
+    - the old suspend branch lost a re-entrant suspend;
+    - the old `post_live_window` had no token.
+- Findings:
+  - **LOW-070 (applied): the SEC-015 owner test would pass without the descriptor.** `test_status_and_app.py::test_the_mutex_is_owned_by_this_user`.
+    - On a non-elevated run, a default mutex's owner is also the current user, so the owner assertion alone cannot tell the explicit descriptor from none.
+    - Fix: the test also reads the DACL and asserts `SE_DACL_PROTECTED` and one ACE for the current user. That is the descriptor's own shape, and a default mutex's DACL is neither.
+    - surface=test-only.
+  - **LOW-071 (applied, leg stage-9-exec-k13): two new tests were wrong, not the product.** The composer's k12 run gave 3 failed and 4173 passed, with the app closed.
+    - (a) `test_pipe_server.py::test_the_pipe_carries_a_medium_label_that_refuses_lower_levels` compared the whole SACL string, and Windows read back `S:AI(ML;;NWNRNX;;;ME)`.
+      - `AI` is a descriptor CONTROL flag (SE_SACL_AUTO_INHERITED), not part of the ACE. The object manager sets it when it builds a new object's descriptor.
+      - The ACE is byte-identical to the one `pipe_sddl` sets, and has no `ID` (inherited) flag.
+      - Behavioural proof in the same run: the low-integrity probe PASSED (no skips), so a low-integrity child was refused.
+      - Fix: parse the text. Controls must be `""` or `"AI"`, and the ACE list exactly `(ML;;NWNRNX;;;ME)`: one label ACE, no ACE flags, NW+NR+NX at Medium.
+    - (b) and (c) `test_system_pause.py::TestSuspendDuringStart::test_a_suspend_with_no_recording_pauses_nothing[idle|queued]` asserted `controller.calls == []`. But the window's own setup already records `set_enrolment_blocker` and `set_live_transcriber_factory`.
+      - Fix: snapshot the calls after construction and assert none were added. A suspend that paused (or made any other call) at IDLE or QUEUED still fails the test.
+    - No production change. surface=test-only (harness).
+    - /fix decision: Applied (both).
+- Fix-delta self-check: PASS.
+  - The hunk reads `DACL_SECURITY_INFORMATION` through a handle created with `MUTEX_ALL_ACCESS` (READ_CONTROL included).
+  - `GetAce` returns the pywin32 `((type, flags), mask, sid)` shape for an allowed ACE.
+  - Sibling sweep for the same class (an assertion a default would also satisfy) over the other new tests: none.
+- Last reviewed: 2026-09-28
+
+### Round 69 - 2026-09-28 - H2a + H3a build-now set (pipe hardening, single-instance owner, sleep during Start, live-view tag, checked unlock), independent cross-family codex peer review (pass stage-9.p3)
+
+- Round status: Closed (2 fixed; leg stage-9-exec-k14)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Static review of the specified HEAD-to-781db52 diff and permitted current-code context, H2a/H3a specifications and rounds 67–68; no writes, tests or network.
+- **PR-MED-370** (MED, regression, `desktop/src/scribe_desktop/app.py:177`): A foreign-owned mutex admits multiple instances of this user’s app without any replacement exclusion. While the squatter holds the name, both launches return success without retaining a lock. Each creates its own controller and sweeps the shared session root. The pipe’s first-instance rule only disables the second instance’s Chrome link; desktop recording continues. Custody protection is process-local, so this is unsafe for the single-instance invariant. A normal second launch against this user’s readable mutex remains correctly refused. — Evidence: `"return (True, 0)  # another account's mutex: not our instance"`; `app.py:261` creates `"controller = SessionController(backend, logger=logger)"`, and `app.py:274` calls `"run_sweep()"` before pipe startup. `app.py:237`–239 handles pipe refusal with `"bridge.set_unavailable()"` and `"return None"`. `session.py:1342`–1345 builds protected IDs only from `"self._custody_reservations"` and `"self._live"`. Recommendation: Fix-now — Require a held alternative per-user exclusion before admitting a foreign-mutex fallback; add a two-launch squat regression and reconcile the security documentation. /fix decision: Applied (leg stage-9-exec-k14): `app.acquire_instance_exclusion` — the mutex plus a per-user lock file held with no sharing, and no start without one of them; +8 tests. See the tuples below.
+- **PR-LOW-371** (LOW, docs-only, `CHANGELOG.md:155`): The changelog claims unlock requires Windows confirmation, but unanswered or failed queries deliberately clear the flag. Its unconditional forged-unlock protection claim therefore exceeds the implementation and the threat model’s stated residue. — Evidence: `"A screen-unlock message is believed only if Windows agrees the session is unlocked"`; `system_events.py:326`–330 instead sets `"answer = None"` on exception and retains the flag only under `"if answer is True:"`, otherwise executing `"self._locked_at = None"`. Recommendation: Fix-now — Say that an unlock is rejected when Windows reports locked, while unavailable or failed queries still trust the notification. /fix decision: Applied (leg stage-9-exec-k14): the CHANGELOG line reworded exactly so (docs only).
+- Verification counts: 4 claims checked, 2 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k14)
+
+- **PR-MED-370: CONFIRMED, MED, regression (introduced by SEC-015 in k12).** Fixed.
+  - Evidence, from the k12 code:
+    - `acquire_single_instance_lock` returned `(True, 0)` for a foreign owner (and, as before SEC-015, for a NULL `CreateMutexW`).
+    - `main` treated any `acquired` as a licence to build a `SessionController` and run the sweep.
+    - A second launch meeting the same foreign mutex got `(True, 0)` too, so two controllers ran over one sessions root. The pipe's first-instance rule only removes the second one's Chrome link.
+  - Sibling found in the same class (pre-existing since Phase 2): a NULL `CreateMutexW` (for example another account's mutex with a DACL that refuses this user, which SEC-015's own docstring cites) also started unguarded. The fix covers it.
+  - Design, and why rather than a lock file ONLY in the fallback case:
+    - A fallback-only file leaves a hole. Instance A starts on the file while the name is squatted. The squatter leaves. Launch B then CREATES the mutex fresh and would run beside A.
+    - So `acquire_instance_exclusion` ALWAYS takes the file after the mutex:
+      - mutex refused → `already_running`, unchanged, before the file is touched;
+      - file busy → `already_running`, and a mutex just created is closed again so the name is not pinned;
+      - file held → run, with or without the mutex;
+      - file failed → run on the mutex alone if held (availability of the normal path is unchanged; while our mutex exists no other instance of ours can start: a new launch sees our mutex, or gets our DACL's GA and so no NULL), else `unavailable` → `main` shows "Clinic Scribe could not start. …" and returns 1 before any backend, controller or sweep.
+    - Holding (not probing) the file in the normal path also closes the check-then-open race between a fallback launch and a fresh-mutex launch.
+  - The file:
+    - `%LOCALAPPDATA%\ClinikoScribe\app.lock` (`default_instance_lock_path`, the same base rule as the other per-user folders).
+    - `CreateFileW` with read+write access, share mode 0, `OPEN_ALWAYS`, and no inheritable handle.
+    - `ERROR_SHARING_VIOLATION` is retried 5 × 100 ms (a scanner or indexer holding it briefly), then read as busy.
+    - The file is empty and never deleted, so it holds no data and needs no retention row.
+    - Tests and seams pass a tmp path (the MSIX note in `docs/lessons.md`).
+  - No new dependency; the mutex layer and its name are unchanged.
+  - Tests (+8, `test_status_and_app.py`):
+    - `TestInstanceExclusion` (7):
+      - the normal path holds both and refuses a second launch;
+      - a squatted name admits exactly one (the regression);
+      - the squatter leaving still admits no second instance, and the refused launch un-pins the name;
+      - neither holdable → `unavailable`;
+      - the file alone runs and refuses a second;
+      - the mutex alone with a failed file runs and refuses a second;
+      - the default path is computed without creating anything.
+    - `test_main_refuses_to_start_without_an_exclusion`: exit 1, the cannot-start box, and the backend never touched.
+  - Edited: the mutex-layer test renamed `test_another_accounts_mutex_is_reported_not_held` (its comment says the file then decides); `test_main_refuses_second_instance` and `test_hands_free.py`'s start-up-failure test now patch `acquire_instance_exclusion`, so no test opens the real lock file.
+  - Not provable by the suite: a REAL second Windows account's mutex, and that such an account cannot open or create the file in this user's profile (the profile ACL). Named in the test class and the threat model.
+  - Docs: threat model item 5 (the exclusion, the refusal, the residues: the same-user squat, a scanner beyond the retry reading as "already running", and the SID-less path now backed by the file); data-flow map components row; CHANGELOG.
+- **PR-LOW-371: CONFIRMED, LOW, docs-only.** `system_events.py` `note_unlock` keeps the flag only on `True`; None or a raising query clears it. The CHANGELOG claimed an unconditional check.
+  - Fixed: the line now says an unlock is rejected when Windows reports the session still locked, and is still believed when the query fails or has no answer.
+  - The threat model already says so ("if Windows cannot answer, the unlock is believed as delivered"): checked, unchanged.
+- Cap verdict: accept — one production MED (a regression this pass introduced) fixed with its pre-existing sibling and 8 tests, and one docs LOW; a scoped codex confirmation follows.
+- Fix-delta self-check: PASS.
+  - Every `acquire_instance_exclusion` branch returns handles only when something is held.
+  - The busy branch releases a held mutex (`release_single_instance_lock(0)` is a no-op).
+  - `main` keeps `exclusion` alive to exit.
+  - The already-running text, its exit code (0) and the mutex name are unchanged.
+  - ruff clean; mypy 50 files.
+
+### Round 70 - 2026-09-28 - Confirmation: one instance per user under a foreign-owned mutex (the app.lock exclusion), independent cross-family codex peer review (pass stage-9.p3)
+
+- Round status: Closed (1 fixed; leg stage-9-exec-k15; plus LOW-072, a test-harness fix from the composer's k15 run, leg stage-9-exec-k16)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified six-file fix diff and current context, plus plan Round 69; static confirmation only, with no writes, tests or network.
+- **PR-MED-380** (MED, correctness, `desktop/src/scribe_desktop/app.py:314`): The mutex-only and file-only fallbacks can admit two instances holding different exclusions. Instance A starts with a mutex while the file cannot open. Once the file becomes available, instance B whose `CreateMutexW` fails acquires that file and also starts. A held mutex does not establish that every subsequent mutex-open attempt succeeds; an error is treated as permission to use the other exclusion. Both instances consequently reach the controller and sweep. — Evidence: `app.py:212`–213 returns `"if not handle: return (True, 0)"`; `app.py:314` retains `"tuple(handle for handle in (mutex, lock_file) if handle)"`, and line 317 returns `"InstanceExclusion(\"acquired\", held)"` for either singleton. `desktop/tests/test_status_and_app.py:429` and `:443` test each fallback separately, without their overlapping lifetimes. `docs/security/threat-model.md:168`–169 therefore overclaims `"while our mutex exists, no other instance of ours can start."` Recommendation: Fix-now — Require a common exclusion for every admitted instance, or establish a coordinated fallback protocol; add the overlapping mutex-only/file-only regression and correct the documentation. /fix decision: Applied (leg stage-9-exec-k15, the composer's required design): the lock file is required for every admitted instance, and the mutex admits nothing on its own; +3 tests net. See the tuples below.
+- Verification counts: 3 claims checked, 1 confirmed, 2 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k15)
+
+- **PR-MED-380: CONFIRMED, MED, fix-induced (my k14 design).** Fixed.
+  - Evidence from the k14 code: `acquire_instance_exclusion` returned `acquired` with the mutex alone when `_hold_lock_file` failed, and with the file alone when `acquire_single_instance_lock` gave `(True, 0)`.
+  - The k14 tuples justified the mutex-only branch with "while our mutex exists … a new launch … gets our DACL's GA and so no NULL". That covers only an access-denied NULL. `CreateMutexW` can also fail for other reasons (resource or quota exhaustion, a transient kernel error), and the code maps EVERY NULL to `(True, 0)`.
+  - So codex's sequence is reachable: A starts on the mutex while the file will not open; the file later opens; B's `CreateMutexW` fails; B takes the file and starts beside A. The threat model's sentence overclaimed.
+- The fix, to the composer's required design:
+  - `acquire_instance_exclusion` admits ONLY with the lock file held.
+    - Mutex refused (our own instance) → `already_running`, before the file, exactly as before.
+    - File held → `acquired`, keeping the mutex too when this launch created it (an old mutex-only build still sees the name).
+    - File busy → `already_running`.
+    - File failed for any other reason → `unavailable` → `main` shows "Clinic Scribe could not start" and exits 1 before the controller, the sweep or the pipe.
+    - On every non-admission a mutex this launch created is closed again, so the name is not pinned.
+  - A foreign or refused mutex (`(True, 0)`) neither admits nor refuses; the file decides.
+  - The mutex-layer function is unchanged apart from its docstring (no longer "Fail-open").
+  - Availability trade-off: the normal path now also needs the file. An unopenable `%LOCALAPPDATA%\ClinikoScribe\` refuses the start where k12 and earlier ran on the mutex. That is the composer's "safe over available", and the message names the step (restart, launch again).
+- Tests (`test_status_and_app.py::TestInstanceExclusion`):
+  - Replaced: `test_a_held_mutex_with_a_failed_lock_file_still_starts`, which pinned the old mutex-only admission, became `test_a_held_mutex_with_a_failed_lock_file_refuses_to_start`. That is codex's overlap regression: A with the file unopenable is `unavailable` and un-pins the name; B (mutex failed, file open) is then the only instance and refuses a third launch.
+  - New: `test_a_lock_file_held_by_another_instance_is_already_running[created|foreign_or_failed]`. Whatever the mutex does, a file held by another instance means "already running", and a created mutex is given back.
+  - New: `test_a_killed_instances_lock_is_released_by_windows`. A child process takes the exclusion (a tmp path), the parent is refused, the child is killed, and the next launch starts.
+  - Unchanged: the normal first and second launches, the squatted name, the squatter leaving, neither held, the file alone, the default path, and `main`'s refusal.
+  - Net +3: TestInstanceExclusion goes from 7 to 10.
+  - Every test uses a tmp lock path (the MSIX note).
+- Docs as a class:
+  - threat model item 5 rewritten to the one-exclusion rule and its residue: a same-user squat of either the name or the file, a scanner beyond the retry, and an old build refused by a foreign mutex as always;
+  - data-flow map components row;
+  - CHANGELOG (the SEC-015 sub-bullets and the test count, now desktop +45).
+- Cap verdict: accept — the MED was introduced by the round-69 fix and is closed to a single-exclusion rule with the named regression; pass stage-9.p3's cap is 3, and the next confirmation is peer round 3 of 3.
+- **LOW-072 (applied, leg stage-9-exec-k16): test harness — the killed-instance test killed the launcher, not the holder.** The composer's k15 run gave 1 failed and 4186 passed. `test_a_killed_instances_lock_is_released_by_windows` got `already_running` after `child.kill(); child.wait()`.
+  - Diagnosis confirmed: `sys.executable` is the venv's `python.exe`, a redirector that runs the base interpreter as its CHILD.
+    - The host leg in `test_integration_no_sockets.py` already walked the tree for this reason, and the composer sees the same launcher-plus-interpreter pair behind Chrome's native host.
+    - `kill()` ended only the launcher, and the interpreter holding `app.lock` exited later.
+    - The product is correct.
+  - Fix: the child prints its own pid. The test ends THAT process and waits for it (`OpenProcess` + `TerminateProcess` + `WaitForSingleObject`, 30 s) before the next acquire. The first line is read with a 60 s bound. A `finally` ends the real holder on any failure, then the launcher.
+  - Same-class sweep (every `Popen`/`CreateProcessAsUser` child in the suite):
+    - **Fixed (same root cause, a different shape):** `test_integration_no_sockets.py`'s no-sockets polls of the app, pipe-app, relay and recorder children called `psutil.Process(Popen.pid)`, which is the LAUNCHER. So on this host those polls never looked at the interpreter that could open a socket, a vacuity gap in the offline-contract proof going back to Phase 2.
+      - `assert_no_connections` now walks `[proc, *proc.children(recursive=True)]`: a descendant that exits mid-walk is skipped, and the root vanishing still raises.
+      - Every caller polls while the child is provably live (a marker or a gate), so the interpreter is in the tree.
+      - The host leg's own tree loop now uses the same helper.
+    - **Not the defect:**
+      - `test_pipe_server.py`'s low-integrity probe reads only the exit code, which the launcher passes through. Its control (exit 42) proves the chain.
+      - The lock-dispatch children in `test_system_pause.py` and `test_ui_pause_and_unreviewed.py` run to completion (`subprocess.run`) and assert stdout.
+      - The crash test (`test_crash_kill_mid_recording_then_recover_transcribe_complete`) kills the launcher, and the interpreter dies moments later. Its later assertions (no footer, the sweep keeps it, recovery decrypts, Complete) assert no released handle and tolerate a late death, because recovery accepts any torn tail.
+    - Executor recommendation (not fixed): give the crash test the pid-kill-and-wait shape so "hard mid-recording termination" is exact rather than a job-object kill moments later. surface=test-only.
+  - `docs/lessons.md`: a new entry (the venv launcher; kill and wait on the child's own pid; walk the tree for psutil).
+  - No production change; no count change (4187). surface=test-only (harness).
+  - /fix decision: Applied.
+- Fix-delta self-check: PASS.
+  - Every admitted result holds the file handle.
+  - Every non-admitted result closes a created mutex (`release_single_instance_lock(0)` is a no-op).
+  - `main`'s already-running text, its exit code 0, the cannot-start path's exit code 1, and the mutex name are unchanged.
+  - ruff clean; mypy 50 files.
+
+### Round 71 - 2026-09-28 - Confirmation: one required per-user lock, and the offline proof reaching the real interpreter, independent cross-family codex peer review (pass stage-9.p3)
+
+- Round status: Closed (2 fixed, test-only; leg stage-9-exec-k17). Pass stage-9.p3 accept-closed at peer round 3 of 3; the composer's suite run is the confirmation.
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified seven-file diff and current scoped context, plus plan Round 70; static review only. PR-MED-380 is closed; two test-harness gaps remain.
+- **PR-LOW-390** (LOW, test verification, `desktop/tests/test_integration_no_sockets.py:165`): The socket helper accepts a launcher-only sample when no interpreter descendant is found. Markers prevent polling before initial interpreter startup, but do not guarantee continued presence: the idle-app and pipe-app children merely run for five seconds after READY, without a parent-controlled exit gate. Thus the helper's claim that every caller polls a provably live interpreter is stronger than its checks. — Evidence: line 165 builds `"tree = [proc, *proc.children(recursive=True)]"` without checking for the expected interpreter; lines 169–172 skip vanished descendants. Lines 307–308 use `"print('READY', flush=True)"` followed by `"time.sleep(5)"`; lines 319–323 subsequently poll without an interpreter-presence assertion. Recommendation: Fix-now — Identify the real interpreter in the readiness handshake and require its successful inspection during mandatory polls; gate the timed children until polling finishes, keeping optional post-exit samples explicitly separate. /fix decision: Applied (leg stage-9-exec-k17): every mandatory poll now requires the child-reported interpreter pid to be in the tree and inspected; the timed children are gated on stdin. See the tuples.
+- **PR-LOW-391** (LOW, test cleanup, `desktop/tests/test_status_and_app.py:570`): Failure before recording the holder PID bypasses real-child cleanup and falls back to killing only the launcher. A readiness timeout or non-acquired response reaches this path while the interpreter may remain alive. Additionally, an exception from holder termination prevents the subsequent launcher cleanup. — Evidence: line 560 initializes `"holder_pid = 0"`; line 564 asserts `"words[:1] == [b'acquired']"` before line 565 assigns the PID. Cleanup uses `"if holder_pid:"` followed by `"_terminate_and_wait(holder_pid, 30)"`, then `"child.kill()"` at line 572. The child unconditionally executes `"time.sleep(120)"` at line 354. Recommendation: Fix-now — Provide process-tree cleanup even before the PID handshake succeeds, and use nested finally blocks so a holder-termination failure cannot bypass launcher cleanup. /fix decision: Applied (leg stage-9-exec-k17): the launcher's descendants are ended (and waited for) in a nested `finally` on every path, before or after the handshake, and the launcher's own kill sits in the outer `finally`. See the tuples.
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-09-28
+
+#### LEG 1 verified tuples (executor, leg stage-9-exec-k17)
+
+- **PR-LOW-390: CONFIRMED, LOW, test verification (introduced by my k16 fix).**
+  - k16's `assert_no_connections` walked `[root, *children]`, skipped vanished descendants, and never checked that an interpreter was among them. A launcher-only sample passed.
+  - The Step-10 idle-app child (`time.sleep(5)`), the pipe-app child (a 5 s loop) and the relay's app child (a 60 s loop) ran on timers, with no parent-controlled gate.
+  - Fixed, test-only, in `test_integration_no_sockets.py`:
+    - **The interpreter's own pid is reported by the child:**
+      - `_write_child`'s prelude prints `PID <os.getpid()>` as the first line;
+      - the Step-10 and pipe-app children print `READY <pid> …`;
+      - the relay's host child writes `PID <pid>` to stderr (its stdout is the framed channel).
+      - The entry-point host (`scribe-host.exe`, which cannot print) is resolved to the one Python leaf of its launcher chain (`_leaf_interpreter`; a hidden `conhost.exe` is ignored). It fails unless exactly one exists.
+    - **Mandatory polls:** `assert_no_connections(tree: _ChildTree, label)` FAILS when that pid is not in the tree, or exits mid-poll ("the poll would have checked only the launcher"). It passes only after inspecting it. The root vanishing still raises.
+    - **Optional samples:** the three post-Complete samples now call `_sample_after_exit`, which is separate, tolerant, and never a substitute.
+    - **Gates:** the three timed children block on stdin — the idle app with `sys.stdin.readline()`, the two Qt apps with an event set by a stdin-reader thread, and a 120 s safety cap. They stay alive until the parent kills them in `finally`. The kill is the release: nothing asserts a Qt-teardown exit code, as before. Every parent-side read is bounded (`_read_line_within`, 60–90 s). The Step-13 recorder and prose children were already gated.
+- **PR-LOW-391: CONFIRMED, LOW, test cleanup (introduced by my k16 fix).**
+  - Before the pid handshake, a failure fell back to `child.kill()`, which ends only the launcher (the interpreter would sleep out its 120 s). A raising `_terminate_and_wait` skipped the launcher's kill.
+  - Fixed in `test_status_and_app.py::test_a_killed_instances_lock_is_released_by_windows`:
+    - A `psutil.Process` for the launcher is taken right after `Popen`. Its pid cannot be reused while `child` holds the process handle.
+    - The inner `finally` runs `_end_descendants(launcher, 30)`: it kills every descendant and waits for each (`psutil.wait_procs`, bounded), and fails if any survives. That covers the pre-handshake case.
+    - The OUTER `finally` kills and waits on the launcher, so a failing descendant kill never skips it.
+    - The success path still ends the holder by its reported pid and waits before the next acquire.
+  - psutil is an existing dev dependency; nothing new.
+- No production change; no count change (4187).
+- Cap verdict: accept — test-harness — both LOWs are confirmed, fix-induced by leg k16 and fixed test-only. Pass stage-9.p3 reached its cap of 3 and is accept-closed; the composer's suite run is the confirmation.
+- Fix-delta self-check: PASS.
+  - Every mandatory `assert_no_connections` call now takes a `_ChildTree` whose pid came from the child itself or from the host's single Python leaf.
+  - No `psutil.Process(Popen.pid)` is polled bare.
+  - The children's first-line additions break no marker (`_PipeReader` matches by prefix, and no test asserts a first line).
+  - The stub child's prelude adds only `os` (already loaded at start-up) and a print.
+  - ruff clean; mypy 50 files.
 
 ## Tasks
 Every task's verification is the per-phase suite in `Validation / Verification` plus the test classes it names. `[executor: premium-only]` marks custody, concurrency, network-surface and security-doc work. The tier is entirely premium, so the labels record where care concentrates rather than routing.
@@ -5054,13 +5422,82 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - Desktop: 4111 collected, 4110 passed + 1 skipped while `scribe-app` runs.
       - Extension: 297.
       - `npm run build` is required, because `panel.ts`, `context.ts` and `connection.ts` changed.
-- [ ] 🟥 H2a: round 56's recorded simplifications (SIMP-004..016) — a scoped `/review-plan` on this task AFTER the P.2 live smoke, then `/fix` in the order it sets. Suggested order:
-  - SIMP-006, the practitioner's product-name choice (recommended: "Clinic Scribe").
-    - **DECIDED 2026-09-28 by the practitioner ("Go with Clinic Scribe") and DONE in leg stage-9-exec-k8.** The display name is "Clinic Scribe" everywhere a person sees it, and the extension is "Clinic Scribe Companion". Every internal `ClinikoScribe` identifier is byte-identical: the `%LOCALAPPDATA%\ClinikoScribe` folders, the mutex, the pipe, the Credential Manager prefix, the DPAPI key descriptions, `INSTALL_DIR`, the native-host name and the extension id. `desktop/tests/test_display_name.py` guards both halves.
-  - Then SIMP-004 / 005, the canonical text tables pinned by a both-mirrors test.
-  - Then SIMP-007, one re-verification pipeline.
-  - Then the rest: 008–016.
-  - SIMP-011's protocol-code merges wait for the write plan's protocol bump.
+- [x] 🟩 H2a: round 56's recorded simplifications (SIMP-004..016). **Hardened by the round-67 scoped `/review-plan` (leg stage-9-exec-k11, 2026-09-28).** Every item has exactly one disposition below. The Build-now items are steps 8–10 of H3a's build order, after the security items.
+  - Done (leg `stage-9-exec-k12`, 2026-09-28; `/review-loop` round 68; suites composer-run):
+    - Built: SIMP-004 and SIMP-005 as guard tests (`test_chrome_text_tables.py`, +4; the key sets matched, no text changed); SIMP-012 `session.CAPTURING_STATES` at all 9 sites (+1 pin); SIMP-008 `encounter.display_text` behind `_one_line` (pinned first, +5 ids). SIMP-006 was done in k8.
+    - Deferred, each non-production-impacting: SIMP-007 (`Revisit by: the draft-write plan's freshness task`), SIMP-009 and SIMP-011 (`Revisit by: the draft-write plan's protocol bump`), SIMP-010 (`Revisit by: the next change to hub.ts's message parsing`), SIMP-013, SIMP-014 and SIMP-015 (`Revisit by: the draft-write plan's hardening /simplify`), SIMP-016 (`Revisit by: the draft-write plan`).
+    - Round 56's `/fix decision` fields are filled.
+  - SIMP-006, the product name: **DECIDED 2026-09-28 by the practitioner ("Go with Clinic Scribe") and DONE in leg stage-9-exec-k8.**
+    - The display name is "Clinic Scribe" everywhere a person sees it, and the extension is "Clinic Scribe Companion".
+    - Every internal `ClinikoScribe` identifier is byte-identical: the `%LOCALAPPDATA%\ClinikoScribe` folders, the mutex, the pipe, the Credential Manager prefix, the DPAPI key descriptions, `INSTALL_DIR`, the native-host name and the extension id.
+    - `desktop/tests/test_display_name.py` guards both halves.
+  - **Build now** (guard tests only, no production change):
+    - **SIMP-004**, the block-reason text.
+      - Re-read on the current tree: the two Chrome copies are identical today (`page.ts:39` `REASONS` and `panel-view.ts:66` `BLOCK_REASONS`).
+      - The desktop `ui/models.py:439` `PAUSE_CUES` is DELIBERATELY worded differently ("Paused - … in Chrome", plus `hotkey` and `spoken`). It is already key-pinned to `PauseReason` (`test_ui_models.py:1652`).
+      - One canonical table for all three would change what the practitioner reads, so it is not proposed.
+      - Build a new `desktop/tests/test_chrome_text_tables.py`: a text-matching reader in the style of `test_display_name.py`.
+        - It finds `const <NAME>` through the closing `};` in the TypeScript file and takes every `key: "value",` line, skipping `//` lines.
+        - It FAILS on any other line inside the block, so a multi-line value cannot slip past.
+      - Test 1: `page.ts` `REASONS` equals `panel-view.ts` `BLOCK_REASONS`, keys and text.
+      - Test 2: their keys are exactly `{r.value for r in PauseReason} - {"hotkey", "spoken"}`, since those two never draw a block (`context_rules.py:66`).
+    - **SIMP-005**, the note-refusal text.
+      - The wording differs by surface on purpose: the panel must name "Clinic Scribe's Clinics tab", while the desktop IS the app. No text changes.
+      - Build in the same file:
+        - Test 3: `panel-view.ts:51` `NOTE_REFUSALS` keys are exactly `{r.value for r in NoteRefusal}` (`encounter.py:274`).
+        - Test 4: `ui/models.py:235` `NOTE_REFUSAL_REASONS` covers the same set.
+      - A code added on one side then fails the suite, instead of reading "no reason given" in the panel.
+      - If a key set differs at build time, stop and record it. Do not edit any text.
+  - **Build now (refactor)** (behaviour-neutral, test-pinned):
+    - **SIMP-012**, one name for the two capturing states.
+      - `session.py`: add `CAPTURING_STATES: frozenset[SessionState] = frozenset({SessionState.RECORDING, SessionState.PAUSED})` beside `ACTIVE_STATES` (:124), with a one-line comment.
+      - Its name is "capturing", not round 56's "LIVE", because `_live` and `_LiveSession` in `session.py` mean any tracked session.
+      - Replace the 8 spellings:
+        - `session.py:724`;
+        - `voice_commands.py:145`;
+        - `ui/bridge.py:551`, `:586` and `:637`;
+        - `ui/main_window.py:925` and `:1073`;
+        - `ui/microphone.py:38`;
+        - plus H3a step 6's new site, if that step landed first.
+      - The TypeScript two-value checks stay (round 56).
+      - Pinned by the existing tests at each site: `test_session.py`'s finish-state tests, `test_voice_commands.py`, `test_ui_bridge.py`'s pause, resume and live-display tests, `test_hands_free.py`'s live-window gate, the close guard's test, and the microphone screen's tests.
+      - Plus 1 new pin in `test_session.py`: `CAPTURING_STATES == {RECORDING, PAUSED}` and `CAPTURING_STATES < ACTIVE_STATES`.
+    - **SIMP-008**, one display-text cleaner.
+      - `encounter.py:396` `_display_text` becomes the public `display_text`, with the same body; `_patient_name` is updated.
+      - `ui/bridge.py:184` `_one_line` becomes `return display_text(text)[:limit] or fallback`.
+      - Why nothing changes: the two category sets are equal (`Cc Cf Cs Zl Zp`), and the cut already follows the collapse.
+      - Add the pin FIRST, then refactor: a `test_ui_bridge.py` test of `_one_line`, parametrised over 5 ids (a lone surrogate, U+2028, a NUL, an over-limit string, and an all-control string, which gives the fallback). Its expected values are computed from TODAY's code.
+      - Also pinned by `test_encounter.py::test_a_lone_surrogate_in_a_name_becomes_a_space`.
+  - **Deferred** (each with `Risk if deferred` · `Revisit by`):
+    - **SIMP-007** (MED): the two re-verification pipelines stay separate, for three reasons.
+      - A shared helper cannot live in the bridge: the checkout re-verification (`ui/main_window.py:1154-1212`) must work with no Chrome link, and tests build a window without one.
+      - The two stale guards differ on purpose: the ledger's tags, and the checkout's request identity.
+      - Merging would put SEC-009's cooldown and spacing on the practitioner-opened checkout check, which is a behaviour change. Today that check makes one call per recovered session opened, and a 429 there reads as offline.
+      - `Risk if deferred: maintainability` (two stale-result guards could diverge; each is pinned by its own tests) · `Revisit by: the draft-write plan's freshness task`. The Follow-Up Continuation Notes already say to wire one source there, not add a third.
+    - **SIMP-009**: ids, hosts, limits and the consent literal.
+      - Every copy fails closed: a narrower copy refuses and never admits. The consent literal is pinned by the `command__start*` fixtures.
+      - A shared module would also have to leave `cliniko_client.py` out, because of the TID251 pin.
+      - `Risk if deferred: maintainability` · `Revisit by: the draft-write plan's protocol bump`.
+    - **SIMP-010**: `isObject` in `hub.ts:114` and `page.ts:74`, beside `protocol.ts:206` `isPlainObject`.
+      - These are three identical three-line guards.
+      - The page copy stays on purpose, because the page script is injected on its own.
+      - The Discard arm/disarm half is gone: SEC-003 removed the page's Discard (k9).
+      - `Risk if deferred: minor` · `Revisit by: the next change to hub.ts's message parsing`.
+    - **SIMP-011**: protocol-shaped duplicates.
+      - `native_host.py:84` `RELAYED_TYPES` and `INBOUND_TYPES` are two policies (what the host relays, and what the pipe accepts) that happen to match.
+      - `ui/bridge.py:170` `_ACTION_CONTROL` limits which names reach `getattr(controls, …)` (`:886`).
+      - The refusal-code merge and the notice drop change protocol v2.
+      - `Risk if deferred: minor` · `Revisit by: the draft-write plan's protocol bump`.
+    - **SIMP-013**: `pipe_client.py:58` imports `pipe_server`'s private helpers.
+      - This is layering, not duplication: a rename breaks the import, and the suite fails at once.
+      - `Risk if deferred: maintainability` · `Revisit by: the draft-write plan's hardening /simplify`, or the next pipe change beyond H3a.
+    - **SIMP-014**: test-only members in production; the `pipe_lost` signal has no production connection.
+      - `Risk if deferred: minor` · `Revisit by: the draft-write plan's hardening /simplify`.
+    - **SIMP-015**: splitting `ui/models.py`, `ui/main_window.py` and `ui/bridge.py`. These are large moves.
+      - `Risk if deferred: maintainability` · `Revisit by: the draft-write plan's hardening /simplify, before that plan adds to main_window.py`.
+    - **SIMP-016**: `prune_reminders` keeps an unlinked or failed recording's `session_ref` until the process ends.
+      - That is one short string per recording, and a stale ref resolves to no command: the controller's live-session check refuses it.
+      - `Risk if deferred: minor` · `Revisit by: the draft-write plan`, which keys the write by session.
 - [x] 🟩 H3: `/security-review` — log findings; same impact-tiered routing
   - Done (leg `stage-9-exec-k3`, 2026-09-28; round 57; suites composer-run):
     - 22 findings: 21 LOW + 1 record-only. No CRIT, HIGH or MED; no must-pause.
@@ -5074,24 +5511,191 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - Desktop: 4119 collected, 4118 passed + 1 skipped while `scribe-app` runs.
       - Extension: 299.
       - `npm run build` is required, because `page.ts` changed.
-- [ ] 🟥 H3a: round 57's recorded security items — a scoped `/review-plan` on this task AFTER the P.2 live smoke (together with H2a where they touch the same code), then `/fix`.
+- [x] 🟩 H3a: round 57's recorded security items, plus round 65's start-up gap. **Hardened by the round-67 scoped `/review-plan` (leg stage-9-exec-k11, 2026-09-28).** Every open item has exactly one disposition below.
+  - Done (leg `stage-9-exec-k12`, 2026-09-28; `/review-loop` round 68; suites composer-run):
+    - Built, steps 1–7 in order: round 65's start-up gap (+2), SEC-017 (+4), SEC-016 (+2), SEC-014's label (+2; the low-integrity probe skips by name where such a child cannot start), SEC-015 (+3), SEC-021 (+3), SEC-022 (+3; refinement: `live_segments` checks the token only and the drawing slot keeps the view-open check, so the phrase rules are unchanged). Plus SEC-020 (+5), built on the host answer `False` (`OWNERSHIP: gate-disposition key=h3a-sec-020-host-check choice=build`).
+    - With H2a's steps 8–10: desktop +34 → 4176 passed with the app closed.
+    - Deferred: SEC-008 (`Revisit by: the draft-write plan's freshness task, with H2a SIMP-007`). SEC-014's host half is a Follow-Up Continuation Note for the next Task 4.3 revision.
+    - Practitioner steps still owed, at the next smoke: SEC-007's two address-bar edits (built only if Cliniko renders either form), and the live Win+L → sign in → Resume re-check that confirms SEC-020.
+    - Round 57's and round 65's `/fix decision` fields are filled.
   - Needs the practitioner at the review — **all four DECIDED 2026-09-28 (each the recommended option, `OWNERSHIP: gate-disposition key=h3a-sec-…`) and DONE in leg stage-9-exec-k9 (round 57 `/fix decision: Applied`; review rounds 63+):**
     - [x] SEC-003: Discard off the page block (D1 addendum).
     - [x] SEC-009: a 60 s cooldown after a 429 and 1 s call spacing (D4 addendum).
     - [x] SEC-013: the pipe-owner check (Task 4.3 extended).
     - [x] SEC-019: enrolment stops on lock and sleep (D5 addendum).
-  - Needs a host check first:
-    - SEC-014: a low-integrity open of the pipe.
-    - SEC-007: whether Cliniko serves the odd URL forms.
-    - SEC-020: a real unlock's `SessionFlags`, confirmed during P.2.
-    - SEC-021: sleep while pressing Start, added as a smoke step.
-  - Code with tests:
-    - SEC-008 (with H2a SIMP-007);
-    - SEC-015;
-    - SEC-016;
-    - SEC-017;
-    - SEC-022 (the live-view token).
-    - Round 65's recorded start-up item: `pipe_server.py` `start`'s SDDL conversion outside the `try` (map its error to `create_failed`; with SEC-015/017).
+  - **Build order.** H2a's items are included as steps 8–10.
+    - Each step is independently testable and lands with its own tests.
+    - One `/fix` leg may take several steps, but steps 1–3 must stay in this order, because all three change `pipe_server._serve` / `start`.
+    - Line numbers are as of `44daa67`.
+    1. **Round 65's start-up gap.**
+       - `pipe_server.py:395-400`: move the `SECURITY_ATTRIBUTES` build and `ConvertStringSecurityDescriptorToSecurityDescriptor` inside the `try` that wraps `CreateNamedPipe` (:402).
+       - A `pywintypes.error` there then raises `PipeUnavailable("create_failed")`, like any other creation failure. Nothing else changes.
+       - Tests (+2):
+         - `test_pipe_server.py::TestFaults`: monkeypatch `pipe_server.win32security.ConvertStringSecurityDescriptorToSecurityDescriptor` to raise. `start()` raises `PipeUnavailable` with `create_failed`, starts no thread, and leaves the name free.
+         - `test_ui_bridge.py::TestPipeUnavailableFallback`: a third id, `sddl_rejected`, with the same monkeypatch through `app._start_chrome_link`. The link reads unavailable, and a desktop Start reaches the controller.
+    2. **SEC-017: the serve loop ends without telling anyone.**
+       - `pipe_server.py`: `PipeEvents` gains `def ended(self) -> None: ...`, meaning the server stopped serving for a reason other than `stop()` and the name is released.
+       - `_serve` (:467) tracks two things:
+         - the current `conn_id`, which is None between clients and set back to None right after `disconnected` is reported;
+         - whether the end was REQUESTED: the `reason == "stopped"` return, or `_await_client` returning False while `WaitForSingleObject(self._stop_event, 0)` is signalled.
+       - Any exception in the loop is caught (`# noqa: BLE001`), logged as `pipe_server state=serve_failed` with NO exception text, and ends the loop.
+       - The `finally` does these in order:
+         1. If a connection was current: set `_closed_event` and join its writer (step 3's rule applies once built).
+         2. `CloseHandle`, as today.
+         3. Report `disconnected(conn_id, "server_failed")`, if a connection was current.
+         4. Unless the end was requested: log `pipe_server state=ended` and call `ended()`.
+         - Every event call in the `finally` is wrapped, so none can raise out of the thread.
+       - `ui/bridge.py`:
+         - `ended()` runs on the pipe thread and only emits a new queued `_ended_q`.
+         - `_on_ended` calls `set_unavailable()`. Widen its docstring to "could not be created, or stopped".
+         - A current connection was already reported disconnected, so a linked recording has already paused with `pipe_lost` through the existing `_on_disconnected`.
+       - The line shown is the EXISTING `CHROME_UNAVAILABLE_LINE`, with unchanged text.
+         - Recorded, not proposed: its cause clause ("another program is using its channel") is already not the cause for `create_failed` either.
+         - Its advice is right for both: restart, and the Session tab still records.
+         - Rewording it is the practitioner's call, if they want it.
+       - Tests (+4):
+         - `test_pipe_server.py`:
+           - a connect failure (monkeypatch `ConnectNamedPipe` to raise a non-benign `pywintypes.error`) ends the server, calls `ended()` once, and leaves the name free;
+           - `stop()` never calls `ended()`;
+           - an exception mid-connection (monkeypatch `PipeServer._read_loop` to raise) reports `disconnected(1, "server_failed")` and then `ended()`, in that order.
+           - `Recorder` (:80) gains `ended`.
+         - `test_ui_bridge.py`: after `bridge.ended()` and processed events, the Session screen shows `CHROME_UNAVAILABLE_LINE`, and `publish()` sends nothing.
+    3. **SEC-016: a slow writer and the next client.** `pipe_server.py`:
+       - `_write_loop` (:554) takes the frame through a new `_take_frame(conn_id) -> bytes | None`.
+         - Under `_lock`, it returns and clears `_mailbox.frame` ONLY when `_mailbox.conn_id == conn_id`.
+         - For another id it returns None and leaves the frame alone. Today, :563 clears the current client's frame when a stale writer wakes.
+       - `_serve`: every writer join (the normal path at :486 and step 2's failure path) waits until the writer has ENDED before the pipe is disconnected, reset or closed.
+         - Call `writer.join(_JOIN_TIMEOUT_S)`. If the writer is still alive, log `pipe_server state=writer_slow` once and keep joining in `_JOIN_TIMEOUT_S` steps.
+         - This always ends:
+           - every writer wait includes `_closed_event`, which is set before the join, and `_stop_event`;
+           - `WriteFile` and `GetOverlappedResult` do not block at those points;
+           - so a live writer is only one that has not yet been scheduled.
+       - Result: no new client is accepted, and the handle is never disconnected or closed, while an old writer lives. Frame N can never reach client N+1.
+       - Tests (+2):
+         - `_take_frame` leaves another connection's frame and takes (and clears) its own. A unit test with no pipe: build the server and set `_mailbox`.
+         - A slow writer delays the next client.
+           - Monkeypatch `pipe_server._JOIN_TIMEOUT_S` to 0.05, and `PipeServer._write_loop` to a function that waits on a `threading.Event` and ignores `_closed_event`.
+           - Client 1 connects and closes, then client 2 connects.
+           - The `Recorder` shows no `connected(2)` until the event is set, and then it does.
+    4. **SEC-014: the pipe's integrity label.**
+       - `pipe_server.py:166` `pipe_sddl` becomes `O:{sid}D:P(A;;GA;;;{sid})S:(ML;;NWNRNX;;;ME)`: a mandatory label at Medium, with no-write-up, no-read-up and no-execute-up.
+       - A lower-integrity process of this user then cannot open the pipe at all. Today the implicit label blocks writes only, so such a process could open it read-only, receive `state` (the patient name included) and hold the only slot.
+       - Why this is safe for the real host: a medium process may set a label at or below its own level, and Chrome starts native hosts at medium.
+       - The DACL, the owner and every host check are unchanged. Update the docstring.
+       - Tests (+2, and 1 edited):
+         - Edited: the SDDL pin (`test_pipe_server.py:226`).
+         - New: the real server pipe carries the label. `GetSecurityInfo(server._handle, SE_KERNEL_OBJECT, LABEL_SECURITY_INFORMATION)` gives one `SYSTEM_MANDATORY_LABEL_ACE_TYPE` (0x11) ACE, with mask 0x7 and SID `S-1-16-8192`.
+         - New: the low-integrity probe, an integration test.
+           - It is skipped under `SCRIBE_SKIP_INTEGRATION`, and skipped by name when the child cannot be started.
+           - Duplicate this process's token as a primary token (`DuplicateTokenEx`), and set its `TokenIntegrityLevel` to `S-1-16-4096` with `SE_GROUP_INTEGRITY`.
+           - Start `sys.executable -c` with that token (`CreateProcessAsUser`). The child runs `win32file.CreateFile(<name>, GENERIC_READ, 0, None, OPEN_EXISTING, 0, None)` and exits 0 on success, or with the Windows error code.
+           - Assert exit code 5 (access denied). Use the exit code only: a low-integrity child cannot write a file the test could read.
+         - The existing relay and client tests, run from a medium test process, prove the host still connects.
+       - Not in this item: the second half of round 57's recommendation, where the HOST requires a medium-or-higher, non-AppContainer server.
+         - That extends Task 4.3's (b) check set, which is the practitioner's to confirm, as SEC-013 was.
+         - With the label in place, its only remaining case is a low-integrity process that creates the pipe name BEFORE the app starts. That is the same-user residue (2).
+         - Recorded as a Follow-Up Continuation Note for the next Task 4.3 revision; not built here.
+    5. **SEC-015: another account squatting the single-instance mutex.** `app.py`:
+       - Keep the name `Global\ClinikoScribe-app-<username>`. It is an identifier, and a changed name would let an old build and a new build run together during an upgrade.
+       - `acquire_single_instance_lock` (:75) creates the mutex with an explicit descriptor, `O:<sid>D:P(A;;GA;;;<sid>)`.
+         - The SID is the current user's, from `pipe_server.current_user_sid()`.
+         - If that raises `PipeUnavailable`, there is no SID: create the mutex as today, with no descriptor, and skip the owner check.
+         - Use pywin32 (`win32event.CreateMutex` with `win32security.SECURITY_ATTRIBUTES`) or ctypes. Keep the `(bool, int)` return, the int handle that `main` keeps open, and every fail-open branch.
+       - On `ERROR_ALREADY_EXISTS`:
+         - Read the existing mutex's owner with a new `_mutex_owner_sid(handle) -> str | None` (`GetSecurityInfo` with `OWNER_SECURITY_INFORMATION`), then close the handle.
+         - Return `(True, 0)` (fail open, as for any failure today) when the SID is known, the owner is readable, and the owner differs.
+         - Otherwise return `(False, 0)`, as today.
+         - A squat with a restrictive DACL already fails open, because `CreateMutexW` returns NULL.
+         - With the explicit owner, an elevated instance's mutex is still owned by the user, so it still refuses a second launch.
+       - Tests (+3, `test_status_and_app.py` beside :227):
+         - the created mutex's owner is the current user;
+         - a mutex whose owner reads as another SID (monkeypatch `app._mutex_owner_sid`) does not stop the app: `(True, 0)`;
+         - with the SID unreadable (monkeypatch `app.current_user_sid` to raise `PipeUnavailable`), the second acquire is still refused.
+    6. **SEC-021: a suspend delivered inside `controller.start`.**
+       - `ui/main_window.py`, the `nativeEvent` suspend branch (:579): after `pause_for(SUSPEND)` and `on_stop()`, check the controller's state.
+         - If it is not RECORDING or PAUSED (`CAPTURING_STATES`, once H2a SIMP-012 lands), emit a new queued `_suspend_recheck_q`.
+         - Its slot calls `pause_for(PauseReason.SUSPEND)` again.
+       - Why it is lost today: the controller's lock is an `RLock` (`session.py:417`), so a message delivered re-entrantly inside `start()` reads the OLD state and does nothing. The queued call runs after `start()` returns, and pauses the new recording.
+       - It is idempotent and fails safe: at IDLE or QUEUED it does nothing, and a recording already paused is not paused again.
+       - Why build it rather than first test whether PortAudio pumps messages: the guard is additive and safe whatever the answer, and a person cannot reliably time a sleep inside a Start press.
+       - Tests (+2, `test_system_pause.py`, driving `_send` (:132) in-process):
+         - A `FakeController` whose `start()` delivers `PBT_APMSUSPEND` through `_send` before it switches to RECORDING. After `start()` returns and events are processed, the recording is paused with the sleep cue, once.
+         - A suspend at IDLE, with no Start, pauses nothing and changes no state.
+    7. **SEC-022: the live view's session tag.** `ui/transcript.py` and `ui/main_window.py`:
+       - `TranscriptScreen.live_poster() -> Callable[[tuple[TranscriptSegment, ...]], None]` replaces `post_live_window`.
+         - It takes the next token from a per-screen counter and remembers it as the PENDING token.
+         - It returns a function that emits `live_window` with `(token, segments)`. That function only emits, so it is thread-safe.
+       - `begin_live_view()` adopts the pending token as the current one and clears the pending one.
+         - If no poster was made for this Start, the current token is None, and None matches nothing.
+       - A new `live_segments(payload) -> tuple[TranscriptSegment, ...] | None` returns the segments only while the view is live and `payload[0]` is the current token.
+         - `_on_live_window` (:306) and `MainWindow._on_live_window` (:1065) both go through it.
+         - So a stale post is neither drawn nor fed to the spoken-pause and new-consultation rules.
+       - `MainWindow._build_live_transcriber` (:870) passes `on_window=self.transcript_screen.live_poster()`.
+         - It is called inside `start()` (`session.py:647-653`), before `session_started` → `begin_live_view()`, so the order holds.
+       - Tests (+3):
+         - a post from the previous Start's poster, delivered after the new `begin_live_view`, draws nothing, and the new poster's post does;
+         - the same stale window saying "scribe pause" does not pause the new recording (`test_hands_free.py`);
+         - a Start that made no poster draws nothing from an old one.
+       - About 15 call sites move to the poster:
+         - `test_ui_screens.py:2517-2585`, 7 sites;
+         - `test_hands_free.py:703-763`, 8 sites, where a small helper wraps `(token, segments)`.
+    8. **H2a SIMP-004 and SIMP-005**: the guard tests (+4).
+    9. **H2a SIMP-012**: `CAPTURING_STATES` (+1).
+    10. **H2a SIMP-008**: `display_text` (+5 ids, pin first).
+  - **Needs the practitioner or the host.** One step each. Report only the words asked for: no names, ids or addresses.
+    - **SEC-020: the unlock checked with Windows.**
+      - Code cannot answer it. If this machine's `SessionFlags` read LOCKED while unlocked, the change would refuse every Resume and Start after the first lock until a restart, because the 5 s re-check would get the same wrong answer.
+      - A test cannot answer it either: the screen may be locked while a suite runs.
+      - **Step:** with the screen unlocked, open a normal PowerShell in the project folder, run `.venv\Scripts\python.exe -c "from scribe_desktop.system_events import Win32SystemEventRegistrar as R; print(R().query_locked())"`, and report the one word it prints.
+      - If it prints `False`, build:
+        - `system_events.py:313` `note_unlock` asks `self._registrar.query_locked()`; an exception counts as None.
+        - It returns WITHOUT clearing the flag only on `True`. `False` or None clears it, as today.
+        - A kept flag keeps its lock time, so `lock_state`'s re-check clears it once Windows agrees. A real unlock whose query races the message therefore heals itself at the next Resume or Start, once the lock is 5 s old.
+        - Nothing resumes; D5 is unchanged.
+        - Tests (+4, `TestLockFlag`):
+          - a forged unlock while Windows says locked keeps the flag;
+          - an unlock Windows confirms clears it;
+          - None and a raising query believe the unlock;
+          - a kept flag clears at `lock_state` after `LOCK_RECHECK_AFTER_SECONDS`, once Windows says unlocked.
+          - Every existing test that sends a real unlock and expects it to clear must pass `locked_answer=False`, because the fake's default is True (`test_system_pause.py:74`).
+        - Docs: narrow the threat model's forged-unlock residue.
+      - If it prints `True`: do not build. Record that on this machine the unlock message stays the only thing that clears the flag.
+      - If it prints `None`: do not build, because the check would change nothing. Record it.
+    - **SEC-007: odd Cliniko URL forms.**
+      - Only Cliniko's servers can answer it.
+      - **Step:** in Chrome, on an open treatment note:
+        - (a) double the slash before `patients` in the address (`…cliniko.com//patients/…`) and press Enter;
+        - go back to the note;
+        - (b) replace the FIRST digit after `/patients/` with `%3` followed by that same digit (a `4` becomes `%34`) and press Enter.
+        - For each of (a) and (b), report one of: "the same note opened", "Cliniko changed the address back", or "another page or an error".
+      - If either says "the same note opened", build:
+        - `extension/src/context.ts:33`: before `NOTE_PATH` is matched, collapse repeated `/` in the path and decode only `%30`–`%39` to digits. Nothing else is decoded, and the id checks stay.
+        - Tests in `context.test.ts` for both forms, and for a `%2F` that must stay undecoded.
+        - `npm run build`.
+      - Otherwise: close SEC-007 as not reachable, and record it.
+  - **Deferred:**
+    - **SEC-008**: switching A → B → A while A's check runs makes a second call for A.
+      - Since SEC-009 and PR-LOW-350, the cost is at most one extra Cliniko call per such switch, spaced by 1 s and stopped by the 60 s cooldown.
+      - The fix would let `accept` keep an answer whose run has moved on. That is the stale-result guard, a custody control, changed to save one call.
+      - `Risk if deferred: minor` · `Revisit by: the draft-write plan's freshness task, with H2a SIMP-007`.
+  - **New-test estimate:**
+    - Steps 1–7: +18 desktop tests.
+    - Steps 8–10: +10 desktop test items.
+    - About 28 new desktop test items in all; 32 if SEC-020 is built.
+    - Extension: +0, or about +3 if SEC-007 is built.
+    - About 16 existing tests edited: SEC-022's call sites and the SDDL pin.
+  - **Checks:**
+    - Every leg: ruff and mypy in the leg, and the composer's desktop suite after it.
+    - `npm run build` only if SEC-007 is built.
+    - Docs as one class, at the end:
+      - the threat model: the residues for SEC-014, 015, 016 and 017, plus 020 if built, and SEC-022's live-view line;
+      - flows 14 and 19 of the data-flow map;
+      - CHANGELOG.
+  - **Live re-check after the build** (one pass):
+    - The Chrome badge turns green **OK** with the app running (step 4).
+    - A second launch still says "already running" (step 5).
+    - Back-to-back recordings: the new live view shows only the new patient's words (step 7).
+    - If SEC-020 is built: lock the screen (Win+L), sign back in, and Resume works.
 - [x] 🟩 H4: a cross-family codex `/peer-review`, sliced by file group:
   - client + registry + security docs;
   - custody + encounter + pipe + host;
@@ -5130,6 +5734,11 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
   - No Cliniko call at startup or idle keeps the no-sockets legs at zero.
   - One Cliniko note can own several recordings (D6's reminder list). The Phase 4 write must decide how a second session's note lands in a draft the first already filled (refuse, append, or ask); never overwrite silently.
   - (H1 round 53, recorded for the write plan) `writeback_context` has NO freshness bound: a re-verification counts until the clinic, target or `clinic_rev` changes, however old. `MainWindow.recovered_writeback_target()` takes no argument and uses the checkout's re-verification from when the session was opened, while `live_writeback_target(reverification)` needs the caller's; `ChromeBridge.live_reverification()` exists but nothing passes it in. The write must re-verify IMMEDIATELY before writing, on both entries — or bound `verified_at` — and wire one source, not add a third.
+  - (Round 67, from SEC-014) For the next Task 4.3 revision, with the practitioner: the host could also require the pipe's server process to be medium integrity or higher and not an AppContainer.
+    - It would reuse the token `process_user_sid` already opens.
+    - It adds no refusal for the real app. An elevated app is already refused at the user check.
+    - It would close the one case H3a step 4's label leaves open: a low-integrity process of this user that creates the pipe name before the app starts.
+    - It is not built in H3a, because it extends (b)'s check set.
   - (H3 round 57 SEC-018, confirmed) There is NO write path today: `cliniko_client` refuses every method but GET before a connection exists, no POST/PATCH/PUT/DELETE appears in `desktop/src`, and `writeback_context`, both `MainWindow` write-target entries and `ChromeBridge.live_reverification` are called only from tests. One more fact for the write: `writeback_context` checks neither `verified_at` nor the request's `conn_gen` — only the target and `clinic_rev` bind it.
 
 ---

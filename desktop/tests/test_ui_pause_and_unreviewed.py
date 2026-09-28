@@ -355,7 +355,9 @@ class TestSuspendAndCue:
         )
         assert child.returncode == 0, child.stderr.decode(errors="replace")
         lines = child.stdout.decode().splitlines()
-        assert lines[-1] == 'SEEN ["suspend"]'
+        # The suspend met an idle controller, so round 57 SEC-021's queued
+        # re-check asks once more (the real `pause_for` does nothing at IDLE).
+        assert lines[-1] == 'SEEN ["suspend", "suspend"]'
         for marker in (b"Traceback", b"TypeError", b"ValueError", b"wrong argument"):
             assert marker not in child.stderr, child.stderr.decode(errors="replace")
 

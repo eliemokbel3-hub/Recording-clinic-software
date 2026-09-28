@@ -23,7 +23,9 @@ behind the locked screen. So the main window sets ``SystemPauseWatch``'s
 lock flag the moment the lock message is dispatched (before the queued
 pause runs), every Resume path refuses by name while it is set (the
 bridge's one resume check), and ``WTS_SESSION_UNLOCK`` clears it — resuming
-nothing. A MISSED unlock must not refuse Resume forever: once the flag is
+nothing — once Windows agrees the session is not locked (round 57 SEC-020:
+an unlock Windows contradicts is a forged one, and the flag stays). A MISSED
+unlock must not refuse Resume forever: once the flag is
 older than ``LOCK_RECHECK_AFTER_SECONDS``, a refused Resume asks Windows for
 the session's real lock state (``WTSQuerySessionInformationW`` /
 ``WTSSessionInfoEx`` -> ``SessionFlags``) and clears the flag only when
@@ -311,7 +313,20 @@ class SystemPauseWatch:
         self._locked_at = self._clock()
 
     def note_unlock(self) -> None:
-        """The unlock message: the refusal ends. Nothing resumes."""
+        """The unlock message: the refusal ends — unless Windows still says
+        this session is LOCKED (round 57 SEC-020: a same-user process can
+        post a forged unlock). The flag then stays with its lock time, so
+        ``lock_state``'s re-check clears it once Windows agrees; a real unlock
+        whose query raced the message heals itself at the next Resume or
+        Start once the lock is ``LOCK_RECHECK_AFTER_SECONDS`` old. An
+        unanswered or failed query believes the message, as before. Nothing
+        resumes."""
+        try:
+            answer = self._registrar.query_locked()
+        except Exception:  # noqa: BLE001 - an unanswered query believes the unlock
+            answer = None
+        if answer is True:
+            return
         self._locked_at = None
 
     def lock_state(self) -> LockState:

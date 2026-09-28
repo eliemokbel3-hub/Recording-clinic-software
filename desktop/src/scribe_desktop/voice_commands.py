@@ -47,7 +47,7 @@ from typing import Final, Literal
 
 from scribe_desktop.audio_capture import CHANNELS, CHUNK_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
 from scribe_desktop.note import normalise_token
-from scribe_desktop.session import SessionState
+from scribe_desktop.session import CAPTURING_STATES, SessionState
 from scribe_desktop.transcription import (
     TRANSCRIBE_WINDOW_MAX_GAP_SECONDS,
     LiveFailure,
@@ -142,7 +142,7 @@ def spoken_pause_state(
     """D7's availability: ``idle`` with no recording, ``on`` while a
     recording's live transcriber runs, else ``unavailable`` (live
     transcription off for this recording, or it has stopped)."""
-    if state not in (SessionState.RECORDING, SessionState.PAUSED):
+    if state not in CAPTURING_STATES:
         return "idle"
     return "on" if attached and failure is None else "unavailable"
 

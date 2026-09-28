@@ -26,7 +26,7 @@ from scribe_desktop.benchmark import (
     run_all,
     threshold_report,
 )
-from scribe_desktop.session import ACTIVE_STATES, SessionState
+from scribe_desktop.session import ACTIVE_STATES, CAPTURING_STATES, SessionState
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
 
@@ -34,9 +34,7 @@ _LEVEL_POLL_MS = 100
 # Smoke round 21: while a session records/pauses, the CaptureWorker owns the
 # device and the meter reads controller.level; in every other state the screen
 # opens its OWN monitoring stream so device selection gives live feedback.
-_MONITOR_STATES = frozenset(
-    s for s in SessionState if s not in (SessionState.RECORDING, SessionState.PAUSED)
-)
+_MONITOR_STATES = frozenset(s for s in SessionState if s not in CAPTURING_STATES)
 # ~3 s of near-zero level on an OPEN monitor stream -> actionable hint (a
 # privacy-blocked mic typically delivers silent blocks, not an error).
 _SILENCE_POLLS = 30

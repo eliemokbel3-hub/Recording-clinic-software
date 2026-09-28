@@ -89,10 +89,11 @@ class TranscriptScreen(QWidget):
     # main window can keep view swaps unreachable during generation (the
     # Task 6.3 residue guard).
     generation_active_changed = Signal(bool)
-    # Note-learning plan Task 1.4: one live window's segments
-    # (``tuple[TranscriptSegment, ...]``), emitted by ``post_live_window``
+    # Note-learning plan Task 1.4: one live window, as
+    # ``(token, tuple[TranscriptSegment, ...])``, emitted by a ``live_poster``
     # from the LIVE WORKER's thread. A queued delivery — the slot runs on the
-    # GUI thread, which is the only thread that may touch the view.
+    # GUI thread, which is the only thread that may touch the view. The token
+    # (round 57 SEC-022) names the Start whose worker posted it.
     live_window = Signal(object)
 
     def __init__(
@@ -146,6 +147,13 @@ class TranscriptScreen(QWidget):
         # window posted outside that span is DROPPED (a late worker post must
         # never append to a cleared or final view).
         self._live_active: bool = False
+        # Round 57 SEC-022: each Start's worker posts under its own token. A
+        # post the RETIRED worker emitted before it was stopped can still be
+        # in Qt's queue when the next Start's view opens; its token no longer
+        # matches, so it is neither drawn nor fed to the phrase rules.
+        self._live_tokens = 0
+        self._pending_live_token: int | None = None
+        self._live_token: int | None = None
         self.live_window.connect(self._on_live_window)
 
         self.warning_label = QLabel()
@@ -285,18 +293,45 @@ class TranscriptScreen(QWidget):
 
     # --- Task 1.4: the live view -------------------------------------------
 
-    def post_live_window(self, segments: tuple[TranscriptSegment, ...]) -> None:
-        """Thread-safe entry point: the LIVE WORKER calls this from its own
-        thread. It only emits ``live_window`` — it must never touch a widget
-        (Qt widgets belong to the GUI thread); the slot does the rendering."""
-        self.live_window.emit(segments)
+    def live_poster(self) -> Callable[[tuple[TranscriptSegment, ...]], None]:
+        """GUI thread, inside ``start()`` while the live worker is built: a
+        new token, pending until ``begin_live_view`` adopts it, and the
+        worker's thread-safe entry point, which posts under that token. The
+        poster only emits ``live_window`` — it must never touch a widget (Qt
+        widgets belong to the GUI thread); the slot does the rendering."""
+        self._live_tokens += 1
+        token = self._live_tokens
+        self._pending_live_token = token
+
+        def post(segments: tuple[TranscriptSegment, ...]) -> None:
+            self.live_window.emit((token, segments))
+
+        return post
+
+    def live_segments(self, payload: object) -> tuple[TranscriptSegment, ...] | None:
+        """A posted window's segments, only when the post carries the CURRENT
+        Start's token (round 57 SEC-022); None for anything else — a retired
+        worker's late post included. Whether the view is open is the
+        drawing slot's own check: the main window's phrase rules keep
+        following the recording's state, as before."""
+        if self._live_token is None:
+            return None
+        if not isinstance(payload, tuple) or len(payload) != 2:
+            return None
+        token, segments = payload
+        if token != self._live_token or not isinstance(segments, tuple):
+            return None
+        return segments
 
     def begin_live_view(self) -> None:
         """GUI thread, at Start: drop whatever the view held (its document,
         custody callbacks and generation controls) and open the empty live
         view under its header. The view stays ``NoTextInteraction`` — the
-        display-only rule is the same surface, live or final."""
+        display-only rule is the same surface, live or final. The poster made
+        for this Start (if any) becomes the only one whose posts count; with
+        none, no post counts."""
         self._clear()
+        self._live_token, self._pending_live_token = self._pending_live_token, None
         self._live_active = True
         self.transcript_view.setPlaceholderText(models.LIVE_TRANSCRIPT_PLACEHOLDER)
         self.transcript_view.setPlainText("")
@@ -305,11 +340,14 @@ class TranscriptScreen(QWidget):
 
     def _on_live_window(self, payload: object) -> None:
         """GUI thread: append one window's lines. A post that arrives after
-        the live view closed (Discard, or the final document) is DROPPED."""
+        the live view closed (Discard, or the final document), or from an
+        earlier Start's worker (SEC-022), is DROPPED."""
         if not self._live_active:
             return
-        assert isinstance(payload, tuple)
-        for line in models.format_live_segments(payload):
+        segments = self.live_segments(payload)
+        if segments is None:
+            return
+        for line in models.format_live_segments(segments):
             self.transcript_view.appendPlainText(line)
 
     def end_live_view(self) -> None:

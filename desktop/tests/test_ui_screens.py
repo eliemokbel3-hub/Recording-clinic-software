@@ -2514,6 +2514,7 @@ class TestTranscriptScreen:
         from scribe_desktop.ui.transcript import TranscriptScreen
 
         screen = TranscriptScreen()
+        post = screen.live_poster()  # built inside Start, before the view opens
         screen.begin_live_view()
         assert screen.live_header_label.isVisibleTo(screen)
         assert screen.live_header_label.text() == models.LIVE_TRANSCRIPT_HEADER
@@ -2526,7 +2527,7 @@ class TestTranscriptScreen:
             Qt.TextInteractionFlag.NoTextInteraction
         )
         poster = threading.Thread(
-            target=screen.post_live_window,
+            target=post,
             args=(_live_segments(0.0, "Hello", "Margaret"),),
         )
         poster.start()
@@ -2536,7 +2537,7 @@ class TestTranscriptScreen:
         assert text == "[00:00-00:02] Hello [Margaret?]"
         assert "pending" not in text
         assert "speaker_" not in text
-        screen.post_live_window(_live_segments(30.0, "Yes", "Ibuprofen"))
+        post(_live_segments(30.0, "Yes", "Ibuprofen"))
         assert _process_until(
             qapp, lambda: "Yes" in screen.transcript_view.toPlainText()
         )
@@ -2552,8 +2553,9 @@ class TestTranscriptScreen:
         from scribe_desktop.ui.transcript import TranscriptScreen
 
         screen = TranscriptScreen()
+        post = screen.live_poster()
         screen.begin_live_view()
-        screen.post_live_window(_live_segments(0.0, "Hello", "Margaret"))
+        post(_live_segments(0.0, "Hello", "Margaret"))
         qapp.processEvents()
         assert screen.transcript_view.toPlainText() != ""
         document = _document()
@@ -2575,16 +2577,53 @@ class TestTranscriptScreen:
         from scribe_desktop.ui.transcript import TranscriptScreen
 
         screen = TranscriptScreen()
+        post = screen.live_poster()
         screen.begin_live_view()
-        screen.post_live_window(_live_segments(0.0, "Hello", "Margaret"))
+        post(_live_segments(0.0, "Hello", "Margaret"))
         qapp.processEvents()
         assert screen.transcript_view.toPlainText() != ""
         screen.clear_live_view()
         assert screen.transcript_view.toPlainText() == ""
         assert not screen.live_header_label.isVisibleTo(screen)
-        screen.post_live_window(_live_segments(30.0, "Yes", "Ibuprofen"))
+        post(_live_segments(30.0, "Yes", "Ibuprofen"))
         qapp.processEvents()
         assert screen.transcript_view.toPlainText() == ""
+        screen.deleteLater()
+
+    def test_a_previous_starts_late_post_is_not_drawn_in_the_new_view(self, qapp: Any) -> None:
+        """Round 57 SEC-022: the retired worker's post, still queued when the
+        next Start opens its view, carries the old token and is dropped; the
+        new worker's post is drawn."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        old_post = screen.live_poster()
+        screen.begin_live_view()
+        new_post = screen.live_poster()  # the next Start builds its worker...
+        screen.begin_live_view()  # ...then opens its view
+        thread = threading.Thread(
+            target=old_post, args=(_live_segments(0.0, "Hello", "Margaret"),)
+        )
+        thread.start()  # the old worker's post, queued across threads
+        thread.join()
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() == ""
+        new_post(_live_segments(30.0, "Yes", "Ibuprofen"))
+        assert _process_until(qapp, lambda: screen.transcript_view.toPlainText() != "")
+        assert screen.transcript_view.toPlainText() == "[00:30-00:32] Yes [Ibuprofen?]"
+        screen.deleteLater()
+
+    def test_a_start_that_made_no_poster_draws_no_old_post(self, qapp: Any) -> None:
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        old_post = screen.live_poster()
+        screen.begin_live_view()
+        screen.begin_live_view()  # a Start with no live worker built
+        old_post(_live_segments(0.0, "Hello", "Margaret"))
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() == ""
+        assert screen.live_segments((None, ())) is None  # no current token at all
         screen.deleteLater()
 
 

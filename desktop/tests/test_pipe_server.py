@@ -13,6 +13,8 @@ reaches the next; stop is prompt in every state.
 from __future__ import annotations
 
 import json
+import os
+import re
 import struct
 import sys
 import threading
@@ -27,10 +29,13 @@ from scribe_desktop.protocol import PROTOCOL_VERSION, Envelope, make_pipe_envelo
 pytestmark = pytest.mark.skipif(sys.platform != "win32", reason="Windows named pipes")
 
 if sys.platform == "win32":
+    import ntsecuritycon
     import pywintypes
+    import win32api
     import win32con
     import win32event
     import win32file
+    import win32process
     import win32security
 
     from scribe_desktop import pipe_server
@@ -77,6 +82,68 @@ def _pipe_message(message_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     return {"protocol_version": PROTOCOL_VERSION, "type": message_type, "payload": payload}
 
 
+# --- a low-integrity child (round 57 SEC-014) -------------------------------------
+
+_LABEL_SECURITY_INFORMATION = 0x00000010
+_SE_GROUP_INTEGRITY = 0x00000020
+_LOW_INTEGRITY_SID = "S-1-16-4096"
+_CREATE_NO_WINDOW = 0x08000000
+# Exits 42: proves a low-integrity Python can run here at all.
+_LOW_CONTROL = "import sys;sys.exit(42)"
+# Opens argv[1] for READ only through kernel32 (no pywin32 in the child) and
+# exits 0 when that worked, else with the Windows error code.
+_LOW_PROBE = (
+    "import ctypes,sys;"
+    "k=ctypes.WinDLL('kernel32',use_last_error=True);"
+    "f=k.CreateFileW;"
+    "f.argtypes=[ctypes.c_wchar_p,ctypes.c_uint32,ctypes.c_uint32,ctypes.c_void_p,"
+    "ctypes.c_uint32,ctypes.c_uint32,ctypes.c_void_p];"
+    "f.restype=ctypes.c_void_p;"
+    "h=f(sys.argv[1],0x80000000,0,None,3,0,None);"
+    "e=ctypes.get_last_error();"
+    "sys.exit(e if h in (None,ctypes.c_void_p(-1).value) else 0)"
+)
+
+
+def _run_low_integrity(code: str, argument: str) -> int | None:
+    """Run ``python -c code argument`` as this user at LOW integrity; its exit
+    code, or None when such a child cannot be started here."""
+    try:
+        token = win32security.OpenProcessToken(
+            win32api.GetCurrentProcess(),
+            ntsecuritycon.TOKEN_DUPLICATE
+            | ntsecuritycon.TOKEN_QUERY
+            | ntsecuritycon.TOKEN_ADJUST_DEFAULT
+            | ntsecuritycon.TOKEN_ASSIGN_PRIMARY,
+        )
+        low = win32security.DuplicateTokenEx(
+            token,
+            win32security.SecurityImpersonation,
+            ntsecuritycon.TOKEN_ALL_ACCESS,
+            win32security.TokenPrimary,
+        )
+        win32security.SetTokenInformation(
+            low,
+            win32security.TokenIntegrityLevel,
+            (win32security.ConvertStringSidToSid(_LOW_INTEGRITY_SID), _SE_GROUP_INTEGRITY),
+        )
+        command = f'"{sys.executable}" -c "{code}" "{argument}"'
+        process, thread, _pid, _tid = win32process.CreateProcessAsUser(
+            low, None, command, None, None, False, _CREATE_NO_WINDOW, None, None,
+            win32process.STARTUPINFO(),
+        )
+    except Exception:  # noqa: BLE001 - any refusal means "cannot run here"
+        return None
+    try:
+        if win32event.WaitForSingleObject(process, int(WAIT_S * 1000)) != 0:
+            win32process.TerminateProcess(process, 1)
+            return None
+        return int(win32process.GetExitCodeProcess(process))
+    finally:
+        thread.Close()
+        process.Close()
+
+
 class Recorder:
     """Thread-safe record of the server's calls."""
 
@@ -92,6 +159,9 @@ class Recorder:
 
     def disconnected(self, conn_id: int, reason: str) -> None:
         self._add(("disconnected", conn_id, reason))
+
+    def ended(self) -> None:
+        self._add(("ended", 0, None))
 
     def _add(self, call: tuple[str, int, object]) -> None:
         with self._cond:
@@ -225,8 +295,40 @@ class TestHardening:
 
     def test_the_sddl_is_protected_and_single_entry(self) -> None:
         sid = current_user_sid()
-        assert pipe_sddl(sid) == f"O:{sid}D:P(A;;GA;;;{sid})"
+        assert pipe_sddl(sid) == f"O:{sid}D:P(A;;GA;;;{sid})S:(ML;;NWNRNX;;;ME)"
         assert pipe_name(sid) == f"\\\\.\\pipe\\ClinikoScribe-{sid}"
+
+    def test_the_pipe_carries_a_medium_label_that_refuses_lower_levels(self, server: Any) -> None:
+        # Round 57 SEC-014: read back from the real pipe, not the string.
+        descriptor = win32security.GetSecurityInfo(
+            server._handle, win32security.SE_KERNEL_OBJECT, _LABEL_SECURITY_INFORMATION
+        )
+        text = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+            descriptor, win32security.SDDL_REVISION_1, _LABEL_SECURITY_INFORMATION
+        )
+        # Windows reports the label ACE exactly as set. Only the descriptor's
+        # control flags may differ: the object manager marks a new object's
+        # SACL auto-inherited ("AI", SE_SACL_AUTO_INHERITED) when it builds
+        # the descriptor. That flag says nothing about the ACE. The ACE carries
+        # no "ID" flag, so it is our explicit one, not an inherited one.
+        parsed = re.fullmatch(r"S:(?P<controls>[A-Z]*)(?P<aces>\(.*\))", text)
+        assert parsed is not None, text
+        assert parsed["controls"] in ("", "AI"), text
+        # One mandatory-label ACE: no ACE flags, no-write-up + no-read-up +
+        # no-execute-up, at Medium (S-1-16-8192).
+        assert parsed["aces"] == "(ML;;NWNRNX;;;ME)", text
+
+    @pytest.mark.skipif(
+        os.environ.get("SCRIBE_SKIP_INTEGRATION") == "1", reason="integration leg skipped"
+    )
+    def test_a_low_integrity_process_cannot_open_the_pipe(self, server: Any, name: str) -> None:
+        """Round 57 SEC-014, proved: a child of this user at LOW integrity
+        opening the pipe read-only is refused (access denied). It reports by
+        exit code only — a low-integrity process cannot write a file here."""
+        control = _run_low_integrity(_LOW_CONTROL, name)
+        if control is None or control != 42:
+            pytest.skip("a low-integrity Python child cannot run in this environment")
+        assert _run_low_integrity(_LOW_PROBE, name) == 5  # ERROR_ACCESS_DENIED
 
     @pytest.mark.parametrize("bad", ["", "S-1", "S-1-5-21-1;(A;;GA;;;WD)", "not-a-sid"])
     def test_a_malformed_sid_is_refused(self, bad: str) -> None:
@@ -410,6 +512,134 @@ class TestFaults:
                 good.close()
         finally:
             assert server.stop(), "the pipe server did not stop in time"
+
+    def test_a_refused_descriptor_is_a_creation_failure(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        # Round 65 / H3a step 1: the SDDL conversion sits inside the `try`, so
+        # Windows refusing it is `create_failed`, never an escaping error.
+        def refuse(*_args: Any) -> Any:
+            raise pywintypes.error(
+                1336, "ConvertStringSecurityDescriptorToSecurityDescriptor", "refused by the test"
+            )
+
+        monkeypatch.setattr(
+            pipe_server.win32security, "ConvertStringSecurityDescriptorToSecurityDescriptor", refuse
+        )
+        server = PipeServer(name, Recorder(), sddl=pipe_sddl(current_user_sid()))
+        with pytest.raises(PipeUnavailable) as caught:
+            server.start()
+        assert caught.value.reason == "create_failed"
+        assert not server.running
+        monkeypatch.undo()
+        free = PipeServer(name, Recorder(), sddl=pipe_sddl(current_user_sid()))
+        free.start()  # the name was never taken
+        assert free.stop()
+
+
+# --- the server's own end (round 57 SEC-017) -------------------------------------
+
+
+class TestServerEnd:
+    def test_a_failed_connect_ends_the_server_and_says_so(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        def fail(handle: Any, overlapped: Any) -> Any:
+            raise pywintypes.error(87, "ConnectNamedPipe", "refused by the test")
+
+        monkeypatch.setattr(pipe_server.win32pipe, "ConnectNamedPipe", fail)
+        recorder = Recorder()
+        server = PipeServer(name, recorder, sddl=pipe_sddl(current_user_sid()))
+        server.start()
+        recorder.wait_for("ended")
+        assert server.stop()
+        assert recorder.calls == [("ended", 0, None)]  # no client was ever current
+        monkeypatch.undo()
+        again = PipeServer(name, Recorder(), sddl=pipe_sddl(current_user_sid()))
+        again.start()  # the name is free again
+        assert again.stop()
+
+    def test_stop_is_never_reported_as_an_end(self, name: str) -> None:
+        idle = Recorder()
+        waiting = PipeServer(name, idle, sddl=pipe_sddl(current_user_sid()))
+        waiting.start()
+        assert waiting.stop()
+        recorder = Recorder()
+        server = PipeServer(name, recorder, sddl=pipe_sddl(current_user_sid()))
+        server.start()
+        client = _connect(name)
+        try:
+            recorder.wait_for("connected")
+            assert server.stop()
+        finally:
+            client.close()
+        assert idle.calls == []
+        assert [c[0] for c in recorder.calls] == ["connected", "disconnected"]
+
+    def test_an_error_mid_connection_reports_the_disconnect_then_the_end(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        def broken(self: Any, conn_id: int) -> str:
+            raise RuntimeError("broken by the test")
+
+        monkeypatch.setattr(PipeServer, "_read_loop", broken)
+        recorder = Recorder()
+        server = PipeServer(name, recorder, sddl=pipe_sddl(current_user_sid()))
+        server.start()
+        client = _connect(name)
+        try:
+            recorder.wait_for("ended")
+            assert recorder.calls == [
+                ("connected", 1, None),
+                ("disconnected", 1, "server_failed"),
+                ("ended", 0, None),
+            ]
+        finally:
+            client.close()
+            assert server.stop()
+
+
+# --- the writer and the next client (round 57 SEC-016) ---------------------------
+
+
+class TestWriter:
+    def test_a_writer_takes_only_its_own_connections_frame(self, name: str) -> None:
+        server = PipeServer(name, Recorder(), sddl=pipe_sddl(current_user_sid()))
+        server._mailbox = pipe_server._Mailbox(conn_id=2, frame=b"frame-2")
+        assert server._take_frame(1) is None  # a stale writer takes nothing...
+        assert server._mailbox.frame == b"frame-2"  # ...and drops nothing
+        assert server._take_frame(2) == b"frame-2"
+        assert server._mailbox.frame is None
+
+    def test_a_slow_writer_holds_back_the_next_client(
+        self, monkeypatch: pytest.MonkeyPatch, name: str
+    ) -> None:
+        release = threading.Event()
+
+        def slow_writer(self: Any, conn_id: int) -> None:
+            release.wait(WAIT_S)  # deaf to the closed event: an unscheduled writer
+
+        monkeypatch.setattr(PipeServer, "_write_loop", slow_writer)
+        monkeypatch.setattr(pipe_server, "_JOIN_TIMEOUT_S", 0.05)
+        recorder = Recorder()
+        server = PipeServer(name, recorder, sddl=pipe_sddl(current_user_sid()))
+        server.start()
+        try:
+            first = _connect(name)
+            recorder.wait_for("connected")
+            first.close()
+            time.sleep(0.3)  # many join timeouts: the server still waits
+            assert [c[0] for c in recorder.calls] == ["connected"]
+            release.set()
+            assert recorder.wait_for("disconnected") == [("disconnected", 1, "closed")]
+            second = _connect(name)
+            try:
+                assert recorder.wait_for("connected", 2)[-1] == ("connected", 2, None)
+            finally:
+                second.close()
+        finally:
+            release.set()
+            assert server.stop()
 
 
 # --- stopping --------------------------------------------------------------------
