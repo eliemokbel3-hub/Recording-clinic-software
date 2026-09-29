@@ -53,6 +53,8 @@ from scribe_desktop.note_config import (
 )
 from scribe_desktop.transcription import SPEAKER_1
 from scribe_desktop.ui import models
+from test_prose_style import FIXTURE_NOTES
+from test_prose_style import _note as prose_fixture_note
 
 SESSION_ID = "e" * 32
 _NOW = datetime(2026, 9, 19, 8, 0, tzinfo=UTC)
@@ -343,6 +345,229 @@ class TestSectionInputDigest:
         assert first != shorter
         assert reordered != shorter
         assert first == section_input_digest(self._section("one line here", "another line here"))
+
+
+# ---------------------------------------------------------------------------
+# Cliniko draft-write plan, Task 3.1 (D7): ``render_note`` must stay byte for
+# byte what it was when ``render_section_lines`` took over its blocks. The
+# reference below is a VERBATIM copy of ``note.py``'s renderer as it stood
+# before Task 3.1 touched it (``_verbatim_block`` / ``_clean_lines`` /
+# ``_clean_block`` / ``_prose_block`` / ``render_note`` at :915-991), captured
+# before the edit and never to be changed with the renderer: Copy's text is
+# pinned against it for the ten ``scripts/measure-prose-fixtures.py`` notes
+# plus this module's three-line-kind note, in all four styles, the prose legs
+# with ``style_renderings`` present (passed, failed and absent sections).
+# What this oracle pins is the COMPOSITION (the blocks, their order and their
+# joins); the reference still calls the live helpers ``assertion_label``,
+# ``is_prefilled``, ``usable_rendering`` and ``prefilled_section_mark``, which
+# are pinned literally elsewhere — ``VERBATIM_BODY`` / ``CLEAN_BODY`` above and
+# the prose-stage tests.
+# ---------------------------------------------------------------------------
+
+
+def _reference_verbatim_block(section: GeneratedSection) -> str:
+    lines = [f"{note_module.SECTION_TITLES[section.section_key]}:"]
+    for assertion in section.note_assertions:
+        lines.append(f"  - {assertion.text}  [{note_module.assertion_label(assertion)}]")
+    return "\n".join(lines)
+
+
+def _reference_clean_lines(section: GeneratedSection) -> list[str]:
+    lines: list[str] = []
+    for assertion in section.note_assertions:
+        text = assertion.text
+        if note_module.is_prefilled(assertion):
+            text = f"{text}  [{PREFILLED_MARK}]"
+        lines.append(text)
+    return lines
+
+
+def _reference_clean_block(section: GeneratedSection) -> str:
+    return "\n".join(
+        [note_module.SECTION_TITLES[section.section_key], *_reference_clean_lines(section)]
+    )
+
+
+def _reference_prose_block(note: GeneratedNote, section: GeneratedSection) -> str:
+    rendering = usable_rendering(note, section)
+    if rendering is None:
+        return _reference_clean_block(section)
+    lines = [note_module.SECTION_TITLES[section.section_key], rendering.prose_text]
+    mark = note_module.prefilled_section_mark(section)
+    if mark is not None:
+        lines.append(mark)
+    return "\n".join(lines)
+
+
+def _reference_render_note(note: GeneratedNote, style: NoteStyle) -> str:
+    blocks: list[str] = []
+    for section in note.note_sections:
+        if style == "verbatim":
+            blocks.append(_reference_verbatim_block(section))
+        elif style == "clean":
+            blocks.append(_reference_clean_block(section))
+        else:
+            blocks.append(_reference_prose_block(note, section))
+    if not blocks:
+        return NO_NOTE_CONTENT
+    return "\n\n".join(blocks)
+
+
+def _with_prose_renderings(note: GeneratedNote) -> GeneratedNote:
+    """``note`` carrying a rendering for every populated section but the
+    last: a two-paragraph PASSED rendering (a newline inside the prose) for
+    even positions, a FAILED one for odd positions — so the prose legs
+    exercise a usable rendering, a failed one and an absent one."""
+    renderings = []
+    populated = [section for section in note.note_sections if section.note_assertions]
+    for position, section in enumerate(populated[:-1]):
+        digest = section_input_digest(section)
+        if position % 2 == 0:
+            texts = "; ".join(assertion.text for assertion in section.note_assertions)
+            renderings.append(
+                StyleRendering(
+                    section_key=section.section_key,
+                    prose_text=f"{texts}.\nA second paragraph.",
+                    input_digest=digest,
+                    verdict="passed",
+                )
+            )
+        else:
+            renderings.append(
+                StyleRendering(
+                    section_key=section.section_key,
+                    prose_text="",
+                    input_digest=digest,
+                    verdict="failed",
+                )
+            )
+    return note.model_copy(update={"style_renderings": tuple(renderings)})
+
+
+def _pinned_notes() -> list[GeneratedNote]:
+    notes = [prose_fixture_note(sections, style="clean") for sections in FIXTURE_NOTES]
+    notes.append(_note())
+    # The three-line-kind note with a passed rendering on the PRE-FILLED
+    # section, so the prose legs carry the section-level mark.
+    notes.append(
+        _note(
+            style_renderings=(
+                _rendering("assessment"),
+                _rendering("treatment_performed", prose_text="An ice pack was advised."),
+            )
+        )
+    )
+    return notes
+
+
+class TestRenderNoteUnchangedByTheSectionRenderer:
+    def test_every_style_matches_the_pre_task_renderer_for_every_pinned_note(self) -> None:
+        notes = _pinned_notes()
+        assert len(notes) == 12
+        checked = 0
+        for base in notes:
+            for note in (base, _with_prose_renderings(base)):
+                for style in models.NOTE_STYLES:
+                    assert render_note(note, style) == _reference_render_note(note, style), (
+                        f"note {checked} style {style}"
+                    )
+                    checked += 1
+        assert checked == 12 * 2 * len(models.NOTE_STYLES)
+        assert set(models.NOTE_STYLES) == {"verbatim", "clean", "own_voice", "narrative"}
+
+    def test_the_pinned_prose_legs_really_carry_a_usable_rendering(self) -> None:
+        """Guards the pin itself: without a usable rendering the prose legs
+        would only re-test ``clean``."""
+        note = _with_prose_renderings(_pinned_notes()[0])
+        body = render_note(note, "narrative")
+        assert "A second paragraph." in body
+        assert body != render_note(note, "clean")
+
+
+class TestRenderSectionLines:
+    """Task 3.1 (D7): the per-section renderer with and without the review
+    apparatus."""
+
+    def _prose_note(self) -> GeneratedNote:
+        return _note(
+            style="narrative",
+            style_renderings=(
+                _rendering("assessment", prose_text="Line one.\nLine two."),
+                _rendering("treatment_performed", prose_text="An ice pack was advised."),
+            ),
+        )
+
+    def test_with_apparatus_the_lines_are_the_blocks_body_without_its_title(self) -> None:
+        for note in (_note(), self._prose_note()):
+            for style in models.NOTE_STYLES:
+                for section in note.note_sections:
+                    lines = note_module.render_section_lines(note, section, style, apparatus=True)
+                    title = note_module.SECTION_TITLES[section.section_key]
+                    heading = f"{title}:" if style == "verbatim" else title
+                    assert "\n".join([heading, *lines]) in render_note(note, style)
+                    assert title not in lines
+
+    def test_without_apparatus_no_title_mark_tag_bullet_or_includes_line(self) -> None:
+        for note in (_note(), self._prose_note()):
+            for style in models.NOTE_STYLES:
+                for section in note.note_sections:
+                    lines = note_module.render_section_lines(
+                        note, section, style, apparatus=False
+                    )
+                    assert lines, (style, section.section_key)
+                    text = "\n".join(lines)
+                    assert note_module.SECTION_TITLES[section.section_key] not in lines
+                    assert PREFILLED_MARK not in text
+                    assert "[includes" not in text
+                    assert "  - " not in text
+                    for label in note_module.PROVENANCE_LABELS.values():
+                        assert f"[{label}]" not in text
+
+    def test_verbatim_without_apparatus_is_the_clean_lines(self) -> None:
+        note = _note()
+        for section in note.note_sections:
+            assert note_module.render_section_lines(
+                note, section, "verbatim", apparatus=False
+            ) == [assertion.text for assertion in section.note_assertions]
+        prefilled = note.note_sections[2]
+        assert note_module.render_section_lines(note, prefilled, "clean", apparatus=False) == [
+            PREFILLED_TEXT
+        ]
+
+    def test_prose_without_apparatus_splits_the_rendering_and_drops_the_section_mark(
+        self,
+    ) -> None:
+        note = self._prose_note()
+        assessment, treatment = note.note_sections[1], note.note_sections[2]
+        assert note_module.render_section_lines(
+            note, assessment, "narrative", apparatus=False
+        ) == ["Line one.", "Line two."]
+        assert note_module.render_section_lines(
+            note, treatment, "narrative", apparatus=False
+        ) == ["An ice pack was advised."]
+        assert note_module.render_section_lines(
+            note, treatment, "narrative", apparatus=True
+        ) == ["An ice pack was advised.", f"[includes 1 line {PREFILLED_MARK}]"]
+
+    def test_a_prose_section_without_a_usable_rendering_falls_back_to_clean_lines(
+        self,
+    ) -> None:
+        failed = _rendering("assessment", prose_text="", verdict="failed")
+        note = _note(style="own_voice", style_renderings=(failed,))
+        assessment = note.note_sections[1]
+        assert note_module.render_section_lines(
+            note, assessment, "own_voice", apparatus=False
+        ) == [TYPED_TEXT]
+
+    def test_an_empty_section_renders_no_lines(self) -> None:
+        empty = GeneratedSection(section_key="diagnosis")
+        note = _note(sections=(empty,))
+        for style in models.NOTE_STYLES:
+            for apparatus in (True, False):
+                assert (
+                    note_module.render_section_lines(note, empty, style, apparatus=apparatus)
+                    == []
+                )
 
 
 class TestModelsReExports:

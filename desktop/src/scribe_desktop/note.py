@@ -766,7 +766,9 @@ class GeneratedNote(BaseModel):
 # ONE rendering path: ``render_note(note, style)`` is what the Note tab
 # displays, what Copy copies and what a reloaded ``note.enc`` shows again —
 # ``ui.models.format_note_body`` is ``render_note(note, note.style)`` and
-# nothing else renders a note body. ``verbatim`` and ``clean`` are
+# nothing else renders a note body. Its per-section lines come from
+# ``render_section_lines``, which the Cliniko draft write reuses without the
+# review apparatus (cliniko-draft-write plan D7). ``verbatim`` and ``clean`` are
 # deterministic over the assertions (no substitution, no model); the two
 # prose styles read the note's ``style_renderings`` and fall back to
 # ``clean`` PER SECTION whenever a section has no rendering, a ``failed``
@@ -912,33 +914,19 @@ def attach_style_renderings(
     return GeneratedNote.from_bytes(updated.to_bytes())
 
 
-def _verbatim_block(section: GeneratedSection) -> str:
-    """Today's rendering, byte for byte: the title with a colon, then each
-    assertion as ONE bullet with its provenance tag (never assembled
-    prose — plan Critical Constraint: assertions render on hard
-    boundaries)."""
-    lines = [f"{SECTION_TITLES[section.section_key]}:"]
-    for assertion in section.note_assertions:
-        lines.append(f"  - {assertion.text}  [{assertion_label(assertion)}]")
-    return "\n".join(lines)
-
-
-def _clean_lines(section: GeneratedSection) -> list[str]:
+def _clean_lines(section: GeneratedSection, *, marked: bool) -> list[str]:
     """One terse line per assertion, in the note's order: the confirmed
     text exactly as confirmed — no substitution, no bullet, no provenance
     tag (the line editor keeps the per-line provenance; the tag is review
-    apparatus, not clinical content). A pre-filled line keeps its D5 mark."""
+    apparatus, not clinical content). With ``marked`` a pre-filled line
+    keeps its D5 mark."""
     lines: list[str] = []
     for assertion in section.note_assertions:
         text = assertion.text
-        if is_prefilled(assertion):
+        if marked and is_prefilled(assertion):
             text = f"{text}  [{PREFILLED_MARK}]"
         lines.append(text)
     return lines
-
-
-def _clean_block(section: GeneratedSection) -> str:
-    return "\n".join([SECTION_TITLES[section.section_key], *_clean_lines(section)])
 
 
 def prefilled_section_mark(section: GeneratedSection) -> str | None:
@@ -956,36 +944,61 @@ def prefilled_section_mark(section: GeneratedSection) -> str | None:
     return f"[includes {count} {noun} {PREFILLED_MARK}]"
 
 
-def _prose_block(note: GeneratedNote, section: GeneratedSection) -> str:
-    rendering = usable_rendering(note, section)
-    if rendering is None:
-        return _clean_block(section)
-    lines = [SECTION_TITLES[section.section_key], rendering.prose_text]
-    mark = prefilled_section_mark(section)
-    if mark is not None:
-        lines.append(mark)
-    return "\n".join(lines)
+def render_section_lines(
+    note: GeneratedNote, section: GeneratedSection, style: NoteStyle, *, apparatus: bool
+) -> list[str]:
+    """One section's body lines under ``style``, WITHOUT its title — the
+    one per-section renderer behind both Copy (``render_note``) and the
+    Cliniko draft write (cliniko-draft-write plan D7). Joining the lines
+    with newlines gives the section's text; a prose rendering holding a
+    newline gives several lines.
+
+    With ``apparatus`` the lines are exactly what the Note tab shows:
+    ``verbatim`` — each assertion as ONE bullet with its provenance tag
+    (never assembled prose — assertions render on hard boundaries);
+    ``clean`` — the confirmed text exactly as confirmed, one line per
+    assertion, a pre-filled line keeping its D5 mark; the prose styles —
+    the usable rendering (``usable_rendering``) followed by the section-level
+    pre-filled mark, or else the section's ``clean`` lines.
+
+    Without ``apparatus`` the lines are the bare clinical text: no bullet,
+    tag or mark and no "[includes …]" line — ``verbatim`` renders as
+    ``clean`` lines, and a prose style still falls back to ``clean`` per
+    section exactly as above. Display text only, never logged here."""
+    if style == "verbatim" and apparatus:
+        return [
+            f"  - {assertion.text}  [{assertion_label(assertion)}]"
+            for assertion in section.note_assertions
+        ]
+    if style in ("own_voice", "narrative"):
+        rendering = usable_rendering(note, section)
+        if rendering is not None:
+            lines = rendering.prose_text.split("\n")
+            mark = prefilled_section_mark(section) if apparatus else None
+            if mark is not None:
+                lines.append(mark)
+            return lines
+    return _clean_lines(section, marked=apparatus)
 
 
 def render_note(note: GeneratedNote, style: NoteStyle) -> str:
     """The note body under ``style`` — display text only, never logged here.
 
-    ``verbatim``: the Phase 3A rendering unchanged (``_verbatim_block``).
-    ``clean``: title, then one terse line per assertion (``_clean_lines``).
-    ``own_voice`` / ``narrative``: per section, the usable prose rendering
-    (``usable_rendering``) or else that section's ``clean`` block — so a
-    note that carries no renderings (no language model — Phase 4) renders
-    exactly as ``clean``. Sections are the note's own, already unique and
-    in canonical order (``GeneratedNote`` validator); an empty note renders
+    Each section is its title — with a colon under ``verbatim``, without one
+    otherwise — followed by ``render_section_lines(..., apparatus=True)``:
+    ``verbatim`` the Phase 3A bullets unchanged, ``clean`` one terse line
+    per assertion, ``own_voice`` / ``narrative`` per section the usable
+    prose rendering or else that section's ``clean`` lines — so a note that
+    carries no renderings (no language model — Phase 4) renders exactly as
+    ``clean``. Sections are the note's own, already unique and in canonical
+    order (``GeneratedNote`` validator); an empty note renders
     ``NO_NOTE_CONTENT``."""
     blocks: list[str] = []
     for section in note.note_sections:
-        if style == "verbatim":
-            blocks.append(_verbatim_block(section))
-        elif style == "clean":
-            blocks.append(_clean_block(section))
-        else:
-            blocks.append(_prose_block(note, section))
+        title = SECTION_TITLES[section.section_key]
+        heading = f"{title}:" if style == "verbatim" else title
+        lines = render_section_lines(note, section, style, apparatus=True)
+        blocks.append("\n".join([heading, *lines]))
     if not blocks:
         return NO_NOTE_CONTENT
     return "\n\n".join(blocks)

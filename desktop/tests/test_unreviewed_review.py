@@ -870,6 +870,53 @@ class TestReconstruction:
         controller.end_generation(lease)
         _close(window)
 
+    def test_refused_while_a_draft_write_holds_the_live_session(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Draft-write plan D9 (Task 4.1): "Open for review" would retire the
+        session a draft write holds — refused on ``is_writing`` with the
+        write-in-flight line before the controller is asked; the writing
+        clinic is the one the Clinics tab's Replace key refuses; after the
+        release the open proceeds."""
+        first = _unreviewed(tmp_path, linked=True)
+        second = _unreviewed(tmp_path, linked=True)
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        window.reconstruct_reminders()
+        assert window.open_unreviewed(first.name) is None
+        assert not window.is_writing and window._writing_clinic() is None
+        # The window's own refusal must come BEFORE the controller is asked
+        # (the controller refuses too, with the same line — round 14 LOW).
+        real_adopt = controller.adopt_queued
+        asked: list[str] = []
+
+        def spy(directory: Path, reader: Any) -> Any:
+            asked.append(directory.name)
+            return real_adopt(directory, reader)
+
+        monkeypatch.setattr(controller, "adopt_queued", spy)
+        reservation = controller.reserve_write(first.name)
+        assert window.is_writing
+        live = controller.session
+        assert live is not None and live.encounter_context is not None
+        assert window._writing_clinic() == live.encounter_context.clinic_id
+        # Round 15: the Clinics tab really asks the WINDOW (its Replace-key
+        # refusal reads this provider).
+        assert window.clinics_screen._writing_clinic() == live.encounter_context.clinic_id
+        assert window.open_unreviewed(second.name) == "cannot_open"
+        assert asked == []
+        assert window.recovery_screen.message_label.text() == models.write_line(
+            "write_in_flight"
+        )
+        assert controller.session is not None and controller.session.session_id == first.name
+        reservation.release()
+        assert not window.is_writing and window._writing_clinic() is None
+        assert window.clinics_screen._writing_clinic() is None
+        assert window.open_unreviewed(second.name) is None
+        assert asked == [second.name]
+        assert controller.session is not None and controller.session.session_id == second.name
+        _close(window)
+
     def test_refused_while_a_recovery_is_transcribing(self, qapp: Any, tmp_path: Path) -> None:
         """Round 32 LOW-024: the Chrome route honours the Recovery screen's
         own block — the resume would land on the adopted session's view."""

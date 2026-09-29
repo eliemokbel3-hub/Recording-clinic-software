@@ -82,8 +82,16 @@ class ScriptedTransport:
         self.calls: list[tuple[str, str, str, dict[str, str]]] = []
 
     def request(
-        self, method: str, host: str, path: str, headers: Mapping[str, str], max_body: int
+        self,
+        method: str,
+        host: str,
+        path: str,
+        headers: Mapping[str, str],
+        max_body: int,
+        *,
+        body: bytes | None = None,
     ) -> cc.RawResponse:
+        assert body is None, "the clinic registry only reads"
         self.calls.append((method, host, path, dict(headers)))
         route = next(r for r in self.routes if path == r or path.startswith(r + "?"))
         answer = self.routes[route]

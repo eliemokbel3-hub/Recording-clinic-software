@@ -67,12 +67,18 @@ class ClinicsScreen(QWidget):
         registry: ClinicRegistry,
         *,
         live_session_clinic: Callable[[], str | None] | None = None,
+        writing_clinic: Callable[[], str | None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._registry = registry
         self._live_session_clinic: Callable[[], str | None] = (
             live_session_clinic if live_session_clinic is not None else (lambda: None)
+        )
+        # Draft-write plan D9: the clinic a Cliniko draft write in flight uses
+        # — its key was read once for the whole write, so Replace key waits.
+        self._writing_clinic: Callable[[], str | None] = (
+            writing_clinic if writing_clinic is not None else (lambda: None)
         )
         self._task: TaskThread | None = None
         self._pending: ValidationRequest | None = None
@@ -232,6 +238,10 @@ class ClinicsScreen(QWidget):
         if clinic_id is None:
             self.key_field.setText("")
             self.status_label.setText(models.CLINIC_NO_SELECTION_LINE)
+            return
+        if self._writing_clinic() == clinic_id:
+            self.key_field.setText("")
+            self.status_label.setText(models.write_line("write_in_flight"))
             return
         request = self._registry.begin_validation(
             api_key=self._take_key(),

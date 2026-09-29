@@ -117,10 +117,14 @@ from scribe_desktop.context_rules import (
     pause_action,
 )
 from scribe_desktop.encounter import (
+    RATE_LIMIT_COOLDOWN_SECONDS as RATE_LIMIT_COOLDOWN_SECONDS,  # re-exported (D13)
+)
+from scribe_desktop.encounter import (
     NoteDisplay,
     NoteRefusal,
     NoteRefused,
     NoteTarget,
+    RateLimitLatch,
     StartRefused,
     UnverifiedOffline,
     VerificationLedger,
@@ -153,11 +157,12 @@ from scribe_desktop.voice_commands import NEW_CONSULTATION_WARNING, spoken_pause
 PUBLISH_INTERVAL_MS: Final = 500
 # Cliniko's rate limit (round 57 SEC-009, practitioner decision 2026-09-28):
 # after a 429 a clinic's checks are answered `unverified_offline` WITHOUT a
-# call for this long (a fixed window from the 429; only a real 429 starts
-# one), and no two verification calls start closer together than the
-# spacing — a check inside it waits in its slot for a single-shot timer,
-# coalesced like any waiting check, never blocking the GUI thread.
-RATE_LIMIT_COOLDOWN_SECONDS: Final = 60.0
+# call for `RATE_LIMIT_COOLDOWN_SECONDS` — the shared `RateLimitLatch`
+# (draft-write D13), injected by the main window, so a 429 seen by the
+# checkout or the draft write cools these checks too — and no two
+# verification calls start closer together than the spacing: a check inside
+# it waits in its slot for a single-shot timer, coalesced like any waiting
+# check, never blocking the GUI thread. The spacing is the bridge's own.
 MIN_CALL_SPACING_SECONDS: Final = 1.0
 # The main window's lock refusals (codex round 51 PR-MED-300).
 _LOCK_REFUSALS: Final = frozenset({"locked", "lock_unknown"})
@@ -262,12 +267,17 @@ class ChromeBridge(QObject):
         reminders: ReminderIndex | None = None,
         open_review: Callable[[str], str | None] | None = None,
         call_spacing_seconds: float = MIN_CALL_SPACING_SECONDS,
+        latch: RateLimitLatch | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._screen = session_screen
         self._clinics = clinics
         self._clock = clock
+        # D13: the one 429 cooldown, shared with the checkout and the write;
+        # read and recorded on the LATCH's clock, never ``clock`` (round 9
+        # LOW-012: the two may be given separately).
+        self._latch = latch if latch is not None else RateLimitLatch(clock)
         # Task 5.5 (D6): the main window's Unreviewed reminder index (read
         # only, for the banner) and its opener — given a session id, it
         # opens that session for review and returns None, or a
@@ -298,9 +308,8 @@ class ChromeBridge(QObject):
         self._waiting_live: VerificationRequest | None = None
         self._live_check: _LiveCheck | None = None
         self._live_check_seq = 0
-        # SEC-009: per-clinic cooldown ends (clinic_id -> clock time), the
-        # last call's start, and the spacing timer that starts a deferred one.
-        self._cooldown_until: dict[str, float] = {}
+        # SEC-009: the last call's start, and the spacing timer that starts a
+        # deferred one (the per-clinic cooldown is the latch's).
         self._last_call_at: float | None = None
         self._call_spacing = call_spacing_seconds
         self._spacing_served = False
@@ -726,8 +735,8 @@ class ChromeBridge(QObject):
         cooldown with no call; or, inside the spacing, put it back in its
         slot and start the timer; or start the call (SEC-009)."""
         now = self._clock()
-        until = self._cooldown_until.get(request.clinic.clinic_id)
-        if until is not None and now < until:
+        # The latch is read on ITS clock: it may be shared (D13).
+        if self._latch.cooling(request.clinic.clinic_id, self._latch.clock()) is not None:
             self._apply_result(rate_limited_result(request), live=live)
             return
         if self._last_call_at is not None and not self._spacing_served:
@@ -817,10 +826,9 @@ class ChromeBridge(QObject):
             outcome = result.outcome
             if isinstance(outcome, UnverifiedOffline) and outcome.rate_limited:
                 # A real 429 (the cooldown's own answers never come here):
-                # this clinic's checks make no call for the next minute.
-                self._cooldown_until[result.request.clinic.clinic_id] = (
-                    self._clock() + RATE_LIMIT_COOLDOWN_SECONDS
-                )
+                # this clinic's calls — here, at checkout, for the write —
+                # make no request for the next minute.
+                self._latch.record_429(result.request.clinic.clinic_id, self._latch.clock())
             self._apply_result(result, live=self._running_live)
         self._finish_task()
         self.publish()

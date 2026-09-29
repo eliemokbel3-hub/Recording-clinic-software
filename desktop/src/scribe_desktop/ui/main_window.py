@@ -36,11 +36,14 @@ from scribe_desktop.context_rules import (
 from scribe_desktop.encounter import (
     EncounterRecord,
     EncounterUnavailable,
+    RateLimitLatch,
+    UnverifiedOffline,
     VerificationRequest,
     VerificationResult,
     VerifiedTarget,
     WritebackRefused,
     WritebackSubject,
+    rate_limited_result,
     read_encounter_record,
     reverification_request,
     verify_note_context,
@@ -65,6 +68,7 @@ from scribe_desktop.session import (
     SessionActivityError,
     SessionControllerError,
     SessionState,
+    WriteInFlightError,
 )
 from scribe_desktop.session_store import KEY_FILENAME, session_expires_at
 from scribe_desktop.status import read_registration_status, run_self_test
@@ -202,10 +206,18 @@ class MainWindow(QMainWindow):
         style_root: Path | None = None,
         language_model_available: Callable[[], bool] | None = None,
         clinic_registry: ClinicRegistry | None = None,
+        rate_limit_latch: RateLimitLatch | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
         self._controller = controller
+        # Draft-write D13: THE 429 cooldown, owned here and shared by the
+        # Chrome bridge's checks, the checkout re-verification and the draft
+        # write — a 429 any of them sees cools the clinic for all of them.
+        # `rate_limit_latch` is the test seam (its clock is injectable).
+        self._rate_limit_latch = (
+            rate_limit_latch if rate_limit_latch is not None else RateLimitLatch()
+        )
         # Phase H round 24 MED-006: the language model's presence is a seam
         # here too — the Practitioner tab's poll and the Note tab's prose
         # stage both ask it, and a test must never read the real host's
@@ -308,7 +320,9 @@ class MainWindow(QMainWindow):
             clinic_registry if clinic_registry is not None else ClinicRegistry()
         )
         self.clinics_screen = ClinicsScreen(
-            self._clinic_registry, live_session_clinic=self._live_session_clinic
+            self._clinic_registry,
+            live_session_clinic=self._live_session_clinic,
+            writing_clinic=self._writing_clinic,
         )
         # Task 3.4: a recovered checkout's encounter record, decrypted ONCE on
         # checkout (`_on_recovered`), and its D4 re-verification.
@@ -427,6 +441,7 @@ class MainWindow(QMainWindow):
                 parent=self,
                 reminders=self.reminders,
                 open_review=self.open_unreviewed,
+                latch=self._rate_limit_latch,
             )
             self.clinics_screen.clinics_changed.connect(bridge.on_clinics_changed)
             bridge.pause_cue.connect(self._show_pause_cue)
@@ -746,6 +761,11 @@ class MainWindow(QMainWindow):
         if not isinstance(info, models.RecoverableSessionInfo):
             return False
         recovery = self.recovery_screen
+        if self.is_writing:
+            # D9: adopting would retire the session a draft write holds.
+            recovery.show_message(models.write_line("write_in_flight"))
+            self.tabs.setCurrentWidget(recovery)
+            return False
         if self.transcript_screen.is_busy or self.note_screen.is_busy:
             recovery.show_message(models.REVIEW_OPEN_BUSY_LINE)
             self.tabs.setCurrentWidget(recovery)
@@ -771,6 +791,8 @@ class MainWindow(QMainWindow):
             )
         except ReviewOpenRefused as exc:
             refusal = models.review_refusal_line(exc.reason, exc.__cause__)
+        except WriteInFlightError:
+            refusal = models.write_line("write_in_flight")
         except SessionControllerError as exc:
             refusal = f"This recording cannot be opened for review now: {exc}."
         except Exception as exc:  # noqa: BLE001 - named, never a crash
@@ -913,6 +935,34 @@ class MainWindow(QMainWindow):
         if session is None or session.is_terminal or session.encounter_context is None:
             return None
         return session.encounter_context.clinic_id
+
+    def _writing_clinic(self) -> str | None:
+        """The clinic a Cliniko draft write in flight writes to, for the
+        Clinics tab's Replace key refusal (draft-write plan D9: the key read
+        once in hop 1 must stay the clinic's key for hop 2). Remove needs no
+        second source: the writing session is always the LIVE one
+        (``reserve_write`` admits only the live QUEUED session and every
+        retiring action is refused while it is held), so
+        ``_live_session_clinic`` already names its clinic. ``reserve_write``
+        does not check linkage — an unlinked reservation names no clinic
+        (None) and reads no key, because the write's own
+        ``writeback_context`` refuses an unlinked session before any key is
+        read (Task 5.2's click)."""
+        writing = self._controller.writing_session_id()
+        session = self._controller.session
+        if writing is None or session is None or session.session_id != writing:
+            return None
+        return self._live_session_clinic()
+
+    @property
+    def is_writing(self) -> bool:
+        """A Cliniko draft write holds the live session's custody (D9): true
+        from ``reserve_write`` — taken at the click, before the first worker —
+        until its result handler releases the reservation or completion
+        consumes it. Read by "Open for review" (``_on_review_requested``); Task 5.2's write
+        wiring adds the close refusal, the Note tab, the Transcript row and
+        the Chrome bridge's pre-checks."""
+        return self._controller.writing_session_id() is not None
 
     def _recovery_in_flight(self) -> bool:
         """Round 33 MED-001: a recovery resume is running, so a note
@@ -1180,6 +1230,14 @@ class MainWindow(QMainWindow):
             self._run_reverification(request)
 
     def _run_reverification(self, request: VerificationRequest) -> None:
+        latch = self._rate_limit_latch
+        if latch.cooling(request.clinic.clinic_id, latch.clock()) is not None:
+            # D13: the clinic is cooling after a 429 — answered as a 429 was
+            # (the existing offline line), with no call; reopening the row
+            # after the cooldown checks again.
+            if request is self._checkout.request:
+                self._checkout.result = rate_limited_result(request)
+            return
         registry = self._clinic_registry
         # The holder pattern (`ui/clinics.py`, round 15 MED-006): the thread
         # object stays a child of this window, so a closure that kept the
@@ -1213,6 +1271,17 @@ class MainWindow(QMainWindow):
 
     def _on_reverified(self, result: object) -> None:
         ran = self._finish_reverify_task()
+        # D13 (PR-LOW-008): a real 429 cools the clinic for every caller —
+        # recorded BEFORE any waiting check starts, whether or not this
+        # result is still current (the cooldown's own answers never come
+        # here: they make no call).
+        if (
+            isinstance(result, VerificationResult)
+            and isinstance(result.outcome, UnverifiedOffline)
+            and result.outcome.rate_limited
+        ):
+            latch = self._rate_limit_latch
+            latch.record_429(result.request.clinic.clinic_id, latch.clock())
         # Applied only to the checkout that dispatched it (identity): a result
         # arriving after the view closed or moved on changes nothing.
         if (
@@ -1334,7 +1403,11 @@ class MainWindow(QMainWindow):
         (`_on_live_transcript`, `_on_recovered`, `_on_transcript_closed`) is
         itself already blocked while a lease or a discard reservation is
         held. Phase 7's busy guards own keeping view swaps unreachable during
-        generation; this catch is the custody backstop, not the UX. If a
+        generation; this catch is the custody backstop, not the UX. A draft
+        write's reservation (D9) also refuses this call, and that holds the
+        same way only once the write wiring blocks those view swaps while
+        writing (draft-write Task 5.2: the Recovery block and the
+        transcript-row disable) — until then no write can be started. If a
         future caller CAN reach it while blocked, give the release path an
         explicit re-run rather than relying on the next view change."""
         if self._recovered_crypto is None:

@@ -297,8 +297,9 @@ class Verified:
 class UnverifiedOffline:
     """Cliniko could not be asked (a connection error, timeout, 5xx or 429):
     recording is allowed, write-back is blocked (D4). ``rate_limited``: the
-    answer was a 429, or the bridge's cooldown after one answered without a
-    call (round 57 SEC-009)."""
+    answer was a 429, or the shared ``RateLimitLatch``'s cooldown after one
+    answered without a call — the bridge's (round 57 SEC-009) or the
+    checkout's (draft-write D13)."""
 
     context: EncounterContext
     rate_limited: bool = False
@@ -362,30 +363,39 @@ _LINK_RE: Final = re.compile(
 )
 
 
-class _Shape(Exception):
-    """An answer did not have the shape the P.1 block expects."""
+class AnswerShapeError(Exception):
+    """An answer did not have the shape the P.1 block expects. Public (round
+    10 LOW-003) because ``link_id`` and ``note_state`` are: a caller catches
+    this by name, never a bare ``Exception`` that would hide its own bugs."""
 
 
-def _link_id(note: Mapping[str, Any], name: str, resource: str | None) -> str | None:  # (b)
+def link_id(note: Mapping[str, Any], name: str, resource: str | None) -> str | None:  # (b)
+    """The id in a note link's ``self`` URL (``resource`` checked when
+    given); None for an absent link. Raises ``AnswerShapeError`` on any other
+    shape. Public for the draft write's note read (draft-write Task 1.1)."""
     value = note.get(name)
     if value is None:
         return None
     if not isinstance(value, dict):
-        raise _Shape()
+        raise AnswerShapeError()
     links = value.get("links")
     url = links.get("self") if isinstance(links, dict) else None
     if not isinstance(url, str):
-        raise _Shape()
+        raise AnswerShapeError()
     match = _LINK_RE.fullmatch(url)
     if match is None or (resource is not None and match.group("resource") != resource):
-        raise _Shape()
+        raise AnswerShapeError()
     return check_id(match.group("id"))
 
 
-def _note_state(note: Mapping[str, Any]) -> NoteRefusal | None:  # (a)
+def note_state(note: Mapping[str, Any]) -> NoteRefusal | None:  # (a)
+    """None for an open draft; ``NOTE_FINAL`` / ``NOTE_ARCHIVED`` otherwise.
+    Raises ``AnswerShapeError`` on a note without ``draft`` /
+    ``finalized_at``. Public for the draft write's note read (draft-write
+    Task 1.1)."""
     draft = note.get("draft")
     if not isinstance(draft, bool) or "finalized_at" not in note:
-        raise _Shape()
+        raise AnswerShapeError()
     if not draft or note["finalized_at"] is not None:
         return NoteRefusal.NOTE_FINAL
     if note.get("archived_at") is not None or note.get("deleted_at") is not None:
@@ -457,8 +467,50 @@ def _offline_context(request: VerificationRequest) -> EncounterContext:
     )
 
 
+# Cliniko's rate limit (round 57 SEC-009, practitioner decision 2026-09-28):
+# after a 429 a clinic's calls are refused WITHOUT a request for this long —
+# a fixed window from the 429; only a real 429 starts one.
+RATE_LIMIT_COOLDOWN_SECONDS: Final = 60.0
+
+
+class RateLimitLatch:
+    """THE 429 cooldown (draft-write D13), one per app, owned by the main
+    window and shared by D13's three paths: the bridge's note checks, the
+    checkout re-verification and the draft write. A 429 recorded by any of
+    them cools the clinic for all of them. The Clinics tab's Validate /
+    Replace key is NOT one of them (it predates this latch, is an explicit
+    click, and names its own 429 as ``ClinicRefusal.RATE_LIMITED``).
+
+    Qt-free and GUI-thread only (it holds no lock); every caller reads and
+    records on ``clock`` (never a clock of its own, round 9 LOW-012).
+    Spacing between calls is NOT here: it stays the bridge's own timer, for
+    bursts of Chrome reports."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
+        self._until: dict[str, float] = {}
+
+    @property
+    def clock(self) -> Callable[[], float]:
+        return self._clock
+
+    def cooling(self, clinic_id: str, now: float) -> float | None:
+        """Seconds of the clinic's cooldown left at ``now``, or None when it
+        is not cooling."""
+        until = self._until.get(clinic_id)
+        if until is None or now >= until:
+            return None
+        return until - now
+
+    def record_429(self, clinic_id: str, now: float) -> None:
+        """A real 429 at ``now``: the clinic cools until ``now`` plus
+        ``RATE_LIMIT_COOLDOWN_SECONDS`` (never shortened by an older one)."""
+        until = now + RATE_LIMIT_COOLDOWN_SECONDS
+        self._until[clinic_id] = max(until, self._until.get(clinic_id, until))
+
+
 def rate_limited_result(request: VerificationRequest) -> VerificationResult:
-    """The answer the bridge records WITHOUT a call while its clinic is in
+    """The answer recorded WITHOUT a call while the request's clinic is in
     the cooldown after a 429 (round 57 SEC-009): ``unverified_offline``, as
     the 429 itself was."""
     return VerificationResult(
@@ -500,7 +552,7 @@ def verify_note_context(
             if reason is None
             else NoteRefused(reason)
         )
-    except Exception:  # noqa: BLE001 - _Shape, InvalidId, the unforeseen: never raise
+    except Exception:  # noqa: BLE001 - AnswerShapeError, InvalidId, the unforeseen: never raise
         outcome = NoteRefused(NoteRefusal.ANSWER_UNREADABLE)
     # Only the outcome leaves: the exception, whose frames hold the key
     # (threat-model Cliniko residue (6)), goes with its block.
@@ -538,19 +590,19 @@ def _check_note(
     clinic = request.clinic
     target = request.target
     note = call.get_treatment_note(target.note_id)
-    state = _note_state(note)
-    patient_id = _link_id(note, "patient", "patients")
-    practitioner_id = _link_id(note, "practitioner", "practitioners")
+    state = note_state(note)
+    patient_id = link_id(note, "patient", "patients")
+    practitioner_id = link_id(note, "practitioner", "practitioners")
     if patient_id is None or practitioner_id is None:
-        raise _Shape()
+        raise AnswerShapeError()
     if patient_id != target.patient_id:
         return NoteRefused(NoteRefusal.PATIENT_MISMATCH)
     if state is not None:
         return NoteRefused(state)
     if practitioner_id != clinic.practitioner_id:
         return NoteRefused(NoteRefusal.WRONG_PRACTITIONER)
-    booking_id = _link_id(note, "booking", None)
-    template_id = _link_id(note, "treatment_note_template", None)
+    booking_id = link_id(note, "booking", None)
+    template_id = link_id(note, "treatment_note_template", None)
     patient = call.get_patient(target.patient_id)
     starts_at: datetime | None = None
     if booking_id is not None:

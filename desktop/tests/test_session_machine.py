@@ -42,6 +42,8 @@ from scribe_desktop.session import (
     SessionController,
     SessionControllerError,
     SessionState,
+    WriteInFlightError,
+    WriteReservation,
 )
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -983,6 +985,295 @@ class TestGenerationCustodyOp:
             controller.with_generation_custody(lease, lambda d, c: None)
         controller.end_generation(lease)
         controller.discard()
+
+
+@windows_only
+class TestWriteReservation:
+    """Cliniko draft-write plan D9 (Task 4.1): the write's reservation is the
+    counted custody reservation plus the ``_writing_id`` marker. ONE TEST PER
+    METHOD of the custody-changing public surface (``docs/lessons.md``
+    2026-08-12, an exhaustive consumer enumeration): refused by name while
+    held, allowed after release — or, for the state-guarded and other-id
+    methods, shown unaffected. The ``write_pending`` refusals of
+    ``begin_generation`` / Save after an attempt read the write record and
+    arrive with it (Task 3.3)."""
+
+    def _queued_session(self, tmp_path: Path) -> tuple[SessionController, Path, str]:
+        controller, _backend = _controller(tmp_path)
+        session = start_unlinked(controller)
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        return controller, session_dir, session.session_id
+
+    def _reserved(
+        self, tmp_path: Path
+    ) -> tuple[SessionController, Path, WriteReservation]:
+        controller, session_dir, session_id = self._queued_session(tmp_path)
+        reservation = controller.reserve_write(session_id)
+        assert controller.writing_session_id() == session_id
+        return controller, session_dir, reservation
+
+    # --- the reservation itself ----------------------------------------------
+
+    def test_reserve_protects_the_session_and_release_clears_it(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        session_id = reservation.session_id
+        assert session_id in controller.reserved_session_ids()
+        assert session_id in controller.custody_protected_ids()
+        reservation.release()
+        assert controller.writing_session_id() is None
+        assert controller.reserved_session_ids() == frozenset()
+        reservation.release()  # idempotent
+        assert controller.reserved_session_ids() == frozenset()
+
+    def test_a_second_reservation_is_refused_by_name(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError):
+            controller.reserve_write(reservation.session_id)
+        assert controller.reserved_session_ids() == {reservation.session_id}
+        reservation.release()
+
+    def test_a_stale_token_never_releases_a_later_reservation(self, tmp_path: Path) -> None:
+        controller, _dir, first = self._reserved(tmp_path)
+        first.release()
+        second = controller.reserve_write(first.session_id)
+        first.release()  # the stale token changes nothing
+        assert controller.writing_session_id() == second.session_id
+        assert controller.reserved_session_ids() == {second.session_id}
+        second.release()
+
+    def test_the_token_cannot_be_retargeted(self, tmp_path: Path) -> None:
+        """Round 15: ``session_id`` is read-only, and the release drops the
+        custody of the session the controller marked, not the token's view."""
+        controller, _dir, reservation = self._reserved(tmp_path)
+        session_id = reservation.session_id
+        with pytest.raises(AttributeError):
+            reservation.session_id = "c" * 32  # type: ignore[misc]
+        with pytest.raises(AttributeError):
+            reservation.other = 1  # type: ignore[attr-defined]
+        reservation.release()
+        assert reservation.session_id == session_id
+        assert controller.reserved_session_ids() == frozenset()
+        assert controller.writing_session_id() is None
+
+    def test_reserve_refused_without_a_queued_live_session(self, tmp_path: Path) -> None:
+        controller, _backend = _controller(tmp_path)
+        with pytest.raises(SessionActivityError):
+            controller.reserve_write("a" * 32)
+        session = start_unlinked(controller)  # RECORDING, not QUEUED
+        with pytest.raises(SessionActivityError):
+            controller.reserve_write(session.session_id)
+        assert controller.writing_session_id() is None
+        controller.discard()
+
+    def test_reserve_refused_for_another_session_id(self, tmp_path: Path) -> None:
+        controller, _dir, _session_id = self._queued_session(tmp_path)
+        with pytest.raises(SessionActivityError, match="not the live one"):
+            controller.reserve_write("b" * 32)
+        assert controller.reserved_session_ids() == frozenset()
+
+    def test_reserve_refused_while_a_discard_of_the_session_is_in_flight(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _dir, session_id = self._queued_session(tmp_path)
+        with controller._lock:  # noqa: SLF001 - discard() is the producer; deliberate injection
+            controller._reserve_custody_locked(session_id)  # noqa: SLF001
+        with pytest.raises(SessionActivityError, match="discard"):
+            controller.reserve_write(session_id)
+        assert controller.writing_session_id() is None
+        with controller._lock:  # noqa: SLF001
+            controller._release_custody_locked(session_id)  # noqa: SLF001
+
+    def test_reserve_and_the_generation_lease_exclude_each_other_in_both_orders(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _dir, session_id = self._queued_session(tmp_path)
+        lease = controller.begin_generation()
+        with pytest.raises(GenerationInProgressError):
+            controller.reserve_write(session_id)
+        controller.end_generation(lease)
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(WriteInFlightError):
+            controller.begin_generation()
+        assert not controller.generating
+        reservation.release()
+        controller.end_generation(controller.begin_generation())
+
+    # --- the refused set: one test per method --------------------------------
+
+    def test_complete_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, session_dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="complete"):
+            controller.complete()
+        assert controller.state is SessionState.QUEUED
+        assert (session_dir / KEY_FILENAME).is_file()
+        reservation.release()
+        assert controller.complete().state is SessionState.WRITTEN
+
+    def test_complete_without_note_is_excluded_by_the_lease_while_writing(
+        self, tmp_path: Path
+    ) -> None:
+        """No lease can be held beside a write (the exclusion above), so the
+        leased exit is refused by its lease check whatever token it is
+        handed; its own write check stays as defence in depth and is
+        unreachable while that exclusion holds."""
+        controller, session_dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(GenerationInProgressError):
+            controller.complete_without_note(GenerationLease())
+        assert (session_dir / KEY_FILENAME).is_file()
+        reservation.release()
+        lease = controller.begin_generation()
+        assert controller.complete_without_note(lease).state is SessionState.WRITTEN
+
+    def test_complete_deleting_saved_note_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, session_dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="complete"):
+            controller.complete_deleting_saved_note()
+        assert (session_dir / KEY_FILENAME).is_file()
+        reservation.release()
+        assert controller.complete_deleting_saved_note().state is SessionState.WRITTEN
+
+    def test_discard_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, session_dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="discard"):
+            controller.discard()
+        assert controller.state is SessionState.QUEUED
+        assert (session_dir / KEY_FILENAME).is_file()
+        reservation.release()
+        assert controller.discard().state is SessionState.DISCARDED
+
+    def test_start_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, session_dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="start"):
+            start_unlinked(controller)
+        current = controller.session
+        assert current is not None and current.session_id == reservation.session_id
+        assert (session_dir / KEY_FILENAME).is_file()
+        reservation.release()
+        start_unlinked(controller)
+        controller.discard()
+
+    def test_adopt_queued_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        other = tmp_path / ("c" * 32)
+        with pytest.raises(WriteInFlightError, match="open for review"):
+            controller.adopt_queued(other, lambda d, c: None)
+        current = controller.session
+        assert current is not None and current.session_id == reservation.session_id
+        reservation.release()
+        # After release the refusal is the directory's own, not the write's.
+        with pytest.raises(SessionControllerError) as refused:
+            controller.adopt_queued(other, lambda d, c: None)
+        assert not isinstance(refused.value, WriteInFlightError)
+
+    def test_begin_generation_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="generation"):
+            controller.begin_generation()
+        reservation.release()
+        controller.end_generation(controller.begin_generation())
+
+    def test_begin_enrolment_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(WriteInFlightError, match="voice enrolment"):
+            controller.begin_enrolment()
+        assert not controller.enrolling
+        reservation.release()
+        controller.end_enrolment(controller.begin_enrolment())
+
+    def test_destroy_recovered_crypto_refused_while_writing(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        crypto = SessionCrypto()
+        with pytest.raises(WriteInFlightError, match="recovered-key destruction"):
+            controller.destroy_recovered_crypto(crypto)
+        assert not crypto.destroyed
+        reservation.release()
+        controller.destroy_recovered_crypto(crypto)
+        assert crypto.destroyed
+
+    def test_retirement_itself_refuses_while_writing(self, tmp_path: Path) -> None:
+        """Round 14 LOW: defence in depth — retirement destroys the in-memory
+        crypto ``with_write_custody`` hands out, so it refuses on its own,
+        not only through its callers (``start``, ``adopt_queued``)."""
+        controller, _dir, reservation = self._reserved(tmp_path)
+        with controller._lock:  # noqa: SLF001 - the private step itself is under test
+            live = controller._live  # noqa: SLF001
+            assert live is not None
+            with pytest.raises(WriteInFlightError, match="session retirement"):
+                controller._retire_locked(live)  # noqa: SLF001
+            assert not live.crypto.destroyed
+        reservation.release()
+
+    def test_transcribe_is_refused_by_the_queued_state(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        with pytest.raises(SessionActivityError):
+            controller.transcribe(lambda d, c: None)
+        assert controller.state is SessionState.QUEUED
+        reservation.release()
+
+    def test_pause_resume_finish_mark_queued_are_refused_by_the_queued_state(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        for action in (
+            controller.pause,
+            controller.resume,
+            controller.finish,
+            controller.mark_queued,
+        ):
+            with pytest.raises(SessionControllerError):
+                action()
+            assert controller.state is SessionState.QUEUED
+        reservation.release()
+
+    def test_recovered_path_ops_on_another_session_are_unaffected(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        completed_dir, completed_crypto = _recovered_dir(tmp_path)
+        controller.complete_recovered(completed_dir, completed_crypto)
+        assert not (completed_dir / KEY_FILENAME).exists()
+        discarded_dir, discarded_crypto = _recovered_dir(tmp_path)
+        controller.discard_recovered(discarded_dir, discarded_crypto)
+        assert not discarded_dir.exists()
+        assert controller.writing_session_id() == reservation.session_id
+        reservation.release()
+
+    def test_the_session_reference_registry_is_unaffected(self, tmp_path: Path) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        other = "d" * 32
+        ref = controller.register_session_ref(other)
+        assert controller.resolve_session_ref(ref) == other
+        controller.forget_session_ref(other)
+        assert controller.resolve_session_ref(ref) is None
+        reservation.release()
+
+    # --- the scoped accessor --------------------------------------------------
+
+    def test_with_write_custody_runs_the_action_on_the_reserved_session(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_dir, reservation = self._reserved(tmp_path)
+
+        def action(directory: Path, crypto: SessionCrypto) -> bytes:
+            return crypto.decrypt((directory / TRANSCRIPT_FILENAME).read_bytes())
+
+        assert controller.with_write_custody(reservation, action) == b"transcript"
+        reservation.release()
+
+    def test_with_write_custody_refuses_a_released_or_foreign_token(
+        self, tmp_path: Path
+    ) -> None:
+        controller, _dir, reservation = self._reserved(tmp_path)
+        forged = WriteReservation(controller, reservation.session_id)
+        with pytest.raises(SessionActivityError, match="held write reservation"):
+            controller.with_write_custody(forged, lambda d, c: None)
+        forged.release()  # a token that was never held releases nothing
+        assert controller.writing_session_id() == reservation.session_id
+        reservation.release()
+        with pytest.raises(SessionActivityError, match="held write reservation"):
+            controller.with_write_custody(reservation, lambda d, c: None)
 
 
 @windows_only

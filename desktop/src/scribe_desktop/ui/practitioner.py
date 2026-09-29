@@ -182,7 +182,7 @@ from scribe_desktop.sample_notes import (
     learn_style_profile,
     read_sample_note,
 )
-from scribe_desktop.session import EnrolmentLease, SessionActivityError
+from scribe_desktop.session import EnrolmentLease, SessionActivityError, WriteInFlightError
 from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.speaker_embedding import (
     SHIPPED_SPEAKER_EMBEDDER,
@@ -1029,6 +1029,12 @@ class PractitionerScreen(QWidget):
             return  # the availability label already names the remedy
         try:
             lease = self._controller.begin_enrolment()
+        except WriteInFlightError:
+            # Draft-write plan D9: named by its line, never the error's own text.
+            self._set_enrolment_status(
+                f"Cannot record now - {models.write_line('write_in_flight')}"
+            )
+            return
         except SessionActivityError as exc:
             self._set_enrolment_status(f"Cannot record now - {exc}")
             return

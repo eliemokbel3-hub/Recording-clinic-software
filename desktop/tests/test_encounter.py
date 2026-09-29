@@ -7,6 +7,7 @@ in-memory key store. No socket, no Credential Manager, no DPAPI."""
 from __future__ import annotations
 
 import base64
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ from encounter_fakes import (
 from scribe_desktop import cliniko_client as cc
 from scribe_desktop.clinics import KEY_SECRET_NAME, Removed
 from scribe_desktop.encounter import (
+    RATE_LIMIT_COOLDOWN_SECONDS,
     RECORDING_CONSENT_TEXT_VERSION,
     VERIFIED_REUSE_SECONDS,
     ConsentAttestation,
@@ -58,6 +60,7 @@ from scribe_desktop.encounter import (
     NoteRefusal,
     NoteRefused,
     NoteTarget,
+    RateLimitLatch,
     StartRefusal,
     StartRefused,
     UnverifiedOffline,
@@ -94,6 +97,36 @@ def verify(registry: Any, request: Any = None, **kwargs: Any) -> VerificationRes
         clock=lambda: NOW,
         **kwargs,
     )
+
+
+# ---------------------------------------------------------------------------
+# Draft-write plan Task 1.3 (D13): the one 429 cooldown.
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimitLatch:
+    def test_a_recorded_429_cools_its_clinic_for_the_cooldown(self) -> None:
+        latch = RateLimitLatch(lambda: 0.0)
+        assert RATE_LIMIT_COOLDOWN_SECONDS == 60.0
+        assert latch.cooling(CLINIC_ID, 100.0) is None
+        latch.record_429(CLINIC_ID, 100.0)
+        assert latch.cooling(CLINIC_ID, 100.0) == 60.0
+        assert latch.cooling(CLINIC_ID, 159.5) == 0.5
+        assert latch.cooling(CLINIC_ID, 160.0) is None
+        assert latch.cooling("fedcba9876543210", 100.0) is None  # per clinic
+
+    def test_a_later_429_extends_and_an_older_one_never_shortens(self) -> None:
+        latch = RateLimitLatch()
+        latch.record_429(CLINIC_ID, 100.0)
+        latch.record_429(CLINIC_ID, 130.0)
+        assert latch.cooling(CLINIC_ID, 185.0) == 5.0
+        latch.record_429(CLINIC_ID, 110.0)  # an older answer, handled late
+        assert latch.cooling(CLINIC_ID, 185.0) == 5.0
+
+    def test_the_clock_is_the_one_given(self) -> None:
+        latch = RateLimitLatch(lambda: 42.0)
+        assert latch.clock() == 42.0
+        assert RateLimitLatch().clock is time.monotonic
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,9 @@ returns a string for DISPLAY ONLY.
 
 from __future__ import annotations
 
+import math
 import re
+import string
 import threading
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -37,6 +39,7 @@ from scribe_desktop.encounter import (
     Verification,
     VerificationOutcome,
     Verified,
+    WritebackRefusal,
     read_encounter_record,
 )
 from scribe_desktop.hotkey import CHORD_TEXT
@@ -111,6 +114,8 @@ from scribe_desktop.session import (
     GenerationLease,
     RecordingSession,
     SessionState,
+    WriteInFlightError,
+    WriteReservation,
 )
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -256,6 +261,216 @@ NOTE_REFUSAL_REASONS: Final[Mapping[NoteRefusal, str]] = {
 
 def note_refusal_line(reason: NoteRefusal) -> str:
     return NOTE_REFUSAL_REASONS[reason]
+
+
+# ---------------------------------------------------------------------------
+# Cliniko draft write (cliniko-draft-write plan Task 5.1): THE one source of
+# the write's user-facing strings — every later task uses these keys, never
+# its own wording (Task 6.1 copies them into docs/design-system.md). Plain
+# clinical English, no exclamation marks; no id, patient or practitioner name,
+# answer or key is ever formatted into a line. Placeholders: ``{reason}``
+# (``check_failed`` — a ``writeback_refusal_line`` or ``note_refusal_line``
+# reason), ``{seconds}`` (``rate_limited``), ``{cause}`` (``not_taken`` — a
+# ``not_taken_cause``, whose only free text is a template QUESTION's label or
+# the client's fixed field categories: ``write_line`` checks the cause's
+# prefix, and the suffix is trusted to ``not_taken_cause``'s callers).
+# ---------------------------------------------------------------------------
+
+WRITE_LINES: Final[Mapping[str, str]] = {
+    "ready": "Write draft to Cliniko",
+    "checking": "Checking the note with Cliniko …",
+    "writing": "Writing the draft to Cliniko …",
+    "written_auto": (
+        "Draft written to Cliniko. Reload the note page in Chrome to see it, then review "
+        "and finalise it there."
+    ),
+    "written_seen": (
+        "Draft written to Cliniko. Reload the note page in Chrome; press Complete once you "
+        "can see it there."
+    ),
+    "written_done": (
+        "Draft written to Cliniko and this recording is complete. Review and finalise the "
+        "note in Cliniko."
+    ),
+    "not_saved": "Save the note first.",
+    "unlinked": "This recording is not linked to a Cliniko note. Copy the note instead.",
+    "mock_note": "This note came from the test provider and cannot be written to a chart.",
+    "check_failed": (
+        "The note could not be checked with Cliniko just now ({reason}). Copy the note, or "
+        "try again."
+    ),
+    "rate_limited": "Cliniko is rate-limiting this clinic. Try again in {seconds} s.",
+    "note_has_text": (
+        "The Cliniko note already holds text. Copy the note and paste it in yourself."
+    ),
+    "write_uncertain": (
+        "An earlier write may have reached Cliniko. Check the note there before copying "
+        "anything."
+    ),
+    "nothing_to_write": (
+        "This note has no content that maps to the Cliniko template, so there is nothing "
+        "to write. Copy the note instead."
+    ),
+    "not_taken": "Cliniko did not take the draft ({cause}). Copy the note instead.",
+    "record_unreadable": (
+        "The record of this recording's earlier write cannot be read, so its outcome "
+        "cannot be checked. Look at the note in Cliniko before copying anything."
+    ),
+    "unknown": (
+        "The write did not confirm. Nothing is lost - press Write again to check the note "
+        "before anything is sent."
+    ),
+    "write_in_flight": "A draft is being written to Cliniko. Wait for it to finish.",
+    "recovery_busy": (
+        "A recovered recording is still being processed. Wait for it to finish, then write."
+    ),
+    # D5/D9's ``write_pending`` refusal (Regenerate, "Cancel review and
+    # regenerate", a second Save once any attempt exists); the escapes D5
+    # names are Copy, Complete and Discard.
+    "write_pending": (
+        "A write to Cliniko was attempted for this note, so it can no longer be changed "
+        "or regenerated here. Copy it, complete the recording or discard it."
+    ),
+}
+
+# The refusal lines D5 prefixes with ``write_uncertain`` while the session's
+# write record holds an EARLIER ``attempting`` or ``unknown`` attempt
+# (PR-MED-017), so a failed retry never invites a bare Copy. Not prefixed: the
+# button label, the progress and success lines, ``write_uncertain`` itself,
+# the two lines that already say the outcome is open (``unknown``,
+# ``record_unreadable``), and ``write_in_flight`` — while a write is in flight
+# the record's ``attempting`` row is THAT write, not an earlier one, and the
+# line invites no Copy.
+WRITE_UNCERTAIN_PREFIXED: Final[frozenset[str]] = frozenset(
+    {
+        "not_saved",
+        "unlinked",
+        "mock_note",
+        "check_failed",
+        "rate_limited",
+        "note_has_text",
+        "nothing_to_write",
+        "not_taken",
+        "recovery_busy",
+        "write_pending",
+    }
+)
+
+# Why a write-back target was refused (``encounter.WritebackRefusal``), as the
+# plain reason inside ``check_failed`` — its own exhaustive table in the
+# ``NOTE_REFUSAL_REASONS`` pattern (``clinic_refusal_line`` formats the Clinics
+# tab's actions and is not reused). No id, name or key.
+WRITEBACK_REFUSAL_REASONS: Final[Mapping[WritebackRefusal, str]] = {
+    WritebackRefusal.CONSENT_UNAVAILABLE: "this recording's consent record could not be read",
+    WritebackRefusal.UNLINKED: "this recording is not linked to a Cliniko note",
+    WritebackRefusal.CONSENT_MISMATCH: "the recording consent does not name this note",
+    WritebackRefusal.CLINIC_GONE: "the clinic is no longer set up in this app",
+    WritebackRefusal.CLINIC_CHANGED: (
+        "the clinic's key was replaced or removed after the check started"
+    ),
+    WritebackRefusal.NOT_VERIFIED: "Cliniko could not confirm the note",
+    WritebackRefusal.NOT_REVERIFIED: "the note has not been checked again for this write",
+    WritebackRefusal.REVERIFICATION_STALE: "the check with Cliniko is out of date",
+    WritebackRefusal.REVERIFICATION_REFUSED: "the note did not pass the check with Cliniko",
+    WritebackRefusal.CONTEXT_CHANGED: (
+        "the note, patient or practitioner no longer matches the recording"
+    ),
+}
+
+# The ``{cause}`` of a ``not_taken`` line, by kind. ``template_mismatch`` may
+# add the template question's name (a template label, never an answer) and
+# ``rejected`` Cliniko's field categories (the client's fixed D11 set) — see
+# ``not_taken_cause``. The two causes a note check also names reuse
+# ``NOTE_REFUSAL_REASONS``' texts, so the key remedy is the same Replace key
+# (Validate would add the clinic again).
+NOT_TAKEN_CAUSES: Final[Mapping[str, str]] = {
+    "template_mismatch": "the Cliniko template does not match this app's template",
+    "rejected": "Cliniko refused the content",
+    "key_rejected": NOTE_REFUSAL_REASONS[NoteRefusal.KEY_REJECTED],
+    "note_not_found": NOTE_REFUSAL_REASONS[NoteRefusal.NOTE_NOT_FOUND],
+    "no_baseline": "the note's untyped starting text could not be established",
+}
+_REJECTED_FIELDS_CAUSE: Final = "Cliniko refused these fields: {categories}"
+
+
+def _is_write_reason(reason: object) -> bool:
+    """``check_failed``'s ``{reason}`` must be one of the refusal tables'
+    fixed texts (Constraint 9: no exception text, id or answer reaches it)."""
+    return reason in WRITEBACK_REFUSAL_REASONS.values() or reason in NOTE_REFUSAL_REASONS.values()
+
+
+def _is_write_cause(cause: object) -> bool:
+    """``not_taken``'s ``{cause}`` must come from ``not_taken_cause``: one of
+    its fixed texts, a template mismatch naming a question, or the rejected
+    fields line. Residue, named: only the PREFIX is checked — the suffix (the
+    question's label, the categories) is trusted to ``not_taken_cause``'s
+    callers, which pass a template label and the client's fixed D11
+    categories only."""
+    if not isinstance(cause, str):
+        return False
+    prefix = NOT_TAKEN_CAUSES["template_mismatch"] + ": "
+    fields = _REJECTED_FIELDS_CAUSE.format(categories="")
+    return cause in NOT_TAKEN_CAUSES.values() or cause.startswith((prefix, fields))
+
+
+def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
+    """The ``WRITE_LINES`` line for ``key`` with its placeholders filled from
+    ``detail`` — the formatting boundary of the write's text:
+
+    - a missing placeholder raises (no half-formatted line is ever shown),
+      and so does a ``detail`` key the line has no placeholder for
+      (``ValueError`` — a detail is never silently dropped);
+    - ``reason`` must be a ``writeback_refusal_line`` / ``note_refusal_line``
+      text and ``cause`` start as a ``not_taken_cause`` result does, else
+      ``ValueError`` (the cause's suffix is not checked — ``_is_write_cause``);
+    - ``seconds`` is shown as whole seconds, rounded UP and never below 1
+      (``RateLimitLatch.cooling`` answers a float); a bool, a non-number or a
+      non-finite value raises ``ValueError``.
+
+    With ``uncertain`` — the session's write record holds an EARLIER
+    ``attempting`` or ``unknown`` attempt (D5, PR-MED-017) — a refusal line in
+    ``WRITE_UNCERTAIN_PREFIXED`` is preceded by ``write_uncertain``; any other
+    line is returned as it is."""
+    template = WRITE_LINES[key]
+    fields = {name for _, name, _, _ in string.Formatter().parse(template) if name}
+    if set(detail) - fields:
+        raise ValueError("a write line was given a detail it has no placeholder for")
+    if "reason" in detail and not _is_write_reason(detail["reason"]):
+        raise ValueError("a write line's reason must come from a refusal table")
+    if "cause" in detail and not _is_write_cause(detail["cause"]):
+        raise ValueError("a write line's cause must come from not_taken_cause")
+    if "seconds" in detail:
+        seconds = detail["seconds"]
+        if (
+            isinstance(seconds, bool)
+            or not isinstance(seconds, (int, float))
+            or not math.isfinite(seconds)
+        ):
+            raise ValueError("a write line's seconds must be a finite number")
+        detail = {**detail, "seconds": max(1, math.ceil(seconds))}
+    line = template.format(**detail)
+    if uncertain and key in WRITE_UNCERTAIN_PREFIXED:
+        return f"{WRITE_LINES['write_uncertain']} {line}"
+    return line
+
+
+def writeback_refusal_line(reason: WritebackRefusal) -> str:
+    return WRITEBACK_REFUSAL_REASONS[reason]
+
+
+def not_taken_cause(
+    kind: str, *, question: str | None = None, categories: Sequence[str] = ()
+) -> str:
+    """A ``not_taken`` line's ``{cause}`` for ``kind`` (a ``NOT_TAKEN_CAUSES``
+    key; any other raises ``KeyError``): ``template_mismatch`` adds the
+    question's name when there is one, ``rejected`` lists Cliniko's field
+    ``categories`` when it gave any; otherwise the kind's fixed text."""
+    cause = NOT_TAKEN_CAUSES[kind]
+    if kind == "template_mismatch" and question:
+        return f"{cause}: {question}"
+    if kind == "rejected" and categories:
+        return _REJECTED_FIELDS_CAUSE.format(categories=", ".join(categories))
+    return cause
 
 
 def recovery_link_line(has_encounter: bool) -> str:
@@ -669,6 +884,28 @@ class SessionControllerLike(Protocol):
     def with_generation_custody[T](
         self, lease: GenerationLease, action: Callable[[Path, SessionCrypto], T]
     ) -> T: ...
+
+    # Cliniko draft-write plan D9 (Task 4.1): the write's own reservation,
+    # taken before its first worker and released by its result handler, its
+    # scoped custody accessor, and the id it holds (None when no write is in
+    # flight).
+    def reserve_write(self, session_id: str) -> WriteReservation: ...
+
+    def with_write_custody[T](
+        self, reservation: WriteReservation, action: Callable[[Path, SessionCrypto], T]
+    ) -> T: ...
+
+    def writing_session_id(self) -> str | None: ...
+
+
+def custody_refusal_text(exc: BaseException) -> str:
+    """How a refused custody action names its cause on a status line: the
+    write-in-flight line for a ``WriteInFlightError`` (D9 — a draft write
+    holds the session), else the exception's type and message as the
+    screens have always shown them."""
+    if isinstance(exc, WriteInFlightError):
+        return write_line("write_in_flight")
+    return f"{type(exc).__name__}: {exc}"
 
 
 # ---------------------------------------------------------------------------
@@ -3412,6 +3649,14 @@ __all__ = [
     "CHECKOUT_CHECK_STOPPED_LINE",
     "NOTE_REFUSAL_REASONS",
     "note_refusal_line",
+    "WRITE_LINES",
+    "WRITE_UNCERTAIN_PREFIXED",
+    "WRITEBACK_REFUSAL_REASONS",
+    "NOT_TAKEN_CAUSES",
+    "custody_refusal_text",
+    "not_taken_cause",
+    "write_line",
+    "writeback_refusal_line",
     "recovery_link_line",
     "checkout_link_line",
     "UNREVIEWED_HEADER",

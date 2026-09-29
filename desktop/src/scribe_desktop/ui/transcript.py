@@ -686,7 +686,7 @@ class TranscriptScreen(QWidget):
             lease = controller.begin_generation()
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
             self.message_label.setText(
-                f"Cannot generate a note now: {type(exc).__name__}: {exc}"
+                f"Cannot generate a note now: {models.custody_refusal_text(exc)}"
             )
             return
         self._lease = lease
@@ -840,7 +840,7 @@ class TranscriptScreen(QWidget):
             # Complete primitive deleted nothing on failure, but the key may
             # be gone for another reason (e.g. the 24 h sweep at expiry).
             self.message_label.setText(
-                f"Complete failed: {type(exc).__name__}: {exc}. "
+                f"Complete failed: {models.custody_refusal_text(exc).rstrip('.')}. "
                 "No key deletion was performed by this action; if the "
                 "session is still within its 24-hour window it remains "
                 "available."
@@ -859,7 +859,7 @@ class TranscriptScreen(QWidget):
         try:
             self._on_discard()
         except Exception as exc:  # noqa: BLE001
-            self.message_label.setText(f"Discard failed: {type(exc).__name__}: {exc}")
+            self.message_label.setText(f"Discard failed: {models.custody_refusal_text(exc)}")
             return
         self._clear()
         self.message_label.setText("Session discarded (audio cryptographically deleted).")

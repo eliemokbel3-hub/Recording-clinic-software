@@ -11,6 +11,7 @@ import os
 import secrets
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,7 @@ from scribe_desktop.context_rules import PauseReason  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     ConsentAttestation,
     EncounterContext,
+    RateLimitLatch,
     UnverifiedOffline,
     Verification,
     Verified,
@@ -178,6 +180,7 @@ class Harness:
         reminders: Any = None,
         open_review: Any = None,
         call_spacing: float = 0.0,
+        latch_clock: Callable[[], float] | None = None,
     ) -> None:
         self.qapp = qapp
         self.transport = transport if transport is not None else NoteTransport()
@@ -190,6 +193,12 @@ class Harness:
             transcriber_factory=lambda: (lambda _d, _c: _document()),
         )
         self.now = 1000.0  # the bridge's clock (a "Resume previous" lapses)
+        # Draft-write D13: the shared 429 latch, injected as the main window
+        # injects it — on the same clock unless a test gives the latch its
+        # own — so a test can play another caller.
+        self.latch = RateLimitLatch(
+            latch_clock if latch_clock is not None else (lambda: self.now)
+        )
         # A long interval: the tests drive publish/_tick themselves.
         self.bridge = ChromeBridge(
             self.controller,
@@ -202,6 +211,7 @@ class Harness:
             # SEC-009's call spacing is off here (this clock never moves on
             # its own) and on in `TestRateLimit`, which pins it.
             call_spacing_seconds=call_spacing,
+            latch=self.latch,
         )
         self.cues: list[str] = []
         self.bridge.pause_cue.connect(self.cues.append)
@@ -607,6 +617,79 @@ class TestRateLimit:
         assert _note_calls(h) == 2
         report = h.sender.last.report
         assert report is not None and report.verification == "verified"
+
+    def test_a_429_the_bridge_sees_cools_the_shared_latch(self, harness: Any) -> None:
+        """Draft-write D13: the bridge records a real 429 in the ONE latch,
+        so the checkout and the write see the clinic cooling for a minute."""
+        h = harness(transport=NoteTransport(note=status(429)))
+        h.connect()
+        h.report()
+        h.settle()
+        assert h.latch.cooling(CLINIC_ID, h.now) == RATE_LIMIT_COOLDOWN_SECONDS
+        assert h.latch.cooling(CLINIC_ID, h.now + RATE_LIMIT_COOLDOWN_SECONDS - 1) == 1.0
+        assert h.latch.cooling(CLINIC_ID, h.now + RATE_LIMIT_COOLDOWN_SECONDS) is None
+
+    def test_a_429_recorded_by_another_caller_cools_the_bridge(self, harness: Any) -> None:
+        """A 429 the write or the checkout records makes the bridge's checks
+        answer offline with no call, until the minute is up."""
+        h = harness()
+        h.connect()
+        h.latch.record_429(CLINIC_ID, h.now)  # as a write hop or the checkout would
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 0
+        report = h.sender.last.report
+        assert report is not None and report.verification == "unverified_offline"
+        h.now += RATE_LIMIT_COOLDOWN_SECONDS
+        # A minute on, a NEW run (another note: a repeat report of the same
+        # target continues its run and dispatches nothing) is checked again.
+        h.report(note_id=OTHER_NOTE)
+        h.settle()
+        assert _note_calls(h) == 1
+        report = h.sender.last.report
+        assert report is not None and report.note_id == OTHER_NOTE
+        assert report.verification == "verified"
+
+    def test_the_bridge_reads_and_records_on_the_latchs_clock(self, harness: Any) -> None:
+        """Round 9 LOW-012, pinned by round 11 LOW-006: with the bridge's
+        clock at 1000 and the latch's at 0, a 429 recorded at latch-time 0
+        still cools the bridge, and a 429 the bridge sees is recorded at
+        latch-time 0 — never on the bridge's own clock."""
+        latch_now = [0.0]
+        h = harness(latch_clock=lambda: latch_now[0])
+        h.connect()
+        h.latch.record_429(CLINIC_ID, 0.0)
+        h.report()
+        h.settle()
+        assert _note_calls(h) == 0
+        report = h.sender.last.report
+        assert report is not None and report.verification == "unverified_offline"
+
+        seen = harness(transport=NoteTransport(note=status(429)), latch_clock=lambda: 0.0)
+        seen.connect()
+        seen.report()
+        seen.settle()
+        assert _note_calls(seen) == 1
+        assert seen.latch.cooling(CLINIC_ID, 0.0) == RATE_LIMIT_COOLDOWN_SECONDS
+
+    def test_the_bridge_builds_its_own_latch_when_none_is_given(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        now = [50.0]
+        screen = SessionScreen(
+            BridgeController(),
+            device_provider=lambda: 1,
+            transcriber_factory=lambda: (lambda _d, _c: _document()),
+        )
+        bridge = ChromeBridge(
+            BridgeController(), screen, make_registry(tmp_path), clock=lambda: now[0]
+        )
+        try:
+            latch = bridge._latch
+            assert isinstance(latch, RateLimitLatch) and latch.clock() == 50.0
+        finally:
+            bridge.deleteLater()
+            screen.deleteLater()
 
     def test_a_live_recheck_inside_the_cooldown_makes_no_call(self, harness: Any) -> None:
         """Round 63 LOW: the cooldown answers the linked live session's

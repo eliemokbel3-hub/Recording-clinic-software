@@ -30,8 +30,10 @@ from encounter_fakes import (  # noqa: E402
 )
 from scribe_desktop.clinics import ClinicRefusal, Refused  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
+    RATE_LIMIT_COOLDOWN_SECONDS,
     EncounterRecord,
     NoteRefusal,
+    RateLimitLatch,
     Verification,
     VerifiedTarget,
     WritebackRefusal,
@@ -67,8 +69,8 @@ def _registry(tmp_path: Path, **kwargs: Any) -> Any:
     return make_registry(root, **kwargs)
 
 
-def _window(tmp_path: Path, registry: Any, controller: Any = None) -> Any:
-    return _main_window(tmp_path, controller, clinic_registry=registry)
+def _window(tmp_path: Path, registry: Any, controller: Any = None, **overrides: Any) -> Any:
+    return _main_window(tmp_path, controller, clinic_registry=registry, **overrides)
 
 
 def _recoverable(root: Path, record: EncounterRecord | None) -> tuple[Path, SessionCrypto]:
@@ -414,6 +416,104 @@ class TestRecoveredCheckout:
         directory, crypto = _recoverable(tmp_path, _linked_record())
         _check_out(window, directory, crypto)
         _settled(qapp, window)
+        assert window.transcript_screen.link_label.text() == models.CHECKOUT_OFFLINE_LINE
+        assert window.recovered_writeback_target() == WritebackRefused(
+            WritebackRefusal.NOT_VERIFIED
+        )
+        window.close()
+
+    # --- draft-write Task 1.3 (D13): the one 429 latch -------------------------
+
+    def test_a_cooling_clinic_is_answered_offline_without_a_call(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """A 429 recorded by any caller (the bridge, the write) makes the
+        checkout show the existing offline line with no call; reopening the
+        row after the minute checks again."""
+        now = [0.0]
+        latch = RateLimitLatch(lambda: now[0])
+        transport = NoteTransport()
+        window = _window(tmp_path, _registry(tmp_path, transport=transport), rate_limit_latch=latch)
+        latch.record_429(CLINIC_ID, now[0])
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        assert not window.is_reverifying
+        assert transport.calls == []
+        assert window.transcript_screen.link_label.text() == models.CHECKOUT_OFFLINE_LINE
+        assert window.recovered_writeback_target() == WritebackRefused(
+            WritebackRefusal.NOT_VERIFIED
+        )
+        now[0] = RATE_LIMIT_COOLDOWN_SECONDS
+        window._begin_checkout(directory.name, _linked_record())  # the row reopened
+        _settled(qapp, window)
+        assert len(transport.calls) >= 1
+        assert window.transcript_screen.link_label.text() == models.CHECKOUT_VERIFIED_LINE
+        window.close()
+
+    def test_a_checkout_429_is_recorded_in_the_latch_the_bridge_shares(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        now = [5.0]
+        latch = RateLimitLatch(lambda: now[0])
+        registry = _registry(tmp_path, transport=NoteTransport(note=status(429)))
+        window = _window(tmp_path, registry, rate_limit_latch=latch)
+        bridge = window.attach_chrome_link()
+        assert bridge._latch is latch  # ONE latch: the bridge reads what the checkout records
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        _settled(qapp, window)
+        assert latch.cooling(CLINIC_ID, now[0]) == RATE_LIMIT_COOLDOWN_SECONDS
+        window.close()
+
+    def test_a_stale_checkout_429_is_still_recorded(self, qapp: Any, tmp_path: Path) -> None:
+        """PR-LOW-008: the checkout is the third producer — its 429 cools the
+        clinic even when the view it answered has closed."""
+        gate = threading.Event()
+
+        def held() -> Any:
+            gate.wait(10)
+            return status(429)
+
+        latch = RateLimitLatch(lambda: 0.0)
+        window = _window(
+            tmp_path,
+            _registry(tmp_path, transport=NoteTransport(note=held)),
+            rate_limit_latch=latch,
+        )
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        window._on_transcript_closed("discarded")  # the answer will be stale
+        gate.set()
+        _settled(qapp, window)
+        assert window.transcript_screen.link_label.text() == ""
+        assert latch.cooling(CLINIC_ID, 0.0) == RATE_LIMIT_COOLDOWN_SECONDS
+        window.close()
+
+    def test_a_429_is_recorded_before_the_waiting_check_starts(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-LOW-008's ORDER: a check requested while a 429 is in flight is
+        answered from the cooldown when that 429 lands — no second call."""
+        gate = threading.Event()
+        note_reads: list[int] = []
+
+        def held() -> Any:
+            note_reads.append(1)
+            gate.wait(10)
+            return status(429)
+
+        latch = RateLimitLatch(lambda: 0.0)
+        window = _window(
+            tmp_path,
+            _registry(tmp_path, transport=NoteTransport(note=held)),
+            rate_limit_latch=latch,
+        )
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        window._begin_checkout(directory.name, _linked_record())  # waits behind the first
+        gate.set()
+        _settled(qapp, window)
+        assert note_reads == [1]
         assert window.transcript_screen.link_label.text() == models.CHECKOUT_OFFLINE_LINE
         assert window.recovered_writeback_target() == WritebackRefused(
             WritebackRefusal.NOT_VERIFIED

@@ -1832,3 +1832,9 @@ def test_transcription_succeeds_with_sockets_stubbed_to_fail(tmp_path: Path) -> 
         f"offline transcription failed under the socket stub:\n{detail}"
     )
     assert b"OFFLINE-TRANSCRIBE-OK" in result.stdout, detail
+
+
+# Cliniko draft-write plan Task 5.3's source pins (which modules may name the
+# draft write or a PATCH) are pure AST checks, so they live beside the client's
+# confinement pins in ``test_cliniko_client.py::TestWriteCallSites``, where
+# neither this module's launcher fixture nor ``SCRIBE_SKIP_INTEGRATION`` skips them.

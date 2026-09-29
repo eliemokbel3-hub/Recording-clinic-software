@@ -59,19 +59,28 @@ class GatedTransport(ScriptedTransport):
         self.gate = threading.Event()
 
     def request(
-        self, method: str, host: str, path: str, headers: Mapping[str, str], max_body: int
+        self,
+        method: str,
+        host: str,
+        path: str,
+        headers: Mapping[str, str],
+        max_body: int,
+        *,
+        body: bytes | None = None,
     ) -> cc.RawResponse:
         self.entered.set()
         assert self.gate.wait(10), "the test never released the gate"
-        return super().request(method, host, path, headers, max_body)
+        return super().request(method, host, path, headers, max_body, body=body)
 
 
 def _screen(
-    registry: ClinicRegistry, live: Callable[[], str | None] | None = None
+    registry: ClinicRegistry,
+    live: Callable[[], str | None] | None = None,
+    writing: Callable[[], str | None] | None = None,
 ) -> Any:
     from scribe_desktop.ui.clinics import ClinicsScreen
 
-    return ClinicsScreen(registry, live_session_clinic=live)
+    return ClinicsScreen(registry, live_session_clinic=live, writing_clinic=writing)
 
 
 def _fill(screen: Any, *, key: str = KEY, name: str = "Northside", address: str = "") -> None:
@@ -404,6 +413,63 @@ class TestReplaceAndRemove:
         screen.on_remove()
         assert registry.records == (first,) and registry.rev(first.clinic_id) == rev
         assert store.keys == {(first.clinic_id, KEY_SECRET_NAME): KEY}
+        screen.deleteLater()
+
+    def test_replace_key_is_refused_for_the_clinic_a_draft_write_uses(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Draft-write plan D9 (Task 4.1): the write read the clinic's key
+        once for both hops, so Replace key waits for it — refused by the
+        write-in-flight line, the typed key cleared, nothing dispatched, the
+        rev and the stored key unchanged; after the write it works again."""
+        store = MemoryKeyStore()
+        registry = make_registry(tmp_path, ScriptedTransport(), store)
+        writing: list[str | None] = [None]
+        screen = _screen(registry, writing=lambda: writing[0])
+        _validate(qapp, screen)
+        _select(screen)
+        clinic_id = registry.records[0].clinic_id
+        rev = registry.rev(clinic_id)
+        writing[0] = clinic_id
+        changed: list[None] = []
+        screen.clinics_changed.connect(lambda: changed.append(None))
+        screen.key_field.setText(KEY_2)
+        screen.on_replace_key()
+        assert screen.status_label.text() == models.write_line("write_in_flight")
+        assert screen.key_field.text() == ""
+        assert not screen.is_busy and not changed
+        assert registry.rev(clinic_id) == rev
+        assert store.keys == {(clinic_id, KEY_SECRET_NAME): KEY}
+        writing[0] = None
+        screen.key_field.setText(KEY_2)
+        screen.on_replace_key()
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert store.keys == {(clinic_id, KEY_SECRET_NAME): KEY_2}
+        screen.deleteLater()
+
+    def test_replace_key_for_another_clinic_is_not_refused_by_a_write(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        subdomains = iter(["northside", "southside", "southside"])
+        transport = ScriptedTransport(
+            public=lambda: ok({"account": {"subdomain": next(subdomains)}})
+        )
+        store = MemoryKeyStore()
+        registry = make_registry(tmp_path, transport, store)
+        writing: list[str | None] = [None]
+        screen = _screen(registry, writing=lambda: writing[0])
+        _validate(qapp, screen)
+        _validate(qapp, screen, key=KEY_2, name="Southside")
+        first, second = registry.records
+        writing[0] = first.clinic_id
+        rev = registry.rev(second.clinic_id)
+        _select(screen, 1)
+        screen.key_field.setText(KEY_2)
+        screen.on_replace_key()
+        assert screen.status_label.text() != models.write_line("write_in_flight")
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert screen.status_label.text().startswith("The key for Southside was replaced")
+        assert registry.rev(second.clinic_id) != rev
         screen.deleteLater()
 
 

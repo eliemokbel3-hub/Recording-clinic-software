@@ -412,6 +412,24 @@ class FakeController:
         crypto = self.generation_crypto if self.generation_crypto is not None else SessionCrypto()
         return action(self.generation_dir, crypto)
 
+    # Draft-write plan D9 (Task 4.1): the write reservation. `writing_id` is
+    # the id a held reservation names — kept for Task 5.2's tests, which set
+    # it to simulate a write in flight (no test sets it yet); kept apart from
+    # `calls`, whose exact lists tests pin.
+
+    writing_id: str | None = None
+
+    def reserve_write(self, session_id: str) -> Any:
+        raise AssertionError("no UI path reserves a write before Task 5.2")
+
+    def with_write_custody(
+        self, reservation: Any, action: Callable[[Path, SessionCrypto], Any]
+    ) -> Any:
+        raise AssertionError("no UI path uses write custody before Task 5.2")
+
+    def writing_session_id(self) -> str | None:
+        return self.writing_id
+
 
 # ---------------------------------------------------------------------------
 # Microphone screen.
@@ -1086,6 +1104,25 @@ class TestPractitionerScreen:
         assert capture.calls == []
         assert screen.record_button.isEnabled()
         assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    def test_a_refusal_by_a_draft_write_names_the_write(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Draft-write plan D9 (round 14): the write's refusal shows its
+        line, never the error's own text."""
+        from scribe_desktop.session import WriteInFlightError
+
+        controller = FakeController()
+        controller.enrolment_error = WriteInFlightError("voice enrolment")
+        capture = _FakeCapture()
+        screen = _practitioner_screen(controller, FakeBackend(), tmp_path, capture=capture)
+        screen.consent_checkbox.setChecked(True)
+        screen.on_record()
+        assert screen.enrolment_status_label.text() == (
+            "Cannot record now - " + models.write_line("write_in_flight")
+        )
+        assert not screen.is_busy and capture.calls == []
         screen.deleteLater()
 
     def test_capture_failure_releases_the_lease_and_saves_nothing(
@@ -2490,6 +2527,38 @@ class TestTranscriptScreen:
         assert screen.transcript_view.toPlainText() != ""
         screen.deleteLater()
 
+    def test_complete_and_discard_refused_by_a_draft_write_name_the_write(
+        self, qapp: Any
+    ) -> None:
+        """Draft-write plan D9 (round 15): both failure lines show the write's
+        line through ``custody_refusal_text``, never the error's own text."""
+        from scribe_desktop.session import WriteInFlightError
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+
+        def refused_complete() -> None:
+            raise WriteInFlightError("complete")
+
+        def refused_discard() -> None:
+            raise WriteInFlightError("discard")
+
+        closed: list[str] = []
+        screen.closed.connect(closed.append)
+        screen.show_document(
+            _document(), on_complete=refused_complete, on_discard=refused_discard
+        )
+        line = models.write_line("write_in_flight")
+        screen.on_complete()
+        assert screen.message_label.text().startswith(
+            f"Complete failed: {line.rstrip('.')}. No key deletion was performed"
+        )
+        screen.on_discard()
+        assert screen.message_label.text() == f"Discard failed: {line}"
+        assert closed == []
+        assert screen.transcript_view.toPlainText() != ""
+        screen.deleteLater()
+
     def test_discard_emits_closed(self, qapp: Any) -> None:
         from scribe_desktop.ui.transcript import TranscriptScreen
 
@@ -3785,6 +3854,31 @@ class TestNoteScreen:
         screen.abandon()
         assert record["abandoned"] == [True]
         assert screen.current_note() is None  # cleared
+        screen.deleteLater()
+
+    def test_a_complete_refused_by_a_draft_write_names_the_write(self, qapp: Any) -> None:
+        """Draft-write plan D9 (round 14): the controller refuses the exit
+        while a draft write holds the session; the tab shows the write-in-
+        flight line, never the error's own text, and keeps the review."""
+        from scribe_desktop.session import WriteInFlightError
+        from scribe_desktop.ui.note import NoteScreen
+
+        screen = NoteScreen()
+
+        def refused() -> None:
+            raise WriteInFlightError("complete")
+
+        screen.begin_review(
+            _note_result(),
+            on_save=lambda note: None,
+            on_abandon=refused,
+            template_profile_id="clinic-a",
+        )
+        screen.abandon()
+        assert screen.message_label.text() == (
+            "Complete without a note failed: " + models.write_line("write_in_flight")
+        )
+        assert screen.current_note() is not None  # nothing cleared
         screen.deleteLater()
 
     def test_cancel_review_calls_callback_and_clears(self, qapp: Any) -> None:
@@ -5681,6 +5775,25 @@ class TestTranscriptGeneration:
         assert ("begin_generation",) in controller.calls
         assert ("with_generation_custody",) in controller.calls
         assert screen.is_busy  # still held through review
+        screen.deleteLater()
+
+    def test_generate_refused_by_a_draft_write_names_the_write(self, qapp: Any) -> None:
+        """Draft-write plan D9 (round 15): the refusal shows the write's line
+        through ``custody_refusal_text``, never the error's own text."""
+        from scribe_desktop.session import WriteInFlightError
+
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        controller.generation_error = WriteInFlightError("generation")
+        screen, _result = self._screen(controller)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert screen.message_label.text() == (
+            "Cannot generate a note now: " + models.write_line("write_in_flight")
+        )
+        assert not screen.is_busy
+        assert ("with_generation_custody",) not in controller.calls
         screen.deleteLater()
 
     def test_complete_refused_while_generating(self, qapp: Any) -> None:

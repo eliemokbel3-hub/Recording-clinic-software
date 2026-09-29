@@ -2084,7 +2084,7 @@ class NoteScreen(QWidget):
             self._on_abandon()
         except Exception as exc:  # noqa: BLE001
             self.message_label.setText(
-                f"Complete without a note failed: {type(exc).__name__}: {exc}"
+                f"Complete without a note failed: {models.custody_refusal_text(exc)}"
             )
             return
         self.clear()

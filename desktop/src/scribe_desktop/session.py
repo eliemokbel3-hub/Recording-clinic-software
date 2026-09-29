@@ -323,6 +323,20 @@ class ReviewOpenRefused(SessionControllerError):
         self.reason = reason
 
 
+class WriteInFlightError(SessionActivityError):
+    """The operation would complete, discard, retire, regenerate, adopt or
+    otherwise change custody of the session a Cliniko draft write holds
+    (cliniko-draft-write plan D9). Refused while the write reservation is
+    held; the UI shows ``WRITE_LINES["write_in_flight"]`` for it (its own
+    text is diagnostic, never shown). A ``SessionActivityError``, so every
+    caller that already handles a custody refusal handles this one."""
+
+    reason = "write_in_flight"
+
+    def __init__(self, operation: str) -> None:
+        super().__init__(f"{operation} refused: a Cliniko draft write holds this session")
+
+
 class GenerationLease:
     """Opaque token for ONE in-flight note-generation operation (Task 6.3).
 
@@ -348,6 +362,34 @@ class EnrolmentLease:
     whole sequence. Compared by IDENTITY; carries no state."""
 
     __slots__ = ()
+
+
+class WriteReservation:
+    """Token for ONE in-flight Cliniko draft write (cliniko-draft-write plan
+    D9): acquired by ``SessionController.reserve_write`` on the GUI thread
+    BEFORE the write's first worker is dispatched, held across both hops and
+    the GUI-thread steps between them, and released by the result handler
+    (``release``) — or consumed by the write's completion (Task 4.2). While
+    held, the session's custody reservation refuses every custody-changing
+    operation (``WriteInFlightError``). Compared by IDENTITY: an equal-looking
+    token built elsewhere is never the held one. ``release`` is idempotent,
+    and releasing a token that is no longer held changes nothing, so a
+    failure path may run it twice."""
+
+    __slots__ = ("_controller", "_session_id")
+
+    def __init__(self, controller: SessionController, session_id: str) -> None:
+        self._controller = controller
+        self._session_id = session_id
+
+    @property
+    def session_id(self) -> str:
+        """The reserved session — read-only, so a holder cannot retarget the
+        token."""
+        return self._session_id
+
+    def release(self) -> None:
+        self._controller._release_write(self)
 
 
 @dataclass
@@ -387,7 +429,8 @@ class SessionController:
     CONCURRENCY CONTRACT, stated accurately after peer rounds 27-32 (the
     earlier blanket "safe from any thread" claim is deliberately NOT
     re-inflated): custody-mutating and custody-using operations — start,
-    adopt_queued, complete, discard, transcribe, generation begin/end, the recovered-path
+    adopt_queued, complete, discard, transcribe, generation begin/end, the
+    draft-write reservation and its accessor, the recovered-path
     coordinator ops, and the sweep/recovery-list protection snapshot — are
     serialized through the controller lock PLUS the per-session custody
     reservation (``_custody_reservations``), whose consumers cover
@@ -431,7 +474,8 @@ class SessionController:
         # time in this app, and over-blocking fails toward safety.
         self._generation: GenerationLease | None = None
         # Rounds 27 + 30 PR-MED-001: TARGET-AWARE custody-transition
-        # reservations, session_id -> in-flight discard count. discard()
+        # reservations, session_id -> in-flight holder count (each discard,
+        # and since the draft-write plan the one draft write). discard()
         # is a TWO-lock operation (the worker join must stay outside the
         # lock), so its entry-time checks alone leave an unlocked window;
         # a discard reserves ITS TARGET's id here (under the lock, after
@@ -448,6 +492,24 @@ class SessionController:
         # overlapping discards are legal, and one finishing must not
         # strip another target's protection.
         self._custody_reservations: dict[str, int] = {}
+        # Cliniko draft-write plan D9: the ONE in-flight draft write. It
+        # holds a counted entry in ``_custody_reservations`` for its session
+        # (so the sweep and recovery list keep the session protected) PLUS
+        # this marker, which is what REFUSES: start(), discard() (both of which
+        # deliberately admit a concurrent DISCARD), the complete family,
+        # adopt_queued, begin_generation, begin_enrolment,
+        # destroy_recovered_crypto and retirement consult it ahead of the
+        # discard-reservation check and raise ``WriteInFlightError`` (a held
+        # generation or enrolment lease, checked first where a method checks
+        # one, still refuses with its own error). complete_without_note checks
+        # it too but is already excluded by its generation lease (lease and
+        # write refuse each other). The recovered-path target check still
+        # names "a discard" for a held id, and transcribe() refuses on its
+        # PROCESSING-state guard: neither is reachable for the writing
+        # session (it is the live QUEUED one, excluded from the recovery
+        # list). Set and cleared together, under the lock.
+        self._write_reservation: WriteReservation | None = None
+        self._writing_id: str | None = None
         # Practitioner-profile plan D15: the ONE in-flight voice-enrolment
         # activity. NOT state-agnostic (unlike the generation lease): it is
         # refused while a session is active and it makes start()/resume()
@@ -614,6 +676,8 @@ class SessionController:
             # depends on — so it is refused outright while the lease is held.
             self._refuse_while_generating("start")
             self._refuse_while_enrolling("start")
+            # D9: start() retires the queued session a draft write holds.
+            self._refuse_while_writing("start")
             live = self._live
             if live is not None and live.session.state in ACTIVE_STATES:
                 raise SessionActivityError(
@@ -898,7 +962,9 @@ class SessionController:
             # and exactly one terminal action may win before either reports
             # success. Same consumer shape as begin_generation's; refuses
             # nothing else (second discards and concurrent start() stay
-            # admitted, pinned by their tests).
+            # admitted, pinned by their tests). A draft write's reservation
+            # is refused by name first (D9).
+            self._refuse_while_writing("complete")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "a discard is completing; the session cannot be completed"
@@ -941,6 +1007,7 @@ class SessionController:
                 raise GenerationInProgressError(
                     "complete-without-note requires the held generation lease"
                 )
+            self._refuse_while_writing("complete-without-note")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "a discard is completing; the session cannot be completed"
@@ -970,6 +1037,7 @@ class SessionController:
         delete-saved-note path the round-35 leased change left without one."""
         with self._lock:
             self._refuse_while_generating("complete")
+            self._refuse_while_writing("complete")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "a discard is completing; the session cannot be completed"
@@ -990,6 +1058,9 @@ class SessionController:
             # Task 6.3: Discard is key-first cryptographic deletion — refused
             # while the generation lease is held, same rationale as complete().
             self._refuse_while_generating("discard")
+            # D9: a concurrent DISCARD stays admitted (its tests pin it), a
+            # draft write in flight does not — Discard destroys its key.
+            self._refuse_while_writing("discard")
             live = self._require_live()
             if SessionState.DISCARDED not in LEGAL_TRANSITIONS[live.session.state]:
                 raise IllegalTransitionError(
@@ -1115,6 +1186,7 @@ class SessionController:
         (in memory) on every refusal after the unwrap."""
         with self._lock:
             self._refuse_while_generating("open for review")
+            self._refuse_while_writing("open for review")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "a discard is completing; open for review after it finishes"
@@ -1215,6 +1287,7 @@ class SessionController:
                 raise GenerationInProgressError(
                     "a note generation is already in progress"
                 )
+            self._refuse_while_writing("generation")
             if self._custody_reservations:
                 # SessionActivityError, not GenerationInProgressError: no
                 # generation is in progress — the conflict is an in-flight
@@ -1276,6 +1349,7 @@ class SessionController:
                 raise SessionActivityError(
                     f"voice enrolment refused: a session is {live.session.state}"
                 )
+            self._refuse_while_writing("voice enrolment")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "voice enrolment refused: a discard is in flight; retry after it finishes"
@@ -1314,7 +1388,8 @@ class SessionController:
             )
 
     def reserved_session_ids(self) -> frozenset[str]:
-        """Session ids an in-flight Discard has reserved (round 30) — the
+        """Session ids an in-flight Discard (round 30) or draft write (D9)
+        has reserved — the
         reservation-only view, for tests and diagnostics.
 
         External protection consumers (the recovery-list exclusion, the
@@ -1326,7 +1401,8 @@ class SessionController:
 
     def custody_protected_ids(self) -> frozenset[str]:
         """ONE atomic snapshot of every custody-protected session id: all
-        in-flight Discard reservation targets (round 30) PLUS the current
+        in-flight Discard (round 30) and draft-write (D9) reservation targets
+        PLUS the current
         live session in ANY non-terminal state (active states included —
         this is a superset of ``active_session_ids()``).
 
@@ -1369,13 +1445,15 @@ class SessionController:
         untouched), through the lease-aware coordinator: while a generation
         is in flight the key it depends on must not be destroyed under it.
 
-        Refused COARSELY while any discard reservation is held (round 30):
+        Refused COARSELY while any discard reservation is held (round 30),
+        and by name while a draft write holds its reservation (D9):
         this operation carries no directory, so there is no identity to
         resolve a scoped check against — and the coarse refusal is a strict
         superset of the scoped one, failing toward safety at the cost of a
         transient retry."""
         with self._lock:
             self._refuse_while_generating("recovered-key destruction")
+            self._refuse_while_writing("recovered-key destruction")
             if self._custody_reservations:
                 raise SessionActivityError(
                     "recovered-key destruction refused: a discard is in flight"
@@ -1410,6 +1488,96 @@ class SessionController:
             directory = live.directory
             crypto = live.crypto
         return action(directory, crypto)
+
+    # --- Cliniko draft-write custody (cliniko-draft-write plan D9) ----------
+
+    def reserve_write(self, session_id: str) -> WriteReservation:
+        """Reserve the QUEUED live session ``session_id`` for ONE Cliniko
+        draft write — on the GUI thread, BEFORE the write's first worker is
+        dispatched. The reservation is the existing counted custody
+        reservation (``_custody_reservations``) plus the ``_writing_id``
+        marker. The REFUSAL comes from the marker: while it is set, ``start``,
+        ``discard``, ``complete``, ``complete_deleting_saved_note``,
+        ``adopt_queued``, ``begin_generation``, ``begin_enrolment``,
+        ``destroy_recovered_crypto`` and session retirement raise
+        ``WriteInFlightError`` ahead of the discard-reservation check (where a
+        method checks a generation or enrolment lease first, a held lease
+        still refuses with its own error). ``complete_without_note``
+        checks the marker too, but is already excluded by its lease: it needs
+        a ``GenerationLease``, which cannot be held beside a write (each
+        refuses the other). ``transcribe`` needs no check — it requires a
+        PROCESSING session, and a write holds only a QUEUED one. The
+        counted entry keeps the sweep and the recovery list protecting the
+        session.
+
+        Refused while a note generation holds its lease, while another write
+        is reserved (``WriteInFlightError``), while a discard of the session
+        is in flight, and unless ``session_id`` is the live session and it
+        is QUEUED (a saved note waits for review there)."""
+        with self._lock:
+            self._refuse_while_generating("write")
+            self._refuse_while_writing("write")
+            live = self._require_state(SessionState.QUEUED)
+            if live.session.session_id != session_id:
+                raise SessionActivityError("write refused: that session is not the live one")
+            if session_id in self._custody_reservations:
+                raise SessionActivityError(
+                    "write refused: a discard of this session is in flight"
+                )
+            reservation = WriteReservation(self, session_id)
+            self._reserve_custody_locked(session_id)
+            self._write_reservation = reservation
+            self._writing_id = session_id
+            return reservation
+
+    def _release_write(self, reservation: WriteReservation) -> None:
+        """``WriteReservation.release``: drop the held reservation's custody
+        entry and marker together, under the lock. A token that is not the
+        held one — already released, or never held — changes nothing."""
+        with self._lock:
+            if self._write_reservation is not reservation or self._writing_id is None:
+                return
+            self._release_custody_locked(self._writing_id)
+            self._write_reservation = None
+            self._writing_id = None
+
+    def writing_session_id(self) -> str | None:
+        """The session a draft write holds, or None — for the UI's
+        refusals (the Clinics tab's Replace key, "Open for review")."""
+        with self._lock:
+            return self._writing_id
+
+    def with_write_custody[T](
+        self, reservation: WriteReservation, action: Callable[[Path, SessionCrypto], T]
+    ) -> T:
+        """Run ``action(directory, crypto)`` for the QUEUED live session under
+        the HELD write reservation — THE accessor the draft write uses for
+        its session files (``write.enc``), mirroring
+        ``with_generation_custody``: the reservation's IDENTITY and the
+        session's QUEUED state and id are checked under the lock, then
+        ``action`` runs outside it. The reservation — taken before the first
+        worker — is what keeps ``start`` / ``complete`` / ``discard`` /
+        retirement from destroying this custody state for the whole write.
+        A released, foreign or stale token raises, so a stale caller never
+        reaches another session's crypto through here."""
+        with self._lock:
+            if self._write_reservation is None or self._write_reservation is not reservation:
+                raise SessionActivityError(
+                    "scoped write access requires the held write reservation"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            if live.session.session_id != reservation.session_id:
+                raise SessionActivityError(
+                    "scoped write access refused: the reserved session is not the live one"
+                )
+            directory = live.directory
+            crypto = live.crypto
+        return action(directory, crypto)
+
+    def _refuse_while_writing(self, operation: str) -> None:
+        """Call under ``self._lock``."""
+        if self._writing_id is not None:
+            raise WriteInFlightError(operation)
 
     def _reserve_custody_locked(self, session_id: str) -> None:
         """Call under ``self._lock``."""
@@ -1541,11 +1709,13 @@ class SessionController:
         """Drop the in-memory handle to a non-active session. On-disk state
         is untouched: a queued/failed session stays recoverable through its
         DPAPI custody blob; terminal sessions have none."""
-        # Task 6.3, defense in depth: today the only caller is start(),
-        # which already refused — but retirement destroys the in-memory
-        # crypto a generation worker may hold, so the guard lives HERE too
-        # rather than only on the callers that exist today.
+        # Task 6.3, defense in depth: today the callers are start() and
+        # adopt_queued(), which already refused — but retirement destroys the
+        # in-memory crypto a generation worker may hold, or that
+        # with_write_custody handed to a draft write's action (D9), so both
+        # guards live HERE too rather than only on the callers that exist.
         self._refuse_while_generating("session retirement")
+        self._refuse_while_writing("session retirement")
         # D2 ownership: a worker still attached to a retired session (its
         # transcriber callable never ran or never claimed it) is stopped here
         # FIRST; an uncleared one REFUSES the retirement (peer round 9
