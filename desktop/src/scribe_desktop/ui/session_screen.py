@@ -85,6 +85,7 @@ class SessionScreen(QWidget):
         self._transcribing = False
         self._last_state = controller.state
         self._last_generating = controller.generating
+        self._last_writing = controller.writing_session_id() is not None
         self._live_status: str | None = None
         # Task 5.1 (D5): the Chrome bridge's resume check — a refusal message,
         # or None when Resume may run. None: no bridge (Resume as before).
@@ -189,6 +190,10 @@ class SessionScreen(QWidget):
         if generating != self._last_generating:
             self._last_generating = generating
             self.refresh()  # D6: the review lease gates Start at QUEUED
+        writing = self._controller.writing_session_id() is not None
+        if writing != self._last_writing:
+            self._last_writing = writing
+            self.refresh()  # draft-write D9: so does a write in flight
         if state == self._last_state:
             return
         previous = self._last_state
@@ -211,13 +216,21 @@ class SessionScreen(QWidget):
         controls = models.controls_for_state(state)
         busy = self._transcribing
         # D6: Start for the next patient at QUEUED, unless the note review
-        # holds the generation lease (the controller refuses it anyway).
-        startable = controls.start and not busy and not self._controller.generating
+        # holds the generation lease or a draft write holds the session
+        # (draft-write D9, H1 round 45 LOW-002) — the controller refuses both
+        # anyway, but only after the consent tick is spent.
+        generating = self._controller.generating
+        writing = self._controller.writing_session_id() is not None
+        self._last_writing = writing
+        startable = controls.start and not busy and not generating and not writing
         self.consent_checkbox.setEnabled(startable)
         self.start_button.setEnabled(startable and self.consent_checkbox.isChecked())
-        self.start_button.setToolTip(
-            models.REVIEW_OPEN_START_HINT if controls.start and self._controller.generating else ""
-        )
+        hint = ""
+        if controls.start and generating:
+            hint = models.REVIEW_OPEN_START_HINT
+        elif controls.start and writing:
+            hint = models.write_line("write_in_flight")
+        self.start_button.setToolTip(hint)
         self.pause_button.setEnabled(controls.pause and not busy)
         self.resume_button.setEnabled(controls.resume and not busy)
         self.finish_button.setEnabled(controls.finish and not busy)
@@ -335,7 +348,7 @@ class SessionScreen(QWidget):
             self._controller.pause()
             self._show_message("Paused.")
         except Exception as exc:  # noqa: BLE001
-            self._show_message(f"Pause failed: {type(exc).__name__}: {exc}")
+            self._show_message(f"Pause failed: {models.custody_refusal_text(exc)}")
             self.refresh()
             return False
         self.refresh()
@@ -354,7 +367,7 @@ class SessionScreen(QWidget):
             self._controller.resume()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001
-            self._show_message(f"Resume failed: {type(exc).__name__}: {exc}")
+            self._show_message(f"Resume failed: {models.custody_refusal_text(exc)}")
             self.refresh()
             return False
         self.refresh()
@@ -365,7 +378,7 @@ class SessionScreen(QWidget):
         try:
             session = self._controller.finish()
         except Exception as exc:  # noqa: BLE001
-            self._show_message(f"Finish failed: {type(exc).__name__}: {exc}")
+            self._show_message(f"Finish failed: {models.custody_refusal_text(exc)}")
             self.refresh()
             return False
         if session.state != SessionState.PROCESSING:

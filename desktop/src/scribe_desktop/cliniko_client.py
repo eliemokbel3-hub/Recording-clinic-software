@@ -508,13 +508,18 @@ def _admit(
 
 
 def _headers_admitted(headers: dict[str, str], *, writing: bool) -> bool:
-    """Header names (case-insensitive, each once) from ``_send``'s set; the
-    write also carries exactly ``Content-Type: application/json``."""
-    names = [name.casefold() for name in headers]
+    """Header names (ASCII, case-insensitive, each once) from ``_send``'s
+    set; the write also carries exactly ``Content-Type: application/json``.
+    ASCII first: Unicode case-folding maps some other letters onto ASCII
+    ones (U+017F, the long s, folds to ``"s"``), so ``lower()`` on an ASCII
+    name is the comparison (H1 round 45 LOW-004)."""
+    if not all(name.isascii() for name in headers):
+        return False
+    names = [name.lower() for name in headers]
     if len(set(names)) != len(names) or not set(names) <= _READ_HEADERS | {"content-type"}:
         return False
     content_type = next(
-        (value for name, value in headers.items() if name.casefold() == "content-type"),
+        (value for name, value in headers.items() if name.lower() == "content-type"),
         None,
     )
     return content_type == _JSON if writing else content_type is None

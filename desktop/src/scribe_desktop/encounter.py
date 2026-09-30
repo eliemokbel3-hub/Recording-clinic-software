@@ -389,6 +389,21 @@ def link_id(note: Mapping[str, Any], name: str, resource: str | None) -> str | N
     return check_id(match.group("id"))
 
 
+def check_note_id(note: Mapping[str, Any], expected: str) -> None:
+    """The note answer's OWN ``id`` must be the requested note's (H3 round 47
+    SEC-002): an answer for one note's URL that carries another note is never
+    verified, and its content never written back over the requested note.
+    Read as ``clinics`` reads an id — a JSON string, or an integer as its
+    digits, never a boolean. Raises ``AnswerShapeError`` otherwise. Public
+    for the draft write's note read, which mirrors ``_check_note``."""
+    value = note.get("id")
+    if isinstance(value, bool):
+        raise AnswerShapeError()
+    text = str(value) if isinstance(value, int) else value
+    if text != expected:
+        raise AnswerShapeError()
+
+
 def note_state(note: Mapping[str, Any]) -> NoteRefusal | None:  # (a)
     """None for an open draft; ``NOTE_FINAL`` / ``NOTE_ARCHIVED`` otherwise.
     Raises ``AnswerShapeError`` on a note without ``draft`` /
@@ -591,6 +606,7 @@ def _check_note(
     clinic = request.clinic
     target = request.target
     note = call.get_treatment_note(target.note_id)
+    check_note_id(note, target.note_id)
     state = note_state(note)
     patient_id = link_id(note, "patient", "patients")
     practitioner_id = link_id(note, "practitioner", "practitioners")

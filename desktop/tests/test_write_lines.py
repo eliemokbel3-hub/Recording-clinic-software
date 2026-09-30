@@ -24,8 +24,11 @@ What is pinned here:
   ``write_prefixed`` puts the same prefix on a line from outside the
   dictionary (the session lock's).
 - ``custody_refusal_text`` names a write in flight, and any
-  ``WriteLineRefusal`` (``WritePendingError``), by its line and leaves every
-  other custody refusal as the screens always showed it.
+  ``WriteLineRefusal`` (``WritePendingError``), by its line, leaves every
+  other ``SessionControllerError`` and every ``AudioCaptureError`` as the
+  screens always showed them, and
+  shows any other error as ``CUSTODY_UNEXPECTED_REASON`` alone (round 49
+  PR-LOW-044: never its message or type).
 - ``write_control`` (Task 5.2, the Note tab's ``_write_ready``) takes its
   standing reasons in order — not saved, unlinked, mock, then the record —
   and ``write_record_block`` is the one record-status mapping the button and
@@ -40,9 +43,11 @@ from typing import get_args
 
 import pytest
 
+from scribe_desktop.audio_capture import AudioCaptureError, CaptureOverflowError, DeviceLostError
 from scribe_desktop.draft_write import WriteRefusal, WriteRefusalName
 from scribe_desktop.encounter import NoteRefusal, WritebackRefusal, WritebackRefused
 from scribe_desktop.session import SessionActivityError, WriteInFlightError
+from scribe_desktop.session_store import StoreWriteError
 from scribe_desktop.ui import models
 
 # The plan's Task 5.1 wording, verbatim ("N s" is ``{seconds} s``, "<reason>"
@@ -290,6 +295,39 @@ class TestCustodyRefusalText:
         assert models.custody_refusal_text(exc) == (
             "SessionActivityError: a discard is completing; the session cannot be completed"
         )
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            PermissionError(13, "Access is denied", r"C:\sessions\feedc0defeedc0de\key.dpapi"),
+            StoreWriteError("transcript not durably readable: 'C:\\sessions\\feedc0defeedc0de'"),
+            RuntimeError("feedc0defeedc0de"),
+        ],
+        ids=["os", "store", "runtime"],
+    )
+    def test_an_unexpected_error_reads_as_the_fixed_reason_only(
+        self, exc: Exception
+    ) -> None:
+        """Round 49 PR-LOW-044 (Constraint 9): an error nobody authored may
+        carry a session directory — its text and type never reach the line."""
+        assert models.custody_refusal_text(exc) == models.CUSTODY_UNEXPECTED_REASON
+        assert not models.CUSTODY_UNEXPECTED_REASON.endswith(".")  # callers add their own
+        assert "!" not in models.CUSTODY_UNEXPECTED_REASON
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            DeviceLostError("failed opening input device 3: Device unavailable"),
+            CaptureOverflowError("capture queue overflowed"),
+            AudioCaptureError("cannot resume a failed capture worker"),
+        ],
+        ids=["device-lost", "overflow", "capture"],
+    )
+    def test_a_capture_error_keeps_its_authored_text(self, exc: Exception) -> None:
+        """Round 49 k5 watch-point: a capture error is authored (a device
+        index and PortAudio's text, never a path) and is the microphone
+        diagnostic at Start, so it reads as before."""
+        assert models.custody_refusal_text(exc) == f"{type(exc).__name__}: {exc}"
 
     def test_a_failed_read_is_record_unreadable_and_a_foreign_line_takes_the_prefix(
         self,

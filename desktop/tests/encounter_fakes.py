@@ -126,8 +126,32 @@ class NoteTransport:
         if isinstance(answer, BaseException):
             raise answer
         if callable(answer):
-            return answer()
+            answer = answer()
+        if route == "/v1/treatment_notes/":
+            return echo_note_id(answer, path)
         return answer
+
+
+def echo_note_id(answer: Any, path: str) -> Any:
+    """A 200 note answer carrying the fakes' default ``id`` (``NOTE``)
+    answers for the note ``path`` names, as Cliniko does — so a test that
+    reads another note (``OTHER_NOTE``) needs no body of its own. Any other
+    id is served as given: a test that wants a mismatching id (H3 round 47
+    SEC-002) sets one."""
+    if not isinstance(answer, cc.RawResponse) or answer.status != 200:
+        return answer
+    try:
+        body = json.loads(answer.body)
+    except ValueError:
+        return answer
+    if not isinstance(body, dict) or body.get("id") != NOTE:
+        return answer
+    requested = path.rsplit("/", 1)[-1]
+    return cc.RawResponse(
+        status=200,
+        rate_limit_reset=answer.rate_limit_reset,
+        body=json.dumps({**body, "id": requested}).encode(),
+    )
 
 
 class MemoryKeyStore:

@@ -848,6 +848,8 @@ class TestDraftWrite:
             assert not window.note_screen.write_button.isEnabled()
             assert window.transcript_screen._write_blocked
             assert window.recovery_screen._write_blocked
+            # H1 round 45 LOW-002: the next patient's Start waits for the write.
+            assert not window.session_screen.consent_checkbox.isEnabled()
             event = QCloseEvent()
             window.closeEvent(event)
             assert not event.isAccepted()
@@ -863,6 +865,7 @@ class TestDraftWrite:
         assert self._line(window) == models.write_line("written_seen")
         assert not window.transcript_screen._write_blocked
         assert not window.recovery_screen._write_blocked
+        assert window.session_screen.consent_checkbox.isEnabled()
         window.close()
 
     def test_a_cooling_clinic_is_refused_before_anything_is_reserved(
@@ -894,6 +897,48 @@ class TestDraftWrite:
         assert _count(cliniko.calls, "PATCH") == 0
         assert store.stored == []
         assert controller.write_releases == 1
+        window.close()
+
+    def test_a_patch_429_is_unknown_and_cools_the_clinic(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """H1 round 45 LOW-003 (D13: a 429 from EITHER hop is recorded): a
+        429 on the PATCH is an unknown outcome AND cools the shared latch,
+        so the next click is refused before any request, carrying the open
+        attempt's warning."""
+        latch = RateLimitLatch(clock=lambda: 100.0)
+        window, controller, cliniko, store = self._window(
+            tmp_path, cliniko=Cliniko(patch=status(429)), rate_limit_latch=latch
+        )
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("unknown")
+        assert [outcome for outcome, _ in store.stored] == ["attempting", "unknown"]
+        assert latch.cooling(CLINIC_ID, 100.0) is not None
+        requests = len(cliniko.calls)
+        window._on_write_requested(controller.session_value.session_id)
+        assert self._line(window) == models.write_line(
+            "rate_limited", uncertain=True, seconds=RATE_LIMIT_COOLDOWN_SECONDS
+        )
+        assert len(cliniko.calls) == requests
+        assert _count(controller.calls, "reserve_write") == 1
+        window.close()
+
+    def test_a_read_answering_with_another_note_writes_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """H3 round 47 SEC-002: hop 1's answer for this note's URL carries
+        another note's id — refused as an unreadable answer, nothing stored,
+        no PATCH, the reservation released."""
+        window, controller, cliniko, store = self._window(
+            tmp_path, cliniko=Cliniko(notes=(ok(note_body(content=_content(), id="2002")),))
+        )
+        self._click(qapp, window, controller)
+        line = self._line(window)
+        assert line is not None
+        assert models.note_refusal_line(NoteRefusal.ANSWER_UNREADABLE) in line
+        assert store.stored == []
+        assert _count(cliniko.calls, "PATCH") == 0
+        assert controller.write_releases == 1 and controller.writing_id is None
         window.close()
 
     @pytest.mark.parametrize("open_attempt", [False, True])

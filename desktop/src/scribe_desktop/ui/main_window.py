@@ -887,8 +887,10 @@ class MainWindow(QMainWindow):
             refusal = models.write_line("write_in_flight")
         except SessionControllerError as exc:
             refusal = f"This recording cannot be opened for review now: {exc}."
-        except Exception as exc:  # noqa: BLE001 - named, never a crash
-            refusal = f"This recording cannot be opened for review: {type(exc).__name__}."
+        except Exception:  # noqa: BLE001 - named, never a crash (nor its text: PR-LOW-044)
+            refusal = (
+                f"This recording cannot be opened for review: {models.CUSTODY_UNEXPECTED_REASON}."
+            )
         else:
             if (
                 previous is not None
@@ -1935,10 +1937,13 @@ class MainWindow(QMainWindow):
         """D9: while a write holds the live session, the Note tab's Write
         is disabled (and the tab busy), the Transcript row disabled and the
         Recovery screen blocked — in both arrival orders with a recovery
-        resume (PR-MED-023: the Write click refuses ``recovery_busy``)."""
+        resume (PR-MED-023: the Write click refuses ``recovery_busy``) — and
+        the Session screen's Start re-read (it reads the controller's writing
+        marker; H1 round 45 LOW-002)."""
         self.note_screen.set_write_in_flight(active)
         self.transcript_screen.set_write_blocked(active)
         self.recovery_screen.set_write_blocked(active)
+        self.session_screen.refresh()
 
     def _show_write_line(self, line: str) -> None:
         self.note_screen.show_write_line(line)

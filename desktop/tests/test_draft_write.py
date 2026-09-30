@@ -56,6 +56,7 @@ from encounter_fakes import (
     NOTE,
     NOW,
     OTHER_HOST,
+    OTHER_NOTE,
     PATIENT,
     PATIENT_BODY,
     TEMPLATE,
@@ -1053,6 +1054,20 @@ class TestWriteRecord:
 # ---------------------------------------------------------------------------
 
 
+def _reconcile(
+    record: draft_write.WriteRecord, note_content: object, match: Any, identity: str
+) -> object:
+    """Reconcile's two halves as ``prepare_write`` runs them, minus the
+    repeat guard between them (``TestPrepareWrite`` covers that):
+    ``confirm_written``, then — when it decides nothing — ``retry_verdict``.
+    A test helper since H2 round 46 SIMP-003: production has no caller for
+    the composed form."""
+    confirmed = draft_write.confirm_written(record, note_content, match, identity)
+    if confirmed is not None:
+        return confirmed
+    return draft_write.retry_verdict(record, note_content, match)
+
+
 class TestReconcile:
     """D15: an open attempt is ``written`` when the note now holds the
     EXPECTED FINAL answers, the next attempt when it still holds the answers
@@ -1074,7 +1089,7 @@ class TestReconcile:
                 record, draft_write.WriteOutcome("unknown"), now=NOW
             )
         after = _as_written(prepared)
-        verdict = draft_write.reconcile(record, after, _match(after), _IDENTITY)
+        verdict = _reconcile(record, after, _match(after), _IDENTITY)
         assert verdict == draft_write.ReconciledWritten()
 
     def test_the_sanitiser_dropping_the_empty_line_still_reads_as_written(
@@ -1088,7 +1103,7 @@ class TestReconcile:
         after = _as_written(prepared)
         history = after["sections"][0]["questions"][0]
         history["answer"] = history["answer"].replace(_SEPARATOR, "")
-        assert draft_write.reconcile(record, after, _match(after), _IDENTITY) == (
+        assert _reconcile(record, after, _match(after), _IDENTITY) == (
             draft_write.ReconciledWritten()
         )
 
@@ -1101,7 +1116,7 @@ class TestReconcile:
         )
         after = _as_written(prepared)
         for content in (after, _content()):
-            assert draft_write.reconcile(record, content, _match(content), _IDENTITY) == (
+            assert _reconcile(record, content, _match(content), _IDENTITY) == (
                 draft_write.NextAttempt()
             )
 
@@ -1111,7 +1126,7 @@ class TestReconcile:
         prepared = self._sent(tmp_path)
         record = draft_write.attempt_record(prepared, now=NOW)
         # Nothing landed: the note still reads as the attempt read it.
-        assert draft_write.reconcile(record, _content(), _match(), _IDENTITY) == (
+        assert _reconcile(record, _content(), _match(), _IDENTITY) == (
             draft_write.NextAttempt()
         )
 
@@ -1119,13 +1134,13 @@ class TestReconcile:
         prepared = self._sent(tmp_path)
         record = draft_write.attempt_record(prepared, now=NOW)
         edited = _content({_HISTORY: _PROMPTS + "<p>typed in Cliniko</p>"})
-        assert draft_write.reconcile(record, edited, _match(edited), _IDENTITY) == (
+        assert _reconcile(record, edited, _match(edited), _IDENTITY) == (
             draft_write.Uncertain()
         )
 
     def test_a_record_of_another_saved_note_is_uncertain_even_when_written(self) -> None:
         for outcome in ("written", "unknown"):
-            assert draft_write.reconcile(
+            assert _reconcile(
                 _record(outcome, identity=_OTHER_IDENTITY), _content(), _match(), _IDENTITY
             ) == draft_write.Uncertain()
 
@@ -1134,7 +1149,7 @@ class TestReconcile:
         record = draft_write.attempt_record(prepared, now=NOW)
         after = _as_written(prepared)
         after["sections"][1]["questions"][2]["answer"] = "<p>Changed in Cliniko</p>"
-        assert draft_write.reconcile(record, after, _match(after), _IDENTITY) == (
+        assert _reconcile(record, after, _match(after), _IDENTITY) == (
             draft_write.Uncertain()
         )
 
@@ -1561,6 +1576,23 @@ class TestPrepareWrite:
         else:
             assert result == draft_write.WriteRefusal("note_unreadable")
 
+    @pytest.mark.parametrize("swallows", ["<p>Site -</p><script>x", "<p>Site -</p><style>x"])
+    def test_an_append_the_answer_takes_in_as_its_own_text_refuses(
+        self, tmp_path: Path, swallows: str
+    ) -> None:
+        """H1 round 45 LOW-001: raw-text markup left open in the answer as
+        read takes the app's text in as its own characters (a parser that
+        flushes it as data) or drops it (one that does not). Either way the
+        app's text would not show below the answer, though under the first
+        the final and before digests differ — the round-40 check alone
+        passed it. The final answer must read as the answer as read, then
+        the app's own lines."""
+        registry, _ = _registry(tmp_path)
+        content = _content({_HISTORY: swallows})
+        assert _prepare(registry, _verified_hop1(registry, content=content)) == (
+            draft_write.WriteRefusal("note_unreadable")
+        )
+
     def test_an_open_attempt_over_the_answers_it_read_is_the_next_attempt(
         self, tmp_path: Path
     ) -> None:
@@ -1726,6 +1758,12 @@ class TestHopOne:
             ),
             ({"patient": None}, NoteRefusal.ANSWER_UNREADABLE),
             ({"draft": "yes"}, NoteRefusal.ANSWER_UNREADABLE),
+            # H3 round 47 SEC-002: an answer carrying another note's id (or
+            # none, or a non-id) is never verified, so never written back.
+            ({"id": OTHER_NOTE}, NoteRefusal.ANSWER_UNREADABLE),
+            ({"id": None}, NoteRefusal.ANSWER_UNREADABLE),
+            ({"id": True}, NoteRefusal.ANSWER_UNREADABLE),
+            ({"id": int(OTHER_NOTE)}, NoteRefusal.ANSWER_UNREADABLE),
         ],
     )
     def test_the_read_is_the_click_s_verification(
@@ -1736,6 +1774,19 @@ class TestHopOne:
         hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.result.outcome == NoteRefused(reason)
         assert hop1.content is None
+
+    def test_the_notes_own_id_may_be_a_json_integer(self, tmp_path: Path) -> None:
+        """H3 round 47 SEC-002: the id check reads the note's ``id`` as the
+        clinic registry reads an id — a string, or an integer as its digits
+        — so the requested note verifies either way."""
+        registry, store = _registry(tmp_path)
+        for note_id in (NOTE, int(NOTE)):
+            cliniko = Cliniko(notes=(ok(note_body(content=_content(), id=note_id)),))
+            hop1 = draft_write.read_for_write(
+                request_for(registry), key_store=store, transport=cliniko
+            )
+            assert isinstance(hop1.result.outcome, Verified)
+            assert hop1.content is not None
 
     @pytest.mark.parametrize(
         ("answer", "reason"),
@@ -1867,6 +1918,13 @@ class TestParityWithTheNoteCheck:
             # the shape is read first in both.
             ok(note_body(draft="yes", patient={"links": {"self": f"{_API}/patients/1002"}})),
             ok(note_body(practitioner=None, patient={"links": {"self": f"{_API}/patients/1002"}})),
+            # H3 round 47 SEC-002: the note's own id, checked first in both —
+            # another note's, beside a patient mismatch and a final note, and
+            # the requested one as a JSON integer.
+            ok(note_body(id=OTHER_NOTE)),
+            ok(note_body(id=OTHER_NOTE, patient={"links": {"self": f"{_API}/patients/1002"}})),
+            ok(note_body(id=OTHER_NOTE, draft=False)),
+            ok(note_body(content=_content(), id=int(NOTE))),
         ],
     )
     def test_the_write_and_the_note_check_agree(

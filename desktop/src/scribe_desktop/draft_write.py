@@ -122,6 +122,7 @@ from scribe_desktop.encounter import (
     # classifies a failed read exactly as the Chrome note check does.
     _offline_context,
     _refusal_for,
+    check_note_id,
     link_id,
     note_state,
     writeback_context,
@@ -850,22 +851,6 @@ def retry_verdict(
     return Uncertain()
 
 
-def reconcile(
-    record: WriteRecord,
-    note_content: object,
-    match: Match,
-    saved_note_identity: str,
-) -> ReconciledWritten | NextAttempt | Uncertain:
-    """What a record means for the click's re-read (D5, D15), before any
-    PATCH: ``confirm_written``, then — when that decides nothing —
-    ``retry_verdict``. ``prepare_write`` runs the two halves separately,
-    with the repeat guard between them."""
-    confirmed = confirm_written(record, note_content, match, saved_note_identity)
-    if confirmed is not None:
-        return confirmed
-    return retry_verdict(record, note_content, match)
-
-
 def attempt_record(prepared: PreparedWrite, *, now: datetime) -> WriteRecord:
     """The ``attempting`` row written BEFORE hop 2 (Constraint 5)."""
     return WriteRecord(
@@ -924,7 +909,8 @@ def verify_note_for_write(
     call: ClinikoCall, request: VerificationRequest, clock: Callable[[], datetime] | None = None
 ) -> NoteRead:
     """Hop 1's ONE request, the note read — the click's verification (D3,
-    D15): the note's patient link must be the context's, the note an open
+    D15): the answer must carry the requested note's own ``id`` (H3 round 47
+    SEC-002), the note's patient link must be the context's, the note an open
     draft (``note_state``), its practitioner the clinic's. No template,
     patient or booking read, so it sits as close to the PATCH as the design
     allows. Raises the client's named errors and ``AnswerShapeError`` for
@@ -939,6 +925,7 @@ def verify_note_for_write(
     if clinic.host != target.clinic_host:
         return NoteRead(NoteRefused(NoteRefusal.CLINIC_MISMATCH))
     note = call.get_treatment_note(target.note_id)
+    check_note_id(note, target.note_id)  # H3 round 47 SEC-002
     state = note_state(note)
     patient_id = link_id(note, "patient", "patients")
     practitioner_id = link_id(note, "practitioner", "practitioners")
@@ -1184,9 +1171,9 @@ def prepare_write(
     6. the answers (the note's OWN style — Copy's), each appended to the
        answer as read (``appended_answer``) and digested: nothing writable →
        ``nothing_to_write``; an answer the app cannot read, or one whose
-       appended form reads the same as the answer as read (the final and
-       before digests would not tell a landed attempt apart) →
-       ``note_unreadable``;
+       appended form does not read as the answer as read followed by the
+       app's own lines (its text would not show, and the final and before
+       digests might not tell a landed attempt apart) → ``note_unreadable``;
     7. the full body; unencodable → ``answer_unreadable``.
 
     Never raises for Cliniko's answers."""
@@ -1217,7 +1204,8 @@ def prepare_write(
         if isinstance(retry_verdict(record, hop1.content, match), Uncertain):
             return refused("write_uncertain")
     assert profile is not None  # match_template refused a missing profile
-    new_answers: dict[str, str] = {}
+    # Each target's answer and its normalised visible text (``own`` below).
+    new_answers: dict[str, tuple[str, str]] = {}
     for target_id, (rendered, lines) in render_targets(note, profile, note.style).items():
         matched = match.questions.get(target_id)
         if matched is None:
@@ -1233,7 +1221,7 @@ def prepare_write(
         except AnswerUnparseable:
             return refused("answer_unreadable")
         if visible:
-            new_answers[target_id] = answer
+            new_answers[target_id] = (answer, visible)
     if not new_answers:
         return refused("nothing_to_write")
     sections = _note_sections(hop1.content)
@@ -1241,7 +1229,7 @@ def prepare_write(
     answers: dict[str, str] = {}
     digests: dict[str, str] = {}
     before_digests: dict[str, str] = {}
-    for target_id, new in new_answers.items():
+    for target_id, (new, own) in new_answers.items():
         matched = match.questions[target_id]
         existing = _answer_at(sections, matched.note_position)
         final = appended_answer(existing, new, matched.representation)
@@ -1255,12 +1243,15 @@ def prepare_write(
             expected = normalise_answer(final, matched.representation)
         except AnswerUnparseable:
             return refused("note_unreadable")
-        if expected == before:
-            # Reconcile tells a landed attempt from one that did not land by
-            # these two digests (D15), so they must differ. They agree only
-            # when the answer as read hides what follows it (markup such as
-            # an unterminated comment): the app's text would not show, and
-            # the app never appends there.
+        if expected != "\n".join(part for part in (before, own) if part):
+            # The final answer must read as the answer as read, then the
+            # app's own lines: reconcile tells a landed attempt from one that
+            # did not land by these two digests (D15), so they must differ,
+            # and the app's text must show as written. Markup in the answer
+            # as read that hides what follows it (an unterminated comment)
+            # or takes it in as its own text (an unterminated ``<script>``,
+            # an unclosed attribute quote) breaks that: the app never
+            # appends there (round 40 LOW-001, H1 round 45 LOW-001).
             return refused("note_unreadable")
         answers[target_id] = final
         digests[target_id] = answer_digest(expected)

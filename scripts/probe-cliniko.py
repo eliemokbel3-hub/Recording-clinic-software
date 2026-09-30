@@ -357,7 +357,9 @@ _ABSENT = "\x00absent"
 
 
 def rich_answer(lines: tuple[str, ...]) -> str:
-    """Rich text as the app will send it: one ``<p>`` per line, escaped."""
+    """Rich text shaped as the app sends it: one ``<p>`` per line, escaped.
+    One difference: an empty line stays ``<p></p>`` here, where the app's
+    ``draft_write.to_cliniko_answer`` sends ``<p><br></p>``."""
     return "".join(f"<p>{html.escape(line, quote=True)}</p>" for line in lines)
 
 
@@ -621,8 +623,15 @@ class TestWrite:
         return answer
 
     def _note(self, why: str = "") -> dict[str, Any]:
+        """EVERY note read — the first and each one after a write — stops by
+        name unless the answer carries the URL's note id (codex round 48
+        PR-LOW-043, the app's SEC-002 check): a later body is what the next
+        PATCH is built from, so another note's content never reaches one."""
         label = "/treatment_notes/<id>" + (f" ({why})" if why else "")
-        return self._fetch(label, lambda: self._call.get_treatment_note(self._target.note_id))
+        note = self._fetch(label, lambda: self._call.get_treatment_note(self._target.note_id))
+        if _valid_id(note.get("id")) != self._target.note_id:
+            raise self._refuse("the note Cliniko returned is not the URL's note")
+        return note
 
     def _content(self, why: str = "") -> dict[str, Any]:
         """The draft leg's every note read after the start: it stops by name
@@ -694,8 +703,7 @@ class TestWrite:
             )
         if not want_final and is_final:
             raise self._refuse("the note is finalised - the test write needs an open draft")
-        if _valid_id(note.get("id")) != target.note_id:
-            raise self._refuse("the note Cliniko returned is not the URL's note")
+        # The note's own id was checked by ``_note`` (every read).
         if _link_id(note, "patient") != target.patient_id:
             raise self._refuse("the note's patient is not the URL's patient")
         if _link_id(note, "practitioner") not in practitioner_ids:

@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
+from scribe_desktop.audio_capture import AudioCaptureError
 from scribe_desktop.clinics import (
     ClinicRecord,
     ClinicRefusal,
@@ -126,6 +127,7 @@ from scribe_desktop.session import (
     EnrolmentLease,
     GenerationLease,
     RecordingSession,
+    SessionControllerError,
     SessionState,
     WriteInFlightError,
     WriteReservation,
@@ -361,9 +363,11 @@ WRITE_LINES: Final[Mapping[str, str]] = {
         "The write stopped on this computer before anything was sent to Cliniko. Copy the "
         "note, or try again."
     ),
-    # D5/D9's ``write_pending`` refusal (Regenerate, "Cancel review and
-    # regenerate", a second Save once any attempt exists); the escapes D5
-    # names are Copy, Complete and Discard.
+    # D5/D9's ``write_pending`` refusal once any attempt exists: Regenerate
+    # (including "Regenerate (replaces the saved note)"), a second Save and
+    # "Delete note and complete without one" ("Cancel review and regenerate"
+    # is already disabled once the note is saved); the escapes D5 names are
+    # Copy, Complete and Discard.
     "write_pending": (
         "A write to Cliniko was attempted for this note, so it can no longer be changed "
         "or regenerated here. Copy it, complete the recording or discard it."
@@ -755,8 +759,9 @@ class SessionWriteStore:
 
 
 def write_profile(note: GeneratedNote, config_root: Path | None) -> TemplateProfile | None:
-    """The template profile a write matches the note's Cliniko template
-    against (D4): ``bind_template_profile(note.template_profile_id)`` over
+    """The template profile a write matches against the note's own content
+    (D4 as amended by D15 — no template is read):
+    ``bind_template_profile(note.template_profile_id)`` over
     the CURRENT config under ``config_root``. None when the config cannot be
     loaded or no longer holds the profile — ``prepare_write`` then refuses
     ``template_mismatch``."""
@@ -1203,17 +1208,30 @@ class SessionControllerLike(Protocol):
     def referenced_session_ids(self) -> frozenset[str]: ...
 
 
+# Round 49 PR-LOW-044: what a status line says for a failure nobody authored.
+# A store or OS error's text can name a session directory (its id), so the
+# screens never show it — nor its type name.
+CUSTODY_UNEXPECTED_REASON = "an unexpected problem on this computer stopped it"
+
+
 def custody_refusal_text(exc: BaseException) -> str:
     """How a refused custody action names its cause on a status line: the
     write-in-flight line for a ``WriteInFlightError`` (D9 — a draft write
     holds the session), a ``WriteLineRefusal``'s own line (D5's
-    ``write_pending`` and its siblings — Task 5.2 words them), else the
-    exception's type and message as the screens have always shown them."""
+    ``write_pending`` and its siblings — Task 5.2 words them), a
+    ``SessionControllerError``'s or an ``AudioCaptureError``'s type and
+    message as the screens have always shown them (both are authored; a
+    capture error adds only a device index and PortAudio's own text, the
+    microphone diagnostic at Start), else ``CUSTODY_UNEXPECTED_REASON`` —
+    never the exception's own text or type (Constraint 9, round 49
+    PR-LOW-044)."""
     if isinstance(exc, WriteInFlightError):
         return write_line("write_in_flight")
     if isinstance(exc, WriteLineRefusal):
         return str(exc)
-    return f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, SessionControllerError | AudioCaptureError):
+        return f"{type(exc).__name__}: {exc}"
+    return CUSTODY_UNEXPECTED_REASON
 
 
 # ---------------------------------------------------------------------------
@@ -3968,6 +3986,7 @@ __all__ = [
     "NOT_TAKEN_CAUSES",
     "PERMANENT_NOTE_REFUSALS",
     "WRITE_LABEL_CHARS",
+    "CUSTODY_UNEXPECTED_REASON",
     "custody_refusal_text",
     "not_taken_cause",
     "note_check_line",

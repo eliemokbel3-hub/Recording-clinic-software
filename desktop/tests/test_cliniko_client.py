@@ -381,6 +381,11 @@ class TestMethods:
             pytest.param("GET", "/user", None, {}, id="get-outside-v1"),
             pytest.param("GET", "/v1/user", None, {"X-Other": "1"}, id="get-extra-header"),
             pytest.param("GET", "/v1/user", None, WRITE_HEADERS, id="get-content-type"),
+            # H1 round 45 LOW-004: U+017F (long s) case-folds to "s", so a
+            # casefold comparison would take this for User-Agent.
+            pytest.param(
+                "GET", "/v1/user", None, {"Uſer-Agent": "x"}, id="get-non-ascii-header-name"
+            ),
             pytest.param("PATCH", WRITE_PATH, VALID_BODY, {}, id="patch-no-content-type"),
             pytest.param(
                 "PATCH",
@@ -1572,7 +1577,8 @@ class TestConfinement:
         registry is the first, for the Clinics tab's Validate / Replace key,
         Task 3.2's note verification (``encounter.verify_note_context``) the
         second, and the draft-write plan's ``draft_write`` (Task 3.2: its
-        body model; Task 3.4: hop 1's reads and hop 2's one write) the third.
+        body model; Task 3.4: hop 1's note read — one GET since D15 — and
+        hop 2's one write) the third.
         The security docs — the threat model's "Cliniko API client" section
         and flow 18 of the data-flow map — name three importers from the
         draft-write plan's Task 6.1; a new caller must update this pin

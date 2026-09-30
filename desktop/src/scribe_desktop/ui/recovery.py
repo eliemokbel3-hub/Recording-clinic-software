@@ -451,7 +451,7 @@ class RecoveryScreen(QWidget):
             discard_session(info.directory, None)
             self.message_label.setText("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
-            self.message_label.setText(f"Discard failed: {type(exc).__name__}: {exc}")
+            self.message_label.setText(f"Discard failed: {models.custody_refusal_text(exc)}")
         else:
             self.session_removed.emit(info.session_id)
         self.refresh()

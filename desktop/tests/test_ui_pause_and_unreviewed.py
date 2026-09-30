@@ -195,6 +195,30 @@ class TestStartAtQueued:
         assert screen.start_button.toolTip() == ""
         screen.deleteLater()
 
+    def test_a_write_in_flight_disables_start_and_keeps_the_tick(self, qapp: Any) -> None:
+        """H1 round 45 LOW-002 (draft-write D9): while a draft write holds
+        the queued session, Start and the consent box are disabled with the
+        write-in-flight hint — the controller would refuse the Start anyway,
+        but only after the tick was spent; the poll re-enables Start when
+        the write ends."""
+        controller = FakeController()
+        previous = _queued_linked()
+        controller.session_value = previous
+        controller.state_value = SessionState.QUEUED
+        screen = _session_screen(controller)
+        screen.consent_checkbox.setChecked(True)
+        controller.writing_id = previous.session_id
+        screen._watch_state()  # the poll notices the write
+        assert not screen.start_button.isEnabled()
+        assert not screen.consent_checkbox.isEnabled()
+        assert screen.consent_checkbox.isChecked()  # not spent
+        assert screen.start_button.toolTip() == models.write_line("write_in_flight")
+        controller.writing_id = None
+        screen._watch_state()  # the poll notices the write ended
+        assert screen.start_button.isEnabled()
+        assert screen.start_button.toolTip() == ""
+        screen.deleteLater()
+
     def test_a_start_that_fails_after_retiring_still_announces_it(
         self, qapp: Any, monkeypatch: pytest.MonkeyPatch
     ) -> None:

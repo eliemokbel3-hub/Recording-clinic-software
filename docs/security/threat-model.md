@@ -1376,8 +1376,8 @@ data-flow map); the native host has none and never imports it. It reads
 has three app callers, each making its client calls on a worker thread in
 answer to a practitioner action or a report from Chrome, never at startup, on
 a timer or while idle: the draft write (`draft_write.py`), on the Note tab's
-"Write draft to Cliniko" click only — two client calls per click, the reads
-then the write; the clinic registry (`clinics.py`, Phase 2) on a Validate or
+"Write draft to Cliniko" click only — two client calls per click, the note
+read then the write; the clinic registry (`clinics.py`, Phase 2) on a Validate or
 Replace key press on the Clinics tab (CLINIC KEYS below), and note
 verification (`encounter.py` `verify_note_context`, Phase 3) — dispatched
 when the practitioner opens a recovered session for checkout or an Unreviewed
@@ -1598,7 +1598,10 @@ thread and never raises: it refuses a note whose URL host is not the clinic's
 recorded host before any request, then makes ONE client call whose key source
 reads Credential Manager once (`KeyStore.retrieve`; a failed or empty read is
 the named refusal `key_unavailable`, not an exception). That call is
-`GET /treatment_notes/<id>` — the note's patient link must equal the URL's
+`GET /treatment_notes/<id>` — the answer's own `id` must be the requested
+note's, or it is `answer_unreadable` (H3 round 47 SEC-002: an answer for one
+note's URL carrying another note is never verified, and never written back
+over the requested note), the note's patient link must equal the URL's
 patient, the note must be an open draft (`draft` true, `finalized_at`,
 `archived_at` and `deleted_at` null), its practitioner link must equal the
 clinic's recorded practitioner — then `GET /patients/<id>` and, when the note
@@ -1736,8 +1739,9 @@ note, never anything but the note's `content`. What the structure enforces:
   refused.
 - A FRESH READ FOR EVERY CLICK, TWO REQUESTS (D3 as amended by D15). Hop 1,
   on a worker, is ONE client call with the key read once and ONE request,
-  `GET /treatment_notes/<id>` — it IS the click's verification (the note's
-  patient link, open-draft state and practitioner, as NOTE VERIFICATION
+  `GET /treatment_notes/<id>` — it IS the click's verification (the answer's
+  own note id, the note's patient link, open-draft state and practitioner, as
+  NOTE VERIFICATION
   checks them; no template, patient or booking read), so it sits as close to
   the `PATCH` as the design allows. Then, on the GUI thread, in
   `prepare_write`'s order: `writeback_context` over that read; the match on
@@ -1769,9 +1773,13 @@ note, never anything but the note's `content`. What the structure enforces:
   app's text. The write refuses `note_unreadable` before any attempt — the
   app never appends to what it cannot read — for an answer that is neither a
   string nor null, HTML the parser cannot read, or an answer whose appended
-  form would read as the answer before it (markup that hides what follows
-  it, such as an unterminated comment; round 40 LOW-001 — the record's two
-  digests below must differ). A second recording's write into a note an
+  form would not read — to Python's HTML parser, which is the check — as
+  the answer before it followed by the app's own lines (markup the parser
+  sees hiding what follows it, such as an unterminated comment, or taking it
+  in as its own text, such as an unterminated `<script>`; round 40 LOW-001
+  and H1 round 45 LOW-001 — the record's two digests below must differ;
+  markup a browser hides but the parser shows is residue (f)). A second
+  recording's write into a note an
   earlier write or the clinician filled appends below it. Emptiness and every
   digest are over normalised VISIBLE text, type-aware: a `paragraph` answer
   is HTML and is decoded to visible text exactly once, a `text` answer is
@@ -1850,7 +1858,15 @@ note, never anything but the note's `content`. What the structure enforces:
   the reservation, the record and the saved note's identity, then fsync →
   decrypt-verify → key deleted → in-memory key destroyed → directory removed
   best-effort → session refs forgotten. Any refusal or failure keeps the key,
-  the record and the queued session, and the next Complete retries.
+  the record and the queued session, and the next Complete retries. A custody
+  action that fails on an error the app did not author (a disk, permission or
+  store error) shows one fixed reason, "an unexpected problem on this computer
+  stopped it", never the error's text or type: that text can name the
+  session's directory (round 49 PR-LOW-044; `ui/models.py`
+  `custody_refusal_text`, shared by every custody status line — Start, Pause,
+  Resume, Finish, Save, Complete, Discard). The controller's own refusals and a
+  capture error keep their authored text; a capture error adds only a device
+  number and PortAudio's message, never a path.
 - NAMED RESIDUES (P.1 on clinic 1, 2026-09-29, D15 and the reviews):
   (a) NO CONDITIONAL WRITE. Cliniko documents no version check on treatment
   notes, so an edit the clinician SAVES in Cliniko's editor between hop 1's
@@ -1880,11 +1896,18 @@ note, never anything but the note's `content`. What the structure enforces:
   tell the clinician's edit from its own write, so the retry is refused
   `write_uncertain` (fail closed); Copy remains, after the clinician checks
   the note in Cliniko.
-  (f) AN ANSWER THAT HIDES WHAT FOLLOWS IT refuses `note_unreadable` (round 40
-  LOW-001): the app's text would not show below it, and the record's digests
-  could not tell a landed attempt from one that did not land. Cliniko's
-  sanitised answers are not known to hold such markup; the clinician copies
-  instead.
+  (f) AN ANSWER THAT HIDES OR SWALLOWS WHAT FOLLOWS IT, as Python's HTML
+  parser reads it, refuses `note_unreadable` (round 40 LOW-001, H1 round 45
+  LOW-001): the app's text would not show below it as its own lines, and the
+  record's digests might not tell a landed attempt from one that did not
+  land. The check is the parser's view, not a browser's: an element a
+  browser hides but the parser reads as text — an unclosed `<div hidden>` or
+  `style="display:none"` block, `<template>`, `<select>`, or (on Python
+  3.12/3.13) a `<textarea>` / `<title>` left open — passes it, and the app's
+  text would land inside it, unseen (H3 round 47 SEC-001). Cliniko's
+  sanitised answers are not known to hold such markup, and seen completion
+  (the clinician looks at the draft before Complete) is the net; the
+  clinician copies instead.
   (g) AFTER COMPLETION THE ONLY COPY IS IN CLINIKO. The session — audio,
   transcript, `note.enc`, `encounter.enc`, `write.enc` — is gone; the draft
   in Cliniko, which the clinician still finalises, is what remains.

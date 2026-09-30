@@ -765,6 +765,44 @@ class TestTestWrite:
         assert "GET /treatment_notes/<id>: Unreachable (HTTP 503)" in lines
         assert lines[-1] == probe.MARKER_LEFT
 
+    @pytest.mark.parametrize("swap_after", [1, 2])
+    def test_a_later_read_of_another_note_stops_before_the_next_write(
+        self, probe: ModuleType, swap_after: int
+    ) -> None:
+        """Codex round 48 PR-LOW-043: every note read after a write carries
+        the URL's note id or the run stops by name — a later body is what the
+        next PATCH is built from — and the marker already written is still
+        reported (exit 2, ``MARKER LEFT`` last)."""
+
+        class Swapping(NoteServer):
+            """Answers every note read with another note's id once
+            ``swap_after`` PATCHes were sent."""
+
+            def request(
+                self,
+                method: str,
+                host: str,
+                path: str,
+                headers: Mapping[str, str],
+                max_body: int,
+                *,
+                body: bytes | None = None,
+            ) -> cc.RawResponse:
+                answer = super().request(method, host, path, headers, max_body, body=body)
+                if method == "GET" and path == NOTE_PATH and self.patch_count >= swap_after:
+                    note = json.loads(answer.body)
+                    note["id"] = "777"
+                    return cc.RawResponse(200, None, json.dumps(note).encode())
+                return answer
+
+        server = Swapping(_write_note(), merge=True)
+        steps: list[Step] = ["yes", "", server.edit(), server.edit(), server.edit()]
+        code, lines = _run_write(probe, server, steps)
+        assert code == 2
+        assert server.patch_count == swap_after  # no PATCH after the swapped read
+        assert "Refused: the note Cliniko returned is not the URL's note." in lines
+        assert lines[-1] == probe.MARKER_LEFT
+
     def test_an_unexpected_error_is_reported_by_class_and_leaves_the_marker(
         self, probe: ModuleType
     ) -> None:

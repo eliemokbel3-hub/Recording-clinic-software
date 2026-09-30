@@ -219,7 +219,10 @@ view patterns · tokens · microcopy.
   line under the buttons (and the tooltip), and a click that still arrives repeats
   it. A click shows "Checking the note with Cliniko …" then "Writing the draft to
   Cliniko …"; closing the window, the Transcript row, the Recovery screen and a
-  Chrome Start / Discard / Open for review are refused while it runs. Success does
+  Chrome Start / Discard / Open for review are refused while it runs, and the Session
+  screen's Start and its consent tick are disabled (a tick already given stays ticked),
+  with "A draft is being written to Cliniko. Wait for it to finish." as Start's tooltip
+  (`ui/session_screen.py` `refresh`, re-run at both ends of the write). Success does
   NOT end the recording: the line becomes "Draft written to Cliniko. Reload the note
   page in Chrome; press Complete once you can see it there. If Cliniko says the note
   was updated elsewhere, choose Discard my changes." (an editor already open on the
@@ -417,6 +420,13 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   cares about ("recording did not finish cleanly; the tail may be missing") rather than
   the internal cause (a missing store footer).
 - Destructive actions are named for what they do — Complete and Discard, not OK/Cancel.
+- A custody action that fails on an error the app did not author (a disk, permission or
+  store error) shows one fixed reason, "an unexpected problem on this computer stopped
+  it", never the error's text or type: that text can name the session's directory. The
+  app's own refusals and a microphone (capture) error keep their text — a capture error
+  names only a device number and the audio driver's message (`ui/models.py`
+  `custody_refusal_text`, shared by Start, Pause, Resume, Finish, Save, Complete and
+  Discard; draft-write round 49).
 - A typed line's learning status names the trigger and the wording: "Will learn shorthand:
   '<trigger>' -> '<wording>' for <Section> when you press Save note on this tab"; a
   not-learned reason names the class ("the trigger contains a name/number/date/medication

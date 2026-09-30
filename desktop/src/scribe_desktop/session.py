@@ -386,8 +386,6 @@ class WriteInFlightError(SessionActivityError):
     text is diagnostic, never shown). A ``SessionActivityError``, so every
     caller that already handles a custody refusal handles this one."""
 
-    reason = "write_in_flight"
-
     def __init__(self, operation: str) -> None:
         super().__init__(f"{operation} refused: a Cliniko draft write holds this session")
 

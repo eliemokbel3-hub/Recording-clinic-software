@@ -1949,7 +1949,110 @@ def _session_screen(
     return screen
 
 
+_LEAK_ID = "feedc0de" * 4
+
+
+def _leaky_errors(session_id: str = _LEAK_ID) -> list[Exception]:
+    """Round 49 PR-LOW-044: unexpected custody failures whose OWN text names
+    the session directory (its id) — an OS error from a key unlink and a
+    store error wrapping one."""
+    from scribe_desktop.session_store import StoreWriteError
+
+    path = rf"C:\Users\clinician\AppData\Local\ClinikoScribe\sessions\{session_id}"
+    return [
+        PermissionError(13, "Access is denied", path + r"\key.dpapi"),
+        StoreWriteError(f"transcript not durably readable: [Errno 5] I/O error: '{path}'"),
+    ]
+
+
+def _assert_content_free(
+    text: str, exc: BaseException, session_id: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Constraint 9: the status line (and every log record) names neither
+    the path, the id, the error's message nor its type — only the fixed
+    reason."""
+    assert models.CUSTODY_UNEXPECTED_REASON in text
+    for leaked in (session_id, "ClinikoScribe", str(exc), type(exc).__name__):
+        assert leaked not in text
+        assert leaked not in caplog.text
+
+
 class TestSessionScreen:
+    @pytest.mark.parametrize("exc", _leaky_errors(), ids=["os", "store"])
+    @pytest.mark.parametrize(
+        ("action", "label"),
+        [
+            ("pause", "Pause"),
+            ("resume", "Resume"),
+            ("finish", "Finish"),
+            ("discard", "Discard"),
+            ("start", "Start"),
+        ],
+    )
+    def test_an_unexpected_failure_shows_only_the_fixed_reason(
+        self,
+        qapp: Any,
+        caplog: pytest.LogCaptureFixture,
+        action: str,
+        label: str,
+        exc: Exception,
+    ) -> None:
+        """Round 49 PR-LOW-044 (the class): every Session-screen control
+        shows a fixed reason for an error nobody authored."""
+        caplog.set_level("DEBUG")
+        controller = FakeController()
+        screen = _session_screen(controller)
+        if action != "start":
+            screen.on_start()
+
+        def fails(*_args: Any, **_kwargs: Any) -> Any:
+            raise exc
+
+        setattr(controller, action, fails)
+        screen.consent_checkbox.setChecked(True)
+        getattr(screen, f"on_{action}")()
+        text = screen.message_label.text()
+        assert text == f"{label} failed: {models.CUSTODY_UNEXPECTED_REASON}"
+        _assert_content_free(text, exc, _LEAK_ID, caplog)
+        screen.deleteLater()
+
+    def test_a_microphone_failure_at_start_keeps_its_diagnostic(self, qapp: Any) -> None:
+        """Round 49 k5 watch-point: a capture error at Start is authored (a
+        device index and PortAudio's text) and is shown as before, while a
+        path-bearing error there is still the fixed reason (above)."""
+        from scribe_desktop.audio_capture import DeviceLostError
+
+        controller = FakeController()
+        screen = _session_screen(controller)
+
+        def fails(*_args: Any, **_kwargs: Any) -> Any:
+            raise DeviceLostError("failed opening input device 7: Device unavailable")
+
+        controller.start = fails  # type: ignore[method-assign]
+        screen.on_start()
+        assert screen.message_label.text() == (
+            "Start failed: DeviceLostError: failed opening input device 7: Device unavailable"
+        )
+        screen.deleteLater()
+
+    def test_an_authored_refusal_keeps_its_text(self, qapp: Any) -> None:
+        from scribe_desktop.session import SessionActivityError
+
+        controller = FakeController()
+        screen = _session_screen(controller)
+        screen.on_start()
+
+        def refused() -> Any:
+            raise SessionActivityError("operation requires state recording, session is paused")
+
+        controller.pause = refused  # type: ignore[method-assign]
+        screen.on_pause()
+        assert screen.message_label.text() == (
+            "Pause failed: SessionActivityError: "
+            "operation requires state recording, session is paused"
+        )
+        screen.deleteLater()
+
     def test_idle_enablement(self, qapp: Any) -> None:
         screen = _session_screen(FakeController())
         assert screen.start_button.isEnabled()
@@ -2369,6 +2472,37 @@ class TestRecoveryScreen:
         assert screen.session_list.count() == 0
         screen.deleteLater()
 
+    @pytest.mark.parametrize("which", [0, 1], ids=["os", "store"])
+    def test_a_failed_discard_names_no_path_and_keeps_the_session(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        which: int,
+    ) -> None:
+        """Round 49 PR-LOW-044: the Recovery screen's Discard shows the
+        fixed reason, never the error's path or the session id."""
+        from scribe_desktop.ui import recovery
+        from scribe_desktop.ui.recovery import RecoveryScreen
+
+        caplog.set_level("DEBUG")
+        session_id = _make_recoverable(tmp_path, finished=True)
+        exc = _leaky_errors(session_id)[which]
+
+        def fails(directory: Path, crypto: Any) -> None:
+            raise exc
+
+        monkeypatch.setattr(recovery, "discard_session", fails)
+        screen = RecoveryScreen(tmp_path, recovery_runner=lambda d: pytest.fail("not called"))
+        screen.session_list.setCurrentRow(0)
+        screen.on_discard()
+        text = screen.message_label.text()
+        assert text == f"Discard failed: {models.CUSTODY_UNEXPECTED_REASON}"
+        _assert_content_free(text, exc, session_id, caplog)
+        assert (tmp_path / session_id / KEY_FILENAME).exists()
+        screen.deleteLater()
+
     def test_active_session_never_listed(self, qapp: Any, tmp_path: Path) -> None:
         from scribe_desktop.ui.recovery import RecoveryScreen
 
@@ -2621,6 +2755,38 @@ class TestTranscriptScreen:
         )
         screen.on_discard()
         assert screen.message_label.text() == f"Discard failed: {line}"
+        assert closed == []
+        assert screen.transcript_view.toPlainText() != ""
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("exc", _leaky_errors(), ids=["os", "store"])
+    def test_an_unexpected_complete_or_discard_failure_shows_only_the_fixed_reason(
+        self, qapp: Any, caplog: pytest.LogCaptureFixture, exc: Exception
+    ) -> None:
+        """Round 49 PR-LOW-044: the Transcript screen's Complete and Discard
+        never show a path-bearing error's text, and the session stays."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        caplog.set_level("DEBUG")
+        screen = TranscriptScreen()
+
+        def fails() -> None:
+            raise exc
+
+        closed: list[str] = []
+        screen.closed.connect(closed.append)
+        screen.show_document(_document(), on_complete=fails, on_discard=fails)
+        screen.on_complete()
+        text = screen.message_label.text()
+        assert text.startswith(
+            f"Complete failed: {models.CUSTODY_UNEXPECTED_REASON}. "
+            "No key deletion was performed by this action"
+        )
+        _assert_content_free(text, exc, _LEAK_ID, caplog)
+        screen.on_discard()
+        text = screen.message_label.text()
+        assert text == f"Discard failed: {models.CUSTODY_UNEXPECTED_REASON}"
+        _assert_content_free(text, exc, _LEAK_ID, caplog)
         assert closed == []
         assert screen.transcript_view.toPlainText() != ""
         screen.deleteLater()
@@ -6569,21 +6735,34 @@ class TestTranscriptGeneration:
         assert closed == ["completed"]
         screen.deleteLater()
 
+    @pytest.mark.parametrize("which", [0, 1, 2], ids=["os", "store", "corrupt"])
     def test_a_failed_completion_releases_keeps_the_session_and_a_retry_succeeds(
-        self, qapp: Any
+        self, qapp: Any, caplog: pytest.LogCaptureFixture, which: int
     ) -> None:
+        """Round 49 PR-LOW-044: a seen-mode Complete that fails on an error
+        naming the session directory shows only the fixed reason — never
+        the path, the id, the message or the type — and a retry succeeds."""
         from scribe_desktop.session_store import StoreCorruptError
 
+        caplog.set_level("DEBUG")
         screen, controller, closed = self._completing(
             WriteRecordStatus("written", note_matches=True)
         )
-        controller.complete_after_write_error = StoreCorruptError(
-            "transcript failed decrypt verification; key retained"
-        )
+        assert controller.session_value is not None
+        session_id = controller.session_value.session_id
+        exc = [
+            *_leaky_errors(session_id),
+            StoreCorruptError("transcript failed decrypt verification; key retained"),
+        ][which]
+        controller.complete_after_write_error = exc
         screen.on_complete()
         text = screen.message_label.text()
-        assert text.startswith("Complete failed: StoreCorruptError: ")
-        assert "No key deletion was performed by this action" in text
+        assert text == (
+            f"Complete failed: {models.CUSTODY_UNEXPECTED_REASON}. No key deletion was "
+            "performed by this action; if the session is still within its 24-hour "
+            "window it remains available."
+        )
+        _assert_content_free(text, exc, session_id, caplog)
         assert closed == []
         assert controller.write_releases == 1 and controller.writing_id is None
         assert controller.state_value is SessionState.QUEUED
@@ -6619,8 +6798,10 @@ class TestTranscriptGeneration:
         )
         screen.on_complete()
         assert screen.message_label.text().startswith(
-            "Complete failed: RuntimeError: the record could not be read"
+            f"Complete failed: {models.CUSTODY_UNEXPECTED_REASON}. "
         )
+        assert "RuntimeError" not in screen.message_label.text()
+        assert "could not be read" not in screen.message_label.text()
         assert ("complete",) not in controller.calls
         assert not any(call[0] in self._WRITE_CALLS for call in controller.calls)
         assert closed == []
