@@ -7,7 +7,7 @@ Build a single-practitioner clinical scribe for two Cliniko clinics using:
 - A thin Chrome extension embedded into the Cliniko workflow.
 - A secure Windows desktop companion for recording and local AI processing.
 - Local Whisper transcription and local `gpt-oss-20b` note generation.
-- Direct creation of draft treatment notes through Cliniko's official API.
+- Direct writing of the reviewed note into the Cliniko draft treatment note, through Cliniko's official API (it fills the note the practitioner opened; it never creates a second one).
 - No cloud processing of audio or transcripts.
 - Replaceable AI providers so Azure Australia can be introduced when commercialising.
 
@@ -43,9 +43,9 @@ The product is documentation-only. It must not invent diagnoses, examination fin
 5. Begin local recording and display an unmistakable recording indicator.
 6. On **Finish consultation**, transcribe and generate the note locally.
 7. Run grounding, contradiction and uncertainty checks.
-8. Create one Cliniko treatment note with `draft: true`, linked to the correct patient, booking, practitioner and template.
+8. Fill one Cliniko treatment note as a draft — the one linked to the correct patient, booking, practitioner and template. *As built (cliniko-draft-write plan, 2026-09-29): after Save, one click on the Note tab's "Write draft to Cliniko" re-reads the linked note and its template and `PATCH`es the note's content only — the request can carry nothing that finalises, creates or moves a note — and it is refused by name, with Copy still offered, when the note is final, already holds typed text or no longer matches.*
 9. Open the draft for practitioner review and finalisation. *(Met by construction since the Cliniko workflow safeguards plan for a Chrome-linked recording: it starts only from an open Cliniko treatment note, and Phase 4's draft fills THAT note, so it is already open for review. A recording started on the desktop is not linked to a note and cannot be written back.)*
-10. After Cliniko confirms successful creation, destroy the session encryption key and delete recoverable audio/transcript data.
+10. After Cliniko confirms the write, destroy the session encryption key and delete recoverable audio/transcript data. *As built (the plan's D6, practitioner decision 2026-09-29): completion is SEEN — because saving a Cliniko editor that was already open overwrites the written draft, the app waits until the clinician has reloaded the note in Chrome, seen the draft and pressed Complete; that Complete verifies the session, deletes its key and removes its directory. After it the draft in Cliniko is the only copy.*
 
 ### Forgotten patient-change protection
 
@@ -113,13 +113,15 @@ Chrome sends only the encounter context and recording commands to the desktop ap
 
 - Configure the two Cliniko accounts independently.
 - Fetch authorised patients, bookings, practitioners and treatment-note templates.
-- Create draft treatment notes through the official API.
+- Fill draft treatment notes through the official API.
 - Maintain a local write ledger mapping each session to its Cliniko note.
 - Before retrying an uncertain request, reconcile by patient, booking, template and content hash to prevent duplicates.
 - Queue encrypted drafts when Cliniko or the internet is unavailable.
 - Never finalise notes automatically.
 
-**Completion:** each test consultation creates exactly one draft in the correct clinic and patient record.
+**Completion:** each test consultation fills exactly one draft in the correct clinic and patient record.
+
+**Delivery note — the draft write (2026-09-29).** Built as `.cursor/plans/plan-cliniko-draft-write.md` on top of Phase 5's verified context, clinic keys and write-back guard. As built: the practitioner's test write on clinic 1 settled the design — a partial body REPLACES a Cliniko note, so the write sends the note's full re-read content with only the app's questions replaced; an already-open Cliniko editor's save overwrites the draft, so completion waits for the clinician's Complete after seeing it; the template carries its default text, so "untyped" is judged against it (or, per clinic, against the practitioner's own defaults file). The ledger is a per-session encrypted record `write.enc` (ids and digests only; it dies with the session — the durable audit record stays Phase 6); the reconcile compares each targeted answer's normalised digest with the record before any retry, so an uncertain request is recognised rather than repeated; drafts are NOT queued — a write needs Cliniko reachable at the click, and a failed or unknown write is retried only by another click while the session still exists (the 24-hour rule governs a recording no longer held open), or the note is copied. Clinic 2 waits on its own API-key permission and test write. What each safeguard does and does not enforce is in `docs/security/threat-model.md` ("Cliniko API client", THE DRAFT WRITE).
 
 ### Phase 5 - Workflow safeguards
 
@@ -132,7 +134,7 @@ Chrome sends only the encounter context and recording commands to the desktop ap
 
 **Completion:** workflow and adversarial tests cannot attach one consultation to another patient.
 
-**Delivery note — Phase 5 before Phase 4 (2026-09-27/28).** Phase 5 was built first, by the practitioner's decision, as `.cursor/plans/plan-cliniko-workflow-safeguards.md`, together with the parts of Phase 4 it needs READ-ONLY: the two clinic API keys (validated with Cliniko, stored in Windows Credential Manager) and a GET-only Cliniko client inside `scribe-app`, so the offline contract became "no connection except Cliniko's API, and none at startup or idle" (none on its own: every call answers a practitioner action, a report from Chrome, or — for a linked recording in progress — the Chrome link reconnecting, so a note already open in Chrome is checked when the app starts). A Chrome-linked recording starts only from an open treatment note that Cliniko verifies (or, when Cliniko cannot be reached, one marked `unverified_offline`), behind the consent tick; a recording started on the desktop is not linked to a Cliniko note and cannot be written back. Chrome's side panel carries consent and every control, and a red/amber frame and a full-page block mark the Cliniko page; a linked recording pauses when its own tab changes note or patient, leaves the note or closes, when another Cliniko note is focused or the Cliniko login page shows, or when the Chrome link drops or a new client connects — switching to a separate non-Cliniko tab does not pause it — and any recording pauses on system sleep or when Windows locks the session (when Windows delivers those notifications — residue in the threat model); back-to-back consultations wait in an Unreviewed list; write-back is refused unless the context is re-verified (`writeback_context`). Writing the draft — Phase 4's create/update, ledger and reconcile — is the next plan. The "Start beside the Cliniko workflow" and the confirmation popup are the side panel, not controls inside Cliniko's page. See `docs/security/threat-model.md` for what each safeguard does and does NOT enforce.
+**Delivery note — Phase 5 before Phase 4 (2026-09-27/28).** Phase 5 was built first, by the practitioner's decision, as `.cursor/plans/plan-cliniko-workflow-safeguards.md`, together with the parts of Phase 4 it needs READ-ONLY: the two clinic API keys (validated with Cliniko, stored in Windows Credential Manager) and a Cliniko client inside `scribe-app` that was then GET-only (Phase 4's draft write later added its one `PATCH`), so the offline contract became "no connection except Cliniko's API, and none at startup or idle" (none on its own: every call answers a practitioner action, a report from Chrome, or — for a linked recording in progress — the Chrome link reconnecting, so a note already open in Chrome is checked when the app starts). A Chrome-linked recording starts only from an open treatment note that Cliniko verifies (or, when Cliniko cannot be reached, one marked `unverified_offline`), behind the consent tick; a recording started on the desktop is not linked to a Cliniko note and cannot be written back. Chrome's side panel carries consent and every control, and a red/amber frame and a full-page block mark the Cliniko page; a linked recording pauses when its own tab changes note or patient, leaves the note or closes, when another Cliniko note is focused or the Cliniko login page shows, or when the Chrome link drops or a new client connects — switching to a separate non-Cliniko tab does not pause it — and any recording pauses on system sleep or when Windows locks the session (when Windows delivers those notifications — residue in the threat model); back-to-back consultations wait in an Unreviewed list; write-back is refused unless the context is re-verified (`writeback_context`). Writing the draft — Phase 4's fill, ledger and reconcile — followed as the next plan (Phase 4's delivery note above). The "Start beside the Cliniko workflow" and the confirmation popup are the side panel, not controls inside Cliniko's page. See `docs/security/threat-model.md` for what each safeguard does and does NOT enforce.
 
 ### Phase 6 - Privacy and professional controls
 

@@ -1,4 +1,4 @@
-# Incident Process (Phase 1)
+# Incident Process
 
 Who: the practitioner-developer (single-user product until commercialisation).
 When in doubt, stop using the software and investigate before resuming.
@@ -26,13 +26,21 @@ When in doubt, stop using the software and investigate before resuming.
   clinic's Cliniko tab
 - (Phase 2+) any indication audio/transcripts persisted beyond their
   retention window or reached the network
+- (Cliniko draft write) a draft written into the wrong Cliniko note or the
+  wrong patient's note; text in a Cliniko note that nobody's "Write draft to
+  Cliniko" click put there; text you typed in a Cliniko note replaced by a
+  write (outside the named residues: an edit saved in the moment between the
+  write's check and its request, or from a Cliniko editor that was already
+  open — threat model, THE DRAFT WRITE); or a note finalised, created or
+  moved by the app
 - Any network connection from `scribe-host`, or from `scribe-app` to anything
   other than `api.<shard>.cliniko.com:443`, or from `scribe-app` at startup or
   while idle with no practitioner action, no Cliniko note open in Chrome and
   no linked recording in progress (the offline contract: no connection
   except Cliniko's API, and none at startup or idle; a note open in Chrome is
   verified when its report arrives, and a linked recording's own note is
-  re-checked whenever the Chrome link reconnects)
+  re-checked whenever the Chrome link reconnects); or any write to Cliniko
+  (a `PATCH`) that no "Write draft to Cliniko" click started
 
 ## Immediate steps
 
@@ -44,6 +52,24 @@ When in doubt, stop using the software and investigate before resuming.
    Credential Manager.
 4. **Preserve evidence:** copy `%LOCALAPPDATA%\ClinikoScribe\logs\` somewhere
    safe BEFORE reinstalling anything; note the time and what you observed.
+
+**A draft written into the wrong note or patient** (Cliniko draft write):
+1. In Cliniko, open that note and delete the written text — or archive the
+   note — BEFORE anyone finalises it; the app never finalises a note, so a
+   wrongly written draft stays editable until a person finalises it.
+2. Do NOT press Complete for that recording in the app: Complete after a
+   written draft destroys the session (audio, transcript, note and the
+   write's record). Leave it on the Transcript screen or in the Unreviewed
+   list, and note its time.
+3. Evidence: Cliniko's own history of the note (who changed it and when),
+   and — while the session still exists — the session's `write.enc` (the
+   attempt, its times and outcome, and digests of what was written; ids and
+   digests only, no note text) under `%LOCALAPPDATA%\ClinikoScribe\sessions\`.
+   The write record dies with its session (at Complete, Discard or the 24 h
+   expiry): there is no durable audit record until PLAN.md Phase 6.
+4. Assess how the note was chosen — the recording is linked to the note it
+   was started from in Chrome, and the write re-reads that same note — and
+   whether the wrong patient's data was disclosed (Assess, below).
 
 ## Assess
 
@@ -61,9 +87,10 @@ When in doubt, stop using the software and investigate before resuming.
    `scripts/register-native-host.py`, reload the extension, and confirm the
    Step-12 gate checks (the badge shows **OK** with the app running, self-test passes, and —
    with Chrome closed, so no Cliniko note report arrives, and no practitioner
-   action such as a Validate — `netstat` shows no connection from either
-   desktop process while the app is idle; a note open in Chrome is verified
-   with Cliniko when its report arrives, which is expected).
+   action such as a Validate or a "Write draft to Cliniko" — `netstat` shows
+   no connection from either desktop process while the app is idle; a note
+   open in Chrome is verified with Cliniko when its report arrives, which is
+   expected).
 2. Re-enter secrets only after the machine is trusted again.
 3. Record what happened and what changed in `CHANGELOG.md` (Security) and,
    if it revealed a systemic gap, add it to the threat model.

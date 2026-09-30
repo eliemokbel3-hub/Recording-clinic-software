@@ -4,6 +4,7 @@ Complete/Discard ordering, and the 24 h expiry sweep."""
 from __future__ import annotations
 
 import errno
+import hashlib
 import os
 import struct
 import sys
@@ -22,6 +23,7 @@ from scribe_desktop.session_store import (
     MAX_RECORD_BYTES,
     NOTE_FILENAME,
     RECOVERY_WINDOW,
+    WRITE_RECORD_FILENAME,
     KeyCustodyError,
     NoteWriteRefusedError,
     SessionChunkStore,
@@ -35,11 +37,14 @@ from scribe_desktop.session_store import (
     iter_chunks,
     read_note,
     read_store_header,
+    read_write_record,
     resolve_key_path,
+    saved_note_identity,
     sweep_sessions,
     unwrap_key_from_file,
     wrap_key_to_file,
     write_note,
+    write_write_record,
 )
 
 if TYPE_CHECKING:
@@ -561,6 +566,78 @@ class TestNoteCustodyOnComplete:
         assert not crypto.destroyed
 
 
+class TestCompleteRemovingTheDirectory:
+    """Cliniko draft-write D6 (Task 4.2): a completion after a confirmed
+    write removes the session directory — strictly AFTER the verification and
+    the key's destruction, best-effort, and never on a failure."""
+
+    def test_verify_then_key_then_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto)
+        events: list[str] = []
+        real_decrypt = crypto.decrypt
+        real_delete = session_store.delete_session_key
+        real_rmtree = session_store.shutil.rmtree
+
+        def decrypt(blob: bytes) -> bytes:
+            events.append("verify")
+            return real_decrypt(blob)
+
+        def delete_key(directory: Path) -> None:
+            events.append("key")
+            real_delete(directory)
+
+        def rmtree(path: Path, ignore_errors: bool = False) -> None:
+            # The key blob and the in-memory key are already gone.
+            assert not (session_dir / KEY_FILENAME).exists()
+            assert crypto.destroyed
+            events.append(f"rmtree ignore_errors={ignore_errors}")
+            real_rmtree(path, ignore_errors=ignore_errors)
+
+        monkeypatch.setattr(crypto, "decrypt", decrypt)
+        monkeypatch.setattr(session_store, "delete_session_key", delete_key)
+        monkeypatch.setattr(session_store.shutil, "rmtree", rmtree)
+        complete_session(session_dir, crypto, remove_directory=True)
+        assert events == ["verify", "verify", "key", "rmtree ignore_errors=True"]
+        assert not session_dir.exists()
+
+    def test_a_failed_verification_removes_nothing(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        (session_dir / NOTE_FILENAME).write_bytes(b"\0" * 64)  # corrupt note
+        with pytest.raises(StoreCorruptError):
+            complete_session(session_dir, crypto, remove_directory=True)
+        assert (session_dir / KEY_FILENAME).exists()
+        assert (session_dir / NOTE_FILENAME).exists()
+        assert not crypto.destroyed
+
+    def test_a_directory_that_cannot_be_removed_is_not_a_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Best-effort as Discard: the key is gone, so what remains is a
+        keyless orphan the recovery list skips and the sweep removes."""
+        session_dir, crypto = _completable_session(tmp_path)
+
+        def failing_rmtree(path: Path, ignore_errors: bool = False) -> None:
+            # A removal that fails: raises unless told to ignore errors, as
+            # shutil.rmtree does; with ignore_errors it leaves the directory.
+            if not ignore_errors:
+                raise OSError(errno.EACCES, "locked by another process")
+
+        monkeypatch.setattr(session_store.shutil, "rmtree", failing_rmtree)
+        complete_session(session_dir, crypto, remove_directory=True)
+        assert session_dir.exists()
+        assert not (session_dir / KEY_FILENAME).exists()
+        assert crypto.destroyed
+
+    def test_the_default_keeps_the_directory(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        complete_session(session_dir, crypto)
+        assert session_dir.is_dir()
+        assert not (session_dir / KEY_FILENAME).exists()
+
+
 # ------------------------------------------------- note artifact I/O (6.2)
 
 
@@ -823,6 +900,135 @@ class TestNoteArtifactIO:
         assert calls == ["verified"]
         complete_session(session_dir, crypto)
         assert calls == ["verified", "verified"]
+
+
+# ------------------------------------------- the draft write's record (write.enc)
+
+
+class TestWriteRecordFile:
+    """Cliniko draft-write Task 3.3: ``write.enc`` follows the encrypted
+    document pattern — its own AAD (``write:<id>``), atomic + fsync, no
+    plaintext on disk — and an existing file that cannot be read is an
+    error, never "no record"."""
+
+    _PLAIN = b'{"outcome": "attempting", "marker": "WRITE-RECORD-PLAINTEXT"}'
+
+    def test_it_round_trips_encrypted(self, tmp_path: Path) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        path = write_write_record(session_dir, crypto, sid, self._PLAIN)
+        assert path == session_dir / WRITE_RECORD_FILENAME == session_dir / "write.enc"
+        assert b"WRITE-RECORD-PLAINTEXT" not in path.read_bytes()
+        assert read_write_record(session_dir, crypto, sid) == self._PLAIN
+        assert [p.name for p in session_dir.iterdir() if p.name.endswith(".tmp")] == []
+
+    def test_no_file_is_no_record(self, tmp_path: Path) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        assert read_write_record(session_dir, SessionCrypto(), sid) is None
+        assert not (session_dir / WRITE_RECORD_FILENAME).exists()
+
+    def test_the_record_is_bound_to_its_session_and_its_own_aad(self, tmp_path: Path) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        write_write_record(session_dir, crypto, sid, self._PLAIN)
+        with pytest.raises(StoreCorruptError, match="write record unreadable"):
+            read_write_record(session_dir, crypto, _sid())
+        # A blob under another artifact's AAD (or none) is not a write record.
+        for aad in (None, b"note:" + sid.encode(), b"encounter:" + sid.encode()):
+            (session_dir / WRITE_RECORD_FILENAME).write_bytes(crypto.encrypt(self._PLAIN, aad))
+            with pytest.raises(StoreCorruptError):
+                read_write_record(session_dir, crypto, sid)
+
+    @pytest.mark.parametrize("blob", [b"", b"short", b"\0" * 64])
+    def test_a_corrupt_or_foreign_record_is_unreadable_never_none(
+        self, tmp_path: Path, blob: bytes
+    ) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        (session_dir / WRITE_RECORD_FILENAME).write_bytes(blob)
+        with pytest.raises(StoreCorruptError) as info:
+            read_write_record(session_dir, SessionCrypto(), sid)
+        assert str(info.value) == "write record unreadable"
+        assert info.value.__cause__ is None and info.value.__context__ is None
+
+    def test_another_key_and_an_unreadable_path_are_unreadable(self, tmp_path: Path) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        write_write_record(session_dir, SessionCrypto(), sid, self._PLAIN)
+        with pytest.raises(StoreCorruptError):
+            read_write_record(session_dir, SessionCrypto(), sid)
+        (session_dir / WRITE_RECORD_FILENAME).unlink()
+        (session_dir / WRITE_RECORD_FILENAME).mkdir()
+        with pytest.raises(StoreCorruptError):
+            read_write_record(session_dir, SessionCrypto(), sid)
+
+    def test_it_is_written_through_the_atomic_writer(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        calls: list[tuple[Path, str]] = []
+        real = session_store.atomic_write_bytes
+
+        def recording(path: Path, data: bytes, *, error_label: str) -> None:
+            calls.append((path, error_label))
+            real(path, data, error_label=error_label)
+
+        monkeypatch.setattr(session_store, "atomic_write_bytes", recording)
+        write_write_record(session_dir, SessionCrypto(), sid, self._PLAIN)
+        assert calls == [(session_dir / WRITE_RECORD_FILENAME, "write record")]
+
+    def test_the_temp_file_is_fsynced_before_it_replaces_the_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 25 LOW-021: the durability order itself, not only the
+        delegation to the atomic writer."""
+        session_dir, sid = _make_session_dir(tmp_path)
+        order: list[str] = []
+        real_fsync, real_replace = os.fsync, os.replace
+
+        def fsync(fd: int) -> None:
+            order.append("fsync")
+            real_fsync(fd)
+
+        def replace(src: str | Path, dst: str | Path) -> None:
+            order.append(f"replace:{Path(dst).name}")
+            real_replace(src, dst)
+
+        monkeypatch.setattr(session_store.os, "fsync", fsync)
+        monkeypatch.setattr(session_store.os, "replace", replace)
+        write_write_record(session_dir, SessionCrypto(), sid, self._PLAIN)
+        assert f"replace:{WRITE_RECORD_FILENAME}" in order
+        assert order.index("fsync") < order.index(f"replace:{WRITE_RECORD_FILENAME}")
+
+    def test_a_failed_write_keeps_the_previous_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, sid = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        write_write_record(session_dir, crypto, sid, self._PLAIN)
+
+        def failing(path: Path, data: bytes, *, error_label: str) -> None:
+            raise StoreWriteError(f"{error_label} write failed")
+
+        monkeypatch.setattr(session_store, "atomic_write_bytes", failing)
+        with pytest.raises(StoreWriteError):
+            write_write_record(session_dir, crypto, sid, b"{}")
+        assert read_write_record(session_dir, crypto, sid) == self._PLAIN
+
+
+class TestSavedNoteIdentity:
+    def test_it_is_the_sha256_of_the_saved_note_plaintext(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        _write_note(session_dir, crypto)
+        plaintext = crypto.decrypt((session_dir / NOTE_FILENAME).read_bytes())
+        assert saved_note_identity(session_dir, crypto) == hashlib.sha256(plaintext).hexdigest()
+
+    def test_no_note_or_another_key_is_unavailable(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        with pytest.raises(StoreCorruptError, match="saved note unavailable"):
+            saved_note_identity(session_dir, crypto)
+        _write_note(session_dir, crypto)
+        with pytest.raises(StoreCorruptError) as info:
+            saved_note_identity(session_dir, SessionCrypto())
+        assert info.value.__context__ is None
 
 
 # ----------------------------------------------------------------- the sweep

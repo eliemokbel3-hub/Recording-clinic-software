@@ -17,11 +17,20 @@ On-disk layout (plan Schema / Data Changes), all under
 - ``transcript.enc`` — written by the Phase-2 transcription step; this
   module only provides the Complete-ordering primitive that consumes it.
 - ``note.enc`` — written by the Phase-3A note pipeline under the SAME key;
-  likewise only consumed here, by the same Complete-ordering primitive.
+  read here by the same Complete-ordering primitive, by ``read_note`` (the
+  review view) and by ``saved_note_identity`` (the draft write's SHA-256 of
+  the saved plaintext, D5).
 - ``encounter.enc`` — the recording's consent and Cliniko note context
   (Cliniko workflow safeguards plan D11), under the SAME key with the
   associated data ``encounter:<session id>``; written by
   ``SessionController.start`` between ``key.dpapi`` and ``audio.enc``.
+  Discard's ``rmtree`` and the sweep remove it with the rest.
+- ``write.enc`` — the Cliniko draft write's record (cliniko-draft-write plan
+  D5): one document, rewritten atomically at every transition, under the
+  SAME key with the associated data ``write:<session id>``. The document is
+  ``draft_write.WriteRecord``'s; this module holds only the bytes' custody
+  (a missing file reads as None, anything else unreadable as a terse
+  ``StoreCorruptError``, never as "no record").
   Discard's ``rmtree`` and the sweep remove it with the rest.
 
 Durability ordering (BINDING, plan key-custody decision):
@@ -31,7 +40,9 @@ Durability ordering (BINDING, plan key-custody decision):
 - Complete: fsync ``transcript.enc`` → verify a decrypt round-trip →
   verify ``note.enc`` when one exists (decrypt, parse, session binding,
   transcript-digest match) → THEN delete the key. Every failure retains
-  the key, which is what keeps regeneration possible.
+  the key, which is what keeps regeneration possible. A completion after a
+  confirmed Cliniko write (``remove_directory=True``) then removes the
+  directory best-effort, after the key.
 - Discard: delete the key FIRST, then best-effort remove the rest.
 - The 24 h expiry sweep skips sessions the caller reports as live
   (recording/paused/processing — keyed off state, not mtime), destroys
@@ -53,6 +64,7 @@ buffers passed through ``append_chunk``/``iter_chunks``.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
 import os
@@ -91,6 +103,10 @@ NOTE_FILENAME: Final = "note.enc"
 # linked, its Cliniko note context — written on EVERY start, after the key
 # and before ``audio.enc``, under the SAME key with its own associated data.
 ENCOUNTER_FILENAME: Final = "encounter.enc"
+# Cliniko draft-write plan D5: the session's ONE write record — ids, digests
+# and the outcome, never note text — under the SAME key with the associated
+# data ``write:<session id>``; destroyed with the session.
+WRITE_RECORD_FILENAME: Final = "write.enc"
 
 _MAGIC: Final = b"CSS2"
 _FORMAT_VERSION: Final = 1
@@ -681,7 +697,11 @@ def _verify_note_for_completion(
 
 
 def complete_session(
-    session_dir: Path, crypto: SessionCrypto, *, delete_note: bool = False
+    session_dir: Path,
+    crypto: SessionCrypto,
+    *,
+    delete_note: bool = False,
+    remove_directory: bool = False,
 ) -> None:
     """Complete ordering (binding): fsync `transcript.enc` -> verify a
     decrypt round-trip -> verify `note.enc` when one exists -> THEN delete
@@ -697,6 +717,13 @@ def complete_session(
     "complete without a note" exit — never a silent deletion. The note is
     unlinked FIRST, and a failed unlink aborts with the key retained rather
     than completing over a note that is still on disk.
+
+    `remove_directory=True` (cliniko-draft-write D6, a completion after a
+    confirmed Cliniko write) then removes the session directory, AFTER the
+    key and the in-memory key are gone, best-effort as Discard does: a
+    removal that fails leaves a keyless directory, which the recovery list
+    skips and the sweep removes as an orphan. It never runs on a failure
+    above, so the key is never lost with the directory still needed.
     """
     if delete_note:
         try:
@@ -720,6 +747,8 @@ def complete_session(
     # application-owned object may decrypt the session — destroy the
     # in-memory key too, not just the wrapped blob.
     crypto.destroy()
+    if remove_directory:
+        shutil.rmtree(session_dir, ignore_errors=True)
 
 
 def discard_session(session_dir: Path, crypto: SessionCrypto | None = None) -> None:
@@ -885,16 +914,79 @@ def read_encounter(session_dir: Path, crypto: SessionCrypto, session_id: str) ->
     refresh. A missing,
     unreadable or unauthentic file raises ``StoreCorruptError`` (terse), and
     the caller treats the session as unlinked."""
+    return _authentic(
+        _read_or_none(session_dir / ENCOUNTER_FILENAME),
+        crypto,
+        _encounter_aad(session_id),
+        "encounter record unavailable",
+    )
+
+
+def _read_or_none(path: Path) -> bytes | None:
     try:
-        blob = (session_dir / ENCOUNTER_FILENAME).read_bytes()
+        return path.read_bytes()
     except OSError:
-        blob = None
+        return None
+
+
+def _authentic(
+    blob: bytes | None, crypto: SessionCrypto, aad: bytes | None, label: str
+) -> bytes:
+    """``blob`` decrypted under ``aad``; a terse ``StoreCorruptError(label)``
+    when there is no blob or it does not authenticate — raised outside any
+    handler, so it chains nothing."""
     if blob is not None:
         try:
-            return crypto.decrypt(blob, _encounter_aad(session_id))
+            return crypto.decrypt(blob, aad)
         except InvalidTag:
             pass
-    raise StoreCorruptError("encounter record unavailable")  # outside the except
+    raise StoreCorruptError(label)
+
+
+def _write_record_aad(session_id: str) -> bytes:
+    """Distinct from every other artifact's, and bound to the session."""
+    return b"write:" + validate_session_id(session_id).encode("ascii")
+
+
+def write_write_record(
+    session_dir: Path, crypto: SessionCrypto, session_id: str, plaintext: bytes
+) -> Path:
+    """Encrypt and write ``write.enc`` ATOMICALLY (temp + fsync +
+    ``os.replace``, so the new document is durable before this returns —
+    the draft write's ``attempting`` row is on disk before its request is
+    dispatched, D5). The caller serialises the record
+    (``draft_write.WriteRecord``); ``StoreWriteError`` on any failure, the
+    previous document intact."""
+    path = session_dir / WRITE_RECORD_FILENAME
+    atomic_write_bytes(
+        path, crypto.encrypt(plaintext, _write_record_aad(session_id)), error_label="write record"
+    )
+    return path
+
+
+def read_write_record(session_dir: Path, crypto: SessionCrypto, session_id: str) -> bytes | None:
+    """Decrypt ``write.enc``: None when there is no such file (no write was
+    ever attempted for the session); ``StoreCorruptError`` (terse) when it
+    exists but cannot be read or authenticated — the caller treats that as
+    an outcome it cannot know (D5's ``record_unreadable``), never as none."""
+    try:
+        blob: bytes | None = (session_dir / WRITE_RECORD_FILENAME).read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        blob = None
+    return _authentic(blob, crypto, _write_record_aad(session_id), "write record unreadable")
+
+
+def saved_note_identity(session_dir: Path, crypto: SessionCrypto) -> str:
+    """The saved note's identity for the draft write (D5): the SHA-256 hex
+    of the decrypted ``note.enc`` plaintext — the exact bytes the review
+    saved. ``StoreCorruptError`` (terse) when there is no readable,
+    authentic ``note.enc``."""
+    plaintext = _authentic(
+        _read_or_none(session_dir / NOTE_FILENAME), crypto, None, "saved note unavailable"
+    )
+    return hashlib.sha256(plaintext).hexdigest()
 
 
 def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:

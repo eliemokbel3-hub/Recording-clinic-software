@@ -6,10 +6,12 @@ answer comes from an injected transport and every key from memory."""
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -19,7 +21,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from encounter_fakes import (  # noqa: E402
     CLINIC_ID,
     HOST,
+    NOTE,
     PATIENT,
+    TEMPLATE,
     NoteTransport,
     consent_for,
     context,
@@ -29,6 +33,7 @@ from encounter_fakes import (  # noqa: E402
     status,
 )
 from scribe_desktop.clinics import ClinicRefusal, Refused  # noqa: E402
+from scribe_desktop.draft_write import record_status  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     RATE_LIMIT_COOLDOWN_SECONDS,
     EncounterRecord,
@@ -52,6 +57,7 @@ from scribe_desktop.session_store import (  # noqa: E402
 )
 from scribe_desktop.transcription import RecoveryOutcome  # noqa: E402
 from scribe_desktop.ui import models  # noqa: E402
+from test_draft_write import _IDENTITY, Cliniko, _profile, _record, _write_note  # noqa: E402
 from test_ui_screens import FakeController, _document, _main_window, _process_until  # noqa: E402
 
 
@@ -567,4 +573,560 @@ class TestRecoveredCheckout:
             request, key_store=registry.key_store, transport=registry.transport
         )
         assert isinstance(window.live_writeback_target(reverified), VerifiedTarget)
+        window.close()
+
+
+# ---------------------------------------------------------------------------
+# Draft-write Task 5.2 (and Task 5.3's never-call pins): MainWindow's write
+# slot — hop 1, the GUI-thread preparation, the attempt row, hop 2 and the
+# outcome — over a fake Cliniko transport, a memory write store and the
+# test's own template profile. No request ever leaves the process.
+# ---------------------------------------------------------------------------
+
+
+class _MemoryWriteStore:
+    """The ``WriteStore`` seam: the saved note and ``write.enc`` in memory.
+    ``stored`` keeps every record with the transport's request count at the
+    moment it was stored (the attempt row must precede the PATCH)."""
+
+    def __init__(self, note: Any = None, *, identity: str = _IDENTITY) -> None:
+        self.note = note if note is not None else _write_note()
+        self.identity = identity
+        self.record: Any = None
+        self.stored: list[tuple[str, int]] = []
+        self.fail_on: set[str] = set()
+        self.requests: Any = lambda: 0
+
+    def load(self, directory: Path, crypto: SessionCrypto, session_id: str) -> Any:
+        return models.WriteInputs(self.record, self.note, self.identity)
+
+    def store(self, directory: Path, crypto: SessionCrypto, session_id: str, record: Any) -> None:
+        if record.outcome in self.fail_on:
+            raise OSError("disk full")
+        self.stored.append((record.outcome, self.requests()))
+        self.record = record
+
+
+class _WriteController(FakeController):
+    """A linked (or unlinked) QUEUED session whose write record is the
+    store's."""
+
+    def __init__(self, store: _MemoryWriteStore, *, linked: bool = True) -> None:
+        super().__init__()
+        self.store = store
+        ctx = context() if linked else None
+        consent = consent_for(ctx) if ctx is not None else unlinked_consent()
+        self.session_value = RecordingSession(
+            consent=consent, encounter_context=ctx
+        ).with_state(SessionState.QUEUED)
+
+    def write_record_status(self, session_id: str) -> Any:
+        self.calls.append(("write_record_status", session_id))
+        return record_status(self.store.record, self.store.identity)
+
+
+def _count(calls: list[Any], name: str) -> int:
+    return sum(1 for call in calls if call[0] == name)
+
+
+class _Gate:
+    """A request held on the worker until the test releases it. ``release``
+    runs in the test's ``finally``: it opens the gate and waits for the
+    write to end, so a failed assertion never leaves a worker running (round
+    34 LOW-013); ``timed_out`` tells a stuck gate from the path under test."""
+
+    def __init__(self) -> None:
+        self.gate = threading.Event()
+        self.entered = threading.Event()
+        self.timed_out = False
+
+    def hold(self) -> None:
+        self.entered.set()
+        if not self.gate.wait(10):
+            self.timed_out = True
+            raise RuntimeError("the test never released the gate")
+
+    def release(self, qapp: Any, window: Any) -> None:
+        self.gate.set()
+        assert _process_until(qapp, lambda: not window.is_writing)
+        qapp.processEvents()
+
+
+def _gated(method: str, prefix: str) -> tuple[Any, _Gate]:
+    """A ``Cliniko`` fake whose every ``method`` request under ``prefix``
+    waits at the gate."""
+    gated = _Gate()
+    cliniko = Cliniko()
+    answer = cliniko.request
+
+    def blocking(verb: str, host: str, path: str, *args: Any, **kwargs: Any) -> Any:
+        if verb == method and path.startswith(prefix):
+            gated.hold()
+        return answer(verb, host, path, *args, **kwargs)
+
+    cliniko.request = blocking  # type: ignore[method-assign]
+    return cliniko, gated
+
+
+class TestDraftWrite:
+    def _window(
+        self,
+        tmp_path: Path,
+        *,
+        cliniko: Any = None,
+        store: _MemoryWriteStore | None = None,
+        linked: bool = True,
+        profile: Any = None,
+        **overrides: Any,
+    ) -> tuple[Any, _WriteController, Any, _MemoryWriteStore]:
+        cliniko = cliniko if cliniko is not None else Cliniko()
+        store = store if store is not None else _MemoryWriteStore()
+        store.requests = lambda: len(cliniko.calls)
+        controller = _WriteController(store, linked=linked)
+        registry = _registry(tmp_path, transport=cliniko)
+        window = _window(
+            tmp_path,
+            registry,
+            controller,
+            write_store=store,
+            write_profile=profile if profile is not None else (lambda note: _profile()),
+            **overrides,
+        )
+        session = controller.session_value
+        assert session is not None
+        window.note_screen.show_saved_note(
+            store.note,
+            _document(),
+            info="",
+            copy_enabled=True,
+            write_binding=models.WriteBinding(session.session_id, linked),
+        )
+        return window, controller, cliniko, store
+
+    def _click(self, qapp: Any, window: Any, controller: Any) -> None:
+        window.note_screen.write_requested.emit(controller.session_value.session_id)
+        assert _process_until(qapp, lambda: not window.is_writing)
+        qapp.processEvents()
+
+    @staticmethod
+    def _line(window: Any) -> str | None:
+        return window.note_screen._write_line
+
+    def test_a_write_reads_then_records_the_attempt_then_patches(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, store = self._window(tmp_path)
+        assert window.note_screen.write_button.isEnabled()
+        window.note_screen.write_button.click()
+        assert _process_until(qapp, lambda: not window.is_writing)
+        qapp.processEvents()
+        assert cliniko.calls == [
+            ("GET", f"/v1/treatment_note_templates/{TEMPLATE}"),
+            ("GET", f"/v1/treatment_notes/{NOTE}"),
+            ("PATCH", f"/v1/treatment_notes/{NOTE}"),
+        ]
+        # The attempt row was on disk after the two reads and BEFORE the PATCH.
+        assert store.stored == [("attempting", 2), ("written", 3)]
+        assert self._line(window) == models.write_line("written_seen")
+        assert window.note_screen.write_label.text() == models.write_line("written_seen")
+        assert not window.note_screen.write_button.isEnabled()  # seen mode: Complete next
+        assert controller.write_releases == 1 and controller.writing_id is None
+        assert not window.note_screen.is_busy
+        assert window._rate_limit_latch.cooling(CLINIC_ID, 0.0) is None
+        window.close()
+
+    def test_a_mock_note_never_calls_the_transport(self, qapp: Any, tmp_path: Path) -> None:
+        """D10's second gate (Task 5.3): the slot's ``refuse_before_read``,
+        reached here by the slot directly — the tab's own gate never emits."""
+        store = _MemoryWriteStore(_write_note(provider_name="mock-provider"))
+        window, controller, cliniko, _store = self._window(tmp_path, store=store)
+        assert not window.note_screen.write_button.isEnabled()
+        window._on_write_requested(controller.session_value.session_id)
+        assert not window.is_writing
+        assert cliniko.calls == []
+        assert self._line(window) == models.write_line("mock_note")
+        assert store.stored == []
+        assert controller.write_releases == 1
+        window.close()
+
+    def test_an_unlinked_session_never_reserves_or_calls(self, qapp: Any, tmp_path: Path) -> None:
+        """Constraint 10 (Task 5.3): nothing is reserved, read or sent."""
+        window, controller, cliniko, store = self._window(tmp_path, linked=False)
+        window._on_write_requested(controller.session_value.session_id)
+        assert not window.is_writing
+        assert cliniko.calls == []
+        assert _count(controller.calls, "reserve_write") == 0
+        assert self._line(window) == models.write_line("unlinked")
+        assert store.stored == []
+        window.close()
+
+    def test_a_patch_403_is_finalised_and_the_next_click_is_forbidden(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, store = self._window(
+            tmp_path, cliniko=Cliniko(patch=status(403))
+        )
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("finalised_before_write")
+        assert [outcome for outcome, _ in store.stored] == ["attempting", "refused"]
+        # The note still reads as a draft: the repeat guard refuses before
+        # any send (R22-02).
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("write_forbidden")
+        assert _count(cliniko.calls, "PATCH") == 1
+        assert controller.write_releases == 2
+        window.close()
+
+    def test_an_unknown_outcome_is_reconciled_by_the_next_click(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, store = self._window(
+            tmp_path, cliniko=Cliniko(patch=status(503))
+        )
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("unknown")
+        assert [outcome for outcome, _ in store.stored] == ["attempting", "unknown"]
+        assert window.note_screen.write_button.isEnabled()  # the click reconciles
+        # The write DID land: Cliniko now answers the sent content.
+        sent = json.loads(cliniko.bodies[-1] or b"{}")["content"]
+        cliniko.answers[("GET", "/v1/treatment_notes/")] = [ok(note_body(content=sent))]
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("written_seen")
+        assert store.stored[-1][0] == "written"
+        assert _count(cliniko.calls, "PATCH") == 1
+        window.close()
+
+    def test_a_raise_before_the_attempt_releases_and_sends_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        def broken(_note: Any) -> Any:
+            raise RuntimeError("profile config unreadable")
+
+        window, controller, cliniko, store = self._window(tmp_path, profile=broken)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("not_sent")
+        assert [call[0] for call in cliniko.calls] == ["GET", "GET"]
+        assert store.stored == []
+        assert controller.write_releases == 1 and controller.writing_id is None
+        window.close()
+
+    def test_a_finished_record_that_cannot_be_stored_reads_unknown(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        store = _MemoryWriteStore()
+        store.fail_on = {"written"}
+        window, controller, _cliniko, _store = self._window(tmp_path, store=store)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("unknown")
+        assert store.stored == [("attempting", 2)]  # still open: the next click reconciles
+        assert controller.write_releases == 1
+        window.close()
+
+    def test_while_writing_the_window_refuses_close_and_blocks_the_screens(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtGui import QCloseEvent
+
+        cliniko, gated = _gated("PATCH", "/v1/treatment_notes/")
+        window, controller, _cliniko, _store = self._window(tmp_path, cliniko=cliniko)
+        window.note_screen.write_button.click()
+        try:
+            assert _process_until(qapp, gated.entered.is_set)
+            assert window.is_writing
+            assert window.note_screen.is_busy
+            assert not window.note_screen.write_button.isEnabled()
+            assert window.transcript_screen._write_blocked
+            assert window.recovery_screen._write_blocked
+            event = QCloseEvent()
+            window.closeEvent(event)
+            assert not event.isAccepted()
+            assert window.statusBar().currentMessage() == models.write_line("write_in_flight")
+            # A second click meets the write in flight: nothing reserved again.
+            reserves = _count(controller.calls, "reserve_write")
+            window._on_write_requested(controller.session_value.session_id)
+            assert self._line(window) == models.write_line("write_in_flight")
+            assert _count(controller.calls, "reserve_write") == reserves
+        finally:
+            gated.release(qapp, window)
+        assert not gated.timed_out
+        assert self._line(window) == models.write_line("written_seen")
+        assert not window.transcript_screen._write_blocked
+        assert not window.recovery_screen._write_blocked
+        window.close()
+
+    def test_a_cooling_clinic_is_refused_before_anything_is_reserved(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        latch = RateLimitLatch(clock=lambda: 100.0)
+        latch.record_429(CLINIC_ID, 100.0)
+        window, controller, cliniko, _store = self._window(tmp_path, rate_limit_latch=latch)
+        window._on_write_requested(controller.session_value.session_id)
+        assert self._line(window) == models.write_line(
+            "rate_limited", seconds=RATE_LIMIT_COOLDOWN_SECONDS
+        )
+        assert cliniko.calls == []
+        assert _count(controller.calls, "reserve_write") == 0
+        window.close()
+
+    def test_a_hop_one_429_cools_the_clinic_and_sends_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        latch = RateLimitLatch(clock=lambda: 100.0)
+        window, controller, cliniko, store = self._window(
+            tmp_path, cliniko=Cliniko(template=status(429)), rate_limit_latch=latch
+        )
+        self._click(qapp, window, controller)
+        assert latch.cooling(CLINIC_ID, 100.0) is not None
+        assert self._line(window) == models.write_line(
+            "rate_limited", seconds=RATE_LIMIT_COOLDOWN_SECONDS
+        )
+        assert _count(cliniko.calls, "PATCH") == 0
+        assert store.stored == []
+        assert controller.write_releases == 1
+        window.close()
+
+    @pytest.mark.parametrize("open_attempt", [False, True])
+    def test_a_cooldown_another_path_records_during_hop_one_stops_hop_two(
+        self, qapp: Any, tmp_path: Path, open_attempt: bool
+    ) -> None:
+        """Codex round 35 PR-MED-038 (D13: a 429 seen by one path stops the
+        others): the Chrome bridge or the checkout records a 429 for this
+        clinic while hop 1 is on the wire, so the write is refused between
+        the hops — nothing stored, no PATCH, the reservation released, and
+        an earlier open attempt's warning kept."""
+        latch = RateLimitLatch(clock=lambda: 100.0)
+        cliniko, gated = _gated("GET", "/v1/treatment_notes/")
+        store = _MemoryWriteStore()
+        if open_attempt:
+            store.record = _record("unknown")
+        window, controller, _cliniko, _store = self._window(
+            tmp_path, cliniko=cliniko, store=store, rate_limit_latch=latch
+        )
+        window._on_write_requested(controller.session_value.session_id)
+        try:
+            assert _process_until(qapp, gated.entered.is_set)
+            # Another producer (the bridge's own `record_429`) on the shared latch.
+            latch.record_429(CLINIC_ID, 100.0)
+        finally:
+            gated.release(qapp, window)
+        assert not gated.timed_out
+        assert self._line(window) == models.write_line(
+            "rate_limited", uncertain=open_attempt, seconds=RATE_LIMIT_COOLDOWN_SECONDS
+        )
+        assert [call[0] for call in cliniko.calls] == ["GET", "GET"]
+        assert store.stored == []
+        assert controller.write_releases == 1 and controller.writing_id is None
+        window.close()
+
+    def test_a_recovery_run_or_a_key_check_for_the_clinic_refuses_the_click(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, _store = self._window(tmp_path)
+        session_id = controller.session_value.session_id
+        window.recovery_screen._busy = True
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line("recovery_busy")
+        window.recovery_screen._busy = False
+        window.clinics_screen._pending = SimpleNamespace(clinic_id=CLINIC_ID)
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line("clinic_busy")
+        window.clinics_screen._pending = None
+        assert cliniko.calls == []
+        assert _count(controller.calls, "reserve_write") == 0
+        window.close()
+
+    def test_a_stale_or_written_click_sends_nothing(self, qapp: Any, tmp_path: Path) -> None:
+        window, controller, cliniko, _store = self._window(tmp_path)
+        window._on_write_requested("not-the-live-session")
+        assert self._line(window) == models.write_line("not_sent")
+        self._click(qapp, window, controller)
+        calls = len(cliniko.calls)
+        # Seen mode (D6): a record already written for this note completes
+        # on Complete, never by another request.
+        window._on_write_requested(controller.session_value.session_id)
+        assert self._line(window) == models.write_line("written_seen")
+        assert len(cliniko.calls) == calls
+        window.close()
+
+    # --- round 33 MED-001: the slot's remaining legs --------------------------
+
+    def _own_file(self, tmp_path: Path, window: Any, body: str | None) -> None:
+        """The clinic set to "My own defaults"; ``body`` (None: no file) at
+        the path the window's config root gives."""
+        from scribe_desktop.note_config import own_template_defaults_path
+
+        registry = window._clinic_registry
+        registry.set_default_source(CLINIC_ID, "own_file", writing_clinic=None)
+        if body is not None:
+            path = own_template_defaults_path(HOST, tmp_path / "config")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(body, encoding="utf-8")
+
+    def test_my_own_defaults_is_read_at_the_click_from_the_windows_config_root(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """D14 / R22-17: under "My own defaults" the clinic's file under the
+        window's config root decides the starting text — missing, naming no
+        entry for the note's template, then usable."""
+        window, controller, cliniko, store = self._window(tmp_path)
+        self._own_file(tmp_path, window, None)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line(
+            "defaults_unreadable", problem=models.OWN_DEFAULTS_PROBLEMS["missing"]
+        )
+        entry = (
+            '{"History": {"Presenting complaint/patient progress": '
+            '["Site -", "Chron -", "Agg -"]}}'
+        )
+        self._own_file(
+            tmp_path, window, '{"schema_version": 1, "templates": {"Follow-up": ' + entry + "}}"
+        )
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line(
+            "defaults_no_template", template="Standard Consultation"
+        )
+        assert _count(cliniko.calls, "PATCH") == 0 and store.stored == []
+        self._own_file(
+            tmp_path,
+            window,
+            '{"schema_version": 1, "templates": {"Standard Consultation": ' + entry + "}}",
+        )
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("written_seen")
+        assert _count(cliniko.calls, "PATCH") == 1
+        assert controller.write_releases == 3
+        window.close()
+
+    def test_an_open_attempt_prefixes_every_later_refusal(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-017 through the slot: an earlier ``unknown`` attempt puts
+        the ``write_uncertain`` warning before the lock's, the cooldown's
+        and the own-defaults refusals; with no record the lock's line is
+        bare."""
+        latch = RateLimitLatch(clock=lambda: 100.0)
+        window, controller, cliniko, store = self._window(tmp_path, rate_limit_latch=latch)
+        session_id = controller.session_value.session_id
+        warning = models.WRITE_LINES["write_uncertain"]
+        locked = models.chrome_refusal_message("locked")
+        window._system_events = SimpleNamespace(lock_state=lambda: "locked")
+        window._on_write_requested(session_id)
+        assert self._line(window) == locked
+        store.record = _record("unknown")
+        window._on_write_requested(session_id)
+        assert self._line(window) == f"{warning} {locked}"
+        window._system_events = None
+        latch.record_429(CLINIC_ID, 100.0)
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line(
+            "rate_limited", uncertain=True, seconds=RATE_LIMIT_COOLDOWN_SECONDS
+        )
+        assert _count(controller.calls, "reserve_write") == 0 and cliniko.calls == []
+        window._rate_limit_latch = RateLimitLatch(clock=lambda: 100.0)
+        # Round 34 LOW-012: every other pre-reserve refusal too.
+        window.recovery_screen._busy = True
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line("recovery_busy", uncertain=True)
+        window.recovery_screen._busy = False
+        window.clinics_screen._pending = SimpleNamespace(clinic_id=CLINIC_ID)
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line("clinic_busy", uncertain=True)
+        window.clinics_screen._pending = None
+        assert _count(controller.calls, "reserve_write") == 0 and cliniko.calls == []
+        self._own_file(tmp_path, window, None)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line(
+            "defaults_unreadable", uncertain=True, problem=models.OWN_DEFAULTS_PROBLEMS["missing"]
+        )
+        assert _count(cliniko.calls, "PATCH") == 0
+        # And the clinic gone before the click.
+        registry = window._clinic_registry
+        assert not isinstance(registry.remove(CLINIC_ID, live_session_clinic=None), Refused)
+        window._on_write_requested(session_id)
+        assert self._line(window) == models.write_line(
+            "check_failed",
+            uncertain=True,
+            reason=models.writeback_refusal_line(WritebackRefusal.CLINIC_GONE),
+        )
+        window.close()
+
+    def test_an_attempt_row_that_cannot_be_stored_sends_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Constraint 5: no PATCH without the ``attempting`` row on disk."""
+        store = _MemoryWriteStore()
+        store.fail_on = {"attempting"}
+        window, controller, cliniko, _store = self._window(tmp_path, store=store)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("not_sent")
+        assert _count(cliniko.calls, "PATCH") == 0 and store.stored == []
+        assert controller.write_releases == 1 and controller.writing_id is None
+        window.close()
+
+    def test_a_worker_that_raises_is_not_sent_before_hop_two_and_unknown_after(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.ui import main_window
+
+        def broken(*_args: Any, **_kwargs: Any) -> Any:
+            raise RuntimeError("worker failure text never shown")
+
+        window, controller, cliniko, store = self._window(tmp_path)
+        monkeypatch.setattr(main_window, "read_for_write", broken)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("not_sent")
+        assert store.stored == [] and cliniko.calls == []
+        monkeypatch.undo()
+        monkeypatch.setattr(main_window, "write_for_click", broken)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("unknown")
+        # The request may have left: the attempt is finished as unknown.
+        assert [outcome for outcome, _ in store.stored] == ["attempting", "unknown"]
+        assert controller.write_releases == 2 and controller.writing_id is None
+        window.close()
+
+    def test_a_clinic_gone_before_the_click_reserves_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, _store = self._window(tmp_path)
+        registry = window._clinic_registry
+        assert not isinstance(registry.remove(CLINIC_ID, live_session_clinic=None), Refused)
+        window._on_write_requested(controller.session_value.session_id)
+        assert self._line(window) == models.write_line(
+            "check_failed", reason=models.writeback_refusal_line(WritebackRefusal.CLINIC_GONE)
+        )
+        assert _count(controller.calls, "reserve_write") == 0 and cliniko.calls == []
+        window.close()
+
+    def test_a_live_session_replaced_between_the_hops_applies_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        cliniko, gated = _gated("GET", "/v1/treatment_notes/")
+        window, controller, _cliniko, store = self._window(tmp_path, cliniko=cliniko)
+        window.note_screen.write_button.click()
+        try:
+            assert _process_until(qapp, gated.entered.is_set)
+            ctx = context()
+            controller.session_value = RecordingSession(
+                consent=consent_for(ctx), encounter_context=ctx
+            ).with_state(SessionState.QUEUED)
+        finally:
+            gated.release(qapp, window)
+        # A worker whose gate timed out would ALSO end `not_sent`: rule it out.
+        assert not gated.timed_out
+        assert self._line(window) == models.write_line("not_sent")
+        assert _count(cliniko.calls, "PATCH") == 0 and store.stored == []
+        assert controller.write_releases == 1
+        window.close()
+
+    def test_the_live_binding_names_the_session_and_its_link(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, _cliniko, _store = self._window(tmp_path)
+        session = controller.session_value
+        assert window._live_write_binding() == models.WriteBinding(session.session_id, True)
+        controller.session_value = session.with_state(SessionState.WRITTEN)
+        assert window._live_write_binding() is None
+        controller.session_value = None
+        assert window._live_write_binding() is None
         window.close()

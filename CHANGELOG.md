@@ -5,6 +5,25 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- Cliniko draft write, Phase 6 — security docs (Task 6.1, 2026-09-29): the threat model, data-flow map, retention schedule, intended use, incident process, shipping-gate page, design system and PLAN.md now describe the one draft write — what it sends, what it refuses, what it records, and its named residues (a full body reverts an edit saved in Cliniko between the app's read and its write; Cliniko sanitises rich text; an already-open Cliniko editor's later save overwrites the draft). Reviews: codex rounds 38–39.
+- Cliniko draft write, Phase 5 — the write button and the Clinics-tab setting (Tasks 5.2, 5.3, 5.4, 2026-09-29).
+  - **Write draft to Cliniko** (5.2): a button beside Copy on the Note tab, enabled only for a saved, linked, non-mock note that Cliniko can still take; one click checks the note with Cliniko, records the attempt, writes the draft and records the outcome. A blocked click shows why. While a write runs the window will not close and the Transcript, Recovery and Chrome Start actions are refused.
+  - **Rate limit respected between the steps**: a Cliniko cooldown recorded by the Chrome link while the note is being checked stops the write before anything is sent.
+  - **Offline pins** (5.3): a test pins the one slot that can start a write and its one button connection.
+  - **Clinics tab** (5.4): each clinic chooses "Cliniko template" or "My own defaults" for a new note's starting text; "Check file" reads the clinic's own-defaults file locally and says whether it can be used. An empty API key now says "Paste the clinic's Cliniko API key …" instead of reporting a wrong format.
+  - **User page**: `docs/own-template-defaults.md` describes the own-defaults file.
+  - Reviews: in-session rounds 33–34 and codex rounds 35–37. Suite 4888.
+- Cliniko draft write, Phase 4 — completion after a write (Task 4.2, 2026-09-29). Reachable once the write button lands (Task 5.2).
+  - **Complete after a confirmed write**: once the draft has reached Cliniko and the clinician presses Complete, the recording is verified, its key destroyed and its folder removed, in that order; nothing completes a session on its own. A record that is not confirmed written completes as before or is refused.
+  - **Session references pruned**: the sweep now forgets in-memory references to sessions that are neither live nor waiting in the Unreviewed list.
+  - Reviews: in-session round 31 and codex round 32. Suite 4813.
+- Cliniko draft write, Phase 3 — the Qt-free write module (Tasks 3.1a, 3.2, 3.3, 3.4, 2026-09-29). Not wired to any button yet (Task 5.2).
+  - **Per-clinic default text** (3.1a): each clinic record in `clinics.json` gains `default_source` — "Cliniko template" (the default, and what an older record reads as) or "My own defaults", read from a hand-edited per-clinic file that `note_config.py` checks in full before any value is used.
+  - **Template match and body** (3.2): the note's questions are matched to the profile by section and question name and type; a note that already holds clinician text is refused; the PATCH carries the whole note as freshly read, with only the app's own questions replaced.
+  - **Write record** (3.3): `write.enc`, encrypted with the session key, records each attempt before it is sent and its outcome after; an unreadable record fails closed, and an unresolved attempt blocks Regenerate and Save with "an earlier write may have reached Cliniko".
+  - **Orchestration** (3.4): template read, note read, then the PATCH, with every refusal (mock note, wrong clinic / patient / practitioner / note, finalised, host mismatch, rate-limit cooldown, template mismatch) decided before anything is sent; a 403 straight after the same key's read means the note was finalised.
+  - **Template profile corrected**: the shipped Template A's five text questions are now rich text, matching clinic 1's real template from Task P.1.
+  - Reviews: in-session rounds 25–27 and codex rounds 28–30. Suite 4774.
 - Cliniko draft write, built ahead of the practitioner's test write (Tasks 3.1, 4.1, 5.1, 5.3 in part, 2026-09-29). Built and reviewed; not wired to any button yet (Task 5.2), uncommitted until the batched live smoke.
   - **Section renderer and answer grouper** (3.1): `note.render_section_lines` renders one section's lines, and `render_note` (what Copy places) is built from it with its text unchanged — a test pins it against a frozen copy of the previous renderer for every style. The new Qt-free `draft_write.py` groups those lines per Cliniko template question (`render_targets`) and turns them into Cliniko's answer HTML (`to_cliniko_answer`); line breaks inside a line become separate lines and blank lines are kept.
   - **Write reservation** (4.1): `SessionController.reserve_write` holds the session for a write; while it is held, Start, Discard, retirement, review, regeneration and a clinic's Replace key / Remove are refused with "a write to Cliniko is in progress" wording. The refusals that depend on the write record come with Task 3.3.

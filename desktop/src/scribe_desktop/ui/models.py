@@ -14,7 +14,7 @@ import string
 import threading
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal, Protocol
@@ -23,11 +23,21 @@ from scribe_desktop.clinics import (
     ClinicRecord,
     ClinicRefusal,
     Committed,
+    DefaultSource,
     LoadProblem,
     Refused,
     Removed,
 )
 from scribe_desktop.context_rules import ReminderEntry
+from scribe_desktop.draft_write import (
+    RECORD_UNREADABLE,
+    RecordUnreadable,
+    WriteOutcome,
+    WriteRecord,
+    WriteRecordStatus,
+    WriteRecordUnreadable,
+    WriteRefusal,
+)
 from scribe_desktop.encounter import (
     RECORDING_CONSENT_TEXT,
     ConsentAttestation,
@@ -40,6 +50,8 @@ from scribe_desktop.encounter import (
     VerificationOutcome,
     Verified,
     WritebackRefusal,
+    WritebackRefused,
+    display_text,
     read_encounter_record,
 )
 from scribe_desktop.hotkey import CHORD_TEXT
@@ -82,12 +94,18 @@ from scribe_desktop.note_config import (
     # (the note.py convention): ONE config-text validator, applied here to
     # typed wording that may become config.
     DEFAULT_NOTE_STYLE,
+    MAX_OWN_DEFAULTS_BYTES,
     LearnedRuleEntry,
     NoteConfig,
     NoteConfigError,
+    OwnDefaults,
+    OwnDefaultsProblem,
+    OwnDefaultsProblemKind,
     PractitionerSettings,
     StyleProfile,
+    TemplateProfile,
     _no_control_chars,
+    bind_template_profile,
     is_learned_rule_id,
     load_learned_rule_entries,
     load_note_config,
@@ -116,6 +134,8 @@ from scribe_desktop.session import (
     SessionState,
     WriteInFlightError,
     WriteReservation,
+    load_write_record,
+    store_write_record,
 )
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -131,6 +151,7 @@ from scribe_desktop.session_store import (
     key_blob_is_dead,
     read_note,
     read_store_header,
+    saved_note_identity,
     session_expires_at,
     store_has_footer,
     unwrap_key_from_file,
@@ -269,21 +290,23 @@ def note_refusal_line(reason: NoteRefusal) -> str:
 # its own wording (Task 6.1 copies them into docs/design-system.md). Plain
 # clinical English, no exclamation marks; no id, patient or practitioner name,
 # answer or key is ever formatted into a line. Placeholders: ``{reason}``
-# (``check_failed`` — a ``writeback_refusal_line`` or ``note_refusal_line``
-# reason), ``{seconds}`` (``rate_limited``), ``{cause}`` (``not_taken`` — a
-# ``not_taken_cause``, whose only free text is a template QUESTION's label or
-# the client's fixed field categories: ``write_line`` checks the cause's
-# prefix, and the suffix is trusted to ``not_taken_cause``'s callers).
+# (``check_failed`` / ``check_refused`` — a ``writeback_refusal_line`` or
+# ``note_refusal_line`` reason), ``{seconds}`` (``rate_limited``), ``{cause}``
+# (``not_taken`` — a ``not_taken_cause``, whose only free text is a template
+# QUESTION's label or the client's fixed field categories: ``write_line``
+# checks the cause's prefix, and the suffix is trusted to
+# ``not_taken_cause``'s callers), ``{problem}`` (``defaults_unreadable`` — an
+# ``OWN_DEFAULTS_PROBLEMS`` text), ``{template}`` / ``{question}`` (the
+# ``defaults_*`` lines — NAMES: Cliniko's template name, or a section and
+# question name from the clinic's own defaults file; cleaned by
+# ``write_label`` first; trusted to their callers like the cause's suffix, a
+# named residue).
 # ---------------------------------------------------------------------------
 
 WRITE_LINES: Final[Mapping[str, str]] = {
     "ready": "Write draft to Cliniko",
     "checking": "Checking the note with Cliniko …",
     "writing": "Writing the draft to Cliniko …",
-    "written_auto": (
-        "Draft written to Cliniko. Reload the note page in Chrome to see it, then review "
-        "and finalise it there."
-    ),
     "written_seen": (
         "Draft written to Cliniko. Reload the note page in Chrome; press Complete once you "
         "can see it there."
@@ -298,6 +321,11 @@ WRITE_LINES: Final[Mapping[str, str]] = {
     "check_failed": (
         "The note could not be checked with Cliniko just now ({reason}). Copy the note, or "
         "try again."
+    ),
+    # Task 5.1(e) (R22-20): the note refusals trying again cannot change
+    # (``PERMANENT_NOTE_REFUSALS``) — no "just now", no "try again".
+    "check_refused": (
+        "Cliniko shows that this note cannot take the draft ({reason}). Copy the note instead."
     ),
     "rate_limited": "Cliniko is rate-limiting this clinic. Try again in {seconds} s.",
     "note_has_text": (
@@ -324,12 +352,50 @@ WRITE_LINES: Final[Mapping[str, str]] = {
     "recovery_busy": (
         "A recovered recording is still being processed. Wait for it to finish, then write."
     ),
+    # Task 5.2 (round 14 LOW-011): a Validate or Replace key for the writing
+    # clinic is in flight on the Clinics tab — the reverse arrival order of
+    # D9's Replace-key refusal, so hop 2 always reads the key hop 1 read.
+    "clinic_busy": (
+        "A key check for this clinic is running on the Clinics tab. Wait for it to finish, "
+        "then write."
+    ),
+    # Task 5.2 (R22-07): the click stopped on this computer before any attempt
+    # was recorded, so nothing can have reached Cliniko.
+    "not_sent": (
+        "The write stopped on this computer before anything was sent to Cliniko. Copy the "
+        "note, or try again."
+    ),
     # D5/D9's ``write_pending`` refusal (Regenerate, "Cancel review and
     # regenerate", a second Save once any attempt exists); the escapes D5
     # names are Copy, Complete and Discard.
     "write_pending": (
         "A write to Cliniko was attempted for this note, so it can no longer be changed "
         "or regenerated here. Copy it, complete the recording or discard it."
+    ),
+    # Task 5.1's Task 2.1 additions (R22-22): each ends in the next step and
+    # the Copy fallback.
+    "finalised_before_write": (
+        "The note was finalised in Cliniko before the write reached it, so the draft was "
+        "not written. Copy the note instead."
+    ),
+    "write_forbidden": (
+        "Cliniko refused the write although the note is still a draft - this clinic's key "
+        "may not be allowed to edit notes. Copy the note instead."
+    ),
+    "defaults_unreadable": (
+        "This clinic's own defaults file cannot be used ({problem}). Correct or create it "
+        "and press Check file on the Clinics tab, or switch the clinic to Cliniko template. "
+        "Or copy the note instead."
+    ),
+    "defaults_no_template": (
+        "This clinic's own defaults file has no entry for the note's Cliniko template "
+        "({template}). Add one, or switch the clinic to Cliniko template. Or copy the note "
+        "instead."
+    ),
+    "defaults_unmatched": (
+        "This clinic's own defaults file names a question the note's Cliniko template does "
+        "not have ({question}). Correct the file, or switch the clinic to Cliniko template. "
+        "Or copy the note instead."
     ),
 }
 
@@ -352,9 +418,45 @@ WRITE_UNCERTAIN_PREFIXED: Final[frozenset[str]] = frozenset(
         "nothing_to_write",
         "not_taken",
         "recovery_busy",
+        "clinic_busy",
+        "not_sent",
         "write_pending",
+        "check_refused",
+        "finalised_before_write",
+        "write_forbidden",
+        "defaults_unreadable",
+        "defaults_no_template",
+        "defaults_unmatched",
     }
 )
+
+# ``defaults_unreadable``'s ``{problem}``: the own-defaults loader's problem
+# names (``note_config.OwnDefaultsProblem``) in plain words — a fixed table,
+# so no file content can reach the line.
+OWN_DEFAULTS_PROBLEMS: Final[Mapping[OwnDefaultsProblemKind, str]] = {
+    "missing": "there is no file for this clinic yet",
+    "unreadable": "it cannot be read",
+    "too_large": f"it is larger than {MAX_OWN_DEFAULTS_BYTES // 1024} KB",
+    "not_valid": (
+        "it is not in the expected format - press Check file on the Clinics tab to see where"
+    ),
+}
+# The note refusals trying again cannot change (Task 5.1(e), R22-20): shown
+# as ``check_refused``; every other ``NoteRefusal`` as ``check_failed``.
+PERMANENT_NOTE_REFUSALS: Final[frozenset[NoteRefusal]] = frozenset(
+    {
+        NoteRefusal.NOTE_FINAL,
+        NoteRefusal.NOTE_ARCHIVED,
+        NoteRefusal.PATIENT_MISMATCH,
+        NoteRefusal.WRONG_PRACTITIONER,
+    }
+)
+# A Cliniko label formatted into a write line (``{template}`` / ``{question}``)
+# is cleaned by the CALLER first (R22-07): control characters become spaces
+# and it is clipped to this many characters, so ``write_line``'s own bound
+# (``_MAX_WRITE_LABEL_CHARS``) never refuses a label Cliniko sent.
+WRITE_LABEL_CHARS: Final = 80
+_MAX_WRITE_LABEL_CHARS: Final = 200
 
 # Why a write-back target was refused (``encounter.WritebackRefusal``), as the
 # plain reason inside ``check_failed`` — its own exhaustive table in the
@@ -387,6 +489,8 @@ NOT_TAKEN_CAUSES: Final[Mapping[str, str]] = {
     "template_mismatch": "the Cliniko template does not match this app's template",
     "rejected": "Cliniko refused the content",
     "key_rejected": NOTE_REFUSAL_REASONS[NoteRefusal.KEY_REJECTED],
+    # Hop 2 reads the key again (D3); nothing is sent when it cannot be read.
+    "key_unavailable": NOTE_REFUSAL_REASONS[NoteRefusal.KEY_UNAVAILABLE],
     "note_not_found": NOTE_REFUSAL_REASONS[NoteRefusal.NOTE_NOT_FOUND],
     "no_baseline": "the note's untyped starting text could not be established",
 }
@@ -425,7 +529,12 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
       ``ValueError`` (the cause's suffix is not checked — ``_is_write_cause``);
     - ``seconds`` is shown as whole seconds, rounded UP and never below 1
       (``RateLimitLatch.cooling`` answers a float); a bool, a non-number or a
-      non-finite value raises ``ValueError``.
+      non-finite value raises ``ValueError``;
+    - ``problem`` must be an ``OWN_DEFAULTS_PROBLEMS`` text, and ``template``
+      / ``question`` a ``str`` with no line break of at most 200 characters,
+      else ``ValueError`` (a Cliniko label is cleaned by ``write_label``
+      first, so this never refuses one; the label itself is trusted to the
+      caller — a named residue).
 
     With ``uncertain`` — the session's write record holds an EARLIER
     ``attempting`` or ``unknown`` attempt (D5, PR-MED-017) — a refusal line in
@@ -439,6 +548,11 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
         raise ValueError("a write line's reason must come from a refusal table")
     if "cause" in detail and not _is_write_cause(detail["cause"]):
         raise ValueError("a write line's cause must come from not_taken_cause")
+    if "problem" in detail and detail["problem"] not in OWN_DEFAULTS_PROBLEMS.values():
+        raise ValueError("a write line's problem must come from OWN_DEFAULTS_PROBLEMS")
+    for name in ("template", "question"):
+        if name in detail and not _is_write_label(detail[name]):
+            raise ValueError(f"a write line's {name} must be one short line")
     if "seconds" in detail:
         seconds = detail["seconds"]
         if (
@@ -449,13 +563,118 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
             raise ValueError("a write line's seconds must be a finite number")
         detail = {**detail, "seconds": max(1, math.ceil(seconds))}
     line = template.format(**detail)
-    if uncertain and key in WRITE_UNCERTAIN_PREFIXED:
-        return f"{WRITE_LINES['write_uncertain']} {line}"
-    return line
+    return write_prefixed(line, uncertain=uncertain and key in WRITE_UNCERTAIN_PREFIXED)
+
+
+def _is_write_label(label: object) -> bool:
+    """One line (no ``str.splitlines`` boundary of any kind) of at most 200
+    characters."""
+    return (
+        isinstance(label, str)
+        and len(label) <= _MAX_WRITE_LABEL_CHARS
+        and label.splitlines() in ([], [label])
+    )
+
+
+def write_label(text: str) -> str:
+    """A Cliniko label (a template, section or question name) as a write
+    line may show it (R22-07): control, format and separator characters
+    become spaces, whitespace is collapsed (``encounter.display_text``, the
+    one cleaner), and it is clipped to ``WRITE_LABEL_CHARS`` with "…"."""
+    cleaned = display_text(text)
+    if len(cleaned) > WRITE_LABEL_CHARS:
+        cleaned = cleaned[: WRITE_LABEL_CHARS - 1] + "…"
+    return cleaned
 
 
 def writeback_refusal_line(reason: WritebackRefusal) -> str:
     return WRITEBACK_REFUSAL_REASONS[reason]
+
+
+def note_check_line(reason: NoteRefusal, *, uncertain: bool = False) -> str:
+    """A refused note check as the Note tab says it: ``check_refused`` for a
+    refusal trying again cannot change (``PERMANENT_NOTE_REFUSALS``), else
+    ``check_failed``."""
+    key = "check_refused" if reason in PERMANENT_NOTE_REFUSALS else "check_failed"
+    return write_line(key, uncertain=uncertain, reason=note_refusal_line(reason))
+
+
+def _writeback_line(refused: WritebackRefused, *, uncertain: bool) -> str:
+    if refused.reason is WritebackRefusal.UNLINKED:
+        return write_line("unlinked", uncertain=uncertain)
+    if refused.note_refusal is not None:
+        return note_check_line(refused.note_refusal, uncertain=uncertain)
+    return write_line(
+        "check_failed", uncertain=uncertain, reason=writeback_refusal_line(refused.reason)
+    )
+
+
+def write_refusal_line(refusal: WriteRefusal) -> str:
+    """The Note tab's line for a click ``draft_write.refuse_before_read`` or
+    ``prepare_write`` refused — every ``WriteRefusalName`` has one —
+    prefixed by ``write_uncertain`` while an EARLIER attempt is open
+    (PR-MED-017). Every name (a profile, Cliniko template or own-defaults
+    label) goes through ``write_label``; everything else is a fixed text.
+    Wording residue for Task P.2: ``answer_unreadable`` reads as Cliniko's
+    answer (it can also be the saved note's own text that cannot be
+    encoded), and a ``key_unavailable`` outcome reads "Cliniko did not take
+    the draft" although nothing was sent."""
+    uncertain = refusal.earlier_attempt_open
+    name = refusal.name
+    if name == "writeback_refused":
+        if refusal.writeback is None:
+            raise ValueError("a writeback refusal carries its WritebackRefused")
+        return _writeback_line(refusal.writeback, uncertain=uncertain)
+    if name == "already_written":
+        return write_line("written_seen")
+    if name == "template_mismatch":
+        question = _question_label(refusal) if refusal.question else None
+        cause = not_taken_cause("template_mismatch", question=question)
+        return write_line("not_taken", uncertain=uncertain, cause=cause)
+    if name == "no_baseline":
+        return write_line("not_taken", uncertain=uncertain, cause=not_taken_cause("no_baseline"))
+    if name == "answer_unreadable":
+        return note_check_line(NoteRefusal.ANSWER_UNREADABLE, uncertain=uncertain)
+    if name == "defaults_unreadable":
+        problem = OWN_DEFAULTS_PROBLEMS[refusal.problem or "unreadable"]
+        return write_line(name, uncertain=uncertain, problem=problem)
+    if name == "defaults_no_template":
+        return write_line(name, uncertain=uncertain, template=write_label(refusal.template or ""))
+    if name == "defaults_unmatched":
+        question = _question_label(refusal)
+        if refusal.more:
+            question += f" and {refusal.more} more"
+        return write_line(name, uncertain=uncertain, question=question)
+    return write_line(name, uncertain=uncertain)
+
+
+def _question_label(refusal: WriteRefusal) -> str:
+    """"<question> in <section>", each name cleaned and clipped by
+    ``write_label`` (at most 2 × 80 characters, so ``write_line``'s bound
+    holds with the " and N more" suffix)."""
+    question = write_label(refusal.question or "")
+    return f"{question} in {write_label(refusal.section)}" if refusal.section else question
+
+
+def write_outcome_line(outcome: WriteOutcome) -> str:
+    """The Note tab's line once hop 2 answered (D5): ``written_seen`` (seen
+    mode, D6), ``finalised_before_write`` for a PATCH 403, the ``not_taken``
+    line naming why for any other refusal, and ``unknown`` otherwise. A
+    429's cooldown is the caller's (the latch)."""
+    if outcome.kind == "written":
+        return write_line("written_seen")
+    if outcome.kind == "unknown":
+        return write_line("unknown")
+    refusal = outcome.refusal
+    if refusal == "finalised_before_write":
+        return write_line("finalised_before_write")
+    if refusal == "cliniko_rejected":
+        cause = not_taken_cause("rejected", categories=outcome.categories)
+    elif refusal in ("key_rejected", "key_unavailable", "note_not_found"):
+        cause = not_taken_cause(refusal)
+    else:
+        raise ValueError("a refused outcome names why")
+    return write_line("not_taken", cause=cause)
 
 
 def not_taken_cause(
@@ -471,6 +690,150 @@ def not_taken_cause(
     if kind == "rejected" and categories:
         return _REJECTED_FIELDS_CAUSE.format(categories=", ".join(categories))
     return cause
+
+
+# ---------------------------------------------------------------------------
+# Cliniko draft write, the Note tab's side (Task 5.2, D2/D5): the binding the
+# main window hands the tab, what the Write button shows, and the session
+# files the click reads and writes through the controller's write custody.
+# ---------------------------------------------------------------------------
+
+
+class WriteLineRefusal(RuntimeError):
+    """A custody action refused because of the session's Cliniko write (D5,
+    D9) whose text IS the ``WRITE_LINES`` line shown — never exception
+    detail (``custody_refusal_text`` shows it as it is)."""
+
+    def __init__(self, line: str) -> None:
+        super().__init__(line)
+
+
+@dataclass(frozen=True)
+class WriteBinding:
+    """The live session the Note tab's note belongs to (D2): its id — what
+    ``write_requested`` carries — and whether it is linked to a Cliniko note
+    (``encounter_context is not None``). Ids only."""
+
+    session_id: str
+    linked: bool
+
+
+@dataclass(frozen=True)
+class WriteControl:
+    """The Write button's state: whether a click may start a write, and the
+    line the tab shows for a standing reason (None: none to show)."""
+
+    ready: bool
+    line: str | None = None
+
+
+def write_control(
+    *, saved: bool, binding: WriteBinding, mock: bool, status: WriteRecordStatus | None
+) -> WriteControl:
+    """D2's ``_write_ready`` outside the in-flight and rendering checks, in
+    this order: a note not yet saved (and ratified) → ``not_saved``; an
+    unlinked session → ``unlinked``; a mock note → ``mock_note`` (D10);
+    then the session's write record (D5; ``status`` None: it could not be
+    read — fail closed, ``record_unreadable``): unreadable →
+    ``record_unreadable``; ``written`` for this saved note → ``written_seen``
+    with Write disabled (seen mode, D6 — only Complete consumes it), for
+    another → ``write_uncertain``; an open attempt keeps Write enabled (the
+    click reconciles) and shows ``unknown``; otherwise ready."""
+    if not saved:
+        return WriteControl(False, write_line("not_saved"))
+    if not binding.linked:
+        return WriteControl(False, write_line("unlinked"))
+    if mock:
+        return WriteControl(False, write_line("mock_note"))
+    blocked = write_record_block(status)
+    if blocked is not None:
+        return WriteControl(False, blocked)
+    assert status is not None  # write_record_block refuses None
+    if status.open_attempt:
+        return WriteControl(True, write_line("unknown"))
+    return WriteControl(True)
+
+
+def write_record_block(status: WriteRecordStatus | None) -> str | None:
+    """The line a session's write record closes Write with (D5, D6), or
+    None when it allows a click — the ONE mapping the Note tab's button and
+    the main window's slot share: a record that cannot be read (``status``
+    None: the read failed — fail closed) → ``record_unreadable``;
+    ``written`` for this saved note → ``written_seen`` (seen mode: only
+    Complete consumes it), for another → ``write_uncertain``."""
+    if status is None or status.outcome == "unreadable":
+        return write_line("record_unreadable")
+    if status.outcome == "written":
+        return write_line("written_seen" if status.note_matches else "write_uncertain")
+    return None
+
+
+def write_prefixed(line: str, *, uncertain: bool) -> str:
+    """A refusal line from outside ``WRITE_LINES`` (the session lock's,
+    ``chrome_refusal_message``) with ``write_line``'s ``write_uncertain``
+    prefix while an EARLIER attempt is open (PR-MED-017), so the standing
+    warning is never replaced by a bare refusal."""
+    return f"{WRITE_LINES['write_uncertain']} {line}" if uncertain else line
+
+
+@dataclass(frozen=True)
+class WriteInputs:
+    """What a Write click reads from the session, under the write
+    reservation (D5): the write record (``RECORD_UNREADABLE`` for one that
+    exists but cannot be read, None for none), the SAVED note as
+    ``read_note`` verified it (repr-hidden: note text), and its identity."""
+
+    record: WriteRecord | RecordUnreadable | None
+    note: GeneratedNote = field(repr=False)
+    note_identity: str
+
+
+class WriteStore(Protocol):
+    """The session files the write touches, reached only through
+    ``with_write_custody`` (D9) — a seam, so a test never needs a real
+    ``note.enc``."""
+
+    def load(self, directory: Path, crypto: SessionCrypto, session_id: str) -> WriteInputs: ...
+
+    def store(
+        self, directory: Path, crypto: SessionCrypto, session_id: str, record: WriteRecord
+    ) -> None: ...
+
+
+class SessionWriteStore:
+    """The app's ``WriteStore``: ``write.enc`` through ``session``'s
+    ``load_write_record`` / ``store_write_record`` (atomic, fsync before
+    return — the ``attempting`` row is on disk before hop 2, Constraint 5),
+    and the saved ``note.enc`` through ``read_note`` and
+    ``saved_note_identity``. Raises what they raise for a saved note that
+    cannot be read; an unreadable record is ``RECORD_UNREADABLE``."""
+
+    def load(self, directory: Path, crypto: SessionCrypto, session_id: str) -> WriteInputs:
+        record: WriteRecord | RecordUnreadable | None
+        try:
+            record = load_write_record(directory, crypto, session_id)
+        except WriteRecordUnreadable:
+            record = RECORD_UNREADABLE
+        note = read_note(directory, crypto)
+        return WriteInputs(record, note, saved_note_identity(directory, crypto))
+
+    def store(
+        self, directory: Path, crypto: SessionCrypto, session_id: str, record: WriteRecord
+    ) -> None:
+        store_write_record(directory, crypto, session_id, record)
+
+
+def write_profile(note: GeneratedNote, config_root: Path | None) -> TemplateProfile | None:
+    """The template profile a write matches the note's Cliniko template
+    against (D4): ``bind_template_profile(note.template_profile_id)`` over
+    the CURRENT config under ``config_root``. None when the config cannot be
+    loaded or no longer holds the profile — ``prepare_write`` then refuses
+    ``template_mismatch``."""
+    try:
+        bound = bind_template_profile(load_note_config(config_root), note.template_profile_id)
+    except (NoteConfigError, ValueError):
+        return None
+    return bound.template_profile
 
 
 def recovery_link_line(has_encounter: bool) -> str:
@@ -897,14 +1260,28 @@ class SessionControllerLike(Protocol):
 
     def writing_session_id(self) -> str | None: ...
 
+    def write_record_status(self, session_id: str) -> WriteRecordStatus: ...
+
+    # Draft-write D6 (Task 4.2): the seen-mode Complete after a confirmed
+    # write, under a reservation the Complete click takes; and SIMP-016's
+    # reference prune (the live id, and every id the registry names).
+    def complete_after_write(self, reservation: WriteReservation) -> RecordingSession: ...
+
+    def live_session_ids(self) -> frozenset[str]: ...
+
+    def referenced_session_ids(self) -> frozenset[str]: ...
+
 
 def custody_refusal_text(exc: BaseException) -> str:
     """How a refused custody action names its cause on a status line: the
     write-in-flight line for a ``WriteInFlightError`` (D9 — a draft write
-    holds the session), else the exception's type and message as the
-    screens have always shown them."""
+    holds the session), a ``WriteLineRefusal``'s own line (D5's
+    ``write_pending`` and its siblings — Task 5.2 words them), else the
+    exception's type and message as the screens have always shown them."""
     if isinstance(exc, WriteInFlightError):
         return write_line("write_in_flight")
+    if isinstance(exc, WriteLineRefusal):
+        return str(exc)
     return f"{type(exc).__name__}: {exc}"
 
 
@@ -3341,7 +3718,7 @@ def build_recovery_runner(
 # key (the tab never shows it after entry).
 # ---------------------------------------------------------------------------
 
-ClinicOperation = Literal["add", "replace", "remove"]
+ClinicOperation = Literal["add", "replace", "remove", "default_source"]
 
 CLINICS_INTRO: Final = (
     "Add each clinic's Cliniko API key so the scribe can check, with Cliniko, that "
@@ -3367,6 +3744,72 @@ CLINIC_NO_SELECTION_LINE: Final = "Select a clinic in the list first."
 CLINIC_REMOVE_CONFIRM_LABEL: Final = "Confirm remove"
 CLINIC_REMOVE_LABEL: Final = "Remove"
 
+# The per-clinic typed-text default source (cliniko-draft-write Task 5.4,
+# D14): what a new Cliniko note starts with — the text the draft write may
+# replace. "Check file" reads the clinic's own file only (no Cliniko call);
+# its questions are matched against the note's template only at write time,
+# so a readable file never reads as "fully checked".
+CLINIC_DEFAULT_SOURCE_TITLE: Final = "Starting text in a new Cliniko note"
+CLINIC_DEFAULT_SOURCE_HINT: Final = (
+    "The draft write replaces only the text a new Cliniko note starts with. Choose where "
+    "the scribe reads that starting text from."
+)
+CLINIC_DEFAULT_SOURCE_LABELS: Final[Mapping[DefaultSource, str]] = {
+    "cliniko_template": "Cliniko template",
+    "own_file": "My own defaults",
+}
+CLINIC_DEFAULT_SOURCE_SAVED: Final = '{name} now uses "{choice}" for the starting text.'
+CLINIC_DEFAULTS_PATH: Final = "Your own defaults for this clinic are read from: {path}"
+CLINIC_DEFAULTS_CHECK_LABEL: Final = "Check file"
+CLINIC_DEFAULTS_OK: Final = (
+    "The file can be read and lists {templates}. Its questions are matched against the "
+    "note's Cliniko template each time you write."
+)
+CLINIC_DEFAULTS_MISSING: Final = (
+    "There is no file at that path yet. Create it (the format and an example are in "
+    "docs\\own-template-defaults.md), then press Check file again."
+)
+CLINIC_DEFAULTS_PROBLEM: Final = (
+    "The file cannot be used ({problem}{location}). Correct it, then press Check file again."
+)
+# ``CLINIC_DEFAULTS_PROBLEM``'s ``{problem}``: the Clinics tab's own wording
+# (the write line's ``OWN_DEFAULTS_PROBLEMS`` sends the reader HERE for the
+# place, so its ``not_valid`` text does not fit this line). ``missing`` has
+# its own line, ``CLINIC_DEFAULTS_MISSING``.
+_CLINIC_DEFAULTS_PROBLEMS: Final[Mapping[OwnDefaultsProblemKind, str]] = {
+    "unreadable": "it cannot be read",
+    "too_large": f"it is larger than {MAX_OWN_DEFAULTS_BYTES // 1024} KB",
+    "not_valid": "it is not in the expected format",
+}
+
+
+def clinic_default_source_line(name: str, source: DefaultSource) -> str:
+    return CLINIC_DEFAULT_SOURCE_SAVED.format(
+        name=name, choice=CLINIC_DEFAULT_SOURCE_LABELS[source]
+    )
+
+
+def clinic_defaults_path_line(path: Path) -> str:
+    return CLINIC_DEFAULTS_PATH.format(path=path)
+
+
+def clinic_defaults_check_line(result: OwnDefaults | OwnDefaultsProblem) -> str:
+    """"Check file"'s line: the file's template count, ``missing``, or the
+    named problem with the loader's key-only, escaped, clipped location —
+    shown on this LOCAL tab only (``note_config``'s destination rule), never
+    a default text."""
+    if isinstance(result, OwnDefaults):
+        count = len(result.templates)
+        templates = f"{count} template" + ("" if count == 1 else "s")
+        return CLINIC_DEFAULTS_OK.format(templates=templates)
+    if result.kind == "missing":
+        return CLINIC_DEFAULTS_MISSING
+    location = f": {result.location}" if result.location else ""
+    return CLINIC_DEFAULTS_PROBLEM.format(
+        problem=_CLINIC_DEFAULTS_PROBLEMS[result.kind], location=location
+    )
+
+
 _CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
     ClinicRefusal.NAME_INVALID: (
         "Type a name for the clinic (one line, up to 60 characters), then press Validate."
@@ -3378,6 +3821,10 @@ _CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
     ClinicRefusal.KEY_FORMAT: (
         "That is not a Cliniko API key - a key ends in its region, such as -au2. Copy it "
         "again from your Cliniko user's API keys page and paste it in."
+    ),
+    # Draft-write Task 5.4 (the smoke follow-up, R22-11).
+    ClinicRefusal.KEY_MISSING: (
+        "Paste the clinic's Cliniko API key, then press Validate or Replace key."
     ),
     ClinicRefusal.ADDRESS_INVALID: (
         "The clinic web address should look like yourclinic.au2.cliniko.com - copy it from "
@@ -3467,6 +3914,16 @@ _CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
         "The key could not be deleted from Windows Credential Manager, so {clinic} was "
         "kept - press Remove again."
     ),
+    # The draft write's own sentence (cliniko-draft-write plan Task 3.1a, D14).
+    ClinicRefusal.WRITE_IN_FLIGHT: WRITE_LINES["write_in_flight"],
+}
+# A refusal whose shared wording does not fit one operation (Task 3.1a): the
+# shared CLINIC_GONE copy speaks of "the result" of a key check, which a
+# setting change has none of.
+_CLINIC_OPERATION_REFUSAL_COPY: Final[
+    Mapping[tuple[ClinicOperation, ClinicRefusal], str]
+] = {
+    ("default_source", ClinicRefusal.CLINIC_GONE): "{clinic} is no longer set up in this app.",
 }
 _CLINIC_WRITE_FAILED_COPY: Final[Mapping[ClinicOperation, str]] = {
     "add": "The clinic list could not be saved, so nothing was added - press Validate again.",
@@ -3478,6 +3935,7 @@ _CLINIC_WRITE_FAILED_COPY: Final[Mapping[ClinicOperation, str]] = {
         "The key was deleted, but {clinic} could not be taken off the list - press Remove "
         "again."
     ),
+    "default_source": "The setting for {clinic} could not be saved; it is unchanged.",
 }
 _CLINIC_LOAD_PROBLEM_COPY: Final[Mapping[LoadProblem, str]] = {
     LoadProblem.UNREADABLE: "The clinic list at {path} could not be opened.",
@@ -3489,9 +3947,12 @@ _CLINIC_LOAD_PROBLEM_COPY: Final[Mapping[LoadProblem, str]] = {
 def clinic_refusal_line(
     refusal: Refused, *, operation: ClinicOperation, clinic_name: str, path: Path
 ) -> str:
-    """The status line for a refused Validate / Replace key / Remove."""
+    """The status line for a refused Validate / Replace key / Remove or
+    default-source change."""
     if refusal.reason is ClinicRefusal.REGISTRY_WRITE_FAILED:
         template = _CLINIC_WRITE_FAILED_COPY[operation]
+    elif (operation, refusal.reason) in _CLINIC_OPERATION_REFUSAL_COPY:
+        template = _CLINIC_OPERATION_REFUSAL_COPY[(operation, refusal.reason)]
     else:
         template = _CLINIC_REFUSAL_COPY[refusal.reason]
     return template.format(clinic=clinic_name or "that clinic", path=path)
@@ -3550,7 +4011,19 @@ __all__ = [
     "CLINIC_NO_SELECTION_LINE",
     "CLINIC_REMOVE_CONFIRM_LABEL",
     "CLINIC_REMOVE_LABEL",
+    "CLINIC_DEFAULT_SOURCE_HINT",
+    "CLINIC_DEFAULT_SOURCE_LABELS",
+    "CLINIC_DEFAULT_SOURCE_SAVED",
+    "CLINIC_DEFAULT_SOURCE_TITLE",
+    "CLINIC_DEFAULTS_CHECK_LABEL",
+    "CLINIC_DEFAULTS_MISSING",
+    "CLINIC_DEFAULTS_OK",
+    "CLINIC_DEFAULTS_PATH",
+    "CLINIC_DEFAULTS_PROBLEM",
     "ClinicOperation",
+    "clinic_default_source_line",
+    "clinic_defaults_check_line",
+    "clinic_defaults_path_line",
     "clinic_load_problem_line",
     "clinic_refusal_line",
     "clinic_remove_prompt",
@@ -3653,9 +4126,16 @@ __all__ = [
     "WRITE_UNCERTAIN_PREFIXED",
     "WRITEBACK_REFUSAL_REASONS",
     "NOT_TAKEN_CAUSES",
+    "OWN_DEFAULTS_PROBLEMS",
+    "PERMANENT_NOTE_REFUSALS",
+    "WRITE_LABEL_CHARS",
     "custody_refusal_text",
     "not_taken_cause",
+    "note_check_line",
+    "write_label",
     "write_line",
+    "write_outcome_line",
+    "write_refusal_line",
     "writeback_refusal_line",
     "recovery_link_line",
     "checkout_link_line",

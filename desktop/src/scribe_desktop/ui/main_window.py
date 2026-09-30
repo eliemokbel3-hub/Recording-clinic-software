@@ -7,8 +7,10 @@ from __future__ import annotations
 import ctypes
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent
@@ -24,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
-from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.clinics import DEFAULT_SOURCE, ClinicRegistry
 from scribe_desktop.context_rules import (
     PauseReason,
     ReminderEntry,
@@ -33,7 +35,23 @@ from scribe_desktop.context_rules import (
     pause_action,
     reminder_entry,
 )
+from scribe_desktop.draft_write import (
+    AlreadyWritten,
+    Hop1Result,
+    PreparedWrite,
+    WriteOutcome,
+    WriteRecord,
+    WriteRefusal,
+    attempt_record,
+    finished_record,
+    prepare_write,
+    read_for_write,
+    reconciled_record,
+    refuse_before_read,
+    write_for_click,
+)
 from scribe_desktop.encounter import (
+    RATE_LIMIT_COOLDOWN_SECONDS,
     EncounterRecord,
     EncounterUnavailable,
     RateLimitLatch,
@@ -41,6 +59,7 @@ from scribe_desktop.encounter import (
     VerificationRequest,
     VerificationResult,
     VerifiedTarget,
+    WritebackRefusal,
     WritebackRefused,
     WritebackSubject,
     rate_limited_result,
@@ -57,7 +76,12 @@ from scribe_desktop.hotkey import (
     Win32HotkeyRegistrar,
 )
 from scribe_desktop.note import GeneratedNote
-from scribe_desktop.note_config import NoteConfig, load_note_config
+from scribe_desktop.note_config import (
+    NoteConfig,
+    TemplateProfile,
+    load_note_config,
+    load_own_template_defaults,
+)
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -69,6 +93,7 @@ from scribe_desktop.session import (
     SessionControllerError,
     SessionState,
     WriteInFlightError,
+    WriteReservation,
 )
 from scribe_desktop.session_store import KEY_FILENAME, session_expires_at
 from scribe_desktop.status import read_registration_status, run_self_test
@@ -113,6 +138,31 @@ class _CheckoutEncounter:
     # its record came from the adoption's one decrypt, and write-back goes
     # through the live entry, never the recovered one.
     adopted: bool = False
+
+
+@dataclass
+class _WriteJob:
+    """ONE "Write draft to Cliniko" click (draft-write Task 5.2), on the GUI
+    thread from the click until its last handler: the held reservation
+    (D9), the session it names, the click's own verification request (D3 —
+    its clinic's key is what both hops read), what the click read under the
+    reservation (the record, the saved note and its identity — repr-hidden:
+    note text), whether an EARLIER attempt was open at the click (the
+    ``write_uncertain`` prefix, PR-MED-017), the worker running, the stage,
+    and the ``attempting`` row once it is on disk."""
+
+    reservation: WriteReservation
+    session_id: str
+    request: VerificationRequest = field(repr=False)
+    inputs: models.WriteInputs = field(repr=False)
+    uncertain: bool
+    task: TaskThread | None = None
+    stage: Literal["hop1", "prepare", "hop2"] = "hop1"
+    attempt: WriteRecord | None = None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 class _MSG(ctypes.Structure):
@@ -207,10 +257,26 @@ class MainWindow(QMainWindow):
         language_model_available: Callable[[], bool] | None = None,
         clinic_registry: ClinicRegistry | None = None,
         rate_limit_latch: RateLimitLatch | None = None,
+        write_store: models.WriteStore | None = None,
+        write_profile: Callable[[GeneratedNote], TemplateProfile | None] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
         self._controller = controller
+        # Draft-write Task 5.2: the one write in flight (None: none), the
+        # session files it reads and writes under its reservation, and the
+        # template profile it matches against — the last two are test seams
+        # (a test never needs a real `note.enc` or the real config root).
+        self._write_job: _WriteJob | None = None
+        self._write_seq = 0
+        self._write_store: models.WriteStore = (
+            write_store if write_store is not None else models.SessionWriteStore()
+        )
+        self._write_profile: Callable[[GeneratedNote], TemplateProfile | None] = (
+            write_profile
+            if write_profile is not None
+            else (lambda note: models.write_profile(note, self._config_root))
+        )
         # Draft-write D13: THE 429 cooldown, owned here and shared by the
         # Chrome bridge's checks, the checkout re-verification and the draft
         # write — a 429 any of them sees cools the clinic for all of them.
@@ -280,6 +346,9 @@ class MainWindow(QMainWindow):
             prose_stage_provider=lambda style: models.build_prose_stage(
                 style, style_root=style_root, available=self._language_model_available
             ),
+            # Draft-write D5 (R22-03): the Write button reads the session's
+            # record through the controller's content-free accessor only.
+            write_status_provider=controller.write_record_status,
         )
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
         # the profile store at construction (a stat and one profile read, no
@@ -323,6 +392,9 @@ class MainWindow(QMainWindow):
             self._clinic_registry,
             live_session_clinic=self._live_session_clinic,
             writing_clinic=self._writing_clinic,
+            # Draft-write Task 5.4 (R22-17): the root the write reads too
+            # (``self._config_root``, set from the same argument below).
+            config_root=config_root,
         )
         # Task 3.4: a recovered checkout's encounter record, decrypted ONCE on
         # checkout (`_on_recovered`), and its D4 re-verification.
@@ -426,6 +498,10 @@ class MainWindow(QMainWindow):
         self.transcript_screen.generation_active_changed.connect(
             self._on_generation_active
         )
+        # Draft-write Task 5.2 (Constraint 2): THE one entry to a Cliniko
+        # write and its reconcile — pinned (`TestWriteSlot`) as this slot's
+        # only connection.
+        self.note_screen.write_requested.connect(self._on_write_requested)
 
     # --- the Chrome link (Task 4.5) ------------------------------------------
 
@@ -657,6 +733,13 @@ class MainWindow(QMainWindow):
         decrypted), under the reference it already had (D2)."""
         if not isinstance(previous, RecordingSession):
             return
+        binding = self.note_screen.write_binding
+        if binding is not None and binding.session_id == previous.session_id:
+            # Draft-write round 34 LOW-004: a Start that FAILED after
+            # retiring the session (H1 round 53 LOW-040) never reaches
+            # `_on_session_started`'s clear, so the Note tab would stay bound
+            # to a session that is no longer live; it reopens from Unreviewed.
+            self.note_screen.clear()
         entry = reminder_entry(previous)
         if entry is not None:
             self.reminders.add(entry)
@@ -696,11 +779,24 @@ class MainWindow(QMainWindow):
 
     def prune_reminders(self) -> None:
         """After a sweep: forget every indexed session whose key is gone
-        (expired or removed). A stat only — nothing is decrypted."""
+        (expired or removed), then prune the reference registry
+        (``prune_session_refs``). A stat only — nothing is decrypted."""
         root = self.recovery_screen.sessions_root
         for session_id in self.reminders.session_ids():
             if not (root / session_id / KEY_FILENAME).is_file():
                 self.forget_unreviewed(session_id)
+        self.prune_session_refs()
+
+    def prune_session_refs(self) -> None:
+        """SIMP-016 (draft-write Task 4.2), run right after the reminder
+        prune: forget every controller reference whose session is neither
+        the live one nor still indexed — an unlinked or failed recording's
+        ref, kept through retirement with no banner to serve (D2). The live
+        and indexed sessions keep theirs; an expired session has already
+        lost its reminder above, so it loses its ref here too."""
+        keep = self._controller.live_session_ids() | self.reminders.session_ids()
+        for session_id in self._controller.referenced_session_ids() - keep:
+            self._controller.forget_session_ref(session_id)
 
     # --- Open for review (Task 5.4, D6; decided option (a)) --------------------
 
@@ -860,6 +956,8 @@ class MainWindow(QMainWindow):
             info=models.saved_note_line(note, self._load_note_config),
             copy_enabled=models.COPY_TO_CLINIKO_ENABLED,
             on_abandon=self._on_note_abandon,
+            # D2: an adopted session writes through the same path as a live one.
+            write_binding=self._live_write_binding(),
         )
         self.tabs.setCurrentWidget(self.note_screen)
 
@@ -939,15 +1037,17 @@ class MainWindow(QMainWindow):
     def _writing_clinic(self) -> str | None:
         """The clinic a Cliniko draft write in flight writes to, for the
         Clinics tab's Replace key refusal (draft-write plan D9: the key read
-        once in hop 1 must stay the clinic's key for hop 2). Remove needs no
+        once in hop 1 must stay the clinic's key for hop 2) and its
+        default-source change's ``WRITE_IN_FLIGHT`` refusal (D14: the write
+        reads the setting once for its baseline, Task 5.4). Remove needs no
         second source: the writing session is always the LIVE one
         (``reserve_write`` admits only the live QUEUED session and every
         retiring action is refused while it is held), so
         ``_live_session_clinic`` already names its clinic. ``reserve_write``
-        does not check linkage — an unlinked reservation names no clinic
-        (None) and reads no key, because the write's own
-        ``writeback_context`` refuses an unlinked session before any key is
-        read (Task 5.2's click)."""
+        does not check linkage — an unlinked session names no clinic (None)
+        and reads no key: the Write click (``_on_write_requested``) refuses
+        it before anything is reserved, and ``writeback_context`` would
+        refuse it again before any key is read."""
         writing = self._controller.writing_session_id()
         session = self._controller.session
         if writing is None or session is None or session.session_id != writing:
@@ -957,12 +1057,17 @@ class MainWindow(QMainWindow):
     @property
     def is_writing(self) -> bool:
         """A Cliniko draft write holds the live session's custody (D9): true
-        from ``reserve_write`` — taken at the click, before the first worker —
-        until its result handler releases the reservation or completion
-        consumes it. Read by "Open for review" (``_on_review_requested``); Task 5.2's write
-        wiring adds the close refusal, the Note tab, the Transcript row and
-        the Chrome bridge's pre-checks."""
-        return self._controller.writing_session_id() is not None
+        over the write's handlers' FULL span — from the Write click's
+        ``reserve_write`` (the controller's marker, taken before the first
+        worker; the job is recorded under it) until its last handler has
+        released the reservation — and,
+        momentarily, while the seen-mode Complete re-acquires one for
+        ``complete_after_write`` (D6). Read by "Open for review"
+        (``_on_review_requested``) and the close refusal; the Note tab, the
+        Transcript row and the Recovery screen are blocked over the same
+        span (``_set_writing``), and the Chrome bridge's pre-checks read the
+        controller's reservation, which spans the same handlers."""
+        return self._write_job is not None or self._controller.writing_session_id() is not None
 
     def _recovery_in_flight(self) -> bool:
         """Round 33 MED-001: a recovery resume is running, so a note
@@ -1014,6 +1119,13 @@ class MainWindow(QMainWindow):
                 "Voice enrolment in progress - wait for it to finish (or Stop "
                 "it) before closing."
             )
+            event.ignore()
+            return
+        if self.is_writing:
+            # Draft-write D9 (Task 5.2): the write-specific line, before the
+            # generic busy branch — a hop's worker may be running, and its
+            # handler must record the outcome and release the session.
+            self.statusBar().showMessage(models.write_line("write_in_flight"))
             event.ignore()
             return
         if (
@@ -1405,9 +1517,9 @@ class MainWindow(QMainWindow):
         held. Phase 7's busy guards own keeping view swaps unreachable during
         generation; this catch is the custody backstop, not the UX. A draft
         write's reservation (D9) also refuses this call, and that holds the
-        same way only once the write wiring blocks those view swaps while
-        writing (draft-write Task 5.2: the Recovery block and the
-        transcript-row disable) — until then no write can be started. If a
+        same way: while a write runs, the Recovery screen is blocked and the
+        Transcript row disabled (draft-write Task 5.2, ``_set_writing``), and
+        the controller refuses a Start and an adoption by name. If a
         future caller CAN reach it while blocked, give the release path an
         explicit re-run rather than relying on the next view change."""
         if self._recovered_crypto is None:
@@ -1430,6 +1542,7 @@ class MainWindow(QMainWindow):
             on_cancel=self._on_note_cancel,
             on_state_changed=self.transcript_screen.set_note_review_state,
             template_profile_id=self.transcript_screen.selected_profile_id(),
+            write_binding=self._live_write_binding(),
         )
         self.tabs.setCurrentWidget(self.note_screen)
 
@@ -1500,9 +1613,352 @@ class MainWindow(QMainWindow):
             self.recovery_screen.release_checkout(source)
         else:
             self.recovery_screen.refresh()
+        if outcome == "written":
+            # Draft-write D6 (seen mode): the terminal line, after refresh().
+            self.session_screen.show_notice(models.write_line("written_done"))
         # Peer round 44 PR-MED-026: a terminal exit that dropped queued
         # phrases stays on the Transcript screen so the appended sentence is
         # actually seen; every other close (ordinary Complete, Complete after
         # Save, an empty queue) lands on the Session screen as before.
         landing = self.transcript_screen if queued + rules > 0 else self.session_screen
         self.tabs.setCurrentWidget(landing)
+
+    # --- the Cliniko draft write (draft-write Task 5.2; D2, D3, D5, D6, D9) ----
+
+    def _live_write_binding(self) -> models.WriteBinding | None:
+        """D2: the Note tab's binding for the live session's note — its id
+        and whether it is linked (``encounter_context is not None``). None
+        with no live session: Write is hidden."""
+        session = self._controller.session
+        if session is None or session.is_terminal:
+            return None
+        return models.WriteBinding(session.session_id, session.encounter_context is not None)
+
+    def _on_write_requested(self, session_id: str) -> None:
+        """THE slot for "Write draft to Cliniko" (D2, D3; Constraint 2 — a
+        write and its reconcile start only here, and this slot's only
+        connection is the Note tab's ``write_requested``). GUI thread, in
+        order, each refusal named on the Note tab and taken before anything
+        is reserved or sent:
+
+        - a write already in flight; a click for a session that is no longer
+          the live one (stale); an unlinked session (Constraint 10 — it never
+          wrote, so it holds no record);
+        - the write record, content-free (D5; ``models.write_record_block``,
+          the Note tab's own mapping): unreadable → ``record_unreadable``,
+          ``written`` → ``written_seen`` (seen mode: no network call — only
+          Complete consumes it); an OPEN attempt makes every later refusal
+          carry the ``write_uncertain`` prefix (PR-MED-017);
+        - the session lock (the PR-MED-300 rule: a click queued behind the
+          lock is refused); a recovery resume running
+          (``recovery_busy``, PR-MED-023); a Validate / Replace key in flight
+          for this clinic (``clinic_busy``, round 14 LOW-011 — the reverse
+          arrival order of D9's Replace-key refusal); the latch's cooldown
+          (``rate_limited``, D13); a clinic no longer set up;
+        - ``reserve_write`` (D9 — BEFORE the first worker), then, under the
+          reservation, the record, the saved note and its identity
+          (``WriteStore.load`` through ``with_write_custody``) and
+          ``refuse_before_read`` (mock note, D10; unreadable or ``written``
+          record) — so those cases make no request;
+        - hop 1 on a worker: ``read_for_write`` (ONE client call, the key
+          read once; the template read and the FINAL note read — D3).
+
+        Anything raised after the reservation releases it (R22-07)."""
+        if self._write_job is not None:
+            self._show_write_line(models.write_line("write_in_flight"))
+            return
+        session = self._controller.session
+        if session is None or session.is_terminal or session.session_id != session_id:
+            self._show_write_line(models.write_line("not_sent"))
+            return
+        context = session.encounter_context
+        if context is None:
+            # Before the record (the Note tab's order, ``models.write_control``):
+            # an unlinked session never wrote, so it holds no record.
+            self._show_write_line(models.write_line("unlinked"))
+            return
+        try:
+            status = self._controller.write_record_status(session_id)
+        except Exception:  # noqa: BLE001 - fail closed: the record may exist
+            status = None
+        blocked = models.write_record_block(status)
+        if blocked is not None or status is None:
+            self._show_write_line(blocked or models.write_line("record_unreadable"))
+            return
+        uncertain = status.open_attempt
+        lock = self._lock_refusal()
+        if lock is not None:
+            self._show_write_line(
+                models.write_prefixed(models.chrome_refusal_message(lock), uncertain=uncertain)
+            )
+            return
+        if self.recovery_screen.is_busy:
+            self._show_write_line(models.write_line("recovery_busy", uncertain=uncertain))
+            return
+        if self.clinics_screen.pending_clinic_id == context.clinic_id:
+            self._show_write_line(models.write_line("clinic_busy", uncertain=uncertain))
+            return
+        latch = self._rate_limit_latch
+        cooling = latch.cooling(context.clinic_id, latch.clock())
+        if cooling is not None:
+            self._show_write_line(
+                models.write_line("rate_limited", uncertain=uncertain, seconds=cooling)
+            )
+            return
+        self._write_seq += 1
+        request = reverification_request(context, self._clinic_registry, seq=self._write_seq)
+        if request is None:
+            reason = models.writeback_refusal_line(WritebackRefusal.CLINIC_GONE)
+            self._show_write_line(
+                models.write_line("check_failed", uncertain=uncertain, reason=reason)
+            )
+            return
+        try:
+            reservation = self._controller.reserve_write(session_id)
+        except WriteInFlightError:
+            self._show_write_line(models.write_line("write_in_flight"))
+            return
+        except Exception:  # noqa: BLE001 - named, never a crash; nothing reserved
+            self._show_write_line(models.write_line("not_sent", uncertain=uncertain))
+            return
+        try:
+            store = self._write_store
+            inputs = self._controller.with_write_custody(
+                reservation, lambda directory, crypto: store.load(directory, crypto, session_id)
+            )
+            early = refuse_before_read(inputs.note, inputs.record, inputs.note_identity)
+            if early is not None:
+                reservation.release()
+                self._show_write_line(models.write_refusal_line(early))
+                return
+            job = _WriteJob(reservation, session_id, request, inputs, uncertain)
+            self._write_job = job
+            self._set_writing(True)
+            self._show_write_line(models.write_line("checking"))
+            registry = self._clinic_registry
+            # The holder pattern (`ui/clinics.py`): the worker takes the
+            # request; the thread object keeps nothing of it.
+            holder = [(request, context.template_id)]
+
+            def hop1() -> Hop1Result:
+                hop_request, template_id = holder.pop()
+                return read_for_write(
+                    hop_request,
+                    template_id,
+                    key_store=registry.key_store,
+                    transport=registry.transport,
+                )
+
+            task = TaskThread(hop1, self)
+            task.succeeded.connect(self._after_hop1)
+            task.failed.connect(self._on_write_task_failed)
+            job.task = task
+            task.start()
+        except Exception:  # noqa: BLE001 - R22-07: never left reserved
+            job_now = self._write_job
+            if job_now is not None and job_now.reservation is reservation:
+                self._end_write(job_now, models.write_line("not_sent", uncertain=uncertain))
+            else:
+                reservation.release()
+                self._show_write_line(models.write_line("not_sent", uncertain=uncertain))
+
+    def _after_hop1(self, result: object) -> None:
+        """Hop 1 answered (GUI thread): ``_prepare_attempt`` decides the
+        click (D3's order, Task 3.4) and puts the ``attempting`` row on disk
+        (Constraint 5), then hop 2 — the PATCH alone, in its OWN client call
+        (``write_for_click``, D3) — is dispatched. A refusal, an
+        already-landed write or anything raised ends the click here, with
+        the reservation released (R22-07: ``unknown`` once an attempt row
+        was written, else ``not_sent``)."""
+        job = self._write_job
+        if job is None or job.stage != "hop1":
+            return  # not this click's answer (defensive: one write at a time)
+        try:
+            job.stage = "prepare"
+            self._join_write_task(job)
+            prepared = self._prepare_attempt(job, result)
+            if isinstance(prepared, str):
+                self._end_write(job, prepared)
+                return
+            self._show_write_line(models.write_line("writing"))
+            registry = self._clinic_registry
+            holder = [(job.request, prepared)]
+
+            def hop2() -> WriteOutcome:
+                hop_request, hop_prepared = holder.pop()
+                return write_for_click(
+                    hop_request,
+                    hop_prepared,
+                    key_store=registry.key_store,
+                    transport=registry.transport,
+                )
+
+            task = TaskThread(hop2, self)
+            task.succeeded.connect(self._finish_write)
+            task.failed.connect(self._on_write_task_failed)
+            job.task = task
+            job.stage = "hop2"
+            task.start()
+        except Exception:  # noqa: BLE001 - R22-07: never left reserved
+            self._end_write(job, self._write_failure_line(job))
+
+    def _prepare_attempt(self, job: _WriteJob, result: object) -> PreparedWrite | str:
+        """The GUI-thread step between the hops (D3; Task 3.4's order inside
+        ``prepare_write``). A 429 on hop 1 is recorded in the latch (D13) and
+        shown as ``rate_limited``; so is a cooldown another path recorded
+        while hop 1 ran (the latch is read again here, before anything is
+        stored — PR-MED-038). The clinic's default source is read NOW
+        (D14): under "My own defaults" the clinic's own file is loaded here,
+        fresh for this click, with the config root this window holds
+        (R22-17) — a bounded local read, never in a worker; a clinic whose
+        record is gone skips it (``writeback_context`` refuses
+        ``clinic_gone``). Returns the prepared write once its ``attempting``
+        row is on disk, or the line that ends the click: a refusal, or
+        ``written_seen`` when reconcile found this session's earlier write
+        in Cliniko (recorded ``written``, no PATCH — D5)."""
+        uncertain = job.uncertain
+        if not isinstance(result, Hop1Result):
+            return models.write_line("not_sent", uncertain=uncertain)
+        clinic_id = job.request.clinic.clinic_id
+        latch = self._rate_limit_latch
+        if result.rate_limited:
+            latch.record_429(clinic_id, latch.clock())
+            seconds = latch.cooling(clinic_id, latch.clock()) or RATE_LIMIT_COOLDOWN_SECONDS
+            return models.write_line("rate_limited", uncertain=uncertain, seconds=seconds)
+        # Codex round 35 PR-MED-038 (D13: "a 429 seen by one path must stop
+        # the others"): the Chrome bridge or the checkout may have recorded
+        # a 429 for this clinic while hop 1 ran, so the latch is read again
+        # before any record is stored or hop 2 is dispatched.
+        cooling = latch.cooling(clinic_id, latch.clock())
+        if cooling is not None:
+            return models.write_line("rate_limited", uncertain=uncertain, seconds=cooling)
+        session = self._controller.session
+        if session is None or session.session_id != job.session_id:
+            return models.write_line("not_sent", uncertain=uncertain)
+        record = self._clinic_registry.record(clinic_id)
+        source = record.default_source if record is not None else DEFAULT_SOURCE
+        own = (
+            load_own_template_defaults(record.host, self._config_root)
+            if record is not None and source == "own_file"
+            else None
+        )
+        inputs = job.inputs
+        prepared = prepare_write(
+            result,
+            consent=session.consent,
+            context=session.encounter_context,
+            clinics=self._clinic_registry,
+            record=inputs.record,
+            note=inputs.note,
+            note_identity=inputs.note_identity,
+            profile=self._write_profile(inputs.note),
+            default_source=source,
+            own_defaults=own,
+        )
+        if isinstance(prepared, WriteRefusal):
+            return models.write_refusal_line(prepared)
+        if isinstance(prepared, AlreadyWritten):
+            earlier = inputs.record
+            if not isinstance(earlier, WriteRecord):
+                return models.write_line("write_uncertain")  # unreachable: reconcile needs one
+            try:
+                self._store_write_record(job, reconciled_record(earlier, now=_utc_now()))
+            except Exception:  # noqa: BLE001 - still open on disk: the next click reconciles
+                return models.write_line("unknown")
+            return models.write_line("written_seen")
+        attempt = attempt_record(prepared, now=_utc_now())
+        self._store_write_record(job, attempt)  # on disk BEFORE hop 2 (Constraint 5)
+        job.attempt = attempt
+        return prepared
+
+    def _finish_write(self, outcome: object) -> None:
+        """Hop 2 answered (GUI thread): the outcome by the HTTP answer only
+        (D5 — a 200 is never relabelled), a 429 into the latch (D13), the
+        record finished on disk, the reservation RELEASED (seen mode, D6:
+        Complete re-acquires one later — nothing completes here), and the
+        line: ``written_seen`` / ``finalised_before_write`` / the ``not_taken``
+        cause / ``unknown``. A record that could not be finished stays
+        ``attempting`` on disk — read as ``unknown`` and reconciled by the
+        next click — so the line is ``unknown`` then."""
+        job = self._write_job
+        if job is None or job.stage != "hop2":
+            return
+        line = models.write_line("unknown")
+        try:
+            self._join_write_task(job)
+            answer = outcome if isinstance(outcome, WriteOutcome) else WriteOutcome("unknown")
+            if answer.rate_limited:
+                latch = self._rate_limit_latch
+                latch.record_429(job.request.clinic.clinic_id, latch.clock())
+            attempt = job.attempt
+            if attempt is None:
+                raise RuntimeError("hop 2 ran without an attempt row")  # unreachable
+            self._store_write_record(job, finished_record(attempt, answer, now=_utc_now()))
+            line = models.write_outcome_line(answer)
+        except Exception:  # noqa: BLE001 - the attempt row stays: unknown, reconciled next
+            line = models.write_line("unknown")
+        finally:
+            self._end_write(job, line)
+
+    def _on_write_task_failed(self, _message: str) -> None:
+        """A hop's worker raised (neither hop's function raises for Cliniko's
+        answers; the message is never shown). After hop 2's dispatch the
+        request may have left, so it is recorded ``unknown``; before it,
+        nothing was sent."""
+        job = self._write_job
+        if job is None:
+            return
+        if job.stage == "hop2":
+            self._finish_write(WriteOutcome("unknown"))
+            return
+        try:
+            self._join_write_task(job)
+        finally:
+            self._end_write(job, self._write_failure_line(job))
+
+    def _store_write_record(self, job: _WriteJob, record: WriteRecord) -> None:
+        """``write.enc`` through the held reservation ONLY (D9: the write's
+        one accessor to its session files)."""
+        store = self._write_store
+        session_id = job.session_id
+        self._controller.with_write_custody(
+            job.reservation,
+            lambda directory, crypto: store.store(directory, crypto, session_id, record),
+        )
+
+    def _write_failure_line(self, job: _WriteJob) -> str:
+        """R22-07: ``unknown`` once an attempt row was written, else
+        ``not_sent`` (nothing can have reached Cliniko)."""
+        if job.attempt is not None:
+            return models.write_line("unknown")
+        return models.write_line("not_sent", uncertain=job.uncertain)
+
+    @staticmethod
+    def _join_write_task(job: _WriteJob) -> None:
+        if job.task is not None:
+            job.task.finish()
+            job.task = None
+
+    def _end_write(self, job: _WriteJob, line: str) -> None:
+        """The click's last step, whatever happened: release the
+        reservation (idempotent), forget the job, unblock the screens and
+        show ``line``."""
+        try:
+            job.reservation.release()
+        finally:
+            if self._write_job is job:
+                self._write_job = None
+            self._set_writing(False)
+            self._show_write_line(line)
+
+    def _set_writing(self, active: bool) -> None:
+        """D9: while a write holds the live session, the Note tab's Write
+        is disabled (and the tab busy), the Transcript row disabled and the
+        Recovery screen blocked — in both arrival orders with a recovery
+        resume (PR-MED-023: the Write click refuses ``recovery_busy``)."""
+        self.note_screen.set_write_in_flight(active)
+        self.transcript_screen.set_write_blocked(active)
+        self.recovery_screen.set_write_blocked(active)
+
+    def _show_write_line(self, line: str) -> None:
+        self.note_screen.show_write_line(line)

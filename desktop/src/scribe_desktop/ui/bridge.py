@@ -890,7 +890,9 @@ class ChromeBridge(QObject):
             # that ended can never act on a newer one.
             self._refuse(action, "session_changed")
             return
-        if self._screen.is_busy:
+        if self._screen.is_busy or (action == "discard" and self._writing()):
+            # Draft-write D9 (Task 5.2): a Discard would destroy the session a
+            # Cliniko draft write holds — refused with the existing code.
             self._refuse(action, "busy")
             return
         if action == "resume_previous":
@@ -914,6 +916,15 @@ class ChromeBridge(QObject):
         if not done:
             self._refuse(action, "failed")
 
+    def _writing(self) -> bool:
+        """A Cliniko draft write holds the live session (draft-write D9):
+        the controller's write reservation, taken at the Write click before
+        the first worker and released by the write's last handler — the
+        span of ``MainWindow.is_writing``. Chrome's Start, Discard and "Open
+        for review" are refused meanwhile with their EXISTING codes (D2: no
+        protocol change)."""
+        return self._controller.writing_session_id() is not None
+
     def _open_review(self, session_ref: str | None) -> None:
         """Task 5.5 (D2, D6): the banner's "Open for review". THE session
         gate for a RETIRED session: the reference must still resolve (D2's
@@ -931,7 +942,8 @@ class ChromeBridge(QObject):
         if session_id is None or session_id not in reminders:
             self._refuse("open_review", "session_changed")
             return
-        if self._screen.is_busy:
+        if self._screen.is_busy or self._writing():
+            # Draft-write D9: adopting would retire the session a write holds.
             self._refuse("open_review", "busy")
             return
         if self._controller.generating:
@@ -997,7 +1009,12 @@ class ChromeBridge(QObject):
         if isinstance(context, StartRefused):
             self._refuse("start", context.reason.value, context.note_refusal)
             return
-        if self._screen.is_busy or not models.controls_for_state(self._controller.state).start:
+        if (
+            self._screen.is_busy
+            or self._writing()
+            or not models.controls_for_state(self._controller.state).start
+        ):
+            # Draft-write D9: a Start would retire the session a write holds.
             self._refuse("start", "session_active")
             return
         if self._controller.generating:

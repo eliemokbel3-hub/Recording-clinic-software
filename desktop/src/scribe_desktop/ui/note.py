@@ -127,6 +127,13 @@ Clinical-content discipline (Critical Constraints, design-system):
   Every copy of note text — the button and a copy of the panel's selection —
   goes through ``_place_note_text``, which adds the formats that keep the
   note out of Windows clipboard history and cloud sync (Task 8.2).
+- "Write draft to Cliniko" (cliniko-draft-write Task 5.2, D2) sits beside
+  Copy and follows Copy's readiness plus the binding (the live session, and
+  whether it is linked), the mock-note gate (D10) and the session's write
+  record, read content-free (D5); a disabled button says why on its line.
+  The tab only EMITS ``write_requested`` with the bound session id —
+  ``MainWindow``'s one slot owns the write, its custody and its network hops;
+  nothing here reads a key, a note file or Cliniko.
 - Nothing here logs or persists clinical text. Confirmation evidence
   (``shown_text_digest``) is computed from the text the widget ACTUALLY
   rendered — read back from the proposal label, never copied from the
@@ -163,6 +170,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop.draft_write import WriteRecordStatus, is_mock_note
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     ConfirmationDecision,
@@ -317,6 +325,10 @@ class NoteScreen(QWidget):
     # Emitted after learned phrases were WRITTEN on Save, so the Practitioner
     # tab can refresh its lists (Task 5.3).
     learned_phrases_changed = Signal()
+    # Cliniko draft-write D2 (Task 5.2): "Write draft to Cliniko" was clicked
+    # for the bound session (its id). ONE slot owns every write job —
+    # ``MainWindow._on_write_requested``.
+    write_requested = Signal(str)
 
     def __init__(
         self,
@@ -326,8 +338,25 @@ class NoteScreen(QWidget):
         learning_status_provider: Callable[[], models.LearningStatus] | None = None,
         note_style_provider: Callable[[], models.NoteStyleChoice] | None = None,
         prose_stage_provider: Callable[[NoteStyle], models.ProseStage | None] | None = None,
+        write_status_provider: Callable[[str], WriteRecordStatus] | None = None,
     ) -> None:
         super().__init__(parent)
+        # Draft-write D2/D5 (Task 5.2): the live session the note belongs to
+        # (set by `begin_review` / `show_saved_note`; None hides Write), a
+        # write in flight (`set_write_in_flight`), the main window's last
+        # write line, and the content-free record-status read (the
+        # controller's `write_record_status`; a screen built without one
+        # reads "no record"). A READABLE status is cached per session id —
+        # a control refresh never decrypts — and dropped when a write starts
+        # or ends (`set_write_in_flight`: only a write changes the record
+        # while the tab is bound) and on `clear()` (every close, Complete,
+        # Regenerate, adoption and Start clears the tab); every click reads
+        # afresh (fail closed).
+        self._write_binding: models.WriteBinding | None = None
+        self._write_in_flight = False
+        self._write_line: str | None = None
+        self._write_status_provider = write_status_provider
+        self._write_status_cache: tuple[str, WriteRecordStatus | None] | None = None
         self._draft: NoteDraft | None = None
         self._document: TranscriptDocument | None = None
         self._config: NoteConfig | None = None
@@ -532,6 +561,14 @@ class NoteScreen(QWidget):
         self.abandon_button.clicked.connect(self.abandon)
         self.copy_button = QPushButton("Copy note")
         self.copy_button.clicked.connect(self._copy_note)
+        # Draft-write D2 (Task 5.2): beside Copy, shown only for a note bound
+        # to a live session; its line (PLAIN TEXT: fixed WRITE_LINES copy and
+        # template labels) says why it is disabled or how the last write went.
+        self.write_button = QPushButton(models.write_line("ready"))
+        self.write_button.clicked.connect(self._on_write_clicked)
+        self.write_label = QLabel()
+        self.write_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.write_label.setWordWrap(True)
 
         self.message_label = QLabel()
         # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
@@ -571,8 +608,10 @@ class NoteScreen(QWidget):
         buttons.addWidget(self.cancel_button)
         buttons.addWidget(self.abandon_button)
         buttons.addWidget(self.copy_button)
+        buttons.addWidget(self.write_button)
         buttons.addStretch(1)
         note_layout.addLayout(buttons)
+        note_layout.addWidget(self.write_label)
         note_layout.addWidget(self.message_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -598,12 +637,16 @@ class NoteScreen(QWidget):
         on_cancel: Callable[[], None] | None = None,
         on_state_changed: Callable[[models.NoteReviewState], None] | None = None,
         template_profile_id: str | None = None,
+        write_binding: models.WriteBinding | None = None,
     ) -> None:
         """Load a fresh draft for review. ``result`` carries the draft, the
         config it was composed under, and the on-disk transcript — all three
         used so finalisation stays digest-consistent (``models`` docstring).
+        ``write_binding`` (draft-write D2) names the live session the note is
+        for; None hides "Write draft to Cliniko".
         """
         self.clear()
+        self._write_binding = write_binding
         self._draft = result.draft
         self._document = result.document
         self._config = result.config
@@ -658,6 +701,10 @@ class NoteScreen(QWidget):
         self._on_abandon = None
         self._on_cancel = None
         self._on_state_changed = None
+        self._write_binding = None
+        self._write_in_flight = False
+        self._write_line = None
+        self._write_status_cache = None
         self._orphan_style_job()
         self._prose_stage = None
         self.style_label.setText("")
@@ -710,6 +757,7 @@ class NoteScreen(QWidget):
         info: str,
         copy_enabled: bool = models.COPY_TO_CLINIKO_ENABLED,
         on_abandon: Callable[[], None] | None = None,
+        write_binding: models.WriteBinding | None = None,
     ) -> None:
         """Cliniko workflow safeguards plan Task 5.4 (D6): show a SAVED note
         reopened from the Unreviewed section, as it was saved — its edits,
@@ -718,8 +766,12 @@ class NoteScreen(QWidget):
         ``session_store.read_note`` verified. Read-only: changing it means
         Regenerate on the Transcript screen, which replaces it only on that
         review's Save. Copy follows the recorded flag (``_copy_ready``);
-        ``on_abandon`` is "Delete note and complete without one"."""
+        ``on_abandon`` is "Delete note and complete without one";
+        ``write_binding`` offers "Write draft to Cliniko" for the adopted
+        session (draft-write D2 — an adopted session writes through the same
+        path as a live one)."""
         self.clear()
+        self._write_binding = write_binding
         self._saved = note
         self._copy_enabled = copy_enabled
         self._on_abandon = on_abandon
@@ -1942,7 +1994,9 @@ class NoteScreen(QWidget):
         try:
             on_save(note)
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
-            self.message_label.setText(f"Save failed: {type(exc).__name__}: {exc}")
+            # Draft-write Task 5.2: a `write_pending` refusal reads as its own
+            # line (`custody_refusal_text`), every other failure as before.
+            self.message_label.setText(f"Save failed: {models.custody_refusal_text(exc)}")
             return
         self._note_saved = True
         self.message_label.setText(
@@ -2155,6 +2209,130 @@ class NoteScreen(QWidget):
         self.copy_button.setVisible(self._copy_enabled)
         self.copy_button.setEnabled(ready)
 
+    # --- the Cliniko draft write (draft-write Task 5.2, D2) -----------------
+
+    def _write_note(self) -> GeneratedNote | None:
+        """The note a write would carry: the saved review's, or a reopened
+        saved note. (The click itself writes the ``note.enc`` the main window
+        reads under the write reservation — this only decides the button.)"""
+        return self._note if self._note is not None else self._saved
+
+    def _read_write_status(
+        self, session_id: str, *, fresh: bool = False
+    ) -> WriteRecordStatus | None:
+        """The bound session's write record, content-free (D5, R22-03);
+        None when the read failed (fail closed: ``record_unreadable``).
+        Cached per session id (see ``__init__``); ``fresh`` reads again."""
+        cached = self._write_status_cache
+        if not fresh and cached is not None and cached[0] == session_id:
+            return cached[1]
+        provider = self._write_status_provider
+        status: WriteRecordStatus | None
+        if provider is None:
+            status = WriteRecordStatus("none")
+        else:
+            try:
+                status = provider(session_id)
+            except Exception:  # noqa: BLE001 - fail closed, never a crash
+                status = None
+        # Round 34 LOW-001: a failed or unreadable read is never cached — it
+        # closes Write, so no click could re-read it; the next refresh does.
+        if status is not None and status.outcome != "unreadable":
+            self._write_status_cache = (session_id, status)
+        else:
+            self._write_status_cache = None
+        return status
+
+    def _write_control(self, *, fresh: bool = False) -> models.WriteControl | None:
+        """D2's ``_write_ready`` less the in-flight and rendering checks
+        (``models.write_control``); None with no binding (Write hidden). The
+        record is read only for a saved, linked, non-mock note — the earlier
+        checks decide every other case without a read."""
+        binding = self._write_binding
+        if binding is None:
+            return None
+        note = self._write_note()
+        saved = note is not None and self._copy_ready()
+        mock = note is not None and is_mock_note(note)
+        status = (
+            self._read_write_status(binding.session_id, fresh=fresh)
+            if saved and binding.linked and not mock
+            else WriteRecordStatus("none")
+        )
+        return models.write_control(saved=saved, binding=binding, mock=mock, status=status)
+
+    def _apply_write_binding(self) -> None:
+        """Bind the Write button: shown only with a binding; enabled only
+        when ``_write_control`` says ready and neither a write nor a prose
+        rendering is in flight (D2). The line under it is the write in
+        flight's progress line, else a standing reason the button is
+        disabled for (its tooltip too), else the last write's outcome."""
+        control = self._write_control()
+        self.write_button.setVisible(control is not None)
+        if control is None:
+            self.write_button.setEnabled(False)
+            self.write_button.setToolTip("")
+            self.write_label.setText("")
+            return
+        busy = self._write_in_flight or self._style_job is not None
+        self.write_button.setEnabled(control.ready and not busy)
+        standing = None if control.ready else control.line
+        if standing is None and not self._write_in_flight and self._style_job is not None:
+            # A rendering in flight says what is waiting on it (design system).
+            standing = models.rendering_in_flight_line(self._note_style)
+        self.write_button.setToolTip(standing or "")
+        if self._write_in_flight:
+            line = self._write_line
+        elif standing is not None:
+            line = standing
+        else:
+            line = self._write_line if self._write_line is not None else control.line
+        self.write_label.setText(line or "")
+
+    def _on_write_clicked(self) -> None:
+        """The Write button (D2): re-checked at the click (fail closed) — a
+        click that meets a reason repeats it (design-system's disabled-Save
+        cue) — then ``write_requested`` for the bound session. Every write
+        job belongs to the one slot this signal reaches."""
+        binding = self._write_binding
+        control = self._write_control(fresh=True)
+        if binding is None or control is None:
+            return
+        if self._write_in_flight:
+            self.write_label.setText(models.write_line("write_in_flight"))
+            return
+        if not control.ready:
+            # Round 34 LOW-002: the fresh read re-binds the button too, so
+            # it never stays enabled beside the reason it just showed.
+            self._update_controls()
+            self.write_label.setText(control.line or "")
+            return
+        if self._style_job is not None:
+            self.write_label.setText(models.rendering_in_flight_line(self._note_style))
+            return
+        self.write_requested.emit(binding.session_id)
+
+    def set_write_in_flight(self, in_flight: bool) -> None:
+        """The main window's write holds the bound session (D9): Write is
+        disabled and ``is_busy`` stays True until its last handler ran. The
+        cached record status is dropped at both ends: only a write in flight
+        changes the record."""
+        self._write_in_flight = in_flight
+        self._write_status_cache = None
+        self._update_controls()
+
+    def show_write_line(self, line: str) -> None:
+        """The main window's write line — progress, a refusal or the
+        outcome (a ``WRITE_LINES`` line, formatted by ``models``). The main
+        window ends a write (``set_write_in_flight(False)``, which re-reads
+        the record) before it shows the outcome line."""
+        self._write_line = line
+        self._update_controls()
+
+    @property
+    def write_binding(self) -> models.WriteBinding | None:
+        return self._write_binding
+
     # --- state / enablement ------------------------------------------------
 
     def current_note(self) -> GeneratedNote | None:
@@ -2233,6 +2411,9 @@ class NoteScreen(QWidget):
         # readiness changes with resolution/acknowledgement/save, so re-derive
         # it on every control refresh.
         self._apply_copy_binding()
+        # Draft-write D2: Write follows Copy's bar plus the binding, the mock
+        # gate and the write record — re-derived on the same refresh.
+        self._apply_write_binding()
 
     @property
     def is_busy(self) -> bool:
@@ -2242,6 +2423,12 @@ class NoteScreen(QWidget):
         by a Cancel / Delete / Discard that has not yet ended; codex round 22
         PR-MED-036). Closing must wait: the in-progress note would be lost,
         and destroying a running QThread aborts the process (the PR-round-18
-        PR6 hazard the window's close guard exists for)."""
+        PR6 hazard the window's close guard exists for) — OR while a Cliniko
+        draft write holds the bound session (draft-write D9, Task 5.2)."""
         reviewing = self._draft is not None and not self._note_saved
-        return reviewing or self._style_job is not None or bool(self._orphaned_jobs)
+        return (
+            reviewing
+            or self._style_job is not None
+            or bool(self._orphaned_jobs)
+            or self._write_in_flight
+        )

@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -8,10 +8,16 @@ mapping, autofill/prefill proposals, per-assertion confirmation, content
 checking, and the note review UI (Phase 3A; the ML note model itself is
 Phase 3B and stays out of scope below), plus the practitioner-profile and
 note-learning surfaces, plus the Cliniko workflow safeguards (PLAN.md Phase 5,
-built before Phase 4): the read-only Cliniko API client and the clinic keys,
+built before Phase 4): the Cliniko API client and the clinic keys,
 recording consent and the encounter record, the host↔app named pipe with
 protocol v2, the pause rule and the Unreviewed review, the Chrome side panel,
-page frame and block, and the hands-free controls. Clinical data now exists: audio,
+page frame and block, and the hands-free controls; plus the Cliniko draft
+write (PLAN.md Phase 4, the cliniko-draft-write plan, built 2026-09-29): the
+Note tab's "Write draft to Cliniko", the client's ONE write (a `PATCH` that
+fills the open draft treatment note), the per-session write record
+`write.enc`, completion after a confirmed write, and the per-clinic
+default-source setting ("THE DRAFT WRITE" under "Cliniko API client" below).
+Clinical data now exists: audio,
 transcripts, and the composed note artifact, encrypted at rest under
 per-session keys; an UNPROTECTED recovery store expires at ~24 h (eligible at
 24 h, destroyed by the next successful sweep), while a live or under-review
@@ -103,8 +109,12 @@ remains an accepted residual.
    memory. Deleting
    that blob IS the cryptographic deletion of the session's audio and
    transcript (deletion ordering: on Complete — fsync transcript, verify a
-   decrypt round-trip, THEN delete the key; on Discard — key first, then
-   best-effort store removal). Residual: any process in the user's session
+   decrypt round-trip, THEN delete the key; on Complete of a session whose
+   draft Cliniko confirmed writing (cliniko-draft-write D6) — the same
+   ordering under one controller lock, then the session directory removed
+   best-effort AFTER the key, a failed removal leaving a keyless directory
+   the sweep collects; on Discard — key first, then best-effort store
+   removal). Residual: any process in the user's session
    can call `CryptUnprotectData` on the blob while it exists — subsumed by
    boundary 2.
 2. **NTFS unlink is not anti-forensic (ACCEPTED RESIDUAL, user decision
@@ -363,9 +373,12 @@ note inherit exactly that posture.
    saved, ratified content in the encrypted LOCAL DRAFT (`note.enc`). It is not
    yet a signed clinical record: a fully ratified note can be COPIED for
    pasting into Cliniko (enabled since the practitioner's 2026-09-27 decision,
-   D12; surface 4 — the flag plus `_copy_ready`), and the app writes nothing
-   to Cliniko itself, so the assertion becomes signed clinical-record content
-   only after the clinician finalises the note in Cliniko. The type model keeps
+   D12; surface 4 — the flag plus `_copy_ready`), and, for a linked recording,
+   WRITTEN by the app into the open Cliniko treatment note as DRAFT content
+   (cliniko-draft-write plan; "THE DRAFT WRITE" under "Cliniko API client"
+   below — the request can carry `content` only, so it cannot finalise the
+   note). Either way the assertion becomes signed clinical-record content only
+   after the clinician finalises the note in Cliniko. The type model keeps
    this honest: `note_fill.py`
    emits proposals ONLY (typed return surface, pinned by test); a `NoteProposal`
    is a different type from a `NoteAssertion` and cannot be placed in a
@@ -412,9 +425,12 @@ note inherit exactly that posture.
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual
    selection cannot drift clinical text into the Windows clipboard, and the tab's
    plaintext is cleared when a new transcript loads over a stale note. The app
-   introduces no new on-disk plaintext and no new logging channel (the one
-   route out of its custody is the clinician's Copy of a ratified note, whose
-   clipboard residue surface 4 names) —
+   introduces no new on-disk plaintext and no new logging channel (the routes
+   out of its custody are the clinician's Copy of a ratified note, whose
+   clipboard residue surface 4 names, and — since the cliniko-draft-write
+   plan — the clinician's "Write draft to Cliniko" of the same ratified note
+   into a linked recording's own Cliniko draft, over TLS to Cliniko's API
+   only: "THE DRAFT WRITE" below) —
    the note models carry registered tripwire signatures, so a stray repr/dump is
    dropped by the log filter.
 4. **The ratified copyable-note change.** The generated note is the app's first
@@ -458,6 +474,18 @@ note inherit exactly that posture.
    sync off on the clinic machine stays advised
    (`docs/security/intended-use.md`, current scope note), no longer as the
    only mitigation.
+   **The draft write shares the gate (cliniko-draft-write D2, D7).** The Note
+   tab's "Write draft to Cliniko" sits beside Copy and is enabled only when
+   `_copy_ready` holds AND the recording is linked AND the note is not from
+   the test provider (D10) AND the session's write record can be read and
+   does not already read `written` (`ui/models.py` `write_control`) AND no
+   write or prose rendering is in flight (`ui/note.py`); the click
+   re-checks, and the main window's slot checks again. What it sends is rendered by
+   the SAME per-section renderer as Copy (`note.render_section_lines`, the
+   review apparatus off — no bullet, provenance tag, pre-filled mark or
+   "[includes …]" line), so Copy and the write cannot drift apart
+   (Constraint 11). No clipboard is involved; the note leaves the machine
+   only in the write's request body, inside TLS.
 
 **The checker's honest limit (stated plainly, not implied).** The four checks
 in `note_check.py` do NOT establish that a confirmed assertion is grounded in
@@ -1336,21 +1364,25 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     exactly as onnxruntime does — the OS-level socket polls of the real leg
     are what covers it, when that leg runs.
 
-## Cliniko API client (Cliniko workflow safeguards plan, D9; BUILT at Task 1.1, 2026-09-27)
+## Cliniko API client (Cliniko workflow safeguards plan, D9; BUILT at Task 1.1, 2026-09-27; its one draft write BUILT by the cliniko-draft-write plan, 2026-09-29)
 
 The app's offline contract is now **no connection except Cliniko's API, and
 none at startup or idle**. `scribe-app` holds exactly one network-capable
 module, `desktop/src/scribe_desktop/cliniko_client.py` (flow 18 of the
-data-flow map); the native host has none and never imports it. It has two
-app callers, each making ONE client call on a worker thread in answer to a
-practitioner action or a report from Chrome, never at startup, on a timer or
-while idle: the clinic registry (`clinics.py`, Phase 2) on a Validate or
+data-flow map); the native host has none and never imports it. It reads
+(`GET`) and, since the cliniko-draft-write plan, makes ONE kind of write: a
+`PATCH` that fills an open draft treatment note (THE DRAFT WRITE below). It
+has three app callers, each making its client calls on a worker thread in
+answer to a practitioner action or a report from Chrome, never at startup, on
+a timer or while idle: the draft write (`draft_write.py`), on the Note tab's
+"Write draft to Cliniko" click only — two client calls per click, the reads
+then the write; the clinic registry (`clinics.py`, Phase 2) on a Validate or
 Replace key press on the Clinics tab (CLINIC KEYS below), and note
 verification (`encounter.py` `verify_note_context`, Phase 3) — dispatched
 when the practitioner opens a recovered session for checkout or an Unreviewed
 session for review and its encounter record names a Cliniko note, or when a
-clinic changes while that checkout is open; and, since Phase 4, by the Chrome
-bridge (`ui/bridge.py`) for a note report from the focused tab on an
+clinic changes while that checkout is open; and, since the safeguards plan's
+Phase 4, by the Chrome bridge (`ui/bridge.py`) for a note report from the focused tab on an
 allow-listed host and, once per new pipe connection, for the linked live
 session's own note (NOTE VERIFICATION below; "The Chrome link" below). An
 idle app with Chrome closed makes no call; a Cliniko note left open in
@@ -1362,9 +1394,22 @@ CONFINEMENT. Ruff TID251 bans `socket`, `http`, `urllib.request` and
 `http.client` import. `tests/test_cliniko_client.py::TestConfinement` pins the
 count at exactly one, that no other module under `desktop/src` imports
 `http`, `ssl`, `socket`, `urllib.request` or `PySide6.QtNetwork`, that the
-native host's import closure never reaches the client, and that `clinics.py`
-and `encounter.py` are the only modules that import it. Residue: these are SOURCE checks, so a dynamic import
-(`importlib.import_module`) is outside them; and the banned list names the
+native host's import closure never reaches the client, and that `clinics.py`,
+`draft_write.py` and `encounter.py` are the only modules that import it. Down
+the chain, `TestWriteCallSites` confines what those importers may reach: each
+may import only the client names pinned for it and name only the `ClinikoCall`
+methods pinned for it (the write method only in `draft_write.py`), and no
+module outside the client may use a client private member except as a
+class's own `self.<name>` of a member that class itself defines, call any
+`x.request(…)`, subclass a client class or reach `__globals__` / `__dict__` — the
+private members and the capability list are DERIVED from the client's
+source, so a new one is covered with no pin change. `TestWriteSlot` pins
+that a write starts only from the Note tab's button slot (THE DRAFT WRITE
+below). Residue: these are SOURCE checks, so a dynamic import
+(`importlib.import_module`), a name built at run time, `vars()` or
+`sys.modules` is outside them, and the transport's `request` is checked in
+call position only; and the banned list — ruff's, and
+`TestConfinement._NETWORK_MODULES` — names the
 common network modules, not every network-capable API — `asyncio`,
 `ftplib` / `smtplib` / `imaplib` / `poplib`, `xmlrpc.client`,
 `multiprocessing.connection`, a `ctypes` call into `ws2_32` / `winhttp` or a
@@ -1375,18 +1420,41 @@ no-sockets integration test (host, app startup and idle, capture,
 transcription, prose), which asserts zero connections whatever API opened
 them — on the practitioner's host only, since CI skips integration.
 
-WHAT IT CAN SEND. `GET` only: `HTTPSTransport.request` refuses any other
-method before a connection exists, the client passes only `GET`, and the
-module has no write method (Critical Constraint 1: drafts only, by
-construction, and this plan writes nothing). The host is
-`api.<shard>.cliniko.com`, built ONLY from a documented shard taken from the
-key's `-<shard>` suffix; a missing or unknown suffix, or a key with any
-character outside the key alphabet (CR/LF included), is `InvalidKey` before a
-request — never defaulted to `au1`. Ids in a path are validated as 1–19
-digits with no leading zero. Headers are fixed: HTTP Basic auth (the key as
+WHAT IT CAN SEND (draft-write D1, Critical Constraint 1: drafts only, by
+construction). The transport's allow-list (`cliniko_client._admit`) admits
+exactly two request shapes and raises `ValueError` for anything else BEFORE a
+connection exists: a `GET` with no body, or a `PATCH` to a path that fully
+matches `/v1/treatment_notes/<id>` whose body is UTF-8 JSON — parsed as
+Cliniko will read it, so an escaped key counts as the key it spells — holding
+exactly ONE top-level key, `content`, whose value is an object. Both shapes go
+only to a documented API host (`api.<shard>.cliniko.com` for a shard in
+`SHARDS`) under `/v1/`; the method, host, path and every header name and value
+must be exactly `str` and the body exactly `bytes`, and the transport sends the
+plain header snapshot it checked, so what is checked is what is sent. Header
+NAMES are limited to the three the client sets — HTTP Basic auth (the key as
 username, empty password), `Accept: application/json`, and
-`User-Agent: Clinic Scribe (<contact email>)` with the email refused on CR/LF
-or a failed shape check.
+`User-Agent: Clinic Scribe (<contact email>)`, the email refused on CR/LF or a
+failed shape check — each once, plus, for the `PATCH` only,
+`Content-Type` exactly `application/json`. So a top-level `draft`, `title`,
+patient, booking, attendee or template field cannot leave, whoever builds the
+request: the write can fill a note's content but cannot finalise it, create a
+note, or move one to another patient, booking or template. The method string
+`"PATCH"` is written once in the module (`_WRITE_METHOD`, pinned by a source
+test), and its only sender is `ClinikoCall.write_draft_note(note_id,
+content: DraftContent)`, whose body model has one field, `content`, and
+refuses any other (`extra="forbid"`). The host is built ONLY from a
+documented shard taken from the key's `-<shard>` suffix; a missing or unknown
+suffix, or a key with any character outside the key alphabet (CR/LF
+included), is `InvalidKey` before a request — never defaulted to `au1`. Ids
+in a path are validated as 1–19 digits with no leading zero. A body JSON
+cannot hold — a lone surrogate, a NaN — raises `DraftUnencodable` before any
+request. Residue: what Cliniko does with the keys INSIDE `content` is
+Cliniko's (the draft write replaces the targeted answers only, from the
+note's own re-read content — THE DRAFT WRITE below); and Cliniko documents a
+final note as immutable, which is what stops a `PATCH` to a note finalised
+after the write's own read (P.1's finalised leg: Cliniko answered 403) — the
+app's request shape cannot express finalisation, but it does not by itself
+stop a content write to a final note.
 
 TRANSPORT. One `http.client.HTTPSConnection` per request, closed after, on
 port 443. Every socket step (connect, each TLS/send/receive step) times out
@@ -1411,11 +1479,25 @@ variable and pins `keylog_filename = None`, and
 `assert_offline_env` refuses it by name (surface 17's handling of
 `LLAMA_CPP_LIB_PATH`, same shape).
 
-UNTRUSTED ANSWERS. A body is read ONLY for a 200: every other status is
+UNTRUSTED ANSWERS. A body is read ONLY for a 200 and, for the `PATCH`
+alone, for a 422: every other status is
 final from its status line and headers, so a 401/403/404/429/3xx/5xx whose
 body stalls or is cut keeps its own named error (and a 429 its reset) rather
 than becoming `Unreachable` (codex round 8 PR-MED-012); the unread body goes
-with the closed connection. A 200's body is read in pieces that never ask
+with the closed connection. For the `PATCH` the STATUS LINE decides
+(draft-write D5): a 200 is a write Cliniko accepted whatever its body then
+does — a body that stalls, is cut or fails to parse is reported as unreadable
+and the answer stays `written` — and a 422's body is reduced to FIXED
+categories before any exception exists: each top-level `errors` key becomes
+one of Cliniko's documented treatment-note field names (`content`, `title`,
+`patient_id`, `booking_id`, `attendee_id`, `treatment_note_template_id`,
+`draft`) or `other`, and no key text, value or other body byte survives;
+the body is dropped before `ClinikoRejected` is raised, outside any handler,
+so it has neither `__cause__` nor `__context__`. An identifier-shaped key can
+itself carry data, which is why the categories are a fixed set rather than a
+shape filter; this surface is bounded by that set, not residue-free. Any other
+4xx but 401/403/404/429 on the `PATCH` is `ClinikoRejected` with no
+categories. A 200's body is read in pieces that never ask
 the library for more than what is left of `MAX_BODY_BYTES + 1` (1 MiB + 1
 byte) in total, plus the stdlib reader's own buffer; a body longer than
 1 MiB is `Malformed` and never parsed. The status line and headers are bounded by
@@ -1435,7 +1517,9 @@ request, `getresponse`, the status and header read, every body read):
 (`HTTPException`, `ValueError`, the unforeseen) is `Malformed`.
 
 SECRETS. The key is read from its source ONCE per logical call (one
-verification or one Validate), shared by that call's requests, and on exit
+verification, one Validate, or one hop of a draft write — a Write click makes
+two calls, so it reads the stored key twice, THE DRAFT WRITE below), shared by
+that call's requests, and on exit
 the call drops its `Authorization` value and refuses further use; the client
 object never holds it. What an exception raised by the module RENDERS — its
 message, its repr, its formatted traceback, a log record of it — carries no
@@ -1470,7 +1554,25 @@ after a Replace or a Remove, or a check whose key was replaced between its
 requests, commits nothing and cannot restore a removed clinic. Remove takes
 a second, confirming click and is refused while the live session is linked
 to that clinic (its `EncounterContext` names the clinic id; an unlinked
-session blocks no Remove). Write
+session blocks no Remove). A key field left empty (or blank) is its own
+refusal, `KEY_MISSING`, before the key-shape check, on Validate and Replace
+key alike. While a draft write holds that clinic (the live linked session's),
+Replace key and the default-source change below are refused too
+(`ClinicRefusal.WRITE_IN_FLIGHT`; Remove is already refused), and in the other
+arrival order a Write click is refused while a Validate or Replace key for
+that clinic is in flight (`clinic_busy`) — so both hops of a write read the
+same stored key (draft-write D3, D9). THE DEFAULT-SOURCE SETTING (draft-write
+D14): each clinic record carries `default_source`, "Cliniko template" (the
+default) or "My own defaults", chosen on the Clinics tab and saved by one
+atomic `clinics.json` write with no `clinic_rev` bump (it changes no
+identity a pending result depends on); a Replace key keeps the value the
+record holds at commit. `_write` leaves the field out while it is the
+default, so an older build reads the file unchanged — but a file holding
+"My own defaults" for any clinic fails an older build's `extra="forbid"`
+validation and loads EMPTY with its load problem set: fail-closed, the
+DOWNGRADE RESIDUE (no downgrade is planned; the only machine is the
+practitioner's). "Check file" beside "My own defaults" reads the clinic's own
+defaults file locally and makes no Cliniko call. Write
 order, so no failure leaves a key at rest that the registry does not list: a
 new clinic writes the file, then stores the key (a failed store deletes
 whatever it may have written, then rewrites the file without it — if either
@@ -1527,10 +1629,19 @@ checks, a waiting REPORT check starts only while the ledger still awaits it
 (`VerificationLedger.awaits`; codex round 65 PR-LOW-350 — a tab that closed
 or moved on while it waited leaves no call behind, whether it waited inside
 the spacing or behind a running check), and the window's close waits for it
-like a running check. After a
-429 the clinic's checks are answered `unverified_offline` WITHOUT a call for
+like a running check. THE COOLDOWN (draft-write D13): one per-clinic
+`encounter.RateLimitLatch`, owned by the main window and handed to the
+bridge, is shared by the three paths that make note calls — the bridge, the
+checkout re-verification and the draft write — so a 429 any of them sees
+stops the others too; each reads and records it on the latch's own clock.
+After a
+429 the clinic's bridge checks are answered `unverified_offline` WITHOUT a call for
 60 s from that 429 (a fixed window: only a real 429 starts one, the
-window's own answers never extend it, and `RateLimited.reset` is not read);
+window's own answers never extend it, and `RateLimited.reset` is not read) —
+the checkout shows the same rate-limited line without a call, and a Write
+click is refused `rate_limited` (at the click, and again before the write's
+`PATCH`, codex round 35 PR-MED-038); the Clinics tab's Validate / Replace
+key is outside the latch (a practitioner press, three GETs);
 recording stays allowed, and — as with any offline answer — the outcome
 stands until the note is checked again (a new run, a reconnect or a clinic
 change); nothing re-checks when the minute ends. Neither timer ever starts a
@@ -1566,8 +1677,10 @@ kept; the one start-up exception); the recovery listing learns only whether
 the file exists, and the sweep and the periodic refresh never read it. A
 missing or unreadable record reads as "consent unavailable": that session is
 treated as unlinked and has no write target. RESIDUE: the record is the
-session's and goes with its key — at Complete, Discard or expiry — so no
-durable evidence of the consent outlives the session; a durable minimal audit
+session's and goes with its key — at Complete (including the Complete after a
+confirmed draft write, which also removes the session directory), Discard or
+expiry — so no durable evidence of the consent, or of a write, outlives the
+session; a durable minimal audit
 record is PLAN.md Phase 6 (retention schedule, pre-committed rules). Its
 consent is the practitioner's tick on the Session screen or the panel's box
 as relayed by the extension (pipe residue (1)(a) below): what it records is
@@ -1580,9 +1693,180 @@ session and a checked-out one alike — a re-verification of that same note,
 dispatched under the clinic's CURRENT `clinic_rev`, that came back VERIFIED.
 A verification made at Start or stored in `encounter.enc` is never enough on
 its own (round 20 MED-012): a Replace key or Remove since then moved the rev.
-Everything else is a named refusal. Nothing calls it for a write yet (Phase
-4's draft write is the next plan, and brings the pre-write re-verification);
-`encounter.py` has no write method and the client stays GET-only.
+Everything else is a named refusal. Its production caller is the draft
+write's `draft_write.prepare_write`, which builds the guard's subject from the
+live session's consent and context and the click's OWN note read (hop 1
+below), so a checkout's stored result or the bridge's reconnect re-check is
+never accepted (draft-write Constraint 3); `writeback_context` gains no age
+bound — the freshness comes from each click making its own read. The main
+window's `live_writeback_target` and `recovered_writeback_target` remain, but
+nothing in production calls them; the crash-recovery checkout has no Note
+tab and cannot write, and an Unreviewed session opened for review writes
+through the live session's Note tab like any other. `encounter.py` itself has
+no write method; the client's one write is reached only from `draft_write.py`
+(CONFINEMENT above).
+
+THE DRAFT WRITE (cliniko-draft-write plan, D1–D14; Phases 1–5 built
+2026-09-29; `draft_write.py`, `ui/main_window.py` `_on_write_requested`,
+`ui/note.py`). After the clinician Saves a ratified note of a LINKED
+recording, one click on the Note tab's "Write draft to Cliniko" fills the
+Cliniko draft treatment note the recording was started from — never a second
+note, never anything but the note's `content`. What the structure enforces:
+- ONE START. A write, and the reconcile of an earlier one, starts only from
+  that button's slot, `MainWindow._on_write_requested` — never at startup, on
+  a timer, from the sweep, on a clinic change or a reconnect (Constraint 2).
+  `TestWriteSlot` pins, on the source, that the hop functions are named
+  outside `draft_write.py` only there and in `_after_hop1`, that the slot is
+  connected exactly once, to the Note tab's `write_requested`, and that the
+  signal is emitted only by the button's click handler, which is connected
+  only to the button's `clicked`. Residue: a programmatic
+  `write_button.click()` or `clicked.emit()` elsewhere, and names built at run
+  time, are outside a source pin — such a call still passes the handler's
+  click-time checks and the slot's whole check order, so it can only write a
+  saved, ratified, linked note.
+- REFUSED BEFORE ANYTHING IS SENT, in the slot's order: a write already in
+  flight; a click for a session that is no longer the live one; an unlinked
+  (desktop-started) session; an unreadable write record, or one already
+  `written`; the session lock; a recovery resume running; a Validate or
+  Replace key for that clinic in flight; the clinic's 429 cooldown; a clinic
+  no longer set up. Then the write RESERVATION is taken (the controller's
+  existing custody reservation plus a writing marker, D9) BEFORE any worker
+  starts, and — under it — a note from the test provider (`mock-…`, D10) is
+  refused.
+- A FRESH READ FOR EVERY CLICK, IN THREE HOPS (D3). Hop 1, on a worker, is ONE
+  client call with the key read once: a discovery `GET` of the note only when
+  the linked context holds no template id (an offline-started recording),
+  then `GET /treatment_note_templates/<id>`, then the FINAL
+  `GET /treatment_notes/<id>` — last, so it sits as close to the `PATCH` as
+  the design allows; it IS the click's verification (the note's patient link,
+  open-draft state and practitioner, as NOTE VERIFICATION checks them; no
+  patient or booking read), and the note's template link must equal the
+  fetched template. Then, on the GUI thread, in `prepare_write`'s order:
+  `writeback_context` over that read; the template match; reconcile of an
+  open earlier attempt; the repeat guard; the clinic's declared defaults; the
+  typed-text check; the full body. The `attempting` record is written to disk
+  BEFORE hop 2 is dispatched (Constraint 5). Hop 2, on a worker, is its OWN
+  client call, re-reading the same stored key (Replace key and Remove are
+  refused for the writing clinic meanwhile), and makes the `PATCH` alone. The
+  latch is read at the click and again before the attempt is recorded. The
+  workers do network I/O only; the record, the reservation, the guard and
+  every Qt call are on the GUI thread (Constraint 7), and any raise after the
+  reservation releases it.
+- MATCH, TYPED TEXT, BODY (D4, D7, D8). The note's own template profile is
+  bound against the current config and matched to the fetched template by
+  section and question NAME, each exactly once in both the note's content and
+  the template, one question per target, of the target's type; a missing,
+  repeated or mistyped name, or a section the profile leaves unmapped by
+  oversight, refuses `template_mismatch` and nothing is dropped silently. A
+  matched question whose answer is not empty and differs from its DECLARED
+  DEFAULT refuses the write (`note_has_text`, Copy stays); an answer holding
+  content that is not text — an image, a rule, an embed — or HTML the parser
+  cannot read counts as text (fail closed). The comparison is over normalised
+  VISIBLE text, type-aware: a `paragraph` answer is HTML and is decoded to
+  visible text exactly once, a `text` answer and an own-defaults
+  transcription are never decoded, then whitespace is collapsed and NFC
+  applied. The body is the click's re-read `content` with only the matched
+  answers replaced (a rich-text answer is one `<p>` per line, HTML-escaped,
+  no other tag; the attestation checkbox question is never answered), so
+  every other question, checkbox array and unknown field round-trips as
+  Cliniko sent it (confirmed on clinic 1's template by P.1 Q4). A note with no
+  writable content refuses `nothing_to_write` before any attempt; a lone
+  surrogate refuses before any attempt too.
+- THE DECLARED DEFAULT (D14) is the clinic's setting: "Cliniko template" —
+  the template GET's own `answer` for the same question (P.1 Q3: the template
+  carries it) — or "My own defaults" — the clinic's own file
+  `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\<clinic host>.json`,
+  loaded fresh on the GUI thread at each click (a bounded local read) and
+  refused by name when it is missing, unreadable, too large or invalid
+  (`defaults_unreadable`), has no entry for the note's template
+  (`defaults_no_template`), or names a section or question the template lacks
+  (`defaults_unmatched`). These block only a NEW attempt: an open attempt still
+  reconciles first. The app never writes that file or creates its folder.
+- THE WRITE RECORD `write.enc` (D5): one document per session, AES-GCM under
+  the session key with AAD `write:<session_id>`, rewritten atomically at every
+  transition — the attempt number, times, the profile's target ids, the SHA-256
+  of the saved note's plaintext (`note_identity`), a SHA-256 digest of each
+  written answer's normalised text, a digest of where they were written (the
+  matched labels, hashed), the body's digest and the outcome (`attempting`,
+  `written`, `refused` with its reason, `unknown`). It holds ids and digests
+  only — no note text, no Cliniko answer, no Cliniko id. It is written only
+  through the write reservation (`with_write_custody`), and everyone else
+  reads only its content-free status (`write_record_status`). The OUTCOME is
+  decided by the HTTP answer alone: a 200 is `written` and never relabelled;
+  a 401 is `key_rejected`; a 403 just after hop 1 verified the note with the
+  same key is `finalised_before_write` (P.1's finalised leg); 404, 422 and any
+  other 4xx but 429 are refused (Cliniko applied nothing), and so is a key
+  that cannot be read or is refused before any request (nothing was sent); a
+  429, a redirect, a 5xx, a timeout, a lost connection, a TLS failure, no
+  readable status line or any unforeseen failure is `unknown`, and
+  so is a trailing `attempting` left by a crash. There is NO automatic retry:
+  the next click re-reads the note and, for an open attempt, first compares
+  every targeted answer's normalised digest with the record — all equal (and
+  at least one target) means the earlier write landed, recorded `written`
+  with no second `PATCH`; every targeted answer still at its default means a
+  new attempt; anything else is refused `write_uncertain` ("An earlier write
+  may have reached Cliniko …"); once the click's read of the record shows an
+  open attempt, the refusal lines that follow carry that sentence first (the
+  lines `ui/models.py` `WRITE_UNCERTAIN_PREFIXED` names — not
+  `write_in_flight`, which is that very write, nor a refusal met before the
+  record read, nor the lines that already say the outcome is open). A `refused` / `finalised_before_write`
+  record whose note re-reads as a DRAFT is refused `write_forbidden` before
+  any `PATCH` (the repeat guard). Once any attempt exists the saved note is
+  FROZEN for that session: Regenerate (including "Regenerate (replaces the
+  saved note)"), a second Save and "Delete note and complete without one" are
+  refused (`write_pending`; "Cancel review and regenerate" is already disabled
+  once the note is saved) — decided on the Transcript screen for the live
+  session, from the record's content-free status, so the controller's plain
+  `complete` does not read the record itself (the enforcing gate is that
+  screen, the only route a written session takes to it); an unreadable record refuses the write and shows its own
+  line (`record_unreadable`), never a Cliniko rejection.
+- COMPLETION IS SEEN (D6; Task 2.1 on P.1 Q5). A `written` outcome releases
+  the reservation and completes NOTHING: the Note tab keeps Copy and says to
+  reload the note in Chrome and press Complete once it shows there; Write
+  stays disabled and no further request is made for that session. Only the
+  Transcript screen's Complete, when the record reads `written` for THIS saved
+  note, runs `complete_after_write`: under one controller lock it re-checks
+  the reservation, the record and the saved note's identity, then fsync →
+  decrypt-verify → key deleted → in-memory key destroyed → directory removed
+  best-effort → session refs forgotten. Any refusal or failure keeps the key,
+  the record and the queued session, and the next Complete retries.
+- NAMED RESIDUES (P.1 on clinic 1, 2026-09-29, and the reviews):
+  (a) NO CONDITIONAL WRITE. Cliniko documents no version check on treatment
+  notes, so an edit the clinician SAVES in Cliniko's editor between hop 1's
+  final note read and the `PATCH` — to any question, targeted or not — is
+  reverted by the full body (P.1 Q6 reproduced both). The window is kept to
+  the time between two requests; the status line says to reload.
+  (b) AN ALREADY-OPEN EDITOR WINS. Saving a Cliniko editor that was open
+  before the write overwrites the written draft (P.1 Q5) — the reason
+  completion waits until the clinician has SEEN the draft in Chrome; the app
+  cannot detect it.
+  (c) CLINIKO SANITISES RICH TEXT (P.1 Q1): the bytes it stores differ from
+  those sent while the visible text survives one decode, so every comparison
+  is over normalised visible text; whether paragraph breaks survive is
+  unverified (Task P.2 checks it by eye).
+  (d) "FINALISED" IS AN INFERENCE. A `PATCH` 403 is read as "the note was
+  finalised before the write reached it"; a key whose Cliniko role may read
+  notes but not edit them would show that line ONCE, and the repeat guard
+  names it on the next click (`write_forbidden`).
+  (e) THE OWN-DEFAULTS FILE IS A TRUST INPUT. It is same-user-writable
+  plaintext that decides what a write may overwrite: an entry equal to text
+  the clinician typed lets the write replace that text. The app checks its
+  shape, never its meaning; that it holds non-clinical prompt text only is a
+  policy, not an enforced property.
+  (f) A DEFAULT HOLDING AN IMAGE OR RULE (round 26 LOW-003). The not-text
+  check reads the NOTE's answer only, so a template whose own starting text
+  holds an image or a horizontal rule makes every untouched note read as
+  "already holds text" — refused, Copy stays (strict by choice; the real
+  templates' defaults are checked at Task P.2).
+  (g) AFTER COMPLETION THE ONLY COPY IS IN CLINIKO. The session — audio,
+  transcript, `note.enc`, `encounter.enc`, `write.enc` — is gone; the draft
+  in Cliniko, which the clinician still finalises, is what remains.
+  (h) THE DOWNGRADE RESIDUE of the default-source setting (CLINIC KEYS above).
+  (i) The written note text leaves the machine in the request body, to
+  Cliniko, inside TLS, by the clinician's click — the purpose of the feature.
+  (j) The shipped template profile was corrected to clinic 1's recorded
+  template (every writable question rich text); clinic 2's template is
+  unverified until its own P.1, so there the write-time match is the check.
 
 RESIDUE. (1) The TLS trust decision is the Windows store's: a root installed
 there — a TLS-inspection proxy's, or a same-user attacker's — is trusted like
@@ -1597,16 +1881,22 @@ the key. (4) A key is typed or pasted into the Clinics tab; a paste passes
 through the Windows clipboard, whose history and cloud sync are OS features
 outside the app — the tab says so beside the field and asks the practitioner
 to clear it there; the app does not clear it. (5) The contact email and the
-requested ids leave the machine to Cliniko by design, inside TLS. (6) An
+requested ids leave the machine to Cliniko by design, inside TLS — and, for a
+draft write, the note's whole re-read `content` with the ratified note's
+text in its matched answers (THE DRAFT WRITE, residue (i)). (6) An
 exception raised during a call keeps, through its `__traceback__`, every frame
 it unwound through with that frame's locals — `raise … from None` removes the
 chained CONTEXT, not the frame chain. While that exception object is alive
 (bound past its `except`, stored by a caller, `sys.last_exc`, a debugger), it
 references the key (an `InvalidKey` raised by `shard_of_key` before
-`ClinikoClient.call` deletes its local), or the Basic token (`ClinikoCall._get`'s
+`ClinikoClient.call` deletes its local), or the Basic token (`ClinikoCall._send`'s
 local `headers`, in the traceback of every error raised through the transport
-or `_interpret`), with the path, ids and response bytes — past the logical
-call's end, until the exception is dropped (codex round 9 PR-MED-030). Nothing
+or `_interpret`), with the path, ids and response bytes — and, for an error
+raised inside `write_draft_note`, the draft it was sending (`content`, and
+the serialised body when the transport raised), which is note text — past
+the logical call's end, until the exception is dropped (codex round 9
+PR-MED-030; `draft_write.send_write` binds each one only inside its `except`
+clause, which Python unbinds at the clause's end). Nothing
 RENDERS them (SECRETS above); this is memory lifetime inside boundary 2, the
 same class as (2). Clearing the frames in the client
 (`traceback.clear_frames`) was rejected: it would also wipe the caller's
@@ -1767,7 +2057,8 @@ allow-listed host is verified. `start` is refused unless its `state_rev` is
 the last one sent, its target is that bound report, the report is verified
 or `unverified_offline`, no session is active, no note review holds the
 generation lease and a microphone is selected; an `unverified_offline` Start
-records with write-back blocked (Constraint 6). `resume`, `finish`,
+records, and its note can be written only once a Write click's own read of
+it verifies (Constraint 6; THE DRAFT WRITE above). `resume`, `finish`,
 `discard` and `resume_previous` are refused BEFORE their slot runs unless
 their `session_ref` is the live session's; `pause` needs no reference
 (fail-safe); `open_review` names a RETIRED session and is refused unless its
@@ -1790,8 +2081,8 @@ while its clinic is unchanged (D9): a Replace key or Remove voids it and
 checks again under the current key, or reports the clinic gone (codex round
 29 PR-MED-150). RESIDUE: (1) the consent tick is the extension's assertion
 (pipe residue (1)(a) above). (2) The reconnect re-check of a linked live
-session is shown on the Session screen only; the write-back guard does not
-read it and still requires its own current re-verification (MED-012). (3)
+session is shown on the Session screen only; the draft write does not read
+it — each Write click makes its own note read (MED-012; Constraint 3). (3)
 The name is on screen while the session records — the same exposure as
 Cliniko's own page. (4) The snapshot is rebuilt every 500 ms and on every
 event, so what the panel shows can trail the controller by that long; the
@@ -1928,11 +2219,14 @@ installed, the note through `session_store.read_note` (the same verification
 Complete uses): a note that fails is refused on the row and never
 regenerated or overwritten. A saved note opens as it was saved, read-only;
 changing it means "Regenerate (replaces the saved note)", which replaces it
-only on that review's Save. Copying it follows the recorded copy flag and
-re-checks it carries no unresolved error. An adopted linked session is
-re-verified with Cliniko from the record the adoption decrypted (no second
-decrypt); its write-back goes through the live entry, which still needs its
-own current re-verification (MED-012). Adopting retires a live queued or
+only on that review's Save — and not at all once a draft write was attempted
+for it (`write_pending`, THE DRAFT WRITE above). Copying it follows the
+recorded copy flag and re-checks it carries no unresolved error. An adopted
+linked session is re-verified with Cliniko from the record the adoption
+decrypted (no second decrypt), for display only; it is written like any live
+session, from the Note tab, whose click makes its own note read (MED-012) —
+and a session whose record already reads `written` reopens with Write
+disabled and completes only on Complete. Adopting retires a live queued or
 failed session exactly as a Start does (its reminder entry and reference
 kept); the adopted session's own entry leaves the index until it is retired
 again. A recovered view replaced by a live transcript now releases its
@@ -2176,11 +2470,11 @@ Transcript prompt-injection resistance of the local ML note model (Phase 3B —
 3A's provenance check already derives speaker roles from COORDINATES, never the
 assertion's display `speaker` field, as the spoken-injection defence for
 clinician-owned sections; the ML model's own injection resistance is 3B),
-writing the draft into Cliniko (Phase 4 — the next plan; its entry points,
-`writeback_context` and the GET-only client, are covered above; the recording
-consent, indicators and pause rule of Phase 5 are covered above too),
-OneDrive/backup and crash-reporting exclusions and the durable audit record,
-including consent evidence that outlives a session (Phase 6),
+clinic 2's draft write (its template is unverified until its own test write;
+the write-time template match is the check there — THE DRAFT WRITE residue
+(j)), OneDrive/backup and crash-reporting exclusions and the durable audit
+record, including consent and write evidence that outlives a session (Phase
+6 — `write.enc` dies with its session),
 packaging/signing (Phase 7).
 
 ## Review triggers
@@ -2195,7 +2489,12 @@ install (the practitioner's first live smoke of Phase 4 — the relay and the
 bridge are built and described above); the extension gains a permission, a
 host pattern, a web-accessible resource or any browser storage, or the page
 script reads anything but `location.href`; a second Chrome profile, a second
-clinic machine or another practitioner is to be supported;
+clinic machine or another practitioner is to be supported; the first write
+of a new session type (a session kind other than a live or adopted linked
+recording reaching "Write draft to Cliniko" — the crash-recovery checkout,
+for one, cannot write today); the client gains a request shape, a resource or
+a second write, or Cliniko adds a conditional write (a version field — THE
+DRAFT WRITE residue (a) could then close); clinic 2's first draft write;
 or the software is installed on the
 second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next

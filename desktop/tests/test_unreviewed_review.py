@@ -488,16 +488,23 @@ class TestUnreviewedSection:
         assert not screen.open_button.isEnabled()  # nothing selected
         screen.unreviewed_list.setCurrentRow(0)
         assert screen.open_button.isEnabled() and screen.unreviewed_discard_button.isEnabled()
-        for block in ("generation", "checkout"):
+        # Draft-write Task 5.2 (D9): a Cliniko write in flight blocks as a
+        # generation does.
+        for block in ("generation", "write", "checkout"):
             if block == "generation":
                 screen.set_generation_blocked(True)
+            elif block == "write":
+                screen.set_write_blocked(True)
             else:
                 screen._protected.add("f" * 32)
                 screen._update_controls()
             assert not screen.open_button.isEnabled(), block
             screen.on_open_for_review()
             assert asked == [], block
+            if block == "write":  # a queued click names the write
+                assert screen.message_label.text() == models.write_line("write_in_flight")
             screen.set_generation_blocked(False)
+            screen.set_write_blocked(False)
             screen._protected.clear()
             screen.refresh()
             screen.unreviewed_list.setCurrentRow(0)
@@ -1057,3 +1064,60 @@ class TestCloseList:
         event = QCloseEvent()
         window.closeEvent(event)
         assert event.isAccepted()
+
+
+@windows_only
+class TestSessionWriteStore:
+    """Draft-write Task 5.2 (D2, D5, D9): the app's ``WriteStore`` over the
+    real custody — an adopted Unreviewed session's saved note offers Write,
+    and ``write.enc`` round-trips through ``with_write_custody`` under the
+    held reservation into the controller's content-free status."""
+
+    def test_an_adopted_saved_note_round_trips_its_write_record(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from scribe_desktop.draft_write import WriteRecord
+
+        directory = _unreviewed(tmp_path, linked=True, note=True)
+        session_id = directory.name
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        window.reconstruct_reminders()
+        assert window.open_unreviewed(session_id) is None
+        assert window.note_screen.write_binding == models.WriteBinding(session_id, True)
+        store = models.SessionWriteStore()
+        reservation = controller.reserve_write(session_id)
+        try:
+            inputs = controller.with_write_custody(
+                reservation, lambda d, c: store.load(d, c, session_id)
+            )
+            assert inputs.record is None
+            assert inputs.note.template_profile_id == _saved_note(session_id).template_profile_id
+            record = WriteRecord(
+                attempt=1,
+                started_at=datetime(2026, 9, 29, 8, 0, tzinfo=UTC),
+                target_ids=("diagnosis",),
+                note_identity=inputs.note_identity,
+                digests={"diagnosis": "0" * 64},
+                match_sha256="2" * 64,
+                body_sha256="1" * 64,
+                outcome="attempting",
+            )
+            controller.with_write_custody(
+                reservation, lambda d, c: store.store(d, c, session_id, record)
+            )
+            again = controller.with_write_custody(
+                reservation, lambda d, c: store.load(d, c, session_id)
+            )
+            assert again.record == record
+            assert again.note_identity == inputs.note_identity
+        finally:
+            reservation.release()
+        status = controller.write_record_status(session_id)
+        assert status.outcome == "attempting" and status.note_matches
+        # Without the held reservation the files are out of reach.
+        with pytest.raises(SessionActivityError):
+            controller.with_write_custody(reservation, lambda d, c: store.load(d, c, session_id))
+        _close(window)

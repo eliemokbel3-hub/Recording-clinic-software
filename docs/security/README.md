@@ -2,7 +2,9 @@
 
 The five governing documents for the Cliniko clinical scribe, grounded in the
 system as built (Phase 1 onward, through the Cliniko workflow safeguards —
-the read-only Cliniko client, the host↔app pipe and the Chrome side panel):
+the Cliniko client, the host↔app pipe and the Chrome side panel — and the
+Cliniko draft write: the client's one write, the write record and completion
+after a confirmed write):
 
 - `intended-use.md` — intended-use statement (documentation only; no clinical decision support)
 - `data-flow-map.md` — where data lives and moves (including log files; there is no status file)

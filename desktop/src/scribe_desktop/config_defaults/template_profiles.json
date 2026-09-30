@@ -15,7 +15,7 @@
           "target_id": "assessment",
           "group": "Examination",
           "field_label": "Assessment",
-          "target_type": "plain_text"
+          "target_type": "rich_text"
         },
         {
           "target_id": "informed-consent",
@@ -27,25 +27,25 @@
           "target_id": "diagnosis",
           "group": "Examination",
           "field_label": "Diagnosis",
-          "target_type": "plain_text"
+          "target_type": "rich_text"
         },
         {
           "target_id": "treatment",
           "group": "Treatment/Management",
           "field_label": "Treatment",
-          "target_type": "plain_text"
+          "target_type": "rich_text"
         },
         {
           "target_id": "response-to-treatment",
           "group": "Treatment/Management",
           "field_label": "Response to treatment",
-          "target_type": "plain_text"
+          "target_type": "rich_text"
         },
         {
           "target_id": "management-advice",
           "group": "Treatment/Management",
           "field_label": "Management/Advice",
-          "target_type": "plain_text"
+          "target_type": "rich_text"
         }
       ],
       "section_mappings": [

@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -12,8 +12,11 @@ There is
 connection except Cliniko's API, and none at startup or idle** (Cliniko
 workflow safeguards plan, D9; rewritten as a class at Task 1.2, 2026-09-27).
 The native host has no network code at all. `scribe-app` holds exactly ONE
-network-capable module, the read-only Cliniko client (`cliniko_client.py`,
-flow 18): HTTPS `GET` to `api.<shard>.cliniko.com` only. What enforces that:
+network-capable module, the Cliniko client (`cliniko_client.py`, flow 18):
+HTTPS to `api.<shard>.cliniko.com` only, as a `GET` with no body or — since
+the cliniko-draft-write plan — ONE kind of write, a `PATCH` of a
+`{"content": {...}}` body to `/v1/treatment_notes/<id>` that fills an open
+draft note (the transport refuses every other shape before connecting). What enforces that:
 ruff's import bans (`socket`, `http`, `urllib.request`, `PySide6.QtNetwork`)
 with exactly one exemption, on that module's `http.client` import, and a test
 that no other module imports a network module (both in
@@ -22,13 +25,15 @@ source check sees — the named residue). What the process does at runtime is
 pinned separately: `desktop/tests/test_integration_no_sockets.py` asserts zero
 connections from the host, from `scribe-app` at startup and idle, and during
 capture, transcription and prose generation, and the offline env
-kill-switches (flow 7) keep the ML stack off the network. The client has two
+kill-switches (flow 7) keep the ML stack off the network. The client has three
 app callers (flow 18): the clinic registry, on a Validate or Replace key
-pressed on the Clinics tab, and note verification (the plan's Phase 3), on a
+pressed on the Clinics tab; note verification (the safeguards plan's Phase 3), on a
 recovered or Unreviewed session opened for checkout or review whose encounter
 record names a Cliniko note, and — through the Chrome bridge (flow 19) — on a
 note report from the focused Chrome tab and on a new pipe connection under a
-linked live session; each runs on a practitioner action or a Chrome report,
+linked live session; and the draft write, on the Note tab's "Write draft to
+Cliniko" click only (its reads, then its one `PATCH`); each runs on a
+practitioner action or a Chrome report,
 never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
 running app, the model-setup script and the one-off pinned prose-runtime
 wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
@@ -41,7 +46,7 @@ rendering the language model does (flow 17).
 |---|---|---|
 | Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid`; host access `https://*.cliniko.com/*` only, no `tabs` permission |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the read-only Cliniko client (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the Cliniko client — reads and the one draft write (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 | Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
@@ -80,7 +85,8 @@ rendering the language model does (flow 17).
    Cliniko has validated them, deleted by the tab's Remove, overwritten by
    its Replace key. A Validate or Replace key reads the TYPED key (never
    this store); note verification (Phase 3) reads the stored one, once per
-   logical call, on its worker thread. Either way the client's own references go when the call
+   logical call, on its worker thread, and so does the draft write, once
+   per hop — twice per Write click (flow 18). Either way the client's own references go when the call
    ends — in memory only, and a still-live exception from the call keeps its
    frames (and so the key or token) referenced until it is dropped (flow 18).
 
@@ -257,9 +263,15 @@ rendering the language model does (flow 17).
     stores; see the retention schedule).
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3), and the app never
-    logs the note and never writes it outside the encrypted store — with ONE
-    exception the app does not hold: the clinician-initiated Copy below, whose
-    clipboard copy outlives the review. Copy-to-Cliniko ships enabled since the
+    logs the note and never writes it outside the encrypted store — with TWO
+    exceptions, both the clinician's own action on a ratified note: the Copy
+    below, whose clipboard copy outlives the review and which the app does
+    not hold; and, for a linked recording, "Write draft to Cliniko", which
+    sends the note's text to Cliniko's API as the content of the open draft
+    treatment note (flow 18), after which Cliniko holds it. The write keeps a
+    record of its own beside `note.enc`, `write.enc` (ids and digests only,
+    flow 18), and a Complete after a confirmed write also removes the session
+    directory after the key. Copy-to-Cliniko ships enabled since the
     practitioner's 2026-09-27 decision and is offered only for a fully ratified
     note; the copied text goes to the Windows clipboard by the clinician's own
     action and is outside the app's custody from there. Since Task 8.2 every
@@ -533,23 +545,32 @@ rendering the language model does (flow 17).
     tripwire markers), and no socket is opened — pinned by the prose legs of
     `desktop/tests/test_integration_no_sockets.py`.
 
-18. **Cliniko API reads (Cliniko workflow safeguards plan, D9; client BUILT
-    at Task 1.1, 2026-09-27; memory only).** `scribe-app` → HTTPS `GET` →
+18. **Cliniko API reads and the one draft write (Cliniko workflow safeguards
+    plan, D9; client BUILT at Task 1.1, 2026-09-27; the draft write BUILT by
+    the cliniko-draft-write plan, 2026-09-29; memory only, except the write's
+    own record `write.enc`).** `scribe-app` → HTTPS →
     `https://api.<shard>.cliniko.com/v1/...` through `cliniko_client.py`, the
-    app's one network-capable module. Resources: `/user`,
+    app's one network-capable module. Reads (`GET`, no body): `/user`,
     `/practitioners?q[]=user_id:=<id>`, `/settings/public`, `/settings`,
-    `/treatment_notes/<id>`, `/patients/<id>`, `/bookings/<id>` — reads only;
-    the transport refuses any method but `GET` and the module has no write
-    method. WHAT LEAVES the machine: the clinic's API key (HTTP Basic
+    `/treatment_notes/<id>`, `/patients/<id>`, `/bookings/<id>`,
+    `/treatment_note_templates/<id>`. The ONE write: `PATCH
+    /treatment_notes/<id>` with a JSON body whose only top-level key is
+    `content` (THE DRAFT WRITE below); the transport refuses every other
+    method, path, body and header set before connecting. WHAT LEAVES the machine: the clinic's API key (HTTP Basic
     username, inside TLS), the requested ids in the path (digits only,
-    validated), and the practitioner's contact email in the required
+    validated), the practitioner's contact email in the required
     `User-Agent: Clinic Scribe (<email>)` (refused on CR/LF or a failed shape
-    check). WHAT RETURNS: the key user's role and practitioner record, the
-    account subdomain, and for a note its draft state, links (patient,
-    practitioner, booking, template) and content, the patient's record (the
-    display name) and the booking's time. Every answer is held in memory
-    only: the client writes nothing, logs nothing and returns the parsed JSON
-    object to its caller; only a 200's body is read (any other status is
+    check), and — for a write only — the draft's content: the note's own
+    re-read content with the ratified note's text in the matched answers.
+    WHAT RETURNS: the key user's role and practitioner record, the
+    account subdomain, for a note its draft state, links (patient,
+    practitioner, booking, template) and content, a template's sections,
+    questions and default answers, the patient's record (the
+    display name) and the booking's time; for a write, a status (and
+    Cliniko's echo of the note, which nothing keeps). Every answer is held in memory
+    only: the client writes nothing to disk, logs nothing and returns the parsed JSON
+    object to its caller; only a 200's body is read — and, for the write, a
+    422's, reduced at once to fixed field-name categories (any other status is
     classified from its status line and headers), and a body over 1 MiB is
     refused unread past 1 MiB + 1 byte. Controls (threat-model "Cliniko API
     client"): the host only from a documented shard (an unknown or missing
@@ -560,10 +581,13 @@ rendering the language model does (flow 17).
     at startup and refused, the key read once per logical call and never in a
     log line, the client's state, or any exception's rendered text (message,
     repr, formatted traceback) — a still-live exception from the call does
-    keep its frames, and so the key or Basic token, the path, ids and
-    response bytes, referenced in memory until it is dropped (threat-model
-    residue (6)). CALLERS: `clinics.py` and `encounter.py` are the only app
-    modules that import the client (pinned by `test_cliniko_client.py`). A Validate or Replace
+    keep its frames, and so the key or Basic token, the path, ids,
+    response bytes and, for the write, the draft it was sending, referenced
+    in memory until it is dropped (threat-model residue (6)). CALLERS:
+    `clinics.py`, `draft_write.py` and `encounter.py` are the only app
+    modules that import the client, each confined to the client names and
+    methods pinned for it (`test_cliniko_client.py` `TestConfinement`,
+    `TestWriteCallSites`). A Validate or Replace
     key on the Clinics tab is ONE client call on a worker thread, with the
     key the practitioner just typed: `GET /user`, `GET /practitioners` for
     that user and `GET /settings/public`. What it keeps: on success, the
@@ -593,7 +617,10 @@ rendering the language model does (flow 17).
     is dropped when the checkout ends. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
     same client that prints structure only — never a name, id value, answer
-    text or the key. Since Task 4.5 the Chrome bridge (flow 19) is a second
+    text or the key; with no argument it only reads, and its separately
+    typed `--test-write` / `--test-write-final` modes (the draft-write plan's
+    Task P.1, run once per clinic on a dummy patient's note) write a test
+    marker through the client's own write method, after a typed `yes`. Since Task 4.5 the Chrome bridge (flow 19) is a second
     trigger for the same call: a note report from the bound Chrome tab on an
     allow-listed host, and — once per new pipe connection — the linked live
     session's own note; the display value then reaches the pipe's `state`
@@ -602,7 +629,38 @@ rendering the language model does (flow 17).
     429 that clinic's bridge checks (Chrome reports, a reconnect's re-check,
     a clinic change) make no call and read `unverified_offline` until the
     note is checked again (round 57 SEC-009) — fewer calls, never a new
-    trigger.
+    trigger. That 60 s cooldown is one per-clinic latch shared with the
+    checkout re-verification and the draft write (draft-write D13): a 429 any
+    of the three sees makes the others wait too.
+    THE DRAFT WRITE (cliniko-draft-write plan; threat model, "THE DRAFT
+    WRITE"). Trigger: ONLY the Note tab's "Write draft to Cliniko" click on a
+    saved, ratified note of a LINKED recording (live, or an Unreviewed one
+    opened for review) — never at startup, idle, on a timer, a reconnect or a
+    clinic change; a desktop-started (unlinked) recording and a note from the
+    test provider never write. Per click, two client calls on worker
+    threads, each reading the clinic's key from Credential Manager once:
+    hop 1 — a discovery `GET` of the note only when the linked context has no
+    template id, then `GET /treatment_note_templates/<id>`, then the final
+    `GET /treatment_notes/<id>` (the click's own verification of the note);
+    hop 2 — the `PATCH`. In between, on the GUI thread, the app matches the
+    template, checks every matched question still holds only its declared
+    starting text (the clinic's setting: the template's own default answers,
+    or the practitioner's own defaults file — flow 21), builds the body from
+    the re-read content with only the matched answers replaced, and writes
+    the `attempting` record. What it KEEPS: in memory, for that click only —
+    the template and the note's re-read content until the body is built, the
+    body until hop 2 returns; nothing of Cliniko's answers is logged or
+    written. At rest, `sessions\<id>\write.enc` — one document under the
+    session key (AES-256-GCM, AAD `write:<session_id>`), rewritten atomically
+    at each step: the attempt number and times, the template profile's
+    target ids, a SHA-256 of the saved note, a SHA-256 of each written
+    answer's normalised text and of where it was written, the body's SHA-256
+    and the outcome (`attempting` / `written` / `refused` + reason /
+    `unknown`) — ids and digests only, never note text, a Cliniko answer or
+    a Cliniko id. It lives and dies with its session (retention schedule).
+    After the clinician has seen the written draft in Chrome and pressed
+    Complete, the session's key is destroyed and its directory removed, so
+    the draft in Cliniko is the only copy.
 
 19. **Native host ↔ `scribe-app` over a named pipe (Cliniko workflow
     safeguards plan D2/D4; BUILT at Tasks 4.1, 4.2, 4.4 and 4.5,
@@ -728,12 +786,39 @@ rendering the language model does (flow 17).
     and a Cliniko page can see the page script's own element and detect the
     installed extension through its web-accessible module (residue (2)).
 
+21. **Own template defaults → the draft write (cliniko-draft-write plan,
+    D14; BUILT 2026-09-29; local read only, plaintext, practitioner-authored,
+    INTENDED non-clinical — unenforced).** For a clinic the practitioner has
+    switched to "My own defaults" on the Clinics tab, `scribe-app` reads
+    `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\<clinic host>.json`
+    — a file the PRACTITIONER creates and edits by hand
+    (`docs/own-template-defaults.md`) — through
+    `note_config.load_own_template_defaults`, on the GUI thread, at two
+    moments only: each "Write draft to Cliniko" click (after hop 1, fresh for
+    that click) and each "Check file" press on the Clinics tab. It is never
+    read at startup, on a selection or on a timer, and the app never writes
+    the file or creates its folder. The read is bounded (64 KiB), refuses
+    duplicate keys, control characters and over-long names, and fails
+    CLOSED with a named problem (missing, unreadable, too large, not valid);
+    a `not_valid` location names the file's own KEYS only (escaped, clipped),
+    never a default text, and is shown only on the Clinics tab. What it
+    feeds: the starting text each matched question may still hold for the
+    write to go ahead (flow 18) — compared in memory, never written, logged
+    or sent. It is a TRUST input: an entry equal to text the clinician typed
+    in Cliniko lets the write replace that text, and "non-clinical prompt
+    text only" is a policy the loader cannot check (threat model, THE DRAFT
+    WRITE residue (e)). Under "Cliniko template" (the default) the file is
+    not read at all. The choice itself is one field of `clinics.json`,
+    `default_source`, written only while it is "My own defaults".
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
   clinical artifacts this app produces (audio, transcripts, and the composed
   note `note.enc`, flow 10) exist on disk ONLY encrypted under per-session keys
-  inside `sessions\<id>\`. Config files (flow 11) are a SEPARATE,
+  inside `sessions\<id>\`, beside `encounter.enc` (ids, flow 6) and the draft
+  write's record `write.enc` (ids and digests, flow 18). Config files (flow
+  11) and the practitioner's own template-defaults files (flow 21) are a SEPARATE,
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
   semantically (it validates structure only), so it is NOT a content guarantee —
@@ -764,7 +849,8 @@ rendering the language model does (flow 17).
   "Confirm consent" re-saving the same profile with a current consent record
   (content untouched; codex round 31 PR-LOW-048).
 - No network traffic from either desktop process at runtime EXCEPT
-  `scribe-app`'s read-only calls to Cliniko's API (flow 18), and none at
+  `scribe-app`'s calls to Cliniko's API (flow 18) — reads, and the one draft
+  write, which follows only a "Write draft to Cliniko" click — and none at
   startup or idle — a call follows only a practitioner action, a note
   report from Chrome, or a new Chrome link connection while a LINKED
   recording is in progress (its own note is re-checked, with or without a

@@ -61,6 +61,15 @@ from scribe_desktop.audio_capture import (
     CaptureBackend,
     CaptureWorker,
 )
+from scribe_desktop.draft_write import (
+    RECORD_UNREADABLE,
+    RecordUnreadable,
+    WriteRecord,
+    WriteRecordStatus,
+    WriteRecordUnreadable,
+    parse_write_record,
+    record_status,
+)
 from scribe_desktop.encounter import (
     ConsentAttestation,
     EncounterContext,
@@ -78,6 +87,7 @@ from scribe_desktop.session_store import (
     TRANSCRIPT_FILENAME,
     KeyCustodyError,
     SessionChunkStore,
+    SessionStoreError,
     StoreWriteError,
     # Package-private by name, shared deliberately (the note.py convention):
     # the round-30 reserved-target guard must resolve session identity with
@@ -87,8 +97,11 @@ from scribe_desktop.session_store import (
     complete_session,
     default_sessions_root,
     discard_session,
+    read_write_record,
+    saved_note_identity,
     unwrap_key_from_file,
     wrap_key_to_file,
+    write_write_record,
 )
 from scribe_desktop.transcription import LiveFailure, LiveTranscriber
 
@@ -189,6 +202,48 @@ def _tee_sink(
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def load_write_record(
+    session_dir: Path, crypto: SessionCrypto, session_id: str
+) -> WriteRecord | None:
+    """The session's ``write.enc`` decoded (draft-write Task 3.3), or None
+    when there is none. A file that exists but cannot be decrypted or
+    parsed raises ``WriteRecordUnreadable`` — never None, so an unreadable
+    record can never read as "no write happened"."""
+    try:
+        plaintext = read_write_record(session_dir, crypto, session_id)
+    except (SessionStoreError, RuntimeError, ValueError):
+        raise WriteRecordUnreadable() from None
+    return None if plaintext is None else parse_write_record(plaintext)
+
+
+def store_write_record(
+    session_dir: Path, crypto: SessionCrypto, session_id: str, record: WriteRecord
+) -> None:
+    """Writes the record encrypted under the session key (AAD
+    ``write:<id>``, atomic + fsync through ``session_store``)."""
+    write_write_record(session_dir, crypto, session_id, record.to_bytes())
+
+
+def read_write_record_status(
+    session_dir: Path, crypto: SessionCrypto, session_id: str
+) -> WriteRecordStatus:
+    """The content-free status of the session's write record plus whether
+    it belongs to the saved note now on disk. An unreadable record is its
+    own status (never "none"); an unreadable saved note leaves
+    ``note_matches`` False."""
+    record: WriteRecord | RecordUnreadable | None
+    try:
+        record = load_write_record(session_dir, crypto, session_id)
+    except WriteRecordUnreadable:
+        record = RECORD_UNREADABLE
+    identity: str | None
+    try:
+        identity = saved_note_identity(session_dir, crypto)
+    except (SessionStoreError, RuntimeError, ValueError):
+        identity = None
+    return record_status(record, identity)
 
 
 class RecordingSession(BaseModel):
@@ -369,7 +424,9 @@ class WriteReservation:
     D9): acquired by ``SessionController.reserve_write`` on the GUI thread
     BEFORE the write's first worker is dispatched, held across both hops and
     the GUI-thread steps between them, and released by the result handler
-    (``release``) — or consumed by the write's completion (Task 4.2). While
+    (``release``). Seen mode (D6) takes a SECOND, momentary token at the
+    Complete click after a confirmed write: ``complete_after_write``
+    consumes it, or the click releases it when completion refuses. While
     held, the session's custody reservation refuses every custody-changing
     operation (``WriteInFlightError``). Compared by IDENTITY: an equal-looking
     token built elsewhere is never the held one. ``release`` is idempotent,
@@ -636,6 +693,19 @@ class SessionController:
             if live is not None and live.session.state in ACTIVE_STATES:
                 return frozenset({live.session.session_id})
             return frozenset()
+
+    def live_session_ids(self) -> frozenset[str]:
+        """The tracked session's id in ANY state, or empty (SIMP-016: the
+        reference prune keeps the live session's reference)."""
+        with self._lock:
+            live = self._live
+            return frozenset({live.session.session_id}) if live is not None else frozenset()
+
+    def referenced_session_ids(self) -> frozenset[str]:
+        """Every session id the reference registry names (SIMP-016: what the
+        reference prune may drop — ``MainWindow.prune_session_refs``)."""
+        with self._lock:
+            return frozenset(self._session_refs.values())
 
     # --- controls ----------------------------------------------------------
 
@@ -1494,7 +1564,10 @@ class SessionController:
     def reserve_write(self, session_id: str) -> WriteReservation:
         """Reserve the QUEUED live session ``session_id`` for ONE Cliniko
         draft write — on the GUI thread, BEFORE the write's first worker is
-        dispatched. The reservation is the existing counted custody
+        dispatched — or, momentarily, for the seen-mode Complete after a
+        confirmed write (D6: ``complete_after_write`` consumes it, or the
+        Complete click releases it on a refusal). The reservation is the
+        existing counted custody
         reservation (``_custody_reservations``) plus the ``_writing_id``
         marker. The REFUSAL comes from the marker: while it is set, ``start``,
         ``discard``, ``complete``, ``complete_deleting_saved_note``,
@@ -1537,9 +1610,16 @@ class SessionController:
         with self._lock:
             if self._write_reservation is not reservation or self._writing_id is None:
                 return
+            self._release_write_locked()
+
+    def _release_write_locked(self) -> None:
+        """Call under ``self._lock`` with a write reservation held: drop its
+        counted custody entry and its marker TOGETHER (the release and the
+        completion's consumption share this one body)."""
+        if self._writing_id is not None:
             self._release_custody_locked(self._writing_id)
-            self._write_reservation = None
-            self._writing_id = None
+        self._write_reservation = None
+        self._writing_id = None
 
     def writing_session_id(self) -> str | None:
         """The session a draft write holds, or None — for the UI's
@@ -1573,6 +1653,86 @@ class SessionController:
             directory = live.directory
             crypto = live.crypto
         return action(directory, crypto)
+
+    def complete_after_write(self, reservation: WriteReservation) -> RecordingSession:
+        """Complete the QUEUED live session after a CONFIRMED Cliniko draft
+        write (D6, seen mode): the clinician pressed Complete once the draft
+        showed in Cliniko. ``reservation`` is the one the Complete click took
+        through ``reserve_write`` (the write's own was released when its
+        result was recorded).
+
+        Everything runs under ONE hold of the lock, so no other custody
+        action slots in between the checks, the key's destruction and the
+        release: the reservation must be the HELD one and name the live
+        QUEUED session (a write held for another session refuses
+        ``WriteInFlightError``); no other custody reservation may be held;
+        the write record must read ``written`` AND belong to the saved note
+        now on disk (its ``note_identity``, D5 — a record of an earlier note
+        never completes a later one). Then ``complete_session``'s ordering
+        (fsync -> decrypt-verify the transcript and note -> delete
+        ``key.dpapi`` -> zero the in-memory key) and the directory removed
+        best-effort after the key; the session goes WRITTEN, which forgets
+        its references (D2), and the reservation is consumed.
+
+        Any refusal or verification failure raises with the key, the record,
+        the QUEUED state AND the reservation kept — the CALLER releases it
+        (the Transcript screen's ``_complete_after_write``), so a failed Complete
+        can be retried with a fresh reservation. A failed directory removal
+        after the key is not a failure: the keyless directory is an orphan
+        the recovery list skips and the sweep removes."""
+        with self._lock:
+            self._refuse_while_generating("complete")
+            if self._write_reservation is not reservation:
+                if self._writing_id is not None:
+                    raise WriteInFlightError("complete")
+                raise SessionActivityError(
+                    "complete after a write requires the held write reservation"
+                )
+            session_id = reservation.session_id
+            if self._custody_reservations != {session_id: 1}:
+                raise SessionActivityError(
+                    "a discard is completing; the session cannot be completed"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            if live.session.session_id != session_id:
+                raise SessionActivityError(
+                    "complete after a write refused: the reserved session is not the live one"
+                )
+            status = read_write_record_status(live.directory, live.crypto, session_id)
+            if status.outcome != "written":
+                raise SessionActivityError(
+                    "complete after a write refused: the Cliniko write is not confirmed"
+                )
+            if not status.note_matches:
+                raise SessionActivityError(
+                    "complete after a write refused: the write record does not match "
+                    "the saved note (or the saved note cannot be read)"
+                )
+            if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
+                self._refuse_uncleared_live("complete")
+            complete_session(live.directory, live.crypto, remove_directory=True)
+            self._transition_locked(live, SessionState.WRITTEN)  # forgets its refs
+            self._release_write_locked()
+            session = live.session
+            self._live = None
+            return session
+
+    def write_record_status(self, session_id: str) -> WriteRecordStatus:
+        """The live session's Cliniko write record, CONTENT-FREE (D5, R22-03):
+        ``none`` when it has no ``write.enc``, ``unreadable`` when it cannot
+        be read, else its outcome and whether it belongs to the saved note.
+        THE accessor every consumer outside the write uses (the Complete
+        routing, the Write button's state on a reopen, the ``write_uncertain``
+        prefix, ``record_unreadable`` and the ``write_pending`` refusal);
+        read under the lock, reserving nothing. ``SessionActivityError``
+        unless ``session_id`` is the live session (only it has a key here)."""
+        with self._lock:
+            live = self._live
+            if live is None or live.session.session_id != session_id:
+                raise SessionActivityError(
+                    "write record status refused: that session is not the live one"
+                )
+            return read_write_record_status(live.directory, live.crypto, session_id)
 
     def _refuse_while_writing(self, operation: str) -> None:
         """Call under ``self._lock``."""

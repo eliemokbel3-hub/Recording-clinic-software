@@ -8,6 +8,8 @@ platform-neutral."""
 
 from __future__ import annotations
 
+import dataclasses
+import hashlib
 import re
 import sys
 import threading
@@ -22,6 +24,7 @@ from conftest import start_unlinked
 from encounter_fakes import NOW, consent_for
 from encounter_fakes import context as enc_context
 from scribe_desktop.audio_capture import DeviceLostError, MockCaptureBackend
+from scribe_desktop.draft_write import WriteRecord, WriteRecordStatus, WriteRecordUnreadable
 from scribe_desktop.encounter import (
     ConsentAttestation,
     EncounterRecord,
@@ -44,6 +47,8 @@ from scribe_desktop.session import (
     SessionState,
     WriteInFlightError,
     WriteReservation,
+    load_write_record,
+    store_write_record,
 )
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -51,12 +56,14 @@ from scribe_desktop.session_store import (
     KEY_FILENAME,
     NOTE_FILENAME,
     TRANSCRIPT_FILENAME,
+    WRITE_RECORD_FILENAME,
     SessionChunkStore,
     StoreCorruptError,
     StoreWriteError,
     iter_chunks,
     sweep_sessions,
     unwrap_key_from_file,
+    write_write_record,
 )
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI custody is Windows-only")
@@ -1276,6 +1283,363 @@ class TestWriteReservation:
             controller.with_write_custody(reservation, lambda d, c: None)
 
 
+_SAVED_NOTE = b'{"note": "the saved note.enc plaintext"}'
+_SAVED_IDENTITY = hashlib.sha256(_SAVED_NOTE).hexdigest()
+
+
+def _write_record(outcome: Any, *, identity: str = _SAVED_IDENTITY) -> WriteRecord:
+    return WriteRecord(
+        attempt=1,
+        started_at=NOW,
+        target_ids=("diagnosis",),
+        note_identity=identity,
+        digests={"diagnosis": "0" * 64},
+        match_sha256="2" * 64,
+        body_sha256="1" * 64,
+        outcome=outcome,
+        refusal="note_not_found" if outcome == "refused" else None,
+        finished_at=None if outcome == "attempting" else NOW,
+    )
+
+
+@windows_only
+class TestWriteRecordStatus:
+    """Cliniko draft-write Task 3.3: ``write_record_status`` — THE
+    content-free accessor for the live session's ``write.enc`` — and the
+    record's load/store through the write's scoped custody."""
+
+    def _queued(self, tmp_path: Path) -> tuple[SessionController, Path, str]:
+        controller, _backend = _controller(tmp_path)
+        session = start_unlinked(controller)
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(_SAVED_NOTE))
+        return controller, session_dir, session.session_id
+
+    def _store(self, controller: SessionController, session_id: str, record: WriteRecord) -> None:
+        reservation = controller.reserve_write(session_id)
+        try:
+            controller.with_write_custody(
+                reservation, lambda d, c: store_write_record(d, c, session_id, record)
+            )
+        finally:
+            reservation.release()
+
+    def test_no_record_is_none(self, tmp_path: Path) -> None:
+        controller, _dir, session_id = self._queued(tmp_path)
+        assert controller.write_record_status(session_id) == WriteRecordStatus("none")
+        controller.discard()
+
+    @pytest.mark.parametrize("outcome", ["attempting", "unknown", "refused", "written"])
+    def test_each_outcome_reads_back_for_this_saved_note(
+        self, tmp_path: Path, outcome: str
+    ) -> None:
+        controller, _dir, session_id = self._queued(tmp_path)
+        self._store(controller, session_id, _write_record(outcome))
+        status = controller.write_record_status(session_id)
+        assert (status.outcome, status.note_matches) == (outcome, True)
+        assert status.refusal == ("note_not_found" if outcome == "refused" else None)
+        assert status.written is (outcome == "written")
+        assert status.open_attempt is (outcome in ("attempting", "unknown"))
+        controller.discard()
+
+    def test_a_record_of_another_saved_note_does_not_match(self, tmp_path: Path) -> None:
+        controller, session_dir, session_id = self._queued(tmp_path)
+        other = hashlib.sha256(b"another note").hexdigest()
+        self._store(controller, session_id, _write_record("written", identity=other))
+        status = controller.write_record_status(session_id)
+        assert status.outcome == "written" and not status.note_matches and not status.written
+        (session_dir / NOTE_FILENAME).unlink()  # no saved note: never a match
+        self._store(controller, session_id, _write_record("written"))
+        assert not controller.write_record_status(session_id).note_matches
+        controller.discard()
+
+    @pytest.mark.parametrize("blob", [b"garbage", b""])
+    def test_an_unreadable_record_is_its_own_status(self, tmp_path: Path, blob: bytes) -> None:
+        controller, session_dir, session_id = self._queued(tmp_path)
+        (session_dir / WRITE_RECORD_FILENAME).write_bytes(blob)
+        assert controller.write_record_status(session_id) == WriteRecordStatus("unreadable")
+        controller.discard()
+
+    def test_an_authentic_record_that_is_not_the_schema_is_unreadable(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_dir, session_id = self._queued(tmp_path)
+        crypto = unwrap_key_from_file(session_dir)
+        write_write_record(session_dir, crypto, session_id, b'{"outcome": "written"}')
+        assert controller.write_record_status(session_id).outcome == "unreadable"
+        with pytest.raises(WriteRecordUnreadable):
+            load_write_record(session_dir, crypto, session_id)
+        controller.discard()
+
+    def test_the_status_carries_no_content(self) -> None:
+        assert [f.name for f in dataclasses.fields(WriteRecordStatus)] == [
+            "outcome",
+            "note_matches",
+            "refusal",
+        ]
+
+    def test_only_the_live_session_is_answered(self, tmp_path: Path) -> None:
+        controller, _backend = _controller(tmp_path)
+        with pytest.raises(SessionActivityError, match="not the live one"):
+            controller.write_record_status("a" * 32)
+        session = start_unlinked(controller)
+        with pytest.raises(SessionActivityError, match="not the live one"):
+            controller.write_record_status("b" * 32)
+        assert controller.write_record_status(session.session_id).outcome == "none"
+        controller.discard()
+
+    def test_the_record_round_trips_through_the_scoped_custody(self, tmp_path: Path) -> None:
+        controller, _dir, session_id = self._queued(tmp_path)
+        record = _write_record("unknown")
+        self._store(controller, session_id, record)
+        reservation = controller.reserve_write(session_id)
+        loaded = controller.with_write_custody(
+            reservation, lambda d, c: load_write_record(d, c, session_id)
+        )
+        reservation.release()
+        assert loaded == record
+        controller.discard()
+
+
+def _completable_note(session_id: str) -> bytes:
+    """A saved-note plaintext that passes Complete's note verification for
+    ``session_id`` over the ``b"transcript"`` transcript."""
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    return GeneratedNote(
+        session_id=session_id,
+        created_at=NOW,
+        template_profile_id="clinic-a",
+        provider_name="extractive-v1",
+        transcript_digest=digest_bytes(b"transcript"),
+        config_digest=digest_bytes(b"config"),
+    ).to_bytes()
+
+
+@windows_only
+class TestCompleteAfterWrite:
+    """Cliniko draft-write D6 (Task 4.2, seen mode): ``complete_after_write``
+    completes the QUEUED live session only under the HELD write reservation,
+    only when the write record reads ``written`` for the saved note now on
+    disk, keeps the key (and the reservation, for the caller to release) on
+    any refusal or failed verification, and on success removes the key, then
+    the directory, forgets the refs and consumes the reservation — all under
+    one hold of the lock."""
+
+    def _queued(
+        self, tmp_path: Path, outcome: str | None = "written"
+    ) -> tuple[SessionController, Path, str, str]:
+        controller, _backend = _controller(tmp_path)
+        session = start_unlinked(controller)
+        ref = controller.session_ref
+        assert ref is not None
+        session_dir = tmp_path / session.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(session_dir)
+        (session_dir / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+        note = _completable_note(session.session_id)
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(note))
+        if outcome is not None:
+            identity = hashlib.sha256(note).hexdigest()
+            reservation = controller.reserve_write(session.session_id)
+            controller.with_write_custody(
+                reservation,
+                lambda d, c: store_write_record(
+                    d, c, session.session_id, _write_record(outcome, identity=identity)
+                ),
+            )
+            reservation.release()
+        return controller, session_dir, session.session_id, ref
+
+    def _assert_kept(
+        self, controller: SessionController, session_dir: Path, session_id: str
+    ) -> None:
+        assert controller.state is SessionState.QUEUED
+        current = controller.session
+        assert current is not None and current.session_id == session_id
+        assert (session_dir / KEY_FILENAME).is_file()
+        assert (session_dir / WRITE_RECORD_FILENAME).is_file()
+        assert (session_dir / NOTE_FILENAME).is_file()
+
+    def test_completes_removes_the_directory_forgets_refs_and_consumes(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_dir, session_id, ref = self._queued(tmp_path)
+        reservation = controller.reserve_write(session_id)
+        crypto = controller.with_write_custody(reservation, lambda d, c: c)
+        session = controller.complete_after_write(reservation)
+        assert session.state is SessionState.WRITTEN and session.session_id == session_id
+        assert controller.session is None
+        assert not session_dir.exists()
+        assert crypto.destroyed
+        assert controller.resolve_session_ref(ref) is None
+        assert session_id not in controller.referenced_session_ids()
+        assert controller.writing_session_id() is None
+        assert controller.reserved_session_ids() == frozenset()
+        reservation.release()  # consumed: a no-op
+        assert controller.reserved_session_ids() == frozenset()
+
+    def test_the_reservation_is_held_until_the_key_and_directory_are_gone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """No release-then-complete gap: while the completion ordering runs,
+        the write reservation still protects the session; the release comes
+        after it, in the same hold of the lock."""
+        from scribe_desktop import session as session_mod
+
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        real = session_mod.complete_session
+        seen: list[tuple[str | None, frozenset[str], bool]] = []
+
+        def observed(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> None:
+            assert kwargs == {"remove_directory": True}
+            real(directory, crypto, **kwargs)
+            seen.append(
+                (
+                    controller.writing_session_id(),
+                    controller.reserved_session_ids(),
+                    directory.exists(),
+                )
+            )
+
+        monkeypatch.setattr(session_mod, "complete_session", observed)
+        reservation = controller.reserve_write(session_id)
+        controller.complete_after_write(reservation)
+        assert seen == [(session_id, frozenset({session_id}), False)]
+        assert not session_dir.exists()
+        assert controller.writing_session_id() is None
+
+    def test_refused_without_the_held_reservation(self, tmp_path: Path) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        forged = WriteReservation(controller, session_id)
+        with pytest.raises(SessionActivityError, match="held write reservation"):
+            controller.complete_after_write(forged)
+        released = controller.reserve_write(session_id)
+        released.release()
+        with pytest.raises(SessionActivityError, match="held write reservation"):
+            controller.complete_after_write(released)
+        self._assert_kept(controller, session_dir, session_id)
+        controller.discard()
+
+    def test_refused_by_name_while_another_token_is_held(self, tmp_path: Path) -> None:
+        """D9: ``complete_after_write`` for another id (or with a stale token)
+        while a write is reserved is refused as write-in-flight."""
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        held = controller.reserve_write(session_id)
+        tokens = (WriteReservation(controller, "b" * 32), WriteReservation(controller, session_id))
+        for token in tokens:
+            with pytest.raises(WriteInFlightError, match="complete"):
+                controller.complete_after_write(token)
+        assert controller.writing_session_id() == session_id
+        self._assert_kept(controller, session_dir, session_id)
+        held.release()
+        controller.discard()
+
+    @pytest.mark.parametrize("outcome", [None, "attempting", "unknown", "refused"])
+    def test_refused_unless_the_record_reads_written(
+        self, tmp_path: Path, outcome: str | None
+    ) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path, outcome)
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(SessionActivityError, match="not confirmed"):
+            controller.complete_after_write(reservation)
+        assert controller.writing_session_id() == session_id  # the CALLER releases
+        reservation.release()
+        assert controller.state is SessionState.QUEUED
+        assert (session_dir / KEY_FILENAME).is_file()
+        controller.discard()
+
+    def test_refused_for_an_unreadable_record(self, tmp_path: Path) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        (session_dir / WRITE_RECORD_FILENAME).write_bytes(b"garbage")
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(SessionActivityError, match="not confirmed"):
+            controller.complete_after_write(reservation)
+        reservation.release()
+        self._assert_kept(controller, session_dir, session_id)
+        controller.discard()
+
+    def test_refused_when_the_record_belongs_to_another_saved_note(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        crypto = unwrap_key_from_file(session_dir)
+        other = _completable_note(session_id).replace(b"clinic-a", b"clinic-b")
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(other))
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(SessionActivityError, match="does not match the saved note"):
+            controller.complete_after_write(reservation)
+        reservation.release()
+        self._assert_kept(controller, session_dir, session_id)
+        controller.discard()
+
+    def test_refused_while_a_discard_reservation_is_also_held(self, tmp_path: Path) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        reservation = controller.reserve_write(session_id)
+        with controller._lock:  # noqa: SLF001 - discard() is the producer; deliberate injection
+            controller._reserve_custody_locked(session_id)  # noqa: SLF001
+        with pytest.raises(SessionActivityError, match="discard"):
+            controller.complete_after_write(reservation)
+        with controller._lock:  # noqa: SLF001
+            controller._release_custody_locked(session_id)  # noqa: SLF001
+        reservation.release()
+        self._assert_kept(controller, session_dir, session_id)
+        controller.discard()
+
+    def test_refused_while_a_live_worker_is_not_confirmed_cleared(self, tmp_path: Path) -> None:
+        """Round 31 LOW-006 — PR-MED-017's Complete shape: a live worker still
+        attached that cannot be confirmed cleared refuses the completion; the
+        key, the record and the reservation stay (the caller releases), and
+        once it stops the same completion succeeds."""
+
+        class _StuckWorker:
+            cleared = False
+
+            def stop(self, timeout: float | None = None) -> bool:
+                return self.cleared
+
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        worker = _StuckWorker()
+        with controller._lock:  # noqa: SLF001 - no shipped path leaves one at QUEUED
+            live = controller._live  # noqa: SLF001
+            assert live is not None
+            live.live_transcriber = worker  # type: ignore[assignment]
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(SessionActivityError, match="has not stopped yet"):
+            controller.complete_after_write(reservation)
+        assert controller.writing_session_id() == session_id  # the CALLER releases
+        reservation.release()
+        self._assert_kept(controller, session_dir, session_id)
+        worker.cleared = True
+        retry = controller.reserve_write(session_id)
+        assert controller.complete_after_write(retry).state is SessionState.WRITTEN
+        assert not session_dir.exists()
+
+    def test_a_failed_verification_keeps_the_key_and_a_retry_succeeds(
+        self, tmp_path: Path
+    ) -> None:
+        controller, session_dir, session_id, _ref = self._queued(tmp_path)
+        transcript = session_dir / TRANSCRIPT_FILENAME
+        good = transcript.read_bytes()
+        corrupt = bytearray(good)
+        corrupt[-1] ^= 0xFF  # flip a GCM tag byte
+        transcript.write_bytes(bytes(corrupt))
+        reservation = controller.reserve_write(session_id)
+        with pytest.raises(StoreCorruptError):
+            controller.complete_after_write(reservation)
+        assert controller.writing_session_id() == session_id
+        reservation.release()
+        self._assert_kept(controller, session_dir, session_id)
+        transcript.write_bytes(good)
+        retry = controller.reserve_write(session_id)
+        assert controller.complete_after_write(retry).state is SessionState.WRITTEN
+        assert not session_dir.exists()
+
+
 @windows_only
 class TestCompleteWithoutNote:
     """Task 7.1 delete-note-and-complete-without-one, at the controller —
@@ -1661,6 +2025,31 @@ class TestSessionRefs:
         start_unlinked(controller)
         assert controller.resolve_session_ref("not-a-ref") is None
         controller.discard()
+
+    def test_live_and_referenced_session_ids(self, tmp_path: Path) -> None:
+        """SIMP-016's two reads: the live session's id in any state, and
+        every id the registry names (retired and registered ones included)."""
+        controller, _ = _controller(tmp_path)
+        assert controller.live_session_ids() == frozenset()
+        assert controller.referenced_session_ids() == frozenset()
+        first = start_unlinked(controller)
+        assert controller.live_session_ids() == {first.session_id}
+        assert controller.referenced_session_ids() == {first.session_id}
+        controller.finish()
+        controller.mark_queued()
+        assert controller.live_session_ids() == {first.session_id}  # QUEUED is still live
+        second = start_unlinked(controller)  # retires the first: its ref stays
+        indexed = "e" * 32
+        controller.register_session_ref(indexed)
+        assert controller.live_session_ids() == {second.session_id}
+        assert controller.referenced_session_ids() == {
+            first.session_id,
+            second.session_id,
+            indexed,
+        }
+        controller.discard()
+        assert controller.live_session_ids() == frozenset()
+        assert controller.referenced_session_ids() == {first.session_id, indexed}
 
 
 def _wait_for_seconds(controller: SessionController, expected: int) -> None:

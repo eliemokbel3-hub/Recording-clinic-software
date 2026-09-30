@@ -904,6 +904,18 @@ class TestStart:
         h.start()
         self._refused(h, "review_open")
 
+    def test_a_draft_write_in_flight_is_session_active(self, harness: Any) -> None:
+        """Draft-write D9 (Task 5.2): a Start would retire the session a
+        Cliniko write holds — refused with the EXISTING code (D2)."""
+        h = harness()
+        h.verified_report()
+        h.controller.writing_id = "held-by-a-write"
+        h.start()
+        self._refused(h, "session_active")
+        h.controller.writing_id = None
+        h.start()
+        assert len(h.controller.started_with) == 1  # the control
+
     def test_no_microphone_is_refused(self, harness: Any) -> None:
         h = harness(device=None)
         h.verified_report()
@@ -1032,6 +1044,23 @@ class TestSessionCommands:
         h.command("discard", session_ref=h.controller.session_ref, confirmed=True)
         assert ("discard",) in h.controller.calls and self._refusal(h) is None
         assert h.sender.last.live is None
+
+    def test_discard_is_refused_busy_while_a_draft_write_holds_the_session(
+        self, harness: Any
+    ) -> None:
+        """Draft-write D9 (Task 5.2): Pause still works; Discard would
+        destroy the session the write holds and is refused ``busy``."""
+        h = self._recording(harness)
+        ref = h.controller.session_ref
+        h.controller.writing_id = "held-by-a-write"
+        h.command("discard", session_ref=ref, confirmed=True)
+        assert self._refusal(h) == ("discard", "busy")
+        assert ("discard",) not in h.controller.calls
+        h.command("pause")
+        assert ("pause",) in h.controller.calls and self._refusal(h) is None
+        h.controller.writing_id = None
+        h.command("discard", session_ref=ref, confirmed=True)
+        assert ("discard",) in h.controller.calls and self._refusal(h) is None
 
     def test_open_review_without_an_index_is_not_available(self, harness: Any) -> None:
         """A bridge built without the main window's reminder index and opener
@@ -1951,6 +1980,21 @@ class TestOpenReview:
         h.command("open_review", session_ref=ref)
         assert opened == []
         assert _refusal_of(h) == ("open_review", "review_in_progress")
+
+    def test_refused_busy_while_a_draft_write_holds_the_live_session(
+        self, harness: Any
+    ) -> None:
+        """Draft-write D9 (Task 5.2): adopting would retire the session a
+        Cliniko write holds."""
+        h, index, opened = self._harness(harness)
+        session_id, ref = _indexed(h.controller, index)
+        h.controller.writing_id = "held-by-a-write"
+        h.command("open_review", session_ref=ref)
+        assert opened == []
+        assert _refusal_of(h) == ("open_review", "busy")
+        h.controller.writing_id = None
+        h.command("open_review", session_ref=ref)
+        assert opened == [session_id]
 
     @pytest.mark.parametrize(
         ("state", "refused"),

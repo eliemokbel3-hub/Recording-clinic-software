@@ -93,6 +93,11 @@ class RecoveryScreen(QWidget):
         # key reference unzeroized (the Task 6.3 recorded residue). The main
         # window sets this from the transcript screen's generation state.
         self._generation_blocked = False
+        # Draft-write D9 / Task 5.2 (PR-MED-023): the same block while a
+        # Cliniko draft write holds the live session — a recovered result
+        # would clear the writing session's Note tab, replace its transcript
+        # view or swap its completion callback. Set by the main window.
+        self._write_blocked = False
         # PR round 18 (PR1/PR2, guard-only): sessions this screen has handed
         # off — an in-flight resume-processing run or a recovered session
         # whose transcript view still holds custody callbacks. They are
@@ -238,6 +243,25 @@ class RecoveryScreen(QWidget):
         self._generation_blocked = blocked
         self._update_controls()
 
+    def set_write_blocked(self, blocked: bool) -> None:
+        """Block/unblock recovery actions while a Cliniko draft write holds
+        the live session (draft-write D9, the ``set_generation_blocked``
+        pattern) — a click already queued is refused at click time too."""
+        self._write_blocked = blocked
+        self._update_controls()
+
+    @property
+    def _blocked_by_live_work(self) -> bool:
+        return self._generation_blocked or self._write_blocked
+
+    def _refused_by_live_work(self) -> bool:
+        """A queued click meets live work: refused — a write names itself
+        (the design system's refusal with a reason; the generation block
+        keeps its existing silent refusal)."""
+        if self._write_blocked:
+            self.message_label.setText(models.write_line("write_in_flight"))
+        return self._blocked_by_live_work
+
     def _update_controls(self) -> None:
         info = self._selected_info()
         # PR round 19 (MED): while a recovered session's transcript is still
@@ -245,7 +269,7 @@ class RecoveryScreen(QWidget):
         # callbacks — resume stays disabled until Complete/Discard releases.
         # Task 7.2: while a live note generation lease is held, ALL actions
         # are blocked so no view swap can overwrite the retained recovered key.
-        blocked = self._busy or bool(self._protected) or self._generation_blocked
+        blocked = self._busy or bool(self._protected) or self._blocked_by_live_work
         has_selection = info is not None and not blocked
         self.resume_button.setEnabled(bool(has_selection and info is not None and info.has_audio))
         self.discard_button.setEnabled(bool(has_selection))
@@ -254,7 +278,7 @@ class RecoveryScreen(QWidget):
         unreviewed = self._selected_unreviewed() is not None and not blocked
         self.open_button.setEnabled(unreviewed)
         self.unreviewed_discard_button.setEnabled(unreviewed)
-        self.refresh_button.setEnabled(not self._busy and not self._generation_blocked)
+        self.refresh_button.setEnabled(not self._busy and not self._blocked_by_live_work)
         # Either list's selection (codex round 34 PR-MED-190: an Unreviewed
         # row can be a recovered store that never got its Finish footer).
         if any(
@@ -321,7 +345,7 @@ class RecoveryScreen(QWidget):
 
     def on_resume_processing(self) -> None:
         info = self._selected_info()
-        if info is None or self._busy or self._generation_blocked:
+        if info is None or self._busy or self._refused_by_live_work():
             return
         if self._selection_blocked(info):
             self._refuse_stale_selection()
@@ -396,7 +420,7 @@ class RecoveryScreen(QWidget):
         reserved by a Discard, or become the live session) is refused
         before anything is unwrapped."""
         info = self._selected_unreviewed()
-        if info is None or self._busy or self._generation_blocked:
+        if info is None or self._busy or self._refused_by_live_work():
             return
         if self._selection_blocked(info):
             self._refuse_stale_selection()
@@ -417,7 +441,7 @@ class RecoveryScreen(QWidget):
         self._discard(self._selected_unreviewed())
 
     def _discard(self, info: models.RecoverableSessionInfo | None) -> None:
-        if info is None or self._busy or self._generation_blocked:
+        if info is None or self._busy or self._refused_by_live_work():
             return
         if self._selection_blocked(info):
             self._refuse_stale_selection()

@@ -2,32 +2,45 @@
 
 What is pinned here:
 - ``WRITE_LINES`` is EXACTLY the plan's keys and wording (plus D5/D9's
-  ``write_pending``), every line plain text: no exclamation mark, no newline,
-  every placeholder one of ``{reason}`` / ``{seconds}`` / ``{cause}``.
+  ``write_pending`` and the Task 2.1 additions; ``written_auto`` went with
+  seen-mode completion), every line plain text: no exclamation mark, no
+  newline, every placeholder one of ``{reason}`` / ``{seconds}`` /
+  ``{cause}`` / ``{problem}`` / ``{template}`` / ``{question}``.
 - Every refusal name the write can meet resolves to a line: every
   ``encounter.WritebackRefusal`` through ``writeback_refusal_line`` and every
   ``encounter.NoteRefusal`` through ``note_refusal_line``, each inside
   ``check_failed``; every ``not_taken`` cause kind through
-  ``not_taken_cause``. (The ``WriteOutcome`` names arrive with Task 3.4,
-  whose test extends this enumeration.)
+  ``not_taken_cause``; each ``NoteRefusal`` in exactly one of
+  ``check_refused`` / ``check_failed``; every own-defaults problem kind. (The
+  ``WriteRefusalName`` and ``WriteOutcome`` enumerations are in
+  ``test_draft_write.py``.)
 - ``write_line`` is the formatting boundary: a reason or cause from anywhere
   but the tables is refused (Constraint 9), a detail the line has no
   placeholder for is refused, seconds are whole and rounded up.
 - The ``write_uncertain`` prefix (PR-MED-017): with ``uncertain`` every
   refusal line is preceded by it; the progress, success and in-flight lines,
-  and the lines that already say the outcome is open, are not.
-- ``custody_refusal_text`` names a write in flight by its line and leaves
-  every other custody refusal as the screens always showed it.
+  and the lines that already say the outcome is open, are not;
+  ``write_prefixed`` puts the same prefix on a line from outside the
+  dictionary (the session lock's).
+- ``custody_refusal_text`` names a write in flight, and any
+  ``WriteLineRefusal`` (``WritePendingError``), by its line and leaves every
+  other custody refusal as the screens always showed it.
+- ``write_control`` (Task 5.2, the Note tab's ``_write_ready``) takes its
+  standing reasons in order — not saved, unlinked, mock, then the record —
+  and ``write_record_block`` is the one record-status mapping the button and
+  the main window's slot share.
 """
 
 from __future__ import annotations
 
 import re
 import string
+from typing import get_args
 
 import pytest
 
 from scribe_desktop.encounter import NoteRefusal, WritebackRefusal
+from scribe_desktop.note_config import OwnDefaultsProblemKind
 from scribe_desktop.session import SessionActivityError, WriteInFlightError
 from scribe_desktop.ui import models
 
@@ -37,10 +50,6 @@ _EXPECTED = {
     "ready": "Write draft to Cliniko",
     "checking": "Checking the note with Cliniko …",
     "writing": "Writing the draft to Cliniko …",
-    "written_auto": (
-        "Draft written to Cliniko. Reload the note page in Chrome to see it, then review "
-        "and finalise it there."
-    ),
     "written_seen": (
         "Draft written to Cliniko. Reload the note page in Chrome; press Complete once you "
         "can see it there."
@@ -81,16 +90,57 @@ _EXPECTED = {
     "recovery_busy": (
         "A recovered recording is still being processed. Wait for it to finish, then write."
     ),
+    # Task 5.2's two (round 14 LOW-011; R22-07's nothing-sent case).
+    "clinic_busy": (
+        "A key check for this clinic is running on the Clinics tab. Wait for it to finish, "
+        "then write."
+    ),
+    "not_sent": (
+        "The write stopped on this computer before anything was sent to Cliniko. Copy the "
+        "note, or try again."
+    ),
     "write_pending": (
         "A write to Cliniko was attempted for this note, so it can no longer be changed "
         "or regenerated here. Copy it, complete the recording or discard it."
+    ),
+    # Task 5.1's Task 2.1 additions (R22-22, R22-20). " - " for the plan's
+    # dash, as ``unknown`` already writes it.
+    "check_refused": (
+        "Cliniko shows that this note cannot take the draft ({reason}). Copy the note instead."
+    ),
+    "finalised_before_write": (
+        "The note was finalised in Cliniko before the write reached it, so the draft was "
+        "not written. Copy the note instead."
+    ),
+    "write_forbidden": (
+        "Cliniko refused the write although the note is still a draft - this clinic's key "
+        "may not be allowed to edit notes. Copy the note instead."
+    ),
+    "defaults_unreadable": (
+        "This clinic's own defaults file cannot be used ({problem}). Correct or create it "
+        "and press Check file on the Clinics tab, or switch the clinic to Cliniko template. "
+        "Or copy the note instead."
+    ),
+    "defaults_no_template": (
+        "This clinic's own defaults file has no entry for the note's Cliniko template "
+        "({template}). Add one, or switch the clinic to Cliniko template. Or copy the note "
+        "instead."
+    ),
+    "defaults_unmatched": (
+        "This clinic's own defaults file names a question the note's Cliniko template does "
+        "not have ({question}). Correct the file, or switch the clinic to Cliniko template. "
+        "Or copy the note instead."
     ),
 }
 
 _DETAIL: dict[str, dict[str, object]] = {
     "check_failed": {"reason": models.writeback_refusal_line(WritebackRefusal.NOT_VERIFIED)},
+    "check_refused": {"reason": models.note_refusal_line(NoteRefusal.NOTE_FINAL)},
     "rate_limited": {"seconds": 42},
     "not_taken": {"cause": models.not_taken_cause("note_not_found")},
+    "defaults_unreadable": {"problem": models.OWN_DEFAULTS_PROBLEMS["missing"]},
+    "defaults_no_template": {"template": "Standard Consultation"},
+    "defaults_unmatched": {"question": "Diagnosis in Examination"},
 }
 
 
@@ -172,6 +222,7 @@ class TestEveryRefusalResolves:
             "template_mismatch",
             "rejected",
             "key_rejected",
+            "key_unavailable",
             "note_not_found",
             "no_baseline",
         }
@@ -223,7 +274,6 @@ class TestUncertainPrefix:
             "ready",
             "checking",
             "writing",
-            "written_auto",
             "written_seen",
             "written_done",
             "write_uncertain",
@@ -256,3 +306,155 @@ class TestCustodyRefusalText:
         assert models.custody_refusal_text(exc) == (
             "SessionActivityError: a discard is completing; the session cannot be completed"
         )
+
+    def test_a_failed_read_is_record_unreadable_and_a_foreign_line_takes_the_prefix(
+        self,
+    ) -> None:
+        """Round 34 LOW-006: ``write_record_block(None)`` fails closed, and
+        ``write_prefixed`` is ``write_line``'s own prefix."""
+        assert models.write_record_block(None) == models.write_line("record_unreadable")
+        locked = models.chrome_refusal_message("locked")
+        assert models.write_prefixed(locked, uncertain=False) == locked
+        assert models.write_prefixed(locked, uncertain=True) == (
+            f"{models.WRITE_LINES['write_uncertain']} {locked}"
+        )
+        assert models.write_line("unlinked", uncertain=True) == models.write_prefixed(
+            models.write_line("unlinked"), uncertain=True
+        )
+
+    def test_a_write_line_refusal_reads_as_its_line(self) -> None:
+        """Task 5.2: ``WritePendingError`` (a ``WriteLineRefusal``) shows its
+        line — never "WritePendingError: …"."""
+        from scribe_desktop.ui.transcript import WritePendingError
+
+        line = models.write_line("write_pending", uncertain=True)
+        assert models.custody_refusal_text(WritePendingError(line)) == line
+        assert models.custody_refusal_text(models.WriteLineRefusal(line)) == line
+
+
+class TestWriteControl:
+    """Task 5.2 (D2's ``_write_ready`` less in-flight / rendering): the
+    order of the standing reasons and what each record status allows."""
+
+    _BINDING = models.WriteBinding("s", True)
+
+    def _control(self, **overrides: object) -> models.WriteControl:
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        fields: dict[str, object] = {
+            "saved": True,
+            "binding": self._BINDING,
+            "mock": False,
+            "status": WriteRecordStatus("none"),
+        }
+        fields.update(overrides)
+        return models.write_control(**fields)  # type: ignore[arg-type]
+
+    def test_a_saved_linked_real_note_with_no_record_is_ready(self) -> None:
+        assert self._control() == models.WriteControl(True)
+
+    def test_the_reasons_come_in_order(self) -> None:
+        unlinked = models.WriteBinding("s", False)
+        assert self._control(saved=False, binding=unlinked, mock=True, status=None) == (
+            models.WriteControl(False, models.write_line("not_saved"))
+        )
+        assert self._control(binding=unlinked, mock=True, status=None) == (
+            models.WriteControl(False, models.write_line("unlinked"))
+        )
+        assert self._control(mock=True, status=None) == (
+            models.WriteControl(False, models.write_line("mock_note"))
+        )
+        assert self._control(status=None) == (
+            models.WriteControl(False, models.write_line("record_unreadable"))
+        )
+
+    @pytest.mark.parametrize(
+        ("outcome", "matches", "expected"),
+        [
+            ("unreadable", False, (False, "record_unreadable")),
+            ("written", True, (False, "written_seen")),
+            ("written", False, (False, "write_uncertain")),
+            ("attempting", True, (True, "unknown")),
+            ("unknown", False, (True, "unknown")),
+            ("refused", True, (True, None)),
+        ],
+    )
+    def test_each_record_status(
+        self, outcome: str, matches: bool, expected: tuple[bool, str | None]
+    ) -> None:
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        ready, key = expected
+        status = WriteRecordStatus(outcome, note_matches=matches)  # type: ignore[arg-type]
+        control = self._control(status=status)
+        # The shared mapping: it closes exactly the statuses the button does.
+        assert models.write_record_block(status) == (
+            None if ready else models.write_line(key)  # type: ignore[arg-type]
+        )
+        assert control == models.WriteControl(
+            ready, models.write_line(key) if key is not None else None
+        )
+
+
+class TestTheTaskTwoOneAdditions:
+    def test_every_own_defaults_problem_has_its_own_text(self) -> None:
+        assert set(models.OWN_DEFAULTS_PROBLEMS) == set(get_args(OwnDefaultsProblemKind))
+        texts = list(models.OWN_DEFAULTS_PROBLEMS.values())
+        assert len(set(texts)) == len(texts)
+        for text in texts:
+            line = models.write_line("defaults_unreadable", problem=text)
+            assert f"({text})" in line
+
+    def test_a_problem_from_anywhere_else_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="problem"):
+            models.write_line("defaults_unreadable", problem="templates > Secret text")
+
+    @pytest.mark.parametrize("key", ["defaults_no_template", "defaults_unmatched"])
+    def test_a_label_must_be_one_short_line(self, key: str) -> None:
+        name = "template" if key == "defaults_no_template" else "question"
+        assert "Standard" in models.write_line(key, **{name: "Standard"})
+        # Round 25 LOW-022: the boundary itself is accepted.
+        assert "x" * 200 in models.write_line(key, **{name: "x" * 200})
+        for bad in ("a\nb", "a b", "a\rb", "x" * 201, 7, None):
+            with pytest.raises(ValueError, match=name):
+                models.write_line(key, **{name: bad})
+
+    def test_write_label_cleans_and_clips_a_cliniko_label(self) -> None:
+        """R22-07: the caller cleans first, so ``write_line`` never refuses
+        a label Cliniko sent — a 300-character label and one holding line
+        breaks both format."""
+        long = models.write_label("L" * 300)
+        assert len(long) == models.WRITE_LABEL_CHARS and long.endswith("…")
+        broken = models.write_label("Standard\nConsult ation‮")
+        assert "\n" not in broken and " " not in broken and "‮" not in broken
+        for label in (long, broken):
+            models.write_line("defaults_no_template", template=label)
+
+    def test_a_note_refusal_is_either_permanent_or_worth_trying_again(self) -> None:
+        """Task 5.1(e): each ``NoteRefusal`` reads as exactly one of
+        ``check_refused`` (trying again cannot change it) and
+        ``check_failed``."""
+        assert models.PERMANENT_NOTE_REFUSALS == {
+            NoteRefusal.NOTE_FINAL,
+            NoteRefusal.NOTE_ARCHIVED,
+            NoteRefusal.PATIENT_MISMATCH,
+            NoteRefusal.WRONG_PRACTITIONER,
+        }
+        refused_head = models.WRITE_LINES["check_refused"].split("(")[0]
+        failed_head = models.WRITE_LINES["check_failed"].split("(")[0]
+        for reason in NoteRefusal:
+            line = models.note_check_line(reason)
+            permanent = reason in models.PERMANENT_NOTE_REFUSALS
+            assert line.startswith(refused_head) is permanent, reason
+            assert line.startswith(failed_head) is not permanent, reason
+            assert "try again" not in line if permanent else "try again" in line
+            assert models.note_check_line(reason, uncertain=True).startswith(
+                models.WRITE_LINES["write_uncertain"]
+            )
+
+    def test_a_rejected_key_and_a_finalised_note_read_as_their_own_lines(self) -> None:
+        final = models.note_check_line(NoteRefusal.NOTE_FINAL)
+        assert final == models.write_line(
+            "check_refused", reason=models.note_refusal_line(NoteRefusal.NOTE_FINAL)
+        )
+        assert models.write_line("finalised_before_write") != final

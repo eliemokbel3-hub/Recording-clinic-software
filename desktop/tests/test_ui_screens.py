@@ -23,6 +23,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import scribe_desktop.note_config as note_config_module  # noqa: E402
 from scribe_desktop.audio_capture import AudioDevice  # noqa: E402
 from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
+from scribe_desktop.draft_write import WriteRecordStatus  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     ConsentAttestation,
     EncounterContext,
@@ -213,6 +214,16 @@ class FakeController:
         self.forgotten_refs: list[str] = []
         # Task 5.5: D2's registry for sessions other than the tracked one.
         self.refs: dict[str, str] = {}
+        # Draft-write Task 3.3: the live session's write-record status (or an
+        # exception to raise) that the Transcript screen's write_pending
+        # refusal reads.
+        self.write_status: WriteRecordStatus | Exception = WriteRecordStatus("none")
+
+    def write_record_status(self, session_id: str) -> WriteRecordStatus:
+        self.calls.append(("write_record_status", session_id))
+        if isinstance(self.write_status, Exception):
+            raise self.write_status
+        return self.write_status
 
     @property
     def state(self) -> SessionState:
@@ -413,22 +424,77 @@ class FakeController:
         return action(self.generation_dir, crypto)
 
     # Draft-write plan D9 (Task 4.1): the write reservation. `writing_id` is
-    # the id a held reservation names — kept for Task 5.2's tests, which set
-    # it to simulate a write in flight (no test sets it yet); kept apart from
-    # `calls`, whose exact lists tests pin.
+    # the id a held reservation names — tests set it to simulate a write in
+    # flight. Task 4.2: the seen-mode Complete re-acquires a reservation
+    # (`reserve_write`) and completes under it (`complete_after_write`);
+    # `reserve_error` / `complete_after_write_error` make either refuse, and
+    # `write_releases` counts the releases of a HELD token (apart from
+    # `calls`, whose exact lists tests pin).
 
     writing_id: str | None = None
+    held_reservation: Any = None
+    reserve_error: Exception | None = None
+    complete_after_write_error: Exception | None = None
+    write_releases = 0
+    # Task 5.2: the (directory, crypto) the write's scoped custody hands its
+    # action — tests use a ``WriteStore`` seam, so no real session is read.
+    write_dir = Path("unused")
 
     def reserve_write(self, session_id: str) -> Any:
-        raise AssertionError("no UI path reserves a write before Task 5.2")
+        self.calls.append(("reserve_write", session_id))
+        if self.reserve_error is not None:
+            raise self.reserve_error
+        reservation = _FakeWriteReservation(self, session_id)
+        self.held_reservation = reservation
+        self.writing_id = session_id
+        return reservation
+
+    def complete_after_write(self, reservation: Any) -> RecordingSession:
+        self.calls.append(("complete_after_write",))
+        assert reservation is self.held_reservation, "completion needs the held token"
+        if self.complete_after_write_error is not None:
+            raise self.complete_after_write_error  # the reservation stays held
+        self.held_reservation = None
+        self.writing_id = None
+        self.state_value = SessionState.WRITTEN
+        return self._session()
 
     def with_write_custody(
         self, reservation: Any, action: Callable[[Path, SessionCrypto], Any]
     ) -> Any:
-        raise AssertionError("no UI path uses write custody before Task 5.2")
+        # As the real accessor: only the HELD reservation reaches the files.
+        self.calls.append(("with_write_custody",))
+        if reservation is None or reservation is not self.held_reservation:
+            raise SessionActivityError("scoped write access requires the held write reservation")
+        return action(self.write_dir, SessionCrypto())
 
     def writing_session_id(self) -> str | None:
         return self.writing_id
+
+    # SIMP-016 (Task 4.2): the reference prune's two reads.
+
+    def live_session_ids(self) -> frozenset[str]:
+        session = self.session_value
+        return frozenset({session.session_id}) if session is not None else frozenset()
+
+    def referenced_session_ids(self) -> frozenset[str]:
+        return frozenset(self.refs.values())
+
+
+class _FakeWriteReservation:
+    """The fake's reservation token: ``release`` drops it only while it is
+    the held one (idempotent, like the real ``WriteReservation``)."""
+
+    def __init__(self, controller: FakeController, session_id: str) -> None:
+        self._controller = controller
+        self.session_id = session_id
+
+    def release(self) -> None:
+        controller = self._controller
+        if controller.held_reservation is self:
+            controller.held_reservation = None
+            controller.writing_id = None
+            controller.write_releases += 1
 
 
 # ---------------------------------------------------------------------------
@@ -2559,6 +2625,35 @@ class TestTranscriptScreen:
         assert screen.transcript_view.toPlainText() != ""
         screen.deleteLater()
 
+    def test_a_write_in_flight_disables_the_row_and_refuses_at_the_click(
+        self, qapp: Any
+    ) -> None:
+        """Draft-write Task 5.2 (D9): while the main window's write holds the
+        session, Complete, Discard and Generate are disabled and a click
+        that still arrives is refused with the write's line; nothing runs."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        ran: list[str] = []
+        screen.show_document(
+            _document(),
+            on_complete=lambda: ran.append("complete"),
+            on_discard=lambda: ran.append("discard"),
+        )
+        assert screen.complete_button.isEnabled()
+        screen.set_write_blocked(True)
+        assert not screen.complete_button.isEnabled()
+        assert not screen.discard_button.isEnabled()
+        line = models.write_line("write_in_flight")
+        screen.on_complete()
+        assert screen.message_label.text() == f"Complete refused: {line}"
+        screen.on_discard()
+        assert screen.message_label.text() == f"Discard refused: {line}"
+        assert ran == []
+        screen.set_write_blocked(False)
+        assert screen.complete_button.isEnabled()
+        screen.deleteLater()
+
     def test_discard_emits_closed(self, qapp: Any) -> None:
         from scribe_desktop.ui.transcript import TranscriptScreen
 
@@ -3128,6 +3223,74 @@ class TestMainWindow:
         assert ("complete",) in controller.calls
         # The unrelated checkout's protection survives the live closure.
         assert other_id in window.recovery_screen.protected_session_ids()
+        window.close()
+
+    def test_a_complete_after_a_write_ends_on_the_written_done_line(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Draft-write D6 (seen mode, PR-LOW-014): ``closed("written")`` runs
+        the ordinary close cleanup, then the Session screen shows the
+        terminal ``written_done`` line — after its refresh, so it stays."""
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        controller.session_value = RecordingSession(consent=unlinked_consent()).with_state(
+            SessionState.QUEUED
+        )
+        controller.write_status = WriteRecordStatus("written", note_matches=True)
+        window = _main_window(tmp_path, controller)
+        window.session_screen.transcript_ready.emit(_document())
+        qapp.processEvents()
+        window.transcript_screen.on_complete()
+        qapp.processEvents()
+        assert ("complete_after_write",) in controller.calls
+        assert ("complete",) not in controller.calls
+        assert window.session_screen.message_label.text() == models.write_line("written_done")
+        assert window.tabs.currentWidget() is window.session_screen
+        assert window._transcript_source is None
+        window.close()
+
+    def test_the_ref_prune_keeps_live_and_indexed_refs_and_drops_the_rest(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """SIMP-016 (PR-LOW-022): a ref that is neither the live session's
+        nor a still-indexed session's — an unlinked or failed recording's,
+        kept through retirement — is forgotten; the others stay."""
+        from scribe_desktop.context_rules import ReminderEntry
+
+        controller = FakeController()
+        live = RecordingSession(consent=unlinked_consent()).with_state(SessionState.QUEUED)
+        controller.session_value = live
+        window = _main_window(tmp_path, controller)
+        indexed, unlinked = uuid.uuid4().hex, uuid.uuid4().hex
+        for session_id in (live.session_id, indexed, unlinked):
+            controller.register_session_ref(session_id)
+        window.reminders.add(ReminderEntry("clinic-1", "note-1", indexed))
+        window.prune_session_refs()
+        assert controller.referenced_session_ids() == {live.session_id, indexed}
+        assert controller.forgotten_refs == [unlinked]
+        window.close()
+
+    def test_a_sweep_prune_forgets_an_expired_sessions_reminder_and_ref(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """The reminder prune keeps its key-existence rule; the ref prune runs
+        right after it, so an expired indexed session loses both, a kept one
+        neither, and an unindexed ref goes too."""
+        from scribe_desktop.context_rules import ReminderEntry
+
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        kept, expired, unlinked = (uuid.uuid4().hex for _ in range(3))
+        (tmp_path / kept).mkdir()
+        (tmp_path / kept / KEY_FILENAME).write_bytes(b"x" * 64)
+        for session_id in (kept, expired):
+            window.reminders.add(ReminderEntry("clinic-1", "note-1", session_id))
+        for session_id in (kept, expired, unlinked):
+            controller.register_session_ref(session_id)
+        window.prune_reminders()
+        assert window.reminders.session_ids() == {kept}
+        assert controller.referenced_session_ids() == {kept}
+        assert sorted(controller.forgotten_refs) == sorted([expired, unlinked])
         window.close()
 
     def test_recovered_transcript_close_releases_only_itself(
@@ -4135,6 +4298,346 @@ def _routed_line(screen: Any, segment_index: int) -> Any:
 def _utterance_text(screen: Any, segment_index: int) -> str:
     segment = screen._document.transcript_segments[segment_index]
     return " ".join(word.word_text for word in segment.transcript_words)
+
+
+class TestNoteWriteButton:
+    """Draft-write Task 5.2 (D2, D5, D10): the Note tab's "Write draft to
+    Cliniko" button — hidden without a binding, enabled only for a saved,
+    linked, non-mock note whose write record allows it, re-checked at the
+    click, and busy while the main window's write is in flight."""
+
+    _SESSION = "session-w"
+
+    def _screen(
+        self,
+        *,
+        status: Any = None,
+        linked: bool = True,
+        bind: bool = True,
+        result: models.NoteGenerationResult | None = None,
+    ) -> tuple[Any, list[str], list[str]]:
+        from scribe_desktop.draft_write import WriteRecordStatus
+        from scribe_desktop.ui.note import NoteScreen
+
+        reads: list[str] = []
+        current = [status if status is not None else WriteRecordStatus("none")]
+
+        def provider(session_id: str) -> WriteRecordStatus:
+            reads.append(session_id)
+            value = current[0]
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        emitted: list[str] = []
+        screen = NoteScreen(write_status_provider=provider)
+        screen.write_requested.connect(emitted.append)
+        screen.begin_review(
+            result if result is not None else _note_result(),
+            copy_enabled=True,
+            on_save=lambda note: None,
+            on_abandon=lambda: None,
+            template_profile_id="clinic-a",
+            write_binding=models.WriteBinding(self._SESSION, linked) if bind else None,
+        )
+        screen._status = current  # the test's handle on the provider's answer
+        return screen, emitted, reads
+
+    def _save(self, screen: Any) -> None:
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        screen._acknowledge_all()
+        screen.save()
+
+    def test_hidden_without_a_binding(self, qapp: Any) -> None:
+        screen, emitted, reads = self._screen(bind=False)
+        self._save(screen)
+        assert screen.write_button.isHidden()
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == ""
+        screen._on_write_clicked()  # a click that still arrives (the click-time check)
+        assert emitted == [] and reads == []
+        screen.deleteLater()
+
+    def test_not_saved_first_then_ready_once_saved(self, qapp: Any) -> None:
+        screen, emitted, reads = self._screen()
+        assert not screen.write_button.isHidden()
+        assert screen.write_button.text() == models.write_line("ready")
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("not_saved")
+        assert screen.write_button.toolTip() == models.write_line("not_saved")
+        assert reads == []  # no record read before the note is saved
+        self._save(screen)
+        assert screen.write_button.isEnabled()
+        assert screen.write_label.text() == ""
+        assert set(reads) == {self._SESSION}
+        screen.write_button.click()
+        assert emitted == [self._SESSION]
+        screen.deleteLater()
+
+    def test_an_unlinked_session_never_reads_the_record(self, qapp: Any) -> None:
+        screen, emitted, reads = self._screen(linked=False)
+        self._save(screen)
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("unlinked")
+        screen.write_label.setText("")
+        screen._on_write_clicked()  # a click that still arrives repeats the reason
+        assert screen.write_label.text() == models.write_line("unlinked")
+        assert emitted == [] and reads == []
+        screen.deleteLater()
+
+    def test_a_mock_note_is_refused_before_any_record_read(self, qapp: Any) -> None:
+        """D10: the tab's gate; ``draft_write.refuse_before_read`` is the
+        second one (pinned in ``test_ui_encounter.py``)."""
+        screen, emitted, reads = self._screen()
+        self._save(screen)
+        saved = screen._note
+        screen._note = saved.model_copy(update={"provider_name": "mock-provider"})
+        screen._update_controls()
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("mock_note")
+        reads.clear()
+        screen.write_label.setText("")
+        screen._on_write_clicked()
+        assert screen.write_label.text() == models.write_line("mock_note")
+        assert emitted == [] and reads == []
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        ("outcome", "matches", "key"),
+        [
+            ("written", True, "written_seen"),
+            ("written", False, "write_uncertain"),
+            ("unreadable", False, "record_unreadable"),
+        ],
+    )
+    def test_a_write_record_that_closes_the_button(
+        self, qapp: Any, outcome: str, matches: bool, key: str
+    ) -> None:
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        screen, emitted, _reads = self._screen(
+            status=WriteRecordStatus(outcome, note_matches=matches)  # type: ignore[arg-type]
+        )
+        self._save(screen)
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line(key)
+        screen.write_label.setText("")
+        screen._on_write_clicked()
+        assert screen.write_label.text() == models.write_line(key)
+        assert emitted == []
+        screen.deleteLater()
+
+    def test_a_record_read_that_fails_closes_the_button(self, qapp: Any) -> None:
+        screen, emitted, _reads = self._screen(status=OSError("disk"))
+        self._save(screen)
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("record_unreadable")
+        screen._on_write_clicked()
+        assert screen.write_label.text() == models.write_line("record_unreadable")
+        assert emitted == []
+        screen.deleteLater()
+
+    def test_the_status_is_read_once_per_binding_and_afresh_at_the_click(
+        self, qapp: Any
+    ) -> None:
+        """Round 33 LOW-011: a control refresh never re-reads (decrypts) the
+        record; a write starting or ending and every click do."""
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        screen, emitted, reads = self._screen()
+        self._save(screen)
+        assert len(reads) == 1  # the first binding after Save
+        screen._update_controls()
+        screen.show_write_line(models.write_line("checking"))
+        assert len(reads) == 1
+        screen.set_write_in_flight(True)
+        screen.set_write_in_flight(False)
+        assert len(reads) == 3  # one read at each end of a write
+        screen._on_write_clicked()
+        assert len(reads) == 4 and emitted == [self._SESSION]
+        # `clear()` and a new binding drop the cache: a changed record shows.
+        note = screen._note
+        screen.clear()
+        screen._status[0] = WriteRecordStatus("written", note_matches=True)
+        screen.show_saved_note(
+            note,
+            _note_document(),
+            info="",
+            copy_enabled=True,
+            write_binding=models.WriteBinding(self._SESSION, True),
+        )
+        assert screen.write_label.text() == models.write_line("written_seen")
+        assert not screen.write_button.isEnabled()
+        screen.deleteLater()
+
+    def test_a_rendering_in_flight_names_itself_on_the_write_line(self, qapp: Any) -> None:
+        """Round 33 LOW-005: Write waits on a prose rendering and says so
+        on its own line — never Save's message."""
+        screen, emitted, _reads = self._screen()
+        self._save(screen)
+        screen._style_job = object()
+        screen._update_controls()
+        rendering = models.rendering_in_flight_line(screen._note_style)
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == rendering
+        assert screen.write_button.toolTip() == rendering
+        screen.write_label.setText("")
+        screen._on_write_clicked()
+        assert screen.write_label.text() == rendering and emitted == []
+        screen._style_job = None
+        screen._update_controls()
+        assert screen.write_button.isEnabled()
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("outcome", ["attempting", "unknown"])
+    def test_an_open_attempt_stays_writable_and_says_so(self, qapp: Any, outcome: str) -> None:
+        """D5: the next click reconciles an open attempt before any send."""
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        screen, emitted, _reads = self._screen(
+            status=WriteRecordStatus(outcome, note_matches=True)  # type: ignore[arg-type]
+        )
+        self._save(screen)
+        assert screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("unknown")
+        screen.write_button.click()
+        assert emitted == [self._SESSION]
+        screen.deleteLater()
+
+    def test_the_click_rechecks_the_record(self, qapp: Any) -> None:
+        """A record that changed since the button was bound refuses at the
+        click (fail closed) and says why."""
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        screen, emitted, _reads = self._screen()
+        self._save(screen)
+        assert screen.write_button.isEnabled()
+        screen._status[0] = WriteRecordStatus("written", note_matches=True)
+        screen._on_write_clicked()
+        assert emitted == []
+        assert screen.write_label.text() == models.write_line("written_seen")
+        # Round 34 LOW-002: the button follows the reason it just showed.
+        assert not screen.write_button.isEnabled()
+        assert screen.write_button.toolTip() == models.write_line("written_seen")
+        screen.deleteLater()
+
+    def test_a_failed_read_is_never_cached(self, qapp: Any) -> None:
+        """Round 34 LOW-001: a read that failed (or read ``unreadable``)
+        closes Write, so no click could re-read it — the next refresh does,
+        and a record readable again opens Write."""
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        screen, _emitted, reads = self._screen(status=OSError("sharing violation"))
+        self._save(screen)
+        assert screen.write_label.text() == models.write_line("record_unreadable")
+        screen._status[0] = WriteRecordStatus("unreadable")
+        count = len(reads)
+        screen._update_controls()
+        assert len(reads) == count + 1
+        assert not screen.write_button.isEnabled()
+        screen._status[0] = WriteRecordStatus("none")
+        screen._update_controls()
+        assert screen.write_button.isEnabled()
+        assert screen.write_label.text() == ""
+        screen.deleteLater()
+
+    def test_in_flight_disables_write_and_holds_the_tab_busy(self, qapp: Any) -> None:
+        screen, emitted, _reads = self._screen()
+        self._save(screen)
+        assert not screen.is_busy
+        screen.set_write_in_flight(True)
+        screen.show_write_line(models.write_line("checking"))
+        assert screen.is_busy
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == models.write_line("checking")
+        screen._on_write_clicked()
+        assert emitted == []
+        assert screen.write_label.text() == models.write_line("write_in_flight")
+        screen.show_write_line(models.write_line("written_seen"))
+        screen.set_write_in_flight(False)
+        assert not screen.is_busy
+        assert screen.write_label.text() == models.write_line("written_seen")
+        screen.deleteLater()
+
+    def test_the_outcome_line_survives_a_ready_rebind(self, qapp: Any) -> None:
+        """A refusal that leaves the button ready (e.g. ``check_failed``)
+        stays on screen until the next write replaces it."""
+        screen, _emitted, _reads = self._screen()
+        self._save(screen)
+        line = models.write_line("rate_limited", seconds=30)
+        screen.show_write_line(line)
+        assert screen.write_button.isEnabled()
+        assert screen.write_label.text() == line
+        screen.deleteLater()
+
+    def test_clear_forgets_the_binding(self, qapp: Any) -> None:
+        screen, emitted, _reads = self._screen()
+        self._save(screen)
+        screen.set_write_in_flight(True)
+        screen.clear()
+        assert screen.write_binding is None
+        assert not screen.is_busy
+        assert screen.write_button.isHidden()
+        screen._on_write_clicked()
+        assert emitted == []
+        screen.deleteLater()
+
+    def test_a_reopened_saved_note_offers_write(self, qapp: Any) -> None:
+        """Task 5.4's adopted Unreviewed recording: ``show_saved_note`` takes
+        the binding too."""
+        from scribe_desktop.ui.note import NoteScreen
+
+        source, _emitted, _reads = self._screen(bind=False)
+        self._save(source)
+        note = source._note
+        source.deleteLater()
+        emitted: list[str] = []
+        screen = NoteScreen(write_status_provider=lambda _sid: _status_none())
+        screen.write_requested.connect(emitted.append)
+        screen.show_saved_note(
+            note,
+            _note_document(),
+            info="",
+            copy_enabled=True,
+            write_binding=models.WriteBinding(self._SESSION, True),
+        )
+        assert screen.write_button.isEnabled()
+        screen.write_button.click()
+        assert emitted == [self._SESSION]
+        screen.deleteLater()
+
+    def test_a_save_refused_by_a_pending_write_shows_the_write_line(self, qapp: Any) -> None:
+        """D5 (round 26): the second Save a write attempt blocks reads as the
+        ``write_pending`` line, never the exception's class name."""
+        from scribe_desktop.ui.note import NoteScreen
+        from scribe_desktop.ui.transcript import WritePendingError
+
+        screen = NoteScreen()
+
+        def refused(_note: Any) -> None:
+            raise WritePendingError(models.write_line("write_pending"))
+
+        screen.begin_review(
+            _note_result(),
+            copy_enabled=True,
+            on_save=refused,
+            on_abandon=lambda: None,
+            template_profile_id="clinic-a",
+        )
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        screen._acknowledge_all()
+        screen.save()
+        assert models.write_line("write_pending") in screen.message_label.text()
+        assert "WritePendingError" not in screen.message_label.text()
+        screen.deleteLater()
+
+
+def _status_none() -> Any:
+    from scribe_desktop.draft_write import WriteRecordStatus
+
+    return WriteRecordStatus("none")
 
 
 class TestNoteScreenEdits:
@@ -5794,6 +6297,353 @@ class TestTranscriptGeneration:
         )
         assert not screen.is_busy
         assert ("with_generation_custody",) not in controller.calls
+        screen.deleteLater()
+
+    def _live(self, status: WriteRecordStatus | Exception) -> FakeController:
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        controller.session_value = RecordingSession(consent=unlinked_consent()).with_state(
+            SessionState.QUEUED
+        )
+        controller.write_status = status
+        return controller
+
+    @staticmethod
+    def _pending_line(status: WriteRecordStatus | Exception) -> str:
+        """Round 26 MED-001: an OPEN attempt's ``write_pending`` carries the
+        ``write_uncertain`` prefix (PR-MED-017); an unreadable record or a
+        failed read is ``record_unreadable``, which claims no attempt."""
+        if isinstance(status, Exception) or status.outcome == "unreadable":
+            return models.write_line("record_unreadable")
+        return models.write_line("write_pending", uncertain=status.open_attempt)
+
+    def test_the_pending_lines_differ_by_status(self) -> None:
+        warning = models.WRITE_LINES["write_uncertain"]
+        for outcome in ("attempting", "unknown"):
+            assert self._pending_line(WriteRecordStatus(outcome)).startswith(f"{warning} ")
+        for status in (
+            WriteRecordStatus("refused", note_matches=True, refusal="note_not_found"),
+            WriteRecordStatus("written", note_matches=True),
+        ):
+            assert self._pending_line(status) == models.write_line("write_pending")
+        for failed in (WriteRecordStatus("unreadable"), RuntimeError("x")):
+            line = self._pending_line(failed)
+            assert "attempted" not in line and not line.startswith(warning)
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            WriteRecordStatus("attempting"),
+            WriteRecordStatus("unknown"),
+            WriteRecordStatus("refused", note_matches=True, refusal="note_not_found"),
+            WriteRecordStatus("written", note_matches=True),
+            WriteRecordStatus("unreadable"),
+            RuntimeError("the record could not be read"),
+        ],
+    )
+    def test_any_write_attempt_refuses_regenerate(
+        self, qapp: Any, status: WriteRecordStatus | Exception
+    ) -> None:
+        """Draft-write D5 / Task 3.3 (R22-15): once any attempt exists — or
+        the record cannot be read at all (fail closed) — the saved note is
+        frozen: no lease is taken."""
+        controller = self._live(status)
+        screen, _result = self._screen(controller)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert screen.message_label.text() == (
+            "Cannot generate a note now: " + self._pending_line(status)
+        )
+        assert ("begin_generation",) not in controller.calls
+        assert not screen.is_busy
+        assert controller.session_value is not None
+        assert ("write_record_status", controller.session_value.session_id) in controller.calls
+        screen.deleteLater()
+
+    def test_a_write_in_flight_is_named_not_called_earlier(
+        self, qapp: Any, monkeypatch: Any
+    ) -> None:
+        """Round 27 LOW-002: while a write is in flight the record's
+        ``attempting`` row is THAT write — Generate and Save show
+        ``write_in_flight``, never the uncertain prefix inviting Copy."""
+        from scribe_desktop.ui.transcript import WritePendingError
+
+        controller = self._live(WriteRecordStatus("none"))
+        screen, _result = self._screen(controller)
+        monkeypatch.setattr("scribe_desktop.ui.transcript.write_note", lambda *args: None)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert _process_until(qapp, lambda: screen._generation_result is not None)
+        assert controller.session_value is not None
+        controller.write_status = WriteRecordStatus("attempting")
+        controller.writing_id = controller.session_value.session_id
+        with pytest.raises(WritePendingError) as info:
+            screen.save_note(_note_result().draft)  # type: ignore[arg-type]
+        assert str(info.value) == models.write_line("write_in_flight")
+        assert screen.is_busy
+        screen.deleteLater()
+        fresh = self._live(WriteRecordStatus("attempting"))
+        assert fresh.session_value is not None
+        fresh.writing_id = fresh.session_value.session_id
+        screen, _result = self._screen(fresh)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert screen.message_label.text() == (
+            "Cannot generate a note now: " + models.write_line("write_in_flight")
+        )
+        assert ("begin_generation",) not in fresh.calls
+        screen.deleteLater()
+
+    def test_no_write_record_lets_generate_run(self, qapp: Any) -> None:
+        controller = self._live(WriteRecordStatus("none"))
+        screen, _result = self._screen(controller)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert ("begin_generation",) in controller.calls
+        assert screen.is_busy
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            WriteRecordStatus("attempting"),
+            WriteRecordStatus("unknown"),
+            WriteRecordStatus("refused", note_matches=True, refusal="note_not_found"),
+            WriteRecordStatus("written", note_matches=True),
+            WriteRecordStatus("unreadable"),
+            RuntimeError("the record could not be read"),
+        ],
+    )
+    def test_a_second_save_after_an_attempt_is_refused_and_keeps_the_lease(
+        self, qapp: Any, monkeypatch: Any, status: WriteRecordStatus | Exception
+    ) -> None:
+        """Round 25 LOW-019: Save refuses on every status Generate refuses on."""
+        from scribe_desktop.ui.transcript import WritePendingError
+
+        controller = self._live(WriteRecordStatus("none"))
+        screen, _result = self._screen(controller)
+        writes: list[str] = []
+        monkeypatch.setattr(
+            "scribe_desktop.ui.transcript.write_note",
+            lambda *args: writes.append("written"),
+        )
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert _process_until(qapp, lambda: screen._generation_result is not None)
+        controller.write_status = status
+        with pytest.raises(WritePendingError) as info:
+            screen.save_note(_note_result().draft)  # type: ignore[arg-type]
+        assert str(info.value) == self._pending_line(status)
+        assert writes == []
+        assert screen.is_busy  # the lease stays held: Cancel review is the way out
+        screen.deleteLater()
+
+    def test_a_recovered_source_never_consults_the_live_record(self, qapp: Any) -> None:
+        """The live session's record never refuses a recovered transcript's
+        view (it has its own session); the screen does not even ask — not
+        even when the live record holds a completed write (round 25
+        LOW-020: a recovered transcript cannot generate, can_generate=False)."""
+        controller = self._live(WriteRecordStatus("written", note_matches=True))
+        screen, _result = self._screen(controller)
+        screen.show_document(
+            _note_document(),
+            on_complete=lambda: None,
+            on_discard=lambda: None,
+            can_generate=False,
+        )
+        assert screen._write_pending() is None
+        assert not any(call[0] == "write_record_status" for call in controller.calls)
+        screen.deleteLater()
+
+    # --- draft-write D6 (Task 4.2): Complete after a confirmed write ----------
+
+    _WRITE_CALLS = ("reserve_write", "complete_after_write")
+
+    def _completing(
+        self, status: WriteRecordStatus | Exception
+    ) -> tuple[Any, FakeController, list[str]]:
+        controller = self._live(status)
+        screen, _result = self._screen(controller)
+        closed: list[str] = []
+        screen.closed.connect(closed.append)
+        return screen, controller, closed
+
+    def test_a_written_record_completes_through_complete_after_write(self, qapp: Any) -> None:
+        """Seen mode: the Complete button re-acquires the reservation and
+        completes under it; the screen clears and says the draft is in
+        Cliniko; nothing goes through the plain ``complete``."""
+        screen, controller, closed = self._completing(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        assert controller.session_value is not None
+        session_id = controller.session_value.session_id
+        screen.on_complete()
+        names = [call[0] for call in controller.calls]
+        assert names.index("write_record_status") < names.index("reserve_write")
+        assert names.index("reserve_write") < names.index("complete_after_write")
+        assert ("reserve_write", session_id) in controller.calls
+        assert ("complete",) not in controller.calls
+        assert closed == ["written"]
+        assert screen.message_label.text() == models.write_line("written_done")
+        assert controller.held_reservation is None and controller.writing_id is None
+        assert controller.write_releases == 0  # consumed by the completion, not released
+        assert screen.transcript_view.toPlainText() == ""
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            WriteRecordStatus("none"),
+            WriteRecordStatus("attempting"),
+            WriteRecordStatus("unknown"),
+            WriteRecordStatus("refused", note_matches=True, refusal="note_not_found"),
+            WriteRecordStatus("unreadable"),
+        ],
+    )
+    def test_every_other_record_completes_as_before(
+        self, qapp: Any, status: WriteRecordStatus
+    ) -> None:
+        """Manual Complete on a non-written session is unchanged (D6)."""
+        screen, controller, closed = self._completing(status)
+        screen.on_complete()
+        assert ("complete",) in controller.calls
+        assert not any(call[0] in self._WRITE_CALLS for call in controller.calls)
+        assert closed == ["completed"]
+        screen.deleteLater()
+
+    def test_a_written_record_of_another_note_is_refused_never_completed_plainly(
+        self, qapp: Any
+    ) -> None:
+        """D5 (round 31 LOW-002): a ``written`` record whose note identity
+        differs — or whose saved note cannot be read — is ``write_uncertain``
+        and never completes: nothing is reserved, and the plain ``complete``
+        is never the way round the check."""
+        screen, controller, closed = self._completing(
+            WriteRecordStatus("written", note_matches=False)
+        )
+        screen.on_complete()
+        assert screen.message_label.text() == (
+            "Complete refused: " + models.write_line("write_uncertain")
+        )
+        assert ("complete",) not in controller.calls
+        assert not any(call[0] in self._WRITE_CALLS for call in controller.calls)
+        assert closed == []
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            WriteRecordStatus("attempting"),
+            WriteRecordStatus("unknown"),
+            WriteRecordStatus("refused", note_matches=True, refusal="note_not_found"),
+            WriteRecordStatus("written", note_matches=True),
+            WriteRecordStatus("unreadable"),
+            RuntimeError("the record could not be read"),
+        ],
+    )
+    def test_delete_note_and_complete_is_refused_once_a_write_was_attempted(
+        self, qapp: Any, status: WriteRecordStatus | Exception
+    ) -> None:
+        """D5 (round 31 LOW-001): the saved note is frozen once any attempt
+        exists — the post-Save "delete note and complete without one" is
+        refused by the same line as Regenerate and Save."""
+        from scribe_desktop.ui.transcript import WritePendingError
+
+        screen, controller, closed = self._completing(status)
+        with pytest.raises(WritePendingError) as info:
+            screen.abandon_note_and_complete()
+        assert str(info.value) == self._pending_line(status)
+        assert ("complete_deleting_saved_note",) not in controller.calls
+        assert closed == []
+        screen.deleteLater()
+
+    def test_delete_note_and_complete_runs_with_no_write_record(self, qapp: Any) -> None:
+        screen, controller, closed = self._completing(WriteRecordStatus("none"))
+        screen.abandon_note_and_complete()
+        assert ("complete_deleting_saved_note",) in controller.calls
+        assert closed == ["completed"]
+        screen.deleteLater()
+
+    def test_a_failed_completion_releases_keeps_the_session_and_a_retry_succeeds(
+        self, qapp: Any
+    ) -> None:
+        from scribe_desktop.session_store import StoreCorruptError
+
+        screen, controller, closed = self._completing(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        controller.complete_after_write_error = StoreCorruptError(
+            "transcript failed decrypt verification; key retained"
+        )
+        screen.on_complete()
+        text = screen.message_label.text()
+        assert text.startswith("Complete failed: StoreCorruptError: ")
+        assert "No key deletion was performed by this action" in text
+        assert closed == []
+        assert controller.write_releases == 1 and controller.writing_id is None
+        assert controller.state_value is SessionState.QUEUED
+        assert screen.transcript_view.toPlainText() != ""  # the view stays loaded
+        controller.complete_after_write_error = None
+        screen.on_complete()
+        assert closed == ["written"]
+        assert controller.calls.count(("complete_after_write",)) == 2
+        assert controller.write_releases == 1
+        screen.deleteLater()
+
+    def test_a_refused_reservation_completes_nothing(self, qapp: Any) -> None:
+        from scribe_desktop.session import WriteInFlightError
+
+        screen, controller, closed = self._completing(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        controller.reserve_error = WriteInFlightError("write")
+        screen.on_complete()
+        assert screen.message_label.text().startswith(
+            "Complete failed: " + models.write_line("write_in_flight").rstrip(".")
+        )
+        assert ("complete_after_write",) not in controller.calls
+        assert ("complete",) not in controller.calls
+        assert closed == []
+        screen.deleteLater()
+
+    def test_a_failed_status_read_completes_nothing(self, qapp: Any) -> None:
+        """Fail closed: a record that cannot be asked about neither routes
+        to the write's completion nor falls back to the plain one."""
+        screen, controller, closed = self._completing(
+            RuntimeError("the record could not be read")
+        )
+        screen.on_complete()
+        assert screen.message_label.text().startswith(
+            "Complete failed: RuntimeError: the record could not be read"
+        )
+        assert ("complete",) not in controller.calls
+        assert not any(call[0] in self._WRITE_CALLS for call in controller.calls)
+        assert closed == []
+        screen.deleteLater()
+
+    def test_a_recovered_source_completes_through_its_own_callback(self, qapp: Any) -> None:
+        """The live session's ``written`` record never reroutes a recovered
+        transcript's Complete (it is not the live session)."""
+        screen, controller, closed = self._completing(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        completed: list[str] = []
+        screen.show_document(
+            _note_document(),
+            on_complete=lambda: completed.append("recovered"),
+            on_discard=lambda: None,
+            can_generate=False,
+        )
+        screen.on_complete()
+        assert completed == ["recovered"]
+        assert not any(call[0] == "write_record_status" for call in controller.calls)
+        assert not any(call[0] in self._WRITE_CALLS for call in controller.calls)
+        assert closed == ["completed"]
         screen.deleteLater()
 
     def test_complete_refused_while_generating(self, qapp: Any) -> None:

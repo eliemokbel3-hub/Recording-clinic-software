@@ -1515,6 +1515,12 @@ def _is_network(name: str) -> bool:
 
 
 class TestConfinement:
+    """The network is the client's alone (the offline contract: no
+    connection except Cliniko's API, and none at startup or idle). Its one
+    write is confined further down the chain — ``TestWriteCallSites`` (who
+    may reach the client) and ``TestWriteSlot`` (the Note tab's button slot
+    is the only start of a write, draft-write Constraint 2)."""
+
     def test_exactly_one_tid251_noqa_on_the_http_client_import(self) -> None:
         hits = [
             (path.name, line.strip())
@@ -1559,14 +1565,17 @@ class TestConfinement:
         assert "native_host" in seen and "protocol" in seen
         assert "cliniko_client" not in seen
 
-    def test_only_the_clinic_registry_and_note_verification_import_the_client(
+    def test_only_the_registry_note_verification_and_the_draft_write_import_the_client(
         self,
     ) -> None:
         """Task 1.1 built the client with no caller; Task 2.1b's clinic
         registry is the first, for the Clinics tab's Validate / Replace key,
-        and Task 3.2's note verification (``encounter.verify_note_context``)
-        the second (the data-flow map's flow 18 and the threat model's
-        "Cliniko API client" say so). A new caller must update this pin
+        Task 3.2's note verification (``encounter.verify_note_context``) the
+        second, and the draft-write plan's ``draft_write`` (Task 3.2: its
+        body model; Task 3.4: hop 1's reads and hop 2's one write) the third.
+        The security docs — the threat model's "Cliniko API client" section
+        and flow 18 of the data-flow map — name three importers from the
+        draft-write plan's Task 6.1; a new caller must update this pin
         together with those docs."""
         importers = sorted(
             path.relative_to(SRC).as_posix()
@@ -1574,7 +1583,7 @@ class TestConfinement:
             if path.name != "cliniko_client.py"
             and any("cliniko_client" in name for name in _imports(path))
         )
-        assert importers == ["clinics.py", "encounter.py"]
+        assert importers == ["clinics.py", "draft_write.py", "encounter.py"]
 
 
 # Cliniko draft-write plan Task 5.3 (Critical Constraint 2): the write and its
@@ -1582,8 +1591,11 @@ class TestConfinement:
 # ``ClinikoCall.write_draft_note`` -> ``draft_write`` (its ONE caller module)
 # -> ``MainWindow._on_write_requested`` (the ONE slot, connected only to the
 # Note tab's ``write_requested``). ``TestWriteCallSites`` holds the FIRST
-# link: what a module outside the client may reach of it at all. The slot's
-# own AST pin arrives with the slot (Task 5.2). Outside the package, and so
+# link: what a module outside the client may reach of it at all;
+# ``TestWriteSlot`` (below, built with the slot in Task 5.2) the LAST two —
+# who may name ``draft_write``'s senders, and the slot's one connection.
+# The mock-note and unlinked-session never-call legs are in
+# ``test_ui_encounter.py::TestDraftWrite``. Outside the package, and so
 # outside these pins by design: ``scripts/probe-cliniko.py``'s
 # practitioner-run ``--test-write`` modes (Flow 4), which the app never
 # imports.
@@ -1628,13 +1640,34 @@ _ALLOWED_IMPORTS: Mapping[str, frozenset[str]] = {
             "check_id",
         }
     ),
+    # Draft-write Tasks 3.2 (the body model) and 3.4 (the hops and their
+    # errors, R22-13).
+    "draft_write.py": frozenset(
+        {
+            "ClinikoCall",
+            "ClinikoClient",
+            "ClinikoError",
+            "ClinikoRejected",
+            "CredentialsRejected",
+            "DraftContent",
+            "DraftUnencodable",
+            "InvalidKey",
+            "NoteContent",
+            "NotFound",
+            "RateLimited",
+            "Transport",
+        }
+    ),
 }
 # The ``ClinikoCall`` capabilities each module may name, pinned exactly;
-# every other module may name none. ``draft_write.py`` gains
-# ``write_draft_note`` with Task 3.2.
+# every other module may name none. ``draft_write.py``'s arrived with Task
+# 3.4 (R22-13): hop 1's two reads and hop 2's one write.
 _ALLOWED_CAPABILITIES: Mapping[str, frozenset[str]] = {
     "clinics.py": frozenset({"get_user", "get_practitioners_for_user", "get_public_settings"}),
     "encounter.py": frozenset({"get_treatment_note", "get_patient", "get_booking"}),
+    "draft_write.py": frozenset(
+        {"get_treatment_note", "get_treatment_note_template", "write_draft_note"}
+    ),
 }
 # ``ClinikoCall``'s public members that reach nothing: ``close`` drops the
 # key (``host``, a property, is left out by the derivation).
@@ -1916,8 +1949,8 @@ class TestWriteCallSites:
 
     Outside ``cliniko_client.py``, in every module:
     - imports: a module may import from the client only the names
-      ``_ALLOWED_IMPORTS`` pins for it (none, for all but ``clinics.py`` and
-      ``encounter.py``) — never the module object, so ``http`` / ``ssl``,
+      ``_ALLOWED_IMPORTS`` pins for it (none, for all but ``clinics.py``,
+      ``encounter.py`` and ``draft_write.py``) — never the module object, so ``http`` / ``ssl``,
       ``HTTPSTransport``, ``_WRITE_METHOD``, ``_admit`` are out of reach;
     - no class has a base naming a client class — by name, as an attribute
       (``encounter.ClinikoCall``), or through a name the module binds to one
@@ -2148,3 +2181,393 @@ class TestWriteCallSites:
         )
         for near_miss in near_misses:
             assert not _client_reach(ast.parse(near_miss), "clinics.py"), near_miss
+
+
+# Task 5.3's remainder (built with Task 5.2): the chain's LAST links. What
+# ``draft_write`` can send with is DERIVED — every top-level function whose
+# body names a ``ClinikoCall`` capability, ``ClinikoCall`` or
+# ``ClinikoClient``, closed over the functions that name one of those — and
+# outside ``draft_write.py`` only the slot's module may name any of them:
+# exactly the two hops, each inside its one method.
+_DRAFT_WRITE = "draft_write.py"
+_SLOT_MODULE = "ui/main_window.py"
+_HOP_METHODS: Mapping[str, str] = {
+    "read_for_write": "_on_write_requested",
+    "write_for_click": "_after_hop1",
+}
+
+
+def _identifiers(node: ast.AST) -> list[tuple[str, ast.AST]]:
+    """Every name a subtree can use to reach a definition: names,
+    attributes, import aliases (both sides), definitions and EXACT string
+    constants (``getattr(m, "read_for_write")``) — never a docstring that
+    merely mentions one."""
+    found: list[tuple[str, ast.AST]] = []
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name):
+            found.append((child.id, child))
+        elif isinstance(child, ast.Attribute):
+            found.append((child.attr, child))
+        elif isinstance(child, ast.alias):
+            found.append((child.name.rsplit(".", 1)[-1], child))
+            if child.asname:
+                found.append((child.asname, child))
+        elif isinstance(child, ast.Constant) and isinstance(child.value, str):
+            found.append((child.value, child))
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found.append((child.name, child))
+    return found
+
+
+def _draft_write_units(tree: ast.Module) -> list[tuple[str, ast.AST]]:
+    """Every (name, definition) ``draft_write`` binds that could carry a
+    send: functions, a class's methods and class-level assignments (round
+    33 LOW-014), and assignment targets (an alias such as ``send =
+    write_for_click``) — at module level and inside compound statements
+    (``if TYPE_CHECKING:``, ``try:``), never in a function body. A LIST, so
+    a name bound twice (a method shadowing a function) keeps both (round 34
+    LOW-010)."""
+    units: list[tuple[str, ast.AST]] = []
+
+    def collect(body: list[ast.stmt]) -> None:
+        for node in body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                units.append((node.name, node))
+            elif isinstance(node, ast.ClassDef):
+                collect(node.body)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    for name in ast.walk(target):
+                        if isinstance(name, ast.Name) and node.value is not None:
+                            units.append((name.id, node.value))
+            else:
+                for field in ("body", "orelse", "finalbody"):
+                    nested = getattr(node, field, None)
+                    if isinstance(nested, list):
+                        collect([s for s in nested if isinstance(s, ast.stmt)])
+                for handler in getattr(node, "handlers", []):
+                    collect(handler.body)
+
+    collect(tree.body)
+    return units
+
+
+def _draft_write_senders() -> frozenset[str]:
+    return _senders_of(ast.parse((SRC / _DRAFT_WRITE).read_text(encoding="utf-8")))
+
+
+def _senders_of(tree: ast.Module) -> frozenset[str]:
+    """A name is a sender when ANY of its definitions reaches the client or
+    another sender (closed over the module)."""
+    units = _draft_write_units(tree)
+    reach = set(_call_capabilities()) | {"ClinikoCall", "ClinikoClient"}
+    senders: set[str] = set()
+    while True:
+        grown = {
+            name
+            for name, unit in units
+            if name not in senders
+            and any(ident in reach | senders for ident, _ in _identifiers(unit) if ident != name)
+        }
+        if not grown:
+            return frozenset(senders)
+        senders |= grown
+
+
+def _slot_reach(tree: ast.AST, module: str, senders: frozenset[str]) -> list[str]:
+    """Where ``module`` names a draft-write sender beyond the slot's pin."""
+    found: list[str] = []
+    if module != _SLOT_MODULE:
+        for ident, node in _identifiers(tree):
+            if ident in senders:
+                found.append(f"{ident} at line {getattr(node, 'lineno', '?')}")
+        return found
+    methods = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    allowed_nodes: dict[str, set[int]] = {
+        name: {id(child) for child in ast.walk(methods[method])} if method in methods else set()
+        for name, method in _HOP_METHODS.items()
+    }
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("draft_write"):
+            for alias in node.names:
+                if alias.name in senders and (alias.asname or alias.name not in _HOP_METHODS):
+                    found.append(f"import {alias.name} as {alias.asname}")
+    for ident, node in _identifiers(tree):
+        if ident not in senders or isinstance(node, ast.alias):
+            continue
+        if id(node) not in allowed_nodes.get(ident, set()):
+            found.append(f"{ident} at line {getattr(node, 'lineno', '?')}")
+    return found
+
+
+def _references(tree: ast.AST, name: str) -> list[tuple[str, ast.AST]]:
+    """(enclosing function, node) for every use of ``name`` in ``tree`` but
+    its own definition."""
+    found: list[tuple[str, ast.AST]] = []
+
+    def visit(node: ast.AST, enclosing: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = enclosing
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                inner = child.name if enclosing == "<module>" or child.name == name else enclosing
+                if child.name == name:
+                    visit(child, inner)
+                    continue
+            if isinstance(child, ast.Attribute) and child.attr == name:
+                found.append((enclosing, child))
+            elif isinstance(child, ast.Name) and child.id == name:
+                found.append((enclosing, child))
+            elif isinstance(child, ast.Constant) and child.value == name:
+                found.append((enclosing, child))
+            visit(child, inner)
+
+    visit(tree, "<module>")
+    return found
+
+
+_CLICK_MODULE = "ui/note.py"
+_CLICK_CONNECT = "self.write_button.clicked.connect(self._on_write_clicked)"
+
+
+def _click_handler_offences(tree: ast.AST, module: str) -> tuple[int, list[str]]:
+    """(allowed connections, offences) for ``_on_write_clicked`` in one
+    module (codex round 35 PR-LOW-039): the ONE allowed use is ``_CLICK_CONNECT``
+    in ``NoteScreen.__init__``; any other use — another signal's
+    ``connect``, a direct or aliased call, a string, a use in another module
+    — is an offence."""
+    allowed = 0
+    offences: list[str] = []
+    for enclosing, node in _references(tree, "_on_write_clicked"):
+        connect = next(
+            (
+                call
+                for call in ast.walk(tree)
+                if isinstance(call, ast.Call) and any(arg is node for arg in call.args)
+            ),
+            None,
+        )
+        if (
+            module == _CLICK_MODULE
+            and enclosing == "__init__"
+            and connect is not None
+            and ast.unparse(connect) == _CLICK_CONNECT
+        ):
+            allowed += 1
+            continue
+        offences.append(f"{module}:{enclosing}:{getattr(node, 'lineno', '?')}")
+    return allowed, offences
+
+
+class TestWriteSlot:
+    """Critical Constraint 2 (Tasks 5.2, 5.3): a write and its reconcile
+    start ONLY from the Note tab's button slot.
+
+    - ``draft_write``'s send-reaching functions (derived: ``read_for_write``,
+      ``write_for_click`` and every helper they need) are named outside
+      ``draft_write.py`` only in ``ui/main_window.py`` — imported there under
+      their own names, ``read_for_write`` used only inside
+      ``MainWindow._on_write_requested`` and ``write_for_click`` only inside
+      ``MainWindow._after_hop1``;
+    - ``_after_hop1`` is referenced only in ``_on_write_requested`` (hop 1's
+      answer), and ``_on_write_requested`` exactly once in the package: as
+      the argument of ``self.note_screen.write_requested.connect`` in
+      ``MainWindow.__init__`` — the ONE connection of ``write_requested``;
+    - ``write_requested`` is emitted only by ``NoteScreen._on_write_clicked``
+      (the button's click handler, which re-checks ``_write_control``);
+    - ``_on_write_clicked`` is used exactly once in the package: as the
+      argument of ``self.write_button.clicked.connect`` in
+      ``NoteScreen.__init__`` (codex round 35 PR-LOW-039) — no timer or
+      other signal, no direct, aliased or by-string call.
+
+    Residue, named: as ``TestWriteCallSites`` — names built at run time,
+    ``vars()`` / ``sys.modules`` / ``importlib`` and a bound-then-called
+    alias of the slot are unseen by a source pin; review covers them. A
+    programmatic ``write_button.click()`` or ``clicked.emit()`` elsewhere is
+    not pinned either; it still passes the handler's click-time
+    ``_write_control`` and the slot's full check order, so it can only
+    write a saved, ratified, linked note. The
+    socket-level legs (``test_integration_no_sockets.py``: idle, startup and
+    the Chrome link) are unchanged."""
+
+    def test_the_senders_are_derived_from_draft_write(self) -> None:
+        senders = _draft_write_senders()
+        public = {name for name in senders if not name.startswith("_")}
+        assert set(_HOP_METHODS) <= public
+        # Guards the derivation: the two hops and the helpers they reach.
+        assert {"send_write", "fetch_template", "verify_note_for_write", "_hop1"} <= senders
+        assert not {"prepare_write", "refuse_before_read", "record_status"} & senders
+        # Round 33 LOW-014: an alias and a class's method are senders too,
+        # and a caller of either is one in turn; an unrelated name is not.
+        sample = ast.parse(
+            "def hop(call):\n    return call.write_draft_note('1', body)\n"
+            "send = hop\n"
+            "class Sender:\n    def go(self, call):\n        return call.get_user()\n"
+            "def via_alias():\n    return send()\n"
+            "LIMIT = 3\n"
+        )
+        assert _senders_of(sample) == {"hop", "send", "go", "via_alias"}
+        # Round 34 LOW-010: a sender under a compound statement, a class-level
+        # alias, and a sender shadowed by a later harmless method of its name.
+        hidden = ast.parse(
+            "if TYPE_CHECKING:\n    pass\nelse:\n"
+            "    def guarded(call):\n        return call.get_user()\n"
+            "try:\n    import x\nexcept ImportError:\n"
+            "    def fallback(call):\n        return call.get_user()\n"
+            "class Holder:\n    push = staticmethod(guarded)\n"
+            "def twin(call):\n    return call.write_draft_note('1', body)\n"
+            "class Shadow:\n    def twin(self):\n        return 0\n"
+        )
+        assert _senders_of(hidden) == {"guarded", "fallback", "push", "twin"}
+
+    def test_only_the_slot_names_a_sender_and_each_hop_in_its_method(self) -> None:
+        senders = _draft_write_senders()
+        offenders: dict[str, list[str]] = {}
+        for path in sorted(SRC.rglob("*.py")):
+            module = path.relative_to(SRC).as_posix()
+            if module in (_CLIENT, _DRAFT_WRITE):
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            found = _slot_reach(tree, module, senders)
+            if found:
+                offenders[module] = found
+        assert offenders == {}
+
+    def test_the_slot_is_connected_once_to_the_note_tabs_signal(self) -> None:
+        tree = ast.parse((SRC / _SLOT_MODULE).read_text(encoding="utf-8"))
+        slot = _references(tree, "_on_write_requested")
+        assert len(slot) == 1
+        enclosing, node = slot[0]
+        assert enclosing == "__init__"
+        connects = [
+            call
+            for call in ast.walk(tree)
+            if isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "connect"
+            and node in call.args
+        ]
+        assert len(connects) == 1
+        assert ast.unparse(connects[0]) == (
+            "self.note_screen.write_requested.connect(self._on_write_requested)"
+        )
+        assert [where for where, _ in _references(tree, "_after_hop1")] == [
+            "_on_write_requested"
+        ]
+        # No other module names the slot or hop 1's handler at all.
+        for path in sorted(SRC.rglob("*.py")):
+            module = path.relative_to(SRC).as_posix()
+            if module == _SLOT_MODULE:
+                continue
+            other = ast.parse(path.read_text(encoding="utf-8"))
+            for name in ("_on_write_requested", "_after_hop1"):
+                assert _references(other, name) == [], (module, name)
+
+    def test_write_requested_is_connected_once_and_emitted_by_the_click(self) -> None:
+        """Round 33 LOW-013: EVERY use of the name is accounted for — the
+        ``Signal`` definition on ``NoteScreen``, one ``.connect`` and one
+        ``.emit`` — so an alias (``sig = x.write_requested``), a hand-off
+        (``helper(x.write_requested)``) or a string (``getattr``) fails."""
+        connects: list[str] = []
+        emits: list[tuple[str, str]] = []
+        definitions: list[str] = []
+        others: list[str] = []
+        for path in sorted(SRC.rglob("*.py")):
+            module = path.relative_to(SRC).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for enclosing, node in _references(tree, "write_requested"):
+                parent = next(
+                    (
+                        call
+                        for call in ast.walk(tree)
+                        if isinstance(call, ast.Attribute) and call.value is node
+                    ),
+                    None,
+                )
+                if isinstance(node, ast.Attribute) and parent is not None:
+                    if parent.attr == "connect":
+                        connects.append(module)
+                        continue
+                    if parent.attr == "emit":
+                        emits.append((module, enclosing))
+                        continue
+                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                    definitions.append(module)
+                    continue
+                others.append(f"{module}:{getattr(node, 'lineno', '?')}")
+        assert connects == [_SLOT_MODULE]
+        assert emits == [("ui/note.py", "_on_write_clicked")]
+        assert definitions == ["ui/note.py"]
+        assert others == []
+
+    def test_the_click_handler_is_connected_only_to_the_button(self) -> None:
+        """Codex round 35 PR-LOW-039: the emitter's own callers — the one
+        ``write_button.clicked`` connection and nothing else."""
+        allowed = 0
+        offences: list[str] = []
+        for path in sorted(SRC.rglob("*.py")):
+            module = path.relative_to(SRC).as_posix()
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found, bad = _click_handler_offences(tree, module)
+            allowed += found
+            offences += bad
+        assert allowed == 1
+        assert offences == []
+
+    def test_the_click_handler_pin_sees_every_form_it_claims(self) -> None:
+        init = "class N:\n    def __init__(self):\n        {}\n"
+        reaches = (
+            init.format("self.timer.timeout.connect(self._on_write_clicked)"),
+            init.format("self.write_button.pressed.connect(self._on_write_clicked)"),
+            "class N:\n    def refresh(self):\n        self._on_write_clicked()\n",
+            "class N:\n    def refresh(self):\n"
+            "        self.write_button.clicked.connect(self._on_write_clicked)\n",
+            init.format("handler = self._on_write_clicked\n        handler()"),
+            init.format("getattr(self, '_on_write_clicked')()"),
+            init.format("QTimer.singleShot(0, self._on_write_clicked)"),
+        )
+        for sample in reaches:
+            _allowed, bad = _click_handler_offences(ast.parse(sample), _CLICK_MODULE)
+            assert bad, sample
+        allowed_sample = ast.parse(init.format(_CLICK_CONNECT))
+        assert _click_handler_offences(allowed_sample, _CLICK_MODULE) == (1, [])
+        # The same connection in any other module is an offence.
+        _allowed, bad = _click_handler_offences(allowed_sample, _SLOT_MODULE)
+        assert bad
+
+    def test_the_pin_sees_every_form_it_claims(self) -> None:
+        senders = _draft_write_senders()
+        reaches = (
+            "from scribe_desktop.draft_write import write_for_click",
+            "from scribe_desktop.draft_write import send_write as s",
+            "draft_write.read_for_write(request, None)",
+            "getattr(draft_write, 'write_for_click')",
+            "def f():\n    return _hop1",
+        )
+        for sample in reaches:
+            assert _slot_reach(ast.parse(sample), "ui/bridge.py", senders), sample
+        in_slot_module = (
+            # A hop outside its method, or renamed on import.
+            "class W:\n    def other(self):\n        return read_for_write(r, t)",
+            "class W:\n    def _on_write_requested(self):\n        return write_for_click(r, p)",
+            "from scribe_desktop.draft_write import read_for_write as r",
+            "from scribe_desktop.draft_write import send_write",
+        )
+        for sample in in_slot_module:
+            assert _slot_reach(ast.parse(sample), _SLOT_MODULE, senders), sample
+        allowed = (
+            "from scribe_desktop.draft_write import read_for_write, write_for_click\n"
+            "class W:\n"
+            "    def _on_write_requested(self):\n"
+            "        def hop1():\n            return read_for_write(r, t)\n"
+            "    def _after_hop1(self, result):\n"
+            "        return write_for_click(r, p)\n"
+            "    def doc(self):\n"
+            '        """Mentions read_for_write in prose only."""'
+        )
+        assert _slot_reach(ast.parse(allowed), _SLOT_MODULE, senders) == []
+        assert _slot_reach(ast.parse('"""read_for_write, in prose."""'), "ui/x.py", senders) == []

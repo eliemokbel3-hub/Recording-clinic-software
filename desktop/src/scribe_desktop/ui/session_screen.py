@@ -314,7 +314,7 @@ class SessionScreen(QWidget):
             self.session_started.emit()
             self._show_message("Recording.")
         except Exception as exc:  # noqa: BLE001 - surfaced, never crashes the UI
-            self._show_message(f"Start failed: {type(exc).__name__}: {exc}")
+            self._show_message(f"Start failed: {models.custody_refusal_text(exc)}")
             if (
                 previous is not None
                 and not previous.is_terminal
@@ -412,7 +412,7 @@ class SessionScreen(QWidget):
             self.session_discarded.emit()
             self._show_message("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
-            self._show_message(f"Discard failed: {type(exc).__name__}: {exc}")
+            self._show_message(f"Discard failed: {models.custody_refusal_text(exc)}")
             self.refresh()
             return False
         self.refresh()

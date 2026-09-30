@@ -13,7 +13,8 @@ view patterns · tokens · microcopy.
 - One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
   **Practitioner** / **Clinics** / Status — `desktop/src/scribe_desktop/ui/main_window.py`.
   The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
-  replaced or removed. No secondary
+  replaced or removed, and where each clinic chooses where a new Cliniko note's
+  starting text is read from for the draft write (below). No secondary
   windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
@@ -24,7 +25,7 @@ view patterns · tokens · microcopy.
   collapsed to slivers at 1920×1200), the other tabs hold a handful of widgets or an
   expanding text view and do not.
 - The **Note review tab** shows the generated note and the full uncertainty-marked
-  transcript SIDE BY SIDE through the whole review, until copy or Complete —
+  transcript SIDE BY SIDE through the whole review, until copy, write or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
   clinician can always see a low-confidence phrase the note omitted; no automated
   check detects low-confidence or materiality omission (Check 4 `omission_warnings`
@@ -46,7 +47,9 @@ view patterns · tokens · microcopy.
 - **Refuse destructive actions during live work, with a reason.** Closing the window is
   refused while recording or paused, while a voice enrolment is in flight, and while any
   worker runs — transcription, note generation, prose rendering, a benchmark, a clinic key
-  check or a Cliniko note check (`ui/main_window.py` `closeEvent`). With Unreviewed
+  check, a Cliniko note check or a draft write to Cliniko, which has its own line
+  ("A draft is being written to Cliniko. Wait for it to finish.") ahead of the generic
+  one (`ui/main_window.py` `closeEvent`). With Unreviewed
   recordings, the first close is refused and lists each one's expiry time; a second close
   within 10 seconds quits (`models.CLOSE_CONFIRM_SECONDS`). The benchmark is refused while a session is active or an enrolment runs,
   and an enrolment is refused while a session or benchmark runs (`ui/microphone.py`,
@@ -202,7 +205,53 @@ view patterns · tokens · microcopy.
   button, relabelled "Confirm remove" (changing the selection disarms it), and is
   refused — with the reason, "Finish or discard the recording for <clinic> first." —
   while the live recording is linked to that clinic; every refusal names what to do
-  (`ui/models.py` `clinic_refusal_line`; plan D10).
+  (`ui/models.py` `clinic_refusal_line`; plan D10). An empty key field is its own
+  line — "Paste the clinic's Cliniko API key, then press Validate or Replace key." —
+  never the bad-key line.
+- **A per-clinic choice sits under the form it belongs to, and says when it is
+  checked.** Below the Clinics tab's form, the group "Starting text in a new Cliniko
+  note" holds two radios, "Cliniko template" (the default) and "My own defaults",
+  for the selected clinic (cliniko-draft-write D14). A click saves at once and says so
+  ("<clinic> now uses "<choice>" for the starting text."); a refusal puts the radio
+  back to the stored value and names why; the group is disabled with no clinic
+  selected, with a registry problem, and while a key check runs, and a refresh or a
+  selection change sets the radios without saving. Under "My own defaults" only, a
+  path line ("Your own defaults for this clinic are read from: <path>") and a **Check
+  file** button appear; Check file reads the file on this computer and never calls
+  Cliniko, and every result line says the questions are matched against the note's
+  Cliniko template only at write time, so a readable file never reads as fully
+  checked. Nothing is checked at startup, on selection or on a timer (`ui/clinics.py`,
+  `ui/models.py` `CLINIC_DEFAULT_SOURCE_*` / `CLINIC_DEFAULTS_*`; the file format is
+  `docs/own-template-defaults.md`).
+- **A write to a chart is one click, checked afresh, and never completes on its
+  own** (cliniko-draft-write D2–D6). The Note tab's button row carries "Write draft
+  to Cliniko" beside Copy. It is enabled only for a saved, ratified note of a LINKED
+  recording (not a desktop Start, not the test provider) with no write or prose
+  rendering in flight; when it is disabled, the reason is a persistent plain-text
+  line under the buttons (and the tooltip), and a click that still arrives repeats
+  it. A click shows "Checking the note with Cliniko …" then "Writing the draft to
+  Cliniko …"; closing the window, the Transcript row, the Recovery screen and a
+  Chrome Start / Discard / Open for review are refused while it runs. Success does
+  NOT end the recording: the line becomes "Draft written to Cliniko. Reload the note
+  page in Chrome; press Complete once you can see it there.", Write stays disabled,
+  Copy stays, and only the Transcript screen's Complete finishes the recording (the
+  Session screen then reads "Draft written to Cliniko and this recording is
+  complete. Review and finalise the note in Cliniko."). Every refusal is ONE line
+  that names what happened and gives the next step — wait, try again, save, or fix
+  the cause — and offers Copy where copying the note is the way forward (a refusal
+  that only asks to wait, such as "A draft is being written to Cliniko. Wait for it
+  to finish.", does not). Once the click has read the session's write record and it
+  shows an earlier attempt whose outcome is unknown, the refusal lines that follow
+  are prefixed "An earlier write may have reached Cliniko. Check the note there
+  before copying anything." so a failed retry never invites a bare Copy; a refusal
+  met before that read (a write already in flight, a stale click, an unlinked
+  recording) and the lines that already say the outcome is open are not prefixed
+  (`ui/note.py`, `ui/main_window.py`
+  `_on_write_requested`; the lines are `ui/models.py` `WRITE_LINES`, Microcopy below).
+  Once any write was attempted, the note is frozen: Regenerate (including
+  "Regenerate (replaces the saved note)"), a second Save and "Delete note and complete
+  without one" refuse with the `write_pending` line ("Cancel review and regenerate" is
+  already disabled once the note is saved).
 - **Never auto-resume recording.** Recovery offers resume-processing or discard only —
   `ui/recovery.py`. Restarting a microphone without the clinician's say-so is out of
   bounds.
@@ -336,7 +385,10 @@ was said, uncertainty marks and all — so it is DISPLAY-ONLY and never leaves t
 is not the artefact the clinician signs. The **note is ratified content** — every
 non-transcript line confirmed by the clinician against the exact shown wording and passed
 through the checking stage (`note_check.py`) — so it, and only it, may become copyable to
-Cliniko, and only once the clinician has ratified it.
+Cliniko or be written into a linked Cliniko draft, and only once the clinician has
+ratified it. The write's text comes from the same per-section renderer as Copy's
+(`note.render_section_lines`) with the review apparatus switched off — no bullets,
+provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - Transcript text is display-only (`NoTextInteraction`) and cleared on close —
   `ui/transcript.py`. It is never logged, never written outside the encrypted store.
 - The generated NOTE is the copyable surface — but ONLY while the recorded copy flag is on
@@ -394,3 +446,50 @@ Cliniko, and only once the clinician has ratified it.
   the refused wording: "A section is shown as Clean clinical because its prose did not
   pass the fidelity check" / "Read that section as shown (its confirmed lines,
   unchanged), then acknowledge."
+- The draft write's lines (`ui/models.py` `WRITE_LINES`, the ONE source; no id,
+  patient or practitioner name, answer text or key is ever formatted into one). Each
+  refusal gives its next step, and offers Copy where copying the note is the way
+  forward; the wait-only and save-first lines do not. The `write_uncertain` prefix is
+  added only to the lines `ui/models.py` `WRITE_UNCERTAIN_PREFIXED` names, and only
+  once the record read shows an open attempt:
+  - button and progress: "Write draft to Cliniko"; "Checking the note with Cliniko …";
+    "Writing the draft to Cliniko …";
+  - outcome: "Draft written to Cliniko. Reload the note page in Chrome; press Complete
+    once you can see it there." (`written_seen`); after that Complete, on the Session
+    screen, "Draft written to Cliniko and this recording is complete. Review and
+    finalise the note in Cliniko." (`written_done`); "The write did not confirm.
+    Nothing is lost - press Write again to check the note before anything is sent."
+    (`unknown`);
+  - before the write: "Save the note first."; "This recording is not linked to a
+    Cliniko note. Copy the note instead."; "This note came from the test provider and
+    cannot be written to a chart."; "A draft is being written to Cliniko. Wait for it
+    to finish."; "A recovered recording is still being processed. Wait for it to
+    finish, then write."; "A key check for this clinic is running on the Clinics tab.
+    Wait for it to finish, then write."; "Cliniko is rate-limiting this clinic. Try
+    again in N s."; "The write stopped on this computer before anything was sent to
+    Cliniko. Copy the note, or try again." (`not_sent`);
+  - the note check: "The note could not be checked with Cliniko just now (<reason>).
+    Copy the note, or try again." for a cause that can pass, and "Cliniko shows that
+    this note cannot take the draft (<reason>). Copy the note instead." for one that
+    cannot — final, archived, another patient or practitioner (the practitioner
+    confirms this wording at Task P.2);
+  - the note's content: "The Cliniko note already holds text. Copy the note and paste
+    it in yourself."; "This note has no content that maps to the Cliniko template, so
+    there is nothing to write. Copy the note instead."; "Cliniko did not take the draft
+    (<cause>). Copy the note instead.";
+  - Cliniko's answer: "The note was finalised in Cliniko before the write reached it,
+    so the draft was not written. Copy the note instead."; "Cliniko refused the write
+    although the note is still a draft - this clinic's key may not be allowed to edit
+    notes. Copy the note instead.";
+  - the clinic's own defaults file: "This clinic's own defaults file cannot be used
+    (<problem>). …", "… has no entry for the note's Cliniko template (<template>). …",
+    "… names a question the note's Cliniko template does not have (<question> in
+    <section>). …" — each ending "Or copy the note instead.";
+  - uncertainty: "An earlier write may have reached Cliniko. Check the note there
+    before copying anything." (the prefix once the record read shows an open
+    attempt; also its own
+    refusal when the note re-reads as neither written nor untouched); "The record of
+    this recording's earlier write cannot be read, so its outcome cannot be checked.
+    Look at the note in Cliniko before copying anything."; "A write to Cliniko was
+    attempted for this note, so it can no longer be changed or regenerated here. Copy
+    it, complete the recording or discard it." (`write_pending`).

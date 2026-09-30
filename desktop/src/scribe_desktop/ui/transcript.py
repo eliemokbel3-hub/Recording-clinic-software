@@ -55,6 +55,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop.draft_write import WriteRecordStatus
 from scribe_desktop.note import GeneratedNote, speaker_role
 from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_config
 from scribe_desktop.note_fill import detect_prefill_candidates
@@ -80,8 +81,19 @@ def _clear_layout(layout: QLayout) -> None:
             widget.deleteLater()
 
 
+class WritePendingError(models.WriteLineRefusal):
+    """A Save, or the post-Save "delete note and complete without one",
+    refused because a Cliniko write was attempted for the live session's
+    note (draft-write D5); its text is the refusal's line
+    (``TranscriptScreen._write_pending``: ``write_pending``, prefixed while
+    the attempt is open, ``record_unreadable`` or ``write_in_flight``), which
+    the Note tab shows as it is (``models.custody_refusal_text``, Task 5.2)."""
+
+
 class TranscriptScreen(QWidget):
-    # Emitted after a successful Complete ("completed") or Discard ("discarded").
+    # Emitted after a successful Complete ("completed"), a Complete after a
+    # confirmed Cliniko write ("written", draft-write D6) or Discard
+    # ("discarded").
     closed = Signal(str)
     # Emitted with a models.NoteGenerationResult once a draft is composed.
     draft_ready = Signal(object)
@@ -127,10 +139,15 @@ class TranscriptScreen(QWidget):
         # generation STARTING during a resume, so the two flows are mutually
         # exclusive and `_on_recovered` can never fire while a lease is held.
         self._recovery_busy_provider = recovery_busy_provider
+        # Draft-write Task 5.2 (D9): a Cliniko draft write holds the live
+        # session — Generate, Complete and Discard are disabled meanwhile
+        # (the controller refuses each by name too). Set by the main window.
+        self._write_blocked = False
         self._on_complete: Callable[[], object] | None = None
         self._on_discard: Callable[[], object] | None = None
 
         self._can_generate = False
+        self._live_bound = False
         self._config: NoteConfig | None = None
         self._lease: GenerationLease | None = None
         self._generation_result: models.NoteGenerationResult | None = None
@@ -417,6 +434,10 @@ class TranscriptScreen(QWidget):
             self.warning_label.show()
         self._show_attribution_status(document)
         self._can_generate = can_generate and self._controller is not None
+        # Only a LIVE session's document is generated for (``can_generate``);
+        # its write record decides ``write_pending`` (cliniko-draft-write
+        # Task 3.3). A recovered source never consults the live one's.
+        self._live_bound = self._can_generate
         if self._can_generate:
             self._populate_generation_controls(document)
         self.generate_box.setVisible(self._can_generate)
@@ -557,8 +578,15 @@ class TranscriptScreen(QWidget):
         self._note_committed = False
         self.progress_bar.hide()
 
+    def set_write_blocked(self, blocked: bool) -> None:
+        """Draft-write Task 5.2 (D9): the row is disabled while a Cliniko
+        draft write holds the live session, and enabled again when its last
+        handler has run."""
+        self._write_blocked = blocked
+        self._update_controls()
+
     def _update_controls(self) -> None:
-        loaded = self._on_complete is not None
+        loaded = self._on_complete is not None and not self._write_blocked
         generating = self._lease is not None
         # Generation controls (Task 7.5): Generate is unreachable without both
         # a confirmed clinician role and a confirmed template profile.
@@ -568,6 +596,7 @@ class TranscriptScreen(QWidget):
             and not generating
             and self._config is not None
             and not self._recovery_in_flight()
+            and not self._write_blocked
         )
         self.generate_button.setEnabled(can_generate_now and both_confirmed)
         self.profile_combo.setEnabled(can_generate_now)
@@ -593,7 +622,9 @@ class TranscriptScreen(QWidget):
         reason = models.complete_block_reason(merged)
         self.complete_button.setEnabled(loaded and reason is None)
         self.discard_button.setEnabled(loaded and not generating)
-        if loaded and reason is not None:
+        if self._write_blocked and self._on_complete is not None:
+            self.complete_button.setToolTip(models.write_line("write_in_flight"))
+        elif loaded and reason is not None:
             self.complete_button.setToolTip(reason)
         else:
             self.complete_button.setToolTip(
@@ -611,6 +642,7 @@ class TranscriptScreen(QWidget):
         self.warning_label.hide()
         self.attribution_status_label.hide()
         self._can_generate = False
+        self._live_bound = False
         self.generate_box.hide()
         self._reset_generation_state()
         self._update_controls()
@@ -665,6 +697,58 @@ class TranscriptScreen(QWidget):
     def _recovery_in_flight(self) -> bool:
         return self._recovery_busy_provider is not None and self._recovery_busy_provider()
 
+    def _bound_live_session_id(self) -> str | None:
+        """The id of the LIVE session this screen shows — the one session
+        whose Cliniko write record the screen consults (D5) — or None for a
+        recovered source or with no live session."""
+        controller = self._controller
+        if controller is None or not self._live_bound:
+            return None
+        session = controller.session
+        return session.session_id if session is not None else None
+
+    def _write_pending(self) -> str | None:
+        """Cliniko draft-write D5 / Task 3.3 (R22-15): once ANY write attempt
+        exists for the bound LIVE session, its saved note is frozen —
+        Generate / Regenerate, a second Save and the post-Save "delete note
+        and complete without one" are refused (round 31 LOW-001). Read at the
+        click through the controller's content-free ``write_record_status``;
+        the refusal's line, or None when the click may proceed:
+
+        - a readable record (any outcome) → ``write_pending``, prefixed by
+          ``write_uncertain`` while that attempt is still open
+          (``attempting`` / ``unknown`` — PR-MED-017: a line that offers Copy
+          never does so bare while the write may have reached Cliniko);
+        - an unreadable record, or a failed status read (fail closed: a
+          record may exist) → ``record_unreadable``, which says only that
+          the record cannot be read, never how an attempt ended;
+        - first of all, a write in flight (``writing_session_id``) →
+          ``write_in_flight``: the record's ``attempting`` row is THAT write,
+          not an earlier one, so no uncertain prefix and no Copy invited
+          (round 27 LOW-002).
+
+        A recovered source is never refused by the live session's record,
+        and neither is a screen whose controller holds no live session: with
+        no live session there is no record to consult (and
+        ``begin_generation`` / the generation custody refuse without one).
+        The check sits here, not in ``begin_generation``, which takes no
+        session id."""
+        controller = self._controller
+        session_id = self._bound_live_session_id()
+        if controller is None or session_id is None:
+            return None
+        if controller.writing_session_id() is not None:
+            return models.write_line("write_in_flight")
+        try:
+            status = controller.write_record_status(session_id)
+        except Exception:  # noqa: BLE001 - fail closed: a record may exist
+            return models.write_line("record_unreadable")
+        if status.outcome == "none":
+            return None
+        if status.outcome == "unreadable":
+            return models.write_line("record_unreadable")
+        return models.write_line("write_pending", uncertain=status.open_attempt)
+
     def generate(self) -> None:
         controller = self._controller
         if controller is None or self._lease is not None:
@@ -681,6 +765,12 @@ class TranscriptScreen(QWidget):
                 "A recovery is in progress - wait for it to finish before "
                 "generating a note."
             )
+            return
+        pending = (
+            models.write_line("write_in_flight") if self._write_blocked else self._write_pending()
+        )
+        if pending is not None:
+            self.message_label.setText(f"Cannot generate a note now: {pending}")
             return
         try:
             lease = controller.begin_generation()
@@ -753,6 +843,9 @@ class TranscriptScreen(QWidget):
         result = self._generation_result
         if controller is None or lease is None or result is None:
             raise RuntimeError("no note generation is in progress")
+        pending = self._write_pending()
+        if pending is not None:
+            raise WritePendingError(pending)
         config = result.config
         controller.with_generation_custody(
             lease, lambda directory, crypto: write_note(directory, crypto, note, config)
@@ -783,6 +876,11 @@ class TranscriptScreen(QWidget):
         if lease is not None:
             controller.complete_without_note(lease)  # pre-save: raises -> lease + review held
         else:
+            # Draft-write D5 (round 31 LOW-001): once a write was attempted
+            # the saved note is frozen — Copy, Complete or Discard remain.
+            pending = self._write_pending()
+            if pending is not None:
+                raise WritePendingError(pending)
             controller.complete_deleting_saved_note()  # post-save: no lease, guarded
         # Success: _clear() releases any local lease mirror + emits
         # generation_active_changed(False), unblocking recovery, and resets
@@ -831,20 +929,38 @@ class TranscriptScreen(QWidget):
     # --- Phase-2 custody actions -------------------------------------------
 
     def on_complete(self) -> None:
+        """The Complete button. A LIVE session whose Cliniko write record
+        reads ``written`` completes through ``complete_written`` (draft-write
+        D6, seen mode); a ``written`` record of ANOTHER saved note — or of a
+        saved note that cannot be read — is refused with ``write_uncertain``
+        and never completes (D5, round 31 LOW-002; Discard stays); every
+        other session completes through ``on_complete`` as before. The
+        record is read at the click, through the content-free
+        ``write_record_status``; a failed read completes nothing."""
         if self._on_complete is None:
+            return
+        if self._write_blocked:  # click-time re-check (Task 5.2, D9)
+            self.message_label.setText(
+                f"Complete refused: {models.write_line('write_in_flight')}"
+            )
+            return
+        try:
+            status = self._bound_record_status()
+        except Exception as exc:  # noqa: BLE001 - fail closed: nothing completes
+            self._show_complete_failure(exc)
+            return
+        if status is not None and status.outcome == "written":
+            if not status.note_matches:
+                self.message_label.setText(
+                    f"Complete refused: {models.write_line('write_uncertain')}"
+                )
+                return
+            self.complete_written(self._complete_after_write)
             return
         try:
             self._on_complete()
         except Exception as exc:  # noqa: BLE001 - key custody kept on any failure
-            # Round 42 LOW-001: state only what THIS action verified — the
-            # Complete primitive deleted nothing on failure, but the key may
-            # be gone for another reason (e.g. the 24 h sweep at expiry).
-            self.message_label.setText(
-                f"Complete failed: {models.custody_refusal_text(exc).rstrip('.')}. "
-                "No key deletion was performed by this action; if the "
-                "session is still within its 24-hour window it remains "
-                "available."
-            )
+            self._show_complete_failure(exc)
             return
         self._clear()
         self.message_label.setText(
@@ -853,8 +969,69 @@ class TranscriptScreen(QWidget):
         )
         self.closed.emit("completed")
 
+    def complete_written(self, on_complete_written: Callable[[], object]) -> None:
+        """Draft-write D6 (seen mode): Complete for a session whose draft
+        Cliniko has taken, pressed once the clinician can see it there.
+        Mirrors ``on_complete``: ``on_complete_written`` runs the custody
+        action (``_complete_after_write``); on success the screen clears,
+        shows ``written_done`` and emits ``closed("written")``; on failure it
+        shows why and changes nothing else — the session stays QUEUED with
+        its key and write record, so the next Complete tries again."""
+        try:
+            on_complete_written()
+        except Exception as exc:  # noqa: BLE001 - key custody kept on any failure
+            self._show_complete_failure(exc)
+            return
+        self._clear()
+        self.message_label.setText(models.write_line("written_done"))
+        self.closed.emit("written")
+
+    def _complete_after_write(self) -> None:
+        """The custody action behind ``complete_written``: RE-ACQUIRE the
+        write reservation for the live session (the write's own was released
+        when its result was recorded — D6), then ``complete_after_write``,
+        which revalidates the record under the controller lock and consumes
+        the reservation on success. On any failure the reservation is
+        released here, so a refused Complete never leaves the session
+        reserved; ``release`` is a no-op for a token already consumed."""
+        controller = self._controller
+        session_id = self._bound_live_session_id()
+        if controller is None or session_id is None:
+            raise RuntimeError("no live session to complete")
+        reservation = controller.reserve_write(session_id)
+        try:
+            controller.complete_after_write(reservation)
+        finally:
+            reservation.release()
+
+    def _bound_record_status(self) -> WriteRecordStatus | None:
+        """The bound LIVE session's write-record status, or None for a
+        recovered source or with no live session. Raises what the status
+        read raises."""
+        controller = self._controller
+        session_id = self._bound_live_session_id()
+        if controller is None or session_id is None:
+            return None
+        return controller.write_record_status(session_id)
+
+    def _show_complete_failure(self, exc: BaseException) -> None:
+        # Round 42 LOW-001: state only what THIS action verified — the
+        # Complete primitive deleted nothing on failure, but the key may be
+        # gone for another reason (e.g. the 24 h sweep at expiry).
+        self.message_label.setText(
+            f"Complete failed: {models.custody_refusal_text(exc).rstrip('.')}. "
+            "No key deletion was performed by this action; if the "
+            "session is still within its 24-hour window it remains "
+            "available."
+        )
+
     def on_discard(self) -> None:
         if self._on_discard is None:
+            return
+        if self._write_blocked:  # click-time re-check (Task 5.2, D9)
+            self.message_label.setText(
+                f"Discard refused: {models.write_line('write_in_flight')}"
+            )
             return
         try:
             self._on_discard()
