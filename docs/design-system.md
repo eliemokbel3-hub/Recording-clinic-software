@@ -13,8 +13,8 @@ view patterns · tokens · microcopy.
 - One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
   **Practitioner** / **Clinics** / Status — `desktop/src/scribe_desktop/ui/main_window.py`.
   The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
-  replaced or removed, and where each clinic chooses where a new Cliniko note's
-  starting text is read from for the draft write (below). No secondary
+  replaced or removed (since 2026-09-30 it holds no draft-write setting: the
+  "Starting text" group went with cliniko-draft-write D14, retired by D15). No secondary
   windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
@@ -208,24 +208,12 @@ view patterns · tokens · microcopy.
   (`ui/models.py` `clinic_refusal_line`; plan D10). An empty key field is its own
   line — "Paste the clinic's Cliniko API key, then press Validate or Replace key." —
   never the bad-key line.
-- **A per-clinic choice sits under the form it belongs to, and says when it is
-  checked.** Below the Clinics tab's form, the group "Starting text in a new Cliniko
-  note" holds two radios, "Cliniko template" (the default) and "My own defaults",
-  for the selected clinic (cliniko-draft-write D14). A click saves at once and says so
-  ("<clinic> now uses "<choice>" for the starting text."); a refusal puts the radio
-  back to the stored value and names why; the group is disabled with no clinic
-  selected, with a registry problem, and while a key check runs, and a refresh or a
-  selection change sets the radios without saving. Under "My own defaults" only, a
-  path line ("Your own defaults for this clinic are read from: <path>") and a **Check
-  file** button appear; Check file reads the file on this computer and never calls
-  Cliniko, and every result line says the questions are matched against the note's
-  Cliniko template only at write time, so a readable file never reads as fully
-  checked. Nothing is checked at startup, on selection or on a timer (`ui/clinics.py`,
-  `ui/models.py` `CLINIC_DEFAULT_SOURCE_*` / `CLINIC_DEFAULTS_*`; the file format is
-  `docs/own-template-defaults.md`).
-- **A write to a chart is one click, checked afresh, and never completes on its
-  own** (cliniko-draft-write D2–D6). The Note tab's button row carries "Write draft
-  to Cliniko" beside Copy. It is enabled only for a saved, ratified note of a LINKED
+- **A write to a chart is one click, checked afresh, adds and never replaces, and
+  never completes on its own** (cliniko-draft-write D2–D6, D15). The Note tab's
+  button row carries "Write draft to Cliniko" beside Copy. The write keeps every
+  answer already in the Cliniko note — typed text and the template's starting
+  prompts alike — and puts the app's text below it after one empty line; an empty
+  question simply takes the app's text. It is enabled only for a saved, ratified note of a LINKED
   recording (not a desktop Start, not the test provider) with no write or prose
   rendering in flight; when it is disabled, the reason is a persistent plain-text
   line under the buttons (and the tooltip), and a click that still arrives repeats
@@ -233,7 +221,10 @@ view patterns · tokens · microcopy.
   Cliniko …"; closing the window, the Transcript row, the Recovery screen and a
   Chrome Start / Discard / Open for review are refused while it runs. Success does
   NOT end the recording: the line becomes "Draft written to Cliniko. Reload the note
-  page in Chrome; press Complete once you can see it there.", Write stays disabled,
+  page in Chrome; press Complete once you can see it there. If Cliniko says the note
+  was updated elsewhere, choose Discard my changes." (an editor already open on the
+  note holds the pre-write copy; Cliniko's own button keeps the written draft), Write
+  stays disabled,
   Copy stays, and only the Transcript screen's Complete finishes the recording (the
   Session screen then reads "Draft written to Cliniko and this recording is
   complete. Review and finalise the note in Cliniko."). Every refusal is ONE line
@@ -455,7 +446,8 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   - button and progress: "Write draft to Cliniko"; "Checking the note with Cliniko …";
     "Writing the draft to Cliniko …";
   - outcome: "Draft written to Cliniko. Reload the note page in Chrome; press Complete
-    once you can see it there." (`written_seen`); after that Complete, on the Session
+    once you can see it there. If Cliniko says the note was updated elsewhere, choose
+    Discard my changes." (`written_seen`); after that Complete, on the Session
     screen, "Draft written to Cliniko and this recording is complete. Review and
     finalise the note in Cliniko." (`written_done`); "The write did not confirm.
     Nothing is lost - press Write again to check the note before anything is sent."
@@ -473,22 +465,19 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
     this note cannot take the draft (<reason>). Copy the note instead." for one that
     cannot — final, archived, another patient or practitioner (the practitioner
     confirms this wording at Task P.2);
-  - the note's content: "The Cliniko note already holds text. Copy the note and paste
-    it in yourself."; "This note has no content that maps to the Cliniko template, so
-    there is nothing to write. Copy the note instead."; "Cliniko did not take the draft
-    (<cause>). Copy the note instead.";
+  - the note's content: "A question in the Cliniko note holds something the app cannot
+    read, so nothing was written. Copy the note instead." (`note_unreadable`); "This
+    note has no content that maps to the Cliniko template, so there is nothing to
+    write. Copy the note instead."; "Cliniko did not take the draft (<cause>). Copy the
+    note instead.";
   - Cliniko's answer: "The note was finalised in Cliniko before the write reached it,
     so the draft was not written. Copy the note instead."; "Cliniko refused the write
     although the note is still a draft - this clinic's key may not be allowed to edit
     notes. Copy the note instead.";
-  - the clinic's own defaults file: "This clinic's own defaults file cannot be used
-    (<problem>). …", "… has no entry for the note's Cliniko template (<template>). …",
-    "… names a question the note's Cliniko template does not have (<question> in
-    <section>). …" — each ending "Or copy the note instead.";
   - uncertainty: "An earlier write may have reached Cliniko. Check the note there
     before copying anything." (the prefix once the record read shows an open
-    attempt; also its own
-    refusal when the note re-reads as neither written nor untouched); "The record of
+    attempt; also its own refusal when the note re-reads as neither written nor as
+    that attempt read it); "The record of
     this recording's earlier write cannot be read, so its outcome cannot be checked.
     Look at the note in Cliniko before copying anything."; "A write to Cliniko was
     attempted for this note, so it can no longer be changed or regenerated here. Copy

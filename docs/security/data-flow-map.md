@@ -552,8 +552,9 @@ rendering the language model does (flow 17).
     `https://api.<shard>.cliniko.com/v1/...` through `cliniko_client.py`, the
     app's one network-capable module. Reads (`GET`, no body): `/user`,
     `/practitioners?q[]=user_id:=<id>`, `/settings/public`, `/settings`,
-    `/treatment_notes/<id>`, `/patients/<id>`, `/bookings/<id>`,
-    `/treatment_note_templates/<id>`. The ONE write: `PATCH
+    `/treatment_notes/<id>`, `/patients/<id>`, `/bookings/<id>`, and
+    `/treatment_note_templates/<id>` — since D15 (2026-09-30) read only by the
+    practitioner-run probe's test write, never by the app. The ONE write: `PATCH
     /treatment_notes/<id>` with a JSON body whose only top-level key is
     `content` (THE DRAFT WRITE below); the transport refuses every other
     method, path, body and header set before connecting. WHAT LEAVES the machine: the clinic's API key (HTTP Basic
@@ -561,11 +562,12 @@ rendering the language model does (flow 17).
     validated), the practitioner's contact email in the required
     `User-Agent: Clinic Scribe (<email>)` (refused on CR/LF or a failed shape
     check), and — for a write only — the draft's content: the note's own
-    re-read content with the ratified note's text in the matched answers.
+    re-read content with the ratified note's text added to the matched
+    answers (below any answer already there — D15).
     WHAT RETURNS: the key user's role and practitioner record, the
     account subdomain, for a note its draft state, links (patient,
-    practitioner, booking, template) and content, a template's sections,
-    questions and default answers, the patient's record (the
+    practitioner, booking, template) and content, for the probe alone a
+    template's sections, questions and default answers, the patient's record (the
     display name) and the booking's time; for a write, a status (and
     Cliniko's echo of the note, which nothing keeps). Every answer is held in memory
     only: the client writes nothing to disk, logs nothing and returns the parsed JSON
@@ -639,25 +641,26 @@ rendering the language model does (flow 17).
     clinic change; a desktop-started (unlinked) recording and a note from the
     test provider never write. Per click, two client calls on worker
     threads, each reading the clinic's key from Credential Manager once:
-    hop 1 — a discovery `GET` of the note only when the linked context has no
-    template id, then `GET /treatment_note_templates/<id>`, then the final
-    `GET /treatment_notes/<id>` (the click's own verification of the note);
-    hop 2 — the `PATCH`. In between, on the GUI thread, the app matches the
-    template, checks every matched question still holds only its declared
-    starting text (the clinic's setting: the template's own default answers,
-    or the practitioner's own defaults file — flow 21), builds the body from
-    the re-read content with only the matched answers replaced, and writes
-    the `attempting` record. What it KEEPS: in memory, for that click only —
-    the template and the note's re-read content until the body is built, the
-    body until hop 2 returns; nothing of Cliniko's answers is logged or
-    written. At rest, `sessions\<id>\write.enc` — one document under the
-    session key (AES-256-GCM, AAD `write:<session_id>`), rewritten atomically
-    at each step: the attempt number and times, the template profile's
-    target ids, a SHA-256 of the saved note, a SHA-256 of each written
-    answer's normalised text and of where it was written, the body's SHA-256
-    and the outcome (`attempting` / `written` / `refused` + reason /
-    `unknown`) — ids and digests only, never note text, a Cliniko answer or
-    a Cliniko id. It lives and dies with its session (retention schedule).
+    hop 1 — ONE request, `GET /treatment_notes/<id>` (the click's own
+    verification of the note; since D15 no template is read); hop 2 — the
+    `PATCH`. In between, on the GUI thread, the app matches the profile to
+    the note's own content, APPENDS to each matched question it writes — an
+    empty answer takes the app's text; any other answer is kept byte-for-byte
+    with one empty line and the app's text below it; an answer it cannot
+    read refuses the write (D15) — builds the body from the re-read content
+    with only the matched answers set, and writes the `attempting` record.
+    What it KEEPS: in memory, for that click only — the note's re-read
+    content until the body is built, the body until hop 2 returns; nothing of
+    Cliniko's answers is logged or written. At rest, `sessions\<id>\write.enc`
+    — one document under the session key (AES-256-GCM, AAD
+    `write:<session_id>`), rewritten atomically at each step (schema v2): the
+    attempt number and times, the template profile's target ids, a SHA-256 of
+    the saved note, per written target a SHA-256 of its normalised expected
+    final answer and of its normalised answer as read, a SHA-256 of where
+    they were written, the body's SHA-256 and the outcome (`attempting` /
+    `written` / `refused` + reason / `unknown`) — ids and digests only, never
+    note text, a Cliniko answer or a Cliniko id. It lives and dies with its
+    session (retention schedule).
     After the clinician has seen the written draft in Chrome and pressed
     Complete, the session's key is destroyed and its directory removed, so
     the draft in Cliniko is the only copy.
@@ -786,30 +789,10 @@ rendering the language model does (flow 17).
     and a Cliniko page can see the page script's own element and detect the
     installed extension through its web-accessible module (residue (2)).
 
-21. **Own template defaults → the draft write (cliniko-draft-write plan,
-    D14; BUILT 2026-09-29; local read only, plaintext, practitioner-authored,
-    INTENDED non-clinical — unenforced).** For a clinic the practitioner has
-    switched to "My own defaults" on the Clinics tab, `scribe-app` reads
-    `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\<clinic host>.json`
-    — a file the PRACTITIONER creates and edits by hand
-    (`docs/own-template-defaults.md`) — through
-    `note_config.load_own_template_defaults`, on the GUI thread, at two
-    moments only: each "Write draft to Cliniko" click (after hop 1, fresh for
-    that click) and each "Check file" press on the Clinics tab. It is never
-    read at startup, on a selection or on a timer, and the app never writes
-    the file or creates its folder. The read is bounded (64 KiB), refuses
-    duplicate keys, control characters and over-long names, and fails
-    CLOSED with a named problem (missing, unreadable, too large, not valid);
-    a `not_valid` location names the file's own KEYS only (escaped, clipped),
-    never a default text, and is shown only on the Clinics tab. What it
-    feeds: the starting text each matched question may still hold for the
-    write to go ahead (flow 18) — compared in memory, never written, logged
-    or sent. It is a TRUST input: an entry equal to text the clinician typed
-    in Cliniko lets the write replace that text, and "non-clinical prompt
-    text only" is a policy the loader cannot check (threat model, THE DRAFT
-    WRITE residue (e)). Under "Cliniko template" (the default) the file is
-    not read at all. The choice itself is one field of `clinics.json`,
-    `default_source`, written only while it is "My own defaults".
+21. **RETIRED 2026-09-30 (cliniko-draft-write D15).** The own template
+    defaults file under `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\`
+    is no longer read by anything (the loader, the Clinics tab's setting and
+    "Check file" are gone); a practitioner's file may stay on disk, unread.
 
 ## Explicit non-flows
 
@@ -818,7 +801,7 @@ rendering the language model does (flow 17).
   note `note.enc`, flow 10) exist on disk ONLY encrypted under per-session keys
   inside `sessions\<id>\`, beside `encounter.enc` (ids, flow 6) and the draft
   write's record `write.enc` (ids and digests, flow 18). Config files (flow
-  11) and the practitioner's own template-defaults files (flow 21) are a SEPARATE,
+  11) are a SEPARATE,
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
   semantically (it validates structure only), so it is NOT a content guarantee —

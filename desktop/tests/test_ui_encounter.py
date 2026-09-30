@@ -57,7 +57,15 @@ from scribe_desktop.session_store import (  # noqa: E402
 )
 from scribe_desktop.transcription import RecoveryOutcome  # noqa: E402
 from scribe_desktop.ui import models  # noqa: E402
-from test_draft_write import _IDENTITY, Cliniko, _profile, _record, _write_note  # noqa: E402
+from test_draft_write import (  # noqa: E402
+    _HISTORY,
+    _IDENTITY,
+    Cliniko,
+    _content,
+    _profile,
+    _record,
+    _write_note,
+)
 from test_ui_screens import FakeController, _document, _main_window, _process_until  # noqa: E402
 
 
@@ -611,10 +619,12 @@ class _WriteController(FakeController):
     """A linked (or unlinked) QUEUED session whose write record is the
     store's."""
 
-    def __init__(self, store: _MemoryWriteStore, *, linked: bool = True) -> None:
+    def __init__(
+        self, store: _MemoryWriteStore, *, linked: bool = True, template_id: str | None = TEMPLATE
+    ) -> None:
         super().__init__()
         self.store = store
-        ctx = context() if linked else None
+        ctx = context(template_id=template_id) if linked else None
         consent = consent_for(ctx) if ctx is not None else unlinked_consent()
         self.session_value = RecordingSession(
             consent=consent, encounter_context=ctx
@@ -677,12 +687,13 @@ class TestDraftWrite:
         store: _MemoryWriteStore | None = None,
         linked: bool = True,
         profile: Any = None,
+        template_id: str | None = TEMPLATE,
         **overrides: Any,
     ) -> tuple[Any, _WriteController, Any, _MemoryWriteStore]:
         cliniko = cliniko if cliniko is not None else Cliniko()
         store = store if store is not None else _MemoryWriteStore()
         store.requests = lambda: len(cliniko.calls)
-        controller = _WriteController(store, linked=linked)
+        controller = _WriteController(store, linked=linked, template_id=template_id)
         registry = _registry(tmp_path, transport=cliniko)
         window = _window(
             tmp_path,
@@ -720,13 +731,13 @@ class TestDraftWrite:
         window.note_screen.write_button.click()
         assert _process_until(qapp, lambda: not window.is_writing)
         qapp.processEvents()
+        # D15: hop 1 is ONE note read — no template read.
         assert cliniko.calls == [
-            ("GET", f"/v1/treatment_note_templates/{TEMPLATE}"),
             ("GET", f"/v1/treatment_notes/{NOTE}"),
             ("PATCH", f"/v1/treatment_notes/{NOTE}"),
         ]
-        # The attempt row was on disk after the two reads and BEFORE the PATCH.
-        assert store.stored == [("attempting", 2), ("written", 3)]
+        # The attempt row was on disk after the read and BEFORE the PATCH.
+        assert store.stored == [("attempting", 1), ("written", 2)]
         assert self._line(window) == models.write_line("written_seen")
         assert window.note_screen.write_label.text() == models.write_line("written_seen")
         assert not window.note_screen.write_button.isEnabled()  # seen mode: Complete next
@@ -805,7 +816,7 @@ class TestDraftWrite:
         window, controller, cliniko, store = self._window(tmp_path, profile=broken)
         self._click(qapp, window, controller)
         assert self._line(window) == models.write_line("not_sent")
-        assert [call[0] for call in cliniko.calls] == ["GET", "GET"]
+        assert [call[0] for call in cliniko.calls] == ["GET"]
         assert store.stored == []
         assert controller.write_releases == 1 and controller.writing_id is None
         window.close()
@@ -818,7 +829,7 @@ class TestDraftWrite:
         window, controller, _cliniko, _store = self._window(tmp_path, store=store)
         self._click(qapp, window, controller)
         assert self._line(window) == models.write_line("unknown")
-        assert store.stored == [("attempting", 2)]  # still open: the next click reconciles
+        assert store.stored == [("attempting", 1)]  # still open: the next click reconciles
         assert controller.write_releases == 1
         window.close()
 
@@ -873,7 +884,7 @@ class TestDraftWrite:
     ) -> None:
         latch = RateLimitLatch(clock=lambda: 100.0)
         window, controller, cliniko, store = self._window(
-            tmp_path, cliniko=Cliniko(template=status(429)), rate_limit_latch=latch
+            tmp_path, cliniko=Cliniko(notes=(status(429),)), rate_limit_latch=latch
         )
         self._click(qapp, window, controller)
         assert latch.cooling(CLINIC_ID, 100.0) is not None
@@ -913,7 +924,7 @@ class TestDraftWrite:
         assert self._line(window) == models.write_line(
             "rate_limited", uncertain=open_attempt, seconds=RATE_LIMIT_COOLDOWN_SECONDS
         )
-        assert [call[0] for call in cliniko.calls] == ["GET", "GET"]
+        assert [call[0] for call in cliniko.calls] == ["GET"]
         assert store.stored == []
         assert controller.write_releases == 1 and controller.writing_id is None
         window.close()
@@ -950,51 +961,35 @@ class TestDraftWrite:
 
     # --- round 33 MED-001: the slot's remaining legs --------------------------
 
-    def _own_file(self, tmp_path: Path, window: Any, body: str | None) -> None:
-        """The clinic set to "My own defaults"; ``body`` (None: no file) at
-        the path the window's config root gives."""
-        from scribe_desktop.note_config import own_template_defaults_path
+    @pytest.mark.parametrize("template_id", [TEMPLATE, None])
+    def test_hop_one_is_one_read_with_or_without_a_template_id(
+        self, qapp: Any, tmp_path: Path, template_id: str | None
+    ) -> None:
+        """D15: the click reads the note ONCE whether or not the linked
+        context carries a template id (an offline-started session has none)
+        — no discovery read, no template read."""
+        window, controller, cliniko, _store = self._window(tmp_path, template_id=template_id)
+        self._click(qapp, window, controller)
+        assert cliniko.calls == [
+            ("GET", f"/v1/treatment_notes/{NOTE}"),
+            ("PATCH", f"/v1/treatment_notes/{NOTE}"),
+        ]
+        assert self._line(window) == models.write_line("written_seen")
+        window.close()
 
-        registry = window._clinic_registry
-        registry.set_default_source(CLINIC_ID, "own_file", writing_clinic=None)
-        if body is not None:
-            path = own_template_defaults_path(HOST, tmp_path / "config")
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(body, encoding="utf-8")
-
-    def test_my_own_defaults_is_read_at_the_click_from_the_windows_config_root(
+    def test_a_note_holding_text_takes_the_draft_below_it(
         self, qapp: Any, tmp_path: Path
     ) -> None:
-        """D14 / R22-17: under "My own defaults" the clinic's file under the
-        window's config root decides the starting text — missing, naming no
-        entry for the note's template, then usable."""
-        window, controller, cliniko, store = self._window(tmp_path)
-        self._own_file(tmp_path, window, None)
-        self._click(qapp, window, controller)
-        assert self._line(window) == models.write_line(
-            "defaults_unreadable", problem=models.OWN_DEFAULTS_PROBLEMS["missing"]
-        )
-        entry = (
-            '{"History": {"Presenting complaint/patient progress": '
-            '["Site -", "Chron -", "Agg -"]}}'
-        )
-        self._own_file(
-            tmp_path, window, '{"schema_version": 1, "templates": {"Follow-up": ' + entry + "}}"
-        )
-        self._click(qapp, window, controller)
-        assert self._line(window) == models.write_line(
-            "defaults_no_template", template="Standard Consultation"
-        )
-        assert _count(cliniko.calls, "PATCH") == 0 and store.stored == []
-        self._own_file(
-            tmp_path,
-            window,
-            '{"schema_version": 1, "templates": {"Standard Consultation": ' + entry + "}}",
-        )
+        """D15 through the slot (was ``note_has_text``): the typed answer is
+        kept byte-for-byte, one empty line, then the app's text."""
+        typed = "<p>L knee pain</p><p>happened 2 months ago</p>"
+        cliniko = Cliniko(notes=(ok(note_body(content=_content({_HISTORY: typed}))),))
+        window, controller, _cliniko, _store = self._window(tmp_path, cliniko=cliniko)
         self._click(qapp, window, controller)
         assert self._line(window) == models.write_line("written_seen")
-        assert _count(cliniko.calls, "PATCH") == 1
-        assert controller.write_releases == 3
+        sent = json.loads(cliniko.bodies[-1] or b"{}")["content"]
+        answer = sent["sections"][0]["questions"][0]["answer"]
+        assert answer.startswith(typed + "<p><br></p>") and len(answer) > len(typed) + 11
         window.close()
 
     def test_an_open_attempt_prefixes_every_later_refusal(
@@ -1002,8 +997,8 @@ class TestDraftWrite:
     ) -> None:
         """PR-MED-017 through the slot: an earlier ``unknown`` attempt puts
         the ``write_uncertain`` warning before the lock's, the cooldown's
-        and the own-defaults refusals; with no record the lock's line is
-        bare."""
+        and the unreadable-answer refusals; with no record the lock's line
+        is bare."""
         latch = RateLimitLatch(clock=lambda: 100.0)
         window, controller, cliniko, store = self._window(tmp_path, rate_limit_latch=latch)
         session_id = controller.session_value.session_id
@@ -1033,11 +1028,12 @@ class TestDraftWrite:
         assert self._line(window) == models.write_line("clinic_busy", uncertain=True)
         window.clinics_screen._pending = None
         assert _count(controller.calls, "reserve_write") == 0 and cliniko.calls == []
-        self._own_file(tmp_path, window, None)
+        # D15: an answer the app cannot read, after the reconcile let the
+        # click through (the recorded Diagnosis answer is still as read).
+        unreadable = _content({_HISTORY: ["not text"]})
+        cliniko.answers[("GET", "/v1/treatment_notes/")] = [ok(note_body(content=unreadable))]
         self._click(qapp, window, controller)
-        assert self._line(window) == models.write_line(
-            "defaults_unreadable", uncertain=True, problem=models.OWN_DEFAULTS_PROBLEMS["missing"]
-        )
+        assert self._line(window) == models.write_line("note_unreadable", uncertain=True)
         assert _count(cliniko.calls, "PATCH") == 0
         # And the clinic gone before the click.
         registry = window._clinic_registry

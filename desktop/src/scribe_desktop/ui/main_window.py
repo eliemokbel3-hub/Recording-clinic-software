@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.benchmark import BenchmarkResult
-from scribe_desktop.clinics import DEFAULT_SOURCE, ClinicRegistry
+from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.context_rules import (
     PauseReason,
     ReminderEntry,
@@ -80,7 +80,6 @@ from scribe_desktop.note_config import (
     NoteConfig,
     TemplateProfile,
     load_note_config,
-    load_own_template_defaults,
 )
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
@@ -392,9 +391,6 @@ class MainWindow(QMainWindow):
             self._clinic_registry,
             live_session_clinic=self._live_session_clinic,
             writing_clinic=self._writing_clinic,
-            # Draft-write Task 5.4 (R22-17): the root the write reads too
-            # (``self._config_root``, set from the same argument below).
-            config_root=config_root,
         )
         # Task 3.4: a recovered checkout's encounter record, decrypted ONCE on
         # checkout (`_on_recovered`), and its D4 re-verification.
@@ -1037,9 +1033,7 @@ class MainWindow(QMainWindow):
     def _writing_clinic(self) -> str | None:
         """The clinic a Cliniko draft write in flight writes to, for the
         Clinics tab's Replace key refusal (draft-write plan D9: the key read
-        once in hop 1 must stay the clinic's key for hop 2) and its
-        default-source change's ``WRITE_IN_FLIGHT`` refusal (D14: the write
-        reads the setting once for its baseline, Task 5.4). Remove needs no
+        in hop 1 must stay the clinic's key for hop 2). Remove needs no
         second source: the writing session is always the LIVE one
         (``reserve_write`` admits only the live QUEUED session and every
         retiring action is refused while it is held), so
@@ -1469,11 +1463,12 @@ class MainWindow(QMainWindow):
         )
 
     def recovered_writeback_target(self) -> VerifiedTarget | WritebackRefused | None:
-        """Constraint 6 over the recovered checkout (the entry for PLAN.md
-        Phase 4's draft write — the next plan): None
-        when no recovered session is checked out — and for an ADOPTED one
-        (Task 5.4), which is the live session: ``live_writeback_target``
-        governs it."""
+        """Constraint 6 over the recovered checkout: None when no recovered
+        session is checked out — and for an ADOPTED one (Task 5.4), which is
+        the live session: ``live_writeback_target`` governs it. A test-only
+        entry: the draft write builds its own subject in
+        ``draft_write.prepare_write``; this stays because its tests cover
+        the checkout's guard."""
         if self._checkout.session_id is None or self._checkout.adopted:
             return None
         subject = WritebackSubject.of_checkout(self._checkout.record, self._checkout.result)
@@ -1482,11 +1477,12 @@ class MainWindow(QMainWindow):
     def live_writeback_target(
         self, reverification: VerificationResult | None = None
     ) -> VerifiedTarget | WritebackRefused | None:
-        """Constraint 6 over the live session (the entry for PLAN.md Phase
-        4's draft write): refused until ``reverification`` — that write's
-        pre-write check of the session's
-        note, D4 — answers under the clinic's current rev (round 20
-        MED-012). None with no non-terminal session."""
+        """Constraint 6 over the live session: refused until
+        ``reverification`` — a current check of the session's note, D4 —
+        answers under the clinic's current rev (round 20 MED-012). None with
+        no non-terminal session. A test-only entry: the draft write builds
+        its own subject in ``draft_write.prepare_write``; this stays because
+        its tests cover the live guard."""
         session = self._controller.session
         if session is None or session.is_terminal:
             return None
@@ -1661,7 +1657,7 @@ class MainWindow(QMainWindow):
           ``refuse_before_read`` (mock note, D10; unreadable or ``written``
           record) — so those cases make no request;
         - hop 1 on a worker: ``read_for_write`` (ONE client call, the key
-          read once; the template read and the FINAL note read — D3).
+          read once, ONE request: the note read — D3 as amended by D15).
 
         Anything raised after the reservation releases it (R22-07)."""
         if self._write_job is not None:
@@ -1738,13 +1734,11 @@ class MainWindow(QMainWindow):
             registry = self._clinic_registry
             # The holder pattern (`ui/clinics.py`): the worker takes the
             # request; the thread object keeps nothing of it.
-            holder = [(request, context.template_id)]
+            holder = [request]
 
             def hop1() -> Hop1Result:
-                hop_request, template_id = holder.pop()
                 return read_for_write(
-                    hop_request,
-                    template_id,
+                    holder.pop(),
                     key_store=registry.key_store,
                     transport=registry.transport,
                 )
@@ -1807,15 +1801,10 @@ class MainWindow(QMainWindow):
         ``prepare_write``). A 429 on hop 1 is recorded in the latch (D13) and
         shown as ``rate_limited``; so is a cooldown another path recorded
         while hop 1 ran (the latch is read again here, before anything is
-        stored — PR-MED-038). The clinic's default source is read NOW
-        (D14): under "My own defaults" the clinic's own file is loaded here,
-        fresh for this click, with the config root this window holds
-        (R22-17) — a bounded local read, never in a worker; a clinic whose
-        record is gone skips it (``writeback_context`` refuses
-        ``clinic_gone``). Returns the prepared write once its ``attempting``
-        row is on disk, or the line that ends the click: a refusal, or
-        ``written_seen`` when reconcile found this session's earlier write
-        in Cliniko (recorded ``written``, no PATCH — D5)."""
+        stored — PR-MED-038). Returns the prepared write once its
+        ``attempting`` row is on disk, or the line that ends the click: a
+        refusal, or ``written_seen`` when reconcile found this session's
+        earlier write in Cliniko (recorded ``written``, no PATCH — D5)."""
         uncertain = job.uncertain
         if not isinstance(result, Hop1Result):
             return models.write_line("not_sent", uncertain=uncertain)
@@ -1835,13 +1824,6 @@ class MainWindow(QMainWindow):
         session = self._controller.session
         if session is None or session.session_id != job.session_id:
             return models.write_line("not_sent", uncertain=uncertain)
-        record = self._clinic_registry.record(clinic_id)
-        source = record.default_source if record is not None else DEFAULT_SOURCE
-        own = (
-            load_own_template_defaults(record.host, self._config_root)
-            if record is not None and source == "own_file"
-            else None
-        )
         inputs = job.inputs
         prepared = prepare_write(
             result,
@@ -1852,8 +1834,6 @@ class MainWindow(QMainWindow):
             note=inputs.note,
             note_identity=inputs.note_identity,
             profile=self._write_profile(inputs.note),
-            default_source=source,
-            own_defaults=own,
         )
         if isinstance(prepared, WriteRefusal):
             return models.write_refusal_line(prepared)

@@ -77,16 +77,10 @@ def _screen(
     registry: ClinicRegistry,
     live: Callable[[], str | None] | None = None,
     writing: Callable[[], str | None] | None = None,
-    config_root: Path | None = None,
 ) -> Any:
-    """Every screen a test builds gets a config root under the test's own
-    directory (draft-write Task 5.4) — never the real ``%LOCALAPPDATA%``."""
     from scribe_desktop.ui.clinics import ClinicsScreen
 
-    root = config_root if config_root is not None else registry.path.parent / "config"
-    return ClinicsScreen(
-        registry, live_session_clinic=live, writing_clinic=writing, config_root=root
-    )
+    return ClinicsScreen(registry, live_session_clinic=live, writing_clinic=writing)
 
 
 def _fill(screen: Any, *, key: str = KEY, name: str = "Northside", address: str = "") -> None:
@@ -595,208 +589,65 @@ class TestEmptyKey:
         screen.deleteLater()
 
 
-class TestDefaultSource:
-    """Draft-write Task 5.4 (D14): the selected clinic's "Cliniko template" /
-    "My own defaults" choice and "Check file". No Cliniko request, ever."""
+class TestNoDefaultSource:
+    """Cliniko draft-write plan Task 7.2 (D15): the "Starting text" group, its
+    two radios, "Check file" and the file path line are gone; Replace key is
+    still refused for the clinic a draft write is in flight for (D9)."""
 
-    def _one(
-        self, qapp: Any, tmp_path: Path, writing: Callable[[], str | None] | None = None
-    ) -> tuple[Any, Any, Any]:
+    def test_the_tab_has_no_starting_text_group_or_check_file(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtWidgets import QAbstractButton, QGroupBox, QLabel
+
         transport = ScriptedTransport()
         registry = make_registry(tmp_path, transport)
-        screen = _screen(registry, writing=writing, config_root=tmp_path / "config")
+        screen = _screen(registry)
         _validate(qapp, screen)
-        transport.calls.clear()
-        return registry, transport, screen
-
-    @staticmethod
-    def _defaults_file(tmp_path: Path, registry: Any) -> Path:
-        return tmp_path / "config" / "template_defaults" / f"{registry.records[0].host}.json"
-
-    def test_the_radios_follow_the_selection_and_a_refresh_writes_nothing(
-        self, qapp: Any, tmp_path: Path
-    ) -> None:
-        registry, transport, screen = self._one(qapp, tmp_path)
-        assert not screen.source_group.isEnabled()  # nothing selected
-        assert not screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        saved = registry.path.read_bytes()
         _select(screen)
-        assert screen.source_group.isEnabled()
-        assert screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        assert screen.check_file_button.isHidden() and screen.defaults_path_label.isHidden()
-        screen.refresh()
-        assert registry.path.read_bytes() == saved
-        # Changed behind the tab: the next refresh shows it, and writes nothing.
-        clinic_id = registry.records[0].clinic_id
-        registry.set_default_source(clinic_id, "own_file", writing_clinic=None)
-        changed = registry.path.read_bytes()
-        screen.refresh()
-        assert screen.own_radio.isChecked() and not screen.template_radio.isChecked()
-        assert registry.path.read_bytes() == changed
-        screen.clinic_list.setCurrentRow(-1)
-        assert not screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        assert registry.path.read_bytes() == changed
-        assert transport.calls == []
-        screen.deleteLater()
-
-    def test_a_click_writes_once_and_the_same_value_writes_nothing(
-        self, qapp: Any, tmp_path: Path
-    ) -> None:
-        registry, transport, screen = self._one(qapp, tmp_path)
-        _select(screen)
-        clinic_id = registry.records[0].clinic_id
-        writes: list[str] = []
-        real = registry.set_default_source
-
-        def spy(cid: str, source: Any, *, writing_clinic: str | None) -> Any:
-            writes.append(source)
-            return real(cid, source, writing_clinic=writing_clinic)
-
-        registry.set_default_source = spy  # type: ignore[method-assign]
-        screen.own_radio.click()
-        assert writes == ["own_file"]
-        assert registry.record(clinic_id).default_source == "own_file"
-        assert screen.status_label.text() == models.clinic_default_source_line(
-            "Northside", "own_file"
+        for name in (
+            "source_group",
+            "template_radio",
+            "own_radio",
+            "check_file_button",
+            "defaults_label",
+            "defaults_path_label",
+            "on_check_file",
+        ):
+            assert not hasattr(screen, name), name
+        titles = [box.title() for box in screen.findChildren(QGroupBox)]
+        assert all("Starting text" not in title for title in titles)
+        buttons = [button.text() for button in screen.findChildren(QAbstractButton)]
+        assert all(
+            text not in buttons
+            for text in ("Check file", "Cliniko template", "My own defaults")
         )
-        assert screen.own_radio.isChecked()
-        assert not screen.check_file_button.isHidden()
-        path = self._defaults_file(tmp_path, registry)
-        assert screen.defaults_path_label.text() == models.clinic_defaults_path_line(path)
-        screen.own_radio.click()  # the same value
-        assert writes == ["own_file"]
-        screen.template_radio.click()
-        assert writes == ["own_file", "cliniko_template"]
-        assert screen.check_file_button.isHidden()
-        assert transport.calls == []
-        assert not path.parent.exists()  # the app never creates the directory
+        shown = " ".join(label.text() for label in screen.findChildren(QLabel))
+        assert "template_defaults" not in shown
         screen.deleteLater()
 
-    def test_a_refused_write_puts_the_radio_back(self, qapp: Any, tmp_path: Path) -> None:
+    def test_replace_key_waits_for_the_clinic_a_write_is_in_flight_for(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
         writing: list[str | None] = [None]
-        registry, transport, screen = self._one(qapp, tmp_path, writing=lambda: writing[0])
+        transport = ScriptedTransport()
+        registry = make_registry(tmp_path, transport)
+        screen = _screen(registry, writing=lambda: writing[0])
+        _validate(qapp, screen)
         _select(screen)
-        clinic_id = registry.records[0].clinic_id
-        # The clinic a draft write is in flight for.
-        writing[0] = clinic_id
-        screen.own_radio.click()
+        writing[0] = registry.records[0].clinic_id
+        calls = len(transport.calls)
+        screen.key_field.setText(KEY_2)
+        screen.on_replace_key()
         assert screen.status_label.text() == models.write_line("write_in_flight")
-        assert screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        writing[0] = None
-        # A write that fails leaves the file and the setting unchanged.
-        saved = registry.path.read_bytes()
-
-        def failing(*_args: Any) -> None:
-            raise OSError("disk full")
-
-        registry._write = failing  # type: ignore[method-assign]
-        screen.own_radio.click()
-        assert screen.status_label.text() == (
-            "The setting for Northside could not be saved; it is unchanged."
-        )
-        assert screen.template_radio.isChecked()
-        assert registry.path.read_bytes() == saved
-        assert registry.record(clinic_id).default_source == "cliniko_template"
-        # The registry's own gone-clinic refusal (a Remove landing between
-        # the tab's read and the write) is named and the radio put back.
-        del registry._write
-        real = registry.set_default_source
-
-        def gone(cid: str, source: Any, *, writing_clinic: str | None) -> Any:
-            return Refused(ClinicRefusal.CLINIC_GONE, cid)
-
-        registry.set_default_source = gone  # type: ignore[method-assign]
-        screen.own_radio.click()
-        assert screen.status_label.text() == "Northside is no longer set up in this app."
-        assert screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        registry.set_default_source = real  # type: ignore[method-assign]
-        # A clinic gone behind the tab (no refresh yet) writes nothing and
-        # shows no choice.
-        registry._records = ()
-        screen.own_radio.click()
-        assert not screen.template_radio.isChecked() and not screen.own_radio.isChecked()
-        assert registry.path.read_bytes() == saved
-        assert transport.calls == []
+        assert screen.key_field.text() == ""
+        assert len(transport.calls) == calls and not screen.is_busy
         screen.deleteLater()
-
-    def test_the_group_is_disabled_while_busy_and_with_a_load_problem(
-        self, qapp: Any, tmp_path: Path
-    ) -> None:
-        registry, _transport, screen = self._one(qapp, tmp_path)
-        _select(screen)
-        assert screen.source_group.isEnabled()
-        screen._pending = object()  # a Validate or Replace key in flight
-        screen._update_controls()
-        assert not screen.source_group.isEnabled()
-        screen._on_source_clicked(1)  # a click that still arrives writes nothing
-        assert registry.records[0].default_source == "cliniko_template"
-        assert not screen.own_radio.isChecked()
-        screen._pending = None
-        screen._update_controls()
-        assert screen.source_group.isEnabled()
-        screen.deleteLater()
-        (tmp_path / "clinics.json").write_bytes(b"{damaged")
-        damaged = _screen(make_registry(tmp_path), config_root=tmp_path / "config")
-        assert not damaged.source_group.isEnabled()
-        damaged.deleteLater()
-
-    def test_check_file_names_each_outcome_and_reads_only_on_the_press(
-        self, qapp: Any, tmp_path: Path
-    ) -> None:
-        registry, transport, screen = self._one(qapp, tmp_path)
-        _select(screen)
-        screen.own_radio.click()
-        assert screen.defaults_label.text() == ""  # nothing read on the change
-        path = self._defaults_file(tmp_path, registry)
-        screen.on_check_file()
-        assert screen.defaults_label.text() == models.CLINIC_DEFAULTS_MISSING
-        path.parent.mkdir(parents=True)
-        path.write_text(
-            '{"schema_version": 1, "templates": {"Standard Consultation": '
-            '{"History": {"Presenting complaint": "Site -"}}}}',
-            encoding="utf-8",
-        )
-        assert screen.defaults_label.text() == models.CLINIC_DEFAULTS_MISSING  # no timer
-        screen.check_file_button.click()
-        assert screen.defaults_label.text() == models.CLINIC_DEFAULTS_OK.format(
-            templates="1 template"
-        )
-        path.write_text("{not json", encoding="utf-8")
-        screen.on_check_file()
-        assert screen.defaults_label.text() == models.CLINIC_DEFAULTS_PROBLEM.format(
-            problem="it is not in the expected format", location=": the file is not JSON"
-        )
-        path.write_bytes(b" " * (64 * 1024 + 1))
-        screen.on_check_file()
-        assert "it is larger than 64 KB" in screen.defaults_label.text()
-        # The line goes with the clinic it was for.
-        screen.template_radio.click()
-        assert screen.defaults_label.text() == ""
-        assert transport.calls == []
-        screen.deleteLater()
-
-    def test_the_check_lines_name_only_keys(self) -> None:
-        from scribe_desktop.note_config import OwnDefaults, OwnDefaultsProblem
-
-        two = OwnDefaults.model_validate(
-            {"templates": {"A": {"S": {"Q": "x"}}, "B": {}}}
-        )
-        assert "lists 2 templates" in models.clinic_defaults_check_line(two)
-        assert models.clinic_defaults_check_line(OwnDefaultsProblem("unreadable")) == (
-            "The file cannot be used (it cannot be read). Correct it, then press Check "
-            "file again."
-        )
-        from scribe_desktop.note_config import OwnDefaultsProblemKind
-
-        for kind in get_args(OwnDefaultsProblemKind):  # every kind has a line
-            line = models.clinic_defaults_check_line(OwnDefaultsProblem(kind))
-            assert line and "{" not in line, kind
 
 
 class TestCopy:
     def test_every_refusal_has_copy_for_every_operation(self, tmp_path: Path) -> None:
         operations = get_args(models.ClinicOperation)
-        assert operations == ("add", "replace", "remove", "default_source")
+        assert operations == ("add", "replace", "remove")
         for reason in ClinicRefusal:
             for operation in operations:
                 line = models.clinic_refusal_line(
@@ -806,30 +657,5 @@ class TestCopy:
                     path=tmp_path / "clinics.json",
                 )
                 assert line and "{" not in line and "!" not in line
-
-    def _line(self, reason: ClinicRefusal, operation: Any, tmp_path: Path) -> str:
-        return models.clinic_refusal_line(
-            Refused(reason, "0123456789abcdef"),
-            operation=operation,
-            clinic_name="Northside",
-            path=tmp_path / "clinics.json",
-        )
-
-    def test_the_default_source_change_has_its_own_lines(self, tmp_path: Path) -> None:
-        """Cliniko draft-write plan Task 3.1a (R22-05): the setting's write
-        failure and gone clinic read as a setting change, and the writing
-        clinic's refusal is the write's own sentence."""
-        assert self._line(ClinicRefusal.REGISTRY_WRITE_FAILED, "default_source", tmp_path) == (
-            "The setting for Northside could not be saved; it is unchanged."
-        )
-        assert self._line(ClinicRefusal.CLINIC_GONE, "default_source", tmp_path) == (
-            "Northside is no longer set up in this app."
-        )
-        # The other operations keep the shared "result" wording.
-        assert "the result was not used" in self._line(
-            ClinicRefusal.CLINIC_GONE, "replace", tmp_path
-        )
-        for operation in get_args(models.ClinicOperation):
-            assert self._line(ClinicRefusal.WRITE_IN_FLIGHT, operation, tmp_path) == (
-                models.WRITE_LINES["write_in_flight"]
-            )
+        # Task 7.2: the setting's own refusal and write-failed copy are gone.
+        assert not hasattr(ClinicRefusal, "WRITE_IN_FLIGHT")

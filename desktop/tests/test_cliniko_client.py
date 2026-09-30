@@ -1661,13 +1661,13 @@ _ALLOWED_IMPORTS: Mapping[str, frozenset[str]] = {
 }
 # The ``ClinikoCall`` capabilities each module may name, pinned exactly;
 # every other module may name none. ``draft_write.py``'s arrived with Task
-# 3.4 (R22-13): hop 1's two reads and hop 2's one write.
+# 3.4 (R22-13); since Task 7.1 (D15) hop 1 is ONE note read, so it names the
+# note read and hop 2's one write — never ``get_treatment_note_template``,
+# which stays in the client for the probe only.
 _ALLOWED_CAPABILITIES: Mapping[str, frozenset[str]] = {
     "clinics.py": frozenset({"get_user", "get_practitioners_for_user", "get_public_settings"}),
     "encounter.py": frozenset({"get_treatment_note", "get_patient", "get_booking"}),
-    "draft_write.py": frozenset(
-        {"get_treatment_note", "get_treatment_note_template", "write_draft_note"}
-    ),
+    "draft_write.py": frozenset({"get_treatment_note", "write_draft_note"}),
 }
 # ``ClinikoCall``'s public members that reach nothing: ``close`` drops the
 # key (``host``, a property, is left out by the derivation).
@@ -2399,7 +2399,7 @@ class TestWriteSlot:
         public = {name for name in senders if not name.startswith("_")}
         assert set(_HOP_METHODS) <= public
         # Guards the derivation: the two hops and the helpers they reach.
-        assert {"send_write", "fetch_template", "verify_note_for_write", "_hop1"} <= senders
+        assert {"send_write", "verify_note_for_write", "_hop1"} <= senders
         assert not {"prepare_write", "refuse_before_read", "record_status"} & senders
         # Round 33 LOW-014: an alias and a class's method are senders too,
         # and a caller of either is one in turn; an unrelated name is not.

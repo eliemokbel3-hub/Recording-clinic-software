@@ -14,8 +14,9 @@ Everything below up to there is the read-only mode.
 It asks for the contact email (the User-Agent Cliniko requires), the open
 note's URL, and the clinic's API key — the key through ``getpass`` only (not
 echoed, never an argument, never an environment variable) — and then makes
-READ-ONLY calls through the app's own client (``scribe_desktop.cliniko_client``:
-GET only, the host pinned from the key's shard, TLS 1.2+, no redirects):
+READ-ONLY calls through the app's own client (``scribe_desktop.cliniko_client``;
+this read-only mode makes GET calls only, the host pinned from the key's
+shard, TLS 1.2+, no redirects):
 ``/user``, ``/practitioners?q[]=user_id:=<id>``, ``/settings/public``,
 ``/settings``, ``/treatment_notes/<id>``, ``/patients/<id>`` and, when the note
 links one, ``/bookings/<id>``.

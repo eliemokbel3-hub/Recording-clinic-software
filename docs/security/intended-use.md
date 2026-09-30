@@ -22,18 +22,21 @@ reviews and finalises every note in Cliniko.
   nothing is written to Cliniko without the clinician's click. The app's one
   write can only fill the CONTENT of an open draft treatment note: the request
   it can send has no field that finalises a note, creates one, or moves one to
-  another patient (threat model, "Cliniko API client"). It refuses the write
-  when its own read of the note, just before writing, finds text beyond the
-  note's starting text in any question it fills; an edit saved in Cliniko in
-  the moment between that read and the write, or later from a Cliniko editor
-  that was already open, is the named exception (threat model, THE DRAFT
-  WRITE residues (a) and (b)).
+  another patient (threat model, "Cliniko API client"). It never replaces
+  what its own read of the note, just before writing, finds in a question it
+  fills: the text there is kept and the app's text goes below it (D15), and a
+  question it cannot read refuses the write. Two named exceptions (threat
+  model, THE DRAFT WRITE residues (a) and (b)): an edit saved in Cliniko in
+  the moment between that read and the write is reverted by the write; and
+  saving a Cliniko editor that was already open before the write overwrites
+  the app's draft — which is why the app asks the clinician to reload the
+  note and see the draft before pressing Complete.
 - **Not a cloud service.** Audio and transcripts never leave the local
   machine, and transcription and note drafting run on it. There is no cloud
   fallback, silent or otherwise. The app's only network use is Cliniko's own
   API: reads (validating a clinic's key, checking the treatment note a
-  recording belongs to, and, for a write, reading that note and its template
-  again), and the one draft write, which sends the clinician's reviewed note
+  recording belongs to, and, for a write, reading that note again), and the
+  one draft write, which sends the clinician's reviewed note
   into that Cliniko note. It makes no connection at startup or while idle on its own:
   every call answers a practitioner action, a report from Chrome, or — for a
   linked recording still in progress — the Chrome link reconnecting. So a
@@ -89,15 +92,20 @@ checks of the treatment note a recording belongs to, and — since 2026-09-29
 template — clinic 2's template is unverified until its own test write, so
 there the write-time template match is the only check) — the draft write:
 after Save, "Write draft to Cliniko" on the Note tab reads the linked note
-and its template again and fills the note's draft content with the reviewed
-note. It is refused, by name and with Copy still offered, when the recording
-is not linked, the note is final or archived, it already holds typed text,
-its patient, practitioner or template no longer match, or its template does
-not match the app's template setup;
+again and adds the reviewed note to its draft content. Since 2026-09-30
+(practitioner decision D15) it never replaces anything already in the note:
+an empty question takes the app's text, and a question that already holds
+text — typed by the clinician, or the template's starting prompts — keeps it
+exactly, with one empty line and the app's text below it. It is refused, by
+name and with Copy still offered, when the recording is not linked, the note
+is final or archived, its patient or practitioner no longer match, its
+template does not match the app's template setup, or a question it would
+add to holds something the app cannot read;
 after a write the clinician reloads the note in Chrome and presses Complete
-once the draft shows there. Each clinic chooses, on the Clinics tab, where
-the note's untyped starting text is read from: the Cliniko template (the
-default) or a file the practitioner writes (`docs/own-template-defaults.md`).
+once the draft shows there. An edit saved in Cliniko during the moment
+between the app's read and its write is lost, so the clinician does not
+edit the note in Cliniko while a write runs (threat model, THE DRAFT WRITE
+residue (a)).
 A note can still be moved into Cliniko by hand: since 2026-09-27
 (practitioner decision) a fully ratified note can be copied from the Note tab
 and pasted into the Cliniko treatment note. The copy goes through the Windows

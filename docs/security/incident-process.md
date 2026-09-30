@@ -28,11 +28,12 @@ When in doubt, stop using the software and investigate before resuming.
   retention window or reached the network
 - (Cliniko draft write) a draft written into the wrong Cliniko note or the
   wrong patient's note; text in a Cliniko note that nobody's "Write draft to
-  Cliniko" click put there; text you typed in a Cliniko note replaced by a
-  write (outside the named residues: an edit saved in the moment between the
-  write's check and its request, or from a Cliniko editor that was already
-  open — threat model, THE DRAFT WRITE); or a note finalised, created or
-  moved by the app
+  Cliniko" click put there; text already in a Cliniko note — typed by you, or
+  the template's starting prompts — changed or removed by a write, or the
+  app's text added twice to one question by one recording (outside the named
+  residues: an edit saved in the moment between the write's check and its
+  request, or from a Cliniko editor that was already open — threat model,
+  THE DRAFT WRITE); or a note finalised, created or moved by the app
 - Any network connection from `scribe-host`, or from `scribe-app` to anything
   other than `api.<shard>.cliniko.com:443`, or from `scribe-app` at startup or
   while idle with no practitioner action, no Cliniko note open in Chrome and
@@ -56,15 +57,19 @@ When in doubt, stop using the software and investigate before resuming.
 **A draft written into the wrong note or patient** (Cliniko draft write):
 1. In Cliniko, open that note and delete the written text — or archive the
    note — BEFORE anyone finalises it; the app never finalises a note, so a
-   wrongly written draft stays editable until a person finalises it.
+   wrongly written draft stays editable until a person finalises it. The
+   write ADDS text: in a question that already held text, the app's text
+   sits below it after one empty line, so delete only that added part and
+   keep what was there before.
 2. Do NOT press Complete for that recording in the app: Complete after a
    written draft destroys the session (audio, transcript, note and the
    write's record). Leave it on the Transcript screen or in the Unreviewed
    list, and note its time.
 3. Evidence: Cliniko's own history of the note (who changed it and when),
    and — while the session still exists — the session's `write.enc` (the
-   attempt, its times and outcome, and digests of what was written; ids and
-   digests only, no note text) under `%LOCALAPPDATA%\ClinikoScribe\sessions\`.
+   attempt, its times and outcome, and digests of each question's answer as
+   read and as expected after the write; ids and digests only, no note text)
+   under `%LOCALAPPDATA%\ClinikoScribe\sessions\`.
    The write record dies with its session (at Complete, Discard or the 24 h
    expiry): there is no durable audit record until PLAN.md Phase 6.
 4. Assess how the note was chosen — the recording is linked to the note it

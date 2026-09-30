@@ -16,15 +16,17 @@ Task 3.1 (D7), the rendering half — ``render_targets`` and
 The profile is the SHIPPED Template A profile, read from the package's
 ``config_defaults`` directly — never through the ``%LOCALAPPDATA%`` loader.
 
-Tasks 3.2–3.4 (D3–D5, D14), the decision: normalised comparison, the
-name-based template match, the clinic's declared defaults (Option A, the
-template's own answer; Option C, the practitioner's file — handed in
-already loaded), the typed-text check, the FULL body, the write record's
-model and reconcile, ``prepare_write``'s order, hop 1's reads and hop 2's
-classification. Every Cliniko answer is P.1-shaped (clinic 1's "Standard
+Tasks 3.2–3.4 and 7.1 (D3–D5, D15), the decision: normalised comparison,
+the name-based match on the note's own content, the append (D15: an empty
+answer receives the app's text; anything else is kept byte-for-byte with
+one empty line and the app's text below it; an unreadable answer refuses),
+the FULL body, the write record's v2 model (expected final and before
+digests) and reconcile, ``prepare_write``'s order, hop 1's ONE read and hop
+2's classification. Every Cliniko answer is P.1-shaped (clinic 1's "Standard
 Consultation": three sections, every writable question ``paragraph``, one
-checkboxes question) and comes from a fake transport — no socket, ever —
-and every key from an in-memory store. The writable profile here is
+checkboxes question, the History question holding the template's starting
+prompts) and comes from a fake transport — no socket, ever — and every key
+from an in-memory store. The writable profile here is
 Template A with every target ``rich_text`` (what P.1 found, and what the
 shipped profile declares since the Phase 3 correction — pinned against P.1's
 shape in ``TestTemplateMatch``), plus one synthetic ``text`` question for
@@ -92,8 +94,6 @@ from scribe_desktop.note import (
     section_input_digest,
 )
 from scribe_desktop.note_config import (
-    OwnDefaults,
-    OwnDefaultsProblem,
     SectionMapping,
     TargetType,
     TemplateProfile,
@@ -374,36 +374,28 @@ _LAYOUT: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Examination", ("Assessment", "Informed Consent", "Diagnosis")),
     ("Treatment/Management", ("Treatment", "Response to treatment", "Management/Advice")),
 )
-# The template's default for the History question, and the SAME visible text
-# as a new note carries it — a different HTML representation (P.1 Q1: the
-# sanitiser rewrites; comparison is over normalised visible text).
-_TEMPLATE_DEFAULT = "<p>Site -</p><p>Chron -</p><p>Agg -</p>"
-_NOTE_DEFAULT = "<p>Site -</p>\n<p>Chron -&nbsp; </p>\n<p>Agg -</p>"
+# The template's starting prompts in the History question as a new note
+# carries them (Cliniko's own markup, kept byte-for-byte by the append — D15).
+_PROMPTS = "<p>Site -</p>\n<p>Chron -&nbsp; </p>\n<p>Agg -</p>"
+_SEPARATOR = "<p><br></p>"
 _IDENTITY = hashlib.sha256(b"the saved note.enc plaintext").hexdigest()
 _OTHER_IDENTITY = hashlib.sha256(b"another saved note").hexdigest()
 _API = "https://api.au2.cliniko.com/v1"
 
 
-def _sections(
-    answers: Mapping[str, object], types: Mapping[str, str], *, template: bool
-) -> list[dict[str, Any]]:
+def _sections(answers: Mapping[str, object], types: Mapping[str, str]) -> list[dict[str, Any]]:
     sections: list[dict[str, Any]] = []
     for section_name, question_names in _LAYOUT:
         questions: list[dict[str, Any]] = []
         for name in question_names:
             if name == "Informed Consent":
-                if template:
-                    questions.append(
-                        {"name": name, "type": "checkboxes", "choices": [{"value": "Given"}]}
-                    )
-                else:
-                    questions.append(
-                        {
-                            "name": name,
-                            "type": "checkboxes",
-                            "answers": [{"value": "Given", "selected": True}],
-                        }
-                    )
+                questions.append(
+                    {
+                        "name": name,
+                        "type": "checkboxes",
+                        "answers": [{"value": "Given", "selected": True}],
+                    }
+                )
                 continue
             question: dict[str, Any] = {"name": name, "type": types.get(name, "paragraph")}
             if name in answers:
@@ -413,28 +405,20 @@ def _sections(
     return sections
 
 
-def _template(
-    answers: Mapping[str, object] | None = None,
-    types: Mapping[str, str] | None = None,
-    *,
-    name: object = "Standard Consultation",
-) -> dict[str, Any]:
-    answers = {_HISTORY: _TEMPLATE_DEFAULT} if answers is None else answers
-    return {
-        "id": TEMPLATE,
-        "name": name,
-        "content": {"sections": _sections(answers, types or {}, template=True)},
-    }
-
-
 def _content(
     answers: Mapping[str, object] | None = None, types: Mapping[str, str] | None = None
 ) -> dict[str, Any]:
-    answers = {_HISTORY: _NOTE_DEFAULT} if answers is None else answers
+    """A P.1-shaped note ``content``; by default a fresh draft: the History
+    question holding the template's prompts, every other question empty."""
+    answers = {_HISTORY: _PROMPTS} if answers is None else answers
     return {
-        "sections": _sections(answers, types or {}, template=False),
+        "sections": _sections(answers, types or {}),
         "future_key": {"kept": True},
     }
+
+
+def _normalised_digest(answer: str, representation: Any = "html") -> str:
+    return draft_write.answer_digest(draft_write.normalise_answer(answer, representation))
 
 
 def _profile(types: Mapping[str, TargetType] | None = None) -> TemplateProfile:
@@ -473,19 +457,11 @@ def _registry(tmp_path: Path) -> tuple[ClinicRegistry, MemoryKeyStore]:
     return make_registry(tmp_path, storage=store), store
 
 
-def _verified_hop1(
-    registry: ClinicRegistry,
-    *,
-    content: object = None,
-    template: Mapping[str, Any] | None = None,
-    matches: bool = True,
-) -> draft_write.Hop1Result:
+def _verified_hop1(registry: ClinicRegistry, *, content: object = None) -> draft_write.Hop1Result:
     outcome = Verified(enc_context(), NoteDisplay("", None))
     return draft_write.Hop1Result(
         VerificationResult(request_for(registry), outcome),
-        template=_template() if template is None else template,
         content=_content() if content is None else content,
-        template_matches=matches,
     )
 
 
@@ -504,8 +480,6 @@ def _prepare(
     note: GeneratedNote | None = None,
     identity: str = _IDENTITY,
     profile: TemplateProfile | None = _UNSET,
-    source: Any = "cliniko_template",
-    own: OwnDefaults | OwnDefaultsProblem | None = None,
     consent: Any = _UNSET,
     context: Any = _UNSET,
 ) -> draft_write.PreparedWrite | draft_write.AlreadyWritten | draft_write.WriteRefusal:
@@ -519,8 +493,6 @@ def _prepare(
         note=_write_note() if note is None else note,
         note_identity=identity,
         profile=_profile() if profile is _UNSET else profile,
-        default_source=source,
-        own_defaults=own,
     )
 
 
@@ -529,29 +501,34 @@ def _record(
     *,
     refusal: Any = None,
     digests: Mapping[str, str] | None = None,
+    before: Mapping[str, str] | None = None,
     identity: str = _IDENTITY,
     attempt: int = 1,
 ) -> draft_write.WriteRecord:
+    """A diagnosis-only record: its final digest a placeholder (nothing the
+    fixtures ever read) and — by default — its before digest the default
+    ``_content()``'s Diagnosis answer as read (empty), so an open attempt
+    over an untouched note is the next attempt."""
     digests = {"diagnosis": "0" * 64} if digests is None else digests
     # Written under the default profile's match (what ``_prepare`` binds).
-    match = draft_write.match_template(_profile(), _template(), _content())
+    match = draft_write.match_template(_profile(), _content())
     assert isinstance(match, draft_write.Match)
+    if before is None:
+        current = draft_write.answer_digests(_content(), match)
+        before = {target_id: current[target_id] for target_id in digests}
     return draft_write.WriteRecord(
         attempt=attempt,
         started_at=NOW,
         target_ids=tuple(digests),
         note_identity=identity,
         digests=digests,
+        before_digests=before,
         match_sha256=draft_write.match_digest(match, tuple(digests)) or "2" * 64,
         body_sha256="1" * 64,
         outcome=outcome,
         refusal=refusal,
         finished_at=None if outcome == "attempting" else NOW + timedelta(seconds=2),
     )
-
-
-def _own(entry: Mapping[str, Any], name: str = "Standard Consultation") -> OwnDefaults:
-    return OwnDefaults.model_validate({"templates": {name: entry}})
 
 
 def _as_written(prepared: draft_write.PreparedWrite, *, sanitise: bool = True) -> dict[str, Any]:
@@ -568,22 +545,19 @@ def _as_written(prepared: draft_write.PreparedWrite, *, sanitise: bool = True) -
 
 
 class Cliniko:
-    """A fake transport answering hop 1's GETs and hop 2's PATCH by method
-    and path prefix (a queue per route whose LAST answer repeats); records
-    every request. No socket, ever."""
+    """A fake transport answering hop 1's note GET and hop 2's PATCH by
+    method and path prefix (a queue per route whose LAST answer repeats);
+    records every request. No template route: hop 1 reads the note only
+    (D15), so a template read would fail the click. No socket, ever."""
 
     def __init__(
         self,
         *,
         notes: tuple[Any, ...] = (),
-        template: Any = None,
         patch: Any = None,
     ) -> None:
         self.answers: dict[tuple[str, str], list[Any]] = {
             ("GET", "/v1/treatment_notes/"): list(notes) or [ok(note_body(content=_content()))],
-            ("GET", "/v1/treatment_note_templates/"): [
-                template if template is not None else ok(_template())
-            ],
             ("PATCH", "/v1/treatment_notes/"): [patch if patch is not None else ok({"id": NOTE})],
             # The Chrome note check's display reads (the parity test only).
             ("GET", "/v1/patients/"): [ok(PATIENT_BODY)],
@@ -611,10 +585,6 @@ class Cliniko:
             raise answer
         assert isinstance(answer, cc.RawResponse)
         return answer
-
-
-def _template_link(template_id: str) -> dict[str, Any]:
-    return {"links": {"self": f"{_API}/treatment_note_templates/{template_id}"}}
 
 
 # ---------------------------------------------------------------------------
@@ -670,7 +640,7 @@ class TestNormalisation:
 
 class TestTemplateMatch:
     def test_every_writable_target_matches_p1s_template(self) -> None:
-        match = draft_write.match_template(_profile(), _template(), _content())
+        match = draft_write.match_template(_profile(), _content())
         assert isinstance(match, draft_write.Match)
         assert set(match.questions) == {
             "presenting-progress",
@@ -682,7 +652,7 @@ class TestTemplateMatch:
         }
         diagnosis = match.questions["diagnosis"]
         assert (diagnosis.section_name, diagnosis.question_name) == ("Examination", "Diagnosis")
-        assert diagnosis.note_position == diagnosis.template_position == (1, 2)
+        assert diagnosis.note_position == (1, 2)
         assert diagnosis.representation == "html"
         assert "informed-consent" not in match.questions
 
@@ -705,24 +675,21 @@ class TestTemplateMatch:
             "Examination": ["rich_text", "attestation_checkbox", "rich_text"],
             "Treatment/Management": ["rich_text", "rich_text", "rich_text"],
         }
-        match = draft_write.match_template(shipped, _template(), _content())
+        match = draft_write.match_template(shipped, _content())
         assert isinstance(match, draft_write.Match)
         assert {q.representation for q in match.questions.values()} == {"html"}
 
     def test_a_plain_text_target_matches_a_text_question_as_visible_text(self) -> None:
         types = {"Diagnosis": "text"}
         match = draft_write.match_template(
-            _profile({"diagnosis": "plain_text"}), _template(types=types), _content(types=types)
+            _profile({"diagnosis": "plain_text"}), _content(types=types)
         )
         assert isinstance(match, draft_write.Match)
         assert match.questions["diagnosis"].representation == "visible"
 
-    @pytest.mark.parametrize("where", ["template", "content"])
-    def test_a_type_mismatch_names_the_question(self, where: str) -> None:
-        types = {"Diagnosis": "text"}
-        template = _template(types=types) if where == "template" else _template()
-        content = _content(types=types) if where == "content" else _content()
-        assert draft_write.match_template(_profile(), template, content) == (
+    def test_a_type_mismatch_names_the_question(self) -> None:
+        content = _content(types={"Diagnosis": "text"})
+        assert draft_write.match_template(_profile(), content) == (
             draft_write.TemplateMismatch("Diagnosis", "Examination")
         )
 
@@ -735,27 +702,19 @@ class TestTemplateMatch:
             if target["target_id"] == "response-to-treatment":
                 target["group"], target["field_label"] = "Examination", "Diagnosis"
         doubled = TemplateProfile.model_validate(raw)
-        assert draft_write.match_template(doubled, _template(), _content()) == (
+        assert draft_write.match_template(doubled, _content()) == (
             draft_write.TemplateMismatch("Diagnosis", "Examination")
         )
 
     def test_no_profile_and_an_unmapped_section_refuse(self) -> None:
-        assert draft_write.match_template(None, _template(), _content()) == (
-            draft_write.TemplateMismatch()
-        )
+        assert draft_write.match_template(None, _content()) == draft_write.TemplateMismatch()
         oversight = _profile().model_copy(update={"intentionally_unmapped": ()})
         assert oversight.unmapped_section_keys()
-        assert draft_write.match_template(oversight, _template(), _content()) == (
+        assert draft_write.match_template(oversight, _content()) == (
             draft_write.TemplateMismatch()
         )
 
-    @pytest.mark.parametrize("where", ["template", "content"])
-    def test_a_missing_or_repeated_question_or_section_names_the_target(self, where: str) -> None:
-        def edited(edit: Any) -> tuple[dict[str, Any], dict[str, Any]]:
-            template, content = _template(), _content()
-            edit(template["content"] if where == "template" else content)
-            return template, content
-
+    def test_a_missing_or_repeated_question_or_section_names_the_target(self) -> None:
         def drop(doc: dict[str, Any]) -> None:
             doc["sections"][2]["questions"].pop(0)  # Treatment
 
@@ -766,8 +725,9 @@ class TestTemplateMatch:
             doc["sections"].append(json.loads(json.dumps(doc["sections"][2])))
 
         for edit in (drop, repeat, repeat_section):
-            template, content = edited(edit)
-            assert draft_write.match_template(_profile(), template, content) == (
+            content = _content()
+            edit(content)
+            assert draft_write.match_template(_profile(), content) == (
                 draft_write.TemplateMismatch("Treatment", "Treatment/Management")
             ), edit.__name__
 
@@ -776,184 +736,122 @@ class TestTemplateMatch:
         [None, "sections", [{"name": "History"}], [{"name": "History", "questions": [{}]}]],
     )
     def test_a_malformed_structure_refuses_without_naming(self, sections: object) -> None:
-        template = {"name": "Standard Consultation", "content": {"sections": sections}}
-        assert draft_write.match_template(_profile(), template, _content()) == (
+        assert draft_write.match_template(_profile(), {"sections": sections}) == (
             draft_write.TemplateMismatch()
         )
-        content = {"sections": sections}
-        assert draft_write.match_template(_profile(), _template(), content) == (
-            draft_write.TemplateMismatch()
-        )
-
-    def test_a_template_with_top_level_sections_is_read_as_the_probe_reads_it(self) -> None:
-        template = _template()
-        flat = {"name": template["name"], "sections": template["content"]["sections"]}
-        match = draft_write.match_template(_profile(), flat, _content())
-        assert isinstance(match, draft_write.Match)
+        assert draft_write.match_template(_profile(), "content") == draft_write.TemplateMismatch()
 
 
-# ---------------------------------------------------------------------------
-# Task 3.2 / D14: the declared defaults and the typed-text check.
-# ---------------------------------------------------------------------------
-
-
-def _match(
-    template: Mapping[str, Any] | None = None, content: object = None
-) -> draft_write.Match:
-    match = draft_write.match_template(
-        _profile(),
-        _template() if template is None else template,
-        _content() if content is None else content,
-    )
+def _match(content: object = None) -> draft_write.Match:
+    match = draft_write.match_template(_profile(), _content() if content is None else content)
     assert isinstance(match, draft_write.Match)
     return match
 
 
-class TestClinikoTemplateDefaults:
-    def test_the_templates_own_answer_is_the_default_and_absent_is_empty(self) -> None:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["presenting-progress"] == "Site -\nChron -\nAgg -"
-        assert {v for k, v in baseline.defaults.items() if k != "presenting-progress"} == {""}
+# ---------------------------------------------------------------------------
+# Task 7.1 (D15): the append — never replace.
+# ---------------------------------------------------------------------------
 
-    def test_a_null_answer_is_empty_and_any_other_shape_has_no_baseline(self) -> None:
-        template = _template({_HISTORY: None})
-        baseline = draft_write.baseline_defaults(
-            _match(template), template, "cliniko_template", None
+_NEW = "<p>Patient coming in with L knee pain</p><p>It happened 2 months ago</p>"
+
+
+class TestAppend:
+    @pytest.mark.parametrize("existing", [None, "", "   \n ", "<p><br></p>", "<p> </p><p></p>"])
+    def test_an_empty_answer_receives_the_apps_text(self, existing: object) -> None:
+        assert draft_write.appended_answer(existing, _NEW, "html") == _NEW
+
+    def test_a_typed_answer_is_kept_byte_for_byte_then_one_empty_line(self) -> None:
+        """The practitioner's example: two typed lines (Cliniko's own markup,
+        entities and odd spacing included) are the final answer's prefix,
+        byte-equal, then ``<p><br></p>``, then the app's text."""
+        typed = '<p>L knee pain</p>\n<p>happened 2&nbsp;months ago <span style="x">!</span></p>'
+        final = draft_write.appended_answer(typed, _NEW, "html")
+        assert final == typed + _SEPARATOR + _NEW
+        assert isinstance(final, str) and final.startswith(typed)
+
+    def test_the_templates_prompts_are_kept_and_the_text_goes_below(self) -> None:
+        """"Keep prompts, add below" (practitioner 2026-09-30)."""
+        assert draft_write.appended_answer(_PROMPTS, _NEW, "html") == (
+            _PROMPTS + _SEPARATOR + _NEW
         )
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["presenting-progress"] == ""
-        for bad in (["Site -"], 3, {"text": "Site -"}):
-            template = _template({_HISTORY: bad})
-            assert draft_write.baseline_defaults(
-                _match(template), template, "cliniko_template", None
-            ) == draft_write.DefaultsRefusal("no_baseline")
 
-    def test_a_new_note_at_the_template_default_holds_no_text(self) -> None:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert not draft_write.note_has_text(_content(), baseline, _match())
-        empty = _content({})
-        assert not draft_write.note_has_text(empty, baseline, _match(content=empty))
-
-    def test_typed_text_anywhere_targeted_is_text(self) -> None:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        for answers in (
-            {_HISTORY: "<p>Site - left knee</p>"},
-            {_HISTORY: _NOTE_DEFAULT, "Management/Advice": "<p>Ice</p>"},
-        ):
-            content = _content(answers)
-            assert draft_write.note_has_text(content, baseline, _match(content=content))
-
-    def test_an_answer_that_is_not_text_counts_as_text(self) -> None:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        content = _content({_HISTORY: _NOTE_DEFAULT, "Diagnosis": ["x"]})
-        assert draft_write.note_has_text(content, baseline, _match(content=content))
-
-    def test_an_untargeted_question_never_counts(self) -> None:
-        """Round 25 LOW-016: an untargeted question holding typed text (a
-        paragraph the profile does not map) is not the write's business —
-        it round-trips in the full body."""
-        template, content = _template(), _content()
-        extra = {"name": "Private notes", "type": "paragraph"}
-        template["content"]["sections"][0]["questions"].append(dict(extra))
-        content["sections"][0]["questions"].append({**extra, "answer": "<p>typed</p>"})
-        match = _match(template, content)
-        baseline = draft_write.baseline_defaults(match, template, "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert not draft_write.note_has_text(content, baseline, match)
-
-    def test_a_note_holding_the_template_default_byte_for_byte_holds_no_text(self) -> None:
-        content = _content({_HISTORY: _TEMPLATE_DEFAULT})
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert not draft_write.note_has_text(content, baseline, _match(content=content))
+    def test_a_plain_answer_takes_an_empty_line_of_newlines(self) -> None:
+        assert draft_write.appended_answer("L knee pain", "Soft tissue", "visible") == (
+            "L knee pain\n\nSoft tissue"
+        )
+        assert draft_write.appended_answer(" \n", "Soft tissue", "visible") == "Soft tissue"
+        # A plain answer's literal markup is its text, never parsed.
+        assert draft_write.appended_answer("<br>", "x", "visible") == "<br>\n\nx"
 
     @pytest.mark.parametrize(
-        "extra", ['<img src="x.png">', "<hr>", '<p><img src="x.png"></p>', "<iframe></iframe>"]
+        "opaque", ['<img src="x.png">', "<hr>", '<p><img src="x.png"></p>', "<iframe></iframe>"]
     )
-    def test_content_that_is_not_text_counts_as_text(self, extra: str) -> None:
-        """Round 25 LOW-015: an image or a rule has no visible text, so a
-        visible-text comparison alone would call it untyped and overwrite
-        it; any tag outside the text-formatting set counts as text."""
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        for answers in ({"Diagnosis": extra}, {_HISTORY: _TEMPLATE_DEFAULT + extra}):
-            content = _content(answers)
-            assert draft_write.note_has_text(content, baseline, _match(content=content))
+    def test_content_that_is_not_text_is_kept_and_appended_to(self, opaque: str) -> None:
+        """An image or a rule has no visible text but is not empty: kept."""
+        assert draft_write.appended_answer(opaque, _NEW, "html") == opaque + _SEPARATOR + _NEW
 
-    def test_formatting_tags_are_still_untyped(self) -> None:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        styled = "<p><strong>Site -</strong></p><p><em>Chron</em> -</p><p><span>Agg -</span></p>"
-        content = _content({_HISTORY: styled, "Diagnosis": "<p><br></p>"})
-        assert not draft_write.note_has_text(content, baseline, _match(content=content))
+    @pytest.mark.parametrize("existing", [["x"], 3, {"text": "x"}, True])
+    def test_an_answer_that_is_not_a_string_is_unreadable(self, existing: object) -> None:
+        assert draft_write.appended_answer(existing, _NEW, "html") == draft_write.NoteUnreadable()
+
+    def test_formatting_alone_is_not_empty_when_it_holds_text(self) -> None:
+        styled = "<p><strong>Site -</strong></p>"
+        assert draft_write.appended_answer(styled, _NEW, "html") == styled + _SEPARATOR + _NEW
+        assert draft_write.appended_answer("<p><em> </em></p>", _NEW, "html") == _NEW
 
 
 class TestPlainText:
     """Round 25 MED-003 (PR-HIGH-009): a ``plain_text`` target on a ``text``
-    question is compared as VISIBLE text end to end — its template default,
-    the typed-text check, the digests and the body — never HTML-decoded or
-    escaped."""
+    question is handled as VISIBLE text end to end — emptiness, the digests,
+    the append and the body — never HTML-decoded or escaped."""
 
     _TYPES = {"Diagnosis": "text"}
 
     def _profile(self) -> TemplateProfile:
         return _profile({"diagnosis": "plain_text"})
 
-    def _setup(
-        self, template_answers: Mapping[str, object], note_answers: Mapping[str, object]
-    ) -> tuple[dict[str, Any], dict[str, Any], draft_write.Match]:
-        template = _template(template_answers, self._TYPES)
-        content = _content(note_answers, self._TYPES)
-        match = draft_write.match_template(self._profile(), template, content)
-        assert isinstance(match, draft_write.Match)
-        return template, content, match
-
-    def test_the_template_default_of_a_text_question_is_literal(self) -> None:
-        template, _content_, match = self._setup({"Diagnosis": "a &amp; <b>x</b>"}, {})
-        baseline = draft_write.baseline_defaults(match, template, "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["diagnosis"] == "a &amp; <b>x</b>"
-
     @pytest.mark.parametrize(
-        ("default", "typed"),
+        ("plain", "marked"),
         [("left knee", "left <b>knee</b>"), ("a & b", "a &amp; b"), ("a < b", "a &lt; b")],
     )
-    def test_literal_markup_is_typed_text(self, default: str, typed: str) -> None:
-        template, content, match = self._setup({"Diagnosis": default}, {"Diagnosis": typed})
-        baseline = draft_write.baseline_defaults(match, template, "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert draft_write.note_has_text(content, baseline, match)
-        _t, same, same_match = self._setup({"Diagnosis": default}, {"Diagnosis": default})
-        assert not draft_write.note_has_text(same, baseline, same_match)
-        assert draft_write.answer_digests(content, match)["diagnosis"] != (
-            draft_write.answer_digests(same, same_match)["diagnosis"]
+    def test_literal_markup_is_text_and_digests_apart(self, plain: str, marked: str) -> None:
+        match = draft_write.match_template(
+            self._profile(), _content({"Diagnosis": plain}, self._TYPES)
+        )
+        assert isinstance(match, draft_write.Match)
+        digest = draft_write.answer_digests
+        assert digest(_content({"Diagnosis": marked}, self._TYPES), match)["diagnosis"] != (
+            digest(_content({"Diagnosis": plain}, self._TYPES), match)["diagnosis"]
         )
 
     def test_the_body_carries_the_plain_answer_unescaped(self, tmp_path: Path) -> None:
         registry, _ = _registry(tmp_path)
-        template, content, _match_ = self._setup({}, {})
         note = _note(style="clean", sections=(_section("diagnosis", "a<b & c"),))
-        hop1 = _verified_hop1(registry, content=content, template=template)
-        prepared = _prepare(registry, hop1, note=note, profile=self._profile())
-        assert isinstance(prepared, draft_write.PreparedWrite)
-        body = json.loads(prepared.content.to_body())
-        assert body["content"]["sections"][1]["questions"][2]["answer"] == "a<b & c"
-        assert prepared.digests["diagnosis"] == draft_write.answer_digest("a<b & c")
+        for existing, final in ((None, "a<b & c"), ("L &amp; R", "L &amp; R\n\na<b & c")):
+            content = _content({"Diagnosis": existing} if existing else {}, self._TYPES)
+            hop1 = _verified_hop1(registry, content=content)
+            prepared = _prepare(registry, hop1, note=note, profile=self._profile())
+            assert isinstance(prepared, draft_write.PreparedWrite)
+            body = json.loads(prepared.content.to_body())
+            assert body["content"]["sections"][1]["questions"][2]["answer"] == final
+            assert prepared.digests["diagnosis"] == _normalised_digest(final, "visible")
 
 
 class TestUnparseableHtml:
     """Round 25 LOW-001: the stdlib parser can raise on malformed markup,
     and its message can quote the input. Every caller fails closed and no
-    answer text reaches an exception."""
+    answer text reaches an exception. The patched parser raises on any text
+    holding ``<![`` (a malformed declaration), so the app's own answers
+    still parse."""
 
     @pytest.fixture(autouse=True)
     def _parser_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        def boom(self: object, data: str) -> None:
-            raise AssertionError(f"unknown status keyword {data!r}")
+        feed = draft_write._VisibleText.feed
+
+        def boom(self: Any, data: str) -> None:
+            if "<![" in data:
+                raise AssertionError(f"unknown status keyword {data!r}")
+            feed(self, data)
 
         monkeypatch.setattr(draft_write._VisibleText, "feed", boom)
 
@@ -964,101 +862,20 @@ class TestUnparseableHtml:
         assert info.value.__cause__ is None and info.value.__context__ is None
 
     def test_a_visible_answer_never_reaches_the_parser(self) -> None:
-        assert draft_write.normalise_answer("a <b>", "visible") == "a <b>"
+        assert draft_write.normalise_answer("<![a <b>", "visible") == "<![a <b>"
 
     def test_every_caller_fails_closed(self) -> None:
-        match = _match()
-        assert draft_write.baseline_defaults(
-            match, _template(), "cliniko_template", None
-        ) == draft_write.DefaultsRefusal("no_baseline")
-        baseline = draft_write.Baseline({target: "" for target in match.questions})
-        assert draft_write.note_has_text(_content(), baseline, match)
-        assert draft_write.answer_digests(_content(), match) == {}
+        broken = _content({_HISTORY: "<![SECRET-ANSWER"})
+        match = _match(broken)
+        assert "presenting-progress" not in draft_write.answer_digests(broken, match)
+        assert draft_write.appended_answer("<![SECRET-ANSWER", _NEW, "html") == (
+            draft_write.NoteUnreadable()
+        )
 
-    def test_prepare_write_refuses_without_raising(self, tmp_path: Path) -> None:
+    def test_prepare_write_refuses_note_unreadable_without_raising(self, tmp_path: Path) -> None:
         registry, _ = _registry(tmp_path)
-        own = _own({"History": {_HISTORY: "Site -"}})
-        assert _prepare(registry, source="own_file", own=own) == draft_write.WriteRefusal(
-            "note_has_text"
-        )
-        empty = _verified_hop1(registry, content=_content({}))
-        assert _prepare(registry, empty, source="own_file", own=own) == (
-            draft_write.WriteRefusal("answer_unreadable")
-        )
-
-
-class TestOwnDefaults:
-    def test_the_file_decides_the_defaults_as_visible_text(self) -> None:
-        own = _own({"History": {_HISTORY: ["Site -", "Chron -", "Agg -"]}})
-        baseline = draft_write.baseline_defaults(_match(), _template({}), "own_file", own)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["presenting-progress"] == "Site -\nChron -\nAgg -"
-        assert not draft_write.note_has_text(_content(), baseline, _match())
-
-    def test_a_transcription_is_never_html_decoded(self) -> None:
-        own = _own({"Examination": {"Diagnosis": "a &amp; b"}})
-        baseline = draft_write.baseline_defaults(_match(), _template(), "own_file", own)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["diagnosis"] == "a &amp; b"
-        stored = _content({_HISTORY: "", "Diagnosis": "<p>a &amp;amp; b</p>"})
-        assert not draft_write.note_has_text(stored, baseline, _match(content=stored))
-        decoded = _content({_HISTORY: "", "Diagnosis": "<p>a &amp; b</p>"})
-        assert draft_write.note_has_text(decoded, baseline, _match(content=decoded))
-
-    def test_the_template_is_never_the_source_under_own_file(self) -> None:
-        """The template's own History default is NOT declared by the file, so
-        a note still holding it holds text (fail closed)."""
-        own = _own({"Examination": {"Diagnosis": "x"}})
-        baseline = draft_write.baseline_defaults(_match(), _template(), "own_file", own)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert baseline.defaults["presenting-progress"] == ""
-        assert draft_write.note_has_text(_content(), baseline, _match())
-
-    @pytest.mark.parametrize("kind", ["missing", "unreadable", "too_large", "not_valid"])
-    def test_a_loader_problem_is_defaults_unreadable_by_kind(self, kind: Any) -> None:
-        problem = OwnDefaultsProblem(kind, "templates > x (value_error)")
-        assert draft_write.baseline_defaults(
-            _match(), _template(), "own_file", problem
-        ) == draft_write.DefaultsRefusal("defaults_unreadable", problem=kind)
-
-    def test_no_loaded_file_is_a_caller_bug(self) -> None:
-        """Round 25 LOW-003: never an invented loader problem."""
-        with pytest.raises(ValueError, match="loaded file"):
-            draft_write.baseline_defaults(_match(), _template(), "own_file", None)
-
-    def test_no_entry_for_the_template_names_it(self) -> None:
-        own = _own({"History": {_HISTORY: "x"}}, name="Follow-up")
-        assert draft_write.baseline_defaults(
-            _match(), _template(), "own_file", own
-        ) == draft_write.DefaultsRefusal("defaults_no_template", template="Standard Consultation")
-
-    def test_a_template_with_no_name_has_no_baseline(self) -> None:
-        own = _own({"History": {_HISTORY: "x"}})
-        template = _template(name=None)
-        assert draft_write.baseline_defaults(
-            _match(template), template, "own_file", own
-        ) == draft_write.DefaultsRefusal("no_baseline")
-
-    def test_an_unmatched_entry_names_the_first_and_counts_the_rest(self) -> None:
-        own = _own(
-            {
-                "History": {_HISTORY: "x", "Aggravating": "y"},
-                "Plan": {"Next visit": "z"},
-                "Examination": {"Diagnosis": "w", "Palpation": "v"},
-            }
-        )
-        assert draft_write.baseline_defaults(
-            _match(), _template(), "own_file", own
-        ) == draft_write.DefaultsRefusal(
-            "defaults_unmatched", section="History", question="Aggravating", more=2
-        )
-
-    def test_a_listed_question_that_is_not_targeted_is_accepted_and_unused(self) -> None:
-        own = _own({"Examination": {"Informed Consent": "Given", "Diagnosis": "d"}})
-        baseline = draft_write.baseline_defaults(_match(), _template(), "own_file", own)
-        assert isinstance(baseline, draft_write.Baseline)
-        assert "Given" not in baseline.defaults.values()
-        assert baseline.defaults["diagnosis"] == "d"
+        broken = _verified_hop1(registry, content=_content({_HISTORY: "<![SECRET-ANSWER"}))
+        assert _prepare(registry, broken) == draft_write.WriteRefusal("note_unreadable")
 
 
 # ---------------------------------------------------------------------------
@@ -1078,11 +895,16 @@ class TestBuildBody:
         assert body.content.model_dump() == expected
         assert json.loads(body.to_body()) == {"content": expected}
 
-    def test_an_answer_is_sent_nfc(self) -> None:
+    def test_an_answer_is_put_as_given_never_normalised(self) -> None:
+        """D15: a final answer can begin with the note's own answer, kept
+        byte-for-byte — so the body never normalises (the app's part is NFC
+        before it gets here, ``prepare_write``). The literal below is
+        DECOMPOSED (NFD)."""
         body = draft_write.build_body(_content(), _match(), {"diagnosis": "<p>Café</p>"})
         assert isinstance(body, cc.DraftContent)
         answer = body.content.model_dump()["sections"][1]["questions"][2]["answer"]
-        assert answer == unicodedata.normalize("NFC", "<p>Café</p>") == "<p>Café</p>"
+        assert answer != unicodedata.normalize("NFC", answer)  # decomposed, as given
+        assert answer == unicodedata.normalize("NFD", "<p>Café</p>")
 
     def test_an_answer_for_an_unmatched_target_is_a_caller_error(self) -> None:
         with pytest.raises(ValueError, match="target"):
@@ -1116,17 +938,23 @@ class TestWriteRecord:
             "target_ids",
             "note_identity",
             "digests",
+            "before_digests",
             "match_sha256",
             "body_sha256",
             "outcome",
             "refusal",
             "finished_at",
         }
+        assert json.loads(record.to_bytes())["schema_version"] == 2
 
     @pytest.mark.parametrize(
         "update",
         [
             {"digests": {"treatment": "0" * 64}},
+            {"before_digests": {"treatment": "0" * 64}},
+            {"before_digests": {}},
+            {"before_digests": {"diagnosis": "not-a-digest"}},
+            {"schema_version": 1},
             {"target_ids": ("diagnosis", "diagnosis")},
             {"refusal": "note_not_found"},
             {"outcome": "refused"},
@@ -1153,6 +981,18 @@ class TestWriteRecord:
             draft_write.parse_write_record(plaintext)
         assert str(info.value) == "the write record is unreadable"
         assert info.value.__cause__ is None and info.value.__context__ is None
+
+    def test_a_schema_v1_record_is_unreadable(self) -> None:
+        """D15: a Phases 3–6 record (default digests, no before digests) is
+        not this schema — fail closed, ``record_unreadable``."""
+        v1 = json.loads(_record().to_bytes())
+        v1["schema_version"] = 1
+        del v1["before_digests"]
+        with pytest.raises(draft_write.WriteRecordUnreadable):
+            draft_write.parse_write_record(json.dumps(v1).encode())
+        v1["before_digests"] = v1["digests"]
+        with pytest.raises(draft_write.WriteRecordUnreadable):
+            draft_write.parse_write_record(json.dumps(v1).encode())
 
     def test_the_transitions_are_revalidated(self) -> None:
         attempting = _record("attempting")
@@ -1214,10 +1054,10 @@ class TestWriteRecord:
 
 
 class TestReconcile:
-    def _baseline(self) -> draft_write.Baseline:
-        baseline = draft_write.baseline_defaults(_match(), _template(), "cliniko_template", None)
-        assert isinstance(baseline, draft_write.Baseline)
-        return baseline
+    """D15: an open attempt is ``written`` when the note now holds the
+    EXPECTED FINAL answers, the next attempt when it still holds the answers
+    that attempt read, and ``Uncertain`` otherwise; a ``refused`` attempt is
+    the next attempt (Cliniko applied nothing)."""
 
     def _sent(self, tmp_path: Path) -> draft_write.PreparedWrite:
         registry, _ = _registry(tmp_path)
@@ -1234,14 +1074,25 @@ class TestReconcile:
                 record, draft_write.WriteOutcome("unknown"), now=NOW
             )
         after = _as_written(prepared)
-        verdict = draft_write.reconcile(
-            record, after, _match(content=after), self._baseline(), _IDENTITY
-        )
+        verdict = draft_write.reconcile(record, after, _match(after), _IDENTITY)
         assert verdict == draft_write.ReconciledWritten()
 
-    def test_a_refused_attempt_is_never_written_even_when_its_digests_match(
+    def test_the_sanitiser_dropping_the_empty_line_still_reads_as_written(
         self, tmp_path: Path
     ) -> None:
+        """D15's residue: Cliniko may drop the separator paragraph; the
+        normalised digest has no blank lines, so the landed write is still
+        recognised (never appended twice)."""
+        prepared = self._sent(tmp_path)
+        record = draft_write.attempt_record(prepared, now=NOW)
+        after = _as_written(prepared)
+        history = after["sections"][0]["questions"][0]
+        history["answer"] = history["answer"].replace(_SEPARATOR, "")
+        assert draft_write.reconcile(record, after, _match(after), _IDENTITY) == (
+            draft_write.ReconciledWritten()
+        )
+
+    def test_a_refused_attempt_is_never_written_and_may_try_again(self, tmp_path: Path) -> None:
         prepared = self._sent(tmp_path)
         record = draft_write.finished_record(
             draft_write.attempt_record(prepared, now=NOW),
@@ -1249,32 +1100,33 @@ class TestReconcile:
             now=NOW,
         )
         after = _as_written(prepared)
-        verdict = draft_write.reconcile(
-            record, after, _match(content=after), self._baseline(), _IDENTITY
-        )
-        assert verdict == draft_write.Uncertain()
-        assert draft_write.reconcile(record, _content(), _match(), self._baseline(), _IDENTITY) == (
-            draft_write.AtBaseline()
+        for content in (after, _content()):
+            assert draft_write.reconcile(record, content, _match(content), _IDENTITY) == (
+                draft_write.NextAttempt()
+            )
+
+    def test_an_open_attempt_over_the_answers_it_read_is_the_next_attempt(
+        self, tmp_path: Path
+    ) -> None:
+        prepared = self._sent(tmp_path)
+        record = draft_write.attempt_record(prepared, now=NOW)
+        # Nothing landed: the note still reads as the attempt read it.
+        assert draft_write.reconcile(record, _content(), _match(), _IDENTITY) == (
+            draft_write.NextAttempt()
         )
 
-    def test_an_open_attempt_at_the_default_is_the_next_attempt_else_uncertain(self) -> None:
-        record = _record("unknown")
-        assert draft_write.reconcile(record, _content(), _match(), self._baseline(), _IDENTITY) == (
-            draft_write.AtBaseline()
+    def test_an_open_attempt_over_changed_answers_is_uncertain(self, tmp_path: Path) -> None:
+        prepared = self._sent(tmp_path)
+        record = draft_write.attempt_record(prepared, now=NOW)
+        edited = _content({_HISTORY: _PROMPTS + "<p>typed in Cliniko</p>"})
+        assert draft_write.reconcile(record, edited, _match(edited), _IDENTITY) == (
+            draft_write.Uncertain()
         )
-        edited = _content({_HISTORY: "<p>typed in Cliniko</p>"})
-        assert draft_write.reconcile(
-            record, edited, _match(content=edited), self._baseline(), _IDENTITY
-        ) == draft_write.Uncertain()
 
     def test_a_record_of_another_saved_note_is_uncertain_even_when_written(self) -> None:
         for outcome in ("written", "unknown"):
             assert draft_write.reconcile(
-                _record(outcome, identity=_OTHER_IDENTITY),
-                _content(),
-                _match(),
-                self._baseline(),
-                _IDENTITY,
+                _record(outcome, identity=_OTHER_IDENTITY), _content(), _match(), _IDENTITY
             ) == draft_write.Uncertain()
 
     def test_one_differing_target_is_not_written(self, tmp_path: Path) -> None:
@@ -1282,9 +1134,9 @@ class TestReconcile:
         record = draft_write.attempt_record(prepared, now=NOW)
         after = _as_written(prepared)
         after["sections"][1]["questions"][2]["answer"] = "<p>Changed in Cliniko</p>"
-        assert draft_write.reconcile(
-            record, after, _match(content=after), self._baseline(), _IDENTITY
-        ) == draft_write.Uncertain()
+        assert draft_write.reconcile(record, after, _match(after), _IDENTITY) == (
+            draft_write.Uncertain()
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1302,16 +1154,25 @@ class TestPrepareWrite:
         answers = _answers(_write_note(), _profile())
         assert prepared.target_ids == ("presenting-progress", "diagnosis", "treatment")
         assert prepared.attempt == 1 and prepared.note_identity == _IDENTITY
-        assert prepared.digests == {
-            t: draft_write.answer_digest(draft_write.normalise_answer(answers[t], "html"))
-            for t in prepared.target_ids
+        # D15: the History prompts are kept, one empty line, then the text;
+        # the empty Diagnosis and Treatment questions receive the text alone.
+        finals = {
+            "presenting-progress": _PROMPTS + _SEPARATOR + answers["presenting-progress"],
+            "diagnosis": answers["diagnosis"],
+            "treatment": answers["treatment"],
+        }
+        assert prepared.digests == {t: _normalised_digest(finals[t]) for t in finals}
+        assert prepared.before_digests == {
+            "presenting-progress": _normalised_digest(_PROMPTS),
+            "diagnosis": draft_write.answer_digest(""),
+            "treatment": draft_write.answer_digest(""),
         }
         body = prepared.content.to_body()
         assert prepared.body_sha256 == hashlib.sha256(body).hexdigest()
         expected = _content()
-        expected["sections"][0]["questions"][0]["answer"] = answers["presenting-progress"]
-        expected["sections"][1]["questions"][2]["answer"] = answers["diagnosis"]
-        expected["sections"][2]["questions"][0]["answer"] = answers["treatment"]
+        expected["sections"][0]["questions"][0]["answer"] = finals["presenting-progress"]
+        expected["sections"][1]["questions"][2]["answer"] = finals["diagnosis"]
+        expected["sections"][2]["questions"][0]["answer"] = finals["treatment"]
         assert json.loads(body) == {"content": expected}
         assert prepared.target == VerifiedTarget(
             clinic_id=enc_context().clinic_id,
@@ -1463,12 +1324,6 @@ class TestPrepareWrite:
             assert isinstance(result, draft_write.WriteRefusal)
             assert result.writeback is not None and result.writeback.reason is reason
 
-    def test_a_note_re_templated_between_the_reads_is_a_mismatch(self, tmp_path: Path) -> None:
-        registry, _ = _registry(tmp_path)
-        assert _prepare(registry, _verified_hop1(registry, matches=False)) == (
-            draft_write.WriteRefusal("template_mismatch")
-        )
-
     def test_a_template_mismatch_names_the_question(self, tmp_path: Path) -> None:
         registry, _ = _registry(tmp_path)
         # A ``plain_text`` target meeting P.1's ``paragraph`` question.
@@ -1479,24 +1334,44 @@ class TestPrepareWrite:
         assert isinstance(_prepare(registry, profile=_template_a()), draft_write.PreparedWrite)
         assert _prepare(registry, profile=None) == draft_write.WriteRefusal("template_mismatch")
 
-    def test_r22_08_an_open_attempt_cliniko_holds_is_written_with_no_baseline(
-        self, tmp_path: Path
+    @pytest.mark.parametrize("outcome", ["attempting", "unknown"])
+    def test_a_resend_after_an_unknown_outcome_never_appends_twice(
+        self, tmp_path: Path, outcome: str
     ) -> None:
-        """The digest check runs BEFORE the defaults: a clinic switched to an
-        unreadable own-defaults file still records its earlier write."""
+        """D15 / Task P.3 step 5: the first PATCH landed but its answer was
+        lost; the next click reads the note holding the prompts, the empty
+        line and the app's text ONCE — recorded ``written``, no PATCH, never
+        a second copy."""
         registry, _ = _registry(tmp_path)
         first = _prepare(registry)
         assert isinstance(first, draft_write.PreparedWrite)
         record = draft_write.attempt_record(first, now=NOW)
+        if outcome == "unknown":
+            record = draft_write.finished_record(
+                record, draft_write.WriteOutcome("unknown"), now=NOW
+            )
         hop1 = _verified_hop1(registry, content=_as_written(first))
-        result = _prepare(
-            registry,
-            hop1,
-            record=record,
-            source="own_file",
-            own=OwnDefaultsProblem("not_valid", "the top of the file"),
+        assert _prepare(registry, hop1, record=record) == draft_write.AlreadyWritten(first.target)
+
+    def test_an_unknown_outcome_that_did_not_land_is_rebuilt_from_the_current_read(
+        self, tmp_path: Path
+    ) -> None:
+        """Nothing landed and nothing changed: attempt 2, built from the
+        CURRENT read — the same body, the prompts appended to once."""
+        registry, _ = _registry(tmp_path)
+        first = _prepare(registry)
+        assert isinstance(first, draft_write.PreparedWrite)
+        record = draft_write.finished_record(
+            draft_write.attempt_record(first, now=NOW),
+            draft_write.WriteOutcome("unknown"),
+            now=NOW,
         )
-        assert result == draft_write.AlreadyWritten(first.target)
+        second = _prepare(registry, record=record)
+        assert isinstance(second, draft_write.PreparedWrite)
+        assert second.attempt == 2
+        assert second.content.to_body() == first.content.to_body()
+        assert second.digests == first.digests
+        assert second.before_digests == first.before_digests
 
     @staticmethod
     def _changed_profile(way: str) -> TemplateProfile:
@@ -1561,15 +1436,13 @@ class TestPrepareWrite:
         )
 
     def test_the_match_digest_names_where_targets_are_written(self) -> None:
-        match = draft_write.match_template(_profile(), _template(), _content())
+        match = draft_write.match_template(_profile(), _content())
         assert isinstance(match, draft_write.Match)
         both = draft_write.match_digest(match, ("diagnosis", "treatment"))
         assert both == draft_write.match_digest(match, ("treatment", "diagnosis"))
         assert both != draft_write.match_digest(match, ("diagnosis",))
         assert draft_write.match_digest(match, ("diagnosis", "absent")) is None
-        moved = draft_write.match_template(
-            self._changed_profile("remapped"), _template(), _content()
-        )
+        moved = draft_write.match_template(self._changed_profile("remapped"), _content())
         assert isinstance(moved, draft_write.Match)
         assert draft_write.match_digest(moved, ("diagnosis",)) != draft_write.match_digest(
             match, ("diagnosis",)
@@ -1585,69 +1458,144 @@ class TestPrepareWrite:
             assert result.name == "write_uncertain"
             assert result.earlier_attempt_open is (outcome == "unknown")
 
-    def test_r22_02_a_draft_that_refused_as_finalised_is_write_forbidden_before_the_defaults(
+    def test_r22_02_a_draft_that_refused_as_finalised_is_write_forbidden(
         self, tmp_path: Path
     ) -> None:
         registry, _ = _registry(tmp_path)
-        result = _prepare(
-            registry,
-            record=_record("refused", refusal="finalised_before_write"),
-            source="own_file",
-            own=None,
-        )
+        result = _prepare(registry, record=_record("refused", refusal="finalised_before_write"))
         assert result == draft_write.WriteRefusal("write_forbidden")
 
-    def test_the_defaults_refusals_come_before_any_attempt_and_carry_labels(
-        self, tmp_path: Path
+    def test_typed_text_is_kept_and_the_apps_text_goes_below(self, tmp_path: Path) -> None:
+        """D15 (was ``note_has_text``): the practitioner's two typed lines,
+        byte-for-byte, then one empty line, then the app's text; the typed
+        Treatment answer likewise; the untargeted checkbox round-trips."""
+        registry, _ = _registry(tmp_path)
+        typed = "<p>L knee pain</p><p>happened 2 months ago</p>"
+        content = _content({_HISTORY: typed, "Treatment": "<p>typed</p>"})
+        prepared = _prepare(registry, _verified_hop1(registry, content=content))
+        assert isinstance(prepared, draft_write.PreparedWrite)
+        answers = _answers(_write_note(), _profile())
+        body = json.loads(prepared.content.to_body())["content"]
+        assert body["sections"][0]["questions"][0]["answer"] == (
+            typed + _SEPARATOR + answers["presenting-progress"]
+        )
+        assert body["sections"][2]["questions"][0]["answer"] == (
+            "<p>typed</p>" + _SEPARATOR + answers["treatment"]
+        )
+        assert body["sections"][1]["questions"][1] == content["sections"][1]["questions"][1]
+        assert prepared.before_digests["presenting-progress"] == _normalised_digest(typed)
+
+    def test_a_second_recording_appends_below_the_first(self, tmp_path: Path) -> None:
+        """D15 (D8's refusal gone): a note an earlier session's write
+        already filled takes the second session's text below it."""
+        registry, _ = _registry(tmp_path)
+        first = _prepare(registry)
+        assert isinstance(first, draft_write.PreparedWrite)
+        filled = _as_written(first)
+        second_note = _note(sections=(_section("diagnosis", "Rotator cuff strain", start=1),))
+        second = _prepare(
+            registry,
+            _verified_hop1(registry, content=filled),
+            note=second_note,
+            identity=_OTHER_IDENTITY,
+        )
+        assert isinstance(second, draft_write.PreparedWrite)
+        earlier = filled["sections"][1]["questions"][2]["answer"]
+        body = json.loads(second.content.to_body())["content"]
+        assert body["sections"][1]["questions"][2]["answer"] == (
+            earlier + _SEPARATOR + _answers(second_note, _profile())["diagnosis"]
+        )
+
+    @pytest.mark.parametrize("unreadable", [["x"], 7, {"html": "<p>x</p>"}])
+    def test_an_answer_the_app_cannot_read_refuses_note_unreadable(
+        self, tmp_path: Path, unreadable: object
     ) -> None:
         registry, _ = _registry(tmp_path)
-        assert _prepare(
-            registry, source="own_file", own=OwnDefaultsProblem("too_large")
-        ) == draft_write.WriteRefusal("defaults_unreadable", problem="too_large")
-        own = _own({"History": {"Aggravating": "x"}, "Plan": {"Next": "y"}})
-        assert _prepare(
-            registry, record=_record("unknown"), source="own_file", own=own
-        ) == draft_write.WriteRefusal(
-            "defaults_unmatched",
-            earlier_attempt_open=True,
-            section="History",
-            question="Aggravating",
-            more=1,
-        )
-        other = _own({"History": {_HISTORY: "x"}}, name="Follow-up")
-        assert _prepare(registry, source="own_file", own=other) == draft_write.WriteRefusal(
-            "defaults_no_template", template="Standard Consultation"
-        )
-        template = _template({_HISTORY: 7})
-        assert _prepare(registry, _verified_hop1(registry, template=template)) == (
-            draft_write.WriteRefusal("no_baseline")
-        )
-
-    def test_typed_text_with_no_record_is_note_has_text(self, tmp_path: Path) -> None:
-        registry, _ = _registry(tmp_path)
-        content = _content({_HISTORY: _NOTE_DEFAULT, "Treatment": "<p>typed</p>"})
+        content = _content({_HISTORY: _PROMPTS, "Diagnosis": unreadable})
         assert _prepare(registry, _verified_hop1(registry, content=content)) == (
-            draft_write.WriteRefusal("note_has_text")
+            draft_write.WriteRefusal("note_unreadable")
         )
 
-    def test_an_open_attempt_at_the_default_is_the_next_attempt(self, tmp_path: Path) -> None:
+    def test_an_unreadable_answer_the_write_does_not_touch_round_trips(
+        self, tmp_path: Path
+    ) -> None:
+        """Only an answer the app appends to must be readable: a matched
+        question this note writes nothing to (Assessment) keeps its odd
+        answer as read."""
+        registry, _ = _registry(tmp_path)
+        content = _content({_HISTORY: _PROMPTS, "Assessment": ["x"]})
+        prepared = _prepare(registry, _verified_hop1(registry, content=content))
+        assert isinstance(prepared, draft_write.PreparedWrite)
+        body = json.loads(prepared.content.to_body())["content"]
+        assert body["sections"][1]["questions"][0]["answer"] == ["x"]
+
+    def test_an_append_that_reads_as_the_answer_before_it_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 40 LOW-001: reconcile tells a landed attempt from one that
+        did not land by the final and before digests, so a target whose
+        appended answer normalises to the answer as read is refused
+        ``note_unreadable`` — here an append that leaves the typed answer
+        as it was stands in for markup that hides the app's text."""
+        registry, _ = _registry(tmp_path)
+
+        def hidden(existing: object, new: str, representation: object) -> object:
+            return existing if isinstance(existing, str) and existing else new
+
+        monkeypatch.setattr(draft_write, "appended_answer", hidden)
+        assert _prepare(registry) == draft_write.WriteRefusal("note_unreadable")
+
+    @pytest.mark.parametrize("hides", ["<p>Site -</p><!--", '<p>Site -</p><span title="x'])
+    def test_no_prepared_target_has_equal_final_and_before_digests(
+        self, tmp_path: Path, hides: str
+    ) -> None:
+        """Round 40 LOW-001, over real markup that may hide what follows it
+        (how depends on the parser's version): either refused, or every
+        written target's two digests differ."""
+        registry, _ = _registry(tmp_path)
+        content = _content({_HISTORY: hides})
+        result = _prepare(registry, _verified_hop1(registry, content=content))
+        if isinstance(result, draft_write.PreparedWrite):
+            for target_id in result.target_ids:
+                assert result.digests[target_id] != result.before_digests[target_id]
+        else:
+            assert result == draft_write.WriteRefusal("note_unreadable")
+
+    def test_an_open_attempt_over_the_answers_it_read_is_the_next_attempt(
+        self, tmp_path: Path
+    ) -> None:
         registry, _ = _registry(tmp_path)
         prepared = _prepare(registry, record=_record("unknown", attempt=2))
         assert isinstance(prepared, draft_write.PreparedWrite)
         assert prepared.attempt == 3
 
-    def test_an_open_attempt_over_other_text_is_write_uncertain(self, tmp_path: Path) -> None:
+    def test_an_open_attempt_over_changed_answers_is_write_uncertain(
+        self, tmp_path: Path
+    ) -> None:
         registry, _ = _registry(tmp_path)
-        content = _content({_HISTORY: "<p>typed in Cliniko</p>"})
+        content = _content({_HISTORY: _PROMPTS, "Diagnosis": "<p>typed in Cliniko</p>"})
         assert _prepare(
             registry, _verified_hop1(registry, content=content), record=_record("attempting")
         ) == draft_write.WriteRefusal("write_uncertain", earlier_attempt_open=True)
 
-    def test_a_cleanly_refused_attempt_at_the_default_may_try_again(self, tmp_path: Path) -> None:
+    def test_a_cleanly_refused_attempt_tries_again_from_the_current_read(
+        self, tmp_path: Path
+    ) -> None:
+        """D15: Cliniko applied nothing, so attempt 2 is built from the
+        current read — even over an answer typed since."""
         registry, _ = _registry(tmp_path)
-        prepared = _prepare(registry, record=_record("refused", refusal="cliniko_rejected"))
+        content = _content({_HISTORY: _PROMPTS, "Diagnosis": "<p>typed since</p>"})
+        prepared = _prepare(
+            registry,
+            _verified_hop1(registry, content=content),
+            record=_record("refused", refusal="cliniko_rejected"),
+        )
         assert isinstance(prepared, draft_write.PreparedWrite)
         assert prepared.attempt == 2
+        body = json.loads(prepared.content.to_body())["content"]
+        assert body["sections"][1]["questions"][2]["answer"].startswith(
+            "<p>typed since</p>" + _SEPARATOR
+        )
 
     def test_a_note_with_nothing_mapped_has_nothing_to_write(self, tmp_path: Path) -> None:
         registry, _ = _registry(tmp_path)
@@ -1672,8 +1620,6 @@ class TestPrepareWrite:
                 writeback=WritebackRefused(WritebackRefusal.NOT_VERIFIED),
                 question="Diagnosis",
                 section="Examination",
-                template="Standard Consultation",
-                problem="missing",
             )
             for uncertain in (False, True):
                 line = models.write_refusal_line(replace(refusal, earlier_attempt_open=uncertain))
@@ -1692,30 +1638,19 @@ class TestPrepareWrite:
                 writeback=WritebackRefused(WritebackRefusal.NOT_VERIFIED),
                 question="Diagnosis",
                 section="Examination",
-                template="Standard Consultation",
-                problem="missing",
             )
             line = models.write_refusal_line(refusal)
             assert line.startswith(f"{warning} ") is (name not in unprefixed), name
 
     def test_long_or_broken_cliniko_names_always_format(self) -> None:
         """R22-07 end to end: a 300-character name, and one holding line
-        breaks, reach every labelled line without ``write_line`` raising;
-        the unmatched line counts the rest."""
+        breaks, reach the labelled line without ``write_line`` raising."""
         long, broken = "N" * 300, "Standard\nConsult ation"
-        for name in ("template_mismatch", "defaults_no_template", "defaults_unmatched"):
+        for name in ("template_mismatch",):
             for label in (long, broken):
-                refusal = draft_write.WriteRefusal(
-                    name, question=label, section=label, template=label, more=7
-                )
+                refusal = draft_write.WriteRefusal(name, question=label, section=label)
                 line = models.write_refusal_line(refusal)
                 assert "\n" not in line and " " not in line
-        unmatched = models.write_refusal_line(
-            draft_write.WriteRefusal(
-                "defaults_unmatched", question="Aggravating", section="History", more=2
-            )
-        )
-        assert "(Aggravating in History and 2 more)" in unmatched
         mismatch = models.write_refusal_line(
             draft_write.WriteRefusal(
                 "template_mismatch", question="Assessment", section="Examination"
@@ -1730,51 +1665,28 @@ class TestPrepareWrite:
 
 
 class TestHopOne:
-    def test_a_known_template_is_read_then_the_final_note(self, tmp_path: Path) -> None:
+    def test_hop_one_is_one_note_read(self, tmp_path: Path) -> None:
+        """D15: exactly ONE request — the note read; no template read, no
+        discovery read, the key read once."""
         registry, store = _registry(tmp_path)
         cliniko = Cliniko()
         hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko, clock=lambda: NOW
+            request_for(registry), key_store=store, transport=cliniko, clock=lambda: NOW
         )
-        assert cliniko.calls == [
-            ("GET", f"/v1/treatment_note_templates/{TEMPLATE}"),
-            ("GET", f"/v1/treatment_notes/{NOTE}"),
-        ]
+        assert cliniko.calls == [("GET", f"/v1/treatment_notes/{NOTE}")]
         assert store.reads == 1
         assert isinstance(hop1.result.outcome, Verified)
         assert hop1.result.outcome.context.template_id == TEMPLATE
-        assert hop1.template == _template() and hop1.content == _content()
-        assert hop1.template_matches
+        assert hop1.content == _content()
 
-    def test_no_template_id_reads_the_note_to_discover_it(self, tmp_path: Path) -> None:
+    def test_the_read_builds_the_write(self, tmp_path: Path) -> None:
+        """The body carries the read's untargeted edit (the consent box
+        cleared) through preparation and the PATCH."""
         registry, store = _registry(tmp_path)
-        cliniko = Cliniko()
-        hop1 = draft_write.read_for_write(
-            request_for(registry), None, key_store=store, transport=cliniko
-        )
-        assert cliniko.calls == [
-            ("GET", f"/v1/treatment_notes/{NOTE}"),
-            ("GET", f"/v1/treatment_note_templates/{TEMPLATE}"),
-            ("GET", f"/v1/treatment_notes/{NOTE}"),
-        ]
-        assert store.reads == 1 and hop1.template_matches
-
-    def test_the_final_read_not_the_discovery_read_builds_the_write(
-        self, tmp_path: Path
-    ) -> None:
-        """Peer round 28 PR-LOW-037: with the discovery read and the final
-        read answering DIFFERENTLY, the body carries the final read's
-        untargeted edit (the consent box cleared between the reads) through
-        preparation and the PATCH, and text typed into a targeted question
-        between the reads refuses the write."""
-        registry, store = _registry(tmp_path)
-        discovery = ok(note_body(content=_content()))
         edited = _content()
         edited["sections"][1]["questions"][1]["answers"][0]["selected"] = False
-        cliniko = Cliniko(notes=(discovery, ok(note_body(content=edited))))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), None, key_store=store, transport=cliniko
-        )
+        cliniko = Cliniko(notes=(ok(note_body(content=edited)),))
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.content == edited
         prepared = _prepare(registry, hop1)
         assert isinstance(prepared, draft_write.PreparedWrite)
@@ -1786,53 +1698,17 @@ class TestHopOne:
         sent = json.loads(patch.bodies[-1] or b"{}")
         consent = sent["content"]["sections"][1]["questions"][1]
         assert consent["answers"] == [{"value": "Given", "selected": False}]
-        typed = _content({_HISTORY: _NOTE_DEFAULT, "Diagnosis": "<p>typed in Cliniko</p>"})
-        cliniko = Cliniko(notes=(discovery, ok(note_body(content=typed))))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), None, key_store=store, transport=cliniko
-        )
-        assert _prepare(registry, hop1) == draft_write.WriteRefusal("note_has_text")
 
-    def test_a_note_with_no_template_reads_no_template(self, tmp_path: Path) -> None:
+    def test_a_note_with_no_template_link_still_writes(self, tmp_path: Path) -> None:
+        """D15: the match is on the note's own content, so a note whose
+        template link is absent is matched like any other."""
         registry, store = _registry(tmp_path)
-        cliniko = Cliniko(notes=(ok(note_body(treatment_note_template=None)),))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), None, key_store=store, transport=cliniko
-        )
+        cliniko = Cliniko(notes=(ok(note_body(content=_content(), treatment_note_template=None)),))
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert cliniko.calls == [("GET", f"/v1/treatment_notes/{NOTE}")]
-        assert isinstance(hop1.result.outcome, Verified) and hop1.template is None
-        assert _prepare(registry, hop1) == draft_write.WriteRefusal("template_mismatch")
-
-    @pytest.mark.parametrize(
-        ("answer", "expected"),
-        [
-            (ok(note_body(draft=False)), NoteRefused(NoteRefusal.NOTE_FINAL)),
-            (status(403), NoteRefused(NoteRefusal.KEY_REJECTED)),
-            (status(404), NoteRefused(NoteRefusal.NOTE_NOT_FOUND)),
-        ],
-    )
-    def test_a_refused_discovery_read_reads_nothing_more(
-        self, tmp_path: Path, answer: cc.RawResponse, expected: NoteRefused
-    ) -> None:
-        """Round 25 LOW-018: with no template id, a discovery read that does
-        not verify ends hop 1 after ONE request."""
-        registry, store = _registry(tmp_path)
-        cliniko = Cliniko(notes=(answer,))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), None, key_store=store, transport=cliniko
-        )
-        assert hop1.result.outcome == expected
-        assert cliniko.calls == [("GET", f"/v1/treatment_notes/{NOTE}")]
-
-    def test_a_note_re_templated_after_the_template_read_fails_closed(
-        self, tmp_path: Path
-    ) -> None:
-        registry, store = _registry(tmp_path)
-        moved = ok(note_body(content=_content(), treatment_note_template=_template_link("4002")))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=Cliniko(notes=(moved,))
-        )
-        assert isinstance(hop1.result.outcome, Verified) and not hop1.template_matches
+        assert isinstance(hop1.result.outcome, Verified)
+        assert hop1.result.outcome.context.template_id is None
+        assert isinstance(_prepare(registry, hop1), draft_write.PreparedWrite)
 
     @pytest.mark.parametrize(
         ("overrides", "reason"),
@@ -1852,51 +1728,42 @@ class TestHopOne:
             ({"draft": "yes"}, NoteRefusal.ANSWER_UNREADABLE),
         ],
     )
-    def test_the_final_read_is_the_click_s_verification(
+    def test_the_read_is_the_click_s_verification(
         self, tmp_path: Path, overrides: dict[str, Any], reason: NoteRefusal
     ) -> None:
         registry, store = _registry(tmp_path)
         cliniko = Cliniko(notes=(ok(note_body(content=_content(), **overrides)),))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.result.outcome == NoteRefused(reason)
-        assert hop1.template is None and hop1.content is None
+        assert hop1.content is None
 
     @pytest.mark.parametrize(
-        ("answer", "route", "reason"),
+        ("answer", "reason"),
         [
-            (status(401), "note", NoteRefusal.KEY_REJECTED),
-            (status(403), "note", NoteRefusal.KEY_REJECTED),
-            (status(403), "template", NoteRefusal.KEY_REJECTED),
-            (status(401), "template", NoteRefusal.KEY_REJECTED),
-            (status(404), "note", NoteRefusal.NOTE_NOT_FOUND),
-            (status(404), "template", NoteRefusal.NOTE_NOT_FOUND),
-            (cc.RawResponse(200, None, b"[]"), "note", NoteRefusal.ANSWER_UNREADABLE),
+            (status(401), NoteRefusal.KEY_REJECTED),
+            (status(403), NoteRefusal.KEY_REJECTED),
+            (status(404), NoteRefusal.NOTE_NOT_FOUND),
+            (cc.RawResponse(200, None, b"[]"), NoteRefusal.ANSWER_UNREADABLE),
         ],
     )
-    def test_a_refused_read_is_named(
-        self, tmp_path: Path, answer: cc.RawResponse, route: str, reason: NoteRefusal
+    def test_a_refused_read_is_named_after_one_request(
+        self, tmp_path: Path, answer: cc.RawResponse, reason: NoteRefusal
     ) -> None:
-        """A 401 or 403 on EITHER read is a rejected key (P.1: a finalised
-        note still answers its read with 200). A template 404 reads as the
-        note's (a named residue: the note's own link named it)."""
+        """A 401 or 403 is a rejected key (P.1: a finalised note still
+        answers its read with 200)."""
         registry, store = _registry(tmp_path)
-        cliniko = Cliniko(notes=(answer,)) if route == "note" else Cliniko(template=answer)
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        cliniko = Cliniko(notes=(answer,))
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.result.outcome == NoteRefused(reason)
+        assert cliniko.calls == [("GET", f"/v1/treatment_notes/{NOTE}")]
 
     @pytest.mark.parametrize(("code", "rate_limited"), [(429, True), (500, False), (503, False)])
     def test_an_unanswered_read_is_offline(
         self, tmp_path: Path, code: int, rate_limited: bool
     ) -> None:
         registry, store = _registry(tmp_path)
-        cliniko = Cliniko(template=status(code))
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        cliniko = Cliniko(notes=(status(code),))
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert isinstance(hop1.result.outcome, UnverifiedOffline)
         assert hop1.result.outcome.rate_limited is rate_limited
 
@@ -1904,14 +1771,10 @@ class TestHopOne:
         registry, store = _registry(tmp_path)
         store.keys.clear()
         cliniko = Cliniko()
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.result.outcome == NoteRefused(NoteRefusal.KEY_UNAVAILABLE)
         store.fail_read = True
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert hop1.result.outcome == NoteRefused(NoteRefusal.KEY_UNAVAILABLE)
         assert cliniko.calls == []
 
@@ -1920,32 +1783,27 @@ class TestHopOne:
     ) -> None:
         """Round 26 LOW-001: as the Chrome note check, a clinic whose host is
         not the context's is ``clinic_mismatch`` with no key read and no
-        request — never a template GET that could meet a 429."""
+        request — never a GET that could meet a 429."""
         registry, store = _registry(tmp_path)
-        cliniko = Cliniko(template=status(429))
-        for template_id in (TEMPLATE, None):
-            hop1 = draft_write.read_for_write(
-                request_for(registry, note_target(host=OTHER_HOST)),
-                template_id,
-                key_store=store,
-                transport=cliniko,
-            )
-            assert hop1.result.outcome == NoteRefused(NoteRefusal.CLINIC_MISMATCH)
-            assert not hop1.rate_limited
+        cliniko = Cliniko(notes=(status(429),))
+        hop1 = draft_write.read_for_write(
+            request_for(registry, note_target(host=OTHER_HOST)),
+            key_store=store,
+            transport=cliniko,
+        )
+        assert hop1.result.outcome == NoteRefused(NoteRefusal.CLINIC_MISMATCH)
+        assert not hop1.rate_limited
         assert cliniko.calls == [] and store.reads == 0
 
-    @pytest.mark.parametrize("route", ["note", "template"])
-    def test_a_failure_the_transport_raises_is_classified_on_either_read(
-        self, tmp_path: Path, route: str
-    ) -> None:
-        """Round 26 LOW-006: a failure the transport RAISES (not a status)
-        on either read — a lost connection is ``unverified_offline``, never
-        rate-limited; an untrusted certificate is its own refusal."""
+    def test_a_failure_the_transport_raises_is_classified(self, tmp_path: Path) -> None:
+        """Round 26 LOW-006: a failure the transport RAISES (not a status) —
+        a lost connection is ``unverified_offline``, never rate-limited; an
+        untrusted certificate is its own refusal."""
         registry, store = _registry(tmp_path)
         for failure in (cc.Unreachable(), cc.CertificateRejected()):
-            cliniko = Cliniko(notes=(failure,)) if route == "note" else Cliniko(template=failure)
+            cliniko = Cliniko(notes=(failure,))
             hop1 = draft_write.read_for_write(
-                request_for(registry), TEMPLATE, key_store=store, transport=cliniko
+                request_for(registry), key_store=store, transport=cliniko
             )
             if isinstance(failure, cc.Unreachable):
                 assert isinstance(hop1.result.outcome, UnverifiedOffline)
@@ -1956,7 +1814,7 @@ class TestHopOne:
     def test_hop_one_only_reads(self, tmp_path: Path) -> None:
         registry, store = _registry(tmp_path)
         cliniko = Cliniko()
-        draft_write.read_for_write(request_for(registry), None, key_store=store, transport=cliniko)
+        draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         assert {method for method, _ in cliniko.calls} == {"GET"}
         assert set(cliniko.bodies) == {None}
 
@@ -2023,7 +1881,6 @@ class TestParityWithTheNoteCheck:
         ).outcome
         written = draft_write.read_for_write(
             request_for(registry),
-            TEMPLATE,
             key_store=store,
             transport=Cliniko(notes=(answer,)),
             clock=lambda: NOW,
@@ -2041,7 +1898,7 @@ class TestParityWithTheNoteCheck:
             request_for(registry), key_store=store, transport=Cliniko()
         )
         written = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=Cliniko()
+            request_for(registry), key_store=store, transport=Cliniko()
         )
         assert written.result.outcome == check.outcome == NoteRefused(NoteRefusal.KEY_UNAVAILABLE)
 
@@ -2052,7 +1909,7 @@ class TestParityWithTheNoteCheck:
         stray = request_for(registry, note_target(host=OTHER_HOST))
         cliniko = Cliniko()
         check = encounter.verify_note_context(stray, key_store=store, transport=cliniko)
-        written = draft_write.read_for_write(stray, TEMPLATE, key_store=store, transport=cliniko)
+        written = draft_write.read_for_write(stray, key_store=store, transport=cliniko)
         assert written.result.outcome == check.outcome
         assert check.outcome == NoteRefused(NoteRefusal.CLINIC_MISMATCH)
         assert cliniko.calls == [] and store.reads == 0
@@ -2171,16 +2028,14 @@ class TestHopTwo:
         in a second call — the key read once per hop."""
         registry, store = _registry(tmp_path)
         cliniko = Cliniko()
-        hop1 = draft_write.read_for_write(
-            request_for(registry), TEMPLATE, key_store=store, transport=cliniko
-        )
+        hop1 = draft_write.read_for_write(request_for(registry), key_store=store, transport=cliniko)
         prepared = _prepare(registry, hop1)
         assert isinstance(prepared, draft_write.PreparedWrite)
         outcome = draft_write.write_for_click(
             request_for(registry), prepared, key_store=store, transport=cliniko
         )
         assert outcome.kind == "written"
-        assert [method for method, _ in cliniko.calls] == ["GET", "GET", "PATCH"]
+        assert [method for method, _ in cliniko.calls] == ["GET", "PATCH"]
         assert store.reads == 2
 
     def test_every_outcome_has_a_line(self) -> None:
@@ -2215,9 +2070,8 @@ def test_the_module_is_qt_free_and_touches_no_disk_and_no_log() -> None:
     path, OS or logging module, no ``open``, project modules by absolute
     ``from … import`` only (a module object imported so is seen by its full
     name), and from ``note_config`` / ``clinics`` only the pinned type and
-    constant names — the record and
-    the own-defaults file are read and written by the caller (``session`` /
-    ``note_config``)."""
+    constant names — the record is read and written by the caller
+    (``session``); nothing here reads the disk."""
     tree = ast.parse(Path(draft_write.__file__).read_text(encoding="utf-8"))
     imported: set[str] = set()
     for node in ast.walk(tree):
@@ -2246,22 +2100,19 @@ def test_the_module_is_qt_free_and_touches_no_disk_and_no_log() -> None:
     }
     assert not {m for m in imported if m in banned or m.split(".")[0] == "PySide6"}
     # Round 26 LOW-008: the two modules that also READ the disk
-    # (``load_own_template_defaults``, ``default_config_root``, the
-    # registry) are imported from by exactly these names — types and
-    # constants — so a disk reader imported by name fails here.
+    # (``default_config_root``, the config loaders, the registry) are
+    # imported from by exactly these names — types and constants — so a
+    # disk reader imported by name fails here.
     named: dict[str, set[str]] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module is not None:
             named.setdefault(node.module, set()).update(a.name for a in node.names)
     assert named["scribe_desktop.note_config"] == {
-        "OwnDefaults",
-        "OwnDefaultsProblem",
-        "OwnDefaultsProblemKind",
         "TargetType",
         "TemplateProfile",
         "TemplateTarget",
     }
-    assert named["scribe_desktop.clinics"] == {"KEY_SECRET_NAME", "DefaultSource", "KeyStore"}
+    assert named["scribe_desktop.clinics"] == {"KEY_SECRET_NAME", "KeyStore"}
     # ... and neither module is imported as a module object.
     assert not {"scribe_desktop.note_config", "scribe_desktop.clinics"} & {
         f"{module}.{name}" for module, names in named.items() for name in names

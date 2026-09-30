@@ -23,7 +23,6 @@ from scribe_desktop.clinics import (
     ClinicRecord,
     ClinicRefusal,
     Committed,
-    DefaultSource,
     LoadProblem,
     Refused,
     Removed,
@@ -94,13 +93,9 @@ from scribe_desktop.note_config import (
     # (the note.py convention): ONE config-text validator, applied here to
     # typed wording that may become config.
     DEFAULT_NOTE_STYLE,
-    MAX_OWN_DEFAULTS_BYTES,
     LearnedRuleEntry,
     NoteConfig,
     NoteConfigError,
-    OwnDefaults,
-    OwnDefaultsProblem,
-    OwnDefaultsProblemKind,
     PractitionerSettings,
     StyleProfile,
     TemplateProfile,
@@ -295,21 +290,20 @@ def note_refusal_line(reason: NoteRefusal) -> str:
 # (``not_taken`` — a ``not_taken_cause``, whose only free text is a template
 # QUESTION's label or the client's fixed field categories: ``write_line``
 # checks the cause's prefix, and the suffix is trusted to
-# ``not_taken_cause``'s callers), ``{problem}`` (``defaults_unreadable`` — an
-# ``OWN_DEFAULTS_PROBLEMS`` text), ``{template}`` / ``{question}`` (the
-# ``defaults_*`` lines — NAMES: Cliniko's template name, or a section and
-# question name from the clinic's own defaults file; cleaned by
-# ``write_label`` first; trusted to their callers like the cause's suffix, a
-# named residue).
+# ``not_taken_cause``'s callers).
 # ---------------------------------------------------------------------------
 
 WRITE_LINES: Final[Mapping[str, str]] = {
     "ready": "Write draft to Cliniko",
     "checking": "Checking the note with Cliniko …",
     "writing": "Writing the draft to Cliniko …",
+    # Task 7.3 (the P.2 smoke, step 3): an editor already open on the note
+    # holds the pre-write copy, and Cliniko's "updated elsewhere" dialog
+    # offers to keep it — "Discard my changes" keeps the written draft.
     "written_seen": (
         "Draft written to Cliniko. Reload the note page in Chrome; press Complete once you "
-        "can see it there."
+        "can see it there. If Cliniko says the note was updated elsewhere, choose Discard "
+        "my changes."
     ),
     "written_done": (
         "Draft written to Cliniko and this recording is complete. Review and finalise the "
@@ -328,8 +322,10 @@ WRITE_LINES: Final[Mapping[str, str]] = {
         "Cliniko shows that this note cannot take the draft ({reason}). Copy the note instead."
     ),
     "rate_limited": "Cliniko is rate-limiting this clinic. Try again in {seconds} s.",
-    "note_has_text": (
-        "The Cliniko note already holds text. Copy the note and paste it in yourself."
+    # D15: the app never appends to an answer it cannot read.
+    "note_unreadable": (
+        "A question in the Cliniko note holds something the app cannot read, so nothing "
+        "was written. Copy the note instead."
     ),
     "write_uncertain": (
         "An earlier write may have reached Cliniko. Check the note there before copying "
@@ -382,21 +378,6 @@ WRITE_LINES: Final[Mapping[str, str]] = {
         "Cliniko refused the write although the note is still a draft - this clinic's key "
         "may not be allowed to edit notes. Copy the note instead."
     ),
-    "defaults_unreadable": (
-        "This clinic's own defaults file cannot be used ({problem}). Correct or create it "
-        "and press Check file on the Clinics tab, or switch the clinic to Cliniko template. "
-        "Or copy the note instead."
-    ),
-    "defaults_no_template": (
-        "This clinic's own defaults file has no entry for the note's Cliniko template "
-        "({template}). Add one, or switch the clinic to Cliniko template. Or copy the note "
-        "instead."
-    ),
-    "defaults_unmatched": (
-        "This clinic's own defaults file names a question the note's Cliniko template does "
-        "not have ({question}). Correct the file, or switch the clinic to Cliniko template. "
-        "Or copy the note instead."
-    ),
 }
 
 # The refusal lines D5 prefixes with ``write_uncertain`` while the session's
@@ -414,7 +395,7 @@ WRITE_UNCERTAIN_PREFIXED: Final[frozenset[str]] = frozenset(
         "mock_note",
         "check_failed",
         "rate_limited",
-        "note_has_text",
+        "note_unreadable",
         "nothing_to_write",
         "not_taken",
         "recovery_busy",
@@ -424,23 +405,9 @@ WRITE_UNCERTAIN_PREFIXED: Final[frozenset[str]] = frozenset(
         "check_refused",
         "finalised_before_write",
         "write_forbidden",
-        "defaults_unreadable",
-        "defaults_no_template",
-        "defaults_unmatched",
     }
 )
 
-# ``defaults_unreadable``'s ``{problem}``: the own-defaults loader's problem
-# names (``note_config.OwnDefaultsProblem``) in plain words — a fixed table,
-# so no file content can reach the line.
-OWN_DEFAULTS_PROBLEMS: Final[Mapping[OwnDefaultsProblemKind, str]] = {
-    "missing": "there is no file for this clinic yet",
-    "unreadable": "it cannot be read",
-    "too_large": f"it is larger than {MAX_OWN_DEFAULTS_BYTES // 1024} KB",
-    "not_valid": (
-        "it is not in the expected format - press Check file on the Clinics tab to see where"
-    ),
-}
 # The note refusals trying again cannot change (Task 5.1(e), R22-20): shown
 # as ``check_refused``; every other ``NoteRefusal`` as ``check_failed``.
 PERMANENT_NOTE_REFUSALS: Final[frozenset[NoteRefusal]] = frozenset(
@@ -451,12 +418,10 @@ PERMANENT_NOTE_REFUSALS: Final[frozenset[NoteRefusal]] = frozenset(
         NoteRefusal.WRONG_PRACTITIONER,
     }
 )
-# A Cliniko label formatted into a write line (``{template}`` / ``{question}``)
-# is cleaned by the CALLER first (R22-07): control characters become spaces
-# and it is clipped to this many characters, so ``write_line``'s own bound
-# (``_MAX_WRITE_LABEL_CHARS``) never refuses a label Cliniko sent.
+# A profile label formatted into a write line (a ``template_mismatch`` cause's
+# question) is cleaned by ``write_label`` first (R22-07): control characters
+# become spaces and it is clipped to this many characters.
 WRITE_LABEL_CHARS: Final = 80
-_MAX_WRITE_LABEL_CHARS: Final = 200
 
 # Why a write-back target was refused (``encounter.WritebackRefusal``), as the
 # plain reason inside ``check_failed`` — its own exhaustive table in the
@@ -492,7 +457,6 @@ NOT_TAKEN_CAUSES: Final[Mapping[str, str]] = {
     # Hop 2 reads the key again (D3); nothing is sent when it cannot be read.
     "key_unavailable": NOTE_REFUSAL_REASONS[NoteRefusal.KEY_UNAVAILABLE],
     "note_not_found": NOTE_REFUSAL_REASONS[NoteRefusal.NOTE_NOT_FOUND],
-    "no_baseline": "the note's untyped starting text could not be established",
 }
 _REJECTED_FIELDS_CAUSE: Final = "Cliniko refused these fields: {categories}"
 
@@ -529,12 +493,7 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
       ``ValueError`` (the cause's suffix is not checked — ``_is_write_cause``);
     - ``seconds`` is shown as whole seconds, rounded UP and never below 1
       (``RateLimitLatch.cooling`` answers a float); a bool, a non-number or a
-      non-finite value raises ``ValueError``;
-    - ``problem`` must be an ``OWN_DEFAULTS_PROBLEMS`` text, and ``template``
-      / ``question`` a ``str`` with no line break of at most 200 characters,
-      else ``ValueError`` (a Cliniko label is cleaned by ``write_label``
-      first, so this never refuses one; the label itself is trusted to the
-      caller — a named residue).
+      non-finite value raises ``ValueError``.
 
     With ``uncertain`` — the session's write record holds an EARLIER
     ``attempting`` or ``unknown`` attempt (D5, PR-MED-017) — a refusal line in
@@ -548,11 +507,6 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
         raise ValueError("a write line's reason must come from a refusal table")
     if "cause" in detail and not _is_write_cause(detail["cause"]):
         raise ValueError("a write line's cause must come from not_taken_cause")
-    if "problem" in detail and detail["problem"] not in OWN_DEFAULTS_PROBLEMS.values():
-        raise ValueError("a write line's problem must come from OWN_DEFAULTS_PROBLEMS")
-    for name in ("template", "question"):
-        if name in detail and not _is_write_label(detail[name]):
-            raise ValueError(f"a write line's {name} must be one short line")
     if "seconds" in detail:
         seconds = detail["seconds"]
         if (
@@ -566,19 +520,9 @@ def write_line(key: str, *, uncertain: bool = False, **detail: object) -> str:
     return write_prefixed(line, uncertain=uncertain and key in WRITE_UNCERTAIN_PREFIXED)
 
 
-def _is_write_label(label: object) -> bool:
-    """One line (no ``str.splitlines`` boundary of any kind) of at most 200
-    characters."""
-    return (
-        isinstance(label, str)
-        and len(label) <= _MAX_WRITE_LABEL_CHARS
-        and label.splitlines() in ([], [label])
-    )
-
-
 def write_label(text: str) -> str:
-    """A Cliniko label (a template, section or question name) as a write
-    line may show it (R22-07): control, format and separator characters
+    """A profile label (a section or question name) as a write line may
+    show it (R22-07): control, format and separator characters
     become spaces, whitespace is collapsed (``encounter.display_text``, the
     one cleaner), and it is clipped to ``WRITE_LABEL_CHARS`` with "…"."""
     cleaned = display_text(text)
@@ -613,8 +557,8 @@ def write_refusal_line(refusal: WriteRefusal) -> str:
     """The Note tab's line for a click ``draft_write.refuse_before_read`` or
     ``prepare_write`` refused — every ``WriteRefusalName`` has one —
     prefixed by ``write_uncertain`` while an EARLIER attempt is open
-    (PR-MED-017). Every name (a profile, Cliniko template or own-defaults
-    label) goes through ``write_label``; everything else is a fixed text.
+    (PR-MED-017). Every name (a profile label) goes through
+    ``write_label``; everything else is a fixed text.
     Wording residue for Task P.2: ``answer_unreadable`` reads as Cliniko's
     answer (it can also be the saved note's own text that cannot be
     encoded), and a ``key_unavailable`` outcome reads "Cliniko did not take
@@ -631,27 +575,14 @@ def write_refusal_line(refusal: WriteRefusal) -> str:
         question = _question_label(refusal) if refusal.question else None
         cause = not_taken_cause("template_mismatch", question=question)
         return write_line("not_taken", uncertain=uncertain, cause=cause)
-    if name == "no_baseline":
-        return write_line("not_taken", uncertain=uncertain, cause=not_taken_cause("no_baseline"))
     if name == "answer_unreadable":
         return note_check_line(NoteRefusal.ANSWER_UNREADABLE, uncertain=uncertain)
-    if name == "defaults_unreadable":
-        problem = OWN_DEFAULTS_PROBLEMS[refusal.problem or "unreadable"]
-        return write_line(name, uncertain=uncertain, problem=problem)
-    if name == "defaults_no_template":
-        return write_line(name, uncertain=uncertain, template=write_label(refusal.template or ""))
-    if name == "defaults_unmatched":
-        question = _question_label(refusal)
-        if refusal.more:
-            question += f" and {refusal.more} more"
-        return write_line(name, uncertain=uncertain, question=question)
     return write_line(name, uncertain=uncertain)
 
 
 def _question_label(refusal: WriteRefusal) -> str:
     """"<question> in <section>", each name cleaned and clipped by
-    ``write_label`` (at most 2 × 80 characters, so ``write_line``'s bound
-    holds with the " and N more" suffix)."""
+    ``write_label``."""
     question = write_label(refusal.question or "")
     return f"{question} in {write_label(refusal.section)}" if refusal.section else question
 
@@ -3718,7 +3649,7 @@ def build_recovery_runner(
 # key (the tab never shows it after entry).
 # ---------------------------------------------------------------------------
 
-ClinicOperation = Literal["add", "replace", "remove", "default_source"]
+ClinicOperation = Literal["add", "replace", "remove"]
 
 CLINICS_INTRO: Final = (
     "Add each clinic's Cliniko API key so the scribe can check, with Cliniko, that "
@@ -3743,71 +3674,6 @@ CLINIC_CHECK_STOPPED_LINE: Final = (
 CLINIC_NO_SELECTION_LINE: Final = "Select a clinic in the list first."
 CLINIC_REMOVE_CONFIRM_LABEL: Final = "Confirm remove"
 CLINIC_REMOVE_LABEL: Final = "Remove"
-
-# The per-clinic typed-text default source (cliniko-draft-write Task 5.4,
-# D14): what a new Cliniko note starts with — the text the draft write may
-# replace. "Check file" reads the clinic's own file only (no Cliniko call);
-# its questions are matched against the note's template only at write time,
-# so a readable file never reads as "fully checked".
-CLINIC_DEFAULT_SOURCE_TITLE: Final = "Starting text in a new Cliniko note"
-CLINIC_DEFAULT_SOURCE_HINT: Final = (
-    "The draft write replaces only the text a new Cliniko note starts with. Choose where "
-    "the scribe reads that starting text from."
-)
-CLINIC_DEFAULT_SOURCE_LABELS: Final[Mapping[DefaultSource, str]] = {
-    "cliniko_template": "Cliniko template",
-    "own_file": "My own defaults",
-}
-CLINIC_DEFAULT_SOURCE_SAVED: Final = '{name} now uses "{choice}" for the starting text.'
-CLINIC_DEFAULTS_PATH: Final = "Your own defaults for this clinic are read from: {path}"
-CLINIC_DEFAULTS_CHECK_LABEL: Final = "Check file"
-CLINIC_DEFAULTS_OK: Final = (
-    "The file can be read and lists {templates}. Its questions are matched against the "
-    "note's Cliniko template each time you write."
-)
-CLINIC_DEFAULTS_MISSING: Final = (
-    "There is no file at that path yet. Create it (the format and an example are in "
-    "docs\\own-template-defaults.md), then press Check file again."
-)
-CLINIC_DEFAULTS_PROBLEM: Final = (
-    "The file cannot be used ({problem}{location}). Correct it, then press Check file again."
-)
-# ``CLINIC_DEFAULTS_PROBLEM``'s ``{problem}``: the Clinics tab's own wording
-# (the write line's ``OWN_DEFAULTS_PROBLEMS`` sends the reader HERE for the
-# place, so its ``not_valid`` text does not fit this line). ``missing`` has
-# its own line, ``CLINIC_DEFAULTS_MISSING``.
-_CLINIC_DEFAULTS_PROBLEMS: Final[Mapping[OwnDefaultsProblemKind, str]] = {
-    "unreadable": "it cannot be read",
-    "too_large": f"it is larger than {MAX_OWN_DEFAULTS_BYTES // 1024} KB",
-    "not_valid": "it is not in the expected format",
-}
-
-
-def clinic_default_source_line(name: str, source: DefaultSource) -> str:
-    return CLINIC_DEFAULT_SOURCE_SAVED.format(
-        name=name, choice=CLINIC_DEFAULT_SOURCE_LABELS[source]
-    )
-
-
-def clinic_defaults_path_line(path: Path) -> str:
-    return CLINIC_DEFAULTS_PATH.format(path=path)
-
-
-def clinic_defaults_check_line(result: OwnDefaults | OwnDefaultsProblem) -> str:
-    """"Check file"'s line: the file's template count, ``missing``, or the
-    named problem with the loader's key-only, escaped, clipped location —
-    shown on this LOCAL tab only (``note_config``'s destination rule), never
-    a default text."""
-    if isinstance(result, OwnDefaults):
-        count = len(result.templates)
-        templates = f"{count} template" + ("" if count == 1 else "s")
-        return CLINIC_DEFAULTS_OK.format(templates=templates)
-    if result.kind == "missing":
-        return CLINIC_DEFAULTS_MISSING
-    location = f": {result.location}" if result.location else ""
-    return CLINIC_DEFAULTS_PROBLEM.format(
-        problem=_CLINIC_DEFAULTS_PROBLEMS[result.kind], location=location
-    )
 
 
 _CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
@@ -3914,16 +3780,6 @@ _CLINIC_REFUSAL_COPY: Final[Mapping[ClinicRefusal, str]] = {
         "The key could not be deleted from Windows Credential Manager, so {clinic} was "
         "kept - press Remove again."
     ),
-    # The draft write's own sentence (cliniko-draft-write plan Task 3.1a, D14).
-    ClinicRefusal.WRITE_IN_FLIGHT: WRITE_LINES["write_in_flight"],
-}
-# A refusal whose shared wording does not fit one operation (Task 3.1a): the
-# shared CLINIC_GONE copy speaks of "the result" of a key check, which a
-# setting change has none of.
-_CLINIC_OPERATION_REFUSAL_COPY: Final[
-    Mapping[tuple[ClinicOperation, ClinicRefusal], str]
-] = {
-    ("default_source", ClinicRefusal.CLINIC_GONE): "{clinic} is no longer set up in this app.",
 }
 _CLINIC_WRITE_FAILED_COPY: Final[Mapping[ClinicOperation, str]] = {
     "add": "The clinic list could not be saved, so nothing was added - press Validate again.",
@@ -3935,7 +3791,6 @@ _CLINIC_WRITE_FAILED_COPY: Final[Mapping[ClinicOperation, str]] = {
         "The key was deleted, but {clinic} could not be taken off the list - press Remove "
         "again."
     ),
-    "default_source": "The setting for {clinic} could not be saved; it is unchanged.",
 }
 _CLINIC_LOAD_PROBLEM_COPY: Final[Mapping[LoadProblem, str]] = {
     LoadProblem.UNREADABLE: "The clinic list at {path} could not be opened.",
@@ -3947,12 +3802,9 @@ _CLINIC_LOAD_PROBLEM_COPY: Final[Mapping[LoadProblem, str]] = {
 def clinic_refusal_line(
     refusal: Refused, *, operation: ClinicOperation, clinic_name: str, path: Path
 ) -> str:
-    """The status line for a refused Validate / Replace key / Remove or
-    default-source change."""
+    """The status line for a refused Validate / Replace key / Remove."""
     if refusal.reason is ClinicRefusal.REGISTRY_WRITE_FAILED:
         template = _CLINIC_WRITE_FAILED_COPY[operation]
-    elif (operation, refusal.reason) in _CLINIC_OPERATION_REFUSAL_COPY:
-        template = _CLINIC_OPERATION_REFUSAL_COPY[(operation, refusal.reason)]
     else:
         template = _CLINIC_REFUSAL_COPY[refusal.reason]
     return template.format(clinic=clinic_name or "that clinic", path=path)
@@ -4011,19 +3863,7 @@ __all__ = [
     "CLINIC_NO_SELECTION_LINE",
     "CLINIC_REMOVE_CONFIRM_LABEL",
     "CLINIC_REMOVE_LABEL",
-    "CLINIC_DEFAULT_SOURCE_HINT",
-    "CLINIC_DEFAULT_SOURCE_LABELS",
-    "CLINIC_DEFAULT_SOURCE_SAVED",
-    "CLINIC_DEFAULT_SOURCE_TITLE",
-    "CLINIC_DEFAULTS_CHECK_LABEL",
-    "CLINIC_DEFAULTS_MISSING",
-    "CLINIC_DEFAULTS_OK",
-    "CLINIC_DEFAULTS_PATH",
-    "CLINIC_DEFAULTS_PROBLEM",
     "ClinicOperation",
-    "clinic_default_source_line",
-    "clinic_defaults_check_line",
-    "clinic_defaults_path_line",
     "clinic_load_problem_line",
     "clinic_refusal_line",
     "clinic_remove_prompt",
@@ -4126,7 +3966,6 @@ __all__ = [
     "WRITE_UNCERTAIN_PREFIXED",
     "WRITEBACK_REFUSAL_REASONS",
     "NOT_TAKEN_CAUSES",
-    "OWN_DEFAULTS_PROBLEMS",
     "PERMANENT_NOTE_REFUSALS",
     "WRITE_LABEL_CHARS",
     "custody_refusal_text",

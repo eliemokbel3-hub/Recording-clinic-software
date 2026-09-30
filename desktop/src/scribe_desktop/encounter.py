@@ -31,7 +31,8 @@ THE WRITE-BACK GUARD (Constraint 6). ``writeback_context`` is the only way
 to a write target: it returns a ``VerifiedTarget`` or a named refusal, over a
 live session or a checked-out session's decrypted encounter, and in both
 cases only on a current re-verification of that note. This module has no
-write method; Phase 4's draft write is the next plan.
+write method: the draft write is ``draft_write.py``'s, which takes its
+target from ``writeback_context``.
 
 This module never logs. No error or refusal it produces carries a key, an id
 or answer text: a refusal is a reason code.

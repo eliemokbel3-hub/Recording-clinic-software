@@ -2,18 +2,19 @@
 
 What is pinned here:
 - ``WRITE_LINES`` is EXACTLY the plan's keys and wording (plus D5/D9's
-  ``write_pending`` and the Task 2.1 additions; ``written_auto`` went with
-  seen-mode completion), every line plain text: no exclamation mark, no
-  newline, every placeholder one of ``{reason}`` / ``{seconds}`` /
-  ``{cause}`` / ``{problem}`` / ``{template}`` / ``{question}``.
+  ``write_pending``, the Task 2.1 additions and Task 7.3's D15 changes:
+  ``note_unreadable`` in, ``note_has_text`` and the three own-defaults lines
+  out; ``written_auto`` went with seen-mode completion), every line plain
+  text: no exclamation mark, no newline, every placeholder one of
+  ``{reason}`` / ``{seconds}`` / ``{cause}``.
 - Every refusal name the write can meet resolves to a line: every
   ``encounter.WritebackRefusal`` through ``writeback_refusal_line`` and every
   ``encounter.NoteRefusal`` through ``note_refusal_line``, each inside
   ``check_failed``; every ``not_taken`` cause kind through
   ``not_taken_cause``; each ``NoteRefusal`` in exactly one of
-  ``check_refused`` / ``check_failed``; every own-defaults problem kind. (The
-  ``WriteRefusalName`` and ``WriteOutcome`` enumerations are in
-  ``test_draft_write.py``.)
+  ``check_refused`` / ``check_failed``; every ``draft_write.WriteRefusalName``
+  through ``write_refusal_line``. (The ``WriteRefusalName`` and
+  ``WriteOutcome`` enumerations are in ``test_draft_write.py``.)
 - ``write_line`` is the formatting boundary: a reason or cause from anywhere
   but the tables is refused (Constraint 9), a detail the line has no
   placeholder for is refused, seconds are whole and rounded up.
@@ -39,8 +40,8 @@ from typing import get_args
 
 import pytest
 
-from scribe_desktop.encounter import NoteRefusal, WritebackRefusal
-from scribe_desktop.note_config import OwnDefaultsProblemKind
+from scribe_desktop.draft_write import WriteRefusal, WriteRefusalName
+from scribe_desktop.encounter import NoteRefusal, WritebackRefusal, WritebackRefused
 from scribe_desktop.session import SessionActivityError, WriteInFlightError
 from scribe_desktop.ui import models
 
@@ -52,7 +53,8 @@ _EXPECTED = {
     "writing": "Writing the draft to Cliniko …",
     "written_seen": (
         "Draft written to Cliniko. Reload the note page in Chrome; press Complete once you "
-        "can see it there."
+        "can see it there. If Cliniko says the note was updated elsewhere, choose Discard "
+        "my changes."
     ),
     "written_done": (
         "Draft written to Cliniko and this recording is complete. Review and finalise the "
@@ -66,8 +68,9 @@ _EXPECTED = {
         "try again."
     ),
     "rate_limited": "Cliniko is rate-limiting this clinic. Try again in {seconds} s.",
-    "note_has_text": (
-        "The Cliniko note already holds text. Copy the note and paste it in yourself."
+    "note_unreadable": (
+        "A question in the Cliniko note holds something the app cannot read, so nothing "
+        "was written. Copy the note instead."
     ),
     "write_uncertain": (
         "An earlier write may have reached Cliniko. Check the note there before copying "
@@ -116,21 +119,6 @@ _EXPECTED = {
         "Cliniko refused the write although the note is still a draft - this clinic's key "
         "may not be allowed to edit notes. Copy the note instead."
     ),
-    "defaults_unreadable": (
-        "This clinic's own defaults file cannot be used ({problem}). Correct or create it "
-        "and press Check file on the Clinics tab, or switch the clinic to Cliniko template. "
-        "Or copy the note instead."
-    ),
-    "defaults_no_template": (
-        "This clinic's own defaults file has no entry for the note's Cliniko template "
-        "({template}). Add one, or switch the clinic to Cliniko template. Or copy the note "
-        "instead."
-    ),
-    "defaults_unmatched": (
-        "This clinic's own defaults file names a question the note's Cliniko template does "
-        "not have ({question}). Correct the file, or switch the clinic to Cliniko template. "
-        "Or copy the note instead."
-    ),
 }
 
 _DETAIL: dict[str, dict[str, object]] = {
@@ -138,9 +126,6 @@ _DETAIL: dict[str, dict[str, object]] = {
     "check_refused": {"reason": models.note_refusal_line(NoteRefusal.NOTE_FINAL)},
     "rate_limited": {"seconds": 42},
     "not_taken": {"cause": models.not_taken_cause("note_not_found")},
-    "defaults_unreadable": {"problem": models.OWN_DEFAULTS_PROBLEMS["missing"]},
-    "defaults_no_template": {"template": "Standard Consultation"},
-    "defaults_unmatched": {"question": "Diagnosis in Examination"},
 }
 
 
@@ -224,7 +209,6 @@ class TestEveryRefusalResolves:
             "key_rejected",
             "key_unavailable",
             "note_not_found",
-            "no_baseline",
         }
         causes = [models.not_taken_cause(kind) for kind in models.NOT_TAKEN_CAUSES]
         causes.append(models.not_taken_cause("template_mismatch", question="Diagnosis"))
@@ -397,38 +381,62 @@ class TestWriteControl:
 
 
 class TestTheTaskTwoOneAdditions:
-    def test_every_own_defaults_problem_has_its_own_text(self) -> None:
-        assert set(models.OWN_DEFAULTS_PROBLEMS) == set(get_args(OwnDefaultsProblemKind))
-        texts = list(models.OWN_DEFAULTS_PROBLEMS.values())
-        assert len(set(texts)) == len(texts)
-        for text in texts:
-            line = models.write_line("defaults_unreadable", problem=text)
-            assert f"({text})" in line
+    def test_every_write_refusal_name_resolves_to_a_line(self) -> None:
+        """Task 7.3: every ``WriteRefusalName`` — ``note_unreadable`` among
+        them — reads as a dictionary line, prefixed while an earlier attempt
+        is open."""
+        writeback = WritebackRefused(WritebackRefusal.NOT_VERIFIED)
+        for name in get_args(WriteRefusalName):
+            refusal = WriteRefusal(
+                name,
+                writeback=writeback if name == "writeback_refused" else None,
+                question="Diagnosis" if name == "template_mismatch" else None,
+                section="Examination" if name == "template_mismatch" else None,
+            )
+            line = models.write_refusal_line(refusal)
+            assert line and "{" not in line and "!" not in line, name
+        assert models.write_refusal_line(WriteRefusal("note_unreadable")) == (
+            models.WRITE_LINES["note_unreadable"]
+        )
+        open_line = models.write_refusal_line(
+            WriteRefusal("note_unreadable", earlier_attempt_open=True)
+        )
+        assert open_line == (
+            f"{models.WRITE_LINES['write_uncertain']} {models.WRITE_LINES['note_unreadable']}"
+        )
 
-    def test_a_problem_from_anywhere_else_is_refused(self) -> None:
-        with pytest.raises(ValueError, match="problem"):
-            models.write_line("defaults_unreadable", problem="templates > Secret text")
+    def test_the_written_line_names_clinikos_discard_my_changes(self) -> None:
+        """Task 7.3 (the P.2 smoke, step 3): an editor already open keeps the
+        pre-write copy; its "updated elsewhere" dialog's Discard my changes
+        keeps the written draft."""
+        assert models.write_line("written_seen").endswith(
+            "If Cliniko says the note was updated elsewhere, choose Discard my changes."
+        )
 
-    @pytest.mark.parametrize("key", ["defaults_no_template", "defaults_unmatched"])
-    def test_a_label_must_be_one_short_line(self, key: str) -> None:
-        name = "template" if key == "defaults_no_template" else "question"
-        assert "Standard" in models.write_line(key, **{name: "Standard"})
-        # Round 25 LOW-022: the boundary itself is accepted.
-        assert "x" * 200 in models.write_line(key, **{name: "x" * 200})
-        for bad in ("a\nb", "a b", "a\rb", "x" * 201, 7, None):
-            with pytest.raises(ValueError, match=name):
-                models.write_line(key, **{name: bad})
+    def test_the_retired_lines_are_gone(self) -> None:
+        for key in (
+            "note_has_text",
+            "defaults_unreadable",
+            "defaults_no_template",
+            "defaults_unmatched",
+        ):
+            assert key not in models.WRITE_LINES, key
+        assert "no_baseline" not in models.NOT_TAKEN_CAUSES
+        assert not hasattr(models, "OWN_DEFAULTS_PROBLEMS")
 
     def test_write_label_cleans_and_clips_a_cliniko_label(self) -> None:
         """R22-07: the caller cleans first, so ``write_line`` never refuses
         a label Cliniko sent — a 300-character label and one holding line
         breaks both format."""
+        separated = models.write_label("a b")
+        assert separated == "a b"
         long = models.write_label("L" * 300)
         assert len(long) == models.WRITE_LABEL_CHARS and long.endswith("…")
         broken = models.write_label("Standard\nConsult ation‮")
         assert "\n" not in broken and " " not in broken and "‮" not in broken
         for label in (long, broken):
-            models.write_line("defaults_no_template", template=label)
+            cause = models.not_taken_cause("template_mismatch", question=label)
+            assert label in models.write_line("not_taken", cause=cause)
 
     def test_a_note_refusal_is_either_permanent_or_worth_trying_again(self) -> None:
         """Task 5.1(e): each ``NoteRefusal`` reads as exactly one of

@@ -32,7 +32,6 @@ from scribe_desktop.clinics import (
     ValidationRequest,
     parse_clinic_address,
 )
-from scribe_desktop.session_store import StoreWriteError
 
 KEY ="MS0xMjM0NTY3ODkwLWZha2Uta2V5LWZvci10ZXN0cw-au2"
 KEY_2 = "U2Vjb25kLWZha2Uta2V5LWZvci10aGUtc2FtZS1jbGluaWM-au2"
@@ -1128,169 +1127,60 @@ class TestConfirmSubdomainFromNote:
 
 
 # ---------------------------------------------------------------------------
-# Cliniko draft-write plan Task 3.1a (D14): the per-clinic default source.
+# Cliniko draft-write plan Task 7.2 (D15): the retired ``default_source``
+# field (D14) — tolerated on load, dropped, never written again.
 # ---------------------------------------------------------------------------
 
 
-class TestDefaultSource:
-    def test_a_file_written_before_the_setting_loads_as_cliniko_template(
-        self, tmp_path: Path
+class TestLegacyDefaultSource:
+    @pytest.mark.parametrize("value", ["cliniko_template", "own_file"])
+    def test_a_record_carrying_either_value_loads_with_the_field_dropped(
+        self, tmp_path: Path, value: str
     ) -> None:
-        write_file(tmp_path / "clinics.json", file_dict(record_dict()))
+        """Upgrade safety: never an empty, fail-closed registry because a
+        clinic was saved while the setting existed."""
+        write_file(
+            tmp_path / "clinics.json",
+            file_dict(
+                record_dict(default_source=value),
+                record_dict(
+                    clinic_id=IDS[1],
+                    display_name="Southside",
+                    subdomain="southside",
+                    default_source="own_file",
+                ),
+            ),
+        )
         registry = make_registry(tmp_path)
         assert registry.load_problem is None
-        assert registry.records[0].default_source == "cliniko_template"
+        assert [r.clinic_id for r in registry.records] == IDS[:2]
+        assert all("default_source" not in r.model_dump() for r in registry.records)
+        assert registry.records[0] == ClinicRecord.model_validate(record_dict())
 
-    def test_an_unknown_value_fails_closed(self, tmp_path: Path) -> None:
-        write_file(tmp_path / "clinics.json", file_dict(record_dict(default_source="elsewhere")))
+    def test_the_next_registry_write_omits_the_field(self, tmp_path: Path) -> None:
+        write_file(
+            tmp_path / "clinics.json",
+            file_dict(record_dict(subdomain_confirmed=False, default_source="own_file")),
+        )
+        registry = make_registry(tmp_path)
+        (record,) = registry.records
+        assert registry.confirm_subdomain_from_note(
+            record.clinic_id, record.host, registry.rev(record.clinic_id)
+        )
+        saved = json.loads((tmp_path / "clinics.json").read_text(encoding="utf-8"))
+        assert "default_source" not in saved["clinics"][0]
+        assert saved["clinics"][0]["subdomain_confirmed"] is True
+
+    @pytest.mark.parametrize("value", ["elsewhere", "", None, 1, ["own_file"]])
+    def test_an_unknown_value_still_fails_closed(self, tmp_path: Path, value: object) -> None:
+        write_file(tmp_path / "clinics.json", file_dict(record_dict(default_source=value)))
         registry = make_registry(tmp_path)
         assert registry.load_problem is LoadProblem.NOT_VALID
         assert registry.records == ()
 
-    def test_a_new_clinic_starts_at_cliniko_template_and_the_default_is_not_written(
-        self, tmp_path: Path
-    ) -> None:
+    def test_a_new_clinic_is_written_without_the_field(self, tmp_path: Path) -> None:
         registry, _, record = _setup_one(tmp_path)
-        assert record.default_source == "cliniko_template"
+        assert "default_source" not in record.model_dump()
         saved = json.loads((tmp_path / "clinics.json").read_text(encoding="utf-8"))
         assert "default_source" not in saved["clinics"][0]
-
-    def test_the_setting_round_trips_through_the_file(self, tmp_path: Path) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        rev = registry.rev(record.clinic_id)
-        changed = registry.set_default_source(record.clinic_id, "own_file", writing_clinic=None)
-        assert isinstance(changed, ClinicRecord)
-        assert changed.default_source == "own_file"
-        assert changed.model_copy(update={"default_source": "cliniko_template"}) == record
-        assert registry.records == (changed,)
-        saved = json.loads((tmp_path / "clinics.json").read_text(encoding="utf-8"))
-        assert saved["clinics"][0]["default_source"] == "own_file"
-        assert make_registry(tmp_path).records == (changed,)
-        # Back to the default: the field leaves the file again (R22-24).
-        back = registry.set_default_source(
-            record.clinic_id, "cliniko_template", writing_clinic=None
-        )
-        assert back == record
-        saved = json.loads((tmp_path / "clinics.json").read_text(encoding="utf-8"))
-        assert "default_source" not in saved["clinics"][0]
-        assert make_registry(tmp_path).records == (record,)
-        # It changes no identity a pending result depends on.
-        assert registry.rev(record.clinic_id) == rev
-
-    def test_the_same_value_writes_nothing(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        monkeypatch.setattr(registry, "_write", lambda *_: pytest.fail("rewrote"))
-        assert (
-            registry.set_default_source(
-                record.clinic_id, "cliniko_template", writing_clinic=record.clinic_id
-            )
-            == record
-        )
-
-    def test_an_invalid_source_raises_before_anything_is_written(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        monkeypatch.setattr(registry, "_write", lambda *_: pytest.fail("rewrote"))
-        with pytest.raises(ValueError, match="default source"):
-            registry.set_default_source(
-                record.clinic_id,
-                "elsewhere",  # type: ignore[arg-type]
-                writing_clinic=None,
-            )
-        assert registry.records == (record,)
-
-    def test_refused_while_a_write_is_in_flight_for_that_clinic(self, tmp_path: Path) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        before = (tmp_path / "clinics.json").read_bytes()
-        outcome = registry.set_default_source(
-            record.clinic_id, "own_file", writing_clinic=record.clinic_id
-        )
-        assert outcome == Refused(ClinicRefusal.WRITE_IN_FLIGHT, record.clinic_id)
-        assert registry.records == (record,)
-        assert (tmp_path / "clinics.json").read_bytes() == before
-        # A write for ANOTHER clinic does not refuse it.
-        assert isinstance(
-            registry.set_default_source(
-                record.clinic_id, "own_file", writing_clinic="fedcba9876543210"
-            ),
-            ClinicRecord,
-        )
-
-    def test_refused_for_a_gone_clinic(self, tmp_path: Path) -> None:
-        registry, _, _ = _setup_one(tmp_path)
-        assert registry.set_default_source(
-            "ffffffffffffffff", "own_file", writing_clinic=None
-        ) == Refused(ClinicRefusal.CLINIC_GONE, "ffffffffffffffff")
-
-    def test_refused_when_the_file_was_found_damaged(self, tmp_path: Path) -> None:
-        path = tmp_path / "clinics.json"
-        path.write_bytes(b"{damaged")
-        registry = make_registry(tmp_path)
-        assert registry.set_default_source(IDS[0], "own_file", writing_clinic=None) == Refused(
-            ClinicRefusal.REGISTRY_UNREADABLE, IDS[0]
-        )
-        assert path.read_bytes() == b"{damaged"
-
-    @pytest.mark.parametrize(
-        "failure",
-        # Round 26 LOW-010: the atomic writer's own failure is not an OSError.
-        [OSError("disk full"), StoreWriteError("clinics file write failed")],
-    )
-    def test_a_failed_write_leaves_the_setting_unchanged(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
-    ) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        before = (tmp_path / "clinics.json").read_bytes()
-
-        def failing(*_: Any) -> None:
-            raise failure
-
-        monkeypatch.setattr(registry, "_write", failing)
-        outcome = registry.set_default_source(record.clinic_id, "own_file", writing_clinic=None)
-        assert outcome == Refused(ClinicRefusal.REGISTRY_WRITE_FAILED, record.clinic_id)
-        assert registry.records == (record,)
-        assert (tmp_path / "clinics.json").read_bytes() == before
-
-    def test_a_pending_verification_still_matches_after_a_change(self, tmp_path: Path) -> None:
-        """No rev bump: a verification dispatched before the change still
-        confirms the subdomain after it."""
-        registry = make_registry(tmp_path, ScriptedTransport(public=status(403)))
-        record = added(registry, typed_address="northside.au2.cliniko.com")
-        rev = registry.rev(record.clinic_id)
-        registry.set_default_source(record.clinic_id, "own_file", writing_clinic=None)
-        assert registry.confirm_subdomain_from_note(record.clinic_id, record.host, rev)
-        (confirmed,) = registry.records
-        assert confirmed.subdomain_confirmed and confirmed.default_source == "own_file"
-
-    def test_replace_key_keeps_own_file(self, tmp_path: Path) -> None:
-        registry, _, record = _setup_one(tmp_path)
-        registry.set_default_source(record.clinic_id, "own_file", writing_clinic=None)
-        request = _replace(registry, record.clinic_id, KEY_2)
-        assert isinstance(request, ValidationRequest)
-        outcome = registry.commit_validation(request, registry.run_validation(request))
-        assert isinstance(outcome, Committed)
-        assert outcome.record.default_source == "own_file"
-        assert make_registry(tmp_path).records[0].default_source == "own_file"
-
-    @pytest.mark.parametrize(
-        ("before", "during"), [("cliniko_template", "own_file"), ("own_file", "cliniko_template")]
-    )
-    def test_a_change_made_while_a_replace_is_in_flight_is_kept(
-        self, tmp_path: Path, before: Any, during: Any
-    ) -> None:
-        """D14: the Replace carries the record AS IT IS AT COMMIT, not the one
-        it captured at dispatch."""
-        registry, _, record = _setup_one(tmp_path)
-        registry.set_default_source(record.clinic_id, before, writing_clinic=None)
-        request = _replace(registry, record.clinic_id, KEY_2)
-        assert isinstance(request, ValidationRequest)
-        assert request.expected is not None and request.expected.default_source == before
-        result = registry.run_validation(request)
-        registry.set_default_source(record.clinic_id, during, writing_clinic=None)
-        outcome = registry.commit_validation(request, result)
-        assert isinstance(outcome, Committed)
-        assert outcome.record.default_source == during
-        assert make_registry(tmp_path).records[0].default_source == during
+        assert not hasattr(registry, "set_default_source")

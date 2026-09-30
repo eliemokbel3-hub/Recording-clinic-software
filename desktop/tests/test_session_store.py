@@ -1013,6 +1013,46 @@ class TestWriteRecordFile:
             write_write_record(session_dir, crypto, sid, b"{}")
         assert read_write_record(session_dir, crypto, sid) == self._PLAIN
 
+    def test_a_v2_record_round_trips_and_a_v1_record_reads_as_unreadable(
+        self, tmp_path: Path
+    ) -> None:
+        """Draft-write Task 7.1 (D15): ``write.enc`` is schema v2 — the
+        expected final digests and the before digests survive the file; a
+        Phases 3–6 (v1) document decrypts but does not parse, so it is
+        ``record_unreadable`` (fail closed), never "no record"."""
+        import json
+
+        from scribe_desktop.draft_write import (
+            WriteRecord,
+            WriteRecordUnreadable,
+            parse_write_record,
+        )
+
+        session_dir, sid = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        record = WriteRecord(
+            attempt=1,
+            started_at=datetime(2026, 9, 30, 1, 0, tzinfo=UTC),
+            target_ids=("diagnosis",),
+            note_identity="3" * 64,
+            digests={"diagnosis": "0" * 64},
+            before_digests={"diagnosis": "4" * 64},
+            match_sha256="2" * 64,
+            body_sha256="1" * 64,
+            outcome="attempting",
+        )
+        write_write_record(session_dir, crypto, sid, record.to_bytes())
+        plaintext = read_write_record(session_dir, crypto, sid)
+        assert plaintext is not None and parse_write_record(plaintext) == record
+        v1 = record.model_dump(mode="json")
+        v1["schema_version"] = 1
+        del v1["before_digests"]
+        write_write_record(session_dir, crypto, sid, json.dumps(v1).encode())
+        plaintext = read_write_record(session_dir, crypto, sid)
+        assert plaintext is not None
+        with pytest.raises(WriteRecordUnreadable):
+            parse_write_record(plaintext)
+
 
 class TestSavedNoteIdentity:
     def test_it_is_the_sha256_of_the_saved_note_plaintext(self, tmp_path: Path) -> None:

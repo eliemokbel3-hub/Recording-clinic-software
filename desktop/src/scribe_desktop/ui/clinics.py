@@ -18,26 +18,17 @@ Remove) — Remove stays available while a check runs precisely so it can
 supersede one. Remove takes a second, confirming click and is refused while
 the live session is linked to that clinic (D10); the live-session link is
 the ``live_session_clinic`` provider's answer at the confirming click.
-
-The selected clinic's typed-text default source (cliniko-draft-write Task
-5.4, D14): two radios set from the record with signals blocked (a refresh or
-a selection change never writes), a click writes through
-``ClinicRegistry.set_default_source`` once, and a refusal puts the radio
-back. Under "My own defaults" the file's path is shown and "Check file" runs
-the local loader on the GUI thread — no Cliniko call; nothing is read at
-startup, on a selection change or on a timer.
+Replace key is refused for the clinic a Cliniko draft write is in flight for
+(the ``writing_clinic`` provider — cliniko-draft-write D9).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -45,20 +36,16 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QProgressBar,
     QPushButton,
-    QRadioButton,
     QVBoxLayout,
     QWidget,
 )
 
 from scribe_desktop.clinics import (
-    DEFAULT_SOURCES,
-    ClinicRecord,
     ClinicRegistry,
     Refused,
     ValidatedAccount,
     ValidationRequest,
 )
-from scribe_desktop.note_config import load_own_template_defaults, own_template_defaults_path
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
 
@@ -83,14 +70,10 @@ class ClinicsScreen(QWidget):
         *,
         live_session_clinic: Callable[[], str | None] | None = None,
         writing_clinic: Callable[[], str | None] | None = None,
-        config_root: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._registry = registry
-        # Draft-write Task 5.4 (R22-17): the config root the own-defaults
-        # file lives under — the main window's, the one the write reads.
-        self._config_root = config_root
         self._live_session_clinic: Callable[[], str | None] = (
             live_session_clinic if live_session_clinic is not None else (lambda: None)
         )
@@ -103,8 +86,6 @@ class ClinicsScreen(QWidget):
         self._pending: ValidationRequest | None = None
         self._pending_operation: models.ClinicOperation = "add"
         self._remove_armed: str | None = None
-        # The clinic "Check file" last answered for (its line goes with it).
-        self._checked_for: str | None = None
 
         self.clinic_list = QListWidget()
         self.clinic_list.currentItemChanged.connect(lambda *_: self._on_selection_changed())
@@ -147,37 +128,6 @@ class ClinicsScreen(QWidget):
         self.status_label = _plain_label()
         self.clipboard_label = _plain_label(models.CLINIC_KEY_CLIPBOARD_ADVICE)
 
-        # Draft-write Task 5.4 (D14): the selected clinic's default source.
-        # ``idClicked`` only (R22-18) — a programmatic check never writes.
-        self.source_group = QGroupBox(models.CLINIC_DEFAULT_SOURCE_TITLE)
-        self.template_radio = QRadioButton(
-            models.CLINIC_DEFAULT_SOURCE_LABELS["cliniko_template"]
-        )
-        self.own_radio = QRadioButton(models.CLINIC_DEFAULT_SOURCE_LABELS["own_file"])
-        self.source_buttons = QButtonGroup(self)
-        for index, source in enumerate(DEFAULT_SOURCES):
-            radio = self.template_radio if source == "cliniko_template" else self.own_radio
-            self.source_buttons.addButton(radio, index)
-        self.source_buttons.idClicked.connect(self._on_source_clicked)
-        self.defaults_path_label = _plain_label()
-        self.check_file_button = QPushButton(models.CLINIC_DEFAULTS_CHECK_LABEL)
-        self.check_file_button.clicked.connect(self.on_check_file)
-        self.defaults_label = _plain_label()
-        radios = QHBoxLayout()
-        radios.addWidget(self.template_radio)
-        radios.addWidget(self.own_radio)
-        radios.addStretch(1)
-        check = QHBoxLayout()
-        check.addWidget(self.check_file_button)
-        check.addStretch(1)
-        source_layout = QVBoxLayout()
-        source_layout.addWidget(_plain_label(models.CLINIC_DEFAULT_SOURCE_HINT))
-        source_layout.addLayout(radios)
-        source_layout.addWidget(self.defaults_path_label)
-        source_layout.addLayout(check)
-        source_layout.addWidget(self.defaults_label)
-        self.source_group.setLayout(source_layout)
-
         layout = QVBoxLayout()
         layout.addWidget(_plain_label(models.CLINICS_INTRO))
         layout.addWidget(QLabel("Clinics set up on this computer:"))
@@ -189,7 +139,6 @@ class ClinicsScreen(QWidget):
         layout.addLayout(buttons)
         layout.addWidget(self.progress_bar)
         layout.addWidget(self.status_label)
-        layout.addWidget(self.source_group)
         layout.addStretch(1)
         self.setLayout(layout)
         self.refresh()
@@ -245,103 +194,12 @@ class ClinicsScreen(QWidget):
         record = self._registry.record(clinic_id) if clinic_id is not None else None
         return record.display_name if record is not None else ""
 
-    def _selected_record(self) -> ClinicRecord | None:
-        clinic_id = self._selected_clinic_id()
-        return self._registry.record(clinic_id) if clinic_id is not None else None
-
     def _update_controls(self) -> None:
         usable = self._registry.load_problem is None
         selected = self._selected_clinic_id() is not None
         self.validate_button.setEnabled(usable and not self.is_busy)
         self.replace_button.setEnabled(usable and selected and not self.is_busy)
         self.remove_button.setEnabled(usable and selected)
-        self._sync_source()
-
-    def _sync_source(self) -> None:
-        """The default-source group from the selected record (D14): the
-        radios set with signals blocked — this never writes — and the path
-        line and "Check file" shown only under "My own defaults". Disabled
-        with no selection, with a registry load problem and while a Validate
-        or Replace key is in flight (D14's UI-only refusal). Reads the
-        registry only; the own-defaults file is read on "Check file" alone."""
-        record = self._selected_record()
-        usable = self._registry.load_problem is None
-        self.source_group.setEnabled(usable and record is not None and not self.is_busy)
-        self.source_buttons.blockSignals(True)
-        try:
-            if record is None:
-                # An exclusive group cannot uncheck its last button.
-                self.source_buttons.setExclusive(False)
-                self.template_radio.setChecked(False)
-                self.own_radio.setChecked(False)
-                self.source_buttons.setExclusive(True)
-            else:
-                index = DEFAULT_SOURCES.index(record.default_source)
-                button = self.source_buttons.button(index)
-                if button is not None:
-                    button.setChecked(True)
-        finally:
-            self.source_buttons.blockSignals(False)
-        path = self._defaults_path(record) if record is not None else None
-        own = record is not None and record.default_source == "own_file" and path is not None
-        self.defaults_path_label.setVisible(own)
-        self.check_file_button.setVisible(own)
-        self.defaults_path_label.setText(
-            models.clinic_defaults_path_line(path) if own and path is not None else ""
-        )
-        if not own or record is None or record.clinic_id != self._checked_for:
-            self._checked_for = None
-            self.defaults_label.setText("")
-        self.defaults_label.setVisible(bool(self.defaults_label.text()))
-
-    def _defaults_path(self, record: ClinicRecord) -> Path | None:
-        try:
-            return own_template_defaults_path(record.host, self._config_root)
-        except ValueError:  # not a clinic host: never true of a loaded record
-            return None
-
-    def _on_source_clicked(self, button_id: int) -> None:
-        """A radio click (``idClicked``, R22-18): one write through the
-        registry — the same value writes nothing — then the group is set
-        again from the stored record, so a refusal puts the radio back."""
-        record = self._selected_record()
-        if (
-            record is None
-            or self.is_busy
-            or self._registry.load_problem is not None
-            or not 0 <= button_id < len(DEFAULT_SOURCES)
-        ):
-            self._sync_source()  # click-time re-check (fail closed)
-            return
-        source = DEFAULT_SOURCES[button_id]
-        if source == record.default_source:
-            self._sync_source()
-            return
-        outcome = self._registry.set_default_source(
-            record.clinic_id, source, writing_clinic=self._writing_clinic()
-        )
-        if isinstance(outcome, Refused):
-            self._refuse(outcome, "default_source")
-        else:
-            self.status_label.setText(
-                models.clinic_default_source_line(outcome.display_name, outcome.default_source)
-            )
-        self.refresh()
-
-    def on_check_file(self) -> None:
-        """"Check file" (D14): the clinic's own defaults file through the
-        same loader the write uses — size, JSON, shape, names and texts —
-        on the GUI thread (a bounded local read; no Cliniko call)."""
-        record = self._selected_record()
-        if record is None or record.default_source != "own_file" or self.is_busy:
-            return
-        try:
-            result = load_own_template_defaults(record.host, self._config_root)
-        except ValueError:  # not a clinic host: never true of a loaded record
-            return
-        self._checked_for = record.clinic_id
-        self.defaults_label.setText(models.clinic_defaults_check_line(result))
-        self.defaults_label.setVisible(True)
 
     def _on_selection_changed(self) -> None:
         self._disarm_remove()

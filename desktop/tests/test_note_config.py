@@ -2799,229 +2799,31 @@ class TestDeleteUserCue:
 
 
 # ---------------------------------------------------------------------------
-# Cliniko draft-write plan Task 3.1a (D14): a clinic's own template defaults.
-# Every test passes an explicit config root under ``tmp_path`` (R22-17).
+# Cliniko draft-write plan Task 7.2 (D15): the own-defaults file loader and
+# the per-clinic default-source setting (D14) are REMOVED as a class.
 # ---------------------------------------------------------------------------
 
-_HOST: Final = "northside.au2.cliniko.com"
-# A default text no problem or location may ever carry.
-_SENTINEL: Final = "SENTINEL-DEFAULT-TEXT-7f3a"
+_RETIRED_NAMES: Final = (
+    "template_defaults",
+    "load_own_template_defaults",
+    "set_default_source",
+    "OwnDefaults",
+    "default_source",
+)
 
 
-def _own_file(root: Path, payload: object, *, host: str = _HOST) -> Path:
-    path = note_config_module.own_template_defaults_path(host, root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if isinstance(payload, bytes):
-        path.write_bytes(payload)
-    else:
-        path.write_text(json.dumps(payload), encoding="utf-8")
-    return path
-
-
-def _own(templates: object, **extra: object) -> dict[str, object]:
-    return {"schema_version": 1, "templates": templates, **extra}
-
-
-class TestOwnTemplateDefaults:
-    def test_the_path_is_per_clinic_host_under_template_defaults(self, tmp_path: Path) -> None:
-        assert note_config_module.own_template_defaults_path(_HOST, tmp_path) == (
-            tmp_path / "template_defaults" / "northside.au2.cliniko.com.json"
-        )
-
-    @pytest.mark.parametrize(
-        "host", ["", "..", "../x.au2.cliniko.com", "a/b.au2.cliniko.com", "NORTH.au2.cliniko.com"]
-    )
-    def test_anything_but_a_clinic_host_is_refused(self, tmp_path: Path, host: str) -> None:
-        with pytest.raises(ValueError, match="clinic host"):
-            note_config_module.load_own_template_defaults(host, tmp_path)
-
-    def test_a_valid_file_round_trips_its_nesting(self, tmp_path: Path) -> None:
-        payload = _own(
-            {
-                "Standard Consultation": {
-                    "History": {"Presenting complaint": ["Site -", "Chron -", "Agg -"]},
-                    "Treatment/Management": {"Treatment": "Treated as below"},
-                },
-                "Short Follow-up": {},
-            }
-        )
-        _own_file(tmp_path, payload)
-        loaded = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(loaded, note_config_module.OwnDefaults)
-        standard = loaded.template("Standard Consultation")
-        assert standard == {
-            "History": {"Presenting complaint": "Site -\nChron -\nAgg -"},
-            "Treatment/Management": {"Treatment": "Treated as below"},
-        }
-        assert loaded.template("Short Follow-up") == {}  # an entry: "no defaults"
-        assert loaded.template("Absent") is None
-
-    def test_a_list_and_a_newline_string_load_equal(self, tmp_path: Path) -> None:
-        _own_file(
-            tmp_path,
-            _own({"T": {"S": {"list": ["a", "", "b"], "text": "a\n\nb", "crlf": "a\r\n\r\nb"}}}),
-        )
-        loaded = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(loaded, note_config_module.OwnDefaults)
-        section = loaded.templates["T"]["S"]
-        assert section["list"] == section["text"] == section["crlf"] == "a\n\nb"
-
-    def test_a_byte_order_mark_is_tolerated(self, tmp_path: Path) -> None:
-        """Round 26 LOW-009: Notepad may save UTF-8 with a BOM."""
-        payload = json.dumps(_own({"T": {"S": {"Q": "x"}}})).encode("utf-8")
-        _own_file(tmp_path, b"\xef\xbb\xbf" + payload)
-        loaded = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(loaded, note_config_module.OwnDefaults)
-        assert loaded.template("T") == {"S": {"Q": "x"}}
-
-    def test_a_missing_file_is_missing_and_nothing_is_created(self, tmp_path: Path) -> None:
-        root = tmp_path / "config"
-        assert note_config_module.load_own_template_defaults(_HOST, root) == (
-            note_config_module.OwnDefaultsProblem("missing")
-        )
-        assert not root.exists()
-        (root / "template_defaults").mkdir(parents=True)
-        assert note_config_module.load_own_template_defaults(_HOST, root) == (
-            note_config_module.OwnDefaultsProblem("missing")
-        )
-        assert list((root / "template_defaults").iterdir()) == []
-
-    def test_an_unopenable_file_is_unreadable(self, tmp_path: Path) -> None:
-        path = note_config_module.own_template_defaults_path(_HOST, tmp_path)
-        path.mkdir(parents=True)  # a directory where the file should be
-        assert note_config_module.load_own_template_defaults(_HOST, tmp_path) == (
-            note_config_module.OwnDefaultsProblem("unreadable")
-        )
-
-    def test_an_oversize_file_is_too_large(self, tmp_path: Path) -> None:
-        _own_file(tmp_path, b" " * (note_config_module.MAX_OWN_DEFAULTS_BYTES + 1))
-        assert note_config_module.load_own_template_defaults(_HOST, tmp_path) == (
-            note_config_module.OwnDefaultsProblem("too_large")
-        )
-
-    @pytest.mark.parametrize(
-        ("name", "payload"),
-        [
-            ("bad JSON", b"{not json"),
-            ("not UTF-8", b'{"schema_version": 1, "templates": {"\xff": {}}}'),
-            ("an extra top-level key", _own({}, extra=True)),
-            ("schema version 2", {"schema_version": 2, "templates": {}}),
-            ("no templates", {"schema_version": 1}),
-            ("a list at the top", b"[]"),
-            ("a control character in a key", _own({"T\u0007": {}})),
-            ("a newline in a key", _own({"T": {"S\n2": {}}})),
-            ("a blank key", _own({"T": {" ": {}}})),
-            ("a 101-character key", _own({"T": {"S": {"Q" * 101: "x"}}})),
-            ("a tab in a text", _own({"T": {"S": {"Q": f"a\t{_SENTINEL}"}}})),
-            ("a lone CR in a text", _own({"T": {"S": {"Q": f"a\r{_SENTINEL}"}}})),
-            ("a zero-width space in a text", _own({"T": {"S": {"Q": f"a​{_SENTINEL}"}}})),
-            ("an empty text", _own({"T": {"S": {"Q": ""}}})),
-            ("a blank text", _own({"T": {"S": {"Q": "   "}}})),
-            ("an empty list", _own({"T": {"S": {"Q": []}}})),
-            (
-                "a text over 4000 characters",
-                _own({"T": {"S": {"Q": _SENTINEL + "x" * 4000}}}),
-            ),
-            ("a non-string default", _own({"T": {"S": {"Q": 7}}})),
-            ("a non-string line", _own({"T": {"S": {"Q": ["a", 7]}}})),
-            ("a section that is not an object", _own({"T": {"S": _SENTINEL}})),
-            ("a lone surrogate", b'{"templates": {"T": {"S": {"Q": "a\\ud800b"}}}}'),
-        ],
-    )
-    def test_each_malformed_file_is_not_valid_and_never_shows_a_text(
-        self, tmp_path: Path, name: str, payload: object
-    ) -> None:
-        _own_file(tmp_path, payload)
-        problem = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(problem, note_config_module.OwnDefaultsProblem), name
-        assert problem.kind == "not_valid", name
-        assert problem.location, name
-        assert _SENTINEL not in repr(problem), name
-        assert "\n" not in problem.location and "\t" not in problem.location, name
-
-    def test_a_repeated_key_at_any_level_is_not_valid(self, tmp_path: Path) -> None:
-        for blob in (
-            b'{"schema_version": 1, "schema_version": 1, "templates": {}}',
-            b'{"templates": {"T": {}, "T": {}}}',
-            b'{"templates": {"T": {"S": {"Q": "a", "Q": "b"}}}}',
-        ):
-            _own_file(tmp_path, blob)
-            problem = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-            assert isinstance(problem, note_config_module.OwnDefaultsProblem)
-            assert problem.kind == "not_valid"
-            assert problem.location is not None and "repeated" in problem.location
-
-    def test_the_location_names_keys_escaped_and_clipped(self, tmp_path: Path) -> None:
-        long_section = "Section-" + "s" * 90
-        _own_file(
-            tmp_path,
-            _own({"Treatment/Management": {long_section: {"Q": f"a\t{_SENTINEL}"}}}),
-        )
-        problem = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(problem, note_config_module.OwnDefaultsProblem)
-        assert problem.location is not None
-        assert problem.location.startswith("templates > Treatment/Management > Section-")
-        shown_section = problem.location.split(" > ")[2]
-        assert len(shown_section) == 60 and shown_section.endswith("…")
-        assert problem.location.endswith(" > Q (value_error)")
-        assert _SENTINEL not in problem.location
-        # A refused key is shown escaped, never raw.
-        _own_file(tmp_path, _own({"Standard‮Consultation": {}}))
-        problem = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(problem, note_config_module.OwnDefaultsProblem)
-        assert problem.location == "templates > StandardU+202EConsultation (value_error)"
-
-    def test_a_key_problem_names_the_key_not_the_text(self, tmp_path: Path) -> None:
-        _own_file(tmp_path, _own({"T": {"S": {"Q\u0007": _SENTINEL}}}))
-        problem = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(problem, note_config_module.OwnDefaultsProblem)
-        assert problem.location == "templates > T > S > QU+0007 (value_error)"
-
-    @pytest.mark.parametrize(
-        "host",
-        [
-            _HOST,
-            "a.au1.cliniko.com",
-            "x-y.uk2.cliniko.com",
-            "-x.au2.cliniko.com",
-            "x-.au2.cliniko.com",
-            "x.au.cliniko.com",
-            "x.au22.cliniko.com",
-            "x.AU2.cliniko.com",
-            "x.au2.cliniko.com.evil",
-            "a" * 64 + ".au2.cliniko.com",
-            "x_y.au2.cliniko.com",
-        ],
-    )
-    def test_the_file_host_check_agrees_with_the_clinic_record(self, host: str) -> None:
-        """Round 25 LOW-009: the own-defaults file name and the clinic record
-        read a clinic host by one grammar (the file's copy drops the
-        record's named groups)."""
-        import scribe_desktop.clinics as clinics_module
-
-        own = note_config_module._OWN_DEFAULTS_HOST_RE.fullmatch(host) is not None
-        assert own == (clinics_module._HOST_RE.fullmatch(host) is not None), host
-
-    def test_slash_joined_names_stay_distinct(self, tmp_path: Path) -> None:
-        """Round 25 LOW-023: a slash is part of a name, never a path — a
-        section "A/B" holding "C" and a section "A" holding "B/C" differ."""
-        _own_file(tmp_path, _own({"T": {"A/B": {"C": "one"}, "A": {"B/C": "two"}}}))
-        loaded = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        assert isinstance(loaded, note_config_module.OwnDefaults)
-        assert loaded.template("T") == {"A/B": {"C": "one"}, "A": {"B/C": "two"}}
-
-    def test_each_clinic_host_loads_its_own_file(self, tmp_path: Path) -> None:
-        """Round 25 LOW-023: one clinic's file never serves another."""
-        other = "southside.au2.cliniko.com"
-        _own_file(tmp_path, _own({"T": {"S": {"Q": "north"}}}))
-        _own_file(tmp_path, _own({"T": {"S": {"Q": "south"}}}), host=other)
-        north = note_config_module.load_own_template_defaults(_HOST, tmp_path)
-        south = note_config_module.load_own_template_defaults(other, tmp_path)
-        assert isinstance(north, note_config_module.OwnDefaults)
-        assert isinstance(south, note_config_module.OwnDefaults)
-        assert north.template("T") == {"S": {"Q": "north"}}
-        assert south.template("T") == {"S": {"Q": "south"}}
-        (tmp_path / "template_defaults" / f"{other}.json").unlink()
-        assert note_config_module.load_own_template_defaults(other, tmp_path) == (
-            note_config_module.OwnDefaultsProblem("missing")
-        )
+def test_no_production_module_names_the_retired_default_source_surface() -> None:
+    """A source pin (Validation's D-APPEND leg 5): no production module
+    names the own-defaults file, its loader or the setting — except
+    ``clinics.py``, whose before-validator names the retired
+    ``default_source`` FIELD to drop it from an old ``clinics.json``."""
+    package = Path(note_config_module.__file__).parent
+    hits = []
+    for path in sorted(package.rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for name in _RETIRED_NAMES:
+            if name == "default_source" and path.name == "clinics.py":
+                continue
+            if name in text:
+                hits.append(f"{path.relative_to(package)}: {name}")
+    assert hits == []

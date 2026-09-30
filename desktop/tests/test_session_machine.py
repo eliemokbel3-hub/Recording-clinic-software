@@ -1294,6 +1294,7 @@ def _write_record(outcome: Any, *, identity: str = _SAVED_IDENTITY) -> WriteReco
         target_ids=("diagnosis",),
         note_identity=identity,
         digests={"diagnosis": "0" * 64},
+        before_digests={"diagnosis": "3" * 64},
         match_sha256="2" * 64,
         body_sha256="1" * 64,
         outcome=outcome,

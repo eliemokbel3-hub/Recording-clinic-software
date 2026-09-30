@@ -1,4 +1,4 @@
-"""The Qt-free Cliniko draft write (cliniko-draft-write plan D3–D10, D14).
+"""The Qt-free Cliniko draft write (cliniko-draft-write plan D3–D10, D15).
 
 One click on the Note tab's "Write draft to Cliniko" fills the OPEN Cliniko
 draft the recording is linked to with the saved note, through the client's
@@ -6,16 +6,16 @@ one write (``ClinikoCall.write_draft_note`` — drafts only, by construction,
 D1). This module is the whole decision; the Qt wiring (Task 5.2) only moves
 its results between the GUI thread and two workers:
 
-- HOP 1 (worker, ``read_for_write``): ONE client call, the key read once —
-  a discovery note read only when the linked context carries no template
-  id, the template read, then the FINAL note read, which IS the click's
-  verification (``verify_note_for_write``: the note's patient, its open-draft
-  state and its practitioner; no patient or booking read). Never raises: a
-  failure is a ``VerificationResult`` refusal or ``unverified_offline``.
+- HOP 1 (worker, ``read_for_write``): ONE client call, the key read once,
+  ONE request — the note read, which IS the click's verification
+  (``verify_note_for_write``: the note's patient, its open-draft state and
+  its practitioner; no template, patient or booking read — D15). Never
+  raises: a failure is a ``VerificationResult`` refusal or
+  ``unverified_offline``.
 - GUI thread (``prepare_write``): ``writeback_context`` over hop 1's result
-  — never a stored or bridge verification (Constraint 3) — then the
-  template match, the write record's reconcile, the clinic's default source
-  (D14), the typed-text check and the FULL body, in Task 3.4's order.
+  — never a stored or bridge verification (Constraint 3) — then the match
+  on the note's own content, the write record's reconcile, the append and
+  the FULL body, in D15's order.
 - The ``attempting`` row goes to ``write.enc`` (the caller, through
   ``with_write_custody``) BEFORE hop 2 is dispatched (Constraint 5).
 - HOP 2 (worker, ``write_for_click``): the PATCH alone, in its OWN client
@@ -29,24 +29,31 @@ receives a bullet, a provenance tag, the pre-filled mark or an "[includes …]"
 line, and Copy and the write share one source for every line.
 
 What the structure enforces: an attestation target is never yielded or
-answered; a rich-text answer holds no tag but ``<p>`` / ``<br>``; the body is
-the click's own re-read ``content`` with only the matched questions'
-answers replaced (every other question, checkbox array and unknown field
-round-trips); a targeted question holding text that is not its declared
-default refuses the write (D4/D8) — "declared" being the clinic's default
-source (D14): the template's own default answer, or the practitioner's own
-file, whose trust is a residue (below); a mock note never writes (D10).
+answered; the app's own rich-text answer holds no tag but ``<p>`` /
+``<br>``; the body is the click's own re-read ``content`` with only the
+matched questions' answers changed (every other question, checkbox array and
+unknown field round-trips); a matched question's answer as read is never
+removed or rewritten — an empty one receives the app's text, anything else
+(typed text, a template's starting prompts, an image) is kept byte-for-byte
+with ONE empty line and the app's text below it, and one the app cannot read
+refuses the write (D15, ``appended_answer``); a resend after an unknown
+outcome never appends twice (``write.enc`` v2's expected final digests,
+which ``prepare_write`` keeps different from the before digests for every
+written target); a mock note never writes (D10).
 
-Named residues (Task 6.1 carries them to the security docs): Cliniko
+Named residues (Task 7.4 carries them to the security docs): Cliniko
 documents no conditional write, so an edit saved in the Cliniko editor
-between the final note read and the PATCH — to ANY question — is reverted by
-the full body (P.1 Q6); an already-open Cliniko editor's later save
-overwrites the written draft (P.1 Q5 — why completion is SEEN, D6); Cliniko's
-sanitiser rewrites rich text (P.1 Q1), so comparisons are over normalised
-visible text; the own-defaults file is same-user-writable plaintext that
-decides what a write may overwrite; a PATCH 403 is read as "finalised"
-(P.1's finalised leg), and a key that may read but not edit notes is named by
-the repeat guard (``write_forbidden``) on the next click.
+between the note read and the PATCH — to ANY question — is reverted by the
+full body, and text typed into a targeted question in that window is lost
+because the append was built from the earlier read (P.1 Q6); an
+already-open Cliniko editor's later save overwrites the written draft (P.1
+Q5 — why completion is SEEN, D6); Cliniko's sanitiser rewrites rich text
+(P.1 Q1) — it may rewrite or drop the empty separator paragraph — so
+comparisons are over normalised visible text; an edit between an unknown
+attempt and the retry makes the retry ``write_uncertain`` (fail closed); a
+PATCH 403 is read as "finalised" (P.1's finalised leg), and a key that may
+read but not edit notes is named by the repeat guard (``write_forbidden``)
+on the next click.
 
 Nothing here logs. No refusal, hop-2 outcome or record carries a key, a URL,
 an id of a patient or practitioner, or answer text: refusals are names,
@@ -79,7 +86,7 @@ from pydantic import (
     model_validator,
 )
 
-from scribe_desktop.clinics import KEY_SECRET_NAME, DefaultSource, KeyStore
+from scribe_desktop.clinics import KEY_SECRET_NAME, KeyStore
 from scribe_desktop.cliniko_client import (
     ClinikoCall,
     ClinikoClient,
@@ -129,9 +136,6 @@ from scribe_desktop.note import (
     render_section_lines,
 )
 from scribe_desktop.note_config import (
-    OwnDefaults,
-    OwnDefaultsProblem,
-    OwnDefaultsProblemKind,
     TargetType,
     TemplateProfile,
     TemplateTarget,
@@ -139,8 +143,12 @@ from scribe_desktop.note_config import (
 
 # A rich-text answer's only markup: one paragraph per line; an empty line is
 # kept as an empty paragraph so a blank line between prose paragraphs
-# survives Cliniko's editor.
+# survives Cliniko's editor. It is also the ONE empty line the append puts
+# between an answer already in the note and the app's text (D15) — the empty
+# line Cliniko's editor itself makes.
 _EMPTY_PARAGRAPH = "<p><br></p>"
+# The append's empty line in a ``text`` (plain) answer (D15).
+_EMPTY_LINE_PLAIN = "\n\n"
 # The Cliniko question type each writable target type is (D4): a type
 # mismatch refuses the write.
 _QUESTION_TYPES: Final[Mapping[TargetType, str]] = {
@@ -148,7 +156,7 @@ _QUESTION_TYPES: Final[Mapping[TargetType, str]] = {
     "plain_text": "text",
 }
 # How an answer's value is represented: a ``paragraph`` answer is HTML, a
-# ``text`` answer (and an own-defaults transcription) is visible text.
+# ``text`` answer is visible text.
 Representation = Literal["html", "visible"]
 _REPRESENTATIONS: Final[Mapping[str, Representation]] = {
     "paragraph": "html",
@@ -256,7 +264,7 @@ def to_cliniko_answer(lines: Sequence[str], target_type: TargetType) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Normalised comparison (Task 3.2, D4 — PR-HIGH-009, PR-MED-016).
+# Normalised comparison (Task 3.2, D4 — PR-HIGH-009, PR-MED-016; D15).
 # ---------------------------------------------------------------------------
 
 # The tags whose boundary is a line break in the visible text: block elements
@@ -268,9 +276,10 @@ _BREAK_TAGS: Final = frozenset(
     }
 )  # fmt: skip
 # The tags that only format TEXT. Any other tag (an image, a rule, an embed)
-# may be content with no text, so an answer holding one is never "untyped"
-# (``note_has_text``, fail closed). A link's target and a formatting change
-# are not text either way — D4 compares visible text only.
+# may be content with no text, so an answer holding one is never "empty"
+# (``appended_answer`` keeps it and appends below it — D15). A link's target
+# and a formatting change are not text either way — D4 compares visible text
+# only.
 _TEXT_TAGS: Final = _BREAK_TAGS | frozenset(
     {
         "span", "strong", "b", "em", "i", "u", "s", "strike", "sub", "sup",
@@ -354,11 +363,12 @@ def normalise_visible(text: str) -> str:
 
 
 def normalise_answer(value: str, representation: Representation) -> str:
-    """THE comparison form of an answer, default or digest alike (D4): an
-    HTML representation is converted to visible text ONCE; visible text (a
-    ``text`` answer, an own-defaults transcription) never is; then
-    ``normalise_visible``. ``AnswerUnparseable`` from the HTML parser —
-    every caller here fails closed on it."""
+    """THE comparison form of an answer — emptiness and digests alike (D4,
+    D15): an HTML representation is converted to visible text ONCE; visible
+    text (a ``text`` answer) never is; then ``normalise_visible``. Only a
+    comparison form: nothing written is ever built from it.
+    ``AnswerUnparseable`` from the HTML parser — every caller here fails
+    closed on it."""
     if representation == "html":
         value = html_to_visible(value)
     return normalise_visible(value)
@@ -372,22 +382,21 @@ def answer_digest(normalised: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# The template match (Task 3.2, D4).
+# The template match (Task 3.2, D4; on the note's own content only — D15).
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class MatchedQuestion:
     """One writable target found, exactly once and of its type, in the
-    note's own content and in the note's template."""
+    note's own content."""
 
     target: TemplateTarget
     section_name: str
     question_name: str
     representation: Representation
-    # (section index, question index) in the note's content and template.
+    # (section index, question index) in the note's content.
     note_position: tuple[int, int]
-    template_position: tuple[int, int]
 
 
 @dataclass(frozen=True)
@@ -399,7 +408,7 @@ class Match:
 
 @dataclass(frozen=True)
 class TemplateMismatch:
-    """The note's template does not match the profile. ``question`` and
+    """The note's content does not match the profile. ``question`` and
     ``section`` name the target that failed (the profile's own labels) when
     one did; both None for a profile or structure problem."""
 
@@ -429,20 +438,6 @@ def _structure(sections: object) -> list[dict[str, Any]] | None:
     return sections
 
 
-def template_sections(template: Mapping[str, Any]) -> list[dict[str, Any]] | TemplateMismatch:
-    """The template's sections (D14): from its ``content`` object when that
-    holds a ``sections`` list, else from its top level — as the probe reads
-    them; ``TemplateMismatch`` when neither is a well-formed section list."""
-    content = template.get("content")
-    raw = (
-        content.get("sections")
-        if isinstance(content, dict) and isinstance(content.get("sections"), list)
-        else template.get("sections")
-    )
-    sections = _structure(raw)
-    return sections if sections is not None else TemplateMismatch()
-
-
 def _note_sections(note_content: object) -> list[dict[str, Any]] | None:
     return _structure(note_content.get("sections")) if isinstance(note_content, dict) else None
 
@@ -465,24 +460,20 @@ def _find(
 
 
 def match_template(
-    profile: TemplateProfile | None, template: Mapping[str, Any], note_content: object
+    profile: TemplateProfile | None, note_content: object
 ) -> Match | TemplateMismatch:
     """Name-based match (D4) of every WRITABLE target the profile maps — by
-    (section name, question name) — in the note's own ``content`` AND in its
-    template. Refused (``TemplateMismatch``): no profile; a canonical section
-    the profile leaves unmapped by oversight (``unmapped_section_keys``); a
-    template or content that is not a well-formed section list; and, naming
-    the target, a section or question missing or named twice in either, a
-    question whose Cliniko type is not the target's (``paragraph`` for
-    rich text, ``text`` for plain text), or a question an earlier target of
-    the profile already names (one question, one target). The attestation
-    target is never
-    matched: its question round-trips untouched."""
+    (section name, question name) — in the note's own ``content`` (D15: the
+    template itself is never read). Refused (``TemplateMismatch``): no
+    profile; a canonical section the profile leaves unmapped by oversight
+    (``unmapped_section_keys``); content that is not a well-formed section
+    list; and, naming the target, a section or question missing or named
+    twice, a question whose Cliniko type is not the target's (``paragraph``
+    for rich text, ``text`` for plain text), or a question an earlier target
+    of the profile already names (one question, one target). The attestation
+    target is never matched: its question round-trips untouched."""
     if profile is None or profile.unmapped_section_keys():
         return TemplateMismatch()
-    template_secs = template_sections(template)
-    if isinstance(template_secs, TemplateMismatch):
-        return template_secs
     note_secs = _note_sections(note_content)
     if note_secs is None:
         return TemplateMismatch()
@@ -496,14 +487,7 @@ def match_template(
             continue
         expected = _QUESTION_TYPES[target.target_type]
         in_note = _find(note_secs, target.group, target.field_label)
-        in_template = _find(template_secs, target.group, target.field_label)
-        if (
-            in_note is None
-            or in_template is None
-            or in_note[2] != expected
-            or in_template[2] != expected
-            or in_note[:2] in taken
-        ):
+        if in_note is None or in_note[2] != expected or in_note[:2] in taken:
             return TemplateMismatch(target.field_label, target.group)
         taken.add(in_note[:2])
         questions[target.target_id] = MatchedQuestion(
@@ -512,7 +496,6 @@ def match_template(
             question_name=target.field_label,
             representation=_REPRESENTATIONS[expected],
             note_position=(in_note[0], in_note[1]),
-            template_position=(in_template[0], in_template[1]),
         )
     return Match(questions=questions)
 
@@ -542,142 +525,59 @@ def _answer_at(sections: list[dict[str, Any]], position: tuple[int, int]) -> obj
 
 
 # ---------------------------------------------------------------------------
-# The typed-text default and the typed-text check (Task 3.2, D4 / D14).
+# The append (D15): an answer already in the note is kept, never replaced.
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
-class Baseline:
-    """Each matched target's declared "untyped" answer, NORMALISED — the
-    text the write may replace. A target the source does not declare has
-    an empty default."""
-
-    defaults: Mapping[str, str]
+class NoteUnreadable:
+    """A matched question's answer the app cannot read — neither a string
+    nor null, or HTML the parser cannot read: the app never appends to what
+    it cannot read, so nothing is sent (D15, ``note_unreadable``)."""
 
 
-DefaultsRefusalName = Literal[
-    "no_baseline", "defaults_unreadable", "defaults_no_template", "defaults_unmatched"
-]
+def appended_answer(
+    existing: object, new: str, representation: Representation
+) -> str | NoteUnreadable:
+    """The FINAL answer of one matched question (D15, Constraint 4), with
+    ``existing`` its answer as the click's note read returned it and ``new``
+    the app's answer (``to_cliniko_answer``, NFC):
 
+    - EMPTY — absent or null, or a string whose visible text
+      (``normalise_answer``) is empty and that holds no opaque content
+      (``holds_opaque_content``; a blank paragraph or whitespace is not
+      writing): ``new``;
+    - NON-EMPTY — any other string, typed text and a template's starting
+      prompts alike, an image or a rule included: ``existing``
+      BYTE-FOR-BYTE (never re-rendered, never normalised), then ONE empty
+      line — ``<p><br></p>`` for an HTML answer, ``"\\n\\n"`` for a plain
+      one — then ``new``;
+    - UNREADABLE — anything else, or HTML the parser cannot read:
+      ``NoteUnreadable``.
 
-@dataclass(frozen=True)
-class DefaultsRefusal:
-    """Why no baseline could be established (D14). ``problem`` names a
-    loader problem (``defaults_unreadable``); ``template`` the template's
-    name (``defaults_no_template``); ``question`` / ``section`` the FIRST
-    entry the template lacks and ``more`` how many others
-    (``defaults_unmatched``). Labels only — never a default text."""
-
-    name: DefaultsRefusalName
-    problem: OwnDefaultsProblemKind | None = None
-    template: str | None = None
-    section: str | None = None
-    question: str | None = None
-    more: int = 0
-
-
-def baseline_defaults(
-    match: Match,
-    template: Mapping[str, Any],
-    source: DefaultSource,
-    own: OwnDefaults | OwnDefaultsProblem | None,
-) -> Baseline | DefaultsRefusal:
-    """The clinic's declared defaults for every matched target (D14).
-
-    ``"cliniko_template"``: the template's own ``answer`` for the same
-    question, in the question's representation; absent or null is empty,
-    any other shape — or HTML the parser cannot read — ``no_baseline``.
-    ``"own_file"``: ``own`` — the clinic's own defaults file, ALREADY LOADED
-    by the caller (this module never reads the disk; None is a caller bug,
-    ``ValueError``): a loader problem refuses ``defaults_unreadable``; the
-    template's ``name`` must have an entry (``defaults_no_template``; a
-    template with no string name ``no_baseline``); every (section, question)
-    the entry lists must exist in the template, targeted or not
-    (``defaults_unmatched``, naming the first in file order and counting the
-    rest); a listed question that exists but is not targeted is accepted and
-    unused. A transcription is VISIBLE text and is never HTML-decoded."""
-    sections = template_sections(template)
-    if isinstance(sections, TemplateMismatch):
-        return DefaultsRefusal("no_baseline")
-    defaults: dict[str, str] = {}
-    if source == "cliniko_template":
-        for target_id, matched in match.questions.items():
-            answer = _answer_at(sections, matched.template_position)
-            if answer is None:
-                defaults[target_id] = ""
-                continue
-            if not isinstance(answer, str):
-                return DefaultsRefusal("no_baseline")
-            try:
-                defaults[target_id] = normalise_answer(answer, matched.representation)
-            except AnswerUnparseable:
-                return DefaultsRefusal("no_baseline")
-        return Baseline(defaults)
-    if own is None:
-        raise ValueError("an own-defaults source needs the loaded file or its problem")
-    if isinstance(own, OwnDefaultsProblem):
-        return DefaultsRefusal("defaults_unreadable", problem=own.kind)
-    name = template.get("name")
-    if not isinstance(name, str):
-        return DefaultsRefusal("no_baseline")
-    entry = own.template(name)
-    if entry is None:
-        return DefaultsRefusal("defaults_no_template", template=name)
-    unmatched = [
-        (section_name, question_name)
-        for section_name, questions in entry.items()
-        for question_name in questions
-        if _find(sections, section_name, question_name) is None
-    ]
-    if unmatched:
-        section_name, question_name = unmatched[0]
-        return DefaultsRefusal(
-            "defaults_unmatched",
-            section=section_name,
-            question=question_name,
-            more=len(unmatched) - 1,
+    The normalised form decides emptiness only; nothing written is built
+    from it."""
+    if existing is None:
+        return new
+    if not isinstance(existing, str):
+        return NoteUnreadable()
+    try:
+        empty = not normalise_answer(existing, representation) and not holds_opaque_content(
+            existing, representation
         )
-    for target_id, matched in match.questions.items():
-        text = entry.get(matched.section_name, {}).get(matched.question_name)
-        defaults[target_id] = "" if text is None else normalise_answer(text, "visible")
-    return Baseline(defaults)
-
-
-def note_has_text(note_content: object, baseline: Baseline, match: Match) -> bool:
-    """True when any matched target's answer in the note is non-empty AND
-    differs from its declared default (D4) — the note holds text the
-    clinician (or an earlier write) put there. Fail closed: an answer that
-    is neither a string nor null, HTML the parser cannot read, and HTML
-    holding content that is not text (``holds_opaque_content`` — an image, a
-    rule) all count as text. Residue (round 26 LOW-003, for P.2): the
-    opaque check reads the note's answer only, so a template whose OWN
-    default holds such a tag refuses every write of an untouched note
-    (``note_has_text``; Copy remains) — strict by choice until a real
-    template shows one."""
-    sections = _note_sections(note_content)
-    if sections is None:
-        return True
-    for target_id, matched in match.questions.items():
-        answer = _answer_at(sections, matched.note_position)
-        if answer is None:
-            continue
-        if not isinstance(answer, str):
-            return True
-        try:
-            if holds_opaque_content(answer, matched.representation):
-                return True
-            visible = normalise_answer(answer, matched.representation)
-        except AnswerUnparseable:
-            return True
-        if visible and visible != baseline.defaults.get(target_id, ""):
-            return True
-    return False
+    except AnswerUnparseable:
+        return NoteUnreadable()
+    if empty:
+        return new
+    separator = _EMPTY_PARAGRAPH if representation == "html" else _EMPTY_LINE_PLAIN
+    return existing + separator + new
 
 
 def answer_digests(note_content: object, match: Match) -> dict[str, str]:
     """The digest of each matched target's normalised answer in the note —
-    reconcile's comparison with the record (D5). A target whose answer is
-    neither a string nor null, or is HTML the parser cannot read, has no
+    reconcile's comparison with the record's final and before digests (D5,
+    D15); an absent or null answer digests as empty. A target whose answer
+    is neither a string nor null, or is HTML the parser cannot read, has no
     digest here, so it never compares equal."""
     sections = _note_sections(note_content)
     if sections is None:
@@ -706,11 +606,14 @@ def build_body(
     note_content: object, match: Match, answers: Mapping[str, str]
 ) -> DraftContent | AnswerUnreadable:
     """The FULL body (Task 2.1): the click's re-read ``content`` with only
-    ``answers`` (target id → Cliniko answer, NFC-normalised here) put into
-    their matched questions; every other key, question, checkbox array and
-    unknown field is kept as read. Built and ENCODED here (strict UTF-8, no
-    NaN) so an unencodable body refuses before any attempt row is written.
-    ``ValueError`` for an answer naming a target the match lacks."""
+    ``answers`` (target id → final Cliniko answer) put into their matched
+    questions, EXACTLY as given — never normalised here, because a final
+    answer can begin with the note's own answer, kept byte-for-byte (D15);
+    the caller NFC-normalises the app's part (``prepare_write``). Every
+    other key, question, checkbox array and unknown field is kept as read.
+    Built and ENCODED here (strict UTF-8, no NaN) so an unencodable body
+    refuses before any attempt row is written. ``ValueError`` for an answer
+    naming a target the match lacks."""
     if not isinstance(note_content, dict) or _note_sections(note_content) is None:
         return AnswerUnreadable()
     content = copy.deepcopy(note_content)
@@ -720,9 +623,7 @@ def build_body(
         if matched is None:
             raise ValueError("an answer names a target the template match does not hold")
         section_index, question_index = matched.note_position
-        sections[section_index]["questions"][question_index]["answer"] = unicodedata.normalize(
-            "NFC", answer
-        )
+        sections[section_index]["questions"][question_index]["answer"] = answer
     try:
         body = DraftContent(content=NoteContent.model_validate(content))
         body.to_body()
@@ -752,24 +653,29 @@ _TargetId = Annotated[str, StringConstraints(pattern=_ID_PATTERN)]
 
 
 class WriteRecord(BaseModel):
-    """``write.enc``'s ONE document (D5): the attempt number, when it
-    started, the targets written, the saved note's identity (SHA-256 of the
-    saved ``note.enc`` plaintext), each target's answer digest, the digest
-    of WHERE they were written (``match_digest``: the questions' labels,
-    hashed), the body's digest, the outcome and — for ``refused`` — why, and
-    when it finished. Ids and digests only: never note text, never Cliniko's
-    answer. A
-    trailing ``attempting`` (a crash before the outcome) is read as
-    ``unknown``."""
+    """``write.enc``'s ONE document (D5; schema v2 — D15): the attempt
+    number, when it started, the targets written, the saved note's identity
+    (SHA-256 of the saved ``note.enc`` plaintext), per target the digest of
+    the EXPECTED FINAL answer (``digests``: the answer as read with the app's
+    text appended, normalised) and of the answer AS READ by the click that
+    built the attempt (``before_digests``; an empty answer digests ``""``),
+    the digest of WHERE they were written (``match_digest``: the questions'
+    labels, hashed), the body's digest, the outcome and — for ``refused`` —
+    why, and when it finished. Ids and digests only: never note text, never
+    Cliniko's answer. A trailing ``attempting`` (a crash before the outcome)
+    is read as ``unknown``. A schema-v1 document (Phases 3–6: default
+    digests, no before digests) is not this schema: unreadable, fail
+    closed."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     attempt: int = Field(ge=1)
     started_at: AwareDatetime
     target_ids: tuple[_TargetId, ...] = Field(min_length=1)
     note_identity: _Sha256
     digests: Mapping[_TargetId, _Sha256]
+    before_digests: Mapping[_TargetId, _Sha256]
     match_sha256: _Sha256
     body_sha256: _Sha256
     outcome: RecordOutcome
@@ -778,8 +684,11 @@ class WriteRecord(BaseModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> WriteRecord:
-        if set(self.digests) != set(self.target_ids) or len(set(self.target_ids)) != len(
-            self.target_ids
+        written = set(self.target_ids)
+        if (
+            set(self.digests) != written
+            or set(self.before_digests) != written
+            or len(written) != len(self.target_ids)
         ):
             raise ValueError("the digests name exactly the written targets")
         if (self.refusal is not None) != (self.outcome == "refused"):
@@ -871,30 +780,30 @@ class ReconciledWritten:
 
 
 @dataclass(frozen=True)
-class AtBaseline:
-    """Every targeted answer is still at its declared default: the write
-    may proceed as the next attempt."""
+class NextAttempt:
+    """Nothing of the earlier attempt landed (an open attempt whose answers
+    are still as that attempt read them) or Cliniko applied nothing (a
+    ``refused`` attempt): the write may proceed as the next attempt, built
+    from the CURRENT read (D15)."""
 
 
 @dataclass(frozen=True)
 class Uncertain:
     """An earlier write may have reached Cliniko (or the record is not this
-    saved note's): never overwrite, never a bare Copy suggestion."""
+    saved note's): never write again, never a bare Copy suggestion."""
 
 
-def _digests_match(record: WriteRecord, note_content: object, match: Match) -> bool:
+def _digests_equal(expected: Mapping[str, str], note_content: object, match: Match) -> bool:
     current = answer_digests(note_content, match)
-    return bool(record.digests) and all(
-        current.get(target_id) == digest for target_id, digest in record.digests.items()
+    return bool(expected) and all(
+        current.get(target_id) == digest for target_id, digest in expected.items()
     )
 
 
 def confirm_written(
     record: WriteRecord, note_content: object, match: Match, saved_note_identity: str
 ) -> ReconciledWritten | Uncertain | None:
-    """Reconcile's first half (Task 3.4 step 3) — it needs no baseline, so it
-    can establish ``written`` while the clinic's defaults are unusable
-    (R22-08):
+    """Reconcile's first half (D5, D15):
 
     - a record that is not this saved note's (``note_identity`` differs) is
       ``Uncertain`` — never written, never completed;
@@ -905,9 +814,11 @@ def confirm_written(
       ``Uncertain``: the earlier answer may sit in a question the current
       match no longer reads, so neither the digests nor the retry check
       could see it (peer round 28 PR-MED-036);
-    - an OPEN record whose recorded targets all digest equal — and there is
-      at least one — is ``ReconciledWritten``; a ``refused`` one never is
-      (Cliniko applied nothing, so a changed match is harmless there);
+    - an OPEN record whose recorded targets all digest equal to their
+      EXPECTED FINAL answers (``digests``) — and there is at least one — is
+      ``ReconciledWritten``: the earlier PATCH landed, so a resend would
+      append the text twice (D15); a ``refused`` one never is (Cliniko
+      applied nothing, so a changed match is harmless there);
     - None: not decided here (``retry_verdict`` decides)."""
     if record.note_identity != saved_note_identity:
         return Uncertain()
@@ -915,36 +826,44 @@ def confirm_written(
         return ReconciledWritten()
     if record.open_attempt and match_digest(match, record.target_ids) != record.match_sha256:
         return Uncertain()
-    if record.open_attempt and _digests_match(record, note_content, match):
+    if record.open_attempt and _digests_equal(record.digests, note_content, match):
         return ReconciledWritten()
     return None
 
 
 def retry_verdict(
-    note_content: object, baseline: Baseline, match: Match
-) -> AtBaseline | Uncertain:
-    """Reconcile's second half (Task 3.4 step 6): every targeted answer
-    still at its declared default is ``AtBaseline`` (the next attempt),
-    anything else ``Uncertain``."""
-    return Uncertain() if note_has_text(note_content, baseline, match) else AtBaseline()
+    record: WriteRecord, note_content: object, match: Match
+) -> NextAttempt | Uncertain:
+    """Reconcile's second half, for a record ``confirm_written`` left
+    undecided (D15): a ``refused`` record is ``NextAttempt`` (Cliniko
+    applied nothing); an OPEN record whose recorded targets all digest equal
+    to their answers AS THAT ATTEMPT READ THEM (``before_digests``: nothing
+    landed and nothing changed) is ``NextAttempt``; any other open record
+    is ``Uncertain`` — something changed since, and the app cannot tell
+    whether it was its own write (fail closed; Copy remains). The next
+    attempt is rebuilt from the current read, so an edit is never lost to
+    a stale append."""
+    if not record.open_attempt:
+        return NextAttempt()
+    if _digests_equal(record.before_digests, note_content, match):
+        return NextAttempt()
+    return Uncertain()
 
 
 def reconcile(
     record: WriteRecord,
     note_content: object,
     match: Match,
-    baseline: Baseline,
     saved_note_identity: str,
-) -> ReconciledWritten | AtBaseline | Uncertain:
-    """What a record not known to be refused-for-good means for the click's
-    re-read (D5), before any PATCH: ``confirm_written``, then — when that
-    decides nothing — ``retry_verdict``. ``prepare_write`` runs the two
-    halves separately, with the repeat guard and the defaults between
-    them."""
+) -> ReconciledWritten | NextAttempt | Uncertain:
+    """What a record means for the click's re-read (D5, D15), before any
+    PATCH: ``confirm_written``, then — when that decides nothing —
+    ``retry_verdict``. ``prepare_write`` runs the two halves separately,
+    with the repeat guard between them."""
     confirmed = confirm_written(record, note_content, match, saved_note_identity)
     if confirmed is not None:
         return confirmed
-    return retry_verdict(note_content, baseline, match)
+    return retry_verdict(record, note_content, match)
 
 
 def attempt_record(prepared: PreparedWrite, *, now: datetime) -> WriteRecord:
@@ -955,6 +874,7 @@ def attempt_record(prepared: PreparedWrite, *, now: datetime) -> WriteRecord:
         target_ids=prepared.target_ids,
         note_identity=prepared.note_identity,
         digests=prepared.digests,
+        before_digests=prepared.before_digests,
         match_sha256=prepared.match_sha256,
         body_sha256=prepared.body_sha256,
         outcome="attempting",
@@ -987,28 +907,28 @@ def reconciled_record(record: WriteRecord, *, now: datetime) -> WriteRecord:
 
 
 # ---------------------------------------------------------------------------
-# Hop 1: the click's own reads (Task 3.4, D3).
+# Hop 1: the click's own read (Task 3.4, D3 as amended by D15).
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class NoteRead:
-    """The final note read: the click's verification, the note's raw
-    ``content`` and its template link (None unless verified)."""
+    """The note read: the click's verification and the note's raw
+    ``content`` (None unless verified)."""
 
     outcome: VerificationOutcome
     content: object = field(default=None, repr=False)
-    template_id: str | None = None
 
 
 def verify_note_for_write(
     call: ClinikoCall, request: VerificationRequest, clock: Callable[[], datetime] | None = None
 ) -> NoteRead:
-    """The FINAL note read of hop 1 — the click's verification (D3): the
-    note's patient link must be the context's, the note an open draft
-    (``note_state``), its practitioner the clinic's. No patient or booking
-    read, so it sits as close to the PATCH as the design allows. Raises the
-    client's named errors and ``AnswerShapeError`` for the caller to map.
+    """Hop 1's ONE request, the note read — the click's verification (D3,
+    D15): the note's patient link must be the context's, the note an open
+    draft (``note_state``), its practitioner the clinic's. No template,
+    patient or booking read, so it sits as close to the PATCH as the design
+    allows. Raises the client's named errors and ``AnswerShapeError`` for
+    the caller to map.
 
     The checks and their ORDER mirror ``encounter._check_note`` (the Chrome
     note check), which also reads the patient and booking for display; the
@@ -1030,7 +950,6 @@ def verify_note_for_write(
         return NoteRead(NoteRefused(state))
     if practitioner_id != clinic.practitioner_id:
         return NoteRead(NoteRefused(NoteRefusal.WRONG_PRACTITIONER))
-    template_id = link_id(note, "treatment_note_template", None)
     now = clock() if clock is not None else datetime.now(UTC)
     context = EncounterContext(
         clinic_id=clinic.clinic_id,
@@ -1039,34 +958,24 @@ def verify_note_for_write(
         treatment_note_id=target.note_id,
         booking_id=link_id(note, "booking", None),
         practitioner_id=practitioner_id,
-        template_id=template_id,
+        template_id=link_id(note, "treatment_note_template", None),
         verification=Verification.VERIFIED,
         verified_at=now,
     )
     # Display strings are never read for a write (no patient read): empty.
     verified = Verified(context, NoteDisplay("", None))
-    return NoteRead(verified, note.get("content"), template_id)
-
-
-def fetch_template(call: ClinikoCall, template_id: str) -> dict[str, Any]:
-    """Hop 1's template read (``GET /treatment_note_templates/<id>``)."""
-    return call.get_treatment_note_template(template_id)
+    return NoteRead(verified, note.get("content"))
 
 
 @dataclass(frozen=True)
 class Hop1Result:
     """What hop 1 hands the GUI thread. ``result`` is the click's
-    verification (the final note read), a named refusal, or
-    ``unverified_offline`` (``rate_limited`` for a 429). ``template`` and
-    ``content`` are set only when the note verified; ``template_matches``
-    says whether the final note's template link is the template read — a
-    note re-templated between the reads, or one with no template, fails
-    closed as a template mismatch."""
+    verification (the note read), a named refusal, or ``unverified_offline``
+    (``rate_limited`` for a 429). ``content`` is set only when the note
+    verified."""
 
     result: VerificationResult
-    template: Mapping[str, Any] | None = field(default=None, repr=False)
     content: object = field(default=None, repr=False)
-    template_matches: bool = False
 
     @property
     def rate_limited(self) -> bool:
@@ -1096,25 +1005,23 @@ def _key_reader(key_store: KeyStore, clinic_id: str) -> Callable[[], str | None]
 
 def read_for_write(
     request: VerificationRequest,
-    template_id: str | None,
     *,
     key_store: KeyStore,
     transport: Transport | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> Hop1Result:
-    """Worker thread: HOP 1 as ONE client call, the key read once (D3) —
-    a discovery note read when ``template_id`` (the linked context's) is
-    None, then the template read, then the final note read
-    (``verify_note_for_write``). A clinic whose host is not the context's is
-    ``clinic_mismatch`` before the key read. Never raises: a missing key is
-    ``key_unavailable``, a client error the note check's own classification
-    (``encounter._refusal_for``: a 401 or 403 on either read is a rejected
-    key — P.1 showed a finalised note still answers its read with 200 — and
-    a connection failure, 5xx or 429 ``unverified_offline``), anything else
+    """Worker thread: HOP 1 as ONE client call, the key read once, ONE
+    request — the note read (``verify_note_for_write``; D3 as amended by
+    D15). A clinic whose host is not the context's is ``clinic_mismatch``
+    before the key read. Never raises: a missing key is ``key_unavailable``,
+    a client error the note check's own classification
+    (``encounter._refusal_for``: a 401 or 403 is a rejected key — P.1
+    showed a finalised note still answers its read with 200 — and a
+    connection failure, 5xx or 429 ``unverified_offline``), anything else
     ``answer_unreadable``."""
     outcome: VerificationOutcome
     try:
-        return _hop1(request, template_id, key_store, transport, clock)
+        return _hop1(request, key_store, transport, clock)
     except _KeyUnavailable:
         outcome = NoteRefused(NoteRefusal.KEY_UNAVAILABLE)
     except ClinikoError as error:
@@ -1135,7 +1042,6 @@ def read_for_write(
 
 def _hop1(
     request: VerificationRequest,
-    template_id: str | None,
     key_store: KeyStore,
     transport: Transport | None,
     clock: Callable[[], datetime] | None,
@@ -1146,24 +1052,11 @@ def _hop1(
         return Hop1Result(VerificationResult(request, NoteRefused(NoteRefusal.CLINIC_MISMATCH)))
     client = ClinikoClient(contact_email=request.contact_email, transport=transport)
     with client.call(_key_reader(key_store, request.clinic.clinic_id)) as call:
-        if template_id is None:
-            discovered = verify_note_for_write(call, request, clock)
-            if not isinstance(discovered.outcome, Verified):
-                return Hop1Result(VerificationResult(request, discovered.outcome))
-            template_id = discovered.template_id
-            if template_id is None:
-                return Hop1Result(VerificationResult(request, discovered.outcome))
-        template = fetch_template(call, template_id)
-        final = verify_note_for_write(call, request, clock)
-    result = VerificationResult(request=request, outcome=final.outcome)
-    if not isinstance(final.outcome, Verified):
+        read = verify_note_for_write(call, request, clock)
+    result = VerificationResult(request=request, outcome=read.outcome)
+    if not isinstance(read.outcome, Verified):
         return Hop1Result(result)
-    return Hop1Result(
-        result,
-        template=template,
-        content=final.content,
-        template_matches=final.template_id == template_id,
-    )
+    return Hop1Result(result, content=read.content)
 
 
 # ---------------------------------------------------------------------------
@@ -1179,12 +1072,8 @@ WriteRefusalName = Literal[
     "template_mismatch",
     "write_uncertain",
     "write_forbidden",
-    "no_baseline",
-    "defaults_unreadable",
-    "defaults_no_template",
-    "defaults_unmatched",
-    "note_has_text",
     "nothing_to_write",
+    "note_unreadable",
     "answer_unreadable",
 ]
 
@@ -1194,20 +1083,15 @@ class WriteRefusal:
     """Why a click writes nothing, by name (``ui.models.write_refusal_line``
     words it). ``earlier_attempt_open``: the record holds an EARLIER
     ``attempting`` / ``unknown`` attempt, so the line is prefixed by the
-    ``write_uncertain`` warning (PR-MED-017). ``question`` / ``section`` are
-    always a question's and its section's names, apart: the profile's
-    labels (``template_mismatch``) or the clinic's own defaults file's
-    (``defaults_unmatched``); ``template`` is Cliniko's template name. Names
-    only, never answer or default text."""
+    ``write_uncertain`` warning (PR-MED-017). ``question`` / ``section``
+    (``template_mismatch``) are the profile's labels of the question and its
+    section, apart. Names only, never answer text."""
 
     name: WriteRefusalName
     earlier_attempt_open: bool = False
     writeback: WritebackRefused | None = None
     question: str | None = None
     section: str | None = None
-    template: str | None = None
-    more: int = 0
-    problem: OwnDefaultsProblemKind | None = None
 
 
 @dataclass(frozen=True)
@@ -1215,14 +1099,16 @@ class PreparedWrite:
     """Everything hop 2 and the ``attempting`` row need: the verified
     target (repr-hidden: it holds the patient's and practitioner's ids), the
     FULL body (repr-hidden: it is note text), the attempt number, the
-    targets written with their answers' digests and where they are written
-    (``match_digest``), the body's digest and the saved note's identity."""
+    targets written with the digests of their expected final answers and of
+    their answers as read (D15), where they are written (``match_digest``),
+    the body's digest and the saved note's identity."""
 
     target: VerifiedTarget = field(repr=False)
     content: DraftContent = field(repr=False)
     attempt: int
     target_ids: tuple[str, ...]
     digests: Mapping[str, str]
+    before_digests: Mapping[str, str]
     match_sha256: str
     body_sha256: str
     note_identity: str
@@ -1278,30 +1164,30 @@ def prepare_write(
     note: GeneratedNote,
     note_identity: str,
     profile: TemplateProfile | None,
-    default_source: DefaultSource,
-    own_defaults: OwnDefaults | OwnDefaultsProblem | None,
 ) -> PreparedWrite | AlreadyWritten | WriteRefusal:
-    """GUI thread, between the hops: the whole decision, in Task 3.4's
-    order, after ``refuse_before_read`` (which the click must already have
-    run before hop 1 — see there):
+    """GUI thread, between the hops: the whole decision, in D15's order,
+    after ``refuse_before_read`` (which the click must already have run
+    before hop 1 — see there):
 
     1. ``writeback_context`` over hop 1's OWN result (never a stored one);
-    2. the template match (and hop 1's template-link check);
+    2. the match on the note's own content (``match_template``);
     3. ``confirm_written``: the saved note's identity (a mismatch is
        ``write_uncertain``) and, for an OPEN record, the match it was
-       written under (another is ``write_uncertain``) and the digest check —
-       which can establish ``written`` with no baseline (R22-08);
+       written under (another is ``write_uncertain``) and the expected
+       final digests — which establish ``written`` with no PATCH, so a
+       resend never appends twice;
     4. the repeat guard: a record refused ``finalised_before_write`` whose
        note re-reads as a draft is ``write_forbidden`` (R22-02);
-    5. the clinic's default source (D14; ``own_defaults`` loaded by the
-       caller under ``"own_file"`` only — ``ValueError`` when it is None
-       there, a caller bug);
-    6. ``retry_verdict``: at the default → the next attempt, else
-       ``write_uncertain``;
-    7. no record: text that is not the default → ``note_has_text``;
-    8. the answers (the note's OWN style — Copy's) and the full body;
-       nothing writable → ``nothing_to_write``, unencodable →
-       ``answer_unreadable``.
+    5. ``retry_verdict``: an open record whose answers are still as its
+       attempt read them, or a ``refused`` one → the next attempt; any
+       other open record → ``write_uncertain``;
+    6. the answers (the note's OWN style — Copy's), each appended to the
+       answer as read (``appended_answer``) and digested: nothing writable →
+       ``nothing_to_write``; an answer the app cannot read, or one whose
+       appended form reads the same as the answer as read (the final and
+       before digests would not tell a landed attempt apart) →
+       ``note_unreadable``;
+    7. the full body; unencodable → ``answer_unreadable``.
 
     Never raises for Cliniko's answers."""
     early = refuse_before_read(note, record, note_identity)
@@ -1317,10 +1203,7 @@ def prepare_write(
     target = writeback_context(subject, clinics)
     if isinstance(target, WritebackRefused):
         return refused("writeback_refused", writeback=target)
-    template = hop1.template
-    if template is None or not hop1.template_matches:
-        return refused("template_mismatch")
-    match = match_template(profile, template, hop1.content)
+    match = match_template(profile, hop1.content)
     if isinstance(match, TemplateMismatch):
         return refused("template_mismatch", question=match.question, section=match.section)
     if record is not None:
@@ -1331,24 +1214,10 @@ def prepare_write(
             return AlreadyWritten(target)
         if record.outcome == "refused" and record.refusal == "finalised_before_write":
             return refused("write_forbidden")
-    baseline = baseline_defaults(match, template, default_source, own_defaults)
-    if isinstance(baseline, DefaultsRefusal):
-        return refused(
-            baseline.name,
-            problem=baseline.problem,
-            template=baseline.template,
-            section=baseline.section,
-            question=baseline.question,
-            more=baseline.more,
-        )
-    if record is not None:
-        if isinstance(retry_verdict(hop1.content, baseline, match), Uncertain):
+        if isinstance(retry_verdict(record, hop1.content, match), Uncertain):
             return refused("write_uncertain")
-    elif note_has_text(hop1.content, baseline, match):
-        return refused("note_has_text")
     assert profile is not None  # match_template refused a missing profile
-    answers: dict[str, str] = {}
-    digests: dict[str, str] = {}
+    new_answers: dict[str, str] = {}
     for target_id, (rendered, lines) in render_targets(note, profile, note.style).items():
         matched = match.questions.get(target_id)
         if matched is None:
@@ -1356,18 +1225,46 @@ def prepare_write(
             # targets, and ``match_template`` matched every one or refused.
             # Never a silent drop of a section's text (round 26 LOW-002).
             raise ValueError("a rendered target the template match does not hold")
-        # NFC here as ``build_body`` does, so the digest is of what is sent.
+        # NFC here, the app's part only: an answer already in the note is
+        # kept byte-for-byte (``build_body`` normalises nothing — D15).
         answer = unicodedata.normalize("NFC", to_cliniko_answer(lines, rendered.target_type))
         try:
             visible = normalise_answer(answer, matched.representation)
         except AnswerUnparseable:
             return refused("answer_unreadable")
-        if not visible:
-            continue
-        answers[target_id] = answer
-        digests[target_id] = answer_digest(visible)
-    if not answers:
+        if visible:
+            new_answers[target_id] = answer
+    if not new_answers:
         return refused("nothing_to_write")
+    sections = _note_sections(hop1.content)
+    assert sections is not None  # match_template refused malformed content
+    answers: dict[str, str] = {}
+    digests: dict[str, str] = {}
+    before_digests: dict[str, str] = {}
+    for target_id, new in new_answers.items():
+        matched = match.questions[target_id]
+        existing = _answer_at(sections, matched.note_position)
+        final = appended_answer(existing, new, matched.representation)
+        if isinstance(final, NoteUnreadable):
+            return refused("note_unreadable")
+        # ``appended_answer`` admitted only a string or null (read once
+        # already), so the answer as read normalises here as it did there.
+        as_read = existing if isinstance(existing, str) else ""
+        try:
+            before = normalise_answer(as_read, matched.representation)
+            expected = normalise_answer(final, matched.representation)
+        except AnswerUnparseable:
+            return refused("note_unreadable")
+        if expected == before:
+            # Reconcile tells a landed attempt from one that did not land by
+            # these two digests (D15), so they must differ. They agree only
+            # when the answer as read hides what follows it (markup such as
+            # an unterminated comment): the app's text would not show, and
+            # the app never appends there.
+            return refused("note_unreadable")
+        answers[target_id] = final
+        digests[target_id] = answer_digest(expected)
+        before_digests[target_id] = answer_digest(before)
     body = build_body(hop1.content, match, answers)
     if isinstance(body, AnswerUnreadable):
         return refused("answer_unreadable")
@@ -1379,6 +1276,7 @@ def prepare_write(
         attempt=record.attempt + 1 if record is not None else 1,
         target_ids=tuple(answers),
         digests=digests,
+        before_digests=before_digests,
         match_sha256=where,
         body_sha256=hashlib.sha256(body.to_body()).hexdigest(),
         note_identity=note_identity,

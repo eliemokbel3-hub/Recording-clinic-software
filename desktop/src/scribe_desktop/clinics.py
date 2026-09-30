@@ -6,10 +6,11 @@ loader, no network) and 2.1b (key validation and storage).
 WHAT IS KEPT WHERE. ``clinics.json`` (default
 ``%LOCALAPPDATA%\\ClinikoScribe\\clinics.json``) holds NON-SECRET records —
 clinic id, display name, subdomain, shard, the key user's user and
-practitioner ids, the validation time, whether the subdomain is confirmed
-and the clinic's default source for the draft write (``default_source``,
-draft-write D14; omitted from the file while it is the default) — plus the
-practitioner's contact email (the client's ``User-Agent``). The
+practitioner ids, the validation time and whether the subdomain is
+confirmed — plus the practitioner's contact email (the client's
+``User-Agent``). A record written while the draft write's per-clinic
+``default_source`` setting existed (draft-write D14, retired by D15) still
+loads: the field is dropped on load and never written again. The
 API key lives ONLY in Windows Credential Manager through the injected key
 store (``SecureStorageProvider`` in the app), under
 ``(clinic_id, KEY_SECRET_NAME)``. This module writes the key nowhere else,
@@ -52,10 +53,8 @@ is dropped whole (``SUPERSEDED``), and a delayed result for a removed clinic
 is ``CLINIC_GONE`` and can never restore the entry. A result is compared
 against the rev it captured at dispatch, so a key replaced between the
 requests of one call (which read its key once, at the start) cannot commit.
-Confirming the subdomain and changing the default source
-(``set_default_source``) do NOT bump the rev: neither changes an identity or
-key a pending result depends on (a Replace committing later carries the
-source as it is at commit).
+Confirming the subdomain does NOT bump the rev: it changes no identity or key
+a pending result depends on.
 
 ORDER OF WRITES, so a failure never leaves a key at rest that the registry
 does not list: a NEW clinic writes the file first and then stores the key
@@ -98,6 +97,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from scribe_desktop.cliniko_client import (
@@ -136,10 +136,11 @@ _HOST_RE: Final = re.compile(
 )
 # Never a clinic's web address: ``api`` is the API host itself.
 _RESERVED_SUBDOMAINS: Final = frozenset({"api", "www"})
-# The per-clinic typed-text default source (cliniko-draft-write plan D14).
-DefaultSource = Literal["cliniko_template", "own_file"]
-DEFAULT_SOURCE: Final[DefaultSource] = "cliniko_template"
-DEFAULT_SOURCES: Final[tuple[DefaultSource, ...]] = ("cliniko_template", "own_file")
+# The retired per-clinic ``default_source`` field (cliniko-draft-write plan
+# D14, removed by D15) and the two values it could hold: a record carrying
+# either still loads, with the field dropped; any other value stays invalid.
+_LEGACY_DEFAULT_SOURCE_FIELD: Final = "default_source"
+_LEGACY_DEFAULT_SOURCES: Final = frozenset({"cliniko_template", "own_file"})
 
 
 # --- Cliniko's answers, as Task P.1 found them ----------------------------------
@@ -268,13 +269,24 @@ class ClinicRecord(BaseModel):
     # False when the subdomain was TYPED (Cliniko did not share it with this
     # key); a note verified with this key on this host confirms it.
     subdomain_confirmed: StrictBool
-    # Where the Cliniko draft write finds the text a new note STARTS with
-    # (cliniko-draft-write plan D14): the template's own default answers, or
-    # the practitioner's own file ``config\template_defaults\<host>.json``.
-    # A record written before that plan has no such field and loads as the
-    # default; ``_write`` leaves the default out, so an older build still
-    # reads the file unless some clinic uses its own file (R22-24).
-    default_source: DefaultSource = DEFAULT_SOURCE
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_legacy_default_source(cls, data: Any) -> Any:
+        """Upgrade safety (draft-write D15): a record written while the
+        retired ``default_source`` setting existed LOADS, with the field
+        dropped, when it holds either of the setting's two values — never an
+        empty, fail-closed registry on upgrade. Any other value is left for
+        ``extra="forbid"`` to refuse, as before. The next registry write
+        omits the field (the model no longer has it)."""
+        if (
+            isinstance(data, dict)
+            and _LEGACY_DEFAULT_SOURCE_FIELD in data
+            and isinstance(data[_LEGACY_DEFAULT_SOURCE_FIELD], str)
+            and data[_LEGACY_DEFAULT_SOURCE_FIELD] in _LEGACY_DEFAULT_SOURCES
+        ):
+            return {k: v for k, v in data.items() if k != _LEGACY_DEFAULT_SOURCE_FIELD}
+        return data
 
     @property
     def host(self) -> str:
@@ -359,9 +371,6 @@ class ClinicRefusal(StrEnum):
     REGISTRY_UNREADABLE = "registry_unreadable"
     LINKED_TO_LIVE_SESSION = "linked_to_live_session"
     KEY_DELETE_FAILED = "key_delete_failed"
-    # A draft is being written to Cliniko for this clinic (cliniko-draft-write
-    # plan D9 / D14): the write read the default source once for its baseline.
-    WRITE_IN_FLIGHT = "write_in_flight"
 
 
 class LoadProblem(StrEnum):
@@ -551,15 +560,7 @@ class ClinicRegistry:
         payload = {
             "schema_version": SCHEMA_VERSION,
             "contact_email": contact_email,
-            # The default ``default_source`` is left out (D14, R22-24), so an
-            # older build still reads the file while every clinic uses it.
-            "clinics": [
-                r.model_dump(
-                    mode="json",
-                    exclude={"default_source"} if r.default_source == DEFAULT_SOURCE else None,
-                )
-                for r in records
-            ],
+            "clinics": [r.model_dump(mode="json") for r in records],
         }
         blob = json.dumps(payload, indent=2, sort_keys=True).encode("utf-8")
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -745,9 +746,6 @@ class ClinicRegistry:
             practitioner_id=result.practitioner_id,
             validated_at=self._clock(),
             subdomain_confirmed=result.subdomain_confirmed,
-            # The setting as it stands at COMMIT (D14): a Replace key keeps it,
-            # even when it changed while the Replace was in flight.
-            default_source=current.default_source if current is not None else DEFAULT_SOURCE,
         )
         if current is None:
             return self._commit_new(record, request)
@@ -846,35 +844,3 @@ class ClinicRegistry:
             return False
         self._records = after
         return True
-
-    def set_default_source(
-        self, clinic_id: str, source: DefaultSource, *, writing_clinic: str | None
-    ) -> ClinicRecord | Refused:
-        """GUI thread: the clinic's typed-text default source (D14), one
-        atomic ``clinics.json`` write. ``writing_clinic`` is the clinic a
-        draft write is in flight for, or None — refused for that clinic, since
-        the write read the setting once for its baseline (D9). The same value
-        writes nothing and is never refused. No ``clinic_rev`` bump: like confirming a subdomain,
-        the setting changes no identity a pending result depends on. A failed
-        write leaves the file and the setting unchanged. ``ValueError`` for a
-        source that is neither literal, checked BEFORE ``model_copy`` (which
-        does not validate)."""
-        if source not in DEFAULT_SOURCES:
-            raise ValueError("not a default source")
-        if self._load_problem is not None:
-            return Refused(ClinicRefusal.REGISTRY_UNREADABLE, clinic_id)
-        current = self.record(clinic_id)
-        if current is None:
-            return Refused(ClinicRefusal.CLINIC_GONE, clinic_id)
-        if current.default_source == source:
-            return current
-        if writing_clinic == clinic_id:
-            return Refused(ClinicRefusal.WRITE_IN_FLIGHT, clinic_id)
-        changed = current.model_copy(update={"default_source": source})
-        after = tuple(changed if r.clinic_id == clinic_id else r for r in self._records)
-        try:
-            self._write(after, self._contact_email)
-        except (OSError, StoreWriteError):
-            return Refused(ClinicRefusal.REGISTRY_WRITE_FAILED, clinic_id)
-        self._records = after
-        return changed

@@ -15,8 +15,9 @@ page frame and block, and the hands-free controls; plus the Cliniko draft
 write (PLAN.md Phase 4, the cliniko-draft-write plan, built 2026-09-29): the
 Note tab's "Write draft to Cliniko", the client's ONE write (a `PATCH` that
 fills the open draft treatment note), the per-session write record
-`write.enc`, completion after a confirmed write, and the per-clinic
-default-source setting ("THE DRAFT WRITE" under "Cliniko API client" below).
+`write.enc`, completion after a confirmed write, and — since 2026-09-30 (D15)
+— the append that keeps every answer already in the note ("THE DRAFT WRITE"
+under "Cliniko API client" below).
 Clinical data now exists: audio,
 transcripts, and the composed note artifact, encrypted at rest under
 per-session keys; an UNPROTECTED recovery store expires at ~24 h (eligible at
@@ -1449,8 +1450,10 @@ included), is `InvalidKey` before a request — never defaulted to `au1`. Ids
 in a path are validated as 1–19 digits with no leading zero. A body JSON
 cannot hold — a lone surrogate, a NaN — raises `DraftUnencodable` before any
 request. Residue: what Cliniko does with the keys INSIDE `content` is
-Cliniko's (the draft write replaces the targeted answers only, from the
-note's own re-read content — THE DRAFT WRITE below); and Cliniko documents a
+Cliniko's (the draft write sets the targeted answers only — each the answer as
+read with the app's text appended below it, or the app's text for an empty
+answer — in the note's own re-read content, THE DRAFT WRITE below); and
+Cliniko documents a
 final note as immutable, which is what stops a `PATCH` to a note finalised
 after the write's own read (P.1's finalised leg: Cliniko answered 403) — the
 app's request shape cannot express finalisation, but it does not by itself
@@ -1557,22 +1560,19 @@ to that clinic (its `EncounterContext` names the clinic id; an unlinked
 session blocks no Remove). A key field left empty (or blank) is its own
 refusal, `KEY_MISSING`, before the key-shape check, on Validate and Replace
 key alike. While a draft write holds that clinic (the live linked session's),
-Replace key and the default-source change below are refused too
-(`ClinicRefusal.WRITE_IN_FLIGHT`; Remove is already refused), and in the other
-arrival order a Write click is refused while a Validate or Replace key for
-that clinic is in flight (`clinic_busy`) — so both hops of a write read the
-same stored key (draft-write D3, D9). THE DEFAULT-SOURCE SETTING (draft-write
-D14): each clinic record carries `default_source`, "Cliniko template" (the
-default) or "My own defaults", chosen on the Clinics tab and saved by one
-atomic `clinics.json` write with no `clinic_rev` bump (it changes no
-identity a pending result depends on); a Replace key keeps the value the
-record holds at commit. `_write` leaves the field out while it is the
-default, so an older build reads the file unchanged — but a file holding
-"My own defaults" for any clinic fails an older build's `extra="forbid"`
-validation and loads EMPTY with its load problem set: fail-closed, the
-DOWNGRADE RESIDUE (no downgrade is planned; the only machine is the
-practitioner's). "Check file" beside "My own defaults" reads the clinic's own
-defaults file locally and makes no Cliniko call. Write
+Replace key is refused too — the Clinics tab shows the write's own
+`write_in_flight` line (Remove is already refused: the writing session is the
+live linked one) — and in the other arrival order a Write click is refused
+while a Validate or Replace key for that clinic is in flight (`clinic_busy`)
+— so both requests of a write read the same stored key (draft-write D3, D9).
+THE RETIRED DEFAULT-SOURCE SETTING (draft-write D14, retired by D15 on
+2026-09-30): a record written while the per-clinic `default_source` setting
+existed still loads — a `ClinicRecord` before-validator drops the field when
+it holds either of the setting's two values, and the next registry write
+omits it; any other value still fails `extra="forbid"` and the file loads
+EMPTY with its load problem set (fail-closed, as for any damaged file). An
+older build (Phases 3–6) reads a file this build wrote, since the field was
+optional there. Write
 order, so no failure leaves a key at rest that the registry does not list: a
 new clinic writes the file, then stores the key (a failed store deletes
 whatever it may have written, then rewrites the file without it — if either
@@ -1706,8 +1706,9 @@ through the live session's Note tab like any other. `encounter.py` itself has
 no write method; the client's one write is reached only from `draft_write.py`
 (CONFINEMENT above).
 
-THE DRAFT WRITE (cliniko-draft-write plan, D1–D14; Phases 1–5 built
-2026-09-29; `draft_write.py`, `ui/main_window.py` `_on_write_requested`,
+THE DRAFT WRITE (cliniko-draft-write plan, D1–D15; Phases 1–5 built
+2026-09-29, Phase 7 — D15, append instead of refuse — built 2026-09-30;
+`draft_write.py`, `ui/main_window.py` `_on_write_requested`,
 `ui/note.py`). After the clinician Saves a ratified note of a LINKED
 recording, one click on the Note tab's "Write draft to Cliniko" fills the
 Cliniko draft treatment note the recording was started from — never a second
@@ -1733,18 +1734,17 @@ note, never anything but the note's `content`. What the structure enforces:
   existing custody reservation plus a writing marker, D9) BEFORE any worker
   starts, and — under it — a note from the test provider (`mock-…`, D10) is
   refused.
-- A FRESH READ FOR EVERY CLICK, IN THREE HOPS (D3). Hop 1, on a worker, is ONE
-  client call with the key read once: a discovery `GET` of the note only when
-  the linked context holds no template id (an offline-started recording),
-  then `GET /treatment_note_templates/<id>`, then the FINAL
-  `GET /treatment_notes/<id>` — last, so it sits as close to the `PATCH` as
-  the design allows; it IS the click's verification (the note's patient link,
-  open-draft state and practitioner, as NOTE VERIFICATION checks them; no
-  patient or booking read), and the note's template link must equal the
-  fetched template. Then, on the GUI thread, in `prepare_write`'s order:
-  `writeback_context` over that read; the template match; reconcile of an
-  open earlier attempt; the repeat guard; the clinic's declared defaults; the
-  typed-text check; the full body. The `attempting` record is written to disk
+- A FRESH READ FOR EVERY CLICK, TWO REQUESTS (D3 as amended by D15). Hop 1,
+  on a worker, is ONE client call with the key read once and ONE request,
+  `GET /treatment_notes/<id>` — it IS the click's verification (the note's
+  patient link, open-draft state and practitioner, as NOTE VERIFICATION
+  checks them; no template, patient or booking read), so it sits as close to
+  the `PATCH` as the design allows. Then, on the GUI thread, in
+  `prepare_write`'s order: `writeback_context` over that read; the match on
+  the note's own content; the write record's reconcile (the saved note's
+  identity, then for an open attempt the match it was written under and its
+  expected final answers); the repeat guard; the open-attempt retry check;
+  the append and its digests; the full body. The `attempting` record is written to disk
   BEFORE hop 2 is dispatched (Constraint 5). Hop 2, on a worker, is its OWN
   client call, re-reading the same stored key (Replace key and Remove are
   refused for the writing clinic meanwhile), and makes the `PATCH` alone. The
@@ -1752,43 +1752,59 @@ note, never anything but the note's `content`. What the structure enforces:
   workers do network I/O only; the record, the reservation, the guard and
   every Qt call are on the GUI thread (Constraint 7), and any raise after the
   reservation releases it.
-- MATCH, TYPED TEXT, BODY (D4, D7, D8). The note's own template profile is
-  bound against the current config and matched to the fetched template by
-  section and question NAME, each exactly once in both the note's content and
-  the template, one question per target, of the target's type; a missing,
-  repeated or mistyped name, or a section the profile leaves unmapped by
-  oversight, refuses `template_mismatch` and nothing is dropped silently. A
-  matched question whose answer is not empty and differs from its DECLARED
-  DEFAULT refuses the write (`note_has_text`, Copy stays); an answer holding
-  content that is not text — an image, a rule, an embed — or HTML the parser
-  cannot read counts as text (fail closed). The comparison is over normalised
-  VISIBLE text, type-aware: a `paragraph` answer is HTML and is decoded to
-  visible text exactly once, a `text` answer and an own-defaults
-  transcription are never decoded, then whitespace is collapsed and NFC
+- MATCH, APPEND, BODY (D4, D7, D15). The note's own template profile is
+  bound against the current config and matched to the note's OWN content by
+  section and question NAME (the template itself is not read), each exactly
+  once, one question per target, of the target's type; a missing, repeated or
+  mistyped name, or a section the profile leaves unmapped by oversight,
+  refuses `template_mismatch` and nothing is dropped silently.
+  THE APPEND NEVER REPLACES AN ANSWER (D15): for each matched question the
+  note writes to, an EMPTY answer — absent or null, or a string whose visible
+  text is empty and that holds no content that is not text (a blank paragraph
+  or whitespace is not writing) — receives the app's text; ANY OTHER string —
+  typed text and the template's starting prompts alike, an image, a rule or
+  an embed included — is kept BYTE-FOR-BYTE (never re-rendered or
+  normalised; only the app's own text is NFC-normalised), then ONE empty line
+  (`<p><br></p>` in a rich-text answer, a blank line in a plain one), then the
+  app's text. The write refuses `note_unreadable` before any attempt — the
+  app never appends to what it cannot read — for an answer that is neither a
+  string nor null, HTML the parser cannot read, or an answer whose appended
+  form would read as the answer before it (markup that hides what follows
+  it, such as an unterminated comment; round 40 LOW-001 — the record's two
+  digests below must differ). A second recording's write into a note an
+  earlier write or the clinician filled appends below it. Emptiness and every
+  digest are over normalised VISIBLE text, type-aware: a `paragraph` answer
+  is HTML and is decoded to visible text exactly once, a `text` answer is
+  never decoded, then whitespace is collapsed, blank lines dropped and NFC
   applied. The body is the click's re-read `content` with only the matched
-  answers replaced (a rich-text answer is one `<p>` per line, HTML-escaped,
-  no other tag; the attestation checkbox question is never answered), so
-  every other question, checkbox array and unknown field round-trips as
-  Cliniko sent it (confirmed on clinic 1's template by P.1 Q4). A note with no
-  writable content refuses `nothing_to_write` before any attempt; a lone
-  surrogate refuses before any attempt too.
-- THE DECLARED DEFAULT (D14) is the clinic's setting: "Cliniko template" —
-  the template GET's own `answer` for the same question (P.1 Q3: the template
-  carries it) — or "My own defaults" — the clinic's own file
-  `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\<clinic host>.json`,
-  loaded fresh on the GUI thread at each click (a bounded local read) and
-  refused by name when it is missing, unreadable, too large or invalid
-  (`defaults_unreadable`), has no entry for the note's template
-  (`defaults_no_template`), or names a section or question the template lacks
-  (`defaults_unmatched`). These block only a NEW attempt: an open attempt still
-  reconciles first. The app never writes that file or creates its folder.
-- THE WRITE RECORD `write.enc` (D5): one document per session, AES-GCM under
-  the session key with AAD `write:<session_id>`, rewritten atomically at every
-  transition — the attempt number, times, the profile's target ids, the SHA-256
-  of the saved note's plaintext (`note_identity`), a SHA-256 digest of each
-  written answer's normalised text, a digest of where they were written (the
-  matched labels, hashed), the body's digest and the outcome (`attempting`,
-  `written`, `refused` with its reason, `unknown`). It holds ids and digests
+  answers set to their final answers (the app's rich-text part is one `<p>`
+  per line, HTML-escaped, no other tag; the attestation checkbox question is
+  never answered), so every other question, checkbox array, unknown field
+  and untargeted answer round-trips as Cliniko sent it (confirmed on clinic
+  1's template by P.1 Q4). A note with no writable content refuses
+  `nothing_to_write` before any attempt; a lone surrogate refuses
+  `answer_unreadable` before any attempt too.
+- NO TEMPLATE, DEFAULT-SOURCE SETTING OR OWN-DEFAULTS FILE IS READ (D14
+  retired by D15, 2026-09-30). The write makes no Cliniko template `GET` and
+  reads no per-clinic default-source setting and no own-defaults file: the
+  setting, the own-defaults loader and the Clinics tab's "Starting text"
+  group are gone. What it still reads locally is the session's own records
+  (`write.enc`, and the saved `note.enc` with its identity) and the current
+  note config (to bind the note's template profile). An own-defaults file a practitioner made
+  under `%LOCALAPPDATA%\ClinikoScribe\config\template_defaults\` is read by
+  nothing; the app never wrote it and does not delete it.
+- THE WRITE RECORD `write.enc` (D5; schema v2 since D15): one document per
+  session, AES-GCM under the session key with AAD `write:<session_id>`,
+  rewritten atomically at every transition — the attempt number, times, the
+  profile's target ids, the SHA-256 of the saved note's plaintext
+  (`note_identity`), per written target a SHA-256 digest of its normalised
+  EXPECTED FINAL answer and one of its normalised answer AS READ by the
+  attempt's click (an empty answer digests the empty text), a digest of
+  where they were written (the matched labels, hashed), the body's digest and
+  the outcome (`attempting`, `written`, `refused` with its reason,
+  `unknown`). `prepare_write` keeps the two digests different for every
+  written target; a schema-v1 record (Phases 3–6) reads as
+  `record_unreadable`, fail closed. It holds ids and digests
   only — no note text, no Cliniko answer, no Cliniko id. It is written only
   through the write reservation (`with_write_custody`), and everyone else
   reads only its content-free status (`write_record_status`). The OUTCOME is
@@ -1800,12 +1816,17 @@ note, never anything but the note's `content`. What the structure enforces:
   429, a redirect, a 5xx, a timeout, a lost connection, a TLS failure, no
   readable status line or any unforeseen failure is `unknown`, and
   so is a trailing `attempting` left by a crash. There is NO automatic retry:
-  the next click re-reads the note and, for an open attempt, first compares
-  every targeted answer's normalised digest with the record — all equal (and
-  at least one target) means the earlier write landed, recorded `written`
-  with no second `PATCH`; every targeted answer still at its default means a
-  new attempt; anything else is refused `write_uncertain` ("An earlier write
-  may have reached Cliniko …"); once the click's read of the record shows an
+  the next click re-reads the note and, for an open attempt written under the
+  same match (another — the profile changed since — is `write_uncertain`),
+  first compares every targeted answer's normalised digest with the record's
+  expected final digests — all equal (and at least one target) means the
+  earlier write landed, recorded `written` with no second `PATCH`, so a
+  resend never appends twice; all equal to the digests AS READ means nothing
+  landed and nothing changed, and the next attempt is built from the CURRENT
+  read; anything else is refused `write_uncertain` ("An earlier write may
+  have reached Cliniko …"). A cleanly `refused` attempt (Cliniko applied
+  nothing) is followed by a new attempt built from the current read, except
+  as the repeat guard below says; once the click's read of the record shows an
   open attempt, the refusal lines that follow carry that sentence first (the
   lines `ui/models.py` `WRITE_UNCERTAIN_PREFIXED` names — not
   `write_in_flight`, which is that very write, nor a refusal met before the
@@ -1830,38 +1851,46 @@ note, never anything but the note's `content`. What the structure enforces:
   decrypt-verify → key deleted → in-memory key destroyed → directory removed
   best-effort → session refs forgotten. Any refusal or failure keeps the key,
   the record and the queued session, and the next Complete retries.
-- NAMED RESIDUES (P.1 on clinic 1, 2026-09-29, and the reviews):
+- NAMED RESIDUES (P.1 on clinic 1, 2026-09-29, D15 and the reviews):
   (a) NO CONDITIONAL WRITE. Cliniko documents no version check on treatment
   notes, so an edit the clinician SAVES in Cliniko's editor between hop 1's
-  final note read and the `PATCH` — to any question, targeted or not — is
-  reverted by the full body (P.1 Q6 reproduced both). The window is kept to
-  the time between two requests; the status line says to reload.
+  note read and the `PATCH` — to any question, targeted or not — is
+  reverted by the full body (P.1 Q6 reproduced both); for a targeted question,
+  text typed in that window is lost, because the append was built from the
+  earlier read. The window is kept to the time between two requests; the
+  status line says to reload.
   (b) AN ALREADY-OPEN EDITOR WINS. Saving a Cliniko editor that was open
   before the write overwrites the written draft (P.1 Q5) — the reason
   completion waits until the clinician has SEEN the draft in Chrome; the app
   cannot detect it.
   (c) CLINIKO SANITISES RICH TEXT (P.1 Q1): the bytes it stores differ from
   those sent while the visible text survives one decode, so every comparison
-  is over normalised visible text; whether paragraph breaks survive is
-  unverified (Task P.2 checks it by eye).
+  is over normalised visible text. It may rewrite or drop the append's empty
+  separator paragraph (Task P.3 checks it by eye): if dropped, the app's text
+  still lands below the answer with no gap — a format question, not a
+  safety one — and reconcile is unaffected, since the digests drop blank
+  lines.
   (d) "FINALISED" IS AN INFERENCE. A `PATCH` 403 is read as "the note was
   finalised before the write reached it"; a key whose Cliniko role may read
   notes but not edit them would show that line ONCE, and the repeat guard
   names it on the next click (`write_forbidden`).
-  (e) THE OWN-DEFAULTS FILE IS A TRUST INPUT. It is same-user-writable
-  plaintext that decides what a write may overwrite: an entry equal to text
-  the clinician typed lets the write replace that text. The app checks its
-  shape, never its meaning; that it holds non-clinical prompt text only is a
-  policy, not an enforced property.
-  (f) A DEFAULT HOLDING AN IMAGE OR RULE (round 26 LOW-003). The not-text
-  check reads the NOTE's answer only, so a template whose own starting text
-  holds an image or a horizontal rule makes every untouched note read as
-  "already holds text" — refused, Copy stays (strict by choice; the real
-  templates' defaults are checked at Task P.2).
+  (e) AN EDIT BETWEEN AN UNKNOWN ATTEMPT AND THE RETRY. When a targeted
+  answer changed after an attempt whose outcome is unknown — it reads as
+  neither the expected final answer nor the answer as read — the app cannot
+  tell the clinician's edit from its own write, so the retry is refused
+  `write_uncertain` (fail closed); Copy remains, after the clinician checks
+  the note in Cliniko.
+  (f) AN ANSWER THAT HIDES WHAT FOLLOWS IT refuses `note_unreadable` (round 40
+  LOW-001): the app's text would not show below it, and the record's digests
+  could not tell a landed attempt from one that did not land. Cliniko's
+  sanitised answers are not known to hold such markup; the clinician copies
+  instead.
   (g) AFTER COMPLETION THE ONLY COPY IS IN CLINIKO. The session — audio,
   transcript, `note.enc`, `encounter.enc`, `write.enc` — is gone; the draft
   in Cliniko, which the clinician still finalises, is what remains.
-  (h) THE DOWNGRADE RESIDUE of the default-source setting (CLINIC KEYS above).
+  (h) KEPT MEANS KEPT: typed text and the template's prompts stay above the
+  app's text, and the clinician removes any prompt they no longer want in
+  Cliniko (the practitioner's choice, "Keep prompts, add below", D15).
   (i) The written note text leaves the machine in the request body, to
   Cliniko, inside TLS, by the clinician's click — the purpose of the feature.
   (j) The shipped template profile was corrected to clinic 1's recorded
