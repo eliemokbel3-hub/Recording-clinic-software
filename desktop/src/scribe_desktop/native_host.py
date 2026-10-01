@@ -5,6 +5,8 @@ extension may launch this host; the origin argv check here is defence-in-depth,
 and the session nonce is a session/correlation IDENTIFIER, not authentication.
 
 Startup contract:
+- right after logging, an uncaught exception anywhere in the process is
+  logged by its type name only (``exclusions.install_exception_hooks``)
 - binary stdio is set before any pipe I/O (executor facts)
 - resolved executable/module/cwd paths are logged as a hijack tripwire
 - with a missing or unknown origin argv the host exits non-zero BEFORE
@@ -57,6 +59,7 @@ from typing import Any, BinaryIO, Final, Protocol
 
 from pydantic import ValidationError
 
+from scribe_desktop.exclusions import install_exception_hooks
 from scribe_desktop.framing import (
     EndOfStream,
     FramingError,
@@ -545,6 +548,14 @@ def _log_registration_paths(logger: logging.Logger) -> None:
 
 def main() -> int:
     logger = setup_logging("scribe-host")
+    # Privacy-professional-controls round 21 MED-001 (C3, as Task 4.1 does for
+    # scribe-app): an uncaught exception in this process — the main loop, the
+    # stdin reader or the relay's pipe thread, which handle relayed display
+    # strings — is logged by its type name ONLY. Python's default hooks would
+    # print the message and traceback to stderr, which Chrome may log. The
+    # hooks write only through `logger` (a file and stderr, never stdout:
+    # stdout stays framed protocol bytes).
+    install_exception_hooks(logger)
     log_event(logger, "host_start", path=sys.executable, pid=os.getpid())
     log_event(logger, "host_module", path=os.path.abspath(__file__))
     log_event(logger, "host_cwd", path=os.getcwd())

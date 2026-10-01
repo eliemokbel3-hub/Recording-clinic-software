@@ -56,6 +56,7 @@ from scribe_desktop.encounter import (
 )
 from scribe_desktop.hotkey import CHORD_TEXT
 from scribe_desktop.language_model import (
+    LANGUAGE_MODEL_ID,
     LanguageModel,
     LanguageModelError,
     LocalLanguageModel,
@@ -108,6 +109,7 @@ from scribe_desktop.note_config import (
     load_practitioner_settings,
     save_practitioner_settings,
 )
+from scribe_desktop.past_sessions import KeepLabel
 from scribe_desktop.practitioner_profile import (
     ConsentRecord,
     PractitionerProfile,
@@ -117,6 +119,7 @@ from scribe_desktop.practitioner_profile import (
     style_profile_present,
 )
 from scribe_desktop.prose_style import (
+    PROMPT_VERSION,
     PROSE_STYLES,
     ProseInput,
     ProseStyle,
@@ -146,6 +149,7 @@ from scribe_desktop.session_store import (
     default_sessions_root,
     earliest_trusted_timestamp,
     key_blob_is_dead,
+    link_state,
     read_note,
     read_store_header,
     saved_note_identity,
@@ -308,8 +312,8 @@ WRITE_LINES: Final[Mapping[str, str]] = {
         "my changes."
     ),
     "written_done": (
-        "Draft written to Cliniko and this recording is complete. Review and finalise the "
-        "note in Cliniko."
+        "Draft written to Cliniko and this recording is complete. Past sessions shows what "
+        "was kept. Review and finalise the note in Cliniko."
     ),
     "not_saved": "Save the note first.",
     "unlinked": "This recording is not linked to a Cliniko note. Copy the note instead.",
@@ -1124,11 +1128,22 @@ class SessionControllerLike(Protocol):
         self, transcriber: Callable[[Path, SessionCrypto], object]
     ) -> RecordingSession: ...
 
-    def complete(self) -> RecordingSession: ...
+    # Privacy-professional-controls plan Task 2.3 (D5): every Complete takes
+    # the Past-sessions label the UI resolved before calling it (None: "Name
+    # not available"), and reports whether its entry was left for the next
+    # reconciliation (Flow 3 step 4).
+    def complete(self, *, label: KeepLabel | None = None) -> RecordingSession: ...
 
-    def complete_without_note(self, lease: GenerationLease) -> RecordingSession: ...
+    def complete_without_note(
+        self, lease: GenerationLease, *, label: KeepLabel | None = None
+    ) -> RecordingSession: ...
 
-    def complete_deleting_saved_note(self) -> RecordingSession: ...
+    def complete_deleting_saved_note(
+        self, *, label: KeepLabel | None = None
+    ) -> RecordingSession: ...
+
+    @property
+    def last_complete_deferred(self) -> bool: ...
 
     def discard(self) -> RecordingSession: ...
 
@@ -1171,7 +1186,9 @@ class SessionControllerLike(Protocol):
 
     def custody_protected_ids(self) -> frozenset[str]: ...
 
-    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None: ...
+    def complete_recovered(
+        self, directory: Path, crypto: SessionCrypto, *, label: KeepLabel | None = None
+    ) -> None: ...
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None: ...
 
@@ -1201,7 +1218,9 @@ class SessionControllerLike(Protocol):
     # Draft-write D6 (Task 4.2): the seen-mode Complete after a confirmed
     # write, under a reservation the Complete click takes; and SIMP-016's
     # reference prune (the live id, and every id the registry names).
-    def complete_after_write(self, reservation: WriteReservation) -> RecordingSession: ...
+    def complete_after_write(
+        self, reservation: WriteReservation, *, label: KeepLabel | None = None
+    ) -> RecordingSession: ...
 
     def live_session_ids(self) -> frozenset[str]: ...
 
@@ -1316,6 +1335,13 @@ def list_recoverable_sessions(
         if not child.is_dir() or not _SESSION_ID_RE.fullmatch(child.name):
             continue
         if child.name in active_session_ids:
+            continue
+        if link_state(child) is not False:
+            # Privacy-professional-controls H3 round 35 SEC-002: a linked
+            # folder is never offered — Resume, Open for review or Discard
+            # through it would act on ANOTHER folder's key (the sweep and
+            # `delete_session_key` refuse it too). Unreadable status: not
+            # listed this time.
             continue
         key_path = child / KEY_FILENAME
         key_mtime: float | None = None
@@ -2156,6 +2182,80 @@ class NoteGenerationResult:
     notes: tuple[str, ...] = ()
 
 
+# --- model provenance and the generated note (privacy-professional-controls
+# plan D2 / D8) ---------------------------------------------------------------
+
+
+def prose_model_ids(note: GeneratedNote) -> tuple[str | None, str | None]:
+    """The language model and prompt version that rendered ``note``'s prose,
+    captured NOW — at render or at Save, in the process that rendered it
+    (renderings are persisted only at Save, so the constants then ARE the
+    render's; D8) — or ``(None, None)`` when no prose stage ran for it (it
+    carries no rendering, passed or failed)."""
+    if not note.style_renderings:
+        return None, None
+    return LANGUAGE_MODEL_ID, PROMPT_VERSION
+
+
+@dataclass(frozen=True)
+class GeneratedBody:
+    """The note body a review SHOWED first (D2), for ``generated.enc``: the
+    ``format_note_body`` text and what produced it. repr-hidden: clinical
+    text."""
+
+    session_id: str
+    text: str = field(repr=False)
+    provider_name: str
+    style: str
+    language_model_id: str | None
+    prompt_version: str | None
+
+
+def generated_body(note: GeneratedNote) -> GeneratedBody:
+    """``note`` as it is shown (``format_note_body`` — the one rendering
+    path) with its provenance (``prose_model_ids``)."""
+    language_model_id, prompt_version = prose_model_ids(note)
+    return GeneratedBody(
+        session_id=note.session_id,
+        text=format_note_body(note),
+        provider_name=note.provider_name,
+        style=note.style,
+        language_model_id=language_model_id,
+        prompt_version=prompt_version,
+    )
+
+
+# Flow 3 step 4: a Complete whose Past-sessions entry was published but could
+# not be committed after the key (its marker is removed by the next check).
+COMPLETE_DEFERRED_LINE: Final = (
+    "Completed. The Past-sessions copy will appear after the next check."
+)
+# The Transcript screen's Complete (privacy-professional-controls C9): every
+# non-mock Complete keeps the transcript and notes in Past sessions (D6) and
+# then removes the session folder and its key. The screen does not know which
+# files a given Complete kept (a test-provider session keeps nothing; a
+# delete-note path never keeps the saved note), so the lines point at the tab
+# rather than claim them.
+COMPLETE_TOOLTIP: Final = (
+    "Verify the encrypted transcript, keep the transcript and notes in Past sessions "
+    "(never the audio; a test-provider session keeps nothing), then delete the session "
+    "and its key - the audio becomes unrecoverable."
+)
+COMPLETE_DONE_LINE: Final = (
+    "Session completed: transcript verified and the session key destroyed - the audio "
+    "cannot be recovered. Past sessions shows what was kept."
+)
+COMPLETE_WITHOUT_NOTE_LINE: Final = (
+    "Session completed without a note: transcript verified and the session key "
+    "destroyed. Past sessions shows what was kept - never the saved note."
+)
+# D2: the generated note could not be kept for Past sessions (the review goes
+# on; the entry will say "Generated note not kept").
+GENERATED_NOT_KEPT_LINE: Final = (
+    "The generated note could not be kept for Past sessions; the review is unaffected."
+)
+
+
 # --- review edits (practitioner-profile plan Phase 5, D14) ------------------
 
 
@@ -2866,6 +2966,14 @@ def consent_is_current(record: PractitionerProfile | StyleProfile | ConsentRecor
     consent = record if isinstance(record, ConsentRecord) else record.consent
     return consent.consent_text_version == CONSENT_TEXT_VERSION
 
+
+# Privacy-professional-controls D14 (Task 3.3): the in-app intended-use line,
+# shown on the Status tab and the Past sessions tab, worded as
+# `docs/security/intended-use.md` states the app's purpose.
+INTENDED_USE_LINE: Final = (
+    "Documentation aid, not clinical decision support. You review and finalise every "
+    "note in Cliniko."
+)
 
 # D10: first run ASKS, never blocks — shown on the Practitioner tab, which the
 # main window selects at startup when no profile exists.
@@ -3898,6 +4006,7 @@ __all__ = [
     "COPY_TO_CLINIKO_ENABLED",
     "FIRST_RUN_BANNER",
     "FIRST_RUN_STYLE_LINE",
+    "INTENDED_USE_LINE",
     "LANGUAGE_MODEL_ABSENT_REASON",
     "LANGUAGE_MODEL_LOAD_FAILED_LINE",
     "NOTE_STYLES",

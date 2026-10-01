@@ -1496,9 +1496,11 @@ class TestCompleteAfterWrite:
         real = session_mod.complete_session
         seen: list[tuple[str | None, frozenset[str], bool]] = []
 
-        def observed(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> None:
-            assert kwargs == {"remove_directory": True}
-            real(directory, crypto, **kwargs)
+        def observed(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> Any:
+            # Task 1.1: no flag — every Complete removes the directory; Task
+            # 2.3: no archive on a controller built without one.
+            assert kwargs == {"delete_note": False, "keep": None}
+            facts = real(directory, crypto, **kwargs)
             seen.append(
                 (
                     controller.writing_session_id(),
@@ -1506,6 +1508,7 @@ class TestCompleteAfterWrite:
                     directory.exists(),
                 )
             )
+            return facts
 
         monkeypatch.setattr(session_mod, "complete_session", observed)
         reservation = controller.reserve_write(session_id)
@@ -2111,3 +2114,688 @@ class TestRecordedSeconds:
         _wait_for_state(controller, SessionState.FAILED)
         assert controller.recorded_seconds == 2
         controller.discard()
+
+
+# ---------------------------------------------------------------------------
+# Privacy-professional-controls plan Task 1.3: the audit record through the
+# controller — Start's row (the one write that refuses), start_failed on
+# every later Start failure, the five Complete paths, both Discards.
+# ---------------------------------------------------------------------------
+
+AUDIT_USER = "4242"
+
+
+def _audited(tmp_path: Path, **audit_kwargs: Any) -> tuple[SessionController, Any, Path]:
+    from scribe_desktop.audit import AuditLog
+
+    root = tmp_path / "sessions"
+    audit = AuditLog(tmp_path / "audit", clock=lambda: NOW, **audit_kwargs)
+    controller = SessionController(MockCaptureBackend(), sessions_root=root, audit=audit)
+    return controller, audit, root
+
+
+def _audit_row(audit: Any, session_id: str) -> Any:
+    rows = [row for row in audit.rows().rows if row.session_id == session_id]
+    assert len(rows) == 1, rows
+    return rows[0]
+
+
+def _queue_with_transcript(
+    controller: SessionController, root: Path, *, note: bool = False
+) -> str:
+    session = start_unlinked(controller)
+    controller.finish()
+    controller.mark_queued()
+    directory = root / session.session_id
+    crypto = unwrap_key_from_file(directory)
+    (directory / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(b"transcript"))
+    if note:
+        plain = _completable_note(session.session_id)
+        (directory / NOTE_FILENAME).write_bytes(crypto.encrypt(plain))
+    return session.session_id
+
+
+def _refuse_row_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scribe_desktop import audit as audit_mod
+
+    def full_disk(*_args: Any, **_kwargs: Any) -> None:
+        raise StoreWriteError("failed writing audit row: disk full")
+
+    monkeypatch.setattr(audit_mod, "atomic_write_bytes", full_disk)
+
+
+@windows_only
+class TestAuditRecord:
+    def test_a_linked_start_writes_its_row(self, tmp_path: Path) -> None:
+        controller, audit, _root = _audited(tmp_path)
+        controller.set_clinic_user_resolver(lambda clinic_id: AUDIT_USER)
+        ctx = enc_context()
+        session = controller.start(0, consent=consent_for(ctx), context=ctx)
+        row = _audit_row(audit, session.session_id)
+        assert row.origin == "recorded" and row.linked is True
+        assert (row.user_id, row.treatment_note_id, row.booking_id) == (
+            AUDIT_USER,
+            ctx.treatment_note_id,
+            ctx.booking_id,
+        )
+        assert row.deletion.state == "pending"
+        controller.discard()
+        assert _audit_row(audit, session.session_id).deletion.state == "discarded"
+
+    def test_a_resolver_that_fails_records_no_user_and_still_starts(
+        self, tmp_path: Path
+    ) -> None:
+        controller, audit, _root = _audited(tmp_path)
+
+        def broken(_clinic_id: str) -> str | None:
+            raise KeyError("registry gone")
+
+        controller.set_clinic_user_resolver(broken)
+        ctx = enc_context()
+        session = controller.start(0, consent=consent_for(ctx), context=ctx)
+        assert _audit_row(audit, session.session_id).user_id is None
+        controller.discard()
+
+    def test_an_actual_row_write_failure_refuses_start_and_keeps_the_previous_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """C2 / round 1 PR-MED-002: the row is written BEFORE the retire;
+        its failure refuses Start with the previous QUEUED session still
+        installed and usable, and nothing of the new session on disk."""
+        from scribe_desktop.audit import AuditWriteError
+
+        controller, audit, root = _audited(tmp_path)
+        previous = _queue_with_transcript(controller, root)
+        _refuse_row_writes(monkeypatch)
+        with pytest.raises(AuditWriteError, match="Nothing was recorded"):
+            start_unlinked(controller)
+        current = controller.session
+        assert current is not None and current.session_id == previous
+        assert controller.state is SessionState.QUEUED
+        assert [path.name for path in root.iterdir()] == [previous]
+        assert [row.session_id for row in audit.rows().rows] == [previous]
+        monkeypatch.undo()
+        assert controller.complete().state is SessionState.WRITTEN
+        assert _audit_row(audit, previous).deletion.state == "completed"
+
+    def test_the_retire_refusal_marks_start_failed_and_keeps_the_previous_session(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 2 PR-MED-002: an uncleared live transcriber refuses the
+        retire AFTER the row exists — the row reads start_failed, and the
+        previous session stays installed."""
+        controller, audit, root = _audited(tmp_path)
+        previous = _queue_with_transcript(controller, root)
+        monkeypatch.setattr(controller, "_stop_live_locked", lambda _live: False)
+        with pytest.raises(SessionActivityError, match="has not stopped yet"):
+            start_unlinked(controller)
+        current = controller.session
+        assert current is not None and current.session_id == previous
+        assert controller.state is SessionState.QUEUED
+        failed = [row for row in audit.rows().rows if row.deletion.state == "start_failed"]
+        assert len(failed) == 1 and failed[0].session_id != previous
+        assert not (root / failed[0].session_id).exists()
+        monkeypatch.undo()
+        assert controller.complete().state is SessionState.WRITTEN
+
+    def test_a_directory_failure_marks_start_failed_after_the_retire(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 5 PR-LOW-001: the directory is created AFTER the retire, so
+        the previous session is no longer installed — but its files stay
+        on disk, recoverable."""
+        import errno
+
+        controller, audit, root = _audited(tmp_path)
+        previous = _queue_with_transcript(controller, root)
+        real_mkdir = Path.mkdir
+
+        def refusing_mkdir(self: Path, *args: Any, **kwargs: Any) -> None:
+            if self.parent == root:
+                raise OSError(errno.EACCES, "denied")
+            real_mkdir(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "mkdir", refusing_mkdir)
+        with pytest.raises(StoreWriteError):
+            start_unlinked(controller)
+        monkeypatch.undo()
+        assert controller.session is None
+        assert (root / previous / KEY_FILENAME).is_file()
+        states = {row.session_id: row.deletion.state for row in audit.rows().rows}
+        assert states.pop(previous) == "pending"
+        assert list(states.values()) == ["start_failed"]
+
+    def test_a_device_failure_marks_start_failed_and_leaves_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session as session_mod
+        from scribe_desktop.audio_capture import AudioCaptureError
+
+        original = session_mod.CaptureWorker
+
+        class NoDevice(original):  # type: ignore[misc, valid-type]
+            def start(self) -> None:
+                raise AudioCaptureError("device 0 cannot be opened")
+
+        monkeypatch.setattr(session_mod, "CaptureWorker", NoDevice)
+        controller, audit, root = _audited(tmp_path)
+        with pytest.raises(AudioCaptureError):
+            start_unlinked(controller)
+        assert list(root.iterdir()) == []
+        (row,) = audit.rows().rows
+        assert row.deletion.state == "start_failed"
+        assert [event.code for event in row.events] == ["started", "start_failed"]
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "complete",
+            "complete_without_note",
+            "complete_deleting_saved_note",
+            "complete_after_write",
+            "complete_recovered",
+        ],
+    )
+    def test_every_complete_path_records_its_end(self, tmp_path: Path, path: str) -> None:
+        """All five ``complete_session`` callers (enumerated from the code,
+        not the plan): the models, the deletion and the Past-sessions
+        outcome, and the directory gone."""
+        controller, audit, root = _audited(tmp_path)
+        sid = _queue_with_transcript(controller, root, note=True)
+        directory = root / sid
+        if path == "complete":
+            controller.complete()
+        elif path == "complete_without_note":
+            controller.complete_without_note(controller.begin_generation())
+        elif path == "complete_deleting_saved_note":
+            controller.complete_deleting_saved_note()
+        elif path == "complete_after_write":
+            identity = hashlib.sha256(_completable_note(sid)).hexdigest()
+            reservation = controller.reserve_write(sid)
+            controller.with_write_custody(
+                reservation,
+                lambda d, c: store_write_record(
+                    d, c, sid, _write_record("written", identity=identity)
+                ),
+            )
+            reservation.release()
+            controller.complete_after_write(controller.reserve_write(sid))
+        else:
+            start_unlinked(controller)  # retires it: now a recovered session
+            controller.complete_recovered(directory, unwrap_key_from_file(directory))
+            controller.discard()
+        row = _audit_row(audit, sid)
+        expected = (
+            "completed_without_note"
+            if path in {"complete_without_note", "complete_deleting_saved_note"}
+            else "completed"
+        )
+        assert row.deletion.state == expected
+        assert row.deletion.at == NOW
+        assert row.past_session.state == "none"
+        assert row.note_provenance == "known"
+        assert row.models is not None
+        assert row.models.note_provider == "extractive-v1"
+        assert row.models.transcription_model == "unknown"  # not a TranscriptDocument
+        assert not directory.exists()
+
+    def test_a_failed_complete_records_nothing(self, tmp_path: Path) -> None:
+        controller, audit, root = _audited(tmp_path)
+        sid = _queue_with_transcript(controller, root)
+        (root / sid / TRANSCRIPT_FILENAME).unlink()
+        with pytest.raises(StoreWriteError):
+            controller.complete()
+        row = _audit_row(audit, sid)
+        assert row.deletion.state == "pending" and row.models is None
+
+    def test_an_audit_failure_never_blocks_a_complete_or_a_discard(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """C2: after Start, every audit write is best-effort — counted."""
+        controller, audit, root = _audited(tmp_path)
+        completed = _queue_with_transcript(controller, root)
+        _refuse_row_writes(monkeypatch)
+        assert controller.complete().state is SessionState.WRITTEN
+        assert not (root / completed).exists()
+        assert audit.failure_count == 1
+        monkeypatch.undo()
+        session = start_unlinked(controller)
+        _refuse_row_writes(monkeypatch)
+        assert controller.discard().state is SessionState.DISCARDED
+        assert not (root / session.session_id).exists()
+        assert audit.failure_count == 2
+
+    def test_discard_recovered_records_discarded(self, tmp_path: Path) -> None:
+        controller, audit, root = _audited(tmp_path)
+        sid = _queue_with_transcript(controller, root)
+        start_unlinked(controller)  # retires it
+        controller.discard_recovered(root / sid, None)
+        assert _audit_row(audit, sid).deletion.state == "discarded"
+        controller.discard()
+
+    def test_a_concurrent_discard_is_recorded_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The early return for a discard another call already completed
+        records nothing new."""
+        from scribe_desktop import session as session_mod
+
+        entered = threading.Event()
+        release = threading.Event()
+        stops: list[int] = []
+        original = session_mod.CaptureWorker
+
+        class Gated(original):  # type: ignore[misc, valid-type]
+            def stop(self, *, flush: bool) -> None:
+                stops.append(1)
+                if len(stops) == 1:
+                    entered.set()
+                    release.wait(10)
+                super().stop(flush=flush)
+
+        monkeypatch.setattr(session_mod, "CaptureWorker", Gated)
+        controller, audit, _root = _audited(tmp_path)
+        session = start_unlinked(controller)
+        recorded: list[str] = []
+        real_record = audit.record_deletion
+
+        def counting(session_id: str, state: Any, **kwargs: Any) -> bool:
+            recorded.append(state)
+            return bool(real_record(session_id, state, **kwargs))
+
+        monkeypatch.setattr(audit, "record_deletion", counting)
+        first = threading.Thread(target=controller.discard)
+        first.start()
+        try:
+            assert entered.wait(10)
+            assert controller.discard().state is SessionState.DISCARDED
+        finally:
+            release.set()
+            first.join(10)
+        assert not first.is_alive()
+        assert recorded == ["discarded"]
+        assert [e.code for e in _audit_row(audit, session.session_id).events] == [
+            "started",
+            "discarded",
+        ]
+
+    def test_a_pre_audit_session_expiring_on_first_start_up_keeps_its_date(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The upgrade (round 1 PR-MED-004): a session started before the
+        audit existed and expired by the first sweep gets a ``pre_audit``
+        row dated by its own header — and ``encounter.enc`` is never
+        decrypted on the way (C7)."""
+        from datetime import UTC, datetime, timedelta
+
+        from scribe_desktop import encounter as encounter_mod
+        from scribe_desktop import session_store as store_mod
+        from scribe_desktop.app import record_sweep_results
+        from scribe_desktop.audit import AuditLog
+        from scribe_desktop.session_store import read_store_header
+
+        root = tmp_path / "sessions"
+        old = SessionController(MockCaptureBackend(), sessions_root=root)  # no audit yet
+        sid = _queue_with_transcript(old, root)
+        created = read_store_header(root / sid / AUDIO_FILENAME).created_at
+
+        def never(*_args: Any, **_kwargs: Any) -> Any:
+            raise AssertionError("the sweep path decrypted encounter.enc")
+
+        monkeypatch.setattr(store_mod, "read_encounter", never)
+        monkeypatch.setattr(encounter_mod, "read_encounter_record", never)
+        # Round 6 LOW-011: nothing under the session key can be decrypted
+        # without unwrapping it first, so no session-key unwrap may happen at
+        # all (the audit's own key is unwrapped through audit.py's binding).
+        monkeypatch.setattr(store_mod, "unwrap_key_from_file", never)
+        later = datetime.fromtimestamp(created, UTC) + timedelta(hours=30)
+        audit = AuditLog(tmp_path / "audit", clock=lambda: later)
+        results = sweep_sessions(root, now=later.timestamp())
+        assert [(r.session_id, r.action) for r in results] == [(sid, "expired")]
+        record_sweep_results(audit, results)
+        row = _audit_row(audit, sid)
+        assert row.origin == "pre_audit"
+        # The local calendar date (round 6 MED-002; this computer's zone).
+        assert row.session_date == datetime.fromtimestamp(created, UTC).astimezone().date()
+        assert row.deletion.state == "expired"
+
+
+# ---------------------------------------------------------------------------
+# Privacy-professional-controls plan Tasks 2.1-2.3: the Past-sessions entry
+# through the controller - every Complete path keeps it BEFORE the key (C1),
+# an archive failure keeps key, state, lease and reservation, and every
+# non-Complete destroyer removes an unfinished entry first.
+# ---------------------------------------------------------------------------
+
+_ARCHIVE_KEY = b"FAKE-ENTRY-KEY:"
+
+
+def _archive(tmp_path: Path) -> Any:
+    """A Past-sessions store whose entry-key custody is a fake (the SESSION
+    keys stay real DPAPI - these classes are ``windows_only``)."""
+    from scribe_desktop.past_sessions import PastSessionStore
+
+    def wrap(crypto: SessionCrypto, directory: Path) -> None:
+        (directory / KEY_FILENAME).write_bytes(_ARCHIVE_KEY + crypto.export_key())
+
+    def unwrap(directory: Path) -> SessionCrypto:
+        blob = (directory / KEY_FILENAME).read_bytes()
+        return SessionCrypto.from_key(blob[len(_ARCHIVE_KEY) :])
+
+    return PastSessionStore(
+        tmp_path / "past_sessions", clock=lambda: NOW, wrap_key=wrap, unwrap_key=unwrap
+    )
+
+
+def _document(session_id: str, *, model_name: str = "small") -> bytes:
+    from scribe_desktop.transcription import TranscriptDocument
+
+    return TranscriptDocument(
+        session_id=session_id,
+        created_at=NOW,
+        model_name=model_name,
+        sample_rate=16_000,
+        transcript_segments=(),
+    ).to_bytes()
+
+
+def _archived_note(session_id: str, transcript: bytes) -> bytes:
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    return GeneratedNote(
+        session_id=session_id,
+        created_at=NOW,
+        template_profile_id="clinic-a",
+        provider_name="extractive-v1",
+        transcript_digest=digest_bytes(transcript),
+        config_digest=digest_bytes(b"config"),
+    ).to_bytes()
+
+
+def _refuse_publish(monkeypatch: pytest.MonkeyPatch) -> None:
+    from scribe_desktop import past_sessions as past_mod
+
+    def refuse(_src: Any, _dst: Any) -> None:
+        raise PermissionError(13, "in use")
+
+    monkeypatch.setattr(past_mod.os, "rename", refuse)
+
+
+@windows_only
+class TestPastSessionsThroughTheController:
+    def _queued(
+        self, tmp_path: Path, *, model_name: str = "small", note: bool = True
+    ) -> tuple[SessionController, Any, Path, str]:
+        store = _archive(tmp_path)
+        root = tmp_path / "sessions"
+        controller = SessionController(
+            MockCaptureBackend(), sessions_root=root, past_sessions=store
+        )
+        session = start_unlinked(controller)
+        controller.finish()
+        controller.mark_queued()
+        directory = root / session.session_id
+        crypto = unwrap_key_from_file(directory)
+        transcript = _document(session.session_id, model_name=model_name)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(transcript))
+        if note:
+            plain = _archived_note(session.session_id, transcript)
+            (directory / NOTE_FILENAME).write_bytes(crypto.encrypt(plain))
+        return controller, store, directory, session.session_id
+
+    def _label(self) -> Any:
+        from scribe_desktop.past_sessions import keep_label
+
+        return keep_label("Jane Citizen", "linked", "0123456789abcdef")
+
+    def test_complete_keeps_the_entry_with_its_label(self, tmp_path: Path) -> None:
+        controller, store, directory, sid = self._queued(tmp_path)
+        assert controller.complete(label=self._label()).state is SessionState.WRITTEN
+        assert not directory.exists()
+        assert controller.last_complete_deferred is False
+        entry = store.read_entry(sid)
+        assert entry.label.patient_name == "Jane Citizen"
+        assert entry.saved_note is not None
+
+    def test_an_archive_failure_keeps_the_session_queued_and_a_retry_keeps_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session import PAST_SESSION_WRITE_FAILED_TEXT, PastSessionWriteError
+
+        controller, store, directory, sid = self._queued(tmp_path)
+        _refuse_publish(monkeypatch)
+        with pytest.raises(PastSessionWriteError) as info:
+            controller.complete(label=self._label())
+        assert str(info.value) == PAST_SESSION_WRITE_FAILED_TEXT
+        assert info.value.__cause__ is None  # no OS text, no path
+        assert controller.state is SessionState.QUEUED
+        assert (directory / KEY_FILENAME).is_file()
+        monkeypatch.undo()
+        assert controller.complete(label=self._label()).state is SessionState.WRITTEN
+        assert [listing.session_id for listing in store.list_entries()] == [sid]
+
+    def test_complete_without_note_keeps_the_lease_on_an_archive_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session import PastSessionWriteError
+
+        controller, store, directory, sid = self._queued(tmp_path)
+        lease = controller.begin_generation()
+        _refuse_publish(monkeypatch)
+        with pytest.raises(PastSessionWriteError):
+            controller.complete_without_note(lease, label=self._label())
+        assert controller.generating
+        assert controller.state is SessionState.QUEUED
+        assert (directory / NOTE_FILENAME).is_file()
+        monkeypatch.undo()
+        controller.complete_without_note(lease, label=self._label())
+        assert not controller.generating
+        entry = store.read_entry(sid)
+        assert entry.saved_note is None and not entry.label.has_saved
+
+    def test_complete_deleting_saved_note_keeps_no_note(self, tmp_path: Path) -> None:
+        controller, store, _directory, sid = self._queued(tmp_path)
+        controller.complete_deleting_saved_note(label=self._label())
+        assert store.read_entry(sid).saved_note is None
+
+    def test_complete_after_write_keeps_the_reservation_on_an_archive_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session import PastSessionWriteError
+
+        controller, store, directory, sid = self._queued(tmp_path)
+        crypto = unwrap_key_from_file(directory)
+        identity = hashlib.sha256(crypto.decrypt((directory / NOTE_FILENAME).read_bytes()))
+        reservation = controller.reserve_write(sid)
+        controller.with_write_custody(
+            reservation,
+            lambda d, c: store_write_record(
+                d, c, sid, _write_record("written", identity=identity.hexdigest())
+            ),
+        )
+        _refuse_publish(monkeypatch)
+        with pytest.raises(PastSessionWriteError):
+            controller.complete_after_write(reservation, label=self._label())
+        assert controller.writing_session_id() == sid  # the caller releases
+        reservation.release()
+        assert controller.state is SessionState.QUEUED
+        assert (directory / KEY_FILENAME).is_file()
+        monkeypatch.undo()
+        retry = controller.reserve_write(sid)
+        assert controller.complete_after_write(retry).state is SessionState.WRITTEN
+        assert store.read_entry(sid).label.recording == "unknown"  # label=None
+
+    def test_complete_recovered_keeps_the_entry(self, tmp_path: Path) -> None:
+        store = _archive(tmp_path)
+        controller = SessionController(
+            MockCaptureBackend(), sessions_root=tmp_path / "sessions", past_sessions=store
+        )
+        directory, crypto = _recovered_dir(tmp_path)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(
+            crypto.encrypt(_document(directory.name))
+        )
+        controller.complete_recovered(directory, crypto, label=self._label())
+        assert not directory.exists()
+        assert [listing.session_id for listing in store.list_entries()] == [directory.name]
+
+    def test_a_mock_session_keeps_nothing(self, tmp_path: Path) -> None:
+        controller, store, _directory, _sid = self._queued(tmp_path, model_name="mock")
+        controller.complete(label=self._label())
+        assert store.list_entries() == []
+        assert not store.root.exists()
+
+    # The five callers of `_complete_locked` in session.py (codex round 14
+    # PR-LOW-013 — enumerated from the code, not from the plan's list).
+    _COMPLETE_PATHS = (
+        "complete",
+        "complete_without_note",
+        "complete_deleting_saved_note",
+        "complete_recovered",
+        "complete_after_write",
+    )
+
+    @pytest.mark.parametrize("path", _COMPLETE_PATHS)
+    def test_a_deferred_commit_is_reported_and_reconciled_on_every_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+    ) -> None:
+        """Flow 3 step 4: a marker removal that fails AFTER the key boundary
+        never raises — each path still destroys the source key, makes its
+        terminal transition and releases its lease or reservation, reports
+        ``last_complete_deferred``, and the entry stays unlisted until
+        ``reconcile_pending`` commits it."""
+        if path == "complete_recovered":
+            store = _archive(tmp_path)
+            controller = SessionController(
+                MockCaptureBackend(), sessions_root=tmp_path / "sessions", past_sessions=store
+            )
+            directory, crypto = _recovered_dir(tmp_path)
+            (directory / TRANSCRIPT_FILENAME).write_bytes(
+                crypto.encrypt(_document(directory.name))
+            )
+            sid = directory.name
+            monkeypatch.setattr(store, "commit", lambda _sid: False)
+            controller.complete_recovered(directory, crypto, label=self._label())
+            assert crypto.destroyed
+        else:
+            controller, store, directory, sid = self._queued(tmp_path)
+            reservation = None
+            if path == "complete_after_write":
+                live_crypto = unwrap_key_from_file(directory)
+                note = live_crypto.decrypt((directory / NOTE_FILENAME).read_bytes())
+                identity = hashlib.sha256(note).hexdigest()
+                seed = controller.reserve_write(sid)
+                controller.with_write_custody(
+                    seed,
+                    lambda d, c: store_write_record(
+                        d, c, sid, _write_record("written", identity=identity)
+                    ),
+                )
+                seed.release()
+                reservation = controller.reserve_write(sid)
+            lease = controller.begin_generation() if path == "complete_without_note" else None
+            monkeypatch.setattr(store, "commit", lambda _sid: False)
+            if path == "complete":
+                session = controller.complete(label=self._label())
+            elif path == "complete_without_note":
+                assert lease is not None
+                session = controller.complete_without_note(lease, label=self._label())
+            elif path == "complete_deleting_saved_note":
+                session = controller.complete_deleting_saved_note(label=self._label())
+            else:
+                assert reservation is not None
+                session = controller.complete_after_write(reservation, label=self._label())
+            assert session.state is SessionState.WRITTEN
+            assert controller.session is None
+            assert not controller.generating  # any lease consumed
+            assert controller.writing_session_id() is None  # any reservation consumed
+            assert controller.reserved_session_ids() == frozenset()
+        assert not (directory / KEY_FILENAME).exists()  # the source key is gone
+        assert not directory.exists()
+        assert controller.last_complete_deferred is True
+        assert store.list_entries() == []  # pending until reconciled
+        monkeypatch.undo()
+        assert store.reconcile_pending(directory.parent) == [sid]
+        assert [listing.session_id for listing in store.list_entries()] == [sid]
+
+    def test_an_uncleared_live_worker_still_refuses_before_any_entry(
+        self, tmp_path: Path
+    ) -> None:
+        class _StuckWorker:
+            def stop(self, timeout: float | None = None) -> bool:
+                return False
+
+        controller, store, directory, _sid = self._queued(tmp_path)
+        with controller._lock:  # noqa: SLF001 - no shipped path leaves one at QUEUED
+            live = controller._live  # noqa: SLF001
+            assert live is not None
+            live.live_transcriber = _StuckWorker()  # type: ignore[assignment]
+        with pytest.raises(SessionActivityError, match="has not stopped yet"):
+            controller.complete(label=self._label())
+        assert not store.root.exists()
+        assert (directory / KEY_FILENAME).is_file()
+
+    def test_discard_removes_an_unfinished_entry_before_the_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import session_store as store_mod
+
+        controller, store, directory, sid = self._queued(tmp_path)
+
+        def refuse(_directory: Path) -> None:
+            raise PermissionError(13, "in use")
+
+        monkeypatch.setattr(store_mod, "delete_session_key", refuse)
+        with pytest.raises(PermissionError):
+            controller.complete(label=self._label())
+        monkeypatch.undo()
+        assert (store.root / sid).is_dir()  # the published, pending entry
+        seen: list[bool] = []
+        real = store.remove_pending_entry
+
+        def observed(session_id: str) -> bool:
+            seen.append((directory / KEY_FILENAME).is_file())
+            return bool(real(session_id))
+
+        monkeypatch.setattr(store, "remove_pending_entry", observed)
+        controller.discard()
+        assert seen == [True]
+        assert not (store.root / sid).exists()
+        assert store.reconcile_pending(directory.parent) == []
+        assert store.list_entries() == []
+
+    def test_a_discard_whose_entry_cannot_be_removed_changes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session import PastSessionCleanupError
+
+        controller, store, directory, sid = self._queued(tmp_path)
+        monkeypatch.setattr(store, "remove_pending_entry", lambda _sid: False)
+        with pytest.raises(PastSessionCleanupError, match="Nothing was deleted"):
+            controller.discard()
+        assert controller.state is SessionState.QUEUED
+        assert (directory / KEY_FILENAME).is_file()
+        assert controller.custody_protected_ids() == frozenset({sid})  # the live id only
+        monkeypatch.undo()
+        controller.discard()
+        assert not directory.exists()
+
+    def test_discard_recovered_removes_an_unfinished_entry_first(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.session import PastSessionCleanupError
+
+        store = _archive(tmp_path)
+        controller = SessionController(
+            MockCaptureBackend(), sessions_root=tmp_path / "sessions", past_sessions=store
+        )
+        directory, crypto = _recovered_dir(tmp_path)
+        (store.root / directory.name).mkdir(parents=True)
+        (store.root / directory.name / KEY_FILENAME).write_bytes(b"k")
+        monkeypatch.setattr(store, "remove_pending_entry", lambda _sid: False)
+        with pytest.raises(PastSessionCleanupError):
+            controller.discard_recovered(directory, crypto)
+        assert (directory / KEY_FILENAME).is_file()
+        monkeypatch.undo()
+        controller.discard_recovered(directory, crypto)
+        assert not directory.exists()
+        assert not (store.root / directory.name).exists()

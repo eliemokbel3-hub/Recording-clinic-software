@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -17,15 +17,27 @@ Note tab's "Write draft to Cliniko", the client's ONE write (a `PATCH` that
 fills the open draft treatment note), the per-session write record
 `write.enc`, completion after a confirmed write, and — since 2026-09-30 (D15)
 — the append that keeps every answer already in the note ("THE DRAFT WRITE"
-under "Cliniko API client" below).
+under "Cliniko API client" below); plus the privacy and professional controls
+(PLAN.md Phase 6, the privacy-professional-controls plan, built 2026-10-01):
+the durable audit record, the Past-sessions archive and its tab, the CSV
+export, the exclusions and the exception hooks ("Privacy and professional
+controls" below).
 Clinical data now exists: audio,
 transcripts, and the composed note artifact, encrypted at rest under
 per-session keys; an UNPROTECTED recovery store expires at ~24 h (eligible at
 24 h, destroyed by the next successful sweep), while a live or under-review
-session is sweep-exempt (see the retention schedule for the exemption).
-Patient NAMES now exist too, in memory only: fetched from Cliniko for a
-verified note and shown on the desktop and in Chrome ("The Chrome link" and
-"The Chrome extension" below).
+session is sweep-exempt (see the retention schedule for the exemption). Since
+the privacy-professional-controls plan, every non-mock Complete also KEEPS
+the session's transcript, saved note and generated note — never its audio —
+in a Past-sessions entry under its own key, for a retention the practitioner
+chooses (default: until they delete it), and every session leaves a
+content-free audit row for 7 years.
+Patient NAMES now exist too: in memory, fetched from Cliniko for a verified
+note and shown on the desktop and in Chrome ("The Chrome link" and "The
+Chrome extension" below) — and, since the privacy-professional-controls plan,
+at rest in exactly one place, each Past-sessions entry's encrypted label
+(written at Complete from the name the app held in memory for that session;
+never in `encounter.enc`, the audit row, the CSV or a log).
 
 ## Trust boundaries
 
@@ -108,19 +120,25 @@ remains an accepted residual.
    active or recoverable (unprotected recovery is expiry-eligible at 24 h and
    destroyed by the next successful sweep — see §6); it is unwrapped only in
    memory. Deleting
-   that blob IS the cryptographic deletion of the session's audio and
-   transcript (deletion ordering: on Complete — fsync transcript, verify a
-   decrypt round-trip, THEN delete the key; on Complete of a session whose
-   draft Cliniko confirmed writing (cliniko-draft-write D6) — the same
-   ordering under one controller lock, then the session directory removed
-   best-effort AFTER the key, a failed removal leaving a keyless directory
-   the sweep collects; on Discard — key first, then best-effort store
-   removal). Residual: any process in the user's session
+   that blob IS the cryptographic deletion of the session's audio and of the
+   SESSION's copy of its transcript and notes (deletion ordering: on every
+   Complete — fsync transcript, verify a decrypt round-trip, verify the note
+   when one counts, write, verify and publish the Past-sessions entry under
+   its OWN fresh key for a non-mock session (privacy-professional-controls
+   C1 / D4), THEN delete the key, then best-effort remove the entry's
+   `pending` marker and the session directory, a failed removal leaving a
+   keyless directory the sweep collects; on Discard — any unfinished
+   Past-sessions entry for the id removed key-first, then the key, then
+   best-effort store removal). The transcript and notes a Complete kept are
+   NOT destroyed by it: they live on in the entry until Delete now or expiry
+   ("Privacy and professional controls" below). Residual: any process in the user's session
    can call `CryptUnprotectData` on the blob while it exists — subsumed by
    boundary 2.
 2. **NTFS unlink is not anti-forensic (ACCEPTED RESIDUAL, user decision
    2026-07-26).** `key.dpapi`, `audio.enc`, and `transcript.enc` are removed
-   by plain deletion; free clusters, the USN journal, or VSS shadow copies
+   by plain deletion — and so are a Past-sessions entry's key and files at
+   Delete now or expiry, an audit month folder at its prune, and every other
+   store's files; free clusters, the USN journal, or VSS shadow copies
    may retain the wrapped key blob or ciphertext until overwritten.
    Cryptographic deletion therefore holds at the same-user boundary the
    model already accepts, not against a forensic examiner with the disk.
@@ -226,7 +244,10 @@ remains an accepted residual.
    fails closed. Adds ≤ 5 s to the retention beyond the 24 h mark, on top of
    the cadence delay above. The rule is
    defined once (`session_store.earliest_trusted_timestamp`) and shared by the
-   sweep and the recovery listing.
+   sweep and the recovery listing. A session-id-named LINK (symlink or
+   junction) under the sessions root is never swept, keyed away, discarded or
+   listed (privacy-professional-controls H3 round 35 SEC-002; "Privacy and
+   professional controls" below) — it is not a session this app made.
 7. **Transcript-view availability residual (no custody impact).** The shared
    transcript view can be visually replaced if a live transcription
    finishes while a recovered session's transcript is open; the overwritten
@@ -426,7 +447,9 @@ note inherit exactly that posture.
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual
    selection cannot drift clinical text into the Windows clipboard, and the tab's
    plaintext is cleared when a new transcript loads over a stale note. The app
-   introduces no new on-disk plaintext and no new logging channel (the routes
+   introduces no new on-disk plaintext and no new logging channel (the note
+   and transcript it keeps at Complete stay ENCRYPTED in a Past-sessions
+   entry — "Privacy and professional controls" below; the routes
    out of its custody are the clinician's Copy of a ratified note, whose
    clipboard residue surface 4 names, and — since the cliniko-draft-write
    plan — the clinician's "Write draft to Cliniko" of the same ratified note
@@ -452,12 +475,17 @@ note inherit exactly that posture.
    three registered Windows clipboard formats —
    `ExcludeClipboardContentFromMonitorProcessing`,
    `CanIncludeInClipboardHistory` = 0 and `CanUploadToCloudClipboard` = 0
-   (`ui/models.py` `clipboard_mime_formats`). Its two callers are the Copy
+   (`ui/models.py` `clipboard_mime_formats`). Its callers are the Copy
    button (`_copy_note`: `format_note_body`) and a copy of the ratified note
    panel's selection (`_NotePanel`: the keyboard's Copy — Ctrl+C,
    Ctrl+Insert — and the panel's own context menu, which replaces Qt's; the
    selection as Qt renders it), and each re-checks `_copy_ready` at the moment
-   of copying, so nothing is placed before ratification; pinned by
+   of copying, so nothing is placed before ratification — plus, since the
+   privacy-professional-controls plan, the Past sessions tab's "Copy saved
+   note" (`ui/past_sessions.py`: `format_note_body` of a kept SAVED note,
+   which was ratified before it could be saved; refused with its reason when
+   the copy flag is off, no saved note was kept or the note has an unresolved
+   error; its panels are `NoTextInteraction`, so no keyboard copy); pinned by
    `test_ui_screens.py` and `test_ui_models.py`. Windows clipboard history and
    cloud clipboard sync honour the formats, so a copied note is not kept in
    history or uploaded. **Residue once copied (named 2026-09-27, Task 1.4;
@@ -782,6 +810,31 @@ boundary 2: the defended adversary is outside the user's Windows session.
    keeps its in-memory copy of the practitioner's own just-deleted profile
    (deleting persisted custody never revokes plaintext a worker already
    holds; the copy dies with the transcription).
+   **Residue — the consent text's "stored on this computer only, and nothing
+   leaves it" (codex round 30 PR-MED-030; Part B DECIDED (a) by the
+   practitioner on 2026-10-02 — keep consent-v3 with this residue named).**
+   `CONSENT_TEXT_V3` says "Everything it learns is stored on
+   this computer only, and nothing leaves it." That is true of the PROGRAM:
+   it writes what it learns only under this Windows login's
+   `%LOCALAPPDATA%\ClinikoScribe` and sends none of it anywhere (the offline
+   contract; the Cliniko API carries no learned data). It is NOT a guarantee
+   against copies made by other software: Windows Backup, Volume Shadow Copy,
+   a third-party backup or sync tool, or a data folder redirected into
+   OneDrive, a network drive or the roaming profile can copy those files —
+   the app only WARNS about the redirected locations it can see
+   ("Privacy and professional controls", EXCLUSIONS and residues (g), (k)) and
+   cannot see backup tools at all. The voice profile and the learned style are
+   encrypted (a copy stays bound to this login's DPAPI key); the learned
+   phrases and learned shorthand rules are PLAIN TEXT in `config\`, so a copy
+   of them is readable wherever it lands. The text is unchanged because a
+   changed consent text is a new version (consent-v4): both consent records go
+   stale, the practitioner must re-consent, and the own-voice prose stage
+   refuses until they do. The practitioner DECIDED option (a) on 2026-10-02
+   (the plan's handoff note, "COMPOSER stage-7 PRACTITIONER DECISIONS"): keep
+   consent-v3 unchanged with this residue named here and in the retention
+   schedule (rows 42 and 46); the corrected wording is folded into the next
+   consent version whenever one is next needed. The historical v1 and v2 texts ("nothing leaves this
+   computer") are kept verbatim as history and are not current.
 10. **Learned phrases at rest — plain text, the practitioner's own words, by
     consent (Phase 5, D9 as amended).** Where: the user
     `%LOCALAPPDATA%\ClinikoScribe\config\section_cues.json` (the fourth
@@ -1613,7 +1666,12 @@ ids only, never a write target), or a named refusal carrying a reason code
 only. The patient's display name (control and format characters replaced,
 one line, at most 120 characters) and the appointment time travel as a
 separate `NoteDisplay`, in memory only: no model, record, log line or file
-holds them. Phase 3 showed them nowhere; since Phase 4 the Chrome bridge
+holds them — with ONE exception since the privacy-professional-controls plan:
+at Complete the display name the app holds for THAT session (matched by
+session id: the bridge's verified Start display, else its live
+re-verification, else a checkout's Verified result — D5) is written into the
+session's Past-sessions entry label, encrypted under the entry's key, and
+nowhere else ("Privacy and professional controls" below). Phase 3 showed them nowhere; since Phase 4 the Chrome bridge
 shows them — on the Session screen and in `state`, for a verified note only
 ("The Chrome link" below). A result is applied on the GUI
 thread only when it is the one the current checkout dispatched (request
@@ -1679,12 +1737,16 @@ per Unreviewed session at app start to rebuild the reminder index (ids only
 kept; the one start-up exception); the recovery listing learns only whether
 the file exists, and the sweep and the periodic refresh never read it. A
 missing or unreadable record reads as "consent unavailable": that session is
-treated as unlinked and has no write target. RESIDUE: the record is the
-session's and goes with its key — at Complete (including the Complete after a
-confirmed draft write, which also removes the session directory), Discard or
-expiry — so no durable evidence of the consent, or of a write, outlives the
-session; a durable minimal audit
-record is PLAN.md Phase 6 (retention schedule, pre-committed rules). Its
+treated as unlinked and has no write target. The record is the
+session's and goes with its key — at Complete (every Complete also removes
+the session directory), Discard or expiry — and is never copied into a
+Past-sessions entry. Since the privacy-professional-controls plan the
+durable evidence is the session's AUDIT ROW, written at Start before
+anything else of the session exists: the consent time and text version,
+`linked`, the verification state and the clinic, practitioner, user, booking
+and treatment-note ids — never the patient id or a name — kept 7 years, with
+the write's outcome and the deletion added as they happen ("Privacy and
+professional controls" below). Its
 consent is the practitioner's tick on the Session screen or the panel's box
 as relayed by the extension (pipe residue (1)(a) below): what it records is
 that the tick was given, not that consent was gained.
@@ -1856,8 +1918,10 @@ note, never anything but the note's `content`. What the structure enforces:
   Transcript screen's Complete, when the record reads `written` for THIS saved
   note, runs `complete_after_write`: under one controller lock it re-checks
   the reservation, the record and the saved note's identity, then fsync →
-  decrypt-verify → key deleted → in-memory key destroyed → directory removed
-  best-effort → session refs forgotten. Any refusal or failure keeps the key,
+  decrypt-verify → the Past-sessions entry written, verified and published
+  (privacy-professional-controls C1) → key deleted → in-memory key destroyed →
+  the entry's marker and the directory removed best-effort → session refs
+  forgotten — the same one store primitive every Complete path uses. Any refusal or failure keeps the key,
   the record and the queued session, and the next Complete retries. A custody
   action that fails on an error the app did not author (a disk, permission or
   store error) shows one fixed reason, "an unexpected problem on this computer
@@ -1908,9 +1972,16 @@ note, never anything but the note's `content`. What the structure enforces:
   sanitised answers are not known to hold such markup, and seen completion
   (the clinician looks at the draft before Complete) is the net; the
   clinician copies instead.
-  (g) AFTER COMPLETION THE ONLY COPY IS IN CLINIKO. The session — audio,
-  transcript, `note.enc`, `encounter.enc`, `write.enc` — is gone; the draft
-  in Cliniko, which the clinician still finalises, is what remains.
+  (g) AFTER COMPLETION THE SESSION IS GONE; CLINIKO HOLDS THE RECORD. The
+  session — audio, transcript, `note.enc`, `encounter.enc`, `write.enc` — is
+  gone with its key. What remains: the draft in Cliniko, which the clinician
+  still finalises (the system of record); the session's Past-sessions entry
+  (transcript, saved note, generated note — never audio or the write record)
+  for the practitioner's retention setting; and its audit row, with the
+  write's attempts, last outcome and written-at, for 7 years
+  (privacy-professional-controls plan; "Privacy and professional controls"
+  below). The write record's per-question digests do not survive Complete,
+  so evidence of exactly what a write changed is Cliniko's own history.
   (h) KEPT MEANS KEPT: typed text and the template's prompts stay above the
   app's text, and the clinician removes any prompt they no longer want in
   Cliniko (the practitioner's choice, "Keep prompts, add below", D15).
@@ -2500,10 +2571,15 @@ is not supported (Accepted Assumption, practitioner 2026-09-27).
 renderer, side-panel or service-worker process into the Chrome profile; such
 memory may hold a patient's name (and Cliniko's own page content), and Chrome
 uploads crash reports only when the user has allowed it in Chrome's settings.
-`scribe-app`'s own crash dump (Windows Error Reporting) is the same class for
-everything the app holds in memory. Both are outside the app's custody and
-not measured; keeping crash-report upload off on the clinic machine is an
-operating rule, and excluding crash reporting is PLAN.md Phase 6.
+Chrome's dumps stay outside the app's custody and are not measured — an
+accepted residue (privacy-professional-controls plan, Excluded, gate
+disposition 2026-10-01: the extension holds display strings only, never audio,
+transcripts or keys); keeping Chrome's crash-report upload off on the clinic
+machine is an operating rule. `scribe-app`'s and `scribe-host`'s own crash
+dumps (Windows Error Reporting) are the same class for everything those
+processes hold; since that plan they are excluded per user by the register
+script ("Privacy and professional controls" below, EXCLUSIONS), with its
+named residues.
 (9) CHROME'S MEMORY. A name lives in the worker's latest snapshot, the panel's
 view and a page script's slice while it is shown (flow 20); a same-user
 process that can debug Chrome, or DevTools opened on the extension, can read
@@ -2516,6 +2592,357 @@ check for dynamic code, and code review the control for the rest.
 (11) Every report and click the extension relays is its assertion — pipe
 residue (1) above.
 
+## Privacy and professional controls (privacy-professional-controls plan, PLAN.md Phase 6; BUILT 2026-10-01)
+
+THE REVERSAL. Until this plan, Complete destroyed everything of a session and
+the draft in Cliniko was the only copy. At the practitioner's request ("like
+Heidi") every non-mock Complete now KEEPS the session's transcript, saved note
+(unless the path deletes it) and generated note (when readable) — never its
+audio — in a Past-sessions entry, for a
+retention the practitioner chooses (default: until they delete it); every
+session also leaves a content-free audit row for 7 years. Two long-lived
+stores of clinical and ids-only data now sit beside the session store, under
+the same same-user DPAPI boundary (boundary 2).
+
+THE PAST-SESSIONS ARCHIVE (`past_sessions.py`; D1, D3, D6; C1, C4).
+- Layout: `past_sessions\<id>\` with the SAME file names a session uses
+  (`transcript.enc`, `note.enc`, `generated.enc`), so the existing readers
+  work unchanged, plus `label.enc` (AAD `past-label:<id>`). Each entry has a
+  FRESH AES-256-GCM key, DPAPI-wrapped with the description `ClinikoScribe
+  past-session key`, which the unwrap verifies: no session, audit, profile or
+  style key opens an entry, and an entry key opens nothing else. Deleting the
+  entry's `key.dpapi` is its cryptographic deletion (D3); there is no
+  archive-wide key.
+- What is kept (D6, the SOURCE-DERIVED set): the transcript always; the
+  generated note whenever the session held one; the saved note whenever
+  present and not deleted by the path — never on Complete without a note or
+  Complete deleting the saved note. NEVER audio (C4: the source key, which
+  also encrypted `audio.enc` and any superseded temporary file, is still
+  deleted), `encounter.enc`, `write.enc`, `saved-provenance.enc` or an audit
+  id. A MOCK session keeps nothing (audit `not_kept_mock`): the transcript's
+  model, the generated note's provider or the saved note's provider starting
+  with `mock`, casefolded (the mock transcriber records `MockSpeechProvider`).
+  Its Complete is a destroyer too: any entry an earlier, non-mock attempt
+  published for the id is removed key-first BEFORE its key goes, and a failed
+  removal refuses the Complete with the archive's message, key kept (H1 round
+  32 LOW-002).
+- Archive before the key (C1, D4). Inside `complete_session`, after the
+  transcript and note verification and BEFORE `delete_session_key`, the entry
+  is staged under `.staging\<id>\`, then FULLY verified through its own key
+  read back from disk — the exact file set, the label, and every plaintext's
+  SHA-256 against the source bytes, through the existing readers — and only
+  then moved into place, carrying the content-free marker `pending`, replacing
+  any earlier entry for the id key-first. Any failure up to there raises
+  `PastSessionWriteError` ("Complete failed: the Past-sessions copy could not
+  be saved. No key deletion was performed — try again, or Discard."): the key,
+  the QUEUED state, the lease and the write reservation are kept and Complete
+  can be retried. The earlier refusals (an UNCLEARED live transcriber, a
+  failed note verification) still run first. A session whose header id is not
+  its directory name is refused there with the key kept (round 11 LOW-001).
+  After `delete_session_key` (THE boundary) nothing is retryable: the
+  in-memory key is destroyed and the controller makes its terminal transition
+  whatever follows; removing the marker and the directory is best-effort, and
+  a marker left behind shows "Completed. The Past-sessions copy will appear
+  after the next check." (never "No key deletion was performed").
+- One entry per id, and only after a Complete (C1's ordering rule). An entry
+  carrying `pending` while its source `sessions\<id>\key.dpapi` exists is
+  PENDING and never listed. Every NON-Complete destroyer of a source session —
+  `discard()`, `discard_recovered`, the recovery list's Discard, the sweep's
+  `expired`, and a DEAD key's `orphan_gc` — removes that id's entry key-first
+  BEFORE it deletes the source key (`remove_pending_entry`, through the
+  sweep's `before_destroy` for the sweep); a failed removal keeps the source
+  key (Discard is refused: "discard refused: an unfinished Past-sessions copy
+  of this session could not be removed. Nothing was deleted - try again."; the
+  sweep keeps a dead key that tick). An entry path whose link status cannot
+  be read counts as a FAILED removal, never as "a link, nothing to remove"
+  (H1 round 32 LOW-001). So a `pending` entry whose source key is gone
+  can only follow a Complete that reached its key deletion: the Complete's own
+  `commit` removes the marker, and when it could not, `reconcile_pending` — at
+  start-up and on every sweep tick — commits it, ONLY on a CONFIRMED-absent key
+  (`FileNotFoundError`; an inaccessible key is neither absent nor dead:
+  nothing is committed or deleted). `clean_staging` runs at every start-up and
+  sweep tick whatever the retention setting. Links and junctions are never
+  followed inside the store: refused for removal, skipped in listings and
+  staging, never committed through (round 13 PR-LOW-010). The SESSIONS store
+  follows the same rule since H3 round 35 (SEC-002): a session-id-named link
+  under `sessions\` is never swept (`link_refused`, logged by that code), its
+  key never deleted through it and Discard refused (`SessionLinkError`, key
+  kept), and it is never offered on the Recovery list. Link status is read
+  with `os.lstat` (a symlink, or a junction's mount-point reparse tag) —
+  `is_symlink` / `is_junction` report an unreadable status as "not a link" on
+  Python 3.13+ (SEC-001) — and an unreadable status refuses like a link. The
+  archive ROOT and the sessions ROOT themselves are not checked — a junction there is the same-user boundary's
+  residue (boundary 2), and relocating the data folder is the location
+  check's question (EXCLUSIONS below).
+- The generated note (`generated.enc`, D2) is the FIRST body the review
+  showed, written under the generation lease and replaced on regeneration,
+  with the provider, style and — captured at render time — the language-model
+  id and prompt version. The saved note's model ids come from
+  `saved-provenance.enc`, written first inside Save's custody action and used
+  only when its digest names the note being completed (otherwise `unknown`),
+  so a Complete never stamps today's constants on yesterday's note.
+
+THE NAME (D5). The patient's name is written in ONE place at rest: the
+entry's `label.enc`. It is resolved by the UI at the Complete click, matched
+by session id, from what the app already holds in memory — the bridge's
+verified Start display, else the name a Verified live re-verification of
+that session found (remembered for the label only, until the session ends —
+a later reconnect no longer loses it; it is never shown in Chrome), else its
+current live re-verification, else a recovered or adopted checkout's
+Verified result — never persisted at Start (`EncounterRecord`
+stays ids-only), never in the audit row, the CSV or a log; otherwise the
+label reads "Name not available", or "Desktop recording (no Cliniko note)" for
+a desktop Start.
+
+THE PAST SESSIONS TAB (`ui/past_sessions.py`, Qt-free lines in
+`ui/past_sessions_view.py`; Flow 5). Opening the tab lists the entries
+(decrypting each `label.enc` once); LEAVING it drops the opened entry's text
+and every name from every panel. An opened entry shows its generated and
+saved notes side by side, the write outcome read from the audit row, "Copy
+saved note" — the SAVED note only, through the one clipboard placement and
+its three Windows formats (Phase 3A surface 4), gated on the copy flag and no
+unresolved error — and "Show transcript"; every panel is
+`NoTextInteraction`. Hide names masks the LABEL with "Patient hidden".
+Delete now is two clicks within 10 s on the same entry, key first, recorded
+`deleted_early`; it is worded for a recording made in error only (the wrong
+patient, a test, or one recorded without consent) — the wording is the limit,
+nothing in the code tells an error from any other entry. THE 7-YEAR MINIMUM
+(practitioner decision 2026-10-02): the retention setting is "Until I delete
+them" (the default) or "7 years" — nothing shorter; a settings file holding a
+shorter window an earlier build offered (1, 7, 30 or 90 days, 1 year) loads as
+7 years (a before-validator mapping only a genuine integer of exactly those
+values, so the strict type check still refuses `true` or `1.0`), the tab
+says so until the next save writes 7 years, and any other value fails closed;
+`sweep_report` refuses a window under 7 years before any read (`too_short`,
+logged `retention_too_short`, nothing deleted, never a raise). The app does
+not know a patient's age: the warning tells the practitioner to choose
+"Until I delete them" for a patient who was a child (kept until they turn
+25). Choosing 7 years from "Until I delete them" asks, saves, then sweeps;
+an unreadable settings file deletes nothing by age, hides names and refuses
+a Hide-names change until an explicit retention choice replaces it. Every
+line carries a date, a label name and authored words only; a failure maps
+to its store's authored sentence through ONE function
+(`past_sessions_view.failure_reason`), and an error the app did not author
+reads the one fixed line — never a code, a path or exception text (C3). The
+retention sweep (start-up, then at most hourly on the 15-minute timer) uses
+the app's ONE shared store, decrypts each label's date once per process,
+does nothing under "Until I delete them", keeps undated and future-dated
+entries, and records each deletion `expired` (C7: by session id only).
+
+THE AUDIT RECORD (`audit.py`; D7, D8, D9; C2, C3).
+- Layout: `audit\key.dpapi` — one store key, description `ClinikoScribe
+  audit key` — and one row per session, `audit\YYYY-MM\<id>.enc`, AES-GCM with
+  AAD `audit:<id>` (a row renamed onto another id fails), filed under the
+  practitioner's LOCAL calendar month; rewritten read → change → atomic
+  replace. A month folder that is a link (or whose link status cannot be
+  read) is never read, written through or pruned — a Start that would write
+  into one is refused (`unavailable`) and an update counted (H3 round 35
+  SEC-003); a row file over 64 KiB is unreadable and never read whole
+  (SEC-005).
+- Content-free BY CONSTRUCTION (C3): `AuditRow` is `extra="forbid"` and every
+  string is pattern-constrained — Cliniko and clinic ids, the session id,
+  `Literal` outcome codes, refusal CODES and model TOKENS with no space. There
+  is no field for a patient name, patient id or any text. The distinctive
+  field names (`past_session`, `note_provenance`, `consent_confirmed_at`, and
+  `generated.enc`'s `generated_text`) are log-tripwire markers.
+- C2: `begin` writes the row at Start BEFORE `_retire_locked` and before
+  anything of the session exists; the real write is the check, and its
+  failure refuses Start with `AuditWriteError` (a `SessionControllerError`, so
+  the screen shows its authored text and Chrome gets the existing `failed`
+  refusal) with the previous QUEUED session still installed and nothing on
+  disk. Every failure after a successful `begin` marks the row `start_failed`.
+  Every later update — the write's durable transitions and pre-send refusal
+  codes (Task 1.4), Complete's models and outcomes, Discard, expiry,
+  `orphan_gc`, Past-sessions events — goes through `update`, which NEVER
+  raises: a failure is counted, logged as `audit_update_failed
+  detail_code=<stage>` and shown on the Past sessions tab, and the custody
+  action goes ahead.
+- Fail-closed store: a NEWER-schema row is kept byte for byte, never
+  rewritten, and pruned only with its month; an unreadable row is counted and
+  never overwritten; an unreadable, dead or missing key (with rows present)
+  refuses every write — and so every Start — until "Start a new audit record"
+  renames the WHOLE store to a never-existing `audit.unreadable-<stamp>-<8
+  hex>` and creates a fresh key (D9; nothing is deleted, no quarantine is
+  reused; a key failure after the rename leaves the store absent for the next
+  Start or reset to create).
+- 7 years: a month folder is pruned once the month's end + 7 years + one day
+  has passed, at start-up and every 24 h.
+
+THE CSV. Export writes every readable row (no event codes) as UTF-8 CSV with
+a byte-order mark (for Excel) wherever the practitioner chooses, through a save dialog. Every cell passes a
+formula guard (a leading `=`, `+`, `-`, `@`, tab or carriage return gets an
+apostrophe). It holds no name or text, but it is NOT encrypted and it carries
+the Cliniko treatment-note, booking, practitioner and user ids, which
+identify the appointment to anyone with access to that Cliniko account; the
+tab says it is not encrypted. The export's status line never names the file.
+Its temporary file is a fresh name in the chosen folder
+(`.clinic-scribe-*.tmp`), so a file of the practitioner's own called
+`<name>.tmp` is never overwritten or deleted (H3 round 35 SEC-004); the temp
+file is removed on every path unless Windows refuses that removal, when it
+stays and the tab shows its one export-failed line.
+
+EXCLUSIONS (`exclusions.py`, `scripts/register-native-host.py`; D10).
+- Windows Error Reporting: the register script writes, and reads back, the
+  per-user values `pythonw.exe`, `scribe-app.exe` and `scribe-host.exe` = 1
+  under `HKCU\Software\Microsoft\Windows\Windows Error Reporting\
+  ExcludedApplications` (what `WerAddExcludedApplication(..., FALSE)` writes);
+  `--unregister` removes only those three values. `pythonw.exe` is needed
+  because the venv launchers start the BASE `pythonw.exe` as a child.
+- At start-up, before the window is built, `startup_exclusions` (best effort,
+  never refusing start-up): marks `%LOCALAPPDATA%\ClinikoScribe` and every
+  folder beneath it not-content-indexed; checks, READ-ONLY, where the data
+  folder resolves (`realpath`) — inside `%OneDrive%` / `%OneDriveCommercial%`
+  / `%OneDriveConsumer%`, on a `\\` path or a remote drive, or inside
+  `%APPDATA%` each shows a warning, any other unusual place is logged by code
+  only; and checks the three WER values and the RUNNING program's file name.
+  The warnings show on the Status tab and the Past sessions tab and never stop
+  recording; each is logged by its code only. Every attribute, drive-type,
+  environment, path-resolution and registry call goes through an injected
+  `WindowsLayer`, and tests never reach the real one (a sentinel); the folder
+  walk itself uses `os.scandir` and the link checks directly.
+- Exception hooks: `sys.excepthook`, `threading.excepthook` and
+  `sys.unraisablehook` in BOTH processes log only `uncaught_exception
+  error_code=<type name> detail_code=main|thread|unraisable` (a thread's
+  `SystemExit` is silent, as Python's own hook is) — no message, traceback, `exc_info` or locals; the
+  main hook drops `sys.last_*` so an uncaught exception's frames are not kept
+  alive; the replaced default hooks are NOT called, so nothing prints the
+  message or traceback to the console. A handler that fails while writing any
+  log line reports only `--- Logging error (<type>) ---` on stderr, never the
+  exception being handled (`logging_setup.QuietHandlerErrors`, round 23
+  PR-MED-020). `faulthandler` is not enabled.
+
+C5: every audit and archive call runs on the GUI thread (none on the capture
+worker). C8: none of this opens a connection; the offline contract is
+unchanged.
+
+NAMED RESIDUES.
+(a) THE SAME-USER BOUNDARY NOW GUARDS LONG-LIVED STORES. A Past-sessions
+entry can live indefinitely and an audit row 7 years, each protected only by
+DPAPI current-user custody: any process of this Windows user can unwrap their
+keys while they exist (boundary 2), for as long as they exist — a far longer
+window than a session's 24 h.
+(b) NTFS UNLINK. Delete now, expiry and the audit prune are plain deletion,
+not forensic erasure (Phase 2 item 2).
+(c) "UNTIL I DELETE THEM" WITH NO BACKUP. The default keeps every entry
+indefinitely on this PC and this Windows login only. A dead disk, a lost
+profile or an administrator's reset of the Windows password (which breaks
+DPAPI) loses every entry; the entries are then listed as unreadable — kept,
+never deleted by age and never readable again (Delete now still works on
+them; the tab limits it by wording to a recording made in error, round 40
+PR-LOW-034). Passphrase-protected backup/restore is deferred.
+(d) EXPIRY ONLY WHILE THE APP RUNS, and it trusts the wall clock: an entry
+can outlive its setting while the app is closed (deleted at the next start),
+and a clock jumped forward can expire entries early (as the 24 h sweep can).
+An entry whose date this account cannot read is never deleted by age (the
+tab says so, says it is still kept, and limits Delete now to a recording
+made in error — every read-failure line carries that limit, round 40
+PR-LOW-034).
+(e) HIDE NAMES MASKS THE LABEL ONLY. A name spoken in the transcript or
+written in a note is shown as kept. An unsaved Hide-names choice (the file
+could not be written) lasts until the app closes.
+(f) THE CSV IS OUTSIDE CUSTODY — unencrypted, wherever it was saved, holding
+Cliniko ids that identify appointments (THE CSV above).
+(g) ADMIN-ONLY EXCLUSIONS ARE NOT SET. Windows Backup / Volume Shadow Copy
+and third-party backup tools may copy `%LOCALAPPDATA%` (HKLM
+`FilesNotToBackup` / `FilesNotToSnapshot` need admin rights — PLAN.md
+Phase 7's installer).
+(h) THE PAGEFILE AND HIBERNATION FILE may hold anything the process held in
+memory, including an opened entry's text and names (BitLocker is the
+mitigation, as for NTFS residue).
+(i) THE `pythonw.exe` WER BREADTH. The exclusion stops crash reports for
+EVERY pythonw program of this Windows user, not only the app's
+(practitioner-accepted). The documented console launch runs `python.exe`,
+which is NOT excluded, and the app says so at start-up ("Crash reports are
+not excluded for this launch (python.exe) — start the app with
+scribe-app.exe."). Native crashes are not Python exceptions: WER is the
+control for them, the hooks are not.
+(j) NOT-CONTENT-INDEXED IS FOLDERS ONLY. A file written before its folder was
+first marked keeps its old attribute until it is rewritten (session, log,
+profile and configuration files from before this build); links and
+junctions are skipped; it is a request other tools need not honour.
+(k) THE LOCATION CHECK IS READ-ONLY AND WARNS; it never moves data or
+refuses recording, and a folder outside `%USERPROFILE%\AppData\Local` for any
+reason other than the three named is logged, not shown.
+(l) VERIFYING ANY OF THIS FROM AN AGENT SHELL PROVES NOTHING: agent shells on
+this machine are MSIX-virtualized for `%LOCALAPPDATA%` and HKCU
+(`docs/lessons.md`); only a run from a normal terminal counts (smoke P.3).
+(m) THIRD-PARTY LOGGERS: a library logger with no handler of its own falls to
+Python's last-resort handler, which prints WARNING and above to stderr —
+outside the app's handlers and the quiet-error rule — with the TRACEBACK of a
+library's `logger.exception`; a Python `warnings` message likewise prints its
+file, line and source line. Both reach only a console launch: `scribe-app.exe`
+(pythonw) has no stderr, so nothing is printed there (H3 round 35). An inherited
+`PYTHONFAULTHANDLER` (or `-X faulthandler`) would dump file, line and
+function names (no values) on a fatal error. Apart from those, a console
+launch no longer prints the traceback or message of an UNCAUGHT exception
+(the installed hooks write only its type name) — a debugging cost, accepted
+for C3 (the log has the type name; round 37 PR-LOW-032).
+(n) CHROME'S CRASH DUMPS stay outside the app (The Chrome extension, residue
+(8)).
+(o) AUDIT ROWS A CRASH LEAVES OPEN OR INCOMPLETE. A process killed between
+Start's row and the session directory's creation leaves that row `pending` for
+ever (nothing on disk for the sweep to end). A Complete killed after its key
+deletion but before its own audit update is never recorded as completed (its
+outcome is not guessed): if its
+keyless directory is still there, the next sweep ends the row `orphan_gc`; if
+it was already removed, the deletion state stays `pending`. If the entry's
+`pending` marker was still there, the next reconciliation records `archived`;
+if the Complete had already removed the marker but not yet written its own
+audit update, the entry is listed in Past sessions while the row's
+Past-sessions state stays `none` (a later Delete now or expiry still records
+over it). The same holds for a Discard, and for the 24 h expiry, killed
+between the key deletion and the audit update: the row is never recorded as
+`discarded` / `expired` — `orphan_gc` if the keyless directory is still there,
+otherwise `pending` for ever. The sweep records its results only after its
+whole pass, so a kill during a tick can leave every session that expired in
+that tick `pending`.
+(p) AUDIT DATES. `session_date` is the practitioner's LOCAL calendar date
+(every timestamp is UTC), so the month prune waits one extra day. A system
+clock wrong AT Start dates the row by that clock (a date more than seven
+years back would be pruned at the next start-up). The month prune trusts the
+wall clock too: a clock jumped forward by seven years or more removes every
+month it has passed, at the next start-up or 24 h tick — irreversibly (a
+real seven-year gap since the last use is indistinguishable, so there is no
+guard). A pre-audit session's
+creation time before 2026-01-01 (or missing, or in the future) is untrusted
+and its row is dated by the clock of the update that creates it. A Past-sessions event on a row the audit no longer holds (pruned, or
+set aside by a D9 reset) creates a `pre_audit` row — dated by the entry's
+start for Delete now, its completion for expiry, and "now" for a reconciled
+commit.
+(q) A TOKEN IS A WORD. The token pattern admits any single word with no
+space, so what a caller puts in a token field is the caller's to keep
+content-free; the only producers are the persisted model and provider names
+and the draft write's refusal names.
+(r) THE GENERATED NOTE CAN LAG. A regeneration after Save that is then
+cancelled leaves the EARLIER generation's saved note beside the LATER
+generation's body, and both are kept as they stand (D2, round 11 LOW-002); a
+`generated.enc` write that fails and whose stale file cannot be unlinked
+leaves an earlier generation's body to be kept; an unreadable
+`generated.enc` is not kept and the entry reads "Generated note not kept".
+(s) A KEPT TRANSCRIPT IS A HEALTH RECORD. Its retention and access duties
+(state health-records law, APP 11.2 and APP 12, subpoena) are the
+practitioner's; the tab's warning says so, and `docs/practice/` carries the
+research and the practitioner's 2026-10-02 answer (7 years minimum) for the
+independent review. What the app enforces is the floor on the SETTING (no
+choice under 7 years, a legacy shorter value read as 7 years, the sweep
+refusing a shorter window). It does NOT enforce: Delete now's "made in error"
+limit (wording only — any entry can still be deleted early, recorded
+`deleted_early`); the child rule (the app does not know a patient's age — a
+"7 years" setting deletes a child's transcript at 7 years unless the
+practitioner chose "Until I delete them"); the 7 years counted from the
+entry's completion, not from the patient's last contact; and residue (d)'s
+forward clock jump.
+(t) OLDER READERS ARE UNBOUNDED. This plan's readers are size-bounded
+(`generated.enc`, `saved-provenance.enc`, audit rows, the Past-sessions
+settings file — H3 round 35 SEC-005); every reader from before this plan
+still reads its file whole — every store's `key.dpapi`, `transcript.enc` and
+`note.enc` (including a Past-sessions entry's, read through the same readers,
+and the staged copy's own verification read), `encounter.enc`, `write.enc`,
+the voice-profile and style stores and the configuration files under
+`config\` (H3 round 36) — so a same-user process could plant
+an oversized file to exhaust memory — a denial of service inside boundary 2,
+not a disclosure.
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -2524,9 +2951,9 @@ assertion's display `speaker` field, as the spoken-injection defence for
 clinician-owned sections; the ML model's own injection resistance is 3B),
 clinic 2's draft write (its template is unverified until its own test write;
 the write-time template match is the check there — THE DRAFT WRITE residue
-(j)), OneDrive/backup and crash-reporting exclusions and the durable audit
-record, including consent and write evidence that outlives a session (Phase
-6 — `write.enc` dies with its session),
+(j)), the admin-only exclusions (HKLM `FilesNotToBackup` /
+`FilesNotToSnapshot`, an installer step — Phase 7), backup/restore of
+Past sessions (deferred by the privacy-professional-controls plan),
 packaging/signing (Phase 7).
 
 ## Review triggers
@@ -2552,4 +2979,9 @@ second clinic machine (Phase 7). The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next
 trigger on that surface is a change of MODEL or of RUNTIME — a new pin, a new
 quantisation, a different inference library, or a runtime installed by any
-route other than the pinned hashed wheel.
+route other than the pinned hashed wheel. For the privacy and professional
+controls: a field added to the audit row or the Past-sessions label, a new
+file kept in an entry, a backup or restore of Past sessions (deferred), the
+practice relying on Past sessions as part of the health record, a change of
+the retention default, a second Windows user or machine reading the stores,
+or the admin-only exclusions landing with the Phase 7 installer.

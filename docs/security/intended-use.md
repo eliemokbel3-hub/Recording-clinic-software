@@ -31,9 +31,14 @@ reviews and finalises every note in Cliniko.
   saving a Cliniko editor that was already open before the write overwrites
   the app's draft — which is why the app asks the clinician to reload the
   note and see the draft before pressing Complete.
-- **Not a cloud service.** Audio and transcripts never leave the local
-  machine, and transcription and note drafting run on it. There is no cloud
-  fallback, silent or otherwise. The app's only network use is Cliniko's own
+- **Not a cloud service.** The app never sends audio or transcripts off the
+  local machine, and transcription and note drafting run on it. There is no
+  cloud fallback, silent or otherwise. What the app cannot control is other
+  software on the machine: Windows Backup, Volume Shadow Copy or a sync tool
+  may copy its (encrypted) data folder — it WARNS, never refuses, when that
+  folder resolves into OneDrive, a network drive or the roaming profile
+  (threat model, "Privacy and professional controls", residues (g) and (k);
+  data-flow flow 22). The app's only network use is Cliniko's own
   API: reads (validating a clinic's key, checking the treatment note a
   recording belongs to, and, for a write, reading that note again), and the
   one draft write, which sends the clinician's reviewed note
@@ -45,11 +50,31 @@ reviews and finalises every note in Cliniko.
   checked again on every reconnect even with no Cliniko tab open (see the
   threat model's "Cliniko API client" and the data-flow map, flow 18).
 - **Not a system of record.** Cliniko remains the permanent record. After a
-  draft is written, the clinician checks it in Chrome and presses Complete;
-  the software then destroys that recording's data, so the draft in Cliniko is
-  the only copy. Recordings not written or completed follow the retention
-  schedule (encrypted, and destroyed within the 24-hour recovery rule once
-  nothing holds them open).
+  draft is written, the clinician checks it in Chrome and presses Complete.
+  Every Complete destroys the recording's audio and the session itself; since
+  2026-10-01 (PLAN.md Phase 6, the privacy-professional-controls plan) it
+  first keeps the transcript, the saved note (unless that Complete deletes
+  it) and the note the app first showed in its most recent generation (when readable; a regeneration replaces the earlier one) — never the audio,
+  and nothing for a test-provider session — in **Past sessions**, encrypted on this PC
+  and this Windows login only, with no backup, for as long as the
+  practitioner's retention setting says — at least 7 years: "7 years" or
+  until they delete them, the default (practitioner decision 2026-10-02;
+  Delete now is for a recording made in error). Past sessions is a look-back for the practitioner, not the record:
+  a kept transcript becomes part of the practitioner's health record and can
+  be reached by an access request or a subpoena (the tab's warning;
+  `docs/practice/`), but the note the patient's care relies on is the one
+  finalised in Cliniko. A content-free audit row per session (consent,
+  Cliniko ids, models, the write's outcome and what was deleted — never a
+  name or text) is kept 7 years. Recordings not written or completed follow
+  the retention schedule (encrypted, and destroyed within the 24-hour recovery
+  rule once nothing holds them open).
+
+## In the app
+
+Since 2026-10-01 (D14) the app states its intended use in one line at the top
+of the Status tab and of the Past sessions tab: "Documentation aid, not
+clinical decision support. You review and finalise every note in Cliniko."
+(`ui/models.py` `INTENDED_USE_LINE`; change it together with this document).
 
 ## Regulatory posture
 
@@ -57,9 +82,16 @@ Designed to be operable consistently with Ahpra/National Board guidance and
 Australian privacy law, but it is **not** "Ahpra approved" and must never be
 described that way. Independent privacy, legal, clinical-safety, and TGA-scope
 review is required before any deployment beyond the developing practitioner
-(see `PLAN.md`, Assumptions and commercial path).
+(see `PLAN.md`, Assumptions and commercial path). The practice documents in
+`docs/practice/` (patient information and consent, privacy information,
+downtime procedure, clinician review guide) are drafts under the same
+condition: each carries "needs independent privacy/legal/clinical-safety
+review before use with other practitioners". The app never records consent
+in Cliniko and never ticks a Cliniko consent field; its per-recording tick
+records only that the practitioner confirmed consent, with the time, in the
+session and its audit row.
 
-## Current scope note (2026-09-29)
+## Current scope note (2026-10-01)
 
 Built: the security foundation (Chrome extension shell, native-messaging host,
 credential and session-crypto foundations), local recording and transcription,
@@ -81,10 +113,16 @@ any recording pauses on system sleep or when Windows locks the session —
 when Windows delivers those notifications and accepted the app's
 registration for them (the threat model's pause-rule residue names when it
 does not). Also built: back-to-back consultations
-with an Unreviewed list, and a pause hotkey and spoken pause.
+with an Unreviewed list, and a pause hotkey and spoken pause. And, since
+2026-10-01 (PLAN.md Phase 6): the Past sessions tab and its archive, the
+content-free audit record with its CSV export, the per-user crash-report
+exclusions, the not-indexed data folder with a start-up location check that
+warns, type-name-only crash logging, and the intended-use line.
 The app therefore handles **clinical data** — audio, transcripts and draft
-notes, encrypted at rest on this machine — **patient names** fetched from
-Cliniko for display (in memory only, on the desktop and in Chrome), and, once
+notes, encrypted at rest on this machine, and the kept transcripts and notes
+of Past sessions — **patient names** fetched from Cliniko for display (in
+memory, on the desktop and in Chrome; at rest only in each Past-sessions
+entry's encrypted label), and, once
 the practitioner adds them, **the clinics' Cliniko API keys**. Its calls to
 Cliniko are the key checks the practitioner starts on the Clinics tab, the
 checks of the treatment note a recording belongs to, and — since 2026-09-29

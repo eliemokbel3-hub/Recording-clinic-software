@@ -32,6 +32,16 @@ On-disk layout (plan Schema / Data Changes), all under
   (a missing file reads as None, anything else unreadable as a terse
   ``StoreCorruptError``, never as "no record").
   Discard's ``rmtree`` and the sweep remove it with the rest.
+- ``saved-provenance.enc`` — the saved note's model provenance (privacy-
+  professional-controls plan D8): ids and the saved note's digest, never
+  text, under the SAME key with the associated data
+  ``saved-provenance:<session id>``. Complete reads it for the audit's
+  completion facts; it dies with the session.
+- ``generated.enc`` — the FIRST note body the review showed (privacy-
+  professional-controls plan D2), with its provider, style and model ids,
+  under the SAME key with the associated data ``generated:<session id>``;
+  replaced on regeneration. Complete copies it into the Past-sessions entry;
+  it dies with the session.
 
 Durability ordering (BINDING, plan key-custody decision):
 - ``key.dpapi`` is written atomically (temp + fsync + ``os.replace``)
@@ -39,10 +49,14 @@ Durability ordering (BINDING, plan key-custody decision):
   ``audio.enc`` unless the key blob already exists beside it.
 - Complete: fsync ``transcript.enc`` → verify a decrypt round-trip →
   verify ``note.enc`` when one exists (decrypt, parse, session binding,
-  transcript-digest match) → THEN delete the key. Every failure retains
-  the key, which is what keeps regeneration possible. A completion after a
-  confirmed Cliniko write (``remove_directory=True``) then removes the
-  directory best-effort, after the key.
+  transcript-digest match) → write, verify and publish the Past-sessions
+  entry when the caller asks for one (privacy-professional-controls plan
+  C1 / D4) → THEN delete the key. Every failure up to there retains the
+  key, which is what keeps regeneration (and a retry) possible. After the
+  key: the entry's ``pending`` marker is removed and the directory removed,
+  both best-effort (Task 1.1; a failed removal leaves a keyless orphan the
+  sweep's ``orphan_gc`` removes, and a marker left behind is committed by
+  the next reconciliation).
 - Discard: delete the key FIRST, then best-effort remove the rest.
 - The 24 h expiry sweep skips sessions the caller reports as live
   (recording/paused/processing — keyed off state, not mtime), destroys
@@ -70,17 +84,18 @@ import math
 import os
 import re
 import shutil
+import stat as _stat
 import struct
 import sys
 import time
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass, field, replace
 from datetime import timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, BinaryIO, Final
+from typing import TYPE_CHECKING, BinaryIO, Final, Literal, NamedTuple, Protocol
 
 from cryptography.exceptions import InvalidTag
-from pydantic import ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from pydantic_core import PydanticSerializationError
 
 from scribe_desktop.logging_setup import log_event
@@ -97,7 +112,8 @@ KEY_FILENAME: Final = "key.dpapi"
 AUDIO_FILENAME: Final = "audio.enc"
 TRANSCRIPT_FILENAME: Final = "transcript.enc"
 # Phase 3A: the generated note artifact, under the SAME session key as audio
-# and transcript, so cryptographic deletion still destroys everything.
+# and transcript, so deleting the session key destroys every copy held in
+# THIS directory (any copy another store keeps is under that store's own key).
 NOTE_FILENAME: Final = "note.enc"
 # Cliniko workflow safeguards plan D11: the recording's consent and, when
 # linked, its Cliniko note context — written on EVERY start, after the key
@@ -107,6 +123,9 @@ ENCOUNTER_FILENAME: Final = "encounter.enc"
 # and the outcome, never note text — under the SAME key with the associated
 # data ``write:<session id>``; destroyed with the session.
 WRITE_RECORD_FILENAME: Final = "write.enc"
+# Privacy-professional-controls plan D2: the first note body the review showed,
+# under the SAME key with the associated data ``generated:<session id>``.
+GENERATED_FILENAME: Final = "generated.enc"
 
 _MAGIC: Final = b"CSS2"
 _FORMAT_VERSION: Final = 1
@@ -206,6 +225,15 @@ class NoteWriteRefusedError(SessionStoreError):
     """``write_note`` refused the artifact — an unresolved ``error`` warning,
     an unbacked clinician-authored assertion, or a digest/binding mismatch.
     Nothing was written; the on-disk state is unchanged."""
+
+
+class ArchiveWriteError(SessionStoreError):
+    """``complete_session`` could not write, verify or publish the Past-
+    sessions entry it was asked for (privacy-professional-controls plan C1):
+    raised BEFORE the key boundary, so the session key is retained and the
+    Complete can be retried. The cause is chained for diagnosis only — the
+    controller turns this into ``PastSessionWriteError``, whose text is
+    authored."""
 
 
 def default_sessions_root() -> Path:
@@ -619,9 +647,46 @@ def unwrap_key_from_file(
         raise KeyCustodyError("unwrapped key has wrong length") from exc
 
 
+# Windows' reparse tag for a directory junction (a "mount point").
+_IO_REPARSE_TAG_MOUNT_POINT: Final = 0xA0000003
+
+
+def link_state(path: Path) -> bool | None:
+    """Whether ``path`` itself is a symlink or a directory junction, from ONE
+    ``os.lstat`` (privacy-professional-controls H3 round 35 SEC-001): True or
+    False — False also when it does not exist — and None when that cannot be
+    read. ``Path.is_symlink`` / ``is_junction`` cannot serve: from Python 3.13
+    both swallow every error and answer False, so "cannot tell" would read as
+    "not a link". Every caller decides None in its own safe direction."""
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    if _stat.S_ISLNK(status.st_mode):
+        return True
+    return getattr(status, "st_reparse_tag", 0) == _IO_REPARSE_TAG_MOUNT_POINT
+
+
+class SessionLinkError(OSError):
+    """A session folder that is a link (or whose link status cannot be read)
+    was refused by ``delete_session_key``: Windows resolves a junction
+    mid-path, so ``<link>\\key.dpapi`` would be ANOTHER folder's key. An
+    ``OSError``, so every caller's existing key-deletion failure path (key
+    kept, nothing completed or discarded) handles it. Content-free."""
+
+
 def delete_session_key(session_dir: Path) -> None:
     """Delete the wrapped key blob — THE cryptographic deletion of the
-    session (same-user boundary; NTFS residual documented). Idempotent."""
+    session (same-user boundary; NTFS residual documented). Idempotent.
+
+    Never through a link (H3 round 35 SEC-002 — the class ``past_sessions``
+    closed in round 13): a ``session_dir`` that is a symlink or junction, or
+    whose link status cannot be read, raises ``SessionLinkError`` and deletes
+    nothing. Covers every caller — Complete, Discard and the sweep."""
+    if link_state(session_dir) is not False:
+        raise SessionLinkError("the session folder is a link; key kept")
     (session_dir / KEY_FILENAME).unlink(missing_ok=True)
 
 
@@ -646,15 +711,43 @@ def _resolve_session_identity(session_dir: Path) -> str:
     raise StoreCorruptError("session identity is unresolvable; key retained")
 
 
+def _note_identity(plaintext: bytes) -> str:
+    """A saved note's IDENTITY — the one definition (draft-write D5;
+    privacy-professional-controls D8): the SHA-256 hex of the decrypted
+    ``note.enc`` plaintext, the exact bytes the review saved."""
+    return hashlib.sha256(plaintext).hexdigest()
+
+
+class _CompletedNote(NamedTuple):
+    """The note a Complete read (privacy-professional-controls D4 / D8): the
+    parsed note, its identity (``_note_identity``, round 6 LOW-005) and the
+    exact plaintext bytes — what the Past-sessions entry re-encrypts, byte
+    for byte, so the identity holds there too (D1)."""
+
+    note: GeneratedNote
+    identity: str
+    plaintext: bytes
+
+
 def _verified_note(
     session_dir: Path, crypto: SessionCrypto, note_blob: bytes, transcript_plain: bytes
 ) -> GeneratedNote:
+    """``read_note``'s view of the single verification core
+    (``_verified_note_with_identity``, which it runs): the parsed note
+    only."""
+    return _verified_note_with_identity(session_dir, crypto, note_blob, transcript_plain).note
+
+
+def _verified_note_with_identity(
+    session_dir: Path, crypto: SessionCrypto, note_blob: bytes, transcript_plain: bytes
+) -> _CompletedNote:
     """THE single note-verification core (Tasks 1.5 / 6.2): decrypt ->
     parse -> session binding -> transcript-digest match, using the single
     Task-1.1 digest definition. ``read_note`` and the Complete ordering both
     verify through this exact code path, so the two can never disagree about
     what a valid note is. Every failure is typed and the caller's custody is
-    untouched (the "key retained" wording states that custody fact)."""
+    untouched (the "key retained" wording states that custody fact). Also
+    returns the note's identity, from the plaintext already in hand."""
     try:
         plain = crypto.decrypt(note_blob)
     except InvalidTag as exc:
@@ -672,28 +765,485 @@ def _verified_note(
         raise StoreCorruptError("note is bound to another session; key retained")
     if note.transcript_digest != digest_bytes(transcript_plain):
         raise StoreCorruptError("note does not describe this transcript; key retained")
-    return note
+    return _CompletedNote(note, _note_identity(plain), plain)
 
 
 def _verify_note_for_completion(
     session_dir: Path, crypto: SessionCrypto, transcript_plain: bytes
-) -> None:
+) -> _CompletedNote | None:
     """Verify `note.enc` before custody deletion, FAIL-CLOSED and symmetric
     with the transcript: fsync -> decrypt -> parse -> session binding ->
-    transcript-digest match (the shared ``_verified_note`` core). Any failure
+    transcript-digest match (the shared ``_verified_note_with_identity``
+    core). Any failure
     raises, so the caller never reaches `delete_session_key` and regeneration
     stays possible. A missing note is the normal pre-Phase-3A case and
-    verifies vacuously."""
+    verifies vacuously (None). The verified note and its identity are
+    returned (privacy-professional-controls plan D4), so the completion facts
+    need no second decrypt."""
     note_path = session_dir / NOTE_FILENAME
     try:
         with note_path.open("r+b") as stream:
             os.fsync(stream.fileno())
             blob = stream.read()
     except FileNotFoundError:
-        return
+        return None
     except OSError as exc:
         raise StoreWriteError(f"note not durably readable; key retained: {exc}") from exc
-    _verified_note(session_dir, crypto, blob, transcript_plain)
+    return _verified_note_with_identity(session_dir, crypto, blob, transcript_plain)
+
+
+# --------------------------------------------------------------------------
+# The saved note's model provenance and the completion facts (privacy-
+# professional-controls plan D4 / D8) — content-free, for the audit record.
+# --------------------------------------------------------------------------
+
+# D8: the saved note's language-model id and prompt version, captured at SAVE
+# under the session key (AAD ``saved-provenance:<id>``) with the SHA-256 of the
+# saved note's canonical bytes. Task 2.1 writes it inside Save's custody
+# action; Complete only reads it, and uses the ids ONLY when the digest names
+# the ``note.enc`` being completed. Never archived; dies with the session.
+SAVED_PROVENANCE_FILENAME: Final = "saved-provenance.enc"
+# Its bound (H3 round 35 SEC-005): a digest and four short ids.
+MAX_SAVED_PROVENANCE_FILE_BYTES: Final = 64 * 1024
+
+# What an audit row may hold for a model or provider name: one token — no
+# space, so no sentence can pass — else ``FACT_UNRECOGNISED``. ``FACT_NONE``:
+# the step did not run (no note, no voice profile, no prose stage);
+# ``FACT_UNKNOWN``: it may have run but nothing trustworthy says how.
+FACT_TOKEN_PATTERN: Final = r"^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,127}$"
+_FACT_TOKEN_RE: Final = re.compile(FACT_TOKEN_PATTERN)
+FACT_NONE: Final = "none"
+FACT_UNKNOWN: Final = "unknown"
+FACT_UNRECOGNISED: Final = "unrecognised"
+
+
+class SavedProvenance(BaseModel):
+    """``saved-provenance.enc``'s document (D8): ids and a digest, never
+    note text."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    note_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    provider_name: str = Field(min_length=1, max_length=64)
+    style: str = Field(min_length=1, max_length=32)
+    language_model_id: str | None = None
+    prompt_version: str | None = None
+
+    def to_bytes(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
+
+
+def _saved_provenance_aad(session_id: str) -> bytes:
+    """Distinct from every other artifact's, and bound to the session."""
+    return b"saved-provenance:" + validate_session_id(session_id).encode("ascii")
+
+
+def write_saved_provenance(
+    session_dir: Path, crypto: SessionCrypto, session_id: str, provenance: SavedProvenance
+) -> Path:
+    """Encrypt and write ``saved-provenance.enc`` ATOMICALLY (D8). The bytes'
+    custody only: wiring it into Save is Task 2.1's."""
+    path = session_dir / SAVED_PROVENANCE_FILENAME
+    atomic_write_bytes(
+        path,
+        crypto.encrypt(provenance.to_bytes(), _saved_provenance_aad(session_id)),
+        error_label="saved-note provenance",
+    )
+    return path
+
+
+def read_saved_provenance(
+    session_dir: Path, crypto: SessionCrypto, session_id: str
+) -> SavedProvenance | None:
+    """``saved-provenance.enc`` decoded: None when there is no such file;
+    ``StoreCorruptError`` (terse — pydantic's detail would echo the document)
+    when it exists but cannot be read, authenticated or parsed."""
+    try:
+        blob: bytes | None = read_capped(
+            session_dir / SAVED_PROVENANCE_FILENAME, MAX_SAVED_PROVENANCE_FILE_BYTES
+        )
+    except FileNotFoundError:
+        return None
+    except (OSError, StoreCorruptError):
+        blob = None
+    plaintext = _authentic(
+        blob, crypto, _saved_provenance_aad(session_id), "saved-note provenance unreadable"
+    )
+    try:
+        return SavedProvenance.model_validate_json(plaintext)
+    except ValidationError:
+        pass
+    raise StoreCorruptError("saved-note provenance unreadable")  # no chained detail
+
+
+def write_saved_note(
+    session_dir: Path,
+    crypto: SessionCrypto,
+    note: GeneratedNote,
+    config: NoteConfig,
+    *,
+    language_model_id: str | None,
+    prompt_version: str | None,
+) -> Path:
+    """Save's two writes, in D8's order (privacy-professional-controls plan
+    Task 2.1, round 4 PR-MED-001): ``saved-provenance.enc`` FIRST, naming
+    the SHA-256 of the exact canonical bytes ``write_note`` will store, THEN
+    ``note.enc`` — whose replacement stays the Save's one commit boundary.
+
+    A provenance failure raises before ``note.enc`` is touched (nothing is
+    committed); a ``write_note`` failure after it leaves a provenance whose
+    digest names no ``note.enc`` on disk, which Complete reads as
+    ``unknown`` — harmless. ``language_model_id`` / ``prompt_version`` are
+    the caller's (None: no prose stage ran for this note); this module
+    never imports the language model."""
+    canonical = _canonical_note(note)
+    if canonical.session_id != _resolve_session_identity(session_dir):
+        raise NoteWriteRefusedError("the note is bound to another session")
+    write_saved_provenance(
+        session_dir,
+        crypto,
+        canonical.session_id,
+        SavedProvenance(
+            note_digest=_note_identity(canonical.to_bytes()),
+            provider_name=canonical.provider_name,
+            style=canonical.style,
+            language_model_id=language_model_id,
+            prompt_version=prompt_version,
+        ),
+    )
+    return write_note(session_dir, crypto, note, config)
+
+
+# --------------------------------------------------------------------------
+# The first note body the review showed (privacy-professional-controls D2).
+# --------------------------------------------------------------------------
+
+# Bounds (the declared size is never an allocation bound — a file is capped
+# before it is read): a rendered note body is a few kilobytes.
+MAX_GENERATED_TEXT_CHARS: Final = 1_000_000
+MAX_GENERATED_FILE_BYTES: Final = 8 * 1024 * 1024
+
+
+class GeneratedRecord(BaseModel):
+    """``generated.enc``'s document (D2): the first ``format_note_body``
+    output the review showed, before any review action — or, when the first
+    prose rendering landed before any edit, that prose — with what produced
+    it, captured at render time (``language_model_id`` / ``prompt_version``
+    None when no prose stage ran). ``generated_text`` is clinical text: the
+    name is distinctive, a tripwire signature in ``logging_setup``."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    session_id: str = Field(pattern=SESSION_ID_PATTERN)
+    created_at: AwareDatetime
+    provider_name: str = Field(min_length=1, max_length=64)
+    style: str = Field(min_length=1, max_length=32)
+    language_model_id: str | None = Field(default=None, max_length=256)
+    prompt_version: str | None = Field(default=None, max_length=64)
+    generated_text: str = Field(max_length=MAX_GENERATED_TEXT_CHARS)
+
+    def to_bytes(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
+
+
+class _KeptGenerated(NamedTuple):
+    record: GeneratedRecord
+    plaintext: bytes
+
+
+def generated_aad(session_id: str) -> bytes:
+    """Distinct from every other artifact's, and bound to the session. Public
+    for the Past-sessions entry, which re-encrypts the exact plaintext under
+    its own key with this same associated data (D1)."""
+    return b"generated:" + validate_session_id(session_id).encode("ascii")
+
+
+def write_generated(session_dir: Path, crypto: SessionCrypto, record: GeneratedRecord) -> Path:
+    """Encrypt and write ``generated.enc`` ATOMICALLY, replacing any earlier
+    one (a regeneration's first body replaces the previous generation's).
+    Refused (``NoteWriteRefusedError``, nothing written) when the record
+    names another session than the directory is."""
+    if record.session_id != _resolve_session_identity(session_dir):
+        raise NoteWriteRefusedError("the generated note is bound to another session")
+    path = session_dir / GENERATED_FILENAME
+    atomic_write_bytes(
+        path,
+        crypto.encrypt(record.to_bytes(), generated_aad(record.session_id)),
+        error_label="generated note",
+    )
+    return path
+
+
+def read_capped(path: Path, cap: int) -> bytes:
+    """``path``'s bytes, refusing (``StoreCorruptError``) a file larger than
+    ``cap`` before reading it. ``FileNotFoundError`` passes through. The one
+    bounded read for the privacy-professional-controls stores (H3 round 35
+    SEC-005: `generated.enc`, `saved-provenance.enc`, the audit rows)."""
+    with path.open("rb") as stream:
+        blob = stream.read(cap + 1)
+    if len(blob) > cap:
+        raise StoreCorruptError("artifact exceeds its size bound")
+    return blob
+
+
+def _read_generated(
+    session_dir: Path, crypto: SessionCrypto, session_id: str
+) -> _KeptGenerated | None:
+    """``generated.enc`` decoded with its exact plaintext: None when there is
+    none; ``StoreCorruptError`` (terse) when it cannot be read, is over its
+    bound, fails authentication, does not parse or names another session."""
+    label = "generated note unreadable"
+    try:
+        blob: bytes | None = read_capped(
+            session_dir / GENERATED_FILENAME, MAX_GENERATED_FILE_BYTES
+        )
+    except FileNotFoundError:
+        return None
+    except (OSError, StoreCorruptError):
+        blob = None
+    plaintext = _authentic(blob, crypto, generated_aad(session_id), label)
+    try:
+        record = GeneratedRecord.model_validate_json(plaintext)
+    except ValidationError:
+        record = None
+    if record is None or record.session_id != session_id:
+        raise StoreCorruptError(label)  # outside the handler: no chained detail
+    return _KeptGenerated(record, plaintext)
+
+
+def read_generated(
+    session_dir: Path, crypto: SessionCrypto, session_id: str
+) -> GeneratedRecord | None:
+    """``generated.enc`` decoded: None when there is no such file (a session
+    completed before D2, or one never generated for); ``StoreCorruptError``
+    (terse — pydantic's detail would echo the note) when it exists but cannot
+    be read."""
+    kept = _read_generated(session_dir, crypto, session_id)
+    return kept.record if kept is not None else None
+
+
+def is_mock_identity(name: str) -> bool:
+    """THE one mock rule (privacy-professional-controls D6): a model or
+    provider name of the test backends — ``MockSpeechProvider`` (the
+    transcript's ``model_name``), a ``mock-<behaviour>`` note provider — is
+    one starting ``mock``, case-insensitively. A mock session keeps no Past-
+    sessions entry. Named residue: a real model someone named ``mock…``
+    would be treated as mock (the safe direction: nothing kept)."""
+    return name.casefold().startswith("mock")
+
+
+def fact_token(value: object) -> str:
+    """``value`` as an audit fact: ``FACT_NONE`` for None, the text when it
+    is one token (``FACT_TOKEN_PATTERN``), else ``FACT_UNRECOGNISED`` — so a
+    name that is not a plain identifier never reaches the audit."""
+    if value is None:
+        return FACT_NONE
+    text = str(value)
+    return text if _FACT_TOKEN_RE.fullmatch(text) else FACT_UNRECOGNISED
+
+
+@dataclass(frozen=True)
+class CompletionFacts:
+    """What ``complete_session`` reports for the audit record (D4, D8):
+    model and provider TOKENS (``fact_token``) and outcome codes only —
+    never text. Every field is decided from what the session itself
+    persisted, never from the constants in force at Complete:
+
+    - the transcription and speaker models from the ``TranscriptDocument``;
+    - the note's provider, schema version, template profile and style from
+      the completed note (on a delete-note path, the note read for its
+      provenance only — ``note_provenance`` ``unknown`` when it could not
+      be read);
+    - the saved note's language model and prompt version from
+      ``saved-provenance.enc`` ONLY when its digest names that note, else
+      ``unknown``;
+    - the generated note's (``generated_*``) from ``generated.enc`` (D2),
+      ``unknown`` when there is none or it cannot be read (a session
+      generated before D2 is indistinguishable from one never generated);
+    - ``past_session``: ``archived`` when the Past-sessions entry was
+      published, ``not_kept_mock`` for a mock session, else ``none`` (no
+      archive was asked for); ``commit_deferred`` when the entry was
+      published but its ``pending`` marker could not be removed after the
+      key — the entry appears after the next reconciliation (Flow 3 step 4).
+      A status-line fact only, never an audit field: the row's
+      ``past_session`` is ``archived`` either way, and the deferral is a
+      transient no row update would follow."""
+
+    transcription_model: str = FACT_UNKNOWN
+    speaker_model: str = FACT_UNKNOWN
+    note_provider: str = FACT_NONE
+    note_schema_version: str = FACT_NONE
+    template_profile: str = FACT_NONE
+    note_style: str = FACT_NONE
+    language_model_id: str = FACT_NONE
+    prompt_version: str = FACT_NONE
+    generated_provider: str = FACT_UNKNOWN
+    generated_style: str = FACT_UNKNOWN
+    generated_language_model_id: str = FACT_UNKNOWN
+    generated_prompt_version: str = FACT_UNKNOWN
+    note_provenance: Literal["known", "unknown"] | None = None
+    past_session: Literal["none", "archived", "not_kept_mock"] = "none"
+    commit_deferred: bool = False
+
+
+class _UnreadableNote:
+    """A ``note.enc`` present but not readable (the delete-note paths)."""
+
+
+_UNREADABLE_NOTE: Final = _UnreadableNote()
+
+
+def _note_for_provenance(
+    session_dir: Path, crypto: SessionCrypto
+) -> _CompletedNote | _UnreadableNote | None:
+    """The delete-note paths' note, read best-effort for its provenance only
+    (never verified — it is not being completed, and it is never archived):
+    None when there is none, ``_UNREADABLE_NOTE`` when it cannot be read,
+    decrypted or parsed (the delete-unreadable-note escape stays open). Read
+    on EVERY attempt, since nothing unlinks it early any more (D6, round 3
+    PR-MED-002). Never raises."""
+    from scribe_desktop.note import GeneratedNote
+
+    try:
+        blob = (session_dir / NOTE_FILENAME).read_bytes()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return _UNREADABLE_NOTE
+    try:
+        plain = crypto.decrypt(blob)
+        return _CompletedNote(GeneratedNote.from_bytes(plain), _note_identity(plain), plain)
+    except Exception:  # noqa: BLE001 - any failure is "unreadable", never a raise
+        return _UNREADABLE_NOTE
+
+
+def _transcript_model_name(transcript_plain: bytes) -> tuple[str | None, str | None]:
+    """The transcript document's ``(model_name, speaker_model_id)``, or
+    ``(None, None)`` when the plaintext is not a document. Never raises."""
+    from scribe_desktop.transcription import TranscriptDocument
+
+    try:
+        document = TranscriptDocument.from_bytes(transcript_plain)
+    except Exception:  # noqa: BLE001 - a fact, never a Complete failure
+        return None, None
+    return document.model_name, document.speaker_model_id
+
+
+def _is_mock_session(
+    transcript_model: str | None,
+    generated: _KeptGenerated | None,
+    completed: _CompletedNote | _UnreadableNote | None,
+) -> bool:
+    """D6: mock when ANY discriminator says so — the transcript's model, the
+    generated note's provider, or the saved (or, on a delete-note path, the
+    provenance-read) note's provider. An unreadable note decides nothing."""
+    names = [transcript_model]
+    if generated is not None:
+        names.append(generated.record.provider_name)
+    if isinstance(completed, _CompletedNote):
+        names.append(completed.note.provider_name)
+    return any(name is not None and is_mock_identity(name) for name in names)
+
+
+def _completion_facts(
+    session_dir: Path,
+    crypto: SessionCrypto,
+    transcript_models: tuple[str | None, str | None],
+    completed: _CompletedNote | _UnreadableNote | None,
+    generated: _KeptGenerated | None = None,
+) -> CompletionFacts:
+    """Builds ``CompletionFacts`` while the key is still in hand, from the
+    transcript's ``_transcript_model_name`` (parsed once by the caller, H2
+    round 34 SIMP-001). BEST-EFFORT by construction: every read is inside its
+    own guard and a failure yields ``FACT_UNKNOWN`` — the audit never decides
+    whether a Complete happens (Critical Constraint C2)."""
+    transcription_model = speaker_model = FACT_UNKNOWN
+    model_name, speaker_model_id = transcript_models
+    if model_name is not None:
+        transcription_model = fact_token(model_name)
+        speaker_model = fact_token(speaker_model_id)
+    base = CompletionFacts(transcription_model=transcription_model, speaker_model=speaker_model)
+    if generated is not None:
+        record = generated.record
+        base = replace(
+            base,
+            generated_provider=fact_token(record.provider_name),
+            generated_style=fact_token(record.style),
+            generated_language_model_id=fact_token(record.language_model_id),
+            generated_prompt_version=fact_token(record.prompt_version),
+        )
+    if completed is None:
+        return base
+    if isinstance(completed, _UnreadableNote):
+        return replace(
+            base,
+            note_provider=FACT_UNKNOWN,
+            note_schema_version=FACT_UNKNOWN,
+            template_profile=FACT_UNKNOWN,
+            note_style=FACT_UNKNOWN,
+            language_model_id=FACT_UNKNOWN,
+            prompt_version=FACT_UNKNOWN,
+            note_provenance="unknown",
+        )
+    note = completed.note
+    language_model_id = prompt_version = FACT_UNKNOWN
+    try:
+        provenance = read_saved_provenance(
+            session_dir, crypto, _resolve_session_identity(session_dir)
+        )
+        # The note's IDENTITY (the plaintext's SHA-256 — round 6 LOW-005),
+        # never a re-serialisation of the parsed note.
+        if provenance is not None and provenance.note_digest == completed.identity:
+            language_model_id = fact_token(provenance.language_model_id)
+            prompt_version = fact_token(provenance.prompt_version)
+    except Exception:  # noqa: BLE001 - unreadable provenance is "unknown"
+        pass
+    return replace(
+        base,
+        note_provider=fact_token(note.provider_name),
+        note_schema_version=fact_token(note.schema_version),
+        template_profile=fact_token(note.template_profile_id),
+        note_style=fact_token(note.style),
+        language_model_id=language_model_id,
+        prompt_version=prompt_version,
+        note_provenance="known",
+    )
+
+
+@dataclass(frozen=True)
+class ArchiveSource:
+    """What a Complete hands the Past-sessions writer (privacy-professional-
+    controls D1 / D6): the SOURCE-DERIVED set, as verified plaintext bytes —
+    the transcript always, the saved note when this path completes it (never
+    on a delete-note path), the generated note when ``generated.enc`` read
+    back authentic. Never audio. ``created_at`` is the session's trusted
+    creation time (epoch seconds) or None. repr-hidden: clinical text."""
+
+    session_id: str
+    created_at: float | None
+    transcript_plain: bytes = field(repr=False)
+    note_plain: bytes | None = field(repr=False)
+    generated_plain: bytes | None = field(repr=False)
+
+
+class ArchiveKeeper(Protocol):
+    """The Past-sessions writer ``complete_session`` is given (D4), so this
+    module imports neither ``past_sessions`` nor any UI code.
+
+    ``write`` stages, FULLY verifies and publishes the entry carrying its
+    ``pending`` marker — any failure raises, BEFORE the key boundary.
+    ``commit`` removes the marker after the source key is gone and NEVER
+    raises: False leaves the entry for the next reconciliation.
+    ``drop_unfinished`` (H1 round 32 LOW-002) is a Complete that keeps
+    nothing (a mock session): any entry an earlier attempt published for the
+    id is removed key-first BEFORE the key boundary, as every non-Complete
+    destroyer does (C1) — False means it could not be, and the key stays."""
+
+    def write(self, source: ArchiveSource) -> None: ...
+
+    def commit(self, session_id: str) -> bool: ...
+
+    def drop_unfinished(self, session_id: str) -> bool: ...
 
 
 def complete_session(
@@ -701,11 +1251,12 @@ def complete_session(
     crypto: SessionCrypto,
     *,
     delete_note: bool = False,
-    remove_directory: bool = False,
-) -> None:
+    keep: ArchiveKeeper | None = None,
+) -> CompletionFacts:
     """Complete ordering (binding): fsync `transcript.enc` -> verify a
-    decrypt round-trip -> verify `note.enc` when one exists -> THEN delete
-    the key. Any failure keeps the key.
+    decrypt round-trip -> verify `note.enc` when one exists -> the Past-
+    sessions entry when ``keep`` is given -> THEN delete the key. Any failure
+    up to there keeps the key.
 
     The note joins the ordering and fails closed exactly like the
     transcript. Retaining custody on a bad note is the POINT: the key is
@@ -714,22 +1265,35 @@ def complete_session(
     the only route to a correct note.
 
     `delete_note=True` is the clinician's explicit, confirmed
-    "complete without a note" exit — never a silent deletion. The note is
-    unlinked FIRST, and a failed unlink aborts with the key retained rather
-    than completing over a note that is still on disk.
+    "complete without a note" exit — never a silent deletion. Since the
+    privacy-professional-controls plan (D6, round 3 PR-MED-002) the note is
+    NOT unlinked early: it is excluded from verification and from the
+    archive, read best-effort for its provenance only (an unreadable note
+    never blocks), and stays on disk until the key and then the directory
+    go — unreadable from the moment the key is deleted.
 
-    `remove_directory=True` (cliniko-draft-write D6, a completion after a
-    confirmed Cliniko write) then removes the session directory, AFTER the
-    key and the in-memory key are gone, best-effort as Discard does: a
-    removal that fails leaves a keyless directory, which the recovery list
-    skips and the sweep removes as an orphan. It never runs on a failure
-    above, so the key is never lost with the directory still needed.
+    The Past-sessions entry (C1 / D4): unless the session is mock (D6 — any
+    of the transcript's model, the generated note's provider or the note's
+    provider), ``keep.write`` publishes the SOURCE-DERIVED set BEFORE the
+    key is deleted; a failure raises ``ArchiveWriteError`` with the key
+    retained, so the Complete can be retried (a retry replaces the pending
+    entry key-first) or the session discarded (which removes it). A mock
+    session writes nothing (``not_kept_mock``) and removes, key-first and
+    before the key, any entry an earlier attempt published for the id.
+
+    ``delete_session_key`` is THE IRREVERSIBLE BOUNDARY. Once it has
+    returned nothing below raises: the in-memory key is destroyed, the
+    entry's marker removed best-effort (``commit_deferred`` when it could not
+    be — the next reconciliation commits it) and the session directory
+    removed best-effort, as Discard does: a removal that fails leaves a
+    keyless directory, which the recovery list skips and the sweep removes
+    as an orphan (``orphan_gc``, whose confirmed-absent key commits any
+    entry).
+
+    Returns the content-free ``CompletionFacts`` (privacy-professional-
+    controls plan D4), gathered best-effort while the key is still in hand:
+    a fact that cannot be read is ``unknown``, never a failure.
     """
-    if delete_note:
-        try:
-            (session_dir / NOTE_FILENAME).unlink(missing_ok=True)
-        except OSError as exc:
-            raise StoreWriteError(f"note not removable; key retained: {exc}") from exc
     transcript_path = session_dir / TRANSCRIPT_FILENAME
     try:
         with transcript_path.open("r+b") as stream:
@@ -741,14 +1305,73 @@ def complete_session(
         transcript_plain = crypto.decrypt(blob)
     except InvalidTag as exc:
         raise StoreCorruptError("transcript failed decrypt verification; key retained") from exc
-    _verify_note_for_completion(session_dir, crypto, transcript_plain)
-    delete_session_key(session_dir)
+    completed_note: _CompletedNote | _UnreadableNote | None
+    archived_note: bytes | None = None
+    if delete_note:
+        completed_note = _note_for_provenance(session_dir, crypto)
+    else:
+        completed_note = _verify_note_for_completion(session_dir, crypto, transcript_plain)
+        archived_note = completed_note.plaintext if completed_note is not None else None
+    session_id: str | None
+    try:
+        session_id = _resolve_session_identity(session_dir)
+    except StoreCorruptError:
+        session_id = None  # nothing bound to an identity can be read or kept
+    generated: _KeptGenerated | None = None
+    if session_id is not None:
+        try:
+            generated = _read_generated(session_dir, crypto, session_id)
+        except Exception:  # noqa: BLE001 - unreadable: not kept, its facts unknown
+            generated = None
+    transcript_models = _transcript_model_name(transcript_plain)
+    facts = _completion_facts(session_dir, crypto, transcript_models, completed_note, generated)
+    past_session: Literal["none", "archived", "not_kept_mock"] = "none"
+    if keep is not None:
+        if _is_mock_session(transcript_models[0], generated, completed_note):
+            past_session = "not_kept_mock"
+            # H1 round 32 LOW-002: an earlier, non-mock attempt may have
+            # published a pending entry for this id (its key deletion then
+            # failed). Keeping nothing means removing it BEFORE the key goes —
+            # reconciliation would otherwise commit it as a finished entry.
+            # Keyed by the DIRECTORY, like every other destroyer.
+            if not keep.drop_unfinished(session_dir.name):
+                raise ArchiveWriteError("an unfinished Past-sessions entry remains; key retained")
+        else:
+            if session_id is None:
+                raise ArchiveWriteError("the session identity is unresolvable; key retained")
+            if session_id != session_dir.name:
+                # C1 keys every entry by id, and every other destroyer
+                # (Discard, the recovery list, the sweep) and the
+                # reconciliation name the source by its DIRECTORY: an entry
+                # under a header id the directory does not carry could
+                # outlive a Discard and then be committed (round 11 LOW-001).
+                raise ArchiveWriteError("the session identity is not its directory; key retained")
+            created = audit_created_at(session_dir)
+            source = ArchiveSource(
+                session_id=session_id,
+                created_at=created if created is not None and math.isfinite(created) else None,
+                transcript_plain=transcript_plain,
+                note_plain=archived_note,
+                generated_plain=generated.plaintext if generated is not None else None,
+            )
+            try:
+                keep.write(source)
+            except Exception as exc:  # noqa: BLE001 - any archive failure keeps the key
+                raise ArchiveWriteError("Past-sessions entry not written; key retained") from exc
+            past_session = "archived"
+    delete_session_key(session_dir)  # THE BOUNDARY: nothing below raises
     # PR-HIGH-001 (downgraded MED): after successful custody deletion no
     # application-owned object may decrypt the session — destroy the
     # in-memory key too, not just the wrapped blob.
     crypto.destroy()
-    if remove_directory:
-        shutil.rmtree(session_dir, ignore_errors=True)
+    commit_deferred = False
+    if past_session == "archived" and keep is not None and session_id is not None:
+        try:
+            commit_deferred = not keep.commit(session_id)
+        except Exception:  # noqa: BLE001 - after the boundary: deferred, never raised
+            commit_deferred = True
+    shutil.rmtree(session_dir, ignore_errors=True)
+    return replace(facts, past_session=past_session, commit_deferred=commit_deferred)
 
 
 def discard_session(session_dir: Path, crypto: SessionCrypto | None = None) -> None:
@@ -986,7 +1609,7 @@ def saved_note_identity(session_dir: Path, crypto: SessionCrypto) -> str:
     plaintext = _authentic(
         _read_or_none(session_dir / NOTE_FILENAME), crypto, None, "saved note unavailable"
     )
-    return hashlib.sha256(plaintext).hexdigest()
+    return _note_identity(plaintext)
 
 
 def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:
@@ -1020,7 +1643,13 @@ def read_note(session_dir: Path, crypto: SessionCrypto) -> GeneratedNote:
 @dataclass(frozen=True)
 class SweepResult:
     session_id: str
-    action: str  # kept | skipped_active | expired | orphan_gc | error
+    action: str  # kept | skipped_active | expired | orphan_gc | error | link_refused
+    # Privacy-professional-controls plan D8 (round 1 PR-MED-004): for an
+    # ``expired`` or ``orphan_gc`` session, its ``session_created_at`` read
+    # BEFORE anything was deleted (epoch seconds; ``-inf`` when every stamp
+    # was untrusted), so an audit row the sweep has to create keeps the
+    # session's true date. None for every other action. Content-free.
+    created_at: float | None = None
 
 
 def earliest_trusted_timestamp(candidates: Iterable[float], now: float) -> float | None:
@@ -1051,21 +1680,30 @@ def earliest_trusted_timestamp(candidates: Iterable[float], now: float) -> float
     return min(trusted) if trusted else None
 
 
-def _session_created_at(session_dir: Path, now: float) -> float:
+def session_created_at(session_dir: Path, now: float) -> float:
     """Best available creation time, FAIL-SAFE for the 24 h cap (PR-MED-004):
     a malformed header timestamp (NaN/inf) or one claiming the future must
     not extend retention, so collect header created-at + key-blob mtime,
     filter through `earliest_trusted_timestamp`, which also applies the
     clock-skew tolerance, and take the EARLIEST survivor.
     Falls back to the directory mtime, then to `now` (expires on the next
-    window rather than never)."""
+    window rather than never).
+
+    Public since the privacy-professional-controls plan (D8): a ``pre_audit``
+    audit row — a session started before the audit record existed — is dated
+    by this, read BEFORE the directory is removed (the Complete and Discard
+    callers read it themselves; the sweep carries it on ``SweepResult``). It
+    reads the plaintext audio header and file times only, never a key.
+    ``-inf`` (every stamp untrusted) is the audit's cue to use its own
+    clock."""
     candidates: list[float] = []
-    audio_path = session_dir / AUDIO_FILENAME
-    if audio_path.exists():
-        try:
-            candidates.append(read_store_header(audio_path).created_at)
-        except (SessionStoreError, OSError):
-            pass  # fall through to file times
+    # No ``exists()`` pre-check (round 6 LOW-002): on Python 3.12 it re-raises
+    # a non-ENOENT OSError. A missing header is FileNotFoundError here, so
+    # this read raises no OSError at all.
+    try:
+        candidates.append(read_store_header(session_dir / AUDIO_FILENAME).created_at)
+    except (SessionStoreError, OSError):
+        pass  # fall through to file times
     for stat_target in (session_dir / KEY_FILENAME, session_dir):
         try:
             candidates.append(stat_target.stat().st_mtime)
@@ -1086,14 +1724,38 @@ def _session_created_at(session_dir: Path, now: float) -> float:
     return now
 
 
+def audit_created_at(session_dir: Path, now: float | None = None) -> float | None:
+    """``session_created_at`` for the audit record (privacy-professional-
+    controls D8): a pre-audit session's creation time, read BEFORE its
+    directory goes (``now`` defaults to the wall clock). NEVER raises — None
+    lets the audit use its own clock, so dating a row can never block the
+    Complete, Discard or write it describes (C2). The one copy every caller
+    uses (round 7 LOW-014)."""
+    try:
+        return session_created_at(session_dir, time.time() if now is None else now)
+    except Exception:  # noqa: BLE001 - a date, never a reason anything changes
+        return None
+
+
 def session_expires_at(
     session_dir: Path, now: float, *, max_age: timedelta = RECOVERY_WINDOW
 ) -> float:
     """When the sweep will first treat ``session_dir`` as expired (POSIX
-    seconds): THE sweep's own creation time (``_session_created_at``) plus
+    seconds): THE sweep's own creation time (``session_created_at``) plus
     the window, so the Unreviewed expiry warning (Cliniko workflow
     safeguards plan D6) can never promise longer than the sweep allows."""
-    return _session_created_at(session_dir, now) + max_age.total_seconds()
+    return session_created_at(session_dir, now) + max_age.total_seconds()
+
+
+def _before_destroy(callback: Callable[[str], bool] | None, session_id: str) -> bool:
+    """``sweep_sessions``' C1 hook: True when there is none or it succeeded;
+    a raise counts as a failure (the session is kept this tick)."""
+    if callback is None:
+        return True
+    try:
+        return bool(callback(session_id))
+    except Exception:  # noqa: BLE001 - fail toward keeping the key
+        return False
 
 
 def sweep_sessions(
@@ -1103,6 +1765,7 @@ def sweep_sessions(
     now: float | None = None,
     max_age: timedelta = RECOVERY_WINDOW,
     logger: logging.Logger | None = None,
+    before_destroy: Callable[[str], bool] | None = None,
 ) -> list[SweepResult]:
     """Startup/periodic sweep of the sessions root.
 
@@ -1114,6 +1777,16 @@ def sweep_sessions(
       cryptographically dead.
     - Only well-formed session-id directory names are handled; anything
       else is left alone (never delete what we did not create).
+
+    ``before_destroy(session_id)`` (privacy-professional-controls C1) runs
+    BEFORE an ``expired`` key deletion and BEFORE a DEAD key's (an existing
+    zero-length or truncated blob) ``orphan_gc`` deletion — the caller
+    removes any Past-sessions entry an interrupted Complete published for
+    that id, key first. False (or a raise) means it could not: the session
+    is left alone this tick (``error``), key and all, so no discarded
+    content can later be committed. It is NOT called for a CONFIRMED-absent
+    key: that orphan follows a Complete that reached its key deletion, and
+    its entry is committed, never deleted.
     """
     current = time.time() if now is None else now
     results: list[SweepResult] = []
@@ -1126,8 +1799,19 @@ def sweep_sessions(
         if session_id in active_session_ids:
             results.append(SweepResult(session_id, "skipped_active"))
             continue
+        linked = link_state(child)
+        if linked is not False:
+            # H3 round 35 SEC-002: a linked folder is never followed — its
+            # `key.dpapi` is ANOTHER folder's (a session's, or a Past-sessions
+            # entry's). Left in place, untouched; status unreadable: next tick.
+            refused = "link_refused" if linked else "error"
+            results.append(SweepResult(session_id, refused))
+            if logger is not None:
+                log_event(logger, "session_sweep", session_id=session_id, detail_code=refused)
+            continue
         key_path = child / KEY_FILENAME
         action: str
+        created: float | None = None
         try:
             # PR-MED-006: a single stat() distinguishes CONFIRMED-missing
             # custody (FileNotFoundError -> orphan GC) from a transiently
@@ -1140,19 +1824,33 @@ def sweep_sessions(
             except FileNotFoundError:
                 key_blob_size = -1  # confirmed absent: orphan custody
             if key_blob_is_dead(key_blob_size):
-                # Orphan or cryptographically-dead custody: GC.
-                delete_session_key(child)
-                shutil.rmtree(child, ignore_errors=True)
-                action = "orphan_gc"
-            elif current - _session_created_at(child, current) >= max_age.total_seconds():
-                delete_session_key(child)  # key first — binding ordering
-                shutil.rmtree(child, ignore_errors=True)
-                action = "expired"
+                # Orphan or cryptographically-dead custody: GC. The date is
+                # read first (D8): the removal takes the header with it.
+                created = session_created_at(child, current)
+                if key_blob_size >= 0 and not _before_destroy(before_destroy, session_id):
+                    created = None
+                    action = "error"  # C1: the dead key stays this tick
+                else:
+                    delete_session_key(child)
+                    shutil.rmtree(child, ignore_errors=True)
+                    action = "orphan_gc"
+            elif current - (created := session_created_at(child, current)) >= (
+                max_age.total_seconds()
+            ):
+                if not _before_destroy(before_destroy, session_id):
+                    created = None
+                    action = "error"  # C1: the key stays this tick
+                else:
+                    delete_session_key(child)  # key first — binding ordering
+                    shutil.rmtree(child, ignore_errors=True)
+                    action = "expired"
             else:
+                created = None
                 action = "kept"
         except OSError:
+            created = None
             action = "error"
-        results.append(SweepResult(session_id, action))
+        results.append(SweepResult(session_id, action, created))
         if logger is not None:
             log_event(logger, "session_sweep", session_id=session_id, detail_code=action)
     return results

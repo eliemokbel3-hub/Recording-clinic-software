@@ -1,11 +1,16 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
 since Phase 3A — the composed note artifact, all encrypted at rest under
 per-session keys; an unprotected recovery store expires at ~24 h (eligible at
 24 h, destroyed by the next successful sweep), while a live or under-review
-session is sweep-exempt (flow 10; retention schedule). Phase 3A also adds **clinician-authored config** (plaintext,
+session is sweep-exempt (flow 10; retention schedule). Since the
+privacy-professional-controls plan (PLAN.md Phase 6) every non-mock Complete
+copies the session's transcript, saved note and generated note — never audio —
+into an encrypted Past-sessions entry kept for the practitioner's retention
+setting, with the patient's name in that entry's label, and every session
+leaves a content-free audit row for 7 years (flow 22). Phase 3A also adds **clinician-authored config** (plaintext,
 INTENDED as non-patient boilerplate — an unenforced operational rule, flow 11).
 There is
 **no status file** (that design was cut in plan hardening). **Network: no
@@ -46,7 +51,7 @@ rendering the language model does (flow 17).
 |---|---|---|
 | Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid`; host access `https://*.cliniko.com/*` only, no `tabs` permission |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / practitioner / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the Cliniko client — reads and the one draft write (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / past sessions / practitioner / clinics / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the Cliniko client — reads and the one draft write (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
 | Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
 | Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
 
@@ -74,7 +79,14 @@ rendering the language model does (flow 17).
    types, versions, byte sizes, states, error codes, filesystem paths, PIDs)
    via `logging_setup.py`'s wrapper + tripwire filter. Protocol payloads and
    nonces are actively dropped if ever formatted into a record. Stdout is
-   NEVER a log destination (it carries only protocol frames).
+   NEVER a log destination (it carries only protocol frames). Since the
+   privacy-professional-controls plan's Task 4.1 both processes replace
+   Python's exception hooks: an uncaught exception reaches the log (and the
+   console's stderr, when there is one) as ONE line,
+   `uncaught_exception error_code=<type name>
+   detail_code=main|thread|unraisable` (a thread's `SystemExit` is silent),
+   never its message or traceback, and a failing log handler reports `--- Logging error (<type>)
+   ---` on stderr only (flow 22, EXCLUSIONS).
 
 3. **Desktop → Windows Credential Manager.** Durable secrets via `keyring`,
    keyed `ClinikoScribe/<clinic_id>` + secret name. Phase 1 stores only the
@@ -96,14 +108,22 @@ rendering the language model does (flow 17).
    Phase 2 a DPAPI-wrapped copy lives on disk for the crash-recovery
    window (`key.dpapi`, flow 6) and encrypted artifacts persist under
    `sessions\<id>\` (flows 6–7) — deleting the wrapped key is the
-   cryptographic deletion of those artifacts.
+   cryptographic deletion of those artifacts. Since the
+   privacy-professional-controls plan two more DPAPI-wrapped key kinds live
+   on disk, each with its own description the unwrap verifies: one per
+   Past-sessions entry (`past_sessions\<id>\key.dpapi`, deleting it is that
+   entry's cryptographic deletion) and one for the audit store
+   (`audit\key.dpapi`) — flow 22.
 
 5. **Registration artifacts (machine-local, outside the repo).**
    `%LOCALAPPDATA%\ClinikoScribe\` holds the host manifest and a copy of
    `scribe-host.exe`, referenced from
    `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`.
    Contain paths and the pinned extension ID — no secrets. (Chrome resolves
-   the manifest only from a space-free path — see the threat model.)
+   the manifest only from a space-free path — see the threat model.) Since the
+   privacy-professional-controls plan's Task 4.2 the same script also writes
+   three per-user Windows Error Reporting values (flow 22, EXCLUSIONS);
+   `--unregister` removes them with the rest.
 
 6. **Microphone → encrypted session store (Phase 2).** `scribe-app` captures
    16 kHz mono PCM16 (sounddevice/WASAPI, ~1 s chunks). Each chunk is
@@ -129,7 +149,10 @@ rendering the language model does (flow 17).
    one read and destroyed at once; only the clinic, note and session ids are
    kept, in memory). The recovery listing reads only whether the file
    exists; the sweep and the periodic refresh never read it. It goes with the session's key
-   like every other artifact.
+   like every other artifact, and is never copied into a Past-sessions
+   entry; its consent time and version, `linked`, verification state and
+   ids (never the patient id) are ALSO written into the session's audit row
+   at Start, before the key (flow 22).
    Plaintext audio exists ONLY in transient capture/processing buffers —
    never on disk, never in logs. Deleting `key.dpapi` is the cryptographic
    deletion of the session (same-user boundary; NTFS unlink residual — see
@@ -150,7 +173,9 @@ rendering the language model does (flow 17).
    uncertainty marks (low-confidence words, numbers, names) → 2-speaker
    labels → `sessions\<id>\transcript.enc`, written atomically under the
    SAME session key. The transcript renders in a display-only view; the
-   explicit Complete action runs fsync → decrypt-verify → key deletion.
+   explicit Complete action runs fsync → decrypt-verify → (non-mock) the
+   Past-sessions entry written, verified and published under its own key →
+   key deletion → directory removal (flow 22).
    Since the practitioner-profile plan's Phase 2 the SAME in-process flow
    optionally applies the practitioner's voice profile: the worker reads
    `profile\voice.enc` (flow 12, mapped at that plan's Task 3.3) and loads
@@ -258,26 +283,37 @@ rendering the language model does (flow 17).
     describe a superseded transcript. Complete verifies `note.enc` when one
     exists (decrypt → parse → session binding → transcript-digest match) BEFORE
     key deletion, so deleting `key.dpapi` is the cryptographic deletion of the
-    note along with the audio and transcript (same custody and retention posture
-    as the audio and transcript — the 24 h cap governs unprotected recovery
-    stores; see the retention schedule).
+    SESSION's copy of the note along with the audio and transcript (same custody
+    and retention posture as the audio and transcript — the 24 h cap governs
+    unprotected recovery stores; see the retention schedule). Since the
+    privacy-professional-controls plan a non-mock Complete first copies the
+    note (unless the path deletes it), the transcript and the generated note
+    into the session's Past-sessions entry under the entry's own key, and Save
+    also writes `saved-provenance.enc` (the saved note's model ids and digest,
+    no text) and the review writes `generated.enc` (the first body shown,
+    replaced by each regeneration) under
+    the session key (flow 22).
     Inside the app, the plaintext note and the full transcript coexist in memory
-    only for the review window (threat model, Phase 3A §3), and the app never
-    logs the note and never writes it outside the encrypted store — with TWO
+    only for the review window (threat model, Phase 3A §3) and, since the
+    privacy-professional-controls plan, while an opened Past-sessions entry is
+    on screen (flow 22, THE TAB), and the app never
+    logs the note and never writes it outside the encrypted stores (the
+    session's, then its Past-sessions entry's) — with TWO
     exceptions, both the clinician's own action on a ratified note: the Copy
     below, whose clipboard copy outlives the review and which the app does
     not hold; and, for a linked recording, "Write draft to Cliniko", which
     sends the note's text to Cliniko's API as the content of the open draft
     treatment note (flow 18), after which Cliniko holds it. The write keeps a
     record of its own beside `note.enc`, `write.enc` (ids and digests only,
-    flow 18), and a Complete after a confirmed write also removes the session
-    directory after the key. Copy-to-Cliniko ships enabled since the
+    flow 18), and every Complete — the one after a confirmed write included —
+    removes the session directory after the key. Copy-to-Cliniko ships enabled since the
     practitioner's 2026-09-27 decision and is offered only for a fully ratified
     note; the copied text goes to the Windows clipboard by the clinician's own
     action and is outside the app's custody from there. Since Task 8.2 every
     copy of note text — the Copy button, and the keyboard's Copy or the
-    context menu's Copy over the ratified note panel's selection — carries
-    three registered Windows formats
+    context menu's Copy over the ratified note panel's selection, and (since
+    the privacy-professional-controls plan) the Past sessions tab's "Copy saved
+    note" — carries three registered Windows formats
     (`ExcludeClipboardContentFromMonitorProcessing`,
     `CanIncludeInClipboardHistory` = 0, `CanUploadToCloudClipboard` = 0) that
     Windows clipboard history and cloud clipboard sync honour, so the copy is
@@ -614,7 +650,9 @@ rendering the language model does (flow 17).
     a verification state and time, or a reason code — and, beside it, a
     separate display value (the patient's name, cleaned to one line of at
     most 120 characters, and the appointment time) that no model, record,
-    log or file holds and Phase 3 showed nowhere; the note's content and
+    log or file holds and Phase 3 showed nowhere — save that a session's
+    name is written, at its Complete, into its Past-sessions label (flow
+    22); the note's content and
     the rest of each answer are dropped with the call. A checkout's outcome
     is dropped when the checkout ends. The practitioner-run feasibility script
     `scripts/probe-cliniko.py` (Task 1.3) is a separate process built on the
@@ -660,10 +698,15 @@ rendering the language model does (flow 17).
     they were written, the body's SHA-256 and the outcome (`attempting` /
     `written` / `refused` + reason / `unknown`) — ids and digests only, never
     note text, a Cliniko answer or a Cliniko id. It lives and dies with its
-    session (retention schedule).
+    session (retention schedule); its transitions and any pre-send refusal
+    code are also recorded, best-effort, in the session's audit row
+    (attempts, last outcome, last refusal, written-at — flow 22).
     After the clinician has seen the written draft in Chrome and pressed
-    Complete, the session's key is destroyed and its directory removed, so
-    the draft in Cliniko is the only copy.
+    Complete, the session's Past-sessions entry is published, its key is
+    destroyed and its directory removed: the draft in Cliniko is the clinical
+    record, the entry keeps the transcript and notes for the practitioner's
+    retention setting, and the audit row keeps the write's outcome — the
+    write record's digests are gone.
 
 19. **Native host ↔ `scribe-app` over a named pipe (Cliniko workflow
     safeguards plan D2/D4; BUILT at Tasks 4.1, 4.2, 4.4 and 4.5,
@@ -721,7 +764,9 @@ rendering the language model does (flow 17).
     the latest report per open tab and the bound tab, cleared on every new
     connection or disconnect; the bound report's verification outcome (flow
     18's display value beside it); the live session's display name, dropped
-    when that session ends; the tab the linked live session is bound to (a
+    when that session ends (and the name a Verified live re-verification of
+    that session found, kept for the Past-sessions label only — never sent to
+    Chrome — and dropped when the session ends); the tab the linked live session is bound to (a
     tab number, forgotten on every new connection or disconnect and when the
     session ends), its block (a reason code, while it is paused) and a
     clicked "Resume previous" (a time, lapsing after 30 seconds); the hotkey's
@@ -735,7 +780,9 @@ rendering the language model does (flow 17).
     from each Unreviewed session's `encounter.enc`, Task 5.5), which loses an
     entry when that session is completed, discarded, expires or is opened
     for review.
-    Nothing is written to disk, and nothing is logged beyond a connection's
+    Nothing is written to disk — except that a Complete writes the display
+    name the app holds for that session into the Past-sessions entry's
+    encrypted `label.enc` (flow 22; H3 round 35) — and nothing is logged beyond a connection's
     state or close reason with its connection number (`pipe_client`), the
     server's own state (`pipe_server`), a failed connect's Windows error
     code and, at each end, the OTHER end's executable path (`pipe_peer`,
@@ -794,13 +841,113 @@ rendering the language model does (flow 17).
     is no longer read by anything (the loader, the Clinics tab's setting and
     "Check file" are gone); a practitioner's file may stay on disk, unread.
 
+22. **Audit record, Past sessions and exclusions (privacy-professional-controls
+    plan, PLAN.md Phase 6; BUILT 2026-10-01; in-process, zero network, GUI
+    thread only).**
+    - AUDIT. At Start, BEFORE the previous session is retired and before any
+      file of the new one exists, `AuditLog.begin` writes the session's row:
+      `%LOCALAPPDATA%\ClinikoScribe\audit\YYYY-MM\<id>.enc` (the
+      practitioner's local month), AES-256-GCM under the one audit key
+      (`audit\key.dpapi`, DPAPI current-user, description `ClinikoScribe audit
+      key`), AAD `audit:<id>`. Content: the session id and local date, origin,
+      the consent time and text version, `linked`, the verification state, the
+      app's clinic id and the Cliniko practitioner, user (from the clinic
+      registry), booking and treatment-note ids — never the patient id, a name
+      or any text. A failed write refuses Start. Later, best-effort and never
+      blocking: the draft write's transitions (`MainWindow._store_write_record`)
+      and pre-send refusal codes (`AuditLog.record_write_refusal`, from
+      `_on_write_requested` / `_prepare_attempt`), Complete's model and provider tokens
+      and outcome (from `CompletionFacts`: the transcript's model ids, the
+      generated note's from `generated.enc`, the saved note's from
+      `saved-provenance.enc` only when its digest names the completed note),
+      Discard, expiry and `orphan_gc` (from the sweep, by session id only —
+      `encounter.enc` is never decrypted for it), and the Past-sessions
+      events. Kept 7 years by month; pruned at start-up and every 24 h. An
+      unreadable key refuses every Start until "Start a new audit record"
+      renames the whole store aside (`audit.unreadable-…`) unread.
+    - EXPORT. "Export audit record (CSV)" on the Past sessions tab writes every
+      readable row (no event codes; a spreadsheet-formula guard on every cell)
+      as UTF-8 CSV with a byte-order mark to the path the practitioner picks in a save dialog
+      (starting in Documents). The file is NOT encrypted and leaves the app's
+      custody: no name or text, but Cliniko ids that identify the appointment
+      to anyone with that Cliniko account. Its temporary file is a fresh name
+      in that folder (`.clinic-scribe-*.tmp`), removed on every path unless
+      Windows refuses the removal (H3 round 35 SEC-004).
+    - KEEP AT COMPLETE. The review writes `sessions\<id>\generated.enc` (the
+      first note body shown — a regeneration replaces it — its provider, style and render-time model ids;
+      session key, AAD `generated:<id>`); Save writes
+      `sessions\<id>\saved-provenance.enc` (the saved note's model ids and
+      SHA-256, no text) before `note.enc`. At a non-mock Complete,
+      `complete_session` re-encrypts the transcript, `generated.enc` when
+      present and readable and `note.enc` when present and not deleted by the path, byte
+      for byte, under a FRESH per-entry key into `past_sessions\.staging\<id>\`,
+      with `label.enc` (AAD `past-label:<id>`: dates, linked / desktop /
+      unknown, the clinic id, the patient's display name or none, and which
+      notes are held). The name comes from memory at the Complete click,
+      matched by session id (the Chrome bridge's verified Start display, the
+      name a Verified live re-verification of that session found, or a
+      recovered or adopted checkout's Verified result); it was
+      never persisted at Start. The staged entry is verified through its own
+      key read back from disk, moved to `past_sessions\<id>\` with a
+      `pending` marker, and only THEN is the session key deleted; the marker
+      and the session directory are removed after it. Audio, `encounter.enc`,
+      `write.enc` and `saved-provenance.enc` are never copied. Discard (live
+      and `discard_recovered`), the recovery list's Discard, the sweep's expiry, a dead key's
+      `orphan_gc` and a mock Complete (which keeps nothing) remove any
+      unfinished entry for the id, key first, BEFORE the source key goes — a
+      removal that fails, or an entry path that cannot be inspected, keeps the
+      source key; reconciliation (start-up and every sweep tick) commits
+      a `pending` entry once its source key is confirmed absent, and staging
+      leftovers are cleaned at every start-up and tick. A linked FOLDER
+      (symlink or junction) where a session, an entry, a staging copy or an
+      audit month would be is never followed: not swept, keyed away,
+      discarded, listed, read, written through or pruned (H3 round 35
+      SEC-002/SEC-003). The three roots themselves are not checked, and a
+      linked audit row FILE is read like any row (its AAD binds it to its
+      session id).
+    - THE TAB. Opening the Past sessions tab decrypts each entry's
+      `label.enc` to list date + name ("Patient hidden" under Hide names);
+      opening an entry decrypts its notes AND its transcript into memory (the
+      notes shown at once, the transcript only behind "Show transcript"), in
+      `NoTextInteraction` panels; leaving the tab drops all of it. "Copy saved note" places the kept SAVED note on the Windows clipboard
+      through the one placement with the three history- and sync-excluding
+      formats (flow 10). Delete now (two clicks; worded for a recording made
+      in error only) and the retention sweep (start-up, then at most hourly
+      while the app runs; nothing under "Until I delete them"; 7 years
+      minimum — a shorter window is refused before any read) delete the
+      entry's key first, then its files, and update its audit row
+      (`deleted_early` / `expired`). Settings: `config\past_sessions.json`
+      (`retention_days` — null or 7 years; a removed shorter value loads as
+      7 years — and `hide_names`).
+    - EXCLUSIONS. `scripts/register-native-host.py` (run from a normal
+      terminal) writes and reads back `pythonw.exe`, `scribe-app.exe` and
+      `scribe-host.exe` = DWORD 1 under `HKCU\Software\Microsoft\Windows\
+      Windows Error Reporting\ExcludedApplications`; `--unregister` removes
+      them. At every start-up, before the window, `app.main` marks
+      `%LOCALAPPDATA%\ClinikoScribe` and its folders not-content-indexed (best
+      effort, folders only, links skipped) and runs two READ-ONLY checks — the
+      data folder's resolved location (OneDrive, a network path or drive, the
+      roaming profile) and the three WER values plus the running program's
+      name — whose warning lines show on the Status and Past sessions tabs and
+      are logged by code only; nothing is moved and recording is never
+      refused. Both processes install the type-name-only exception hooks
+      (flow 2). Every attribute, drive-type, environment, path-resolution and
+      registry call goes through one injected layer, which tests replace (C6);
+      the folder walk itself uses `os.scandir` and the link checks directly.
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
   clinical artifacts this app produces (audio, transcripts, and the composed
   note `note.enc`, flow 10) exist on disk ONLY encrypted under per-session keys
   inside `sessions\<id>\`, beside `encounter.enc` (ids, flow 6) and the draft
-  write's record `write.enc` (ids and digests, flow 18). Config files (flow
+  write's record `write.enc` (ids and digests, flow 18) — and, since the
+  privacy-professional-controls plan, ONLY encrypted under per-entry keys
+  inside `past_sessions\<id>\` (the kept transcript and notes, and the label
+  with the patient's name), plus the content-free audit rows encrypted under
+  the audit key (flow 22). The ONE plaintext export is the audit CSV, which
+  holds no text or name but Cliniko ids, and lands only where the
+  practitioner saves it (flow 22). Config files (flow
   11) are a SEPARATE,
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
@@ -859,10 +1006,14 @@ rendering the language model does (flow 17).
   (`embedding`/`enrolment_speech_seconds`/`consent_text_version`), and — since
   the note-learning-and-styles plan — the learned-style markers `exemplar_text`
   (Phase 0) with `sample_text`, `recognised_shorthand` and
-  `unrecognised_shorthand` beside it (Phase 3, flow 16), so a stray
-  repr or `model_dump` of a note model, of the practitioner's profile or of a
-  sample note or style draft is
-  dropped by the last-line filter. Neither the note pipeline nor the profile
+  `unrecognised_shorthand` beside it (Phase 3, flow 16), and — since the
+  privacy-professional-controls plan — the audit and archive markers
+  (`past_session`, `note_provenance`, `consent_confirmed_at`,
+  `generated_text`, and the patient-identifier names), so a stray
+  repr or `model_dump` of a note model, of the practitioner's profile, of a
+  sample note or style draft, of an audit row or of a kept generated note is
+  dropped by the last-line filter. An uncaught exception logs its type name
+  only (flow 2). Neither the note pipeline nor the profile
   path opens a logging channel, and none of `sample_notes.py`,
   `ui/style_review.py` or the Practitioner tab holds a logger. The Phase-2 attribution fields on the
   transcript (`enrolled_speaker` / `enrolment_similarity` /
@@ -885,8 +1036,14 @@ rendering the language model does (flow 17).
   The Chrome-side recording surface — the side panel, the page frame and the
   block — holds what it shows in memory only; the Cliniko API key never
   reaches Chrome at all (no protocol field carries it).
-- Log/temp locations are user-local; exclusion from OneDrive/backup sweep is
-  a Phase 6 task (`PLAN.md`), noted in the retention schedule.
+- Log/temp locations are user-local. Since the privacy-professional-controls
+  plan the app marks its data folder not-content-indexed and WARNS (never
+  refuses) at start-up when that folder resolves inside OneDrive, onto a
+  network drive or into the roaming profile, and the register script excludes
+  the app's programs from Windows Error Reporting per user (flow 22). The
+  app does not exclude itself from Windows Backup / Volume Shadow Copy or
+  third-party backup tools (admin-only — PLAN.md Phase 7's installer; the
+  retention schedule names the residue).
 - No uploaded sample note on disk (note-learning-and-styles plan, D9; BUILT,
   Phase 3): the 1–5 notes the practitioner chooses are read into memory by
   `sample_notes.read_sample_note`, never copied and never moved — pinned by a
@@ -926,5 +1083,7 @@ Chrome ↔ native host over stdio (flow 1) ↔ `scribe-app` over the per-user
 named pipe (flow 19), with what Chrome keeps and draws in flow 20. The
 Chrome-spawned host is a thin, stateless relay; the app alone decides every
 pause, Start, Resume and refusal; a patient's name crosses only for a note
-Cliniko verified, lives in memory only on both sides, and reaches a Cliniko
-tab only for that tab's own clinic.
+Cliniko verified, lives in memory only on the Chrome side and in the app
+until that session's Complete — when the app writes it, encrypted, into the
+session's Past-sessions label and nowhere else (flow 22) — and reaches a
+Cliniko tab only for that tab's own clinic.

@@ -142,6 +142,117 @@ def test_rotation_configured(logger: logging.Logger) -> None:
 
 
 # --------------------------------------------------------------------------
+# Privacy-professional-controls round 23 PR-MED-020 (C3): a handler that fails
+# to write reports ONE fixed line naming the failure's type. The stock
+# `handleError` printed the exception being handled — chain, traceback and
+# message — whenever the failing call ran inside an `except`.
+# --------------------------------------------------------------------------
+
+_SENTINEL = "Jane Citizen left knee effusion"
+
+
+def _failing_logger(tmp_path: Path, name: str) -> logging.Logger:
+    """A real `setup_logging` logger (file + stderr) whose FILE handler fails
+    every write: a forced rollover that raises inside `emit`."""
+    from logging.handlers import RotatingFileHandler
+
+    built = setup_logging(name, log_dir=tmp_path, stderr=True)
+    # Python never rolls over an EMPTY file (gh-116263): one line first.
+    log_event(built, "priming", state="ok")
+    file_handler = next(h for h in built.handlers if isinstance(h, RotatingFileHandler))
+    file_handler.maxBytes = 1
+
+    def refuse() -> None:
+        raise OSError("the disk is full")
+
+    file_handler.doRollover = refuse  # type: ignore[method-assign]
+    return built
+
+
+def _close(built: logging.Logger) -> None:
+    for handler in built.handlers:
+        handler.close()
+    built.handlers.clear()
+
+
+def test_every_handler_setup_logging_builds_reports_failures_quietly(tmp_path: Path) -> None:
+    from scribe_desktop.logging_setup import QuietHandlerErrors
+
+    built = setup_logging("test-quiet-handlers", log_dir=tmp_path, stderr=True)
+    try:
+        assert len(built.handlers) == 2
+        assert all(isinstance(h, QuietHandlerErrors) for h in built.handlers)
+    finally:
+        _close(built)
+
+
+def test_only_logging_setup_installs_a_handler() -> None:
+    """The quiet report covers every handler only while `logging_setup` is
+    the one place that builds loggers and handlers. A TEXT scan over every
+    production module: it cannot see a name built at run time or an aliased
+    import — review does."""
+    src = Path(__file__).resolve().parents[1] / "src" / "scribe_desktop"
+    banned = (
+        "getLogger(",
+        "addHandler(",
+        "basicConfig(",
+        "lastResort",
+        "raiseExceptions",
+        "qInstallMessageHandler",
+    )
+    offenders = [
+        f"{path.relative_to(src).as_posix()}: {word}"
+        for path in sorted(src.rglob("*.py"))
+        if path.name != "logging_setup.py"
+        for word in banned
+        if word in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == []
+
+
+@pytest.mark.parametrize("failing", ["file", "stderr"])
+def test_a_failing_handler_never_prints_the_exception_being_handled(
+    tmp_path: Path, capfd: pytest.CaptureFixture[str], failing: str
+) -> None:
+    """An ordinary `log_event` inside an `except` whose exception carries
+    clinical text: the failure reads one fixed line on stderr, and neither
+    the text, the exception's message nor a traceback reaches stderr or
+    stdout."""
+    from scribe_desktop.logging_setup import handler_error_count
+
+    if failing == "file":
+        built = _failing_logger(tmp_path, "test-failing-file")
+    else:
+        built = setup_logging("test-failing-stderr", log_dir=tmp_path, stderr=True)
+
+        class Broken:
+            def write(self, text: str) -> int:
+                raise OSError("the pipe is gone")
+
+            def flush(self) -> None:
+                pass
+
+        stderr_handler = next(
+            h for h in built.handlers if not isinstance(h, logging.FileHandler)
+        )
+        stderr_handler.setStream(Broken())  # type: ignore[attr-defined]
+    before = handler_error_count()
+    try:
+        try:
+            raise ValueError(_SENTINEL)
+        except ValueError:
+            log_event(built, "operation_failed", state="failed")
+    finally:
+        _close(built)
+    assert handler_error_count() == before + 1
+    out, err = capfd.readouterr()
+    assert out == ""
+    assert "--- Logging error (OSError) ---" in err
+    for leak in (_SENTINEL, "Traceback", "ValueError", "the disk is full", "Message:"):
+        assert leak not in err, leak
+
+
+# --------------------------------------------------------------------------
 # PR-HIGH-001 (peer round 3): handler filters run BEFORE the formatter appends
 # the traceback, so a message-only scan let a caught note-validation error
 # persist clinical text into the log with the drop counter untouched.

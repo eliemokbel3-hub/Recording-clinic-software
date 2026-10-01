@@ -30,7 +30,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scribe_desktop.session_store import default_sessions_root, discard_session
+from scribe_desktop.audit import AuditLog
+from scribe_desktop.past_sessions import PastSessionStore
+from scribe_desktop.session import PastSessionCleanupError
+from scribe_desktop.session_store import (
+    audit_created_at,
+    default_sessions_root,
+    discard_session,
+)
 from scribe_desktop.transcription import RecoveryOutcome
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
@@ -72,10 +79,18 @@ class RecoveryScreen(QWidget):
         active_ids_provider: Callable[[], frozenset[str]] | None = None,
         recovery_runner: Callable[[Path], RecoveryOutcome] | None = None,
         clock: Callable[[], float] = time.time,
+        audit: AuditLog | None = None,
+        past_sessions: PastSessionStore | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._root = sessions_root if sessions_root is not None else default_sessions_root()
+        # Privacy-professional-controls Task 1.3: this list's Discard records
+        # ``discarded`` in the session's audit row (best-effort, C2).
+        self._audit = audit
+        # Task 2.3 (C1): this list's Discard removes any unfinished Past-
+        # sessions entry for the session BEFORE its key goes.
+        self._past_sessions = past_sessions
         self._active_ids_provider = active_ids_provider or frozenset
         self._clock = clock
         # The ids already warned about (D6), so the cue fires once per
@@ -446,12 +461,28 @@ class RecoveryScreen(QWidget):
         if self._selection_blocked(info):
             self._refuse_stale_selection()
             return
+        # D8: a pre-audit session's date, read BEFORE its directory goes —
+        # never a reason for the Discard to fail (C2; ``audit_created_at``
+        # never raises).
+        created_at = (
+            audit_created_at(info.directory, self._clock()) if self._audit is not None else None
+        )
         try:
+            # C1: an unfinished Past-sessions entry an interrupted Complete
+            # left for this session goes BEFORE its key — or nothing does.
+            past = self._past_sessions
+            if past is not None and not past.remove_pending_entry(info.session_id):
+                raise PastSessionCleanupError()
             # Key-first cryptographic deletion; no unwrapped key exists here.
             discard_session(info.directory, None)
             self.message_label.setText("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
             self.message_label.setText(f"Discard failed: {models.custody_refusal_text(exc)}")
         else:
+            if self._audit is not None:
+                # Best-effort (C2): ``update`` never raises.
+                self._audit.record_deletion(
+                    info.session_id, "discarded", created_at=created_at
+                )
             self.session_removed.emit(info.session_id)
         self.refresh()

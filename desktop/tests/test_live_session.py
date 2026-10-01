@@ -720,9 +720,9 @@ class TestLiveSessionController:
         observed: list[bool] = []
         real_complete = session_mod.complete_session
 
-        def observing(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> None:
+        def observing(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> Any:
             observed.append(worker.buffers_cleared)
-            real_complete(directory, crypto, **kwargs)
+            return real_complete(directory, crypto, **kwargs)
 
         monkeypatch.setattr(session_mod, "complete_session", observing)
         if complete == "complete":

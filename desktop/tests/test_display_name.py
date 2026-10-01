@@ -13,7 +13,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from scribe_desktop import practitioner_profile, secure_storage, session_store
+from scribe_desktop import (
+    audit,
+    past_sessions,
+    practitioner_profile,
+    secure_storage,
+    session_store,
+)
 from scribe_desktop.pipe_server import PIPE_PREFIX
 from scribe_desktop.protocol import HOST_NAME
 
@@ -50,6 +56,8 @@ def test_the_internal_identifiers_are_unchanged() -> None:
     assert session_store.SESSION_KEY_DESCRIPTION == "ClinikoScribe session key"
     assert practitioner_profile.PROFILE_KEY_DESCRIPTION == "ClinikoScribe practitioner profile key"
     assert practitioner_profile.STYLE_KEY_DESCRIPTION == "ClinikoScribe practitioner style key"
+    assert audit.AUDIT_KEY_DESCRIPTION == "ClinikoScribe audit key"
+    assert past_sessions.PAST_SESSION_KEY_DESCRIPTION == "ClinikoScribe past-session key"
     assert PIPE_PREFIX == "\\\\.\\pipe\\ClinikoScribe-"
     assert HOST_NAME == "com.scribe.cliniko_host"
     register = (REPO / "scripts" / "register-native-host.py").read_text(encoding="utf-8")

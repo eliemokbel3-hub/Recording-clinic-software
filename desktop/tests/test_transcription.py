@@ -1230,7 +1230,7 @@ class TestControllerTranscription:
         completed = controller.complete()
         assert completed.state is SessionState.WRITTEN
         assert not (session_dir / KEY_FILENAME).exists()  # cryptographic deletion
-        assert (session_dir / TRANSCRIPT_FILENAME).is_file()  # artifact retained
+        assert not session_dir.exists()  # Task 1.1: every Complete removes the directory
 
     def test_transcriber_failure_routes_to_recoverable_failed(
         self, tmp_path: Path

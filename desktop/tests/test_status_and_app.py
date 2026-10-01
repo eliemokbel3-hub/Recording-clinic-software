@@ -62,7 +62,9 @@ def test_window_offscreen_smoke(tmp_path) -> None:
 
     from scribe_desktop.audio_capture import MockCaptureBackend
     from scribe_desktop.clinics import ClinicRegistry
+    from scribe_desktop.past_sessions import PastSessionStore
     from scribe_desktop.session import SessionController
+    from scribe_desktop.ui import models
     from scribe_desktop.ui.main_window import MainWindow
 
     app = QApplication.instance() or QApplication([])
@@ -78,8 +80,12 @@ def test_window_offscreen_smoke(tmp_path) -> None:
         language_model_available=lambda: False,  # nor the real model's presence
         # Cliniko safeguards Task 2.2: never the real clinics.json.
         clinic_registry=ClinicRegistry(tmp_path / "clinics.json"),
+        # Privacy-professional-controls Task 3.1: never the real archive root.
+        past_sessions=PastSessionStore(tmp_path / "past_sessions"),
     )
     panel = window.status_panel
+    # Task 3.3 (D14): the intended-use line heads the Status tab.
+    assert panel.intended_use_label.text() == models.INTENDED_USE_LINE
     assert "Registration:" in panel.registration_label.text()
     panel.on_self_test()
     assert "PASS" in panel.self_test_label.text()
@@ -631,6 +637,8 @@ def test_main_refuses_to_start_without_an_exclusion(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         app_module, "setup_logging", lambda name: logging.getLogger("test-no-exclusion")
     )
+    # Privacy-professional-controls Task 4.1 (C6): never this process's hooks.
+    monkeypatch.setattr(app_module, "install_exception_hooks", lambda logger: lambda: None)
     monkeypatch.setattr(app_module, "apply_offline_env", lambda: None)
     monkeypatch.setattr(app_module, "assert_offline_env", lambda: None)
     monkeypatch.setattr(
@@ -671,6 +679,8 @@ def test_main_refuses_second_instance(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         app_module, "setup_logging", lambda name: logging.getLogger("test-second-instance")
     )
+    # Privacy-professional-controls Task 4.1 (C6): never this process's hooks.
+    monkeypatch.setattr(app_module, "install_exception_hooks", lambda logger: lambda: None)
     monkeypatch.setattr(app_module, "apply_offline_env", lambda: None)
     monkeypatch.setattr(app_module, "assert_offline_env", lambda: None)
     monkeypatch.setattr(

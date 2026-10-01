@@ -1113,6 +1113,43 @@ class TestLiveSession:
         assert PATIENT_NAME not in h.screen.chrome_label.text()
         assert h.sender.last.live is None
 
+    def test_a_rechecked_name_outlives_a_later_reconnect_for_the_label(
+        self, harness: Any
+    ) -> None:
+        """Privacy-professional-controls D5 (H1 round 32 LOW-005): a Start
+        made offline has no name; a reconnect's Verified re-check finds it.
+        Once the session is queued, a further reconnect clears the re-check
+        (write-back needs a current one) — but the name stays for this
+        session's Past-sessions label, is never shown in Chrome, and goes
+        with its session."""
+        h: Harness = harness(transport=NoteTransport(note=status(503)))
+        h.connect()
+        h.report()
+        h.settle()
+        h.start()  # unverified_offline: no Start display
+        session = h.controller.session_value
+        assert session is not None
+        session_id = session.session_id
+        assert h.bridge.live_display_name(session_id) is None
+        h.transport.routes["/v1/treatment_notes/"] = ok(note_body())
+        h.connect(2)
+        h.settle()
+        assert h.bridge.live_display_name(session_id) == PATIENT_NAME
+        h.controller.state_value = SessionState.QUEUED
+        h.controller.session_value = session.with_state(SessionState.QUEUED)
+        h.connect(3)
+        h.settle()
+        assert h.bridge.live_reverification() is None  # not capturing: cleared
+        assert h.bridge.live_display_name(session_id) == PATIENT_NAME
+        assert h.bridge.live_display_name(secrets.token_hex(16)) is None
+        live = h.sender.last.live
+        assert live is None or live.patient_name is None  # never shown in Chrome
+        h.controller.session_value = None
+        h.controller.session_ref = None
+        h.controller.state_value = SessionState.IDLE
+        h.bridge._tick()
+        assert h.bridge._recheck_display is None
+
     def test_a_report_check_never_displaces_the_live_recheck(self, harness: Any) -> None:
         """Round 25 MED-018: with a check in flight at reconnect, the re-check
         waited in the ONE slot a report's check then took — so it never ran

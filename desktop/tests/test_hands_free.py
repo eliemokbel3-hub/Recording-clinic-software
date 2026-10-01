@@ -412,6 +412,36 @@ def _actions(controller: FakeController) -> list[tuple[Any, ...]]:
     return [call for call in controller.calls if call[0] in _SESSION_ACTIONS]
 
 
+class _InertAudit:
+    """``app.main``'s audit log in a start-up test: prunes and records
+    nothing, and never reaches the real ``%LOCALAPPDATA%``."""
+
+    def prune(self) -> int:
+        return 0
+
+    def record_deletion(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    def record_past_session(self, *args: Any, **kwargs: Any) -> bool:
+        """Task 3.2: a reconciled commit's ``archived`` (none here)."""
+        return True
+
+
+class _InertPastSessions:
+    """``app.main``'s Past-sessions archive in a start-up test
+    (privacy-professional-controls Task 2.3): cleans, removes and commits
+    nothing, and never reaches the real ``%LOCALAPPDATA%``."""
+
+    def clean_staging(self) -> int:
+        return 0
+
+    def remove_pending_entry(self, session_id: str) -> bool:
+        return True
+
+    def reconcile_pending(self, sessions_root: Path) -> list[str]:
+        return []
+
+
 def _recording(controller: FakeController) -> RecordingSession:
     session = RecordingSession(consent=unlinked_consent()).with_state(SessionState.RECORDING)
     controller.session_value = session
@@ -570,6 +600,11 @@ class TestHotkeyWindow:
         monkeypatch.setattr(window, "show", fail_show)
         for name, value in {
             "setup_logging": lambda name: logging.getLogger("test-hands-free"),
+            # Privacy-professional-controls Task 4.1 (C6): never this process's
+            # exception hooks, never the real Windows layer.
+            "install_exception_hooks": lambda logger: lambda: None,
+            "Win32WindowsLayer": lambda: None,
+            "startup_exclusions": lambda *args, **kwargs: (),
             "apply_offline_env": lambda: None,
             "assert_offline_env": lambda: None,
             "QApplication": lambda argv: QApplication.instance() or QApplication(argv),
@@ -577,6 +612,10 @@ class TestHotkeyWindow:
                 app_module.InstanceExclusion("acquired")
             ),
             "SoundDeviceBackend": lambda: object(),
+            # Privacy-professional-controls Task 1.3: never the real audit root.
+            "AuditLog": lambda **kwargs: _InertAudit(),
+            # Task 2.3: never the real archive root either.
+            "PastSessionStore": lambda **kwargs: _InertPastSessions(),
             "SessionController": lambda *args, **kwargs: controller,
             "default_sessions_root": lambda: tmp_path / "sessions",
             "sweep_protected_ids": lambda *args: frozenset(),
@@ -655,6 +694,7 @@ from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.hotkey import HOTKEY_ID, WM_HOTKEY
+from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.session import SessionController
 from scribe_desktop.ui.main_window import MainWindow
 class FakeRegistrar:
@@ -670,7 +710,8 @@ controller = SessionController(backend, sessions_root=root)
 w = MainWindow(controller, backend, sessions_root=root,
                profile_root=base / 'profile', config_root=base / 'config',
                style_root=base / 'style', language_model_available=lambda: False,
-               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+               clinic_registry=ClinicRegistry(base / 'clinics.json'),
+               past_sessions=PastSessionStore(base / 'past_sessions'))
 seen = []
 w.on_hotkey = lambda: seen.append('hotkey')
 assert w.attach_hotkey(FakeRegistrar()).state == 'on'

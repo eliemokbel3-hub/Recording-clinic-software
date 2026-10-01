@@ -25,7 +25,20 @@ When in doubt, stop using the software and investigate before resuming.
   under the wrong patient or note; or a patient's name shown on another
   clinic's Cliniko tab
 - (Phase 2+) any indication audio/transcripts persisted beyond their
-  retention window or reached the network
+  retention window or reached the network — since PLAN.md Phase 6 that
+  includes audio found anywhere after Complete, a Past-sessions entry still
+  present after Delete now or after its retention setting expired it while
+  the app was running, an entry for a session that was discarded, a
+  patient's name or any note text in the audit record or its CSV, or a Past
+  sessions tab showing the wrong patient's name on an entry
+- (PLAN.md Phase 6) the Past sessions tab says audit updates could not be
+  saved, or Start is refused because the audit record could not be saved —
+  not an incident on its own (recording and notes are unaffected; see
+  `docs/practice/downtime-procedure.md`), but a run of them, or an audit
+  key that suddenly cannot be read without a Windows password reset, is worth
+  investigating as a possible tamper; a start-up warning that the data folder
+  is inside OneDrive, on a network drive or in the roaming profile means
+  clinical data may have left this computer — assess it as below
 - (Cliniko draft write) a draft written into the wrong Cliniko note or the
   wrong patient's note; text in a Cliniko note that nobody's "Write draft to
   Cliniko" click put there; text already in a Cliniko note — typed by you, or
@@ -45,7 +58,8 @@ When in doubt, stop using the software and investigate before resuming.
 
 ## Immediate steps
 
-1. **Stop the software.** Close Chrome (kills the host), close `scribe-app`.
+1. **Stop the software.** Close Chrome (kills the host); export the audit
+   record first if `scribe-app` is still open (step 4), then close it.
 2. **Disconnect the channel:** `scripts/register-native-host.py --unregister`
    and remove/disable the unpacked extension in `chrome://extensions`.
 3. **Revoke secrets (once clinic keys are stored):** regenerate the affected clinic's Cliniko
@@ -53,6 +67,31 @@ When in doubt, stop using the software and investigate before resuming.
    Credential Manager.
 4. **Preserve evidence:** copy `%LOCALAPPDATA%\ClinikoScribe\logs\` somewhere
    safe BEFORE reinstalling anything; note the time and what you observed.
+   Since PLAN.md Phase 6 also export the audit record (Past sessions tab,
+   "Export audit record (CSV)") — it is the durable, content-free account of
+   every session's consent, links, write outcome and deletion. Export it
+   BEFORE closing `scribe-app` if it is still open. Reopening it (with Chrome
+   closed, recording nothing, closing it after) runs the start-up sweeps
+   BEFORE the window shows: the audit month prune, the 24 h expiry of every
+   unprotected session (with its `write.enc`) and the Past-sessions retention
+   sweep — under the "7 years" setting (the only one shorter than "Until I
+   delete them" since the 7-year minimum, 2026-10-02) that deletes the
+   incident's Past-sessions entry only once it is 7 years old, or sooner if
+   the clock was jumped forward. If that entry or session matters, copy the whole
+   `%LOCALAPPDATA%\ClinikoScribe\` folder aside as evidence before reopening
+   (on this machine, under this account; `models\`, static program data of
+   several GiB, can be left out; the app never reads the copy). The copy is
+   NOT all encrypted: beside the encrypted stores (`sessions\`,
+   `past_sessions\` entries, `audit\`, `profile\`, `style\`) it holds
+   plaintext files — the logs, `clinics.json` (ids and the contact email),
+   everything under `config\` (the clinician config, the learned phrases and
+   rules with their sidecars, `practitioner_settings.json`,
+   `past_sessions.json`), `app.lock` and the registration files — so keep it
+   as carefully as the original and delete it when the incident is closed.
+   Do not move or delete `audit\`, `audit.unreadable-…\` or
+   `past_sessions\`: their keys are bound to this Windows account and
+   machine, so a copy elsewhere cannot be read, and an administrator's reset
+   of this account's password makes them unreadable here too.
 
 **A draft written into the wrong note or patient** (Cliniko draft write):
 1. In Cliniko, open that note and delete the written text — or archive the
@@ -61,17 +100,28 @@ When in doubt, stop using the software and investigate before resuming.
    write ADDS text: in a question that already held text, the app's text
    sits below it after one empty line, so delete only that added part and
    keep what was there before.
-2. Do NOT press Complete for that recording in the app: Complete after a
-   written draft destroys the session (audio, transcript, note and the
-   write's record). Leave it on the Transcript screen or in the Unreviewed
-   list, and note its time.
-3. Evidence: Cliniko's own history of the note (who changed it and when),
-   and — while the session still exists — the session's `write.enc` (the
-   attempt, its times and outcome, and digests of each question's answer as
-   read and as expected after the write; ids and digests only, no note text)
-   under `%LOCALAPPDATA%\ClinikoScribe\sessions\`.
-   The write record dies with its session (at Complete, Discard or the 24 h
-   expiry): there is no durable audit record until PLAN.md Phase 6.
+2. Do NOT press Complete for that recording in the app yet: Complete after a
+   written draft destroys the session — its audio and the write's record
+   (`write.enc`, with its per-question digests) — keeping only the
+   transcript and notes in Past sessions and the outcome in the audit row.
+   Leave it on the Transcript screen or in the Unreviewed list, and note its
+   time — once the app is closed it lasts only until the 24 h expiry, run at
+   the next start-up (Immediate steps, step 4).
+3. Evidence: Cliniko's own history of the note (who changed it and when);
+   while the session still exists, the session's `write.enc` (the attempt,
+   its times and outcome, and digests of each question's answer as read and
+   as expected after the write; ids and digests only, no note text) under
+   `%LOCALAPPDATA%\ClinikoScribe\sessions\`, which dies with its session (at
+   Complete, Discard or the 24 h expiry); and — durable since 2026-10-01
+   (PLAN.md Phase 6) — the session's AUDIT ROW, kept 7 years: the consent's
+   time and text version, whether the recording was linked and how it was
+   verified, the clinic, practitioner, user, booking and treatment-note ids it
+   was linked to, the models, the write's attempts, last outcome, last
+   refusal code and written-at, and what was deleted when. Export it from the
+   Past sessions tab ("Export audit record (CSV)"); the CSV is not encrypted
+   — keep it with the incident evidence and delete it when done. The
+   session's Past-sessions entry, once completed, holds the transcript and
+   notes as they were saved.
 4. Assess how the note was chosen — the recording is linked to the note it
    was started from in Chrome, and the write re-reads that same note — and
    whether the wrong patient's data was disclosed (Assess, below).

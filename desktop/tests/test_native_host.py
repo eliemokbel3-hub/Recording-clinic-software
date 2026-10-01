@@ -55,7 +55,33 @@ def test_main_refuses_without_origin_before_reading_stdin(
     monkeypatch.setattr(nh.sys, "argv", ["scribe-host"])
     monkeypatch.setattr(nh.sys, "stdin", ExplodingStdin())
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    # Privacy-professional-controls round 21 MED-001 (C6): never this
+    # process's exception hooks.
+    monkeypatch.setattr(nh, "install_exception_hooks", lambda logger: lambda: None)
+    # Round 23 PR-LOW-021 (C6): never the real HKCU registration or the
+    # installed manifest (the Windows-layer sentinel cannot see `winreg`).
+    paths: list[object] = []
+    monkeypatch.setattr(nh, "_log_registration_paths", paths.append)
     assert nh.main() == 2
+    assert len(paths) == 1
+
+
+def test_main_installs_the_exception_hooks_first_with_its_own_logger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 21 MED-001 (C3): the host's uncaught exceptions — its stdin
+    reader and relay threads included — are logged by type name only, from
+    the first line after logging is set up (before the origin check)."""
+    import scribe_desktop.native_host as nh
+
+    events: list[object] = []
+    logger = logging.getLogger("test-host-hooks")
+    monkeypatch.setattr(nh, "setup_logging", lambda name: logger)
+    monkeypatch.setattr(nh, "install_exception_hooks", lambda given: events.append(given))
+    monkeypatch.setattr(nh, "_log_registration_paths", lambda given: events.append("paths"))
+    monkeypatch.setattr(nh, "verify_origin", lambda argv: events.append("origin") or False)
+    assert nh.main() == 2
+    assert events == [logger, "paths", "origin"]
 
 
 # --- handshake state machine --------------------------------------------

@@ -15,7 +15,9 @@ means an UNLINKED recording). Both are frozen and refuse extra fields.
 carries no note, a linked one names exactly the context's note and, when it
 names a practitioner, the context's practitioner. Display strings (the
 patient's name, the appointment time) are never a field of either: they
-travel separately as ``NoteDisplay``, in memory only.
+travel separately as ``NoteDisplay``, in memory only. (The one place a name
+is later written is a Past-sessions entry's encrypted label, at Complete —
+privacy-professional-controls D5 — never this module's records.)
 
 VERIFICATION (D4) is split by thread, like the clinic registry's Validate:
 ``VerificationLedger`` (GUI thread) turns each context report into at most

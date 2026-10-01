@@ -565,7 +565,7 @@ class TestExtractivePipelineEndToEnd:
         # The note joins the Complete ordering and verifies; the key dies.
         complete_session(session_dir, crypto)
         assert not (session_dir / KEY_FILENAME).exists()
-        assert (session_dir / NOTE_FILENAME).is_file()
+        assert not (session_dir / NOTE_FILENAME).exists()  # the directory goes (Task 1.1)
 
     def test_note_describing_a_superseded_transcript_cannot_survive(
         self, tmp_path: Path

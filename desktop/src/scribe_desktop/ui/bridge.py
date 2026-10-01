@@ -320,6 +320,12 @@ class ChromeBridge(QObject):
         self._spacing.setTimerType(Qt.TimerType.PreciseTimer)
         self._spacing.timeout.connect(self._on_spacing_elapsed)
         self._live_display: _LiveDisplay | None = None
+        # Privacy-professional-controls D5 (H1 round 32 LOW-005): the name from
+        # a Verified RE-CHECK of the live session, for its Past-sessions label
+        # only — a later reconnect clears ``_live_check`` once the session is
+        # queued, which would otherwise lose it. Never shown in Chrome (the
+        # Start's display is); in memory only, dropped when that session ends.
+        self._recheck_display: _LiveDisplay | None = None
         # Phase 7 (D7, D8): shown only — the main window owns both.
         self._hotkey: HotkeyStatus = NOT_SET_UP
         self._system_pause: SystemPauseStatus = SYSTEM_PAUSE_NOT_SET_UP
@@ -388,6 +394,22 @@ class ChromeBridge(QObject):
     @property
     def conn_gen(self) -> int:
         return self._ledger.conn_gen
+
+    def live_display_name(self, session_id: str) -> str | None:
+        """Privacy-professional-controls D5: the patient's name from the
+        Verified Start of the LIVE session ``session_id`` — the in-memory
+        display this bridge already holds (dropped when that session ends) —
+        else from a Verified re-check of that session this connection or an
+        earlier one made (H1 round 32 LOW-005), or None. Read by
+        ``MainWindow.keep_label_for`` for the Past-sessions label at
+        Complete; never persisted or logged here."""
+        session = self._controller.session
+        if session is None or session.session_id != session_id:
+            return None
+        for display in (self._live_display, self._recheck_display):
+            if display is not None and display.session_id == session_id:
+                return display.display.patient_display_name
+        return None
 
     def live_reverification(self) -> VerificationResult | None:
         """The linked live session's re-verification from the latest pipe
@@ -818,6 +840,10 @@ class ChromeBridge(QObject):
                 and self._rev_current(result.request)
             ):
                 check.result = result
+                if isinstance(result.outcome, Verified):
+                    self._recheck_display = _LiveDisplay(
+                        check.session_id, result.outcome.display
+                    )
         else:
             self._ledger.accept(result)
 
@@ -1238,6 +1264,9 @@ class ChromeBridge(QObject):
         display = self._live_display
         if display is not None and ended(display.session_id):
             self._live_display = None  # the name goes with its session
+        rechecked = self._recheck_display
+        if rechecked is not None and ended(rechecked.session_id):
+            self._recheck_display = None  # so does a re-check's
         check = self._live_check
         if check is not None and ended(check.session_id):
             # Round 25 LOW-019: the re-check's result names the patient too.

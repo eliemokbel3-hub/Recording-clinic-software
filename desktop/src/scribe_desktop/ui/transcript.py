@@ -38,6 +38,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import UTC, datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -59,8 +61,15 @@ from scribe_desktop.draft_write import WriteRecordStatus
 from scribe_desktop.note import GeneratedNote, speaker_role
 from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_config
 from scribe_desktop.note_fill import detect_prefill_candidates
-from scribe_desktop.session import GenerationLease
-from scribe_desktop.session_store import write_note
+from scribe_desktop.past_sessions import KeepLabel
+from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session import GenerationLease, PastSessionWriteError
+from scribe_desktop.session_store import (
+    GENERATED_FILENAME,
+    GeneratedRecord,
+    write_generated,
+    write_saved_note,
+)
 from scribe_desktop.transcription import (
     TranscriptDocument,
     TranscriptSegment,
@@ -145,6 +154,11 @@ class TranscriptScreen(QWidget):
         self._write_blocked = False
         self._on_complete: Callable[[], object] | None = None
         self._on_discard: Callable[[], object] | None = None
+        # Privacy-professional-controls D5: the Past-sessions label for a
+        # session id, resolved at the click BEFORE the Complete calls this
+        # screen makes itself (after a write, and delete-note-and-complete).
+        # Registered by the main window; None labels nothing.
+        self._keep_label_provider: Callable[[str], KeepLabel | None] | None = None
 
         self._can_generate = False
         self._live_bound = False
@@ -273,10 +287,7 @@ class TranscriptScreen(QWidget):
         self.generate_box.hide()
 
         self.complete_button = QPushButton("Complete")
-        self.complete_button.setToolTip(
-            "Verify the encrypted transcript, then cryptographically delete "
-            "the session (audio becomes unrecoverable)."
-        )
+        self.complete_button.setToolTip(models.COMPLETE_TOOLTIP)
         self.discard_button = QPushButton("Discard")
         self.complete_button.clicked.connect(self.on_complete)
         self.discard_button.clicked.connect(self.on_discard)
@@ -578,6 +589,21 @@ class TranscriptScreen(QWidget):
         self._note_committed = False
         self.progress_bar.hide()
 
+    def set_keep_label_provider(
+        self, provider: Callable[[str], KeepLabel | None] | None
+    ) -> None:
+        """Register how a Complete this screen calls itself labels its Past-
+        sessions entry (D5: ``MainWindow.keep_label_for``)."""
+        self._keep_label_provider = provider
+
+    def _keep_label(self) -> KeepLabel | None:
+        """The bound live session's label, resolved NOW (the click)."""
+        provider = self._keep_label_provider
+        session_id = self._bound_live_session_id()
+        if provider is None or session_id is None:
+            return None
+        return provider(session_id)
+
     def set_write_blocked(self, blocked: bool) -> None:
         """Draft-write Task 5.2 (D9): the row is disabled while a Cliniko
         draft write holds the live session, and enabled again when its last
@@ -627,10 +653,7 @@ class TranscriptScreen(QWidget):
         elif loaded and reason is not None:
             self.complete_button.setToolTip(reason)
         else:
-            self.complete_button.setToolTip(
-                "Verify the encrypted transcript, then cryptographically delete "
-                "the session (audio becomes unrecoverable)."
-            )
+            self.complete_button.setToolTip(models.COMPLETE_TOOLTIP)
 
     def _clear(self) -> None:
         self._on_complete = None
@@ -837,7 +860,15 @@ class TranscriptScreen(QWidget):
         """Write the reviewed note on the GUI thread via the scoped, lease-
         aware op (Task 7.2 — write_note NEVER on the worker thread), then
         release the lease. Raises on failure so the Note tab surfaces it and
-        the lease stays held for a retry."""
+        the lease stays held for a retry.
+
+        Privacy-professional-controls D8 (Task 2.1): the one custody action
+        writes ``saved-provenance.enc`` FIRST — the saved note's model ids,
+        captured now, in the process that rendered it — then ``note.enc``,
+        whose replacement stays the commit (``write_saved_note``). Either
+        failing raises before ``_note_committed`` is set, so the screen, the
+        lease and the disk agree: a provenance with no matching note is
+        read as ``unknown`` at Complete."""
         controller = self._controller
         lease = self._lease
         result = self._generation_result
@@ -847,11 +878,67 @@ class TranscriptScreen(QWidget):
         if pending is not None:
             raise WritePendingError(pending)
         config = result.config
+        language_model_id, prompt_version = models.prose_model_ids(note)
         controller.with_generation_custody(
-            lease, lambda directory, crypto: write_note(directory, crypto, note, config)
+            lease,
+            lambda directory, crypto: write_saved_note(
+                directory,
+                crypto,
+                note,
+                config,
+                language_model_id=language_model_id,
+                prompt_version=prompt_version,
+            ),
         )
         self._note_committed = True  # note.enc is on disk (round 36 PR-MED-002)
         self._release_lease()
+
+    def keep_generated(self, body: models.GeneratedBody) -> bool:
+        """Privacy-professional-controls D2 (Task 2.1): keep the note body the
+        review showed first as ``generated.enc``, replacing any earlier one
+        (a regeneration's), on the GUI thread under the HELD lease — the
+        ``save_note`` pattern. Refused (False, nothing written) without the
+        lease. Never raises: the generated note is a Past-sessions copy,
+        never a reason a review cannot go on. When the write fails the
+        earlier generation's file is removed best-effort, so a stale body is
+        never kept as this generation's; if even that fails, what stays is
+        an earlier generation of THIS session (named residue).
+
+        Named residue (review round 11 LOW-002): the file follows the LATEST
+        review shown, while ``note.enc`` changes only at Save. A regeneration
+        after Save that is then cancelled (Cancel review keeps the saved
+        note) leaves the earlier generation's saved note beside the later
+        generation's body, and Complete keeps both as they are (D2: replaced
+        on regeneration)."""
+        controller = self._controller
+        lease = self._lease
+        if controller is None or lease is None:
+            return False
+
+        def keep(directory: Path, crypto: SessionCrypto) -> bool:
+            try:
+                record = GeneratedRecord(
+                    session_id=body.session_id,
+                    created_at=datetime.now(UTC),
+                    provider_name=body.provider_name,
+                    style=body.style,
+                    language_model_id=body.language_model_id,
+                    prompt_version=body.prompt_version,
+                    generated_text=body.text,
+                )
+                write_generated(directory, crypto, record)
+            except Exception:  # noqa: BLE001 - never blocks the review
+                try:
+                    (directory / GENERATED_FILENAME).unlink(missing_ok=True)
+                except OSError:
+                    pass
+                return False
+            return True
+
+        try:
+            return controller.with_generation_custody(lease, keep)
+        except Exception:  # noqa: BLE001 - a lease no longer held: nothing written
+            return False
 
     def abandon_note_and_complete(self) -> None:
         """The Note tab's delete-note-and-complete-without-one exit. Routes by
@@ -873,23 +960,21 @@ class TranscriptScreen(QWidget):
         if controller is None:
             raise RuntimeError("no controller")
         lease = self._lease
+        label = self._keep_label()  # D5: resolved before the Complete
         if lease is not None:
-            controller.complete_without_note(lease)  # pre-save: raises -> lease + review held
+            # Pre-save: raises -> lease + review held.
+            controller.complete_without_note(lease, label=label)
         else:
             # Draft-write D5 (round 31 LOW-001): once a write was attempted
             # the saved note is frozen — Copy, Complete or Discard remain.
             pending = self._write_pending()
             if pending is not None:
                 raise WritePendingError(pending)
-            controller.complete_deleting_saved_note()  # post-save: no lease, guarded
+            controller.complete_deleting_saved_note(label=label)  # post-save: no lease
         # Success: _clear() releases any local lease mirror + emits
         # generation_active_changed(False), unblocking recovery, and resets
         # the committed-note flag (the session is now terminal).
-        self._clear()
-        self.message_label.setText(
-            "Session completed without a note (transcript verified, key destroyed)."
-        )
-        self.closed.emit("completed")
+        self._show_completed(models.COMPLETE_WITHOUT_NOTE_LINE, "completed")
 
     def cancel_note_review(self) -> None:
         """Non-destructive escape from a note review (round 35 PR-MED-003):
@@ -962,12 +1047,24 @@ class TranscriptScreen(QWidget):
         except Exception as exc:  # noqa: BLE001 - key custody kept on any failure
             self._show_complete_failure(exc)
             return
+        self._show_completed(models.COMPLETE_DONE_LINE, "completed")
+
+    def _complete_deferred(self) -> bool:
+        """Flow 3 step 4: the Complete that just succeeded left its Past-
+        sessions entry for the next reconciliation."""
+        controller = self._controller
+        return controller is not None and controller.last_complete_deferred
+
+    def _show_completed(self, line: str, closed_as: str) -> None:
+        """Every Complete that succeeded ends here (H2 round 34 SIMP-005):
+        the screen clears and shows ``line`` — or, Flow 3 step 4, the
+        deferred-copy line when the Past-sessions entry was left for the next
+        reconciliation — then emits ``closed(closed_as)``. ``_clear`` never
+        completes anything, so reading the flag first is the same read."""
+        deferred = self._complete_deferred()
         self._clear()
-        self.message_label.setText(
-            "Session completed: transcript verified and the session key "
-            "destroyed (cryptographic deletion)."
-        )
-        self.closed.emit("completed")
+        self.message_label.setText(models.COMPLETE_DEFERRED_LINE if deferred else line)
+        self.closed.emit(closed_as)
 
     def complete_written(self, on_complete_written: Callable[[], object]) -> None:
         """Draft-write D6 (seen mode): Complete for a session whose draft
@@ -982,9 +1079,7 @@ class TranscriptScreen(QWidget):
         except Exception as exc:  # noqa: BLE001 - key custody kept on any failure
             self._show_complete_failure(exc)
             return
-        self._clear()
-        self.message_label.setText(models.write_line("written_done"))
-        self.closed.emit("written")
+        self._show_completed(models.write_line("written_done"), "written")
 
     def _complete_after_write(self) -> None:
         """The custody action behind ``complete_written``: RE-ACQUIRE the
@@ -998,9 +1093,10 @@ class TranscriptScreen(QWidget):
         session_id = self._bound_live_session_id()
         if controller is None or session_id is None:
             raise RuntimeError("no live session to complete")
+        label = self._keep_label()  # D5: resolved before the Complete
         reservation = controller.reserve_write(session_id)
         try:
-            controller.complete_after_write(reservation)
+            controller.complete_after_write(reservation, label=label)
         finally:
             reservation.release()
 
@@ -1015,6 +1111,11 @@ class TranscriptScreen(QWidget):
         return controller.write_record_status(session_id)
 
     def _show_complete_failure(self, exc: BaseException) -> None:
+        if isinstance(exc, PastSessionWriteError):
+            # Flow 3: the archive failed BEFORE the key boundary — its own
+            # authored line, which already says nothing was deleted.
+            self.message_label.setText(f"Complete failed: {exc}")
+            return
         # Round 42 LOW-001: state only what THIS action verified — the
         # Complete primitive deleted nothing on failure, but the key may be
         # gone for another reason (e.g. the 24 h sweep at expiry).

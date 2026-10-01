@@ -329,6 +329,11 @@ class NoteScreen(QWidget):
     # for the bound session (its id). ONE slot owns every write job —
     # ``MainWindow._on_write_requested``.
     write_requested = Signal(str)
+    # Privacy-professional-controls D2 (Task 2.1): the note body a fresh
+    # review SHOWED first (``models.GeneratedBody``) — at ``begin_review``,
+    # and again when the first prose rendering lands before any edit — for
+    # ``generated.enc``; the main window keeps it under the review's lease.
+    generated_shown = Signal(object)
 
     def __init__(
         self,
@@ -409,6 +414,11 @@ class NoteScreen(QWidget):
         self._style_job: TaskThread | None = None
         self._style_job_abort: threading.Event | None = None
         self._orphaned_jobs: list[TaskThread] = []
+        # D2: the input digest of the note a review first showed, while its
+        # FIRST prose rendering is still to land (None otherwise). That
+        # rendering replaces the kept generated body only when nothing was
+        # edited before it landed.
+        self._first_render_digest: str | None = None
         # ONE set for two kinds of id (practitioner decision 2026-09-26): the
         # provider lines Removed (or typed over) and the pre-filled proposals
         # Removed. The namespaces cannot collide — an assertion id is
@@ -686,6 +696,13 @@ class NoteScreen(QWidget):
         )
         self._build_proposal_rows()
         self._refinalise()  # -> _update_controls -> _apply_copy_binding
+        # D2: the body just shown, before any review action, is the kept
+        # generated note; a prose job started for it may replace it.
+        note = self._note
+        if note is not None:
+            if self._style_job is not None:
+                self._first_render_digest = note_input_digest(note)
+            self.generated_shown.emit(models.generated_body(note))
 
     def clear(self) -> None:
         """Clear all plaintext and review state. Called when a different
@@ -706,6 +723,7 @@ class NoteScreen(QWidget):
         self._write_line = None
         self._write_status_cache = None
         self._orphan_style_job()
+        self._first_render_digest = None
         self._prose_stage = None
         self.style_label.setText("")
         self._resolutions.clear()
@@ -1891,6 +1909,15 @@ class NoteScreen(QWidget):
             self._acknowledged.discard("style_fallback")
         self.note_body.setPlainText(models.format_note_body(self._note))
         self.style_label.setText(models.style_stage_line(result, self._note))
+        first, self._first_render_digest = self._first_render_digest, None
+        if (
+            first is not None
+            and result.note_digest == first
+            and note_input_digest(self._note) == first
+        ):
+            # D2: the first prose rendering landed before any edit — the body
+            # now shown IS the generated note.
+            self.generated_shown.emit(models.generated_body(self._note))
         self._refresh_warnings()
         if result.note_digest != note_input_digest(self._note) and models.sections_to_render(
             self._note
@@ -1904,6 +1931,7 @@ class NoteScreen(QWidget):
         current = self._release_style_job(job)
         if not current or self._note is None:
             return
+        self._first_render_digest = None  # D2: no first rendering to keep
         # An unexpected error in the stage (a model failure is a RESULT, not
         # this): nothing landed, the body already shows Clean clinical, and
         # Save is re-enabled because nothing unseen exists.

@@ -62,8 +62,8 @@ _EXPECTED = {
         "my changes."
     ),
     "written_done": (
-        "Draft written to Cliniko and this recording is complete. Review and finalise the "
-        "note in Cliniko."
+        "Draft written to Cliniko and this recording is complete. Past sessions shows what "
+        "was kept. Review and finalise the note in Cliniko."
     ),
     "not_saved": "Save the note first.",
     "unlinked": "This recording is not linked to a Cliniko note. Copy the note instead.",

@@ -37,7 +37,7 @@ import re
 import sys
 import traceback
 from pathlib import Path
-from typing import Final
+from typing import Final, TextIO
 
 # Whitelisted metadata keys accepted by log_event (plan: whitelisted schema).
 ALLOWED_KEYS: Final[frozenset[str]] = frozenset(
@@ -249,6 +249,30 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"contact_email"',
     "'contact_email'",
     "contact_email=",
+    # Privacy-professional-controls plan Task 1.2 (C3): an ``audit.AuditRow``
+    # holds ids only, but a rendering of one ties a session to a patient's
+    # Cliniko note and the practitioner — so every rendering is dropped, like
+    # the encounter types'. These three names are the row's own (a row also
+    # renders ``treatment_note_id`` and ``consent_text_version``, already
+    # registered); no ``log_event`` key renders as any of them (pinned by
+    # test).
+    '"past_session"',
+    "'past_session'",
+    "past_session=",
+    '"note_provenance"',
+    "'note_provenance'",
+    "note_provenance=",
+    '"consent_confirmed_at"',
+    "'consent_confirmed_at'",
+    "consent_confirmed_at=",
+    # Privacy-professional-controls plan Task 2.1 (D2): ``generated.enc``'s
+    # document carries the first note body the review showed as
+    # ``generated_text`` — clinical text, dropped in every rendering. A Past-
+    # sessions label names the patient as ``patient_name`` (registered above,
+    # Task 4.1), so a rendering of a label is dropped too.
+    '"generated_text"',
+    "'generated_text'",
+    "generated_text=",
 )
 
 # THE production log format — one string, used to build every handler's
@@ -277,11 +301,68 @@ def _interpolated_fields(fmt: str) -> tuple[str, ...]:
 _SCANNED_FIELDS: Final[tuple[str, ...]] = _interpolated_fields(LOG_FORMAT)
 
 _dropped_records = 0
+_handler_errors = 0
 
 
 def dropped_record_count() -> int:
     """Number of log records dropped by the tripwire (exposed for tests/audit)."""
     return _dropped_records
+
+
+def handler_error_count() -> int:
+    """Number of records a handler failed to write (exposed for tests)."""
+    return _handler_errors
+
+
+# An exception type's name is shown only when it is a plain identifier.
+_TYPE_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+
+
+def exception_type_name(exc_type: object) -> str:
+    """``exc_type.__name__`` when it is a plain identifier, else ``unknown``."""
+    name = getattr(exc_type, "__name__", None)
+    if isinstance(name, str) and _TYPE_NAME.fullmatch(name):
+        return name
+    return "unknown"
+
+
+class QuietHandlerErrors(logging.Handler):
+    """Privacy-professional-controls round 23 PR-MED-020 (C3): a handler that
+    fails to write a record (a full disk, a failed rollover, a broken stream,
+    a bad format) reports it as ONE fixed stderr line naming the error's
+    TYPE, and nothing else.
+
+    The stock ``Handler.handleError`` prints ``sys.exception()`` with its
+    whole ``__context__`` chain, the call stack and the record's message and
+    arguments. Whenever the failing call runs while an exception is being
+    handled — every exception hook (the thread hook runs inside ``except:``),
+    and any ``log_event`` inside an ``except`` block — that chain is the
+    handled exception's message and traceback, which may carry clinical text.
+    This override never prints a traceback, a chain, a stack, a message or an
+    argument, never writes stdout, keeps no reference to the exception, and
+    never raises. Every handler ``setup_logging`` builds carries it (pinned by
+    test); ``logging_setup`` is the only module that installs a handler.
+    Residue: a third-party logger with no handler of its own falls to Python's
+    ``logging.lastResort`` (WARNING and above), which is not one of these."""
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802 - stdlib name
+        global _handler_errors
+        _handler_errors += 1
+        try:
+            stream = sys.stderr
+            if logging.raiseExceptions and stream:
+                name = exception_type_name(type(sys.exception()))
+                stream.write(f"--- Logging error ({name}) ---\n")
+        except Exception:  # noqa: BLE001 - reporting a failure must never raise
+            pass
+
+
+class _QuietRotatingFileHandler(QuietHandlerErrors, logging.handlers.RotatingFileHandler):
+    """The rotating log file, with the quiet failure report."""
+
+
+class _QuietStreamHandler(QuietHandlerErrors, logging.StreamHandler[TextIO]):
+    """The stderr handler, with the quiet failure report."""
 
 
 class PayloadTripwireFilter(logging.Filter):
@@ -414,7 +495,9 @@ def setup_logging(
     directory = log_dir if log_dir is not None else default_log_dir()
     try:
         directory.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.handlers.RotatingFileHandler(
+        # Round 23 PR-MED-020: both handlers report a write failure as one
+        # fixed line (``QuietHandlerErrors``), never the handled exception.
+        file_handler = _QuietRotatingFileHandler(
             directory / f"{name}.log", maxBytes=max_bytes, backupCount=3, encoding="utf-8"
         )
         file_handler.setFormatter(formatter)
@@ -427,7 +510,7 @@ def setup_logging(
 
     # sys.stderr is None under a pythonw-backed launcher with no redirection.
     if stderr and sys.stderr is not None:
-        stderr_handler = logging.StreamHandler(sys.stderr)
+        stderr_handler = _QuietStreamHandler(sys.stderr)
         stderr_handler.setFormatter(formatter)
         stderr_handler.addFilter(tripwire)
         logger.addHandler(stderr_handler)

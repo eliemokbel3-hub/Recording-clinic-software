@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import ctypes
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from scribe_desktop.audio_capture import CaptureBackend
+from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.context_rules import (
@@ -58,6 +59,7 @@ from scribe_desktop.encounter import (
     UnverifiedOffline,
     VerificationRequest,
     VerificationResult,
+    Verified,
     VerifiedTarget,
     WritebackRefusal,
     WritebackRefused,
@@ -81,6 +83,7 @@ from scribe_desktop.note_config import (
     TemplateProfile,
     load_note_config,
 )
+from scribe_desktop.past_sessions import KeepLabel, PastSessionStore, keep_label
 from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
@@ -94,7 +97,7 @@ from scribe_desktop.session import (
     WriteInFlightError,
     WriteReservation,
 )
-from scribe_desktop.session_store import KEY_FILENAME, session_expires_at
+from scribe_desktop.session_store import KEY_FILENAME, audit_created_at, session_expires_at
 from scribe_desktop.status import read_registration_status, run_self_test
 from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
 from scribe_desktop.system_events import (
@@ -113,6 +116,8 @@ from scribe_desktop.ui.bridge import ChromeBridge
 from scribe_desktop.ui.clinics import ClinicsScreen
 from scribe_desktop.ui.microphone import MicrophoneScreen
 from scribe_desktop.ui.note import NoteScreen
+from scribe_desktop.ui.past_sessions import PastSessionsScreen
+from scribe_desktop.ui.past_sessions_view import PAST_SESSIONS_TAB_TITLE
 from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.session_screen import SessionScreen
@@ -126,7 +131,11 @@ class _CheckoutEncounter:
     """The recovered checkout's Cliniko link (Task 3.4). ``record`` is the
     decrypted ``encounter.enc`` (None: missing or undecryptable, so the
     session is unlinked); ``request`` the re-verification in flight and
-    ``result`` the one that answered it. Ids only — never a display string."""
+    ``result`` the one that answered it. ``record`` holds ids only; a
+    ``Verified`` ``result`` also carries Cliniko's display strings (the
+    patient's name), in memory only — the checkout line never shows them,
+    and ``keep_label_for`` reads the name for the Past-sessions label at
+    Complete (privacy-professional-controls D5)."""
 
     session_id: str | None = None
     record: EncounterRecord | None = None
@@ -164,6 +173,7 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+
 class _MSG(ctypes.Structure):
     """The head of a Windows ``MSG`` (``nativeEvent``'s
     ``windows_generic_MSG``): enough to recognise a power broadcast or a
@@ -196,16 +206,31 @@ def _is_suspend_event(event_type: object, message: object) -> bool:
 
 
 class StatusPanel(QWidget):
-    """The Phase-1 status window content (registration + self-test)."""
+    """The Phase-1 status window content (registration + self-test), under
+    the intended-use line (privacy-professional-controls D14) and the
+    start-up exclusion warnings (Task 4.1, Flow 6 — fixed lines computed once
+    by ``app.main`` before the window is built; hidden when there are none)."""
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, parent: QWidget | None = None, *, exclusion_warnings: Sequence[str] = ()
+    ) -> None:
         super().__init__(parent)
+        self.intended_use_label = QLabel(models.INTENDED_USE_LINE)
+        self.intended_use_label.setWordWrap(True)
+        self.intended_use_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.exclusion_warnings = tuple(exclusion_warnings)
+        self.exclusions_label = QLabel("\n".join(self.exclusion_warnings))
+        self.exclusions_label.setWordWrap(True)
+        self.exclusions_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.exclusions_label.setVisible(bool(self.exclusion_warnings))
         self.registration_label = QLabel()
         self.self_test_label = QLabel("Self-test: not run")
         self.self_test_button = QPushButton("Run self-test")
         self.self_test_button.clicked.connect(self.on_self_test)
 
         layout = QVBoxLayout()
+        layout.addWidget(self.intended_use_label)
+        layout.addWidget(self.exclusions_label)
         layout.addWidget(QLabel(f"Native host: {HOST_NAME}"))
         layout.addWidget(self.registration_label)
         layout.addWidget(self.self_test_button)
@@ -258,10 +283,21 @@ class MainWindow(QMainWindow):
         rate_limit_latch: RateLimitLatch | None = None,
         write_store: models.WriteStore | None = None,
         write_profile: Callable[[GeneratedNote], TemplateProfile | None] | None = None,
+        audit: AuditLog | None = None,
+        past_sessions: PastSessionStore | None = None,
+        past_sessions_confirm: Callable[[str, str], bool] | None = None,
+        past_sessions_save_path: Callable[[], Path | None] | None = None,
+        exclusion_warnings: Sequence[str] = (),
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
         self._controller = controller
+        # Privacy-professional-controls Task 1.4: the audit record the draft
+        # write reports into (best-effort, C2); the recovery list and the Past
+        # sessions tab are handed it — and the archive — directly below. None —
+        # every test that does not ask for it — records nothing; ``app.main``
+        # passes the one the controller holds.
+        self._audit = audit
         # Draft-write Task 5.2: the one write in flight (None: none), the
         # session files it reads and writes under its reservation, and the
         # template profile it matches against — the last two are test seams
@@ -322,10 +358,15 @@ class MainWindow(QMainWindow):
             sessions_root,
             active_ids_provider=self._live_session_ids,
             recovery_runner=recovery_runner,
+            audit=audit,
+            past_sessions=past_sessions,
         )
         self.transcript_screen = TranscriptScreen(
             controller, recovery_busy_provider=self._recovery_in_flight
         )
+        # D5: the Completes the Transcript screen calls itself are labelled
+        # through the same resolution as the ones this window wires.
+        self.transcript_screen.set_keep_label_provider(self.keep_label_for)
         # Practitioner-profile plan Phase 5: the Note tab learns phrases into
         # the user cue file under `config_root` (None = the default config
         # root, exactly as the generator's loader resolves it) and reads the
@@ -432,7 +473,27 @@ class MainWindow(QMainWindow):
         self._suspend_recheck_q.connect(
             self._on_suspend_recheck, Qt.ConnectionType.QueuedConnection
         )
-        self.status_panel = StatusPanel()
+        # Privacy-professional-controls Task 4.1 (Flow 6): the start-up
+        # exclusion warnings, computed by `app.main` BEFORE this window is built
+        # (`exclusions.startup_exclusions`) and shown on the Status tab and the
+        # Past sessions status line. The window itself makes no Windows call
+        # for them; the default `()` (every test that does not ask) shows none.
+        self.status_panel = StatusPanel(exclusion_warnings=exclusion_warnings)
+        # Privacy-professional-controls Task 3.1: what the archive kept, its
+        # retention setting and the audit record's export. Construction reads
+        # only the settings file under `config_root`; the archive is listed
+        # when the tab is opened. `past_sessions` None (a test that does not
+        # ask for it) touches no archive. Its confirmation and save dialog are
+        # seams (round 16 LOW-018): None opens the real ones; a test passes
+        # fakes so no real dialog ever opens (C6).
+        self.past_sessions_screen = PastSessionsScreen(
+            past_sessions,
+            audit=audit,
+            config_root=config_root,
+            confirm=past_sessions_confirm,
+            choose_csv_path=past_sessions_save_path,
+            exclusion_warnings=exclusion_warnings,
+        )
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.microphone_screen, "Microphone")
@@ -440,6 +501,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.recovery_screen, "Recovery")
         self.tabs.addTab(self.transcript_screen, "Transcript")
         self.tabs.addTab(self.note_screen, "Note")
+        self.tabs.addTab(self.past_sessions_screen, PAST_SESSIONS_TAB_TITLE)
         self.tabs.addTab(self.practitioner_screen, "Practitioner")
         self.tabs.addTab(self.clinics_screen, "Clinics")
         self.tabs.addTab(self.status_panel, "Status")
@@ -494,6 +556,9 @@ class MainWindow(QMainWindow):
         self.transcript_screen.generation_active_changed.connect(
             self._on_generation_active
         )
+        # Privacy-professional-controls D2: the body a review showed first is
+        # kept as `generated.enc`, under the review's lease.
+        self.note_screen.generated_shown.connect(self._on_generated_shown)
         # Draft-write Task 5.2 (Constraint 2): THE one entry to a Cliniko
         # write and its reconcile — pinned (`TestWriteSlot`) as this slot's
         # only connection.
@@ -746,8 +811,16 @@ class MainWindow(QMainWindow):
         self.recovery_screen.refresh()
 
     def _on_tab_changed(self, index: int) -> None:
-        if self.tabs.widget(index) is self.recovery_screen:
+        widget = self.tabs.widget(index)
+        if widget is self.recovery_screen:
             self.recovery_screen.refresh()
+        # Task 3.1: the Past sessions tab is re-listed each time it is opened,
+        # and the opened entry's text and the listed names leave the widgets
+        # and memory when it is left (round 16 LOW-008).
+        if widget is self.past_sessions_screen:
+            self.past_sessions_screen.refresh()
+        else:
+            self.past_sessions_screen.on_left()
 
     def _released_checkout_entry(self) -> ReminderEntry | None:
         """H1 round 53 LOW-040's sibling: the index entry of a RECOVERED
@@ -930,7 +1003,7 @@ class MainWindow(QMainWindow):
         self.note_screen.clear()
         self.transcript_screen.show_document(
             opening.document,
-            on_complete=self._controller.complete,
+            on_complete=self._complete_live,
             on_discard=self._controller.discard,
             store_finished=store_finished,
             can_generate=True,
@@ -1175,7 +1248,7 @@ class MainWindow(QMainWindow):
         # for the scoped generation op).
         self.transcript_screen.show_document(
             document,
-            on_complete=self._controller.complete,
+            on_complete=self._complete_live,
             on_discard=self._controller.discard,
             store_finished=True,
             can_generate=True,
@@ -1285,7 +1358,10 @@ class MainWindow(QMainWindow):
         # only (can_generate defaults False).
         self.transcript_screen.show_document(
             outcome.document,
-            on_complete=lambda: self._controller.complete_recovered(directory, crypto),
+            # D5: the label is resolved at the click, before the Complete.
+            on_complete=lambda: self._controller.complete_recovered(
+                directory, crypto, label=self.keep_label_for(directory.name)
+            ),
             on_discard=lambda: self._controller.discard_recovered(directory, crypto),
             store_finished=outcome.store_finished,
         )
@@ -1528,6 +1604,68 @@ class MainWindow(QMainWindow):
             return
         self._recovered_crypto = None
 
+    # --- the Past-sessions label and the generated note (privacy-
+    # professional-controls D2 / D5) ------------------------------------------
+
+    def keep_label_for(self, session_id: str) -> KeepLabel:
+        """D5: the Past-sessions label for ``session_id``, resolved in the UI
+        BEFORE its Complete, every source matched on the session id:
+
+        1. the Chrome bridge's display from the Verified Start of the live
+           session (the bridge is None when the pipe did not start);
+        2. the bridge's re-verification of the linked live session;
+        3. the checkout's re-verification (a recovered or adopted session)
+           when its outcome is ``Verified``.
+
+        Otherwise no name: "Name not available" for a linked (or unknown)
+        recording, "Desktop recording (no Cliniko note)" for a desktop one —
+        the kind comes from the live session's encounter context or the
+        checkout's decrypted record. The name is never persisted at Start
+        (``EncounterRecord`` stays ids-only); it lives in this label only."""
+        name: str | None = None
+        recording: Literal["linked", "desktop", "unknown"] = "unknown"
+        clinic_id: str | None = None
+        session = self._controller.session
+        bridge = self.chrome_bridge
+        if session is not None and session.session_id == session_id:
+            context = session.encounter_context
+            recording = "linked" if context is not None else "desktop"
+            clinic_id = context.clinic_id if context is not None else None
+            if bridge is not None:
+                name = bridge.live_display_name(session_id)
+                if name is None:
+                    check = bridge.live_reverification()
+                    if check is not None and isinstance(check.outcome, Verified):
+                        name = check.outcome.display.patient_display_name
+        checkout = self._checkout
+        if checkout.session_id == session_id:
+            record = checkout.record
+            if recording == "unknown" and record is not None:
+                context = record.context
+                recording = "linked" if context is not None else "desktop"
+                clinic_id = context.clinic_id if context is not None else None
+            result = checkout.result
+            if name is None and result is not None and isinstance(result.outcome, Verified):
+                name = result.outcome.display.patient_display_name
+        return keep_label(name, recording, clinic_id)
+
+    def _complete_live(self) -> RecordingSession:
+        """The live (or adopted) session's Complete, labelled at the click."""
+        session = self._controller.session
+        label = self.keep_label_for(session.session_id) if session is not None else None
+        return self._controller.complete(label=label)
+
+    def _on_generated_shown(self, body: object) -> None:
+        """D2: keep the body the review showed first (and, before any edit,
+        its first prose rendering) as ``generated.enc`` under the lease. A
+        failure never stops the review; it is said on the status bar."""
+        assert isinstance(body, models.GeneratedBody)
+        kept = self.transcript_screen.keep_generated(body)
+        # A review shown with no lease held (nothing to keep it under) is not
+        # a failure to report; a refused write under the lease is.
+        if not kept and self.transcript_screen.is_busy:
+            self.statusBar().showMessage(models.GENERATED_NOT_KEPT_LINE)
+
     # --- note generation orchestration (Phase 7) --------------------------
 
     def _on_draft_ready(self, result: object) -> None:
@@ -1632,6 +1770,15 @@ class MainWindow(QMainWindow):
             return None
         return models.WriteBinding(session.session_id, session.encounter_context is not None)
 
+    def clinic_user_id(self, clinic_id: str) -> str | None:
+        """The clinic registry's Cliniko ``user_id`` for ``clinic_id``, or
+        None — what ``app.main`` registers as the controller's clinic-user
+        resolver, so a linked Start's audit row names it (privacy-
+        professional-controls D8). A registry read only; nothing contacts
+        Cliniko."""
+        record = self._clinic_registry.record(clinic_id)
+        return record.user_id if record is not None else None
+
     def _on_write_requested(self, session_id: str) -> None:
         """THE slot for "Write draft to Cliniko" (D2, D3; Constraint 2 — a
         write and its reconcile start only here, and this slot's only
@@ -1726,6 +1873,12 @@ class MainWindow(QMainWindow):
             )
             early = refuse_before_read(inputs.note, inputs.record, inputs.note_identity)
             if early is not None:
+                if self._audit is not None:
+                    # Flow 2 (round 7 LOW-001): every pre-send refusal records
+                    # its fixed code, dated under the still-held reservation.
+                    self._audit.record_write_refusal(
+                        session_id, early.name, created_at=self._write_created_at(reservation)
+                    )
                 reservation.release()
                 self._show_write_line(models.write_refusal_line(early))
                 return
@@ -1838,6 +1991,14 @@ class MainWindow(QMainWindow):
             profile=self._write_profile(inputs.note),
         )
         if isinstance(prepared, WriteRefusal):
+            # Task 1.4 (round 1 PR-MED-005): the refusal's FIXED code, never
+            # the display line; best-effort (C2).
+            if self._audit is not None:
+                self._audit.record_write_refusal(
+                    job.session_id,
+                    prepared.name,
+                    created_at=self._write_created_at(job.reservation),
+                )
             return models.write_refusal_line(prepared)
         if isinstance(prepared, AlreadyWritten):
             earlier = inputs.record
@@ -1900,13 +2061,48 @@ class MainWindow(QMainWindow):
 
     def _store_write_record(self, job: _WriteJob, record: WriteRecord) -> None:
         """``write.enc`` through the held reservation ONLY (D9: the write's
-        one accessor to its session files)."""
+        one accessor to its session files).
+
+        THE one boundary every durable write-record transition passes
+        through — the attempt, a reconciled ``written``, the finish and its
+        ``unknown`` fallback — so it is also where the audit row learns the
+        write (privacy-professional-controls Task 1.4): the attempt number,
+        the outcome and, once ``written``, when. Only AFTER the record is on
+        disk (a record that failed to store is not a transition), and
+        best-effort — ``AuditLog.update`` never raises, so the audit can
+        never change what the write does or reports (C2). A refused one also
+        records Cliniko's fixed refusal code (round 6 LOW-006)."""
         store = self._write_store
         session_id = job.session_id
-        self._controller.with_write_custody(
-            job.reservation,
-            lambda directory, crypto: store.store(directory, crypto, session_id, record),
-        )
+        audit = self._audit
+
+        def stored(directory: Path, crypto: SessionCrypto) -> float | None:
+            store.store(directory, crypto, session_id, record)
+            # D8 (round 6 LOW-007): the session's creation time, read in the
+            # same custody hold, dates a pre-audit session's first row.
+            return audit_created_at(directory) if audit is not None else None
+
+        created_at = self._controller.with_write_custody(job.reservation, stored)
+        if audit is not None:
+            audit.record_write(
+                session_id,
+                attempt=record.attempt,
+                outcome=record.outcome,
+                finished_at=record.finished_at,
+                refusal=record.refusal,
+                created_at=created_at,
+            )
+
+    def _write_created_at(self, reservation: WriteReservation) -> float | None:
+        """D8 (round 6 LOW-007): the writing session's creation time, through
+        the held write custody, for a pre-audit session's first row. Never
+        raises — None lets the audit use its own clock."""
+        try:
+            return self._controller.with_write_custody(
+                reservation, lambda directory, _crypto: audit_created_at(directory)
+            )
+        except Exception:  # noqa: BLE001 - a date, never a reason the write changes
+            return None
 
     def _write_failure_line(self, job: _WriteJob) -> str:
         """R22-07: ``unknown`` once an attempt row was written, else

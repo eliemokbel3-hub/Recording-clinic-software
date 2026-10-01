@@ -11,11 +11,30 @@ view patterns · tokens · microcopy.
 
 ## Surfaces & layout
 - One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
-  **Practitioner** / **Clinics** / Status — `desktop/src/scribe_desktop/ui/main_window.py`.
+  **Past sessions** / **Practitioner** / **Clinics** / Status —
+  `desktop/src/scribe_desktop/ui/main_window.py`.
   The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
   replaced or removed (since 2026-09-30 it holds no draft-write setting: the
-  "Starting text" group went with cliniko-draft-write D14, retired by D15). No secondary
-  windows; no new UI framework (PySide6 only, extending the Phase-1 status panel rather
+  "Starting text" group went with cliniko-draft-write D14, retired by D15). The **Past
+  sessions** tab (`ui/past_sessions.py`, its Qt-free lines in `ui/past_sessions_view.py`;
+  privacy-professional-controls plan Flow 5) is the look-back over completed sessions:
+  the list (date + patient name, or "Patient hidden" under **Hide names**), the opened
+  entry's generated note beside its saved note with the Cliniko write outcome, "Copy
+  saved note" and "Show transcript", the two-click Delete now, the retention setting
+  with its warning, Export audit record (CSV) and a status line. LEAVING the tab drops
+  the opened entry's text and the names from every panel; opening it re-lists. Both the
+  Status tab and the Past sessions tab head with the intended-use line ("Documentation
+  aid, not clinical decision support. You review and finalise every note in Cliniko." —
+  `ui/models.py` `INTENDED_USE_LINE`) and show the start-up exclusion warnings
+  (`exclusions.py`) when there are any. No secondary
+  windows beyond short confirmations: the Practitioner tab's delete questions, the
+  learned-style review dialogs, and the Past sessions tab's two confirmations — lowering
+  the retention setting and "Start a new audit record" — which name their buttons for
+  what they do ("Delete older sessions" / "Start a new audit record" against "Keep
+  things as they are", the safe one the default) — plus two file dialogs (the
+  Practitioner tab's sample-note picker and Export's save dialog, which opens in
+  Documents) and the two start-up boxes shown before the window exists ("already
+  running" and "cannot start", `app.py`). No new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
   phrases with their delete. A tab whose groups stack beyond one window height SCROLLS
@@ -97,7 +116,20 @@ view patterns · tokens · microcopy.
   practitioner has already selected or opened (round 60 PR-LOW-332): the Transcript
   screen's Discard (`ui/transcript.py`), and the Recovery tab's Discard in both its lists —
   the recoverable list and the Unreviewed list (`ui/recovery.py`; the Unreviewed one reuses
-  the Recovery list's discard by Task 5.4's decision).
+  the Recovery list's discard by Task 5.4's decision). The Past sessions tab's **Delete
+  now** follows the two-click pattern: it becomes "Confirm delete" for 10 seconds for the
+  same entry with "Delete this past session now? Use Delete now only for a recording made
+  in error - the wrong patient, a test, or one recorded without consent - because a kept
+  transcript must otherwise be kept for at least 7 years. Its notes and transcript cannot
+  be recovered. Press Confirm delete to delete it." (a selection change or the deadline
+  disarms it, checked at the click), and the second click destroys the entry's key first
+  (`ui/past_sessions.py`). A plain line under the button says the same limit ("Use Delete
+  now only for a recording made in error: the wrong patient, a test, or one recorded
+  without consent.", `DELETE_HELP`). Choosing "7 years" over "Until I delete them" is the
+  other destructive choice there (the only two choices since the 7-year minimum,
+  practitioner decision 2026-10-02): it asks first, names what goes ("Keep past sessions
+  for only 7 years? Every kept session older than that is deleted now and cannot be
+  recovered."), and a declined choice puts the setting back and writes nothing.
 - **Edits over whole lines, with typing only OVER a line.** The Note tab's "Edit the note"
   group offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
   transcript utterances under the router's ownership rule as before; Edit opens a one-line
@@ -230,7 +262,8 @@ view patterns · tokens · microcopy.
   stays disabled,
   Copy stays, and only the Transcript screen's Complete finishes the recording (the
   Session screen then reads "Draft written to Cliniko and this recording is
-  complete. Review and finalise the note in Cliniko."). Every refusal is ONE line
+  complete. Past sessions shows what was kept. Review and finalise the note in
+  Cliniko."). Every refusal is ONE line
   that names what happened and gives the next step — wait, try again, save, or fix
   the cause — and offers Copy where copying the note is the way forward (a refusal
   that only asks to wait, such as "A draft is being written to Cliniko. Wait for it
@@ -384,7 +417,13 @@ ratified it. The write's text comes from the same per-section renderer as Copy's
 (`note.render_section_lines`) with the review apparatus switched off — no bullets,
 provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - Transcript text is display-only (`NoTextInteraction`) and cleared on close —
-  `ui/transcript.py`. It is never logged, never written outside the encrypted store.
+  `ui/transcript.py`. It is never logged, never written outside the encrypted stores
+  (the session, then — at Complete — its Past-sessions entry, under that entry's own
+  key). The Past sessions tab shows a kept transcript only behind "Show transcript",
+  also `NoTextInteraction`, and never copies it: its one Copy is "Copy saved note",
+  through the same clipboard placement as the Note tab's Copy (`ui/note.py`
+  `_place_note_text`), refused with its reason when no saved note was kept, the note
+  has an unresolved error, or the copy flag is off.
 - The generated NOTE is the copyable surface — but ONLY while the recorded copy flag is on
   AND the note is fully ratified (no pending proposal, no blocking error, saved, no
   unacknowledged review warning). Until both hold, the note panel is `NoTextInteraction`
@@ -395,9 +434,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   enablement gate — `docs/testing/shipping-gate.md`). The transcript panel is
   never copyable. Never widen copy to only-the-flag; disabling the button alone is
   insufficient because selectable text keeps native copy shortcuts. Every copy of note
-  text — the Copy button, and Ctrl+C / Ctrl+Insert or the panel's own right-click Copy
+  text — the Copy button, Ctrl+C / Ctrl+Insert or the panel's own right-click Copy
   over the ratified note's selection (`ui/note.py` `_NotePanel`, whose menu replaces
-  Qt's) — also carries the registered Windows formats that keep it out of Windows
+  Qt's), and the Past sessions tab's "Copy saved note" — also carries the registered Windows formats that keep it out of Windows
   clipboard history and cloud clipboard sync (`ui/models.py` `clipboard_mime_formats`,
   Task 8.2); they do not stop another program of the same user reading the clipboard,
   and the note stays there until something replaces it.
@@ -419,7 +458,43 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - Plain clinical English, no jargon, no exclamation marks. Name the artefact the user
   cares about ("recording did not finish cleanly; the tail may be missing") rather than
   the internal cause (a missing store footer).
-- Destructive actions are named for what they do — Complete and Discard, not OK/Cancel.
+- Destructive actions are named for what they do — Complete and Discard, not OK/Cancel;
+  Delete now / Confirm delete, and the confirmations' "Delete older sessions" / "Start a
+  new audit record" against "Keep things as they are" (`ui/past_sessions_view.py`).
+- Complete names where the session went, without claiming what one Complete kept (the
+  screen does not know: a test-provider session keeps nothing, and a delete-note path
+  never keeps the saved note): the tooltip "Verify the encrypted transcript, keep the
+  transcript and notes in Past sessions (never the audio; a test-provider session keeps
+  nothing), then delete the session and its key - the audio becomes unrecoverable.",
+  the lines "Session completed: transcript verified and the session key destroyed - the
+  audio cannot be recovered. Past sessions shows what was kept." and "Session completed
+  without a note: transcript verified and the session key destroyed. Past sessions shows
+  what was kept - never the saved note." (`ui/models.py` `COMPLETE_TOOLTIP` /
+  `COMPLETE_DONE_LINE` / `COMPLETE_WITHOUT_NOTE_LINE`), and, when the copy's marker could
+  not be removed after the key, "Completed. The Past-sessions copy will appear after the
+  next check." (`COMPLETE_DEFERRED_LINE`).
+- A Past-sessions line carries a date, the patient's name as the entry's label holds it
+  (never under Hide names) and authored words — never an id, a path or exception text; a
+  failure names its authored reason, and an error the app did not author reads the one
+  fixed reason (`past_sessions_view.failure_reason`). The retention warning is pinned
+  text: "A kept transcript becomes part of your health record - under the VIC Health
+  Records Act 2001, the NSW HRIP Act 2002 and the ACT Health Records (Privacy and Access)
+  Act 1997, and elsewhere APP 11.2. It can be reached by an APP 12 access request or a
+  subpoena. Clinic Scribe keeps it, encrypted, only in this Windows login's data folder
+  and makes no backup of its own - but backup or sync software, or a folder location it
+  has warned about, can still copy the encrypted files. Cliniko stays the system of
+  record. A kept transcript is kept for at least 7 years. If the patient was a child, it
+  must be kept until they turn 25 - Clinic Scribe does not know a patient's age, so choose
+  "Until I delete them" when that applies." (`RETENTION_WARNING`; it states the PROGRAM's
+  behaviour — an encrypted copy made by other software is not prevented, only warned
+  about where it can be seen; change it together with `docs/practice/`). The combo offers
+  exactly "Until I delete them" and "7 years" (practitioner decision 2026-10-02). A
+  settings file still holding a removed shorter setting adds the status line "Your
+  earlier Past-sessions setting was shorter than 7 years, the minimum for a kept
+  transcript, so past sessions are now kept for 7 years. Choose a setting below to save
+  this." until a save (`RETENTION_RAISED_LINE`); a sweep refused for a window under 7
+  years says "The retention setting is shorter than 7 years, so nothing was deleted by
+  age." (`SWEEP_TOO_SHORT_LINE`).
 - A custody action that fails on an error the app did not author (a disk, permission or
   store error) shows one fixed reason, "an unexpected problem on this computer stopped
   it", never the error's text or type: that text can name the session's directory. The
@@ -458,8 +533,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   - outcome: "Draft written to Cliniko. Reload the note page in Chrome; press Complete
     once you can see it there. If Cliniko says the note was updated elsewhere, choose
     Discard my changes." (`written_seen`); after that Complete, on the Session
-    screen, "Draft written to Cliniko and this recording is complete. Review and
-    finalise the note in Cliniko." (`written_done`); "The write did not confirm.
+    screen, "Draft written to Cliniko and this recording is complete. Past sessions
+    shows what was kept. Review and finalise the note in Cliniko." (`written_done`);
+    "The write did not confirm.
     Nothing is lost - press Write again to check the note before anything is sent."
     (`unknown`);
   - before the write: "Save the note first."; "This recording is not linked to a

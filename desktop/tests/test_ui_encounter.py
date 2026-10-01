@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import uuid
 from pathlib import Path
@@ -639,6 +640,78 @@ def _count(calls: list[Any], name: str) -> int:
     return sum(1 for call in calls if call[0] == name)
 
 
+class _AuditRecorder:
+    """The main window's audit seam (privacy-professional-controls Task
+    1.4): what the write reported, in order."""
+
+    def __init__(self, store: _MemoryWriteStore | None = None) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+        self.created: list[float | None] = []  # each record's pre-audit date
+        # PR-LOW-008: what ``write.enc`` held on disk AT each write call —
+        # the record the call reports must already be stored.
+        self.store = store
+        self.stored_at_call: list[list[str]] = []
+
+    def record_write(
+        self,
+        session_id: str,
+        *,
+        attempt: int,
+        outcome: str,
+        finished_at: Any,
+        refusal: str | None = None,
+        created_at: float | None = None,
+    ) -> bool:
+        self.calls.append(("write", session_id, (attempt, outcome), finished_at, refusal))
+        self.created.append(created_at)
+        if self.store is not None:
+            self.stored_at_call.append([stored for stored, _ in self.store.stored])
+        return True
+
+    def record_write_refusal(
+        self, session_id: str, code: str, *, created_at: float | None = None
+    ) -> bool:
+        self.calls.append(("refusal", session_id, code))
+        self.created.append(created_at)
+        return True
+
+    def record_deletion(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    # Privacy-professional-controls Task 3.1: the Past sessions tab's audit
+    # surface (``past_sessions_view.PastSessionsAudit``) — the window builds
+    # the tab with this recorder. Inert: no failures, a readable key, no rows;
+    # the tab is never opened by these tests, so nothing here is reached by a
+    # click (a reset or an export would be a test bug).
+    failure_count = 0
+
+    def key_unreadable(self) -> bool:
+        return False
+
+    def reset(self) -> None:
+        pytest.fail("a draft-write test reset the audit record")
+
+    def row_for(self, session_id: str) -> None:
+        return None
+
+    def record_past_session(
+        self, session_id: str, state: str, *, created_at: float | None = None
+    ) -> bool:
+        self.calls.append(("past_session", session_id, state))
+        return True
+
+    def export_csv(self, path: Path) -> int:
+        pytest.fail("a draft-write test exported the audit record")
+
+
+def test_the_audit_recorder_implements_the_past_sessions_surface() -> None:
+    """The window hands this recorder to the Past sessions tab: it must
+    carry every member the tab uses (the stage-3 suite found it did not)."""
+    from scribe_desktop.ui.past_sessions_view import PastSessionsAudit
+
+    assert isinstance(_AuditRecorder(), PastSessionsAudit)
+
+
 class _Gate:
     """A request held on the worker until the test releases it. ``release``
     runs in the test's ``finally``: it opens the gate and waits for the
@@ -826,11 +899,15 @@ class TestDraftWrite:
     ) -> None:
         store = _MemoryWriteStore()
         store.fail_on = {"written"}
-        window, controller, _cliniko, _store = self._window(tmp_path, store=store)
+        audit = _AuditRecorder(store)
+        window, controller, _cliniko, _store = self._window(tmp_path, store=store, audit=audit)
         self._click(qapp, window, controller)
         assert self._line(window) == models.write_line("unknown")
         assert store.stored == [("attempting", 1)]  # still open: the next click reconciles
         assert controller.write_releases == 1
+        # PR-LOW-008: a transition that was not stored is not audited.
+        assert [call[2] for call in audit.calls] == [(1, "attempting")]
+        assert audit.stored_at_call == [["attempting"]]
         window.close()
 
     def test_while_writing_the_window_refuses_close_and_blocks_the_screens(
@@ -1097,11 +1174,13 @@ class TestDraftWrite:
         """Constraint 5: no PATCH without the ``attempting`` row on disk."""
         store = _MemoryWriteStore()
         store.fail_on = {"attempting"}
-        window, controller, cliniko, _store = self._window(tmp_path, store=store)
+        audit = _AuditRecorder(store)
+        window, controller, cliniko, _store = self._window(tmp_path, store=store, audit=audit)
         self._click(qapp, window, controller)
         assert self._line(window) == models.write_line("not_sent")
         assert _count(cliniko.calls, "PATCH") == 0 and store.stored == []
         assert controller.write_releases == 1 and controller.writing_id is None
+        assert audit.calls == []  # PR-LOW-008: nothing stored, nothing audited
         window.close()
 
     def test_a_worker_that_raises_is_not_sent_before_hop_two_and_unknown_after(
@@ -1124,6 +1203,155 @@ class TestDraftWrite:
         # The request may have left: the attempt is finished as unknown.
         assert [outcome for outcome, _ in store.stored] == ["attempting", "unknown"]
         assert controller.write_releases == 2 and controller.writing_id is None
+        window.close()
+
+    # --- privacy-professional-controls Task 1.4: the write into the audit ----
+
+    def test_the_attempt_then_the_finish_reach_the_audit(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Every durable write-record transition, in order, AFTER it is on
+        disk — the attempt, then the finish (PR-LOW-008: checked AT each
+        audit call, not only at the end)."""
+        store = _MemoryWriteStore()
+        audit = _AuditRecorder(store)
+        window, controller, _cliniko, _store = self._window(tmp_path, store=store, audit=audit)
+        self._click(qapp, window, controller)
+        session_id = controller.session_value.session_id
+        assert [call[:3] for call in audit.calls] == [
+            ("write", session_id, (1, "attempting")),
+            ("write", session_id, (1, "written")),
+        ]
+        assert audit.stored_at_call == [["attempting"], ["attempting", "written"]]
+        finished = store.record.finished_at
+        assert finished is not None and audit.calls[-1][3] == finished
+        assert audit.calls[0][3] is None
+        window.close()
+
+    def test_an_attempt_with_no_finish_shows_the_attempt(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """While hop 2 is on the wire (or if its answer never comes), the
+        row already shows the attempt."""
+        audit = _AuditRecorder()
+        cliniko, gated = _gated("PATCH", "/v1/treatment_notes/")
+        window, _controller, _cliniko, _store = self._window(
+            tmp_path, cliniko=cliniko, audit=audit
+        )
+        window.note_screen.write_button.click()
+        try:
+            assert _process_until(qapp, gated.entered.is_set)
+            assert [call[2] for call in audit.calls] == [(1, "attempting")]
+        finally:
+            gated.release(qapp, window)
+        assert not gated.timed_out
+        window.close()
+
+    def test_a_pre_send_refusal_records_its_code_never_its_line(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 1 PR-MED-005: the ``WriteRefusal`` branch records the fixed
+        code (here the repeat guard's), never the display line."""
+        audit = _AuditRecorder()
+        window, controller, _cliniko, _store = self._window(
+            tmp_path, cliniko=Cliniko(patch=status(403)), audit=audit
+        )
+        # Round 7 LOW-012: the custody's directory carries a KNOWN creation
+        # time, so the date the audit gets is shown to be the session's.
+        session_dir = tmp_path / "write-session"
+        session_dir.mkdir()
+        (session_dir / "key.dpapi").write_bytes(b"placeholder")
+        known = 1_790_000_000.0  # 2026-09-22, in the past
+        os.utime(session_dir / "key.dpapi", (known, known))
+        os.utime(session_dir, (known, known))
+        controller.write_dir = session_dir
+        self._click(qapp, window, controller)
+        # Round 6 LOW-006: Cliniko's own refusal is recorded by its code too.
+        writes = [call for call in audit.calls if call[0] == "write"]
+        assert [(call[2], call[4]) for call in writes] == [
+            ((1, "attempting"), None),
+            ((1, "refused"), "finalised_before_write"),
+        ]
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("write_forbidden")
+        refusals = [call for call in audit.calls if call[0] == "refusal"]
+        assert refusals == [("refusal", controller.session_value.session_id, "write_forbidden")]
+        # Round 6 LOW-007: every record carries the session's creation time,
+        # read through the held write custody, for a pre-audit row's date.
+        assert audit.created == [pytest.approx(known, abs=1e-3)] * 3
+        window.close()
+
+    def test_an_early_refusal_records_its_code_too(self, qapp: Any, tmp_path: Path) -> None:
+        """Round 7 LOW-001: ``refuse_before_read``'s refusals (here the mock
+        note's) are pre-send refusals too — recorded by code, dated through
+        the still-held reservation, which is then released."""
+        audit = _AuditRecorder()
+        store = _MemoryWriteStore(_write_note(provider_name="mock-provider"))
+        window, controller, cliniko, _store = self._window(tmp_path, store=store, audit=audit)
+        window._on_write_requested(controller.session_value.session_id)
+        assert cliniko.calls == []
+        assert audit.calls == [("refusal", controller.session_value.session_id, "mock_note")]
+        assert len(audit.created) == 1 and isinstance(audit.created[0], float)
+        assert controller.write_releases == 1
+        window.close()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="DPAPI custody is Windows-only")
+    def test_unknown_then_reconciled_written_survives_the_completion_record(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 1.4: unknown → reconciled-written, then the completion record
+        (the one ``SessionController``'s Complete makes — called directly
+        here, as the window's controller is a fake) keeps the write fields
+        (round 6 LOW-010)."""
+        from scribe_desktop.audit import AuditLog
+        from scribe_desktop.session_store import CompletionFacts
+
+        audit = AuditLog(tmp_path / "audit")
+        window, controller, cliniko, _store = self._window(
+            tmp_path, cliniko=Cliniko(patch=status(503)), audit=audit
+        )
+        session = controller.session_value
+        session_id = session.session_id
+        audit.begin(
+            session_id,
+            consent=session.consent,
+            context=session.encounter_context,
+            user_id=None,
+            started_at=session.created_at,
+        )
+        self._click(qapp, window, controller)
+        (row,) = audit.rows().rows
+        assert (row.write.attempts, row.write.last_outcome) == (1, "unknown")
+        sent = json.loads(cliniko.bodies[-1] or b"{}")["content"]
+        cliniko.answers[("GET", "/v1/treatment_notes/")] = [ok(note_body(content=sent))]
+        self._click(qapp, window, controller)
+        assert audit.record_completion(session_id, CompletionFacts(), deletion="completed")
+        (row,) = audit.rows().rows
+        assert row.write.last_outcome == "written" and row.write.written_at is not None
+        assert row.deletion.state == "completed"
+        window.close()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="DPAPI custody is Windows-only")
+    def test_an_audit_failure_does_not_change_the_write(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """C2: the audit can never change what the write does or reports."""
+        from scribe_desktop import audit as audit_mod
+        from scribe_desktop.audit import AuditLog
+        from scribe_desktop.session_store import StoreWriteError
+
+        def full_disk(*_args: Any, **_kwargs: Any) -> None:
+            raise StoreWriteError("failed writing audit row: disk full")
+
+        monkeypatch.setattr(audit_mod, "atomic_write_bytes", full_disk)
+        audit = AuditLog(tmp_path / "audit")
+        window, controller, cliniko, store = self._window(tmp_path, audit=audit)
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("written_seen")
+        assert [outcome for outcome, _ in store.stored] == ["attempting", "written"]
+        assert _count(cliniko.calls, "PATCH") == 1
+        assert controller.write_releases == 1
+        assert audit.failure_count == 2
         window.close()
 
     def test_a_clinic_gone_before_the_click_reserves_nothing(
@@ -1170,4 +1398,130 @@ class TestDraftWrite:
         assert window._live_write_binding() is None
         controller.session_value = None
         assert window._live_write_binding() is None
+        window.close()
+
+
+class TestKeepLabel:
+    """Privacy-professional-controls D5 (Task 2.3): the Past-sessions label
+    ``MainWindow.keep_label_for`` resolves BEFORE a Complete — the bridge's
+    Verified Start display, then its re-verification, then the checkout's
+    Verified re-verification, every source matched on the session id."""
+
+    class _Bridge:
+        def __init__(self, name: str | None, check: Any = None) -> None:
+            self.name = name
+            self.check = check
+            self.asked: list[str] = []
+
+        def live_display_name(self, session_id: str) -> str | None:
+            self.asked.append(session_id)
+            return self.name
+
+        def live_reverification(self) -> Any:
+            self.asked.append("reverification")
+            return self.check
+
+    def _live(self, tmp_path: Path, *, linked: bool = True) -> tuple[Any, FakeController, str]:
+        ctx = context() if linked else None
+        consent = consent_for(ctx) if ctx is not None else unlinked_consent()
+        controller = FakeController()
+        controller.session_value = RecordingSession(
+            consent=consent, encounter_context=ctx
+        ).with_state(SessionState.QUEUED)
+        window = _window(tmp_path, _registry(tmp_path), controller)
+        return window, controller, controller.session_value.session_id
+
+    def _verified(self, name: str) -> Any:
+        from scribe_desktop.encounter import NoteDisplay, Verified
+
+        return SimpleNamespace(outcome=Verified(context=context(), display=NoteDisplay(name, None)))
+
+    def test_the_start_display_comes_first(self, qapp: Any, tmp_path: Path) -> None:
+        window, _controller, session_id = self._live(tmp_path)
+        bridge = self._Bridge("Jan Citizen", self._verified("Someone Else"))
+        window.chrome_bridge = bridge
+        try:
+            label = window.keep_label_for(session_id)
+        finally:
+            window.chrome_bridge = None
+        assert (label.patient_name, label.recording, label.clinic_id) == (
+            "Jan Citizen",
+            "linked",
+            CLINIC_ID,
+        )
+        assert bridge.asked == [session_id]  # the re-verification was never needed
+        window.close()
+
+    def test_then_the_live_reverification(self, qapp: Any, tmp_path: Path) -> None:
+        window, _controller, session_id = self._live(tmp_path)
+        window.chrome_bridge = self._Bridge(None, self._verified("Jan Citizen"))
+        try:
+            assert window.keep_label_for(session_id).patient_name == "Jan Citizen"
+            window.chrome_bridge = self._Bridge(None, SimpleNamespace(outcome=object()))
+            label = window.keep_label_for(session_id)
+        finally:
+            window.chrome_bridge = None
+        assert (label.patient_name, label.recording) == (None, "linked")  # not available
+        window.close()
+
+    def test_a_desktop_recording_has_no_name(self, qapp: Any, tmp_path: Path) -> None:
+        window, _controller, session_id = self._live(tmp_path, linked=False)
+        window.chrome_bridge = self._Bridge("Jan Citizen")
+        try:
+            label = window.keep_label_for(session_id)
+        finally:
+            window.chrome_bridge = None
+        assert (label.patient_name, label.recording, label.clinic_id) == (None, "desktop", None)
+        window.close()
+
+    def test_another_session_id_gets_nothing_from_the_live_session(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import UNKNOWN_LABEL
+
+        window, _controller, _session_id = self._live(tmp_path)
+        bridge = self._Bridge("Jan Citizen")
+        window.chrome_bridge = bridge
+        try:
+            assert window.keep_label_for(uuid.uuid4().hex) == UNKNOWN_LABEL
+        finally:
+            window.chrome_bridge = None
+        assert bridge.asked == []
+        window.close()
+
+    def test_a_verified_checkout_names_its_session(self, qapp: Any, tmp_path: Path) -> None:
+        window = _window(tmp_path, _registry(tmp_path, transport=NoteTransport()))
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        _settled(qapp, window)
+        label = window.keep_label_for(directory.name)
+        assert label.recording == "linked" and label.clinic_id == CLINIC_ID
+        assert label.patient_name is not None and "Citizen" in label.patient_name
+        assert window.keep_label_for(uuid.uuid4().hex).patient_name is None
+        window.close()
+
+    def test_an_unanswered_checkout_is_not_available(self, qapp: Any, tmp_path: Path) -> None:
+        gate = threading.Event()
+
+        def held() -> Any:
+            gate.wait(10)
+            return ok(note_body())
+
+        window = _window(tmp_path, _registry(tmp_path, transport=NoteTransport(note=held)))
+        directory, crypto = _recoverable(tmp_path, _linked_record())
+        _check_out(window, directory, crypto)
+        label = window.keep_label_for(directory.name)
+        assert (label.patient_name, label.recording) == (None, "linked")
+        gate.set()
+        _settled(qapp, window)
+        window.close()
+
+    def test_a_desktop_checkout_is_a_desktop_recording(self, qapp: Any, tmp_path: Path) -> None:
+        window = _window(tmp_path, _registry(tmp_path))
+        record = EncounterRecord(consent=unlinked_consent(), context=None)
+        directory, crypto = _recoverable(tmp_path, record)
+        _check_out(window, directory, crypto)
+        _settled(qapp, window)
+        label = window.keep_label_for(directory.name)
+        assert (label.patient_name, label.recording) == (None, "desktop")
         window.close()

@@ -2208,7 +2208,9 @@ class NoteDraft(BaseModel):
     """Stage-one output: the base note plus its proposals, UNCHECKED.
 
     In-memory hand-off between ``compose_draft`` and ``finalise_note`` only —
-    never persisted, never rendered as prose.
+    never persisted, never rendered as prose. (The privacy-professional-
+    controls ``generated.enc``, D2, keeps the first rendered body of the note
+    FINALISED from it — ``format_note_body`` text — never this draft.)
 
     The confinement this type ENFORCES (round 28 PR-MED-001, widened by
     schema v2 D4): base sections hold ``DRAFT_BASE_PROVENANCES`` only —

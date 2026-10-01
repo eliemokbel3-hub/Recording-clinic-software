@@ -90,7 +90,6 @@ from scribe_desktop.protocol import PROTOCOL_VERSION
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     KEY_FILENAME,
-    TRANSCRIPT_FILENAME,
     complete_session,
     store_has_footer,
     sweep_sessions,
@@ -357,8 +356,19 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from scribe_desktop.session import SessionController\n"
         "from scribe_desktop.clinics import ClinicRegistry\n"
         "from scribe_desktop.ui.main_window import MainWindow\n"
+        "from scribe_desktop.audit import AuditLog\n"
+        "from scribe_desktop.app import record_sweep_results, sweep_with_archive\n"
+        "from scribe_desktop.past_sessions import PastSessionStore\n"
         "import tempfile, time\n"
         "from pathlib import Path\n"
+        # Privacy-professional-controls Task 4.1: the exception hooks before the
+        # QApplication and every store. app.main installs them right after
+        # logging, ahead of the offline env; the child sets that env first
+        # (Step 13 above) — the order changes no socket use (H1 round 32
+        # LOW-006).
+        "import logging, os\n"
+        "from scribe_desktop.exclusions import install_exception_hooks, startup_exclusions\n"
+        "install_exception_hooks(logging.getLogger('no-sockets-child'))\n"
         "app = QApplication([])\n"
         # Peer round 55 PR-LOW-041: every store root under the temp parent, so
         # the child never unwraps the developer's real profile or reads their
@@ -368,11 +378,49 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "base = Path(tempfile.mkdtemp())\n"
         "root = base / 'sessions'\n"
         "backend = MockCaptureBackend()\n"
-        "controller = SessionController(backend, sessions_root=root)\n"
+        # Privacy-professional-controls Task 1.3: the new start-up work — the
+        # audit log (its root redirected too), its month prune, the sweep's
+        # results recorded, and the clinic-user resolver.
+        "audit = AuditLog(base / 'audit')\n"
+        # Task 2.3: the Past-sessions archive (its root redirected too), and
+        # the sweep with its staging clean-up, C1 hook and reconciliation.
+        "past = PastSessionStore(base / 'past_sessions')\n"
+        "controller = SessionController(backend, sessions_root=root, audit=audit,\n"
+        "                               past_sessions=past)\n"
+        "audit.prune()\n"
+        "record_sweep_results(audit, sweep_with_archive(root, past, frozenset(), audit=audit))\n"
+        # Task 4.1 (Flow 6): the start-up exclusion work before the window,
+        # under the socket guard — through a FAKE Windows layer over the temp
+        # parent (C6: the child never reads the real registry or environment,
+        # and sets no real file attribute).
+        "class FakeLayer:\n"
+        "    def environ(self, name):\n"
+        "        return str(base) if name in ('LOCALAPPDATA', 'USERPROFILE') else None\n"
+        "    def realpath(self, path):\n"
+        "        return os.path.realpath(path)\n"
+        "    def drive_type(self, root):\n"
+        "        return 3\n"
+        "    def file_attributes(self, path):\n"
+        "        return 0\n"
+        "    def set_file_attributes(self, path, attributes):\n"
+        "        return True\n"
+        "    def wer_exclusions(self):\n"
+        "        return {}\n"
+        "warnings = startup_exclusions(FakeLayer(), executable='pythonw.exe',\n"
+        "                              logger=logging.getLogger('no-sockets-child'), root=base)\n"
         "w = MainWindow(controller, backend, sessions_root=root,\n"
         "               profile_root=base / 'profile', config_root=base / 'config',\n"
         "               style_root=base / 'style', language_model_available=lambda: False,\n"
-        "               clinic_registry=ClinicRegistry(base / 'clinics.json'))\n"
+        "               clinic_registry=ClinicRegistry(base / 'clinics.json'), audit=audit,\n"
+        "               past_sessions=past, exclusion_warnings=warnings)\n"
+        "controller.set_clinic_user_resolver(w.clinic_user_id)\n"
+        # As app.main: the reminder index rebuilt after the sweep (Cliniko
+        # safeguards Task 5.5; nothing to decrypt under the empty root).
+        "w.reconstruct_reminders()\n"
+        # Task 3.2: the start-up retention sweep through the Past sessions
+        # tab, and the tab listed as opening it would (Task 3.1).
+        "w.past_sessions_screen.run_retention_sweep()\n"
+        "w.past_sessions_screen.refresh()\n"
         "w.status_panel.on_self_test()\n"
         # Round 71 PR-LOW-390: report the interpreter's own pid, then stay up
         # until the parent releases the gate (stdin), not on a timer.
@@ -416,6 +464,7 @@ from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
+from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.protocol import PROTOCOL_VERSION
 from scribe_desktop.session import SessionController
 from scribe_desktop.ui.main_window import MainWindow
@@ -427,7 +476,8 @@ controller = SessionController(backend, sessions_root=root)
 w = MainWindow(controller, backend, sessions_root=root,
                profile_root=base / 'profile', config_root=base / 'config',
                style_root=base / 'style', language_model_available=lambda: False,
-               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+               clinic_registry=ClinicRegistry(base / 'clinics.json'),
+               past_sessions=PastSessionStore(base / 'past_sessions'))
 bridge = w.attach_chrome_link()
 name = '\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
 server = PipeServer(name, bridge, sddl=pipe_sddl(current_user_sid()))
@@ -515,6 +565,7 @@ assert_offline_env()
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
 from scribe_desktop.session import SessionController
 from scribe_desktop.ui.main_window import MainWindow
@@ -526,7 +577,8 @@ controller = SessionController(backend, sessions_root=root)
 w = MainWindow(controller, backend, sessions_root=root,
                profile_root=base / 'profile', config_root=base / 'config',
                style_root=base / 'style', language_model_available=lambda: False,
-               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+               clinic_registry=ClinicRegistry(base / 'clinics.json'),
+               past_sessions=PastSessionStore(base / 'past_sessions'))
 bridge = w.attach_chrome_link()
 server = PipeServer(sys.argv[1], bridge, sddl=pipe_sddl(current_user_sid()))
 bridge.attach(server)
@@ -934,7 +986,7 @@ assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
 completed = controller.complete()
 assert completed.state.value == "written"
 assert not (session_dir / KEY_FILENAME).exists(), "Complete must delete key custody"
-assert (session_dir / TRANSCRIPT_FILENAME).is_file(), "transcript artifact must remain"
+assert not (session_dir / TRANSCRIPT_FILENAME).exists(), "Complete removes the directory"
 print("COMPLETED-OK", flush=True)
 '''
 
@@ -1162,7 +1214,7 @@ assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
 completed = controller.complete()
 assert completed.state.value == "written"
 assert not (session_dir / KEY_FILENAME).exists(), "Complete must delete key custody"
-assert (session_dir / TRANSCRIPT_FILENAME).is_file(), "transcript artifact must remain"
+assert not (session_dir / TRANSCRIPT_FILENAME).exists(), "Complete removes the directory"
 print("COMPLETED-OK", flush=True)
 '''
 
@@ -1329,7 +1381,7 @@ assert line.strip() == "CONTINUE", "parent gate broken: %r" % line
 completed = controller.complete()
 assert completed.state.value == "written"
 assert not (session_dir / KEY_FILENAME).exists()
-assert (session_dir / TRANSCRIPT_FILENAME).is_file()
+assert not (session_dir / TRANSCRIPT_FILENAME).exists()  # Complete removes the directory
 print("COMPLETED-OK", flush=True)
 '''
 
@@ -1684,7 +1736,7 @@ def test_crash_kill_mid_recording_then_recover_transcribe_complete(
     # Complete custody ordering: fsync -> verify decrypt -> delete key.
     complete_session(session_dir, outcome.crypto)
     assert not (session_dir / KEY_FILENAME).exists()
-    assert (session_dir / TRANSCRIPT_FILENAME).is_file()
+    assert not session_dir.exists()  # every Complete removes the directory
     assert outcome.crypto.destroyed  # no in-memory decrypt capability remains
     with pytest.raises(RuntimeError):
         outcome.crypto.export_key()

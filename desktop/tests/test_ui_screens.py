@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -218,6 +218,9 @@ class FakeController:
         # exception to raise) that the Transcript screen's write_pending
         # refusal reads.
         self.write_status: WriteRecordStatus | Exception = WriteRecordStatus("none")
+        # Privacy-professional-controls Task 2.3 (D5): the label each Complete
+        # was given, apart from `calls` (whose exact lists tests pin).
+        self.completed_labels: list[tuple[str, Any]] = []
 
     def write_record_status(self, session_id: str) -> WriteRecordStatus:
         self.calls.append(("write_record_status", session_id))
@@ -283,24 +286,36 @@ class FakeController:
         self.state_value = SessionState.QUEUED
         return self._session()
 
-    def complete(self) -> RecordingSession:
+    # Privacy-professional-controls Task 2.3 (D5): whether the last Complete
+    # left its Past-sessions entry for the next check (the real property).
+    last_complete_deferred = False
+
+    def _labelled(self, kind: str, label: Any) -> None:
+        self.completed_labels.append((kind, label))
+
+    def complete(self, *, label: Any = None) -> RecordingSession:
         self.calls.append(("complete",))
+        self._labelled("complete", label)
         self.state_value = SessionState.WRITTEN
         return self._session()
 
-    def complete_without_note(self, lease: GenerationLease) -> RecordingSession:
+    def complete_without_note(
+        self, lease: GenerationLease, *, label: Any = None
+    ) -> RecordingSession:
         self.calls.append(("complete_without_note",))
         if self.generation_error is not None:
             raise self.generation_error  # failure -> lease stays held (not consumed)
+        self._labelled("complete_without_note", label)
         if self.lease is lease:
             self.lease = None  # consume the lease only on success
         self.state_value = SessionState.WRITTEN
         return self._session()
 
-    def complete_deleting_saved_note(self) -> RecordingSession:
+    def complete_deleting_saved_note(self, *, label: Any = None) -> RecordingSession:
         self.calls.append(("complete_deleting_saved_note",))
         if self.generation_error is not None:
             raise self.generation_error
+        self._labelled("complete_deleting_saved_note", label)
         self.state_value = SessionState.WRITTEN
         return self._session()
 
@@ -369,6 +384,12 @@ class FakeController:
         self.calls.append(("set_live_transcriber_factory",))
         self.live_transcriber_factory = factory
 
+    # Privacy-professional-controls Task 1.3: ``app.main`` registers the
+    # clinic-user resolver on the (real) controller after the window exists.
+    def set_clinic_user_resolver(self, resolver: Callable[[str], str | None] | None) -> None:
+        self.calls.append(("set_clinic_user_resolver",))
+        self.clinic_user_resolver = resolver
+
     # Task 6.3: the lease + the lease-aware recovered-custody coordinator.
 
     def begin_generation(self) -> GenerationLease:
@@ -395,10 +416,13 @@ class FakeController:
             ids = ids | {self.session_value.session_id}
         return ids
 
-    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None:
+    def complete_recovered(
+        self, directory: Path, crypto: SessionCrypto, *, label: Any = None
+    ) -> None:
         self.calls.append(("complete_recovered", directory))
         if self.generation_error is not None:
             raise self.generation_error
+        self._labelled("complete_recovered", label)
         crypto.destroy()
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
@@ -449,11 +473,12 @@ class FakeController:
         self.writing_id = session_id
         return reservation
 
-    def complete_after_write(self, reservation: Any) -> RecordingSession:
+    def complete_after_write(self, reservation: Any, *, label: Any = None) -> RecordingSession:
         self.calls.append(("complete_after_write",))
         assert reservation is self.held_reservation, "completion needs the held token"
         if self.complete_after_write_error is not None:
             raise self.complete_after_write_error  # the reservation stays held
+        self._labelled("complete_after_write", label)
         self.held_reservation = None
         self.writing_id = None
         self.state_value = SessionState.WRITTEN
@@ -931,18 +956,48 @@ class _NoTransport:
         pytest.fail("a MainWindow test called Cliniko")
 
 
+_FAKE_ENTRY_KEY = b"FAKE-ENTRY-KEY:"
+
+
+def _fake_entry_wrap(crypto: SessionCrypto, directory: Path) -> None:
+    """A Past-sessions entry key written raw behind a marker (no DPAPI)."""
+    (directory / KEY_FILENAME).write_bytes(_FAKE_ENTRY_KEY + crypto.export_key())
+
+
+def _fake_entry_unwrap(directory: Path) -> SessionCrypto:
+    from scribe_desktop.session_store import KeyCustodyError
+
+    blob = (directory / KEY_FILENAME).read_bytes()
+    if not blob.startswith(_FAKE_ENTRY_KEY):
+        raise KeyCustodyError("not an entry key")
+    return SessionCrypto.from_key(blob[len(_FAKE_ENTRY_KEY) :])
+
+
 def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any) -> Any:
     """Every `MainWindow` a test builds (Phase H round 24 MED-006): the
     learned-style store and the language model's presence are SEAMS — a
     test never decrypts the real `style.enc` or stats the real 2.3 GiB
     model (docs/lessons.md 2026-09-24); overrides still win."""
     from scribe_desktop.clinics import ClinicRegistry
+    from scribe_desktop.past_sessions import PastSessionStore
     from scribe_desktop.ui.main_window import MainWindow
 
     kwargs: dict[str, Any] = {
         "sessions_root": tmp_path,
         "profile_root": tmp_path,
         "config_root": tmp_path / "config",
+        # Privacy-professional-controls Task 3.1: the Past sessions tab's
+        # archive under tmp_path (entry keys faked, never DPAPI) — never the
+        # real %LOCALAPPDATA% root; its settings file is under `config_root`.
+        "past_sessions": PastSessionStore(
+            tmp_path / "past_sessions",
+            wrap_key=_fake_entry_wrap,
+            unwrap_key=_fake_entry_unwrap,
+        ),
+        # Round 16 LOW-018: the tab's dialogs are seams — a test never opens a
+        # real confirmation or save dialog (C6).
+        "past_sessions_confirm": lambda text, _action: pytest.fail(f"a confirmation: {text}"),
+        "past_sessions_save_path": lambda: pytest.fail("a save dialog"),
         "style_root": tmp_path / "style",
         "language_model_available": lambda: False,
         # Cliniko safeguards Task 2.2: never the real clinics.json, never the
@@ -2472,6 +2527,66 @@ class TestRecoveryScreen:
         assert screen.session_list.count() == 0
         screen.deleteLater()
 
+    def test_discard_records_discarded_in_the_audit(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Privacy-professional-controls Task 1.3: this list's direct
+        Discard records ``discarded`` by the session id, dated by the
+        session's own header (read BEFORE the directory went); a failed
+        Discard records nothing."""
+        from scribe_desktop.session_store import read_store_header
+        from scribe_desktop.ui import recovery
+        from scribe_desktop.ui.recovery import RecoveryScreen
+
+        recorded: list[tuple[str, str, float | None]] = []
+
+        class Recorder:
+            def record_deletion(
+                self, session_id: str, state: str, *, created_at: float | None = None
+            ) -> bool:
+                recorded.append((session_id, state, created_at))
+                return True
+
+        session_id = _make_recoverable(tmp_path, finished=True)
+        created = read_store_header(tmp_path / session_id / AUDIO_FILENAME).created_at
+        screen = RecoveryScreen(
+            tmp_path, recovery_runner=lambda d: pytest.fail("not called"), audit=Recorder()
+        )
+        screen.session_list.setCurrentRow(0)
+        screen.on_discard()
+        assert len(recorded) == 1
+        assert recorded[0][:2] == (session_id, "discarded")
+        assert recorded[0][2] is not None and recorded[0][2] <= created
+        failing = _make_recoverable(tmp_path, finished=True)
+
+        def refuse(*_args: Any) -> None:
+            raise OSError("in use")
+
+        monkeypatch.setattr(recovery, "discard_session", refuse)
+        screen.refresh()
+        screen.session_list.setCurrentRow(0)
+        screen.on_discard()
+        assert (tmp_path / failing / KEY_FILENAME).exists()
+        assert len(recorded) == 1
+        # Round 6 LOW-002: a date read that fails never blocks the Discard.
+        # The fault is injected AFTER the list is built (round 7 leg a6): the
+        # list's own expiry display reads the same creation time, and only
+        # the Discard's audit date read is under test here.
+        monkeypatch.undo()
+        screen.refresh()
+        screen.session_list.setCurrentRow(0)
+
+        def unreadable(*_args: Any) -> float:
+            raise RuntimeError("header read exploded")
+
+        from scribe_desktop import session_store
+
+        monkeypatch.setattr(session_store, "session_created_at", unreadable)
+        screen.on_discard()
+        assert not (tmp_path / failing / KEY_FILENAME).exists()
+        assert recorded[-1] == (failing, "discarded", None)
+        screen.deleteLater()
+
     @pytest.mark.parametrize("which", [0, 1], ids=["os", "store"])
     def test_a_failed_discard_names_no_path_and_keeps_the_session(
         self,
@@ -2965,7 +3080,7 @@ class TestTranscriptScreen:
 class TestMainWindow:
     def test_constructs_all_screens(self, qapp: Any, tmp_path: Path) -> None:
         window = _main_window(tmp_path)
-        assert window.tabs.count() == 8
+        assert window.tabs.count() == 9
         titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
         assert titles == [
             "Microphone",
@@ -2973,6 +3088,7 @@ class TestMainWindow:
             "Recovery",
             "Transcript",
             "Note",
+            "Past sessions",  # privacy-professional-controls Task 3.1
             "Practitioner",
             "Clinics",
             "Status",
@@ -6537,7 +6653,9 @@ class TestTranscriptGeneration:
 
         controller = self._live(WriteRecordStatus("none"))
         screen, _result = self._screen(controller)
-        monkeypatch.setattr("scribe_desktop.ui.transcript.write_note", lambda *args: None)
+        monkeypatch.setattr(
+            "scribe_desktop.ui.transcript.write_saved_note", lambda *args, **kwargs: None
+        )
         screen.set_role(SPEAKER_2)
         screen.set_profile("clinic-a")
         screen.generate()
@@ -6594,8 +6712,8 @@ class TestTranscriptGeneration:
         screen, _result = self._screen(controller)
         writes: list[str] = []
         monkeypatch.setattr(
-            "scribe_desktop.ui.transcript.write_note",
-            lambda *args: writes.append("written"),
+            "scribe_desktop.ui.transcript.write_saved_note",
+            lambda *args, **kwargs: writes.append("written"),
         )
         screen.set_role(SPEAKER_2)
         screen.set_profile("clinic-a")
@@ -6864,11 +6982,15 @@ class TestTranscriptGeneration:
         screen, result = self._screen(controller)
         writes: list[str] = []
 
-        def fake_write(directory: Path, crypto: Any, note: Any, config: Any) -> Path:
+        def fake_write(
+            directory: Path, crypto: Any, note: Any, config: Any, **_provenance: Any
+        ) -> Path:
+            # Privacy-professional-controls D8: Save's one custody action is
+            # `write_saved_note` (the provenance, then the note).
             writes.append(threading.current_thread().name)
             return directory / "note.enc"
 
-        monkeypatch.setattr("scribe_desktop.ui.transcript.write_note", fake_write)
+        monkeypatch.setattr("scribe_desktop.ui.transcript.write_saved_note", fake_write)
         screen.set_role(SPEAKER_2)
         screen.set_profile("clinic-a")
         screen.generate()
@@ -7023,6 +7145,231 @@ class TestTranscriptGeneration:
         screen._update_controls()
         assert screen.generate_button.isEnabled()
         screen.deleteLater()
+
+
+class TestTranscriptPastSessions:
+    """Privacy-professional-controls Tasks 2.1 and 2.3 on the Transcript
+    screen: the generated note kept under the lease (D2), the label each
+    Complete is given (D5), and the Complete lines (Flow 3)."""
+
+    def _screen(self, controller: FakeController) -> tuple[Any, models.NoteGenerationResult]:
+        return TestTranscriptGeneration()._screen(controller)
+
+    def _leased(self, qapp: Any, tmp_path: Path) -> tuple[Any, FakeController, Path, str]:
+        session_id = uuid.uuid4().hex
+        directory = tmp_path / session_id
+        directory.mkdir()
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        controller.generation_dir = directory
+        controller.generation_crypto = SessionCrypto()
+        screen, _result = self._screen(controller)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert _process_until(qapp, lambda: screen._generation_result is not None)
+        return screen, controller, directory, session_id
+
+    @staticmethod
+    def _body(session_id: str, text: str = "Subjective: sore knee.") -> models.GeneratedBody:
+        return models.GeneratedBody(
+            session_id=session_id,
+            text=text,
+            provider_name="extractive-v1",
+            style="verbatim",
+            language_model_id=None,
+            prompt_version=None,
+        )
+
+    def test_the_generated_note_is_kept_under_the_lease_and_replaced(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.session_store import read_generated
+
+        screen, controller, directory, session_id = self._leased(qapp, tmp_path)
+        crypto = controller.generation_crypto
+        assert screen.keep_generated(self._body(session_id))
+        kept = read_generated(directory, crypto, session_id)
+        assert kept is not None and kept.generated_text == "Subjective: sore knee."
+        assert screen.keep_generated(self._body(session_id, "Plan: review."))
+        kept = read_generated(directory, crypto, session_id)
+        assert kept is not None and kept.generated_text == "Plan: review."
+        assert screen.is_busy  # the lease is not released by keeping
+        screen.deleteLater()
+
+    def test_nothing_is_kept_without_the_lease(self, qapp: Any, tmp_path: Path) -> None:
+        controller = FakeController()
+        controller.state_value = SessionState.QUEUED
+        controller.generation_dir = tmp_path
+        screen, _result = self._screen(controller)
+        assert screen.keep_generated(self._body(uuid.uuid4().hex)) is False
+        assert ("with_generation_custody",) not in controller.calls
+        assert list(tmp_path.iterdir()) == []
+        screen.deleteLater()
+
+    def test_a_failed_keep_removes_the_earlier_generation(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.session_store import GENERATED_FILENAME
+
+        screen, _controller, directory, session_id = self._leased(qapp, tmp_path)
+        assert screen.keep_generated(self._body(session_id))
+        assert screen.keep_generated(self._body(uuid.uuid4().hex)) is False  # another session
+        assert not (directory / GENERATED_FILENAME).exists()
+        screen.deleteLater()
+
+    def test_a_failed_save_commits_nothing_and_keeps_the_lease(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """D8: whichever of Save's two writes fails (the store tests pin the
+        order), the screen records no committed note and the review keeps
+        its lease, so Save can be retried or the review cancelled."""
+        from scribe_desktop.session_store import StoreWriteError
+
+        screen, _controller, _directory, _sid = self._leased(qapp, tmp_path)
+        result = screen._generation_result
+        assert result is not None
+
+        def fail(*_args: Any, **_kwargs: Any) -> Path:
+            raise StoreWriteError("failed writing saved-note provenance: disk full")
+
+        monkeypatch.setattr("scribe_desktop.ui.transcript.write_saved_note", fail)
+        note = finalise_note(
+            result.draft,
+            [
+                ProposalResolution(
+                    shown_text_digest=text_digest(p.note_excerpt),
+                    confirmation=ConfirmationDecision(
+                        proposal_id=p.proposal_id,
+                        note_confirmation="declined",
+                        decided_at=datetime.now(UTC),
+                    ),
+                )
+                for p in result.draft.note_proposals
+            ],
+            result.document,
+            result.config,
+        )
+        with pytest.raises(StoreWriteError):
+            screen.save_note(note)
+        assert not screen._note_committed
+        assert screen.is_busy
+        screen.deleteLater()
+
+    def test_the_pre_save_exit_passes_the_label(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.past_sessions import keep_label
+
+        label = keep_label("Jan Citizen", "linked", None)
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        assert controller.session_value is not None
+        session_id = controller.session_value.session_id
+        screen, _result = self._screen(controller)
+        asked: list[str] = []
+        screen.set_keep_label_provider(lambda sid: asked.append(sid) or label)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert _process_until(qapp, lambda: screen._generation_result is not None)
+        screen.abandon_note_and_complete()
+        assert controller.completed_labels == [("complete_without_note", label)]
+        assert asked == [session_id]
+        screen.deleteLater()
+
+    def test_the_seen_complete_passes_the_label(self, qapp: Any) -> None:
+        from scribe_desktop.past_sessions import keep_label
+
+        label = keep_label(None, "desktop", None)
+        controller = TestTranscriptGeneration()._live(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        screen, _result = self._screen(controller)
+        screen.set_keep_label_provider(lambda _sid: label)
+        screen.on_complete()
+        assert controller.completed_labels == [("complete_after_write", label)]
+        screen.deleteLater()
+
+    def test_no_provider_is_no_label(self, qapp: Any) -> None:
+        controller = TestTranscriptGeneration()._live(
+            WriteRecordStatus("written", note_matches=True)
+        )
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        assert controller.completed_labels == [("complete_after_write", None)]
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "status", [WriteRecordStatus("none"), WriteRecordStatus("written", note_matches=True)]
+    )
+    def test_a_deferred_entry_is_said(self, qapp: Any, status: WriteRecordStatus) -> None:
+        controller = TestTranscriptGeneration()._live(status)
+        controller.last_complete_deferred = True
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        assert screen.message_label.text() == models.COMPLETE_DEFERRED_LINE
+        screen.deleteLater()
+
+    def test_the_complete_lines_name_past_sessions(self, qapp: Any) -> None:
+        """C9: Complete keeps a Past-sessions copy, so neither the button's
+        tooltip nor the success line may say the session is simply gone."""
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        screen, _result = self._screen(controller)
+        assert screen.complete_button.toolTip() == (
+            "Verify the encrypted transcript, keep the transcript and notes in Past sessions "
+            "(never the audio; a test-provider session keeps nothing), then delete the session "
+            "and its key - the audio becomes unrecoverable."
+        )
+        screen.on_complete()
+        assert screen.message_label.text() == (
+            "Session completed: transcript verified and the session key destroyed - the audio "
+            "cannot be recovered. Past sessions shows what was kept."
+        )
+        screen.deleteLater()
+
+    def test_an_archive_failure_says_so_and_changes_nothing(self, qapp: Any) -> None:
+        from scribe_desktop.session import PAST_SESSION_WRITE_FAILED_TEXT, PastSessionWriteError
+
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+
+        def refuse(*, label: Any = None) -> RecordingSession:
+            raise PastSessionWriteError()
+
+        controller.complete = refuse  # type: ignore[method-assign]
+        screen, _result = self._screen(controller)
+        closed: list[str] = []
+        screen.closed.connect(closed.append)
+        screen.on_complete()
+        assert screen.message_label.text() == f"Complete failed: {PAST_SESSION_WRITE_FAILED_TEXT}"
+        assert closed == []
+        assert screen.transcript_view.toPlainText() != ""
+        screen.deleteLater()
+
+
+class TestGeneratedShown:
+    """D2: the Note tab emits the body the review showed first; the main
+    window keeps it through the Transcript screen."""
+
+    def test_begin_review_emits_the_first_body(self, qapp: Any, tmp_path: Path) -> None:
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        bodies: list[Any] = []
+        window.note_screen.generated_shown.connect(bodies.append)
+        result = _note_result()
+        window._on_draft_ready(result)
+        assert len(bodies) == 1
+        body = bodies[0]
+        assert isinstance(body, models.GeneratedBody)
+        assert body.session_id == result.draft.session_id
+        assert body.text != ""
+        assert (body.language_model_id, body.prompt_version) == (None, None)
+        assert "text=" not in repr(body)
+        window.close()
+
+    def test_a_review_without_a_lease_shows_no_failure(self, qapp: Any, tmp_path: Path) -> None:
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        window._on_draft_ready(_note_result())
+        assert window.statusBar().currentMessage() != models.GENERATED_NOT_KEPT_LINE
+        window.close()
 
 
 # ---------------------------------------------------------------------------
@@ -7287,7 +7634,8 @@ class TestNoteWiring:
         # on the Transcript screen instead of moving to the Session screen.
         assert window.tabs.currentWidget() is window.transcript_screen
         assert window.transcript_screen.message_label.text() == (
-            "Session completed without a note (transcript verified, key destroyed). "
+            "Session completed without a note: transcript verified and the session key "
+            "destroyed. Past sessions shows what was kept - never the saved note. "
             + models.unlearned_on_exit_line(1)
         )
         assert window.note_screen.current_note() is None
@@ -7340,7 +7688,8 @@ class TestNoteWiring:
         window.note_screen.abandon()
         message = window.transcript_screen.message_label.text()
         assert message == (
-            "Session completed without a note (transcript verified, key destroyed)."
+            "Session completed without a note: transcript verified and the session key "
+            "destroyed. Past sessions shows what was kept - never the saved note."
         )
         # Round 44 PR-MED-026: an empty-queue close keeps the pre-existing
         # landing on the Session screen.
@@ -7374,6 +7723,75 @@ class TestNoteWiring:
         assert "not learned" not in window.transcript_screen.message_label.text()
         window.close()
 
+    @pytest.mark.parametrize("then", ["retry", "cancel"])
+    @pytest.mark.parametrize("stage", ["provenance", "note"])
+    def test_a_save_failing_at_either_write_agrees_with_disk(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any, stage: str, then: str
+    ) -> None:
+        """Privacy-professional-controls Task 2.1 / D8 (codex round 14
+        PR-LOW-012): the REAL ``write_saved_note`` through the window's own
+        route, with a failure injected at the provenance write — or at the
+        note write AFTER the provenance landed. Either way nothing is
+        committed: no ``note.enc``, neither screen's saved flag, the lease
+        still held. Cancel review then keeps it that way; a retry saves a
+        note whose reopened copy and provenance agree with disk."""
+        from scribe_desktop import session_store
+        from scribe_desktop.session_store import (
+            NOTE_FILENAME,
+            SAVED_PROVENANCE_FILENAME,
+            TRANSCRIPT_FILENAME,
+            read_note,
+            read_saved_provenance,
+            saved_note_identity,
+        )
+
+        window, controller = self._generate_through_window(qapp, tmp_path)
+        result = window.transcript_screen._generation_result
+        assert result is not None
+        directory = tmp_path / result.draft.session_id
+        directory.mkdir()
+        crypto = SessionCrypto()
+        (directory / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(result.document.to_bytes()))
+        controller.generation_dir = directory
+        controller.generation_crypto = crypto
+
+        def fail(*_args: Any, **_kwargs: Any) -> Path:
+            raise StoreWriteError(f"failed writing the {stage}: disk full")
+
+        target = "write_saved_provenance" if stage == "provenance" else "write_note"
+        monkeypatch.setattr(session_store, target, fail)
+        note_screen = window.note_screen
+        transcript_screen = window.transcript_screen
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        assert note_screen.message_label.text().startswith("Save failed:")
+        assert not (directory / NOTE_FILENAME).exists()
+        # D8: the provenance lands first; left without its note it names
+        # nothing on disk.
+        assert (directory / SAVED_PROVENANCE_FILENAME).exists() is (stage == "note")
+        assert not note_screen._note_saved
+        assert not transcript_screen._note_committed
+        assert transcript_screen.is_busy  # the lease is kept for a retry
+        monkeypatch.undo()
+        if then == "cancel":
+            note_screen.cancel_review()
+            assert not transcript_screen.is_busy
+            assert not transcript_screen._note_committed
+            assert not (directory / NOTE_FILENAME).exists()
+            assert transcript_screen.generate_button.isEnabled()  # regenerate, nothing saved
+        else:
+            note_screen.save()
+            assert note_screen._note_saved and transcript_screen._note_committed
+            assert not transcript_screen.is_busy
+            reopened = read_note(directory, crypto)  # what a reopen reads
+            assert reopened.session_id == result.draft.session_id
+            provenance = read_saved_provenance(directory, crypto, directory.name)
+            assert provenance is not None
+            assert provenance.note_digest == saved_note_identity(directory, crypto)
+        window.close()
+
     def _fake_write_note(self, monkeypatch: Any) -> list[str]:
         """Fake the on-disk note write so a caller's ``NoteScreen.save`` can
         travel the window's own route - ``MainWindow._on_note_save`` ->
@@ -7383,11 +7801,15 @@ class TestNoteWiring:
 
         writes: list[str] = []
 
-        def fake_write(directory: Path, crypto: Any, note: Any, config: Any) -> Path:
+        def fake_write(
+            directory: Path, crypto: Any, note: Any, config: Any, **_provenance: Any
+        ) -> Path:
+            # Privacy-professional-controls D8: Save's one custody action is
+            # `write_saved_note` (the provenance, then the note).
             writes.append(threading.current_thread().name)
             return directory / "note.enc"
 
-        monkeypatch.setattr("scribe_desktop.ui.transcript.write_note", fake_write)
+        monkeypatch.setattr("scribe_desktop.ui.transcript.write_saved_note", fake_write)
         return writes
 
     def test_recorded_fail_keeps_copy_hidden_through_the_window(
@@ -8145,3 +8567,1652 @@ class TestTranscriptAutoConfirm:
                     "speaker_model_id": "mock-speaker-embedder-v1",
                 }
             )
+
+
+# ---------------------------------------------------------------------------
+# Privacy-professional-controls Phase 3: the Past sessions tab (Task 3.1), its
+# retention sweep (Task 3.2) and the intended-use line (Task 3.3).
+# ---------------------------------------------------------------------------
+
+_PS_NOW = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
+# The one retention window (the 7-year minimum, practitioner decision
+# 2026-10-02): every expiry below is proven at it.
+_PS_SEVEN = 7 * 365 + 2
+_PS_WINDOW = timedelta(days=_PS_SEVEN)
+
+
+class _CountedUnwrap:
+    """The fake entry-key unwrap, counted: "never" must decrypt nothing."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def __call__(self, directory: Path) -> SessionCrypto:
+        self.calls += 1
+        return _fake_entry_unwrap(directory)
+
+
+class _FakePastAudit:
+    """The audit log as the tab uses it: records every call, never DPAPI."""
+
+    def __init__(self, row: Any = None) -> None:
+        self.calls: list[tuple[Any, ...]] = []
+        self.row = row
+        self.failure_count = 0
+        self.unreadable = False
+        self.export_result = 0
+        self.export_error: Exception | None = None
+        self.reset_error: Exception | None = None
+
+    def record_past_session(
+        self, session_id: str, state: str, *, created_at: float | None = None
+    ) -> bool:
+        self.calls.append(("past_session", session_id, state, created_at))
+        return True
+
+    def row_for(self, session_id: str) -> Any:
+        self.calls.append(("row_for", session_id))
+        return self.row
+
+    def key_unreadable(self) -> bool:
+        return self.unreadable
+
+    def reset(self) -> None:
+        self.calls.append(("reset",))
+        if self.reset_error is not None:
+            raise self.reset_error
+        self.unreadable = False
+
+    def export_csv(self, path: Path) -> int:
+        self.calls.append(("export", path))
+        if self.export_error is not None:
+            raise self.export_error
+        return self.export_result
+
+
+def _ps_store(
+    root: Path, *, clock: datetime = _PS_NOW, unwrap: Callable[[Path], SessionCrypto] | None = None
+) -> Any:
+    from scribe_desktop.past_sessions import PastSessionStore
+
+    return PastSessionStore(
+        root,
+        clock=lambda: clock,
+        wrap_key=_fake_entry_wrap,
+        unwrap_key=unwrap if unwrap is not None else _fake_entry_unwrap,
+    )
+
+
+def _ps_entry(
+    store: Any,
+    *,
+    name: str | None = "Jane Citizen",
+    recording: str = "linked",
+    started: datetime | None = None,
+    note: bool = True,
+    generated: bool = True,
+) -> tuple[str, GeneratedNote | None]:
+    """One committed Past-sessions entry: a transcript, a saved note and a
+    generated note (each optional but the transcript), written through the
+    store's own verified path."""
+    from scribe_desktop.note import digest_bytes
+    from scribe_desktop.past_sessions import keep_label
+    from scribe_desktop.session_store import ArchiveSource, GeneratedRecord
+
+    sid = uuid.uuid4().hex
+    start = started if started is not None else _PS_NOW - timedelta(minutes=20)
+    transcript = TranscriptDocument(
+        session_id=sid,
+        created_at=start,
+        model_name="small",
+        sample_rate=16_000,
+        transcript_segments=_document().transcript_segments,
+    ).to_bytes()
+    saved = (
+        GeneratedNote(
+            session_id=sid,
+            created_at=start,
+            template_profile_id="clinic-a",
+            provider_name="extractive-v1",
+            transcript_digest=digest_bytes(transcript),
+            config_digest=digest_bytes(b"config"),
+        )
+        if note
+        else None
+    )
+    kept = (
+        GeneratedRecord(
+            session_id=sid,
+            created_at=start,
+            provider_name="extractive-v1",
+            style="verbatim",
+            generated_text="Subjective: sore left knee for two weeks.",
+        )
+        if generated
+        else None
+    )
+    store.write_entry(
+        ArchiveSource(
+            session_id=sid,
+            created_at=start.timestamp(),
+            transcript_plain=transcript,
+            note_plain=saved.to_bytes() if saved is not None else None,
+            generated_plain=kept.to_bytes() if kept is not None else None,
+        ),
+        keep_label(name, recording, None),  # type: ignore[arg-type]
+    )
+    assert store.commit(sid)
+    return sid, saved
+
+
+class TestPastSessionsTab:
+    """Task 3.1 (Flow 5; D5, D9, D13, D14) and Task 3.2: the tab against a
+    fake-keyed archive under tmp_path, a fake audit, injected confirmations,
+    an injected save dialog and an injected clock — no DPAPI, no real
+    dialog, no real clipboard, no wall clock (C6)."""
+
+    def _screen(
+        self,
+        tmp_path: Path,
+        *,
+        store: Any = "default",
+        audit: Any = None,
+        confirm: Callable[[str, str], bool] | None = None,
+        choose: Callable[[], Path | None] | None = None,
+        monotonic: Callable[[], float] | None = None,
+    ) -> Any:
+        from scribe_desktop.ui.past_sessions import PastSessionsScreen
+
+        def refuse_confirm(text: str, action: str) -> bool:
+            pytest.fail(f"an unexpected confirmation: {text} [{action}]")
+
+        screen = PastSessionsScreen(
+            _ps_store(tmp_path / "past_sessions") if store == "default" else store,
+            audit=audit,
+            config_root=tmp_path / "config",
+            clock=lambda: _PS_NOW,
+            monotonic=monotonic if monotonic is not None else (lambda: 100.0),
+            local_zone=UTC,
+            confirm=confirm if confirm is not None else refuse_confirm,
+            choose_csv_path=(
+                choose if choose is not None else (lambda: pytest.fail("a save dialog"))
+            ),
+        )
+        return screen
+
+    @staticmethod
+    def _rows(screen: Any) -> list[str]:
+        return [screen.entry_list.item(i).text() for i in range(screen.entry_list.count())]
+
+    @staticmethod
+    def _select(screen: Any, session_id: str) -> None:
+        from PySide6.QtCore import Qt
+
+        for i in range(screen.entry_list.count()):
+            item = screen.entry_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == session_id:
+                screen.entry_list.setCurrentItem(item)
+                item.setSelected(True)
+                return
+        pytest.fail("no such row")
+
+    # --- pinned text (Tasks 3.1 and 3.3) -----------------------------------
+
+    def test_the_intended_use_line_and_the_retention_warning_are_pinned(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import RETENTION_DAYS_CHOICES
+        from scribe_desktop.ui import past_sessions_view as view
+
+        assert models.INTENDED_USE_LINE == (
+            "Documentation aid, not clinical decision support. You review and finalise "
+            "every note in Cliniko."
+        )
+        assert view.RETENTION_WARNING == (
+            "A kept transcript becomes part of your health record - under the VIC Health "
+            "Records Act 2001, the NSW HRIP Act 2002 and the ACT Health Records (Privacy and "
+            "Access) Act 1997, and elsewhere APP 11.2. It can be reached by an APP 12 access "
+            "request or a subpoena. Clinic Scribe keeps it, encrypted, only in this Windows "
+            "login's data folder and makes no backup of its own - but backup or sync software, "
+            "or a folder location it has warned about, can still copy the encrypted files. "
+            "Cliniko stays the system of record. A kept transcript is kept for at least 7 "
+            "years. If the patient was a child, it must be kept until they turn 25 - Clinic "
+            "Scribe does not know a patient's age, so choose \"Until I delete them\" when that "
+            "applies."
+        )
+        # The combo offers exactly what the settings file accepts, "never" first.
+        assert view.RETENTION_OPTIONS[0][1] is None
+        assert tuple(d for _l, d in view.RETENTION_OPTIONS if d is not None) == (
+            RETENTION_DAYS_CHOICES
+        )
+        screen = self._screen(tmp_path)
+        assert screen.intended_use_label.text() == models.INTENDED_USE_LINE
+        assert screen.retention_warning_label.text() == view.RETENTION_WARNING
+        assert screen.csv_line_label.text() == view.CSV_NOT_ENCRYPTED_LINE
+        assert "not encrypted" in view.CSV_NOT_ENCRYPTED_LINE
+        assert screen.retention_combo.currentIndex() == 0  # the default is "never"
+        assert not screen.hide_names_checkbox.isChecked()  # D13: names shown
+        screen.deleteLater()
+
+    # --- the 7-year minimum (practitioner decision 2026-10-02) ---------------
+
+    def test_the_combo_offers_exactly_the_two_choices(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        assert view.RETENTION_OPTIONS == (("Until I delete them", None), ("7 years", 2557))
+        screen = self._screen(tmp_path)
+        texts = [screen.retention_combo.itemText(i) for i in range(screen.retention_combo.count())]
+        assert texts == ["Until I delete them", "7 years"]
+        for removed in ("1 day", "7 days", "30 days", "90 days", "1 year"):
+            assert removed not in texts
+        screen.deleteLater()
+
+    def test_the_warning_carries_the_child_rule(self) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        assert view.RETENTION_WARNING.endswith(
+            "A kept transcript is kept for at least 7 years. If the patient was a child, it "
+            "must be kept until they turn 25 - Clinic Scribe does not know a patient's age, "
+            'so choose "Until I delete them" when that applies.'
+        )
+        assert view.RETENTION_OPTIONS[0][0] == "Until I delete them"  # the named choice
+
+    def test_delete_now_is_worded_for_a_recording_made_in_error(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        assert view.DELETE_HELP == (
+            "Use Delete now only for a recording made in error: the wrong patient, a test, or "
+            "one recorded without consent."
+        )
+        assert view.DELETE_CONFIRM_MESSAGE == (
+            "Delete this past session now? Use Delete now only for a recording made in error - "
+            "the wrong patient, a test, or one recorded without consent - because a kept "
+            "transcript must otherwise be kept for at least 7 years. Its notes and transcript "
+            "cannot be recovered. Press Confirm delete to delete it."
+        )
+        screen = self._screen(tmp_path)
+        assert screen.delete_help_label.text() == view.DELETE_HELP
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("legacy", [1, 7, 30, 90, 365])
+    @pytest.mark.parametrize("save_by", ["same_choice", "hide_names"])
+    def test_a_removed_shorter_setting_reads_as_seven_years_and_says_so(
+        self, qapp: Any, tmp_path: Path, legacy: int, save_by: str
+    ) -> None:
+        """The upgrade on the tab: a file holding a removed window is NOT an
+        unreadable file (Hide names works, the sweep runs) — it reads as 7
+        years, so an entry only the shorter window would have deleted is
+        kept; the status line says the setting was raised until a save (the
+        same "7 years" chosen again, which asks nothing, or a Hide names
+        click) writes 7 years."""
+        import json
+
+        from scribe_desktop.past_sessions import SETTINGS_FILENAME, load_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        config = tmp_path / "config"
+        config.mkdir()
+        blob = json.dumps({"schema_version": 1, "retention_days": legacy, "hide_names": False})
+        (config / SETTINGS_FILENAME).write_text(blob, encoding="utf-8")
+        root = tmp_path / "past_sessions"
+        old, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=1)))
+        young, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=legacy + 1)))
+        store = _ps_store(root)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)  # no confirmation allowed
+        assert view.RETENTION_RAISED_LINE in screen.status_lines()
+        assert view.SETTINGS_UNREADABLE_LINE not in screen.status_lines()
+        assert screen.retention_combo.currentIndex() == view.retention_index(_PS_SEVEN)
+        assert screen.hide_names_checkbox.isEnabled()
+        assert screen.run_retention_sweep() == [old]
+        assert [item.session_id for item in store.list_entries()] == [young]
+        assert (config / SETTINGS_FILENAME).read_text(encoding="utf-8") == blob  # unasked
+        assert view.RETENTION_RAISED_LINE in screen.status_label.text()
+        if save_by == "same_choice":
+            screen.retention_combo.activated.emit(view.retention_index(_PS_SEVEN))
+            assert screen.message_label.text() == "Past sessions are kept for 7 years."
+        else:
+            screen.hide_names_checkbox.click()
+        saved = json.loads((config / SETTINGS_FILENAME).read_text(encoding="utf-8"))
+        assert saved["retention_days"] == _PS_SEVEN
+        assert view.RETENTION_RAISED_LINE not in screen.status_lines()
+        assert view.RETENTION_RAISED_LINE not in screen.status_label.text()
+        screen.refresh()
+        assert view.RETENTION_RAISED_LINE not in screen.status_lines()
+        assert load_past_session_settings(config).retention_days == _PS_SEVEN
+        # Once saved, the same choice again is unchanged: nothing is written.
+        (config / SETTINGS_FILENAME).write_text(json.dumps(saved), encoding="utf-8")
+        before = (config / SETTINGS_FILENAME).read_text(encoding="utf-8")
+        screen.on_retention_chosen(view.retention_index(_PS_SEVEN))
+        assert (config / SETTINGS_FILENAME).read_text(encoding="utf-8") == before
+        screen.deleteLater()
+
+    def test_a_sweep_refused_for_a_short_window_deletes_nothing_and_says_so(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Defence in depth: were a window under 7 years ever to reach the
+        sweep (here forced past the settings model with ``model_construct``),
+        the shared store refuses it before any read, nothing is deleted or
+        recorded, and the status line says so — never a raise."""
+        from scribe_desktop.past_sessions import LoadedPastSessionSettings, PastSessionSettings
+        from scribe_desktop.ui import past_sessions as screen_module
+        from scribe_desktop.ui import past_sessions_view as view
+
+        short = PastSessionSettings.model_construct(
+            schema_version=1, retention_days=1, hide_names=False
+        )
+        monkeypatch.setattr(
+            screen_module,
+            "read_past_session_settings",
+            lambda _root=None: LoadedPastSessionSettings(short),
+        )
+        root = tmp_path / "past_sessions"
+        old, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=40)))
+        unwrap = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwrap)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        assert screen.run_retention_sweep() == []
+        assert unwrap.calls == 0
+        assert audit.calls == []
+        assert [item.session_id for item in store.list_entries()] == [old]
+        assert view.SWEEP_TOO_SHORT_LINE in screen.status_lines()
+        assert view.SWEEP_PROBLEM_LINE not in screen.status_lines()
+        assert view.SWEEP_TOO_SHORT_LINE in screen.status_label.text()
+        screen.deleteLater()
+
+    # --- the list (D5, D13) ---------------------------------------------------
+
+    def test_construction_decrypts_nothing_and_opening_lists_newest_first(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        unwrap = _CountedUnwrap()
+        store = _ps_store(tmp_path / "past_sessions", unwrap=unwrap)
+        older, _ = _ps_entry(store, name="Ann Older", started=_PS_NOW - timedelta(days=2))
+        _ps_entry(store, name="Ben Newer", started=_PS_NOW - timedelta(hours=1))
+        _ps_entry(store, name=None, recording="desktop", started=_PS_NOW - timedelta(days=3))
+        _ps_entry(store, name=None, started=_PS_NOW - timedelta(days=4))
+        unwrap.calls = 0
+        screen = self._screen(tmp_path, store=store)
+        assert unwrap.calls == 0
+        assert self._rows(screen) == []  # nothing listed, so no "none kept" yet
+        screen.refresh()
+        assert unwrap.calls == 4  # one label each
+        assert self._rows(screen) == [
+            "2026-10-01 08:00 - Ben Newer",
+            "2026-09-29 09:00 - Ann Older",
+            f"2026-09-28 09:00 - {view.DESKTOP_RECORDING}",
+            f"2026-09-27 09:00 - {view.NAME_NOT_AVAILABLE}",
+        ]
+        assert older in {listing.session_id for listing in screen._listings}
+        screen.deleteLater()
+
+    def test_hide_names_masks_names_at_once_and_is_saved(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import load_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, name="Jane Citizen")
+        _ps_entry(store, name=None, recording="desktop", started=_PS_NOW - timedelta(days=1))
+        screen = self._screen(tmp_path, store=store, audit=_FakePastAudit())
+        screen.refresh()
+        self._select(screen, sid)
+        assert "Jane Citizen" in screen.heading_label.text()
+        screen.hide_names_checkbox.setChecked(True)
+        screen.on_hide_names(True)
+        rows = self._rows(screen)
+        assert not any("Jane" in row for row in rows)
+        assert rows[0].endswith(view.PATIENT_HIDDEN)
+        assert rows[1].endswith(view.DESKTOP_RECORDING)  # no name to hide
+        assert "Jane" not in screen.heading_label.text()
+        assert screen._open_id == sid  # the opened entry stays open
+        assert load_past_session_settings(tmp_path / "config").hide_names is True
+        screen.deleteLater()
+        again = self._screen(tmp_path, store=store)
+        again.refresh()
+        assert again.hide_names_checkbox.isChecked()
+        assert not any("Jane" in row for row in self._rows(again))
+        again.deleteLater()
+
+    # --- the opened entry (Flow 5) --------------------------------------------
+
+    def test_an_opened_entry_shows_both_notes_and_the_write_outcome(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.audit import AuditRow, AuditWrite
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, saved = _ps_entry(store)
+        assert saved is not None
+        row = AuditRow(
+            session_id=sid,
+            session_date=_PS_NOW.date(),
+            origin="recorded",
+            write=AuditWrite(
+                attempts=1, last_outcome="written", written_at=_PS_NOW - timedelta(minutes=5)
+            ),
+        )
+        audit = _FakePastAudit(row)
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        assert screen.generated_view.toPlainText() == "Subjective: sore left knee for two weeks."
+        assert screen.saved_view.toPlainText() == models.format_note_body(saved)
+        assert screen.write_line_label.text() == (
+            "Cliniko write: written as a draft on 2026-10-01 08:55."
+        )
+        assert ("row_for", sid) in audit.calls
+        no_interaction = screen.saved_view.textInteractionFlags()
+        from PySide6.QtCore import Qt
+
+        for panel in (screen.generated_view, screen.saved_view, screen.transcript_view):
+            assert panel.textInteractionFlags() == Qt.TextInteractionFlag.NoTextInteraction
+        assert no_interaction == Qt.TextInteractionFlag.NoTextInteraction
+        # The transcript stays behind Show transcript.
+        assert not screen.transcript_view.isVisibleTo(screen)
+        assert screen.transcript_view.toPlainText() == ""
+        screen.on_toggle_transcript()
+        assert screen.transcript_view.isVisibleTo(screen)
+        assert "Margaret" in screen.transcript_view.toPlainText()
+        assert screen.transcript_button.text() == view.HIDE_TRANSCRIPT_LABEL
+        screen.on_toggle_transcript()
+        assert screen.transcript_view.toPlainText() == ""
+        # Leaving the tab drops every panel's text.
+        screen.on_toggle_transcript()
+        screen.close_entry()
+        for panel in (screen.generated_view, screen.saved_view, screen.transcript_view):
+            assert panel.toPlainText() == ""
+        assert screen.heading_label.text() == ""
+        screen.deleteLater()
+
+    def test_an_entry_without_notes_says_so_and_cannot_be_copied(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, note=False, generated=False)
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        self._select(screen, sid)
+        assert screen.generated_view.toPlainText() == view.GENERATED_NOT_KEPT
+        assert screen.saved_view.toPlainText() == view.NO_SAVED_NOTE
+        assert screen.write_line_label.text() == view.WRITE_NO_ROW  # no audit here
+        assert not screen.copy_button.isEnabled()
+        # Round 16 LOW-002: the reason is the cause, shown under the buttons.
+        assert screen.copy_reason_label.text() == view.COPY_NO_SAVED_NOTE
+        assert screen.copy_reason_label.isVisibleTo(screen)
+        screen.on_copy()
+        assert screen.message_label.text() == view.COPY_NO_SAVED_NOTE
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        ("write", "expected"),
+        [
+            ({}, "Cliniko write: not attempted."),
+            ({"last_refusal": "mock_note"}, "Cliniko write: not sent - it was refused "
+             "before anything was sent."),
+            ({"attempts": 2, "last_outcome": "refused", "last_refusal": "forbidden"},
+             "Cliniko write: refused by Cliniko (2 attempts)."),
+            ({"attempts": 1, "last_outcome": "unknown"},
+             "Cliniko write: the outcome was not confirmed - check the note in Cliniko."),
+        ],
+    )
+    def test_the_write_outcome_line_never_shows_a_code(
+        self, write: dict[str, Any], expected: str
+    ) -> None:
+        from scribe_desktop.audit import AuditRow, AuditWrite
+        from scribe_desktop.ui import past_sessions_view as view
+
+        row = AuditRow(
+            session_id=uuid.uuid4().hex,
+            session_date=_PS_NOW.date(),
+            origin="recorded",
+            write=AuditWrite(**write),
+        )
+        assert view.write_outcome_line(row, zone=UTC) == expected
+        assert view.write_outcome_line(None, unavailable=True) == view.WRITE_ROW_UNAVAILABLE
+
+    def test_copy_goes_through_the_one_placement_with_the_three_formats(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        mimes: list[Any] = []
+        payloads = TestNoteWiring()._fake_clipboard(monkeypatch, mimes)
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, saved = _ps_entry(store)
+        assert saved is not None
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        assert not screen.copy_button.isEnabled()  # nothing opened yet
+        self._select(screen, sid)
+        assert screen.copy_button.isEnabled()
+        screen.on_copy()
+        assert payloads == [models.format_note_body(saved)]  # the SAVED note only
+        assert screen.message_label.text() == view.COPY_DONE
+        [mime] = mimes
+        for name in models.clipboard_mime_formats():
+            assert mime.hasFormat(models.windows_clipboard_mime_type(name))
+        screen.deleteLater()
+
+    # --- Delete now -------------------------------------------------------------
+
+    def test_delete_now_takes_two_clicks_and_records_deleted_early(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.session_store import KEY_FILENAME as KEY
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        started = _PS_NOW - timedelta(hours=3)
+        sid, _ = _ps_entry(store, started=started)
+        keep, _ = _ps_entry(store, started=_PS_NOW - timedelta(days=1))
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_clicked()
+        assert screen.delete_button.text() == view.DELETE_CONFIRM_LABEL
+        assert screen.message_label.text() == view.DELETE_CONFIRM_MESSAGE
+        assert (store.root / sid / KEY).is_file()  # one click deletes nothing
+        screen.on_delete_clicked()
+        assert not (store.root / sid).exists()
+        assert [item.session_id for item in store.list_entries()] == [keep]
+        assert ("past_session", sid, "deleted_early", started.timestamp()) in audit.calls
+        assert len(self._rows(screen)) == 1
+        assert screen.generated_view.toPlainText() == ""  # the opened entry went too
+        assert screen.message_label.text() == view.DELETE_DONE
+        assert screen.delete_button.text() == view.DELETE_LABEL
+        screen.deleteLater()
+
+    def test_the_delete_arming_expires_and_follows_the_selection(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        now = [100.0]
+        store = _ps_store(tmp_path / "past_sessions")
+        first, _ = _ps_entry(store)
+        second, _ = _ps_entry(store, started=_PS_NOW - timedelta(days=1))
+        screen = self._screen(tmp_path, store=store, monotonic=lambda: now[0])
+        screen.refresh()
+        self._select(screen, first)
+        # Round 19 PR-LOW-016: a LATE second click with no tick in between is
+        # decided by the click-time deadline alone — it asks again, deletes
+        # nothing.
+        screen.on_delete_clicked()
+        now[0] += view.DELETE_CONFIRM_SECONDS + 1
+        screen.on_delete_clicked()
+        assert screen.message_label.text() == view.DELETE_CONFIRM_MESSAGE
+        assert {item.session_id for item in store.list_entries()} == {first, second}
+        for sid in (first, second):
+            assert (store.root / sid / KEY_FILENAME).is_file()
+        now[0] += view.DELETE_CONFIRM_SECONDS + 1
+        screen._tick()
+        assert screen.delete_button.text() == view.DELETE_LABEL
+        screen.on_delete_clicked()  # asks again, deletes nothing
+        assert len(store.list_entries()) == 2
+        self._select(screen, second)  # another entry disarms
+        assert screen.delete_button.text() == view.DELETE_LABEL
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert [item.session_id for item in store.list_entries()] == [first]
+        screen.deleteLater()
+
+    # --- retention (Task 3.2; Flow 4) ----------------------------------------
+
+    def test_lowering_retention_asks_then_sweeps_and_records_expired(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import load_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        completed = _PS_NOW - _PS_WINDOW - timedelta(days=40)
+        old, _ = _ps_entry(_ps_store(root, clock=completed))
+        recent, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=2)))
+        store = _ps_store(root)
+        asked: list[tuple[str, str]] = []
+        audit = _FakePastAudit()
+        screen = self._screen(
+            tmp_path,
+            store=store,
+            audit=audit,
+            confirm=lambda t, a: asked.append((t, a)) or True,
+        )
+        screen.refresh()
+        index = view.retention_index(_PS_SEVEN)
+        screen.retention_combo.setCurrentIndex(index)
+        screen.on_retention_chosen(index)
+        # Round 16 LOW-010/017: the literal question, with a named button.
+        assert asked == [
+            (view.retention_confirm_text(_PS_SEVEN), view.RETENTION_CONFIRM_ACTION)
+        ]
+        assert asked[0][0] == (
+            "Keep past sessions for only 7 years? Every kept session older than that is "
+            "deleted now and cannot be recovered."
+        )
+        assert load_past_session_settings(tmp_path / "config").retention_days == _PS_SEVEN
+        assert [item.session_id for item in store.list_entries()] == [recent]
+        # Round 16 LOW-005: dated by the entry's completion, for a pre_audit row.
+        assert ("past_session", old, "expired", completed.timestamp()) in audit.calls
+        assert len(self._rows(screen)) == 1  # dropped from the list in memory
+        assert screen.message_label.text() == view.retention_changed_line(_PS_SEVEN, 1)
+        assert screen.message_label.text() == (
+            "Past sessions are kept for 7 years. 1 older session was deleted."
+        )
+        screen.deleteLater()
+
+    def test_a_declined_lowering_changes_nothing(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.past_sessions import SETTINGS_FILENAME
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=40)))
+        store = _ps_store(root)
+        screen = self._screen(tmp_path, store=store, confirm=lambda _t, _a: False)
+        index = view.retention_index(_PS_SEVEN)
+        screen.retention_combo.setCurrentIndex(index)
+        screen.on_retention_chosen(index)
+        assert screen.retention_combo.currentIndex() == 0  # back to "never"
+        assert not (tmp_path / "config" / SETTINGS_FILENAME).exists()
+        assert len(store.list_entries()) == 1
+        assert screen.message_label.text() == view.retention_kept_line(None)
+        screen.deleteLater()
+
+    def test_raising_retention_neither_asks_nor_sweeps(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.past_sessions import (
+            PastSessionSettings,
+            load_past_session_settings,
+            save_past_session_settings,
+        )
+        from scribe_desktop.ui import past_sessions_view as view
+
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        root = tmp_path / "past_sessions"
+        _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=40)))
+        unwrap = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwrap)
+        screen = self._screen(tmp_path, store=store)  # any confirmation fails the test
+        assert screen.retention_combo.currentIndex() == view.retention_index(_PS_SEVEN)
+        index = view.retention_index(None)  # 7 years -> "Until I delete them" raises
+        screen.retention_combo.setCurrentIndex(index)
+        screen.on_retention_chosen(index)
+        assert load_past_session_settings(tmp_path / "config").retention_days is None
+        assert unwrap.calls == 0
+        assert len(store.list_entries()) == 1  # an entry past 7 years is kept
+        screen.deleteLater()
+
+    def test_never_decrypts_nothing(self, qapp: Any, tmp_path: Path) -> None:
+        root = tmp_path / "past_sessions"
+        _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=4000)))
+        unwrap = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwrap)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        assert screen.run_retention_sweep() == []
+        assert unwrap.calls == 0
+        assert audit.calls == []
+        assert len(store.list_entries()) == 1
+        screen.deleteLater()
+
+    def test_the_sweep_deletes_what_the_setting_says_through_the_shared_store(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import PastSessionSettings, save_past_session_settings
+
+        root = tmp_path / "past_sessions"
+        completed = _PS_NOW - _PS_WINDOW - timedelta(days=1)
+        old, _ = _ps_entry(_ps_store(root, clock=completed))
+        kept, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW + timedelta(days=1)))
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        unwrap = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwrap)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        assert screen.run_retention_sweep() == [old]
+        assert audit.calls == [("past_session", old, "expired", completed.timestamp())]
+        assert screen.status_lines() == []  # a sweep that finished says nothing
+        assert unwrap.calls == 2
+        # Round 12 LOW-001: the ONE store's date cache — a later tick reads no label.
+        assert screen.run_retention_sweep() == []
+        assert unwrap.calls == 2
+        assert [item.session_id for item in store.list_entries()] == [kept]
+        screen.deleteLater()
+
+    def test_an_unreadable_setting_deletes_nothing_and_says_so(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import SETTINGS_FILENAME
+        from scribe_desktop.ui import past_sessions_view as view
+
+        (tmp_path / "config").mkdir()
+        settings_file = tmp_path / "config" / SETTINGS_FILENAME
+        settings_file.write_text('{"retention_days": true}')
+        root = tmp_path / "past_sessions"
+        _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=4000)), name="Jane Citizen")
+        unwrap = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwrap)
+        screen = self._screen(tmp_path, store=store)
+        assert view.SETTINGS_UNREADABLE_LINE in screen.status_lines()
+        assert screen.status_label.text() == view.SETTINGS_UNREADABLE_LINE
+        assert screen.run_retention_sweep() == []
+        assert unwrap.calls == 0
+        assert len(store.list_entries()) == 1
+        # Round 16 MED-001: an unreadable file fails toward HIDING names.
+        assert screen.hide_names_checkbox.isChecked()
+        screen.refresh()
+        assert not any("Jane" in row for row in self._rows(screen))
+        # Hide names is refused, never written over the unreadable file with a
+        # retention the practitioner did not choose (stage-3 leg c2).
+        assert not screen.hide_names_checkbox.isEnabled()
+        screen.hide_names_checkbox.setChecked(False)
+        screen.on_hide_names(False)
+        assert screen.hide_names_checkbox.isChecked()
+        assert screen.message_label.text() == view.HIDE_NAMES_REFUSED
+        assert settings_file.read_text() == '{"retention_days": true}'
+        # An explicit retention choice replaces the file - keeping names hidden,
+        # the state the practitioner was looking at - and Hide names works again.
+        never = view.retention_index(None)
+        screen.on_retention_chosen(never)
+        assert screen.status_lines() == []
+        from scribe_desktop.past_sessions import load_past_session_settings
+
+        saved = load_past_session_settings(tmp_path / "config")
+        assert (saved.retention_days, saved.hide_names) == (None, True)
+        assert screen.hide_names_checkbox.isEnabled()
+        screen.hide_names_checkbox.setChecked(False)
+        screen.on_hide_names(False)
+        saved = load_past_session_settings(tmp_path / "config")
+        assert (saved.retention_days, saved.hide_names) == (None, False)
+        assert any("Jane" in row for row in self._rows(screen))
+        screen.deleteLater()
+
+    def test_the_settings_file_is_re_read_and_an_unsaved_hide_choice_stands(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 16 MED-001: opening the tab re-reads the file; a Hide names
+        choice the file did not take survives the hourly sweep's reload."""
+        from scribe_desktop.past_sessions import (
+            PastSessionSettings,
+            PastSessionSettingsError,
+            save_past_session_settings,
+        )
+        from scribe_desktop.ui import past_sessions as screen_module
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        _ps_entry(store, name="Jane Citizen")
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        assert any("Jane" in row for row in self._rows(screen))
+        # Another writer (a hand edit) hides names: the next opening follows it.
+        save_past_session_settings(
+            PastSessionSettings(hide_names=True), config_root=tmp_path / "config"
+        )
+        screen.refresh()
+        assert screen.hide_names_checkbox.isChecked()
+        assert not any("Jane" in row for row in self._rows(screen))
+        # A save that fails keeps the choice for the run, over every reload.
+        save_past_session_settings(PastSessionSettings(), config_root=tmp_path / "config")
+        screen.refresh()
+
+        def refuse(*_a: Any, **_k: Any) -> Any:
+            raise PastSessionSettingsError("past_sessions.json could not be written")
+
+        monkeypatch.setattr(screen_module, "save_past_session_settings", refuse)
+        screen.hide_names_checkbox.setChecked(True)
+        screen.on_hide_names(True)
+        assert screen.message_label.text() == view.HIDE_NAMES_NOT_SAVED
+        assert screen.run_retention_sweep() == []  # reloads the (unhidden) file
+        assert screen.hide_names_checkbox.isChecked()
+        screen.refresh()
+        assert screen.hide_names_checkbox.isChecked()
+        assert not any("Jane" in row for row in self._rows(screen))
+        screen.deleteLater()
+
+    def test_hide_names_and_retention_are_wired_to_their_signals(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 16 LOW-015: a real click and a real combo activation reach
+        the handlers (the other tests call them directly)."""
+        from scribe_desktop.past_sessions import load_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        asked: list[str] = []
+        screen = self._screen(
+            tmp_path, confirm=lambda _t, action: asked.append(action) or True
+        )
+        screen.refresh()
+        screen.hide_names_checkbox.click()
+        assert load_past_session_settings(tmp_path / "config").hide_names is True
+        screen.retention_combo.activated.emit(view.retention_index(None))  # unchanged
+        assert asked == []
+        screen.retention_combo.setCurrentIndex(view.retention_index(_PS_SEVEN))
+        screen.retention_combo.activated.emit(view.retention_index(_PS_SEVEN))
+        assert asked == [view.RETENTION_CONFIRM_ACTION]  # "never" -> 7 years lowers
+        saved = load_past_session_settings(tmp_path / "config")
+        assert (saved.retention_days, saved.hide_names) == (_PS_SEVEN, True)
+        screen.deleteLater()
+
+    def test_a_sweep_that_cannot_finish_says_so(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 16 MED-002: an entry due but not deletable is reported on the
+        status line and in the lowering's outcome, until a sweep finishes."""
+        from scribe_desktop.past_sessions import PastSessionError, PastSessionStore
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        old, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=40)))
+        store = _ps_store(root)
+        audit = _FakePastAudit()
+        screen = self._screen(
+            tmp_path, store=store, audit=audit, confirm=lambda _t, _a: True
+        )
+        real_delete = PastSessionStore.delete_entry
+
+        def refuse_delete(self_: Any, session_id: str) -> None:
+            raise PastSessionError("key_unremovable")
+
+        monkeypatch.setattr(PastSessionStore, "delete_entry", refuse_delete)
+        index = view.retention_index(_PS_SEVEN)
+        screen.retention_combo.setCurrentIndex(index)
+        screen.on_retention_chosen(index)
+        assert screen.message_label.text() == view.retention_changed_line(
+            _PS_SEVEN, 0, problem=True
+        )
+        assert view.SWEEP_PROBLEM_LINE in screen.status_lines()
+        assert audit.calls == []  # nothing deleted, nothing recorded
+        monkeypatch.setattr(PastSessionStore, "delete_entry", real_delete)
+        assert screen.run_retention_sweep() == [old]
+        assert view.SWEEP_PROBLEM_LINE not in screen.status_lines()
+        screen.deleteLater()
+
+    def test_every_audit_double_implements_the_tabs_surface(self, tmp_path: Path) -> None:
+        """The tab depends on ``PastSessionsAudit``: the real log and this
+        file's double carry every member (``AuditLog`` construction touches
+        nothing on disk)."""
+        from scribe_desktop.audit import AuditLog
+        from scribe_desktop.ui.past_sessions_view import PastSessionsAudit
+
+        assert isinstance(AuditLog(tmp_path / "audit"), PastSessionsAudit)
+        assert isinstance(_FakePastAudit(), PastSessionsAudit)
+        assert not (tmp_path / "audit").exists()
+
+    # --- the audit record on the tab (D9, C2, Export CSV) ----------------------
+
+    def test_export_goes_through_the_injected_dialog(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.audit import AuditUnavailable
+        from scribe_desktop.session_store import StoreWriteError as WriteError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        target = tmp_path / "out" / "audit.csv"
+        # A non-consuming dialog (leg c5): it answers `answer[0]` on every
+        # call, so adding a case can never run it dry.
+        answer: list[Path | None] = [None]
+        asked: list[int] = []
+        audit = _FakePastAudit()
+        audit.export_result = 3
+
+        def choose() -> Path | None:
+            asked.append(1)
+            return answer[0]
+
+        screen = self._screen(tmp_path, audit=audit, choose=choose)
+        screen.on_export()  # the dialog was cancelled
+        assert audit.calls == [] and screen.message_label.text() == ""
+        assert len(asked) == 1
+        answer[0] = target
+        screen.on_export()
+        assert audit.calls == [("export", target)]
+        assert screen.message_label.text() == view.export_done_line(3)
+        assert "not encrypted" in screen.message_label.text()
+        # Round 16 LOW-001 (C3): the outcome never carries the file's name or path.
+        assert "audit.csv" not in screen.message_label.text()
+        assert str(tmp_path) not in screen.message_label.text()
+        audit.export_error = AuditUnavailable("unavailable")
+        screen.on_export()
+        assert screen.message_label.text() == (
+            "The audit record could not be exported: the audit folder could not be read."
+        )
+        audit.export_error = WriteError(f"failed writing audit export: {tmp_path}")
+        screen.on_export()
+        assert screen.message_label.text() == (
+            "The audit record could not be exported: the file could not be written."
+        )
+        assert str(tmp_path) not in screen.message_label.text()
+        audit.export_error = OSError(f"[Errno 13] Permission denied: {tmp_path}")
+        screen.on_export()
+        assert screen.message_label.text() == view.export_failed_line(OSError())
+        assert str(tmp_path) not in screen.message_label.text()
+        screen.deleteLater()
+
+    def test_an_unreadable_audit_key_offers_the_reset(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.audit import AuditResetError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        audit = _FakePastAudit()
+        audit.unreadable = True
+        answers = [False, True, True]
+        actions: list[str] = []
+        screen = self._screen(
+            tmp_path,
+            audit=audit,
+            confirm=lambda _t, action: actions.append(action) or answers.pop(0),
+            choose=lambda: pytest.fail("an export the key cannot serve"),
+        )
+        assert not screen.reset_audit_button.isVisibleTo(screen)  # nothing read yet
+        screen.refresh()
+        assert screen.reset_audit_button.isVisibleTo(screen)
+        assert view.AUDIT_KEY_UNREADABLE_LINE in screen.status_lines()
+        # Round 16 LOW-009: the export is disabled, and refused at the click.
+        assert not screen.export_button.isEnabled()
+        screen.on_export()
+        assert ("export",) not in [call[:1] for call in audit.calls]
+        screen.on_reset_audit()  # declined
+        assert ("reset",) not in audit.calls
+        audit.reset_error = AuditResetError("set_aside_failed")
+        screen.on_reset_audit()
+        assert screen.message_label.text() == (
+            "A new audit record could not be started: the audit folder could not be set "
+            "aside. Nothing was deleted."
+        )
+        audit.reset_error = None
+        screen.on_reset_audit()
+        assert screen.message_label.text() == view.AUDIT_RESET_DONE
+        assert not screen.reset_audit_button.isVisibleTo(screen)
+        assert view.AUDIT_KEY_UNREADABLE_LINE not in screen.status_lines()
+        assert screen.export_button.isEnabled()
+        assert actions == [view.AUDIT_RESET_CONFIRM_ACTION] * 3
+        screen.deleteLater()
+
+    def test_failed_audit_updates_are_counted_and_shown(self, qapp: Any, tmp_path: Path) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, audit=audit)
+        assert screen.status_lines() == []
+        assert not screen.status_label.isVisibleTo(screen)
+        audit.failure_count = 2
+        screen._tick()  # the 1 s tick re-reads the in-memory count
+        assert screen.status_label.text() == view.audit_failures_line(2)
+        assert screen.status_label.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_without_an_archive_the_tab_touches_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        screen = self._screen(tmp_path, store=None)
+        screen.refresh()
+        assert screen.run_retention_sweep() == []
+        assert view.STORE_UNAVAILABLE in screen.status_lines()
+        assert not screen.delete_button.isEnabled()
+        assert not screen.retention_combo.isEnabled()
+        assert not screen.export_button.isEnabled()  # no audit either
+        assert not (tmp_path / "past_sessions").exists()
+        screen.deleteLater()
+
+    # --- round 16 (/review-loop): failure paths and lifetimes -----------------
+
+    def test_copy_says_why_per_cause(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 16 LOW-002: the recorded flag off, and a saved note still
+        carrying an unresolved error, each refuse Copy with their own reason
+        — and nothing reaches the clipboard."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        mimes: list[Any] = []
+        payloads = TestNoteWiring()._fake_clipboard(monkeypatch, mimes)
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        self._select(screen, sid)
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", False)
+        screen._render_controls()
+        assert not screen.copy_button.isEnabled()
+        assert screen.copy_reason_label.text() == view.COPY_TURNED_OFF
+        screen.on_copy()
+        assert screen.message_label.text() == view.COPY_TURNED_OFF
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        monkeypatch.setattr(GeneratedNote, "blocking_warnings", lambda _self: (object(),))
+        screen._render_controls()
+        assert screen.copy_reason_label.text() == view.COPY_UNRESOLVED
+        screen.on_copy()
+        assert screen.message_label.text() == view.COPY_UNRESOLVED
+        assert payloads == [] and mimes == []
+        assert view.copy_unavailable_reason(
+            opened=False, has_saved=False, unresolved=False, copy_enabled=True
+        ) == view.COPY_NOTHING_OPEN
+        screen.deleteLater()
+
+    def test_leaving_the_tab_drops_every_name_and_the_opened_entry(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 16 LOW-008: names and clinical text are held only while the
+        tab is in front."""
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, name="Jane Citizen")
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        self._select(screen, sid)
+        assert screen.saved_view.toPlainText() != ""
+        screen.on_left()
+        assert self._rows(screen) == []
+        assert screen._listings == []
+        assert screen._open_entry is None
+        assert screen.saved_view.toPlainText() == ""
+        assert screen.heading_label.text() == ""
+        screen.refresh()
+        assert any("Jane" in row for row in self._rows(screen))
+        screen.deleteLater()
+
+    def test_opening_the_tab_clears_a_stale_line(self, qapp: Any, tmp_path: Path) -> None:
+        """Round 16 LOW-004: a previous visit's outcome line does not linger,
+        and the Delete-now question leaves with its arming."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        now = [100.0]
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        screen = self._screen(tmp_path, store=store, monotonic=lambda: now[0])
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_clicked()
+        assert screen.message_label.text() == view.DELETE_CONFIRM_MESSAGE
+        now[0] += view.DELETE_CONFIRM_SECONDS + 1
+        screen._tick()
+        assert screen.message_label.text() == ""
+        screen._show_message(view.COPY_DONE)
+        screen.refresh()
+        assert screen.message_label.text() == ""
+        screen.deleteLater()
+
+    def test_an_archive_that_cannot_be_listed_is_never_shown_as_empty(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 16 LOW-003: the listing says it could not read, and the
+        retention sweep says it could not finish."""
+        from scribe_desktop.past_sessions import PastSessionSettings, save_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        root.write_bytes(b"")  # a file where the folder should be: not listable
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        screen = self._screen(tmp_path, store=_ps_store(root))
+        screen.refresh()
+        assert self._rows(screen) == []
+        assert view.NO_ENTRIES not in self._rows(screen)
+        assert screen.message_label.text() == view.LIST_UNREADABLE
+        assert screen.run_retention_sweep() == []
+        assert view.SWEEP_PROBLEM_LINE in screen.status_lines()
+        screen.deleteLater()
+
+    def test_a_failed_delete_keeps_the_entry_and_records_nothing(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Round 16 LOW-017: the authored reason, the entry still listed and
+        open, no ``deleted_early``; an unexpected error shows the fixed line."""
+        from scribe_desktop.past_sessions import PastSessionError, PastSessionStore
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+
+        def refuse(_self: Any, _sid: str) -> None:
+            raise PastSessionError("delete_failed")
+
+        monkeypatch.setattr(PastSessionStore, "delete_entry", refuse)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert screen.message_label.text() == (
+            "Delete failed: that Past-sessions entry could not be deleted. Nothing else "
+            "changed - try again."
+        )
+        assert len(self._rows(screen)) == 1 and screen._open_id == sid
+        assert not any(call[0] == "past_session" for call in audit.calls)
+
+        def explode(_self: Any, _sid: str) -> None:
+            raise OSError(f"denied: {tmp_path}")
+
+        monkeypatch.setattr(PastSessionStore, "delete_entry", explode)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert screen.message_label.text() == (
+            f"Delete failed: {view.UNEXPECTED_REASON}. Nothing else changed - try again."
+        )
+        assert str(tmp_path) not in screen.message_label.text()
+        screen.deleteLater()
+
+    def test_a_failing_audit_update_never_stops_a_deletion(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 19 PR-LOW-017 (C2): the audit update after Delete now and
+        after an expiry FAILS (returns False and is counted, as
+        ``AuditLog.update`` does — it never raises). The deletion and the
+        tab's cleanup still finish, and the failure is shown."""
+        from scribe_desktop.past_sessions import PastSessionSettings, save_past_session_settings
+        from scribe_desktop.session_store import KEY_FILENAME as KEY
+        from scribe_desktop.ui import past_sessions_view as view
+
+        class _FailingAudit(_FakePastAudit):
+            def record_past_session(
+                self, session_id: str, state: str, *, created_at: float | None = None
+            ) -> bool:
+                super().record_past_session(session_id, state, created_at=created_at)
+                self.failure_count += 1
+                return False
+
+        root = tmp_path / "past_sessions"
+        expiring, _ = _ps_entry(
+            _ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=2))
+        )
+        doomed, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=1)))
+        kept, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=2)))
+        store = _ps_store(root)
+        audit = _FailingAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        panels = (screen.generated_view, screen.saved_view, screen.transcript_view)
+
+        def open_with_everything_shown(session_id: str) -> None:
+            self._select(screen, session_id)
+            screen.on_toggle_transcript()
+            assert screen._open_id == session_id
+            assert all(panel.toPlainText() != "" for panel in panels)
+            assert screen.heading_label.text() != "" and screen.write_line_label.text() != ""
+            assert screen.transcript_view.isVisibleTo(screen)
+
+        def assert_nothing_of_it_remains() -> None:
+            # Round 20 PR-LOW-019: the opened entry and EVERY content panel.
+            assert screen._open_id is None and screen._open_entry is None
+            assert all(panel.toPlainText() == "" for panel in panels)
+            assert screen.heading_label.text() == "" and screen.write_line_label.text() == ""
+            assert not screen.transcript_view.isVisibleTo(screen)
+            assert screen.transcript_button.text() == view.SHOW_TRANSCRIPT_LABEL
+            assert screen.entry_list.selectedItems() == []
+            assert not screen.copy_button.isEnabled()
+
+        screen.refresh()
+        open_with_everything_shown(doomed)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert not (root / doomed / KEY).exists() and not (root / doomed).exists()
+        assert_nothing_of_it_remains()
+        assert len(self._rows(screen)) == 2
+        assert screen.message_label.text() == view.DELETE_DONE
+        screen._tick()  # the 1 s tick re-reads the in-memory failure count
+        assert screen.status_label.text() == view.audit_failures_line(1)
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        open_with_everything_shown(expiring)  # the sweep expires the OPEN entry
+        assert screen.run_retention_sweep() == [expiring]
+        assert not (root / expiring).exists()
+        assert_nothing_of_it_remains()
+        assert [item.session_id for item in store.list_entries()] == [kept]
+        assert len(self._rows(screen)) == 1
+        assert [call[1:3] for call in audit.calls if call[0] == "past_session"] == [
+            (doomed, "deleted_early"),
+            (expiring, "expired"),
+        ]
+        assert view.audit_failures_line(2) in screen.status_label.text()
+        screen.deleteLater()
+
+    def test_an_unreadable_entry_says_so_and_can_still_be_deleted(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 16 LOW-011/017: a label this account cannot read lists as
+        such, opens to the next step, and Delete now removes it (key first),
+        recorded as ``deleted_early`` with no date to give."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        sid, _ = _ps_entry(_ps_store(root))
+
+        def refuse_unwrap(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        from scribe_desktop.past_sessions import PastSessionSettings, save_past_session_settings
+
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        store = _ps_store(root, unwrap=refuse_unwrap)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        # Round 17 LOW-020: the sweep keeps it (no date) and the tab says so.
+        assert screen.run_retention_sweep() == []
+        assert view.undated_line(1) in screen.status_lines()
+        assert "cannot be read" in view.undated_line(1)
+        screen.refresh()
+        assert self._rows(screen) == [view.ENTRY_UNREADABLE_ROW]
+        self._select(screen, sid)
+        assert screen.heading_label.text() == view.ENTRY_UNREADABLE
+        assert screen.generated_view.toPlainText() == ""
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert not (root / sid).exists()
+        assert ("past_session", sid, "deleted_early", None) in audit.calls
+        assert view.undated_line(1) not in screen.status_lines()  # it is gone
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        "change",
+        [
+            # "never" is also the only RAISE left (practitioner decision
+            # 2026-10-02: 7 years is the one finite choice), so the former
+            # "raise" case (30 days -> 1 year) is this one.
+            "never",
+            "hand_edit",
+            "unreadable",
+            # Round 19 PR-LOW-015: a hand-edit picked up by every other
+            # reload route — Hide names and each early exit of a choice.
+            "toggle",
+            "same_choice",
+            "declined",
+            "save_fails",
+        ],
+    )
+    def test_the_sweep_lines_follow_the_current_setting(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any, change: str
+    ) -> None:
+        """Round 18 PR-LOW-014 / round 19 PR-LOW-015: the partial-sweep and
+        undated lines describe the setting the sweep ran under. Choosing
+        "never", raising the setting, or any route that reloads a changed
+        file (opening the tab, Hide names, a choice that changes nothing, is
+        declined or cannot be saved) drops them from the VISIBLE label at
+        once — with no sweep — and the retry wording promises no hour."""
+        from scribe_desktop.past_sessions import (
+            SETTINGS_FILENAME,
+            PastSessionError,
+            PastSessionSettings,
+            PastSessionSettingsError,
+            PastSessionStore,
+            save_past_session_settings,
+        )
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=40)))
+        unreadable_id, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=2)))
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+
+        unwraps: list[str] = []
+
+        def unwrap(directory: Path) -> SessionCrypto:
+            unwraps.append(directory.name)
+            if directory.name == unreadable_id:
+                raise OSError("DPAPI refused")
+            return _fake_entry_unwrap(directory)
+
+        store = _ps_store(root, unwrap=unwrap)
+
+        def refuse_delete(_self: Any, _sid: str) -> None:
+            raise PastSessionError("delete_failed")
+
+        monkeypatch.setattr(PastSessionStore, "delete_entry", refuse_delete)
+        answers = [False]
+        screen = self._screen(tmp_path, store=store, confirm=lambda _t, _a: answers[0])
+        assert screen.run_retention_sweep() == []
+        assert view.SWEEP_PROBLEM_LINE in screen.status_label.text()
+        assert view.undated_line(1) in screen.status_label.text()
+        assert "within the hour" not in view.SWEEP_PROBLEM_LINE
+        assert "while it is running" in view.SWEEP_PROBLEM_LINE
+        calls = len(unwraps)
+        config = tmp_path / "config"
+        if change == "never":
+            screen.on_retention_chosen(view.retention_index(None))
+        elif change == "hand_edit":
+            save_past_session_settings(PastSessionSettings(), config_root=config)
+            screen.refresh()
+        elif change == "unreadable":
+            (config / SETTINGS_FILENAME).write_text('{"retention_days": "x"}')
+            screen.refresh()
+        elif change == "toggle":  # the peer's repro
+            save_past_session_settings(PastSessionSettings(), config_root=config)
+            screen.on_hide_names(True)
+        elif change == "same_choice":  # the file already says "never"
+            save_past_session_settings(PastSessionSettings(), config_root=config)
+            screen.on_retention_chosen(view.retention_index(None))
+        elif change == "declined":  # hand-edited to "never"; -> 7 years asks; no
+            save_past_session_settings(PastSessionSettings(), config_root=config)
+            screen.on_retention_chosen(view.retention_index(_PS_SEVEN))
+            assert screen.message_label.text() == view.retention_kept_line(None)
+        else:  # hand-edited to "never"; -> 7 years is confirmed but cannot be saved
+            save_past_session_settings(PastSessionSettings(), config_root=config)
+
+            def refuse_save(*_a: Any, **_k: Any) -> Any:
+                raise PastSessionSettingsError("past_sessions.json could not be written")
+
+            monkeypatch.setattr(
+                "scribe_desktop.ui.past_sessions.save_past_session_settings", refuse_save
+            )
+            answers[0] = True
+            screen.on_retention_chosen(view.retention_index(_PS_SEVEN))
+            assert screen.message_label.text() == view.SETTINGS_NOT_SAVED
+        assert view.SWEEP_PROBLEM_LINE not in screen.status_lines()
+        assert view.undated_line(1) not in screen.status_lines()
+        assert not any("could not be deleted" in line for line in screen.status_lines())
+        # The VISIBLE label, not only the derived list (PR-LOW-015).
+        assert screen.status_label.text() == "\n".join(screen.status_lines())
+        assert "could not be deleted" not in screen.status_label.text()
+        assert "cannot be read on this Windows account" not in screen.status_label.text()
+        if change not in ("hand_edit", "unreadable"):  # those re-list on opening
+            assert len(unwraps) == calls  # no sweep ran for the change
+        screen.deleteLater()
+
+    def test_an_audit_key_lost_mid_visit_offers_the_reset_at_once(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 17 LOW-021: an export (or an entry's write line) that fails
+        because the key went unreadable since the tab was opened re-checks
+        the key, so D9's reset appears and Export is disabled straight away."""
+        from scribe_desktop.audit import AuditUnavailable
+        from scribe_desktop.ui import past_sessions_view as view
+
+        target = tmp_path / "audit.csv"
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, audit=audit, choose=lambda: target)
+        screen.refresh()
+        assert not screen.reset_audit_button.isVisibleTo(screen)
+        audit.unreadable = True
+        audit.export_error = AuditUnavailable("key_unreadable")
+        screen.on_export()
+        assert screen.message_label.text().startswith(
+            "The audit record could not be exported: its key cannot be read"
+        )
+        assert screen.reset_audit_button.isVisibleTo(screen)
+        assert view.AUDIT_KEY_UNREADABLE_LINE in screen.status_lines()
+        assert not screen.export_button.isEnabled()
+        screen.deleteLater()
+
+    def test_an_unreadable_audit_row_re_checks_the_key(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.audit import AuditUnavailable
+        from scribe_desktop.ui import past_sessions_view as view
+
+        class _LostKeyAudit(_FakePastAudit):
+            def row_for(self, session_id: str) -> Any:
+                raise AuditUnavailable("key_unreadable")
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        audit = _LostKeyAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        audit.unreadable = True
+        self._select(screen, sid)
+        assert screen.write_line_label.text() == view.WRITE_ROW_UNAVAILABLE
+        assert screen.reset_audit_button.isVisibleTo(screen)
+        screen.deleteLater()
+
+    def test_an_entry_that_fails_to_open_names_the_next_step(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from scribe_desktop.past_sessions import PastSessionError, PastSessionStore
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+
+        def refuse(_self: Any, _sid: str) -> Any:
+            raise PastSessionError("unreadable")
+
+        monkeypatch.setattr(PastSessionStore, "read_entry", refuse)
+        self._select(screen, sid)
+        assert screen.heading_label.text() == (
+            "This past session cannot be opened: that Past-sessions entry cannot be read on "
+            "this Windows account. Delete now is only for a recording made in error - read "
+            "the downtime procedure before deleting it."
+        )
+        assert not screen.copy_button.isEnabled()
+        assert screen.delete_button.isEnabled()  # still possible; the wording is the limit
+        screen.deleteLater()
+
+    def test_no_read_failure_line_offers_delete_now_without_the_made_in_error_limit(
+        self,
+    ) -> None:
+        """Round 40 PR-LOW-034 (the class): an entry this account cannot
+        read is still kept and may still be a health record (the 7-year
+        minimum), so EVERY line that names Delete now for a read failure —
+        the selected-entry line, the undated status line (both counts) and
+        the open-failure line (every reason) — carries the made-in-error
+        limit and never offers deletion as the remedy."""
+        from scribe_desktop.past_sessions import PAST_SESSION_REASONS, PastSessionError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        assert view.ENTRY_UNREADABLE == (
+            "This past session cannot be read on this Windows account. It is still kept and "
+            "is not deleted by age. Delete now is only for a recording made in error - read "
+            "the downtime procedure before deleting it."
+        )
+        assert view.undated_line(1) == (
+            "1 past session cannot be read on this Windows account, so it is not deleted by "
+            "age and is still kept. Delete now is only for a recording made in error - read "
+            "the downtime procedure before deleting it."
+        )
+        assert view.undated_line(3) == (
+            "3 past sessions cannot be read on this Windows account, so they are not deleted "
+            "by age and are still kept. Delete now is only for a recording made in error - "
+            "read the downtime procedure before deleting them."
+        )
+        lines = [view.ENTRY_UNREADABLE, view.undated_line(1), view.undated_line(2)]
+        lines += [view.open_failed_line(PastSessionError(code)) for code in PAST_SESSION_REASONS]
+        lines.append(view.open_failed_line(OSError("anything")))
+        for line in lines:
+            assert "Delete now" in line
+            assert "only for a recording made in error" in line
+            assert "can delete" not in line and "can still delete" not in line
+
+    def test_a_sweep_disarms_a_delete_for_an_entry_it_removed(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Round 16 LOW-017 (D3 racing a sweep): the armed entry is gone, so a
+        second click deletes nothing else."""
+        from scribe_desktop.past_sessions import PastSessionSettings, save_past_session_settings
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        old, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW - timedelta(days=2)))
+        kept, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=1)))
+        store = _ps_store(root)
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        self._select(screen, old)
+        screen.on_delete_clicked()
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        assert screen.run_retention_sweep() == [old]
+        assert screen.delete_button.text() == view.DELETE_LABEL
+        assert screen._delete_armed is None
+        screen.on_delete_clicked()  # nothing selected now: deletes nothing
+        assert [item.session_id for item in store.list_entries()] == [kept]
+        screen.deleteLater()
+
+    def test_every_refusal_line_is_mapped_in_one_place_and_never_echoes(self) -> None:
+        """Stage-3 leg c4: ``failure_reason`` is the tab's ONE code-to-
+        sentence mapping. Every code each store authors reads its sentence;
+        an unknown code, and any other exception, read the app's one fixed
+        line — never the raw code or the exception's text (C3)."""
+        from scribe_desktop.audit import (
+            AUDIT_REASONS,
+            AUDIT_RESET_REASONS,
+            AuditResetError,
+            AuditUnavailable,
+        )
+        from scribe_desktop.past_sessions import PAST_SESSION_REASONS, PastSessionError
+        from scribe_desktop.session_store import StoreWriteError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        for error, table in (
+            (PastSessionError, PAST_SESSION_REASONS),
+            (AuditUnavailable, AUDIT_REASONS),
+            (AuditResetError, AUDIT_RESET_REASONS),
+        ):
+            for code, sentence in table.items():
+                assert view.failure_reason(error(code)) == sentence
+            unknown = error("some_new_code")
+            assert view.failure_reason(unknown) == view.UNEXPECTED_REASON
+        secret = r"C:\Users\someone\past_sessions"
+        for exc in (OSError(secret), RuntimeError(secret), ValueError(secret)):
+            assert view.failure_reason(exc) == view.UNEXPECTED_REASON
+        lines = [
+            view.delete_failed_line(PastSessionError("no_such_code")),
+            view.open_failed_line(OSError(secret)),
+            view.reset_failed_line(RuntimeError(secret)),
+            view.export_failed_line(AuditUnavailable("no_such_code")),
+            view.export_failed_line(StoreWriteError(secret)),
+            view.export_failed_line(OSError(secret)),
+        ]
+        for line in lines:
+            assert secret not in line and "no_such_code" not in line
+        assert view.export_failed_line(OSError(secret)) == (
+            "The audit record could not be exported: the file could not be written."
+        )
+
+    def test_no_failure_handler_or_sweep_logs_a_name_a_path_or_exception_text(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any, caplog: Any
+    ) -> None:
+        """Round 19 PR-LOW-018 (C3): every record logged while the tab's
+        failure handlers (open, Delete now, export, reset) and two failing
+        sweeps run, with a store logger attached, is checked for distinct
+        sentinels — the patient's name in a label, a path in the archive
+        root, and text inside the injected exceptions — in its message, its
+        args, its structured fields and its exception information."""
+        import logging
+
+        from scribe_desktop.audit import AuditResetError
+        from scribe_desktop.past_sessions import (
+            PastSessionError,
+            PastSessionSettings,
+            PastSessionStore,
+            save_past_session_settings,
+        )
+
+        name = "Zebedee Sentinelname"
+        path_mark = "SENTINELPATH"
+        text_mark = "SENTINELTEXT"
+        root = tmp_path / f"{path_mark}_archive"
+        logger = logging.getLogger("test-past-sessions-c3")
+
+        def store_at(clock: datetime) -> Any:
+            return PastSessionStore(
+                root,
+                clock=lambda: clock,
+                wrap_key=_fake_entry_wrap,
+                unwrap_key=_fake_entry_unwrap,
+                logger=logger,
+            )
+
+        caplog.set_level(logging.DEBUG)
+        old, _ = _ps_entry(store_at(_PS_NOW - _PS_WINDOW - timedelta(days=40)), name=name)
+        _ps_entry(store_at(_PS_NOW - timedelta(days=1)), name=name)
+        secret = f"{text_mark} at {root}"
+        audit = _FakePastAudit()
+        audit.export_error = OSError(secret)
+        audit.reset_error = AuditResetError(text_mark)  # an unknown code carrying text
+        screen = self._screen(
+            tmp_path,
+            store=store_at(_PS_NOW),
+            audit=audit,
+            confirm=lambda _t, _a: True,
+            choose=lambda: root / "out.csv",
+        )
+        screen.refresh()
+
+        def fail(*_a: Any, **_k: Any) -> Any:
+            raise OSError(secret)
+
+        monkeypatch.setattr(PastSessionStore, "read_entry", fail)
+        self._select(screen, old)  # the open-failure handler
+        monkeypatch.setattr(PastSessionStore, "delete_entry", fail)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()  # the delete-failure handler
+        screen.on_export()  # the export-failure handler
+        screen.on_reset_audit()  # the reset-failure handler
+        save_past_session_settings(
+            PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
+        )
+        assert screen.run_retention_sweep() == []  # the walk stops on a foreign error
+
+        def refuse(*_a: Any, **_k: Any) -> Any:
+            raise PastSessionError("delete_failed")
+
+        monkeypatch.setattr(PastSessionStore, "delete_entry", refuse)
+        assert screen.run_retention_sweep() == []  # a counted, refused deletion
+
+        records = list(caplog.records)
+        assert any("sweep_failed" in r.getMessage() for r in records)  # not vacuous
+        marks = (name, "Sentinelname", path_mark, text_mark, str(root))
+        formatter = logging.Formatter()
+        for record in records:
+            parts = [record.getMessage(), repr(record.args), repr(vars(record))]
+            if record.exc_info:
+                parts.append(formatter.formatException(record.exc_info))
+            if record.exc_text:
+                parts.append(record.exc_text)
+            blob = "\n".join(parts)
+            leaked = [mark for mark in marks if mark in blob]
+            assert leaked == [], f"{record.name}: {leaked}"
+        # ...and none reached the screen either.
+        for text in (screen.message_label.text(), screen.heading_label.text()):
+            assert all(mark not in text for mark in marks)
+        screen.deleteLater()
+
+    def test_a_date_before_1970_still_lists(self) -> None:
+        """Round 16 LOW-007: a conversion the platform refuses falls back to
+        UTC text instead of breaking the tab."""
+        from datetime import timezone
+
+        from scribe_desktop.ui import past_sessions_view as view
+
+        moment = datetime(1, 1, 1, 0, 0, tzinfo=UTC)  # west of UTC: out of range
+        text = view._local_text(moment, timezone(timedelta(hours=-10)))
+        assert text == moment.strftime("%Y-%m-%d %H:%M UTC")  # %Y's padding is the C library's
+        assert text.endswith("01-01 00:00 UTC")
+
+    # --- in the main window -----------------------------------------------------
+
+    def test_the_tab_lists_on_opening_and_drops_text_on_leaving(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window = _main_window(tmp_path)
+        screen = window.past_sessions_screen
+        sid, _ = _ps_entry(screen._store)
+        assert window.status_panel.intended_use_label.text() == models.INTENDED_USE_LINE
+        window.tabs.setCurrentWidget(screen)
+        assert len(self._rows(screen)) == 1
+        self._select(screen, sid)
+        assert screen.generated_view.toPlainText() != ""
+        window.tabs.setCurrentWidget(window.status_panel)
+        assert screen.generated_view.toPlainText() == ""
+        assert screen._open_entry is None
+        assert self._rows(screen) == [] and screen._listings == []  # round 16 LOW-008
+        window.close()

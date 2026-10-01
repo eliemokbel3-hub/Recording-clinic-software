@@ -11,5 +11,7 @@ one network-capable module is ``scribe_desktop.cliniko_client``, and no UI
 module imports it — ``ui/bridge.py``, ``ui/main_window.py`` and
 ``ui/clinics.py`` reach Cliniko only through ``encounter`` and ``clinics``),
 no clinical text in logs, and transcript content is
-DISPLAYED only — never written anywhere except the encrypted store.
+DISPLAYED only — never written anywhere except the encrypted stores (the
+session's, and at Complete the Past-sessions entry under its own key —
+``scribe_desktop.past_sessions``).
 """

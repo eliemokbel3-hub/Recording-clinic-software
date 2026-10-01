@@ -10,7 +10,9 @@ over the shared sessions root);
 then the 24-hour expiry sweep (Flow 3) before the recovery screen lists
 anything; a periodic sweep re-runs the expiry rule on a best-effort
 cadence while the app stays open (round 47 PR-LOW-001 — "keeps the cap
-enforced" overstated it: see ``_SWEEP_INTERVAL_MS``). Last, the Chrome link
+enforced" overstated it: see ``_SWEEP_INTERVAL_MS``). The exception hooks
+go in right after logging, and the exclusion checks run just before the window
+is built (privacy-professional-controls Task 4.1). Last, the Chrome link
 (Cliniko workflow safeguards plan Tasks 4.2 + 4.5): the named pipe the
 native host connects to, behind the single-instance guard.
 """
@@ -23,6 +25,7 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -30,11 +33,18 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from scribe_desktop.audio_capture import SoundDeviceBackend
+from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+from scribe_desktop.exclusions import (
+    Win32WindowsLayer,
+    install_exception_hooks,
+    startup_exclusions,
+)
 from scribe_desktop.logging_setup import log_event, setup_logging
+from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user_sid
 from scribe_desktop.session import SessionController
-from scribe_desktop.session_store import default_sessions_root, sweep_sessions
+from scribe_desktop.session_store import SweepResult, default_sessions_root, sweep_sessions
 from scribe_desktop.ui.main_window import MainWindow
 
 if sys.platform == "win32":
@@ -53,6 +63,16 @@ if sys.platform == "win32":
 # the wording `docs/security/retention-schedule.md` now carries. The startup
 # sweep runs immediately.
 _SWEEP_INTERVAL_MS = 15 * 60 * 1000
+
+# Privacy-professional-controls plan Flow 4: the audit month prune runs at
+# start-up and then on the sweep tick once this long has passed since the
+# last one — the same best-effort cadence, never a bound.
+_AUDIT_PRUNE_INTERVAL_S = 24 * 60 * 60
+
+# Task 3.2 (Flow 4): the Past-sessions retention sweep runs at start-up and
+# then on the sweep tick once this long has passed since the last one — at
+# most hourly, the same best-effort cadence, never a bound.
+_RETENTION_SWEEP_INTERVAL_S = 60 * 60
 
 # Single-instance guard (peer round 18 PR4, priority raised after the
 # 2026-07-28 live smoke: two concurrent scribe-app processes shared one
@@ -358,6 +378,139 @@ def sweep_protected_ids(
     return controller.custody_protected_ids() | extra
 
 
+def record_sweep_results(audit: AuditLog, results: list[SweepResult] | None) -> None:
+    """Privacy-professional-controls Flow 4 / C7: every session the sweep
+    ended — ``expired`` or ``orphan_gc`` — recorded in its audit row BY
+    SESSION ID ONLY (nothing is decrypted; ``encounter.enc`` never), while
+    the row still reads ``pending`` (``AuditLog.record_deletion``). A
+    session with no row gets a ``pre_audit`` one dated by the result's
+    ``created_at``, read before the sweep deleted anything. Best-effort:
+    ``update`` never raises."""
+    for result in results or ():
+        if result.action == "expired":
+            audit.record_deletion(result.session_id, "expired", created_at=result.created_at)
+        elif result.action == "orphan_gc":
+            audit.record_deletion(result.session_id, "orphan_gc", created_at=result.created_at)
+
+
+def sweep_with_archive(
+    sessions_root: Path,
+    past_sessions: PastSessionStore,
+    active_session_ids: frozenset[str],
+    logger: logging.Logger | None = None,
+    *,
+    audit: AuditLog | None = None,
+) -> list[SweepResult]:
+    """Privacy-professional-controls Flow 4 / C1, at start-up and on every
+    sweep tick: staging copies a crash left are removed (whatever the
+    retention setting — "never" too); the 24 h sweep runs with the
+    archive's ``remove_pending_entry`` as its ``before_destroy``, so an
+    expiring (or dead-keyed) session's unfinished entry goes BEFORE its key;
+    then every ``pending`` entry whose source key is CONFIRMED absent is
+    committed, and each committed id is recorded in ``audit`` as
+    ``archived`` (round 12 LOW-002: the Complete that published it may have
+    stopped before its own audit update; a row that already says so is left
+    alone). None of these raises; nothing is decrypted."""
+    past_sessions.clean_staging()
+    results = sweep_sessions(
+        sessions_root,
+        active_session_ids=active_session_ids,
+        logger=logger,
+        before_destroy=past_sessions.remove_pending_entry,
+    )
+    committed = past_sessions.reconcile_pending(sessions_root)
+    if audit is not None:
+        for session_id in committed:
+            audit.record_past_session(session_id, "archived")
+    return results
+
+
+def prune_audit_if_due(audit: AuditLog, last_prune: float, now: float) -> float:
+    """Flow 4: the audit month prune on a sweep tick, once
+    ``_AUDIT_PRUNE_INTERVAL_S`` has passed since ``last_prune`` (monotonic
+    seconds). Returns when the latest prune ran. ``prune`` never raises."""
+    if now - last_prune < _AUDIT_PRUNE_INTERVAL_S:
+        return last_prune
+    audit.prune()
+    return now
+
+
+def retention_sweep_if_due(
+    sweep: Callable[[], object], last_sweep: float, now: float
+) -> float:
+    """Task 3.2 (Flow 4): the Past-sessions retention sweep on a sweep tick,
+    once ``_RETENTION_SWEEP_INTERVAL_S`` has passed since ``last_sweep``
+    (monotonic seconds) — at most hourly on the 15-minute timer. Returns when
+    the latest sweep ran. ``sweep`` is the Past sessions tab's
+    ``run_retention_sweep``, which never raises."""
+    if now - last_sweep < _RETENTION_SWEEP_INTERVAL_S:
+        return last_sweep
+    sweep()
+    return now
+
+
+class PeriodicSweep:
+    """The 15-minute sweep tick's body, out of ``main`` so it is tested (round
+    16 LOW-016): the 24 h session sweep with the recovery list's protected
+    ids, the reminder prune and the recovery re-listing, then the audit
+    prune (every 24 h) and the Past-sessions retention sweep (at most
+    hourly), each timed by ``monotonic`` seconds — which never go
+    backwards, so a wall-clock jump neither skips nor repeats one."""
+
+    def __init__(
+        self,
+        window: MainWindow,
+        audit: AuditLog,
+        run_sweep: Callable[[frozenset[str]], object],
+        *,
+        last_prune: float,
+        last_retention_sweep: float,
+        monotonic: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._window = window
+        self._audit = audit
+        self._run_sweep = run_sweep
+        self._monotonic = monotonic
+        self.last_prune = last_prune
+        self.last_retention_sweep = last_retention_sweep
+
+    def __call__(self) -> None:
+        """Every step runs even when an earlier one raised (H1 round 32
+        LOW-003: an unlistable sessions root must not also stop the audit
+        prune and the retention deletion, a privacy control). The first
+        failure is raised again at the end, so the exception hook logs its
+        type name exactly as before."""
+        failure: Exception | None = None
+        for step in (self._session_sweep, self._audit_prune, self._retention_sweep):
+            try:
+                step()
+            except Exception as exc:  # noqa: BLE001 - re-raised below
+                failure = failure if failure is not None else exc
+        if failure is not None:
+            raise failure
+
+    def _session_sweep(self) -> None:
+        window = self._window
+        # PR round 18 (PR2): a resume-processing run and a recovered session
+        # awaiting Complete/Discard are protected from the sweep too — the
+        # sweep must never destroy a store mid-recovery.
+        self._run_sweep(window.recovery_screen.protected_session_ids())
+        window.prune_reminders()  # D6: an expired session's reminder goes too
+        window.recovery_screen.refresh()
+
+    def _audit_prune(self) -> None:
+        # Flow 4: the audit month prune, every 24 h on the sweep tick.
+        self.last_prune = prune_audit_if_due(self._audit, self.last_prune, self._monotonic())
+
+    def _retention_sweep(self) -> None:
+        # Task 3.2: the retention sweep, at most hourly.
+        self.last_retention_sweep = retention_sweep_if_due(
+            self._window.past_sessions_screen.run_retention_sweep,
+            self.last_retention_sweep,
+            self._monotonic(),
+        )
+
+
 def _start_chrome_link(window: MainWindow, logger: logging.Logger) -> PipeServer | None:
     """Cliniko workflow safeguards plan Tasks 4.2 + 4.5: the named pipe the
     native host connects to, and the bridge behind it. Created AFTER the
@@ -380,6 +533,13 @@ def _start_chrome_link(window: MainWindow, logger: logging.Logger) -> PipeServer
 
 def main() -> int:
     logger = setup_logging("scribe-app")
+    # Privacy-professional-controls Task 4.1 (C3): from here on an uncaught
+    # exception — the main thread, a Qt slot, a worker thread, an unraisable
+    # one — is logged by its type name ONLY; Python's default hooks (which
+    # print the message and traceback to stderr) are never called. Kept for
+    # the process lifetime: restoring them on the way out would let a
+    # start-up failure's traceback reach the default hook after all.
+    install_exception_hooks(logger)
     # Offline kill-switches: set AND asserted before any ML code can run
     # (plan Design Decision "Runtime offline enforcement").
     apply_offline_env()
@@ -401,25 +561,65 @@ def main() -> int:
         log_event(logger, "app_exit", state="no_single_instance")
         return 1
     backend = SoundDeviceBackend()
-    controller = SessionController(backend, logger=logger)
+    # Privacy-professional-controls Task 1.3: the audit record. Construction
+    # touches nothing on disk; Start writes the first row (and the key).
+    audit = AuditLog(logger=logger)
+    # Task 2.3: the Past-sessions archive every Complete writes into.
+    # Construction touches nothing on disk.
+    past_sessions = PastSessionStore(logger=logger)
+    controller = SessionController(
+        backend, logger=logger, audit=audit, past_sessions=past_sessions
+    )
     sessions_root = default_sessions_root()
 
-    def run_sweep(extra_protected: frozenset[str] = frozenset()) -> None:
+    def run_sweep(extra_protected: frozenset[str] = frozenset()) -> list[SweepResult]:
         # Skips live sessions by STATE (never mtime), plus the controller's
         # own non-terminal session (round 42 MED-001 — see
-        # sweep_protected_ids).
-        sweep_sessions(
+        # sweep_protected_ids). The results are recorded in the audit (C7);
+        # the archive's staging, unfinished entries and commits are tended
+        # around it (C1, `sweep_with_archive`).
+        results = sweep_with_archive(
             sessions_root,
-            active_session_ids=sweep_protected_ids(controller, extra_protected),
-            logger=logger,
+            past_sessions,
+            sweep_protected_ids(controller, extra_protected),
+            logger,
+            audit=audit,
         )
+        record_sweep_results(audit, results)
+        return results
 
+    last_prune = time.monotonic()
+    audit.prune()  # Flow 4: the audit month prune at start-up...
     run_sweep()  # Flow 3: app start -> sweep BEFORE the recovery list renders
-    window = MainWindow(controller, backend, sessions_root=sessions_root)
+    # Task 4.1 (Flow 6, D10): before the window is built, the data folder is
+    # marked not-content-indexed (best effort) and the read-only location and
+    # WER checks run against the RUNNING interpreter. Their warning lines show
+    # on the Status tab and the Past sessions status line; nothing here can
+    # refuse start-up, and nothing opens a connection.
+    exclusion_warnings = startup_exclusions(
+        Win32WindowsLayer(), executable=sys.executable, logger=logger
+    )
+    window = MainWindow(
+        controller,
+        backend,
+        sessions_root=sessions_root,
+        audit=audit,
+        past_sessions=past_sessions,
+        exclusion_warnings=exclusion_warnings,
+    )
+    # D8: a linked Start's audit row names the clinic's Cliniko user id,
+    # read from the window's clinic registry at each Start.
+    controller.set_clinic_user_resolver(window.clinic_user_id)
     # Task 5.5 (D6): after the sweep, the reminder index is rebuilt from the
     # sessions left on disk — the one start-up decrypt of `encounter.enc`,
     # once per Unreviewed session. Nothing contacts Cliniko here.
     window.reconstruct_reminders()
+    # Task 3.2 (Flow 4): the Past-sessions retention sweep at start-up, through
+    # the tab that owns the setting and the app's ONE shared store (round 12
+    # LOW-001: never a fresh store, so each label's date is read once per
+    # process). "Never" decrypts nothing; an unreadable setting deletes nothing.
+    window.past_sessions_screen.run_retention_sweep()
+    last_retention_sweep = time.monotonic()
     pipe = _start_chrome_link(window, logger)
     if pipe is not None:
         app.aboutToQuit.connect(pipe.stop)
@@ -443,15 +643,13 @@ def main() -> int:
 
         sweep_timer = QTimer(window)
         sweep_timer.setInterval(_SWEEP_INTERVAL_MS)
-
-        def periodic_sweep() -> None:
-            # PR round 18 (PR2): a resume-processing run and a recovered
-            # session awaiting Complete/Discard are protected from the sweep
-            # too — the sweep must never destroy a store mid-recovery.
-            run_sweep(window.recovery_screen.protected_session_ids())
-            window.prune_reminders()  # D6: an expired session's reminder goes too
-            window.recovery_screen.refresh()
-
+        periodic_sweep = PeriodicSweep(
+            window,
+            audit,
+            run_sweep,
+            last_prune=last_prune,
+            last_retention_sweep=last_retention_sweep,
+        )
         sweep_timer.timeout.connect(periodic_sweep)
         sweep_timer.start()
 

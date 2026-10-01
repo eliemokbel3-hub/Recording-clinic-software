@@ -840,6 +840,7 @@ assert_offline_env()
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
+from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.session import SessionController
 from scribe_desktop.ui.main_window import MainWindow
 class FakeSystemRegistrar:
@@ -861,7 +862,8 @@ controller = SessionController(backend, sessions_root=root)
 w = MainWindow(controller, backend, sessions_root=root,
                profile_root=base / 'profile', config_root=base / 'config',
                style_root=base / 'style', language_model_available=lambda: False,
-               clinic_registry=ClinicRegistry(base / 'clinics.json'))
+               clinic_registry=ClinicRegistry(base / 'clinics.json'),
+               past_sessions=PastSessionStore(base / 'past_sessions'))
 seen = []
 w.pause_for = lambda reason: seen.append(str(reason))
 hwnd = int(w.winId())

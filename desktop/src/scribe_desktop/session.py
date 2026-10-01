@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -80,11 +80,14 @@ from scribe_desktop.encounter import (
     write_encounter_record,
 )
 from scribe_desktop.logging_setup import log_event
+from scribe_desktop.past_sessions import KeepLabel, PastSessionStore
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     SESSION_ID_PATTERN,
     TRANSCRIPT_FILENAME,
+    ArchiveWriteError,
+    CompletionFacts,
     KeyCustodyError,
     SessionChunkStore,
     SessionStoreError,
@@ -94,6 +97,7 @@ from scribe_desktop.session_store import (
     # THE single definition custody verification uses, or the two could
     # disagree about which session a directory is.
     _resolve_session_identity,
+    audit_created_at,
     complete_session,
     default_sessions_root,
     discard_session,
@@ -104,6 +108,11 @@ from scribe_desktop.session_store import (
     write_write_record,
 )
 from scribe_desktop.transcription import LiveFailure, LiveTranscriber
+
+if TYPE_CHECKING:
+    # audit.py imports THIS module (``AuditWriteError`` subclasses
+    # ``SessionControllerError``, D12), so the store's type is annotation-only.
+    from scribe_desktop.audit import AuditLog
 
 # Task 4.5: the audio one stored chunk holds (1.0 s at 16 kHz mono PCM16).
 _CHUNK_SECONDS: Final = CHUNK_BYTES / (SAMPLE_RATE * CHANNELS * SAMPLE_WIDTH)
@@ -390,6 +399,39 @@ class WriteInFlightError(SessionActivityError):
         super().__init__(f"{operation} refused: a Cliniko draft write holds this session")
 
 
+# Privacy-professional-controls plan Flow 3: the status line a refused
+# archive gives (its ``Complete failed:`` prefix is the screen's).
+PAST_SESSION_WRITE_FAILED_TEXT: Final = (
+    "the Past-sessions copy could not be saved. No key deletion was performed "
+    "— try again, or Discard."
+)
+
+
+class PastSessionWriteError(SessionControllerError):
+    """A Complete refused BEFORE its key boundary because the Past-sessions
+    entry could not be written, verified or published (privacy-professional-
+    controls C1, D12): the key, the state, any lease and any reservation are
+    kept, so the Complete can be retried — a retry replaces the unfinished
+    entry key-first — or the session discarded, which removes it. Authored
+    text only (the store's cause is never shown)."""
+
+    def __init__(self) -> None:
+        super().__init__(PAST_SESSION_WRITE_FAILED_TEXT)
+
+
+class PastSessionCleanupError(SessionControllerError):
+    """A Discard refused because the unfinished Past-sessions entry an
+    interrupted Complete left for this session could not be removed (C1:
+    the source key may only go after it). Nothing was deleted; the Discard
+    can be retried."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "discard refused: an unfinished Past-sessions copy of this session could "
+            "not be removed. Nothing was deleted - try again."
+        )
+
+
 class GenerationLease:
     """Opaque token for ONE in-flight note-generation operation (Task 6.3).
 
@@ -509,10 +551,32 @@ class SessionController:
         sessions_root: Path | None = None,
         logger: logging.Logger | None = None,
         live_transcriber_factory: Callable[[], LiveTranscriber] | None = None,
+        audit: AuditLog | None = None,
+        past_sessions: PastSessionStore | None = None,
     ) -> None:
         self._backend = backend
         self._root = sessions_root if sessions_root is not None else default_sessions_root()
         self._logger = logger
+        # Privacy-professional-controls plan Task 1.3 (C2): the audit record.
+        # None records nothing (every test construction site that does not
+        # ask for it). ``begin`` at Start is the one audit write that refuses;
+        # every later record is best-effort and never raises into custody.
+        self._audit = audit
+        # Privacy-professional-controls plan Task 2.3 (C1, D4): the Past-
+        # sessions archive every Complete writes into before its key goes,
+        # and every Discard clears an unfinished entry from before its key
+        # goes. None keeps nothing (every test construction site that does
+        # not ask for it); ``app.main`` passes the real store.
+        self._past_sessions = past_sessions
+        # Flow 3 step 4: whether the LAST successful Complete left its
+        # Past-sessions entry for the next reconciliation (its marker could
+        # not be removed after the key) — read by the screens for the
+        # truthful status line.
+        self._last_complete_deferred = False
+        # The clinic registry's ``user_id`` for a linked Start's clinic (D8),
+        # registered after construction because the registry is the main
+        # window's (``set_clinic_user_resolver``); None records no user id.
+        self._clinic_user_resolver: Callable[[str], str | None] | None = None
         # Note-learning plan D1/D2: builds the live worker at start(); None
         # keeps today's batch-only behaviour. Settable after construction
         # (``set_live_transcriber_factory``) because the live view it posts
@@ -722,12 +786,16 @@ class SessionController:
         recording (the desktop Start); a linked Start passes the context its
         verification produced.
 
-        Ordering (binding key-custody decision): session dir -> DPAPI-wrap
+        Ordering (binding key-custody decision): the audit row (privacy-
+        professional-controls Flow 1 — BEFORE the previous session is
+        retired; ``AuditWriteError`` refuses Start here with nothing changed)
+        -> retire the previous session -> session dir -> DPAPI-wrap
         the fresh session key to ``key.dpapi`` (atomic, durable) -> write
         ``encounter.enc`` (the consent and context, D11; atomic, durable) ->
         ONLY THEN create ``audio.enc`` -> start the capture worker (the
         single writer) -> state=recording. A crash after the key leaves no
-        audio without its consent record."""
+        audio without its consent record. Any failure after the row marks
+        it ``start_failed`` (best-effort)."""
         if not isinstance(consent, ConsentAttestation):
             raise ConsentRequiredError("start refused: no recording consent was given")
         if context is not None and not isinstance(context, EncounterContext):
@@ -751,70 +819,100 @@ class SessionController:
                 raise SessionActivityError(
                     "another session is active (single-active-session invariant)"
                 )
-            if live is not None:
-                # Previous session is queued/failed/terminal: drop our
-                # in-memory handle. Its on-disk custody (if any) remains, so
-                # a recoverable session stays recoverable via the sweep and
-                # recovery screen.
-                self._retire_locked(live)
+            # Privacy-professional-controls Flow 1: the session (and so its
+            # id) is built BEFORE the retire — the constructor is pure — and
+            # its audit row written next. A failed row write refuses Start
+            # HERE (AuditWriteError, C2), with the previous QUEUED session
+            # still installed and nothing of the new session on disk.
             session = RecordingSession(  # state defaults to idle
                 key_reference="key.dpapi", consent=consent, encounter_context=context
             )
-            directory = self._root / session.session_id
-            crypto = SessionCrypto()
-            try:
-                directory.mkdir(parents=True, exist_ok=True)
-            except OSError as exc:
-                raise StoreWriteError(f"failed creating session directory: {exc}") from exc
-            store: SessionChunkStore | None = None
-            live_worker: LiveTranscriber | None = None
-            try:
-                wrap_key_to_file(crypto, directory)  # key BEFORE first chunk
-                # D11: the consent (and context) record, after the key and
-                # BEFORE audio.enc; the failure cleanup below removes it.
-                write_encounter_record(
-                    directory,
-                    crypto,
+            if self._audit is not None:
+                self._audit.begin(
                     session.session_id,
-                    EncounterRecord(consent=consent, context=context),
+                    consent=consent,
+                    context=context,
+                    user_id=self._audit_user_id(context),
+                    started_at=session.created_at,
                 )
-                store = SessionChunkStore.create(
-                    directory / AUDIO_FILENAME, crypto, session.session_id
-                )
-                chunk_store = store
-                if self._live_transcriber_factory is not None:
-                    # D1: the live worker is fed by a tee AFTER the store's
-                    # encrypting write; it holds no crypto and no store handle.
-                    # Started BEFORE the capture worker so the first chunk
-                    # finds it running (a feed before start fails it).
-                    live_worker = self._live_transcriber_factory()
-                    live_worker.start()
-                worker = CaptureWorker(
-                    self._backend,
-                    device_id,
-                    _tee_sink(chunk_store, live_worker),
-                    on_failure=self._on_capture_failure,
-                )
-                worker.start()
-            except Exception:
-                # Nothing recoverable exists yet — clean up completely
-                # (key first) rather than leaving an empty orphan.
-                if live_worker is not None:
-                    # Under the lock: the short bound (nothing was fed yet, the
-                    # worker holds no plaintext; a load still in flight clears
-                    # itself on exit).
-                    live_worker.stop(timeout=_LIVE_STOP_LOCKED_TIMEOUT_S)
-                if store is not None:
-                    store.close()
-                discard_session(directory, crypto)
+            try:
+                return self._start_locked(live, session, device_id)
+            except BaseException:
+                # Flow 1 step 5: EVERY failure after a successful ``begin`` —
+                # the retire refusal (the previous session stays installed),
+                # the directory creation, the key, the encounter record, the
+                # store, the device — marks the row (best-effort, C2).
+                if self._audit is not None:
+                    self._audit.record_start_failed(session.session_id)
                 raise
-            live = _LiveSession(session, directory, crypto, store, worker)
-            live.live_transcriber = live_worker
-            live.session_ref = _new_session_ref()
-            self._session_refs[live.session_ref] = session.session_id
-            self._live = live
-            self._transition_locked(live, SessionState.RECORDING)
-            return live.session
+
+    def _start_locked(
+        self, live: _LiveSession | None, session: RecordingSession, device_id: int
+    ) -> RecordingSession:
+        """``start()``'s body after the audit row, under ``self._lock`` (the
+        caller's one hold). Every exception it raises is marked
+        ``start_failed`` by the caller."""
+        if live is not None:
+            # Previous session is queued/failed/terminal: drop our
+            # in-memory handle. Its on-disk custody (if any) remains, so
+            # a recoverable session stays recoverable via the sweep and
+            # recovery screen.
+            self._retire_locked(live)
+        directory = self._root / session.session_id
+        crypto = SessionCrypto()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StoreWriteError(f"failed creating session directory: {exc}") from exc
+        store: SessionChunkStore | None = None
+        live_worker: LiveTranscriber | None = None
+        try:
+            wrap_key_to_file(crypto, directory)  # key BEFORE first chunk
+            # D11: the consent (and context) record, after the key and
+            # BEFORE audio.enc; the failure cleanup below removes it.
+            write_encounter_record(
+                directory,
+                crypto,
+                session.session_id,
+                EncounterRecord(consent=session.consent, context=session.encounter_context),
+            )
+            store = SessionChunkStore.create(
+                directory / AUDIO_FILENAME, crypto, session.session_id
+            )
+            chunk_store = store
+            if self._live_transcriber_factory is not None:
+                # D1: the live worker is fed by a tee AFTER the store's
+                # encrypting write; it holds no crypto and no store handle.
+                # Started BEFORE the capture worker so the first chunk
+                # finds it running (a feed before start fails it).
+                live_worker = self._live_transcriber_factory()
+                live_worker.start()
+            worker = CaptureWorker(
+                self._backend,
+                device_id,
+                _tee_sink(chunk_store, live_worker),
+                on_failure=self._on_capture_failure,
+            )
+            worker.start()
+        except Exception:
+            # Nothing recoverable exists yet — clean up completely
+            # (key first) rather than leaving an empty orphan.
+            if live_worker is not None:
+                # Under the lock: the short bound (nothing was fed yet, the
+                # worker holds no plaintext; a load still in flight clears
+                # itself on exit).
+                live_worker.stop(timeout=_LIVE_STOP_LOCKED_TIMEOUT_S)
+            if store is not None:
+                store.close()
+            discard_session(directory, crypto)
+            raise
+        installed = _LiveSession(session, directory, crypto, store, worker)
+        installed.live_transcriber = live_worker
+        installed.session_ref = _new_session_ref()
+        self._session_refs[installed.session_ref] = session.session_id
+        self._live = installed
+        self._transition_locked(installed, SessionState.RECORDING)
+        return installed.session
 
     def pause(self) -> RecordingSession:
         """Pause capture. When this returns, no further chunk write can
@@ -924,6 +1022,95 @@ class SessionController:
         with self._lock:
             self._live_transcriber_factory = factory
 
+    def set_clinic_user_resolver(self, resolver: Callable[[str], str | None] | None) -> None:
+        """Register (or clear) how a linked Start finds the clinic's Cliniko
+        ``user_id`` for its audit row (privacy-professional-controls D8): the
+        clinic registry, by clinic id, read at each Start."""
+        with self._lock:
+            self._clinic_user_resolver = resolver
+
+    # --- the audit record (privacy-professional-controls plan Task 1.3) ------
+
+    def _audit_user_id(self, context: EncounterContext | None) -> str | None:
+        """Call under ``self._lock``. The linked clinic's user id, or None —
+        never a reason to refuse Start (a lookup that fails records none)."""
+        resolver = self._clinic_user_resolver
+        if context is None or resolver is None:
+            return None
+        try:
+            return resolver(context.clinic_id)
+        except Exception:  # noqa: BLE001 - an absent id, never a Start failure
+            return None
+
+    def _audit_created_at(self, directory: Path) -> float | None:
+        """D8: the session's creation time, read BEFORE its directory goes,
+        for a ``pre_audit`` row (a session started before the audit existed).
+        Never raises; None when there is no audit to feed."""
+        return audit_created_at(directory) if self._audit is not None else None
+
+    def _audit_completion(
+        self,
+        session_id: str,
+        facts: CompletionFacts,
+        deletion: Literal["completed", "completed_without_note"],
+        created_at: float | None,
+    ) -> None:
+        """Best-effort (C2): ``AuditLog.update`` never raises."""
+        if self._audit is not None:
+            self._audit.record_completion(
+                session_id, facts, deletion=deletion, created_at=created_at
+            )
+
+    def _audit_discarded(self, session_id: str, created_at: float | None) -> None:
+        """Best-effort (C2): ``AuditLog.update`` never raises."""
+        if self._audit is not None:
+            self._audit.record_deletion(session_id, "discarded", created_at=created_at)
+
+    # --- the Past-sessions archive (privacy-professional-controls Task 2.3) --
+
+    @property
+    def last_complete_deferred(self) -> bool:
+        """True when the last successful Complete published its Past-sessions
+        entry but could not remove the entry's ``pending`` marker after the
+        key (Flow 3 step 4): the copy appears after the next reconciliation."""
+        with self._lock:
+            return self._last_complete_deferred
+
+    def _complete_locked(
+        self,
+        directory: Path,
+        crypto: SessionCrypto,
+        *,
+        delete_note: bool = False,
+        label: KeepLabel | None = None,
+    ) -> tuple[CompletionFacts, float | None]:
+        """Call under ``self._lock``, after every refusal: THE one call of
+        ``complete_session`` for all five Complete paths, with the archive's
+        writer when there is an archive (C1 / D4). Returns the facts and the
+        pre-audit date read BEFORE the directory went. An archive failure
+        before the key boundary raises ``PastSessionWriteError`` (key,
+        state, lease and reservation all kept — the caller's own raise
+        semantics); every other failure propagates exactly as before."""
+        created_at = self._audit_created_at(directory)
+        keeper = self._past_sessions.keeper(label) if self._past_sessions is not None else None
+        try:
+            facts = complete_session(directory, crypto, delete_note=delete_note, keep=keeper)
+        except ArchiveWriteError:
+            raise PastSessionWriteError() from None
+        self._last_complete_deferred = facts.commit_deferred
+        return facts, created_at
+
+    def _remove_unfinished_entry_locked(self, session_id: str) -> None:
+        """Call under ``self._lock``, BEFORE any path other than Complete
+        deletes ``session_id``'s key (C1's ordering rule): remove any Past-
+        sessions entry an interrupted Complete left for it, key first.
+        ``PastSessionCleanupError`` when it could not be — the key must then
+        stay, or the entry could later be committed as a finished one."""
+        if self._past_sessions is None:
+            return
+        if not self._past_sessions.remove_pending_entry(session_id):
+            raise PastSessionCleanupError()
+
     def transcribe(
         self, transcriber: Callable[[Path, SessionCrypto], object]
     ) -> RecordingSession:
@@ -1011,12 +1198,14 @@ class SessionController:
             self._transition_locked(live, SessionState.QUEUED)
             return live.session
 
-    def complete(self) -> RecordingSession:
+    def complete(self, *, label: KeepLabel | None = None) -> RecordingSession:
         """The explicit Phase-2 Complete action (distinct from Discard):
         queued -> written via the store's binding ordering primitive
-        (fsync transcript -> verify decrypt round-trip -> delete key =
-        cryptographic deletion). Any verification failure keeps the key
-        and leaves the session queued."""
+        (fsync transcript -> verify decrypt round-trip -> the Past-sessions
+        entry -> delete key = cryptographic deletion). Any verification or
+        archive failure keeps the key and leaves the session queued.
+        ``label`` is what the UI resolved for the entry (D5; None: "Name not
+        available")."""
         with self._lock:
             # Task 6.3: Complete deletes the session key — the generation
             # worker's transcript would become unreadable and its note
@@ -1045,18 +1234,25 @@ class SessionController:
             # cannot be confirmed cleared.
             if not self._stop_live_locked(live):
                 self._refuse_uncleared_live("complete")
-            complete_session(live.directory, live.crypto)  # raises -> stays queued
+            facts, created_at = self._complete_locked(  # raises -> stays queued
+                live.directory, live.crypto, label=label
+            )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
             self._live = None
+            self._audit_completion(session.session_id, facts, "completed", created_at)
             return session
 
-    def complete_without_note(self, lease: GenerationLease) -> RecordingSession:
+    def complete_without_note(
+        self, lease: GenerationLease, *, label: KeepLabel | None = None
+    ) -> RecordingSession:
         """The clinician's explicit 'complete without a note' exit (Flow 2,
-        Task 7.1): complete the queued session but DELETE any ``note.enc``
-        first (``delete_note=True``), then the same binding transcript
-        ordering as ``complete()`` (fsync -> verify -> delete key). Never a
-        silent deletion — the Note tab's delete-note control confirms it.
+        Task 7.1): complete the queued session WITHOUT its ``note.enc``
+        (``delete_note=True`` — excluded from verification and from the
+        Past-sessions entry, gone with the key and the directory; D6), then
+        the same binding transcript ordering as ``complete()`` (fsync ->
+        verify -> the entry -> delete key). Never a silent deletion — the
+        Note tab's delete-note control confirms it.
 
         Runs UNDER the HELD generation lease and CONSUMES it only on success
         (round 35 PR-MED-001). The Note tab's abandon path holds the lease for
@@ -1068,8 +1264,7 @@ class SessionController:
         no-unlocked-window shape as ``complete()``), and clears
         ``self._generation`` ONLY after the WRITTEN transition. A failure
         raises with the lease still held, the session still QUEUED, and the
-        key retained (note-unlink-first is fail-closed inside
-        ``complete_session``)."""
+        key retained."""
         with self._lock:
             if self._generation is None or self._generation is not lease:
                 raise GenerationInProgressError(
@@ -1083,26 +1278,33 @@ class SessionController:
             live = self._require_state(SessionState.QUEUED)
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete-without-note")  # lease kept
-            complete_session(live.directory, live.crypto, delete_note=True)  # raises -> lease kept
+            facts, created_at = self._complete_locked(  # raises -> lease kept
+                live.directory, live.crypto, delete_note=True, label=label
+            )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
             self._live = None
             self._generation = None  # consume the lease only on success
+            self._audit_completion(
+                session.session_id, facts, "completed_without_note", created_at
+            )
             return session
 
-    def complete_deleting_saved_note(self) -> RecordingSession:
+    def complete_deleting_saved_note(self, *, label: KeepLabel | None = None) -> RecordingSession:
         """The POST-Save 'delete note and complete without one' exit (round 36
         PR-MED-001): the note is already committed and NO lease is held, so
-        this deletes ``note.enc`` and completes the queued session with the
-        same binding ordering as ``complete()``.
+        this completes the queued session WITHOUT its ``note.enc`` (excluded
+        from verification and from the Past-sessions entry, gone with the key
+        and the directory; D6) with the same binding ordering as
+        ``complete()``.
 
         Guarded like ``complete()``: refused while a generation lease is held
         (a regeneration is in flight — the pre-Save leased path
         ``complete_without_note(lease)`` owns that state) or while a discard is
-        completing. A failure keeps the key and leaves the session queued
-        (note-unlink-first is fail-closed inside ``complete_session``). This
-        is the pre-round-35 no-lease shape, restored as the SEPARATE guarded
-        delete-saved-note path the round-35 leased change left without one."""
+        completing. A failure keeps the key and leaves the session queued.
+        This is the pre-round-35 no-lease shape, restored as the SEPARATE
+        guarded delete-saved-note path the round-35 leased change left
+        without one."""
         with self._lock:
             self._refuse_while_generating("complete")
             self._refuse_while_writing("complete")
@@ -1113,10 +1315,15 @@ class SessionController:
             live = self._require_state(SessionState.QUEUED)
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete")
-            complete_session(live.directory, live.crypto, delete_note=True)
+            facts, created_at = self._complete_locked(
+                live.directory, live.crypto, delete_note=True, label=label
+            )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
             self._live = None
+            self._audit_completion(
+                session.session_id, facts, "completed_without_note", created_at
+            )
             return session
 
     def discard(self) -> RecordingSession:
@@ -1178,6 +1385,12 @@ class SessionController:
             # post-stop recheck was rejected: refusing at that point would
             # strand a half-stopped session claiming RECORDING/PAUSED with
             # its worker gone.
+            # Privacy-professional-controls C1: an unfinished Past-sessions
+            # entry for this session goes BEFORE its key — here, in this
+            # same hold of the lock and before the reservation, so a refusal
+            # changes nothing, and from here on the reservation keeps every
+            # Complete (the only publisher) away from this id.
+            self._remove_unfinished_entry_locked(session_id)
             self._reserve_custody_locked(session_id)
         try:
             if worker is not None:
@@ -1215,15 +1428,19 @@ class SessionController:
                 # are resolved from ITS directory and crypto only.
                 live.worker = None
                 if live.session.state == SessionState.DISCARDED:
-                    return live.session  # concurrent discard already completed
+                    # Concurrent discard already completed — and recorded it
+                    # in the audit; this call records nothing new.
+                    return live.session
                 if live.store is not None:
                     live.store.close()
                     live.store = None
+                created_at = self._audit_created_at(live.directory)
                 discard_session(live.directory, live.crypto)  # key-first, destroys crypto
                 self._transition_locked(live, SessionState.DISCARDED)
                 session = live.session
                 if self._live is live:
                     self._live = None
+                self._audit_discarded(session_id, created_at)
                 return session
         finally:
             with self._lock:
@@ -1489,24 +1706,35 @@ class SessionController:
                 ids.add(live.session.session_id)
             return frozenset(ids)
 
-    def complete_recovered(self, directory: Path, crypto: SessionCrypto) -> None:
+    def complete_recovered(
+        self, directory: Path, crypto: SessionCrypto, *, label: KeepLabel | None = None
+    ) -> None:
         """Complete a RECOVERED session (Flow 2 ordering via
-        ``complete_session``: fsync -> verify -> delete key), through the
-        lease-aware coordinator instead of a raw store-primitive call."""
+        ``complete_session``: fsync -> verify -> the Past-sessions entry ->
+        delete key), through the lease-aware coordinator instead of a raw
+        store-primitive call. A recovered session that once failed IS
+        archived: Complete, not the earlier failure, decides (D6)."""
         with self._lock:
             self._refuse_while_generating("complete")
             self._refuse_reserved_target_locked(directory, "complete")
-            complete_session(directory, crypto)
+            facts, created_at = self._complete_locked(directory, crypto, label=label)
             self._forget_refs_locked(directory.name)  # D2: its ref stops resolving
+            if re.fullmatch(SESSION_ID_PATTERN, directory.name):
+                self._audit_completion(directory.name, facts, "completed", created_at)
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
         """Discard a RECOVERED session (key-first cryptographic deletion),
-        through the lease-aware coordinator."""
+        through the lease-aware coordinator — any unfinished Past-sessions
+        entry for it first (C1)."""
         with self._lock:
             self._refuse_while_generating("discard")
             self._refuse_reserved_target_locked(directory, "discard")
+            self._remove_unfinished_entry_locked(directory.name)
+            created_at = self._audit_created_at(directory)
             discard_session(directory, crypto)
             self._forget_refs_locked(directory.name)  # D2: its ref stops resolving
+            if re.fullmatch(SESSION_ID_PATTERN, directory.name):
+                self._audit_discarded(directory.name, created_at)
 
     def destroy_recovered_crypto(self, crypto: SessionCrypto) -> None:
         """Zeroize a recovered checkout's in-memory key copy (disk custody
@@ -1652,7 +1880,9 @@ class SessionController:
             crypto = live.crypto
         return action(directory, crypto)
 
-    def complete_after_write(self, reservation: WriteReservation) -> RecordingSession:
+    def complete_after_write(
+        self, reservation: WriteReservation, *, label: KeepLabel | None = None
+    ) -> RecordingSession:
         """Complete the QUEUED live session after a CONFIRMED Cliniko draft
         write (D6, seen mode): the clinician pressed Complete once the draft
         showed in Cliniko. ``reservation`` is the one the Complete click took
@@ -1708,11 +1938,12 @@ class SessionController:
                 )
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete")
-            complete_session(live.directory, live.crypto, remove_directory=True)
+            facts, created_at = self._complete_locked(live.directory, live.crypto, label=label)
             self._transition_locked(live, SessionState.WRITTEN)  # forgets its refs
             self._release_write_locked()
             session = live.session
             self._live = None
+            self._audit_completion(session.session_id, facts, "completed", created_at)
             return session
 
     def write_record_status(self, session_id: str) -> WriteRecordStatus:

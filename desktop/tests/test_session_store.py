@@ -8,10 +8,11 @@ import hashlib
 import os
 import struct
 import sys
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -471,12 +472,13 @@ class TestNoteCustodyOnComplete:
         complete_session(session_dir, crypto)
         assert not (session_dir / KEY_FILENAME).exists()
 
-    def test_valid_note_completes_and_survives_on_disk(self, tmp_path: Path) -> None:
+    def test_valid_note_completes_and_the_directory_goes(self, tmp_path: Path) -> None:
         session_dir, crypto = _completable_session(tmp_path)
         _write_note(session_dir, crypto)
         complete_session(session_dir, crypto)
         assert not (session_dir / KEY_FILENAME).exists()
-        assert (session_dir / NOTE_FILENAME).is_file()
+        # Task 1.1: the note no longer survives Complete on disk.
+        assert not session_dir.exists()
         assert crypto.destroyed
 
     def test_corrupt_ciphertext_retains_the_key(self, tmp_path: Path) -> None:
@@ -542,34 +544,52 @@ class TestNoteCustodyOnComplete:
 
     def test_explicit_delete_note_then_complete(self, tmp_path: Path) -> None:
         """The clinician's confirmed 'complete without a note' exit — the note
-        is removed explicitly, never silently dropped by the ordering."""
+        is excluded from verification (one describing ANOTHER transcript
+        still completes), and goes with the key and the directory."""
         session_dir, crypto = _completable_session(tmp_path)
         _write_note(session_dir, crypto, transcript_digest=_digest_of_another_transcript())
         complete_session(session_dir, crypto, delete_note=True)
         assert not (session_dir / NOTE_FILENAME).exists()
         assert not (session_dir / KEY_FILENAME).exists()
 
-    def test_unlink_failure_retains_the_key(
+    def test_the_note_is_never_unlinked_before_the_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        session_dir, crypto = _completable_session(tmp_path)
-        _write_note(session_dir, crypto)
+        """Privacy-professional-controls D6 (round 3 PR-MED-002, superseding
+        the early unlink): nothing on the delete-note path touches
+        ``note.enc`` before the key — a failure after the old unlink point
+        keeps BOTH, so a retry still reads the note's provenance."""
+        session_dir, crypto, body = _documented_session(tmp_path)
+        _saved_note(session_dir, crypto, body)
+        unlinked: list[str] = []
+        real_unlink = Path.unlink
 
-        def refuse(self: Path, missing_ok: bool = False) -> None:
+        def watch(self: Path, missing_ok: bool = False) -> None:
+            unlinked.append(self.name)
+            real_unlink(self, missing_ok=missing_ok)
+
+        def refuse(_session_dir: Path) -> None:
             raise OSError(errno.EACCES, "locked by another process")
 
-        monkeypatch.setattr(Path, "unlink", refuse)
-        with pytest.raises(StoreWriteError, match="not removable"):
+        monkeypatch.setattr(Path, "unlink", watch)
+        monkeypatch.setattr(session_store, "delete_session_key", refuse)
+        with pytest.raises(OSError):
             complete_session(session_dir, crypto, delete_note=True)
-        assert (session_dir / KEY_FILENAME).exists()
+        assert NOTE_FILENAME not in unlinked
         assert (session_dir / NOTE_FILENAME).exists()
+        assert (session_dir / KEY_FILENAME).exists()
         assert not crypto.destroyed
+        monkeypatch.undo()
+        facts = complete_session(session_dir, crypto, delete_note=True)  # the retry
+        assert facts.note_provenance == "known"
+        assert not session_dir.exists()
 
 
 class TestCompleteRemovingTheDirectory:
-    """Cliniko draft-write D6 (Task 4.2): a completion after a confirmed
-    write removes the session directory — strictly AFTER the verification and
-    the key's destruction, best-effort, and never on a failure."""
+    """Privacy-professional-controls plan Task 1.1 (formerly draft-write D6
+    only): EVERY completion removes the session directory — strictly AFTER
+    the verification and the key's destruction, best-effort, and never on a
+    failure."""
 
     def test_verify_then_key_then_directory(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -599,7 +619,7 @@ class TestCompleteRemovingTheDirectory:
         monkeypatch.setattr(crypto, "decrypt", decrypt)
         monkeypatch.setattr(session_store, "delete_session_key", delete_key)
         monkeypatch.setattr(session_store.shutil, "rmtree", rmtree)
-        complete_session(session_dir, crypto, remove_directory=True)
+        complete_session(session_dir, crypto)
         assert events == ["verify", "verify", "key", "rmtree ignore_errors=True"]
         assert not session_dir.exists()
 
@@ -607,7 +627,7 @@ class TestCompleteRemovingTheDirectory:
         session_dir, crypto = _completable_session(tmp_path)
         (session_dir / NOTE_FILENAME).write_bytes(b"\0" * 64)  # corrupt note
         with pytest.raises(StoreCorruptError):
-            complete_session(session_dir, crypto, remove_directory=True)
+            complete_session(session_dir, crypto)
         assert (session_dir / KEY_FILENAME).exists()
         assert (session_dir / NOTE_FILENAME).exists()
         assert not crypto.destroyed
@@ -626,16 +646,29 @@ class TestCompleteRemovingTheDirectory:
                 raise OSError(errno.EACCES, "locked by another process")
 
         monkeypatch.setattr(session_store.shutil, "rmtree", failing_rmtree)
-        complete_session(session_dir, crypto, remove_directory=True)
+        complete_session(session_dir, crypto)
         assert session_dir.exists()
         assert not (session_dir / KEY_FILENAME).exists()
         assert crypto.destroyed
 
-    def test_the_default_keeps_the_directory(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("delete_note", [False, True], ids=["with_note", "without_note"])
+    def test_every_complete_removes_the_directory(
+        self, tmp_path: Path, delete_note: bool
+    ) -> None:
+        """Inverted from ``test_the_default_keeps_the_directory``: there is
+        no flag any more — the plain and the delete-note Complete alike leave
+        no session directory behind."""
         session_dir, crypto = _completable_session(tmp_path)
-        complete_session(session_dir, crypto)
-        assert session_dir.is_dir()
-        assert not (session_dir / KEY_FILENAME).exists()
+        _write_note(session_dir, crypto)
+        complete_session(session_dir, crypto, delete_note=delete_note)
+        assert not session_dir.exists()
+        assert crypto.destroyed
+
+    def test_the_flag_is_gone(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        with pytest.raises(TypeError):
+            complete_session(session_dir, crypto, remove_directory=True)  # type: ignore[call-arg]
+        assert (session_dir / KEY_FILENAME).exists()
 
 
 # ------------------------------------------------- note artifact I/O (6.2)
@@ -730,7 +763,7 @@ class TestNoteArtifactIO:
         write_note(session_dir, crypto, _writable_note(session_dir, config), config)
         complete_session(session_dir, crypto)
         assert not (session_dir / KEY_FILENAME).exists()
-        assert (session_dir / NOTE_FILENAME).is_file()
+        assert not session_dir.exists()  # Task 1.1: removed with the rest
 
     def test_refuses_unresolved_error_warning(self, tmp_path: Path) -> None:
         from scribe_desktop.note import NoteWarning
@@ -885,17 +918,20 @@ class TestNoteArtifactIO:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Task 6.2 Done-when: `read_note` verifies through the SAME code path
-        `complete_session` uses — pinned structurally, not by prose."""
+        `complete_session` uses — pinned structurally, not by prose. The core
+        is ``_verified_note_with_identity`` since round 6 LOW-005 (it also
+        returns the note's identity); ``_verified_note`` is ``read_note``'s
+        note-only wrapper around it."""
         session_dir, crypto = _completable_session(tmp_path)
         _write_note(session_dir, crypto)
         calls: list[str] = []
-        original = session_store._verified_note
+        original = session_store._verified_note_with_identity
 
         def spy(*args: object, **kwargs: object) -> object:
             calls.append("verified")
             return original(*args, **kwargs)  # type: ignore[arg-type]
 
-        monkeypatch.setattr(session_store, "_verified_note", spy)
+        monkeypatch.setattr(session_store, "_verified_note_with_identity", spy)
         read_note(session_dir, crypto)
         assert calls == ["verified"]
         complete_session(session_dir, crypto)
@@ -1366,3 +1402,521 @@ class TestExpirySweep:
             for r in sweep_sessions(tmp_path, max_age=timedelta(hours=1))
         }
         assert results[sid] == "expired"
+
+    def test_an_ended_session_carries_its_creation_time(self, tmp_path: Path) -> None:
+        """Privacy-professional-controls D8 (round 1 PR-MED-004): the sweep
+        reads ``created_at`` BEFORE it deletes anything, so an audit row it
+        has to create keeps the session's true date."""
+        import time
+
+        created = time.time() - 30 * 3600
+        expired_dir, expired = _make_session_dir(tmp_path)
+        SessionChunkStore.create(
+            expired_dir / "audio.enc", SessionCrypto(), expired, created_at=created
+        ).close()
+        orphan_dir, orphan = _make_session_dir(tmp_path, dummy_key=False)
+        SessionChunkStore.create(
+            orphan_dir / "audio.enc", SessionCrypto(), orphan, created_at=created,
+            require_key=False,
+        ).close()
+        kept = self._session_with_key(tmp_path, age_hours=1)
+        results = {r.session_id: r for r in sweep_sessions(tmp_path)}
+        assert (results[expired].action, results[expired].created_at) == ("expired", created)
+        assert (results[orphan].action, results[orphan].created_at) == ("orphan_gc", created)
+        assert (results[kept].action, results[kept].created_at) == ("kept", None)
+        assert not expired_dir.exists() and not orphan_dir.exists()
+
+    def test_the_creation_time_is_public_and_reads_no_key(self, tmp_path: Path) -> None:
+        """``session_created_at`` (public since D8) reads the plaintext header
+        and file times only: a session whose key is garbage still dates."""
+        session_dir, sid = _make_session_dir(tmp_path)  # a placeholder key
+        SessionChunkStore.create(
+            session_dir / "audio.enc", SessionCrypto(), sid, created_at=1_700_000_000.0
+        ).close()
+        assert session_store.session_created_at(session_dir, 1_800_000_000.0) == 1_700_000_000.0
+
+    def test_an_unreadable_header_never_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 6 LOW-002: a header that cannot be opened (a non-ENOENT
+        OSError) falls through to the file times — the audit's date read
+        can never block the Discard or the ``orphan_gc`` it precedes."""
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        (session_dir / "audio.enc").write_bytes(b"locked")
+
+        def locked(_path: Path) -> Any:
+            raise PermissionError(13, "in use")
+
+        monkeypatch.setattr(session_store, "read_store_header", locked)
+        # Round 7 LOW-011: Python 3.12's ``Path.exists`` re-raises such an
+        # error — the removed pre-check, so the old code would fail here.
+        monkeypatch.setattr(Path, "exists", locked)
+        now = time.time()
+        assert session_store.session_created_at(session_dir, now) <= now
+
+
+# ------------------------------------------- the completion facts (D4 / D8)
+
+
+def _documented_session(
+    tmp_path: Path, *, model_name: str = "small"
+) -> tuple[Path, SessionCrypto, bytes]:
+    """A completable session whose transcript is a real ``TranscriptDocument``
+    (so its model names can be read; no voice profile applied), with a
+    placeholder key."""
+    from scribe_desktop.transcription import TranscriptDocument
+
+    session_dir, sid = _make_session_dir(tmp_path)
+    document = TranscriptDocument(
+        session_id=sid,
+        created_at=datetime.now(UTC),
+        model_name=model_name,
+        sample_rate=16_000,
+        transcript_segments=(),
+    )
+    body = document.to_bytes()
+    crypto = SessionCrypto()
+    (session_dir / "transcript.enc").write_bytes(crypto.encrypt(body))
+    return session_dir, crypto, body
+
+
+def _saved_note(
+    session_dir: Path, crypto: SessionCrypto, transcript: bytes, **fields: object
+) -> GeneratedNote:
+    from scribe_desktop.note import GeneratedNote, digest_bytes
+
+    note = GeneratedNote(
+        session_id=session_dir.name,
+        created_at=datetime.now(UTC),
+        template_profile_id="clinic-a",
+        provider_name="extractive-v1",
+        transcript_digest=digest_bytes(transcript),
+        config_digest=digest_bytes(b"config"),
+        **fields,  # type: ignore[arg-type]
+    )
+    (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(note.to_bytes()))
+    return note
+
+
+def _provenance(
+    session_dir: Path,
+    crypto: SessionCrypto,
+    note: GeneratedNote,
+    *,
+    digest: str | None = None,
+    language_model_id: str | None = "qwen3-4b-instruct-2507-q4km",
+    prompt_version: str | None = "narrative-v2",
+) -> None:
+    session_store.write_saved_provenance(
+        session_dir,
+        crypto,
+        session_dir.name,
+        session_store.SavedProvenance(
+            note_digest=digest or hashlib.sha256(note.to_bytes()).hexdigest(),
+            provider_name=note.provider_name,
+            style=note.style,
+            language_model_id=language_model_id,
+            prompt_version=prompt_version,
+        ),
+    )
+
+
+class TestCompletionFacts:
+    """``complete_session`` returns content-free facts decided from what the
+    session persisted (D4, D8), best-effort: a fact never fails a Complete."""
+
+    def test_models_come_from_the_transcript_and_the_note(self, tmp_path: Path) -> None:
+        session_dir, crypto, body = _documented_session(tmp_path)
+        note = _saved_note(session_dir, crypto, body, style="clean")
+        _provenance(session_dir, crypto, note)
+        facts = complete_session(session_dir, crypto)
+        assert facts == session_store.CompletionFacts(
+            transcription_model="small",
+            speaker_model="none",
+            note_provider="extractive-v1",
+            note_schema_version=str(note.schema_version),
+            template_profile="clinic-a",
+            note_style="clean",
+            language_model_id="qwen3-4b-instruct-2507-q4km",
+            prompt_version="narrative-v2",
+            note_provenance="known",
+        )
+        assert facts.past_session == "none"
+        assert facts.generated_provider == "unknown"  # Task 2.1's generated.enc
+
+    def test_a_provenance_for_another_note_is_unknown(self, tmp_path: Path) -> None:
+        """Round 3 PR-MED-004: the ids are used ONLY when the digest names
+        the note being completed."""
+        session_dir, crypto, body = _documented_session(tmp_path)
+        note = _saved_note(session_dir, crypto, body)
+        _provenance(session_dir, crypto, note, digest="0" * 64)
+        facts = complete_session(session_dir, crypto)
+        assert (facts.language_model_id, facts.prompt_version) == ("unknown", "unknown")
+        assert facts.note_provider == "extractive-v1"
+
+    @pytest.mark.parametrize("delete_note", [False, True])
+    def test_the_match_is_the_saved_plaintexts_identity(
+        self, tmp_path: Path, delete_note: bool
+    ) -> None:
+        """Round 6 LOW-005: the digest is ``saved_note_identity``'s — the
+        SHA-256 of the bytes actually saved — never a re-serialisation of
+        the parsed note (which a schema default could silently change)."""
+        import json
+
+        session_dir, crypto, body = _documented_session(tmp_path)
+        note = _saved_note(session_dir, crypto, body)
+        saved = json.dumps(json.loads(note.to_bytes()), indent=2).encode()
+        assert saved != note.to_bytes()
+        (session_dir / NOTE_FILENAME).write_bytes(crypto.encrypt(saved))
+        _provenance(session_dir, crypto, note, digest=hashlib.sha256(saved).hexdigest())
+        facts = complete_session(session_dir, crypto, delete_note=delete_note)
+        assert facts.language_model_id == "qwen3-4b-instruct-2507-q4km"
+        other_dir, other_crypto, other_body = _documented_session(tmp_path)
+        other = _saved_note(other_dir, other_crypto, other_body)
+        other_saved = json.dumps(json.loads(other.to_bytes()), indent=2).encode()
+        (other_dir / NOTE_FILENAME).write_bytes(other_crypto.encrypt(other_saved))
+        _provenance(other_dir, other_crypto, other)  # the re-serialisation's digest
+        facts = complete_session(other_dir, other_crypto, delete_note=delete_note)
+        assert facts.language_model_id == "unknown"
+
+    def test_no_provenance_is_unknown_and_no_prose_is_none(self, tmp_path: Path) -> None:
+        session_dir, crypto, body = _documented_session(tmp_path)
+        _saved_note(session_dir, crypto, body)
+        facts = complete_session(session_dir, crypto)
+        assert (facts.language_model_id, facts.prompt_version) == ("unknown", "unknown")
+        other_dir, other_crypto, other_body = _documented_session(tmp_path)
+        other_note = _saved_note(other_dir, other_crypto, other_body)
+        _provenance(
+            other_dir, other_crypto, other_note, language_model_id=None, prompt_version=None
+        )
+        facts = complete_session(other_dir, other_crypto)
+        assert (facts.language_model_id, facts.prompt_version) == ("none", "none")
+
+    def test_an_unreadable_provenance_never_fails_the_complete(self, tmp_path: Path) -> None:
+        session_dir, crypto, body = _documented_session(tmp_path)
+        _saved_note(session_dir, crypto, body)
+        (session_dir / session_store.SAVED_PROVENANCE_FILENAME).write_bytes(b"\0" * 64)
+        facts = complete_session(session_dir, crypto)
+        assert facts.language_model_id == "unknown"
+        assert not session_dir.exists()
+
+    def test_no_note_leaves_the_note_facts_none(self, tmp_path: Path) -> None:
+        session_dir, crypto, _body = _documented_session(tmp_path)
+        facts = complete_session(session_dir, crypto)
+        assert (facts.note_provider, facts.language_model_id) == ("none", "none")
+        assert facts.note_provenance is None
+
+    def test_a_transcript_that_is_not_a_document_is_unknown(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        facts = complete_session(session_dir, crypto)
+        assert (facts.transcription_model, facts.speaker_model) == ("unknown", "unknown")
+
+    def test_a_name_that_is_not_one_token_never_reaches_the_facts(
+        self, tmp_path: Path
+    ) -> None:
+        session_dir, crypto, _body = _documented_session(tmp_path, model_name="Jane Citizen")
+        assert complete_session(session_dir, crypto).transcription_model == "unrecognised"
+        assert session_store.fact_token(None) == "none"
+        assert session_store.fact_token("faster-whisper/small@int8") == "faster-whisper/small@int8"
+
+    def test_the_delete_note_path_reads_the_note_for_its_provenance(
+        self, tmp_path: Path
+    ) -> None:
+        session_dir, crypto, body = _documented_session(tmp_path)
+        note = _saved_note(session_dir, crypto, body)
+        _provenance(session_dir, crypto, note)
+        facts = complete_session(session_dir, crypto, delete_note=True)
+        assert facts.note_provenance == "known"
+        assert facts.note_provider == "extractive-v1"
+        assert facts.language_model_id == "qwen3-4b-instruct-2507-q4km"
+        assert not session_dir.exists()
+
+    def test_an_unreadable_note_on_the_delete_note_path_still_completes(
+        self, tmp_path: Path
+    ) -> None:
+        """D6: the delete-unreadable-note escape stays open; its provenance
+        is ``unknown``."""
+        session_dir, crypto, _body = _documented_session(tmp_path)
+        (session_dir / NOTE_FILENAME).write_bytes(b"\0" * 64)
+        facts = complete_session(session_dir, crypto, delete_note=True)
+        assert facts.note_provenance == "unknown"
+        assert facts.note_provider == "unknown"
+        assert not session_dir.exists()
+
+
+class TestSavedProvenanceFile:
+    def test_round_trip_under_its_own_associated_data(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        record = session_store.SavedProvenance(
+            note_digest="a" * 64, provider_name="extractive-v1", style="verbatim"
+        )
+        session_store.write_saved_provenance(session_dir, crypto, session_dir.name, record)
+        assert session_store.read_saved_provenance(session_dir, crypto, session_dir.name) == (
+            record
+        )
+        with pytest.raises(StoreCorruptError, match="^saved-note provenance unreadable$"):
+            session_store.read_saved_provenance(session_dir, crypto, _sid())
+
+    def test_absent_is_none(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        assert (
+            session_store.read_saved_provenance(session_dir, SessionCrypto(), session_dir.name)
+            is None
+        )
+
+    def test_the_bound_applies_to_a_valid_file_before_it_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """H3 round 35 SEC-005, made provable by round 37 PR-LOW-031: an
+        otherwise-VALID file one byte over the cap is refused, at the cap it
+        reads, and no read asks for more than cap + 1 bytes."""
+        from conftest import bounded_read_spy
+
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        record = session_store.SavedProvenance(
+            note_digest="a" * 64, provider_name="extractive-v1", style="verbatim"
+        )
+        session_store.write_saved_provenance(session_dir, crypto, session_dir.name, record)
+        size = (session_dir / session_store.SAVED_PROVENANCE_FILENAME).stat().st_size
+        sizes = bounded_read_spy(monkeypatch, session_store.SAVED_PROVENANCE_FILENAME)
+        monkeypatch.setattr(session_store, "MAX_SAVED_PROVENANCE_FILE_BYTES", size - 1)
+        with pytest.raises(StoreCorruptError, match="^saved-note provenance unreadable$"):
+            session_store.read_saved_provenance(session_dir, crypto, session_dir.name)
+        monkeypatch.setattr(session_store, "MAX_SAVED_PROVENANCE_FILE_BYTES", size)
+        assert session_store.read_saved_provenance(session_dir, crypto, session_dir.name) == (
+            record
+        )
+        assert sizes == [size, size + 1]
+
+
+class TestWriteSavedNote:
+    """Privacy-professional-controls Task 2.1 / D8: Save writes the
+    provenance FIRST, naming the exact bytes ``write_note`` then stores;
+    ``note.enc`` stays the commit boundary."""
+
+    def test_the_provenance_names_the_saved_bytes(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        note = _writable_note(session_dir, config)
+        session_store.write_saved_note(
+            session_dir,
+            crypto,
+            note,
+            config,
+            language_model_id="qwen3-4b-instruct-2507-q4km",
+            prompt_version="narrative-v2",
+        )
+        provenance = session_store.read_saved_provenance(session_dir, crypto, session_dir.name)
+        assert provenance is not None
+        assert provenance.note_digest == saved_note_identity(session_dir, crypto)
+        assert (provenance.language_model_id, provenance.prompt_version) == (
+            "qwen3-4b-instruct-2507-q4km",
+            "narrative-v2",
+        )
+
+    def test_provenance_then_note(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        order: list[str] = []
+        real_provenance = session_store.write_saved_provenance
+        real_note = session_store.write_note
+
+        def provenance(*args: Any) -> Path:
+            order.append("provenance")
+            return real_provenance(*args)
+
+        def write(*args: Any) -> Path:
+            order.append("note")
+            return real_note(*args)
+
+        monkeypatch.setattr(session_store, "write_saved_provenance", provenance)
+        monkeypatch.setattr(session_store, "write_note", write)
+        session_store.write_saved_note(
+            session_dir,
+            crypto,
+            _writable_note(session_dir, config),
+            config,
+            language_model_id=None,
+            prompt_version=None,
+        )
+        assert order == ["provenance", "note"]
+
+    def test_a_provenance_failure_commits_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+
+        def full(*_args: Any) -> Path:
+            raise StoreWriteError("failed writing saved-note provenance: disk full")
+
+        monkeypatch.setattr(session_store, "write_saved_provenance", full)
+        with pytest.raises(StoreWriteError):
+            session_store.write_saved_note(
+                session_dir,
+                crypto,
+                _writable_note(session_dir, config),
+                config,
+                language_model_id=None,
+                prompt_version=None,
+            )
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+    def test_a_note_for_another_session_writes_neither(self, tmp_path: Path) -> None:
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        with pytest.raises(NoteWriteRefusedError, match="another session"):
+            session_store.write_saved_note(
+                session_dir,
+                crypto,
+                _writable_note(session_dir, config, session_id=_sid()),
+                config,
+                language_model_id=None,
+                prompt_version=None,
+            )
+        assert not (session_dir / NOTE_FILENAME).exists()
+        assert not (session_dir / session_store.SAVED_PROVENANCE_FILENAME).exists()
+
+    def test_a_refused_note_leaves_a_provenance_naming_nothing_on_disk(
+        self, tmp_path: Path
+    ) -> None:
+        """The note's own refusals come after the provenance (D8): what is
+        left names no ``note.enc``, so Complete reads ``unknown``."""
+        session_dir, crypto = _completable_session(tmp_path)
+        config = _note_config()
+        stale = _writable_note(session_dir, config, transcript_dig=_digest_of_another_transcript())
+        with pytest.raises(NoteWriteRefusedError):
+            session_store.write_saved_note(
+                session_dir, crypto, stale, config, language_model_id=None, prompt_version=None
+            )
+        assert not (session_dir / NOTE_FILENAME).exists()
+
+
+def _generated_record(session_id: str, **fields: Any) -> session_store.GeneratedRecord:
+    values: dict[str, Any] = {
+        "session_id": session_id,
+        "created_at": datetime(2026, 10, 1, 9, 0, tzinfo=UTC),
+        "provider_name": "extractive-v1",
+        "style": "verbatim",
+        "generated_text": "Subjective: sore left knee.",
+    }
+    values.update(fields)
+    return session_store.GeneratedRecord(**values)
+
+
+class TestGeneratedFile:
+    """Privacy-professional-controls D2: ``generated.enc``."""
+
+    def test_round_trip_under_its_own_associated_data(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        record = _generated_record(session_dir.name, language_model_id="m", prompt_version="p")
+        session_store.write_generated(session_dir, crypto, record)
+        assert session_store.read_generated(session_dir, crypto, session_dir.name) == record
+        blob = (session_dir / session_store.GENERATED_FILENAME).read_bytes()
+        from cryptography.exceptions import InvalidTag
+
+        with pytest.raises(InvalidTag):
+            crypto.decrypt(blob)  # no associated data: not this artifact's
+        with pytest.raises(StoreCorruptError, match="^generated note unreadable$"):
+            session_store.read_generated(session_dir, crypto, _sid())
+
+    def test_a_regeneration_replaces_it(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        session_store.write_generated(session_dir, crypto, _generated_record(session_dir.name))
+        second = _generated_record(session_dir.name, generated_text="Plan: review in a week.")
+        session_store.write_generated(session_dir, crypto, second)
+        assert session_store.read_generated(session_dir, crypto, session_dir.name) == second
+
+    def test_a_record_for_another_session_is_refused(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        with pytest.raises(NoteWriteRefusedError, match="another session"):
+            session_store.write_generated(session_dir, SessionCrypto(), _generated_record(_sid()))
+        assert not (session_dir / session_store.GENERATED_FILENAME).exists()
+
+    def test_absent_is_none_and_oversize_is_unreadable(self, tmp_path: Path) -> None:
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        assert session_store.read_generated(session_dir, crypto, session_dir.name) is None
+        (session_dir / session_store.GENERATED_FILENAME).write_bytes(
+            b"\0" * (session_store.MAX_GENERATED_FILE_BYTES + 1)
+        )
+        with pytest.raises(StoreCorruptError, match="^generated note unreadable$"):
+            session_store.read_generated(session_dir, crypto, session_dir.name)
+
+    def test_the_bound_applies_to_a_valid_file_before_it_is_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 37 PR-LOW-031: the oversize case above would also fail
+        authentication; here an otherwise-VALID file one byte over the cap
+        is refused, at the cap it reads, and no read asks for more than
+        cap + 1 bytes."""
+        from conftest import bounded_read_spy
+
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        record = _generated_record(session_dir.name)
+        session_store.write_generated(session_dir, crypto, record)
+        size = (session_dir / session_store.GENERATED_FILENAME).stat().st_size
+        sizes = bounded_read_spy(monkeypatch, session_store.GENERATED_FILENAME)
+        monkeypatch.setattr(session_store, "MAX_GENERATED_FILE_BYTES", size - 1)
+        with pytest.raises(StoreCorruptError, match="^generated note unreadable$"):
+            session_store.read_generated(session_dir, crypto, session_dir.name)
+        monkeypatch.setattr(session_store, "MAX_GENERATED_FILE_BYTES", size)
+        assert session_store.read_generated(session_dir, crypto, session_dir.name) == record
+        assert sizes == [size, size + 1]
+
+    def test_the_text_is_bounded_and_never_echoed(self, tmp_path: Path) -> None:
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            _generated_record(
+                _sid(), generated_text="x" * (session_store.MAX_GENERATED_TEXT_CHARS + 1)
+            )
+        session_dir, _sid_ = _make_session_dir(tmp_path)
+        crypto = SessionCrypto()
+        (session_dir / session_store.GENERATED_FILENAME).write_bytes(
+            crypto.encrypt(
+                b'{"generated_text": "Jane Citizen"}',
+                session_store.generated_aad(session_dir.name),
+            )
+        )
+        with pytest.raises(StoreCorruptError) as info:
+            session_store.read_generated(session_dir, crypto, session_dir.name)
+        assert "Jane" not in str(info.value)
+        assert info.value.__cause__ is None
+
+    def test_the_facts_come_from_it(self, tmp_path: Path) -> None:
+        session_dir, crypto, _body = _documented_session(tmp_path)
+        session_store.write_generated(
+            session_dir,
+            crypto,
+            _generated_record(
+                session_dir.name, style="clean", language_model_id="m1", prompt_version="p1"
+            ),
+        )
+        facts = complete_session(session_dir, crypto)
+        assert (
+            facts.generated_provider,
+            facts.generated_style,
+            facts.generated_language_model_id,
+            facts.generated_prompt_version,
+        ) == ("extractive-v1", "clean", "m1", "p1")
+
+    def test_an_unreadable_one_never_fails_the_complete(self, tmp_path: Path) -> None:
+        session_dir, crypto, _body = _documented_session(tmp_path)
+        (session_dir / session_store.GENERATED_FILENAME).write_bytes(b"\0" * 64)
+        facts = complete_session(session_dir, crypto)
+        assert facts.generated_provider == "unknown"
+        assert not session_dir.exists()
+
+    def test_the_mock_rule(self) -> None:
+        assert session_store.is_mock_identity("mock")
+        assert session_store.is_mock_identity("MOCK-extractive")
+        assert not session_store.is_mock_identity("extractive-v1")
+        assert not session_store.is_mock_identity("small-mock")
