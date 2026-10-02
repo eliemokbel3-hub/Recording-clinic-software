@@ -1,0 +1,1 @@
+Installation plan Task 0.3 spike payload. Nothing here is Clinic Scribe; uninstall removes it.

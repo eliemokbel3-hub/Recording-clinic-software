@@ -1,0 +1,7 @@
+{
+  "name": "com.scribe.cliniko_host",
+  "description": "Cliniko clinical scribe native host (installation spike, Task 0.2 fallback)",
+  "path": "C:\\ClinikoScribe\\scribe-host.exe",
+  "type": "stdio",
+  "allowed_origins": ["chrome-extension://mbmhglgadhdohpgbmpbjnaifjagfdfid/"]
+}
