@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `75%`
+**Overall Progress:** `78%`
 
 ## Lifecycle State
 - Active
@@ -3255,7 +3255,8 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
       - Also `test_stderr_only_logging_creates_no_folder`.
 
 ### Phase 3 — Build and installer
-- [ ] 🟨 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
+- [x] 🟩 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
+  - DONE 2026-10-03: the practitioner ran the lock from a normal PowerShell at `C:/scribe-build` (pip freeze of the worktree `.venv` as constraints): "wrote 54 pinned wheels to …desktopequirements-build.txt". Composer check: every one of the 54 carries `--hash=sha256:`; the 51 runtime pins equal the build venv's installed versions exactly; the 3 not in the venv (`altgraph` 0.17.5, `pefile` 2024.8.26, `pyinstaller-hooks-contrib` 2026.8) are the PyInstaller build-tool pins. The lock test now RUNS; suite 5848 passed / 10 skipped (9 symlink + the Task 3.6 pins). Composer committed the lock.
   - **Leg i3-x1 (generator and tests built; stays 🟨 until the practitioner generates and commits the lock — a build-time network step):**
     - **`scripts/lock-build-requirements.py`** writes the lock; it chooses NO version itself. The versions come from a `pip freeze --all` of the proven environment (`--constraints`) plus `BUILD_TOOL_PINS` (Task 0.1 RESULT: `pyinstaller-hooks-contrib` 2026.8, `altgraph` 0.17.5, `pefile` 2024.8.26). One `pip download --only-binary=:all:` resolves pyproject's dependencies + `[ml]` + `EXTRA_REQUIREMENTS` (`sounddevice`; the prose runtime's own Requires-Dist, read from the installed wheel's METADATA: `typing-extensions`, `numpy`, `diskcache`, `jinja2`; PyInstaller's install needs: hooks-contrib, altgraph, pefile, `pywin32-ctypes`, `packaging`, `setuptools`). It refuses, by name: a wheel whose version the proven environment does not pin, an sdist, anything in `NEVER_LOCKED` (`pyinstaller`, `llama-cpp-python`, the dev tools), and a lock that would miss a runtime dependency.
     - **Interpretation call (D1 over the task's wording):** PyInstaller itself is NOT in the lock. D1 needs the bootloader built from source, and Task 0.1 proved that route (6a: the source at tag v6.22.3, commit `ecd7993…`, `waf`, `pip install` of the tree). So `build-release.py` pins PyInstaller by that COMMIT and checks it, and the lock carries its hooks package and its dependencies. A PyPI PyInstaller wheel would ship the prebuilt bootloader that D1 and Task 0.5's Defender result excluded.
