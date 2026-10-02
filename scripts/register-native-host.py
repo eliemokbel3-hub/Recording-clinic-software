@@ -23,11 +23,15 @@ checkout to undo.
 A file Chrome or the app still holds (Windows error 32) stops the run with
 "Close Clinic Scribe and Chrome completely, then run this again".
 
-Two hard requirements learned at the Phase-1 gate, both of which fail SILENTLY
+Two requirements learned at the Phase-1 gate, where a failure was SILENT
 (Chrome reports only "Specified native messaging host not found"):
-1. The install path must contain NO SPACES. A manifest under
-   `C:\Recording clinic software\...` is never resolved by Chrome — which is
-   why the %LOCALAPPDATA% data folder is used instead of the repo.
+1. The install path is kept free of spaces. At that gate a manifest under
+   `C:\Recording clinic software\...` was never resolved — which is why the
+   %LOCALAPPDATA% data folder is used instead of the repo. The installation
+   plan's Task 0.2 has since linked Chrome to a host in
+   `C:\Program Files\ClinikoScribe`, so a space alone is NOT Chrome's rule
+   (round 27 PR-LOW-025; the gate's failure was not re-diagnosed). The
+   refusal below stays as a conservative guard; the dev folder has no space.
 2. The host must be an `.exe` (not `.bat`/`.cmd`). `scribe-host.exe` comes
    from the gui-scripts entry point, so it is windowless and receives
    Chrome's bare origin argv plus `--parent-window` directly. The copy still
@@ -83,7 +87,8 @@ REPO = Path(__file__).resolve().parents[1]
 HOST_NAME = identity.host_name("dev")
 ALLOWED_ORIGIN = identity.expected_origin("dev")
 REGISTRY_KEY = identity.registry_key("dev")
-# Install target: space-free, stable, outside the repo (see module docstring).
+# Install target: stable, outside the repo, kept space-free as a conservative
+# guard (see module docstring).
 INSTALL_DIR = install_layout.data_root("dev")
 MANIFEST_PATH = INSTALL_DIR / f"{HOST_NAME}.json"
 INSTALLED_EXE = INSTALL_DIR / "scribe-host.exe"
@@ -105,13 +110,18 @@ STRAY_PRODUCTION_FILES = (
     install_layout.data_root("production") / "scribe-host.exe",
 )
 
-# Windows' ERROR_SHARING_VIOLATION: Chrome (or the app) holds the file.
+# Windows' ERROR_SHARING_VIOLATION: Chrome (or the app) holds the file open —
+# what a COPY over a running host meets (docs/lessons.md, 2026-10-02).
 _ERROR_SHARING_VIOLATION = 32
+# Windows' ERROR_ACCESS_DENIED: what DELETING a running program's image meets
+# (round 22) — `--unregister` with Chrome still running the old host.
+_ERROR_ACCESS_DENIED = 5
 IN_USE_LINE = "Close Clinic Scribe and Chrome completely, then run this again."
 
 
-def _in_use(exc: OSError) -> bool:
-    return getattr(exc, "winerror", None) == _ERROR_SHARING_VIOLATION
+def _in_use(exc: OSError, *, deleting: bool = False) -> bool:
+    code = getattr(exc, "winerror", None)
+    return code == _ERROR_SHARING_VIOLATION or (deleting and code == _ERROR_ACCESS_DENIED)
 
 
 def venv_executable() -> Path:
@@ -186,8 +196,8 @@ def register() -> int:
         return 1
     if " " in str(INSTALL_DIR):
         print(
-            f"ERROR: install dir {INSTALL_DIR} contains a space; Chrome will not "
-            "resolve the host manifest there.",
+            f"ERROR: install dir {INSTALL_DIR} contains a space; the developer "
+            "build keeps its Chrome link in a space-free folder.",
             file=sys.stderr,
         )
         return 1
@@ -255,7 +265,7 @@ def unregister() -> int:
                 path.unlink()
                 removed.append(str(path))
         except OSError as exc:
-            if not _in_use(exc):
+            if not _in_use(exc, deleting=True):
                 raise
             print("removed  : " + ("; ".join(removed) if removed else "nothing"))
             print(f"ERROR: {IN_USE_LINE}", file=sys.stderr)

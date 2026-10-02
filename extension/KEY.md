@@ -16,7 +16,11 @@
   for the release key, or with `--out extension/key-dev.pem` for the dev key
   (idempotent while the key file exists; a lost key means a NEW ID, which requires
   updating BOTH `src/channel.ts` and the desktop's `desktop/src/scribe_desktop/identity.py`
-  (`EXTENSION_ID` / `DEV_EXTENSION_ID`, which the host registration writes into
-  `allowed_origins`), then re-running that channel's host registration).
-- **Phase 7 note:** the Chrome Web Store assigns its own ID at publication — the host
-  manifest's `allowed_origins` must be updated then (recorded in the plan).
+  (`EXTENSION_ID` / `DEV_EXTENSION_ID`, which the dev host registration and the
+  release build's host manifest write into `allowed_origins`), then re-running the dev
+  host registration, or building and installing a new release).
+- **Installed app:** the release extension ships inside the installer and is loaded
+  unpacked from `C:\Program Files\ClinikoScribe\extension`; the installer's host
+  manifest names this release ID only (`scripts/build-release.py`).
+- **Chrome Web Store:** deferred (installation plan, Excluded). A listing would assign
+  its own ID, and the release host manifest's `allowed_origins` would change then.

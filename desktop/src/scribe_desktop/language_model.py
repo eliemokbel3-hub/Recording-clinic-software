@@ -51,7 +51,8 @@ from typing import Any, Final, Protocol
 
 from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
-from scribe_desktop.speaker_embedding import is_unc_path, sha256_of_file
+from scribe_desktop.install_layout import is_unc_path
+from scribe_desktop.speaker_embedding import sha256_of_file
 
 # --- the pinned model (single source; scripts/setup-models.py imports these) ---
 

@@ -8,11 +8,13 @@ model is guarded with importorskip + a local-model-cache presence check.
 from __future__ import annotations
 
 import os
+import sys
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from conftest import real_ml_models_root, real_ml_skip_reason
+from conftest import forbid_network_io, real_ml_models_root, real_ml_skip_reason
 from scribe_desktop import benchmark
 from scribe_desktop.benchmark import (
     LIVE_WINDOW_SECONDS,
@@ -212,6 +214,89 @@ class TestCandidateDiscovery:
 
     def test_empty_when_cache_missing(self, tmp_path: Path) -> None:
         assert list_whisper_candidates(tmp_path / "nope") == []
+
+    @pytest.mark.parametrize("root", [r"\\h\s\models", r"\/h/s/models"])
+    def test_a_network_root_is_never_touched(
+        self, root: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 27 PR-MED-021: no stat or listing of a network share (C1).
+        def refuse(self: Path, *args: object, **kwargs: object) -> object:
+            raise AssertionError(f"touched {self}")
+
+        monkeypatch.setattr(Path, "is_dir", refuse)
+        monkeypatch.setattr(Path, "iterdir", refuse)
+        assert list_whisper_candidates(Path(root)) == []
+
+
+class TestNetworkPathsRefused:
+    """Round 27 PR-MED-021: the benchmark refuses a network (UNC) path before
+    any filesystem touch or ML import, like the other model loaders."""
+
+    @pytest.mark.parametrize(
+        ("model_dir", "audio"),
+        [
+            (r"\\h\s\whisper\small", r"C:\t\a.wav"),
+            (r"C:\m\whisper\small", "//h/s/a.wav"),
+        ],
+    )
+    def test_run_single_refuses_a_network_path(
+        self, model_dir: str, audio: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        for key, value in OFFLINE_ENV.items():
+            monkeypatch.setenv(key, value)
+        for key in benchmark.FORBIDDEN_NATIVE_OVERRIDES + benchmark.FORBIDDEN_TLS_OVERRIDES:
+            monkeypatch.delenv(key, raising=False)
+        # Round 28 PR-LOW-030: a regressed guard fails at the import
+        # (ImportError, not the RuntimeError) before `WhisperModel` could open
+        # the network path, and no `Path` method in `NETWORK_IO_METHODS`
+        # reaches it either (round 30).
+        monkeypatch.setitem(sys.modules, "faster_whisper", None)
+        forbid_network_io(monkeypatch)
+        with pytest.raises(RuntimeError, match="not UNC"):
+            benchmark.run_single(Path(model_dir), Path(audio), 1.0)
+
+    def test_run_all_refuses_a_network_root(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            benchmark, "list_whisper_candidates", lambda root: pytest.fail("listed")
+        )
+        monkeypatch.setattr(
+            benchmark, "generate_speech_sample", lambda target: pytest.fail("sampled")
+        )
+        with pytest.raises(RuntimeError, match="not UNC"):
+            benchmark.run_all(Path(r"\\h\s\models"))
+
+    @pytest.mark.parametrize("source", ["tempdir", "TMPDIR", "TEMP", "TMP"])
+    def test_run_all_refuses_a_network_temporary_folder(
+        self, source: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 28 PR-LOW-029: refused from the values, before tempfile probes
+        # a candidate folder or the sample is written.
+        unc = r"\\h\s\temp"
+        if source == "tempdir":
+            monkeypatch.setattr(tempfile, "tempdir", unc)
+        else:
+            monkeypatch.setenv(source, unc)
+        monkeypatch.setattr(benchmark, "list_whisper_candidates", lambda root: ["small"])
+        monkeypatch.setattr(
+            benchmark.tempfile,
+            "TemporaryDirectory",
+            lambda *args, **kwargs: pytest.fail("temporary folder made"),
+        )
+        monkeypatch.setattr(
+            benchmark, "generate_speech_sample", lambda target: pytest.fail("sampled")
+        )
+        with pytest.raises(RuntimeError, match="not UNC"):
+            benchmark.run_all(Path(r"C:\m"))
+
+    @pytest.mark.parametrize("target", [r"\\h\s\a.wav", r"\/h/s/a.wav"])
+    def test_the_sample_writer_refuses_a_network_target(
+        self, target: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 28 PR-LOW-029: refused before SAPI is reached — the import
+        # fails the test (ImportError, not the RuntimeError) if it is.
+        monkeypatch.setitem(sys.modules, "win32com.client", None)
+        with pytest.raises(RuntimeError, match="not UNC"):
+            benchmark.generate_speech_sample(Path(target))
 
 
 class TestSnapshotCompleteness:

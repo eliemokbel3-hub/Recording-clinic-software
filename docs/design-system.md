@@ -33,8 +33,12 @@ view patterns · tokens · microcopy.
   what they do ("Delete older sessions" / "Start a new audit record" against "Keep
   things as they are", the safe one the default) — plus two file dialogs (the
   Practitioner tab's sample-note picker and Export's save dialog, which opens in
-  Documents) and the two start-up boxes shown before the window exists ("already
-  running" and "cannot start", `app.py`). No new UI framework (PySide6 only, extending the Phase-1 status panel rather
+  Documents) and the start-up boxes shown before the window exists ("already
+  running" and "cannot start", `app.py`; and, in the installed app only,
+  "Clinic Scribe is not running from its install folder — reinstall Clinic
+  Scribe." for a packaged copy started from anywhere but
+  `C:\Program Files\ClinikoScribe` — `install_layout.NOT_INSTALLED_LINE`,
+  installation plan Task 2.7). No new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
   phrases with their delete. A tab whose groups stack beyond one window height SCROLLS
@@ -189,9 +193,10 @@ view patterns · tokens · microcopy.
   is currently unavailable stays selected-but-disabled with the line saying notes are
   shown as Clean clinical until then; the choice is saved the moment a radio is picked
   and the status line says so (`ui/practitioner.py`, `ui/models.py` `style_options` /
-  `read_note_style`; note-learning plan Flow 3, C8). The reason NAMES THE REMEDY (run
-  `scripts/setup-models.py --only language-model` from a normal terminal and install
-  the prose runtime), and since the practitioner does that outside the app, the tab's
+  `read_note_style`; note-learning plan Flow 3, C8). The reason NAMES THE REMEDY for
+  this build (from a source checkout: run `scripts/setup-models.py --only
+  language-model` from a normal terminal and install the prose runtime; in the
+  installed app: reinstall Clinic Scribe — see the remedy bullet below), and since the practitioner does that outside the app, the tab's
   5 s availability poll re-checks `models.language_model_available()` — an import probe
   plus a stat of the model file, never a load and never a decrypt — and re-computes the
   options when that presence CHANGES, so the two prose radios enable without a restart
@@ -514,6 +519,62 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   language-model from a normal terminal and install the prose runtime (AGENTS.md Local
   Run Steps); needs a learned style - teach the scribe your note style below first." —
   the reason, then the remedy.
+- A missing or damaged model, runtime or Chrome link names the remedy for THIS build
+  (installation plan Task 1.7, `install_layout.model_remedy` /
+  `registration_remedy`): from a source checkout the developer script ("run
+  scripts/setup-models.py[ --only <entry>] from a normal terminal" — the `--only`
+  part when one model is named — "run
+  scripts/register-native-host.py again from a normal terminal"); in the installed
+  app "reinstall Clinic Scribe" — it never names a script the installed app does not
+  have (so the installed Own-voice line above ends "… which is not installed -
+  reinstall Clinic Scribe").
+- The Status tab's link and protection lines (installation plan D9/D10/D6; no path is
+  ever shown): "Registration: registered ✓ (per-user Chrome link)" or "(this
+  computer's Chrome link)", with "; N other link(s) found, not used" when Chrome
+  would pass over others; "Registration: NOT registered — <remedy>"; "Registration:
+  not checked"; and in the installed app, when a per-user entry wins, a second line
+  "Warning: a per-user Chrome link overrides the installed one." (`status.
+  registration_lines`) — and when that per-user entry is also broken, the first line's
+  remedy is "the per-user Chrome link that Chrome uses is broken, and reinstalling does
+  not remove it", never "reinstall" (round 23: the installer writes HKLM only). The start-up warnings beside them include "Crash reports are
+  not excluded for Clinic Scribe — <remedy>, then restart Clinic Scribe." and, in the
+  installed app only, "Clinic Scribe's live recordings and logs are not marked to be
+  left out of Windows backups and snapshots (a best-effort setting) — reinstall
+  Clinic Scribe." / "… could not check whether …" — worded "marked to be left out",
+  never "excluded from backups" (C5; `exclusions.py`).
+- A developer build's Status tab (never the installed app's) adds the checkbox "Allow
+  Cliniko writes from this developer build", off by default; a save that fails says
+  "The developer build's write setting could not be saved; the box shows the setting
+  in use." and re-reads the box from the file (`ui/main_window.py`
+  `DEV_WRITES_CHECKBOX_TEXT` / `DEV_WRITES_SAVE_FAILED`). The developer build's
+  extension is named "Clinic Scribe Companion (dev)" and is loaded in a separate
+  Chrome profile.
+- The Microphone tab's hardware check reports whisper, then the prose stage
+  (installation plan D11): "Prose stage (Narrative style): R of S sections, load L s
+  (or model already loaded); sections W s wall, C s CPU; … per section OK|WARNING|
+  FAIL", a NOTE above 5 s per section and a WARNING at 10 s or more ("They stay
+  local; the Clean clinical style does not use the language model."), "Prose stage:
+  not timed - <reason>" when it could not run (never an "OK"), and one verdict line
+  "Hardware check: whisper medium RTF x.xx OK; prose stage y.y s per section OK". A
+  slow prose stage adds "The prose writing styles are slow on this machine. They stay
+  local; the Clean clinical style does not wait for them." to the warning label. Only
+  timings — never text the model wrote (`benchmark.py`, `ui/microphone.py`). Run it
+  with no prose rendering in flight on the Note tab: the two share the one loaded
+  model, so a section's time would include the wait for the other's call and could
+  read slower than the machine is (accepted, round 22).
+- The installer's words (`packaging/scribe.iss`; the app never runs elevated, so
+  these are the installer's own pages): a running app or Chrome refuses with "Close
+  Clinic Scribe and Chrome completely, then run Setup again." plus the background-
+  Chrome hint, and a check that cannot run refuses the same way; a missing or
+  damaged model pack refuses with "… Nothing was changed."; the Finish page says
+  "Clinic Scribe is installed." (or "updated.") with the Chrome step and "Open Clinic
+  Scribe from the Start menu." — never a Launch option — or "Clinic Scribe is NOT
+  completely installed." when a model copy failed (Setup then also exits 9, or 10
+  when the clinic-only setting it set earlier could not be removed — never its
+  success code); the clinic-only checkbox says it makes Chrome show "managed by your
+  organization" and to leave it unticked on a computer you also develop on;
+  uninstall ends "Your sessions, Past sessions and audit record were left in your
+  Windows profile, unchanged." — no retention period is claimed there.
 - A rendering in flight says what is waiting on it, not just that it is busy: "Writing
   style 'Narrative': rendering the prose now - Save note is available once the prose is
   shown."; a click on the disabled Save repeats it ("The prose is still being rendered -
@@ -540,7 +601,12 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
     (`unknown`);
   - before the write: "Save the note first."; "This recording is not linked to a
     Cliniko note. Copy the note instead."; "This note came from the test provider and
-    cannot be written to a chart."; "A draft is being written to Cliniko. Wait for it
+    cannot be written to a chart."; in a developer build only (a source checkout;
+    installation plan D4), "Writing to Cliniko is off in this developer build. To
+    allow it, tick "Allow Cliniko writes from this developer build" on the Status
+    tab, or copy the note instead." (`dev_build_writes_off`; Write disabled; it
+    follows the record's own lines, and it carries the `write_uncertain` prefix
+    while an earlier attempt is open, like every Copy-inviting line); "A draft is being written to Cliniko. Wait for it
     to finish."; "A recovered recording is still being processed. Wait for it to
     finish, then write."; "A key check for this clinic is running on the Clinics tab.
     Wait for it to finish, then write."; "Cliniko is rate-limiting this clinic. Try

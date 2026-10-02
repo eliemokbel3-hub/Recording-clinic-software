@@ -14,6 +14,7 @@ manifest's `allowed_origins` never drifts.
 - `--out` names another key file (installation plan Task 1.3: the dev
   channel's `extension/key-dev.pem`, also gitignored). A relative path is
   taken from the repo root. The default is unchanged: `extension/key.pem`.
+  Any other file is refused before anything is read or written (round 27).
 
 Usage (from the repo root):
     .venv/Scripts/python.exe scripts/generate-extension-key.py
@@ -32,6 +33,18 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 
 REPO = Path(__file__).resolve().parents[1]
 KEY_PEM = REPO / "extension" / "key.pem"
+# Round 27 PR-LOW-024: the private key is written unencrypted, so `--out` may
+# name only the two key files `.gitignore` excludes — never a repository file
+# a commit would pick up.
+ALLOWED_KEY_FILES = (KEY_PEM, REPO / "extension" / "key-dev.pem")
+
+
+def resolve_out(out: Path) -> Path | None:
+    """The key file ``--out`` names (a relative path is from the repo root),
+    or ``None`` when it is not one of ``ALLOWED_KEY_FILES``."""
+    key_pem = (out if out.is_absolute() else REPO / out).resolve()
+    allowed = {path.resolve() for path in ALLOWED_KEY_FILES}
+    return key_pem if key_pem in allowed else None
 
 
 def load_or_create_private_key(key_pem: Path) -> rsa.RSAPrivateKey:
@@ -56,10 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         "--out",
         type=Path,
         default=KEY_PEM,
-        help="the private key file (default: extension/key.pem; a relative path is from the repo root)",
+        help=(
+            "the private key file: extension/key.pem (default) or extension/key-dev.pem; "
+            "a relative path is from the repo root"
+        ),
     )
     args = parser.parse_args(argv)
-    key_pem: Path = args.out if args.out.is_absolute() else REPO / args.out
+    key_pem = resolve_out(args.out)
+    if key_pem is None:
+        parser.error("--out must be extension/key.pem or extension/key-dev.pem (both gitignored)")
 
     created = not key_pem.exists()
     key = load_or_create_private_key(key_pem)

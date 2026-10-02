@@ -20,7 +20,9 @@ transcript line lands in which section.
 
 1. Create the folder `%LOCALAPPDATA%\ClinikoScribe\config` if it does not exist
    (paste `%LOCALAPPDATA%\ClinikoScribe` into the Explorer address bar, then
-   New folder → `config`).
+   New folder → `config`). That is the installed app's folder; for a run in the
+   developer build (a source checkout since the installation plan) use
+   `%LOCALAPPDATA%\ClinikoScribe-dev` instead.
 2. Copy `autofill_rules.json`, `prefill_templates.json` and `section_cues.json`
    from this folder into it. `template_profiles.json` is NOT copied — the shipped default
    (Template A, both clinics) is used when the file is absent.

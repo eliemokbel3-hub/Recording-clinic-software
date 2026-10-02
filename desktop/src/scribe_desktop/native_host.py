@@ -569,6 +569,11 @@ def _log_registration_paths(logger: logging.Logger, layer: WindowsLayer | None =
         )
         for other in others:
             log_event(logger, "host_manifest_other", path=other.manifest, detail_code=other.place)
+        # H.4 SEC-003: a network-share manifest is logged, never opened — a
+        # planted registry value causes no SMB I/O from the host itself (C1).
+        if install_layout.is_unc_path(winner.manifest):
+            log_event(logger, "host_manifest", state="network_path")
+            return
         launcher = json.loads(Path(winner.manifest).read_text(encoding="utf-8")).get("path", "")
         log_event(logger, "host_launcher", path=str(launcher))
     except Exception:  # noqa: BLE001 - a tripwire line never stops the host

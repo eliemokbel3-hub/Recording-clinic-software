@@ -128,13 +128,31 @@ when you can.
   contact email) and its logs are not. Stop and find out why the folder is there (for example, a folder
   redirection set by IT) before the next consultation; treat any copy that has already
   left the computer under the incident process.
-- **"Crash reports are not excluded for Clinic Scribe …"** — rerun the app's registration
-  step from a normal terminal (not from an AI assistant's shell), then restart the app.
+- **"Crash reports are not excluded for Clinic Scribe …"** — on the installed app,
+  reinstall Clinic Scribe with the same installer, then restart the app; on a developer
+  copy, rerun its registration step from a normal terminal (not from an AI assistant's
+  shell), then restart the app.
+- **"Clinic Scribe's live recordings and logs are not marked to be left out of Windows
+  backups and snapshots …"** (installed app only) — reinstall Clinic Scribe with the
+  same installer. Even when this is set, it is a request that some backup tools ignore;
+  it never covers Past sessions or the audit record, which stay backup-eligible on
+  purpose.
+- **"Warning: a per-user Chrome link overrides the installed one."** (installed app
+  only) — Chrome is using a different Chrome link from the one the installer set up.
+  If you did not set one up yourself, stop recording and follow the incident process
+  before the next consultation. When the line above it also says the per-user link "is
+  broken, and reinstalling does not remove it", Chrome cannot reach the app until that
+  per-user link is removed; reinstalling will not help.
 - **"Crash reports are not excluded for this launch (python.exe) …"** — the app was
   started from a terminal. Close it and start it with its usual shortcut.
 - **"Some of Clinic Scribe's folders could not be marked to stay out of Windows
   Search."** — usually low-risk (the clinical files are encrypted, though the settings,
   learned phrases and logs are not); restart the app, and look into it if it persists.
+- **"Clinic Scribe is not running from its install folder — reinstall Clinic Scribe."**
+  (a box at start, instead of the window) — a copy of the installed app was started
+  from somewhere else. Start it from the Start menu; if the box still shows, reinstall
+  Clinic Scribe with a checked installer, and treat an unexplained copy as a possible
+  incident.
 
 ## Losing the computer
 

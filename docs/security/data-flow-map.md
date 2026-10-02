@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -41,7 +41,14 @@ Cliniko" click only (its reads, then its one `PATCH`); each runs on a
 practitioner action or a Chrome report,
 never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
 running app, the model-setup script and the one-off pinned prose-runtime
-wheel install, both in flow 9. The note pipeline (flows 10–11) is in-process
+wheel install, both in flow 9, and — since the installation plan (PLAN.md
+Phase 7) — the BUILD-time steps that make a release (flow 9 (c)); the
+installer and the installed app download nothing (flow 23). Since that plan a
+source checkout is the developer build, a separate channel with its own data
+and models folder `%LOCALAPPDATA%\ClinikoScribe-dev` (flow 24): every
+`%LOCALAPPDATA%\ClinikoScribe` path below is the installed (production) app's,
+and a source checkout uses the same layout under `ClinikoScribe-dev`. The
+installed app is built but NOT YET INSTALLED (the plan's Phase P). The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
 rendering the language model does (flow 17).
 
@@ -49,16 +56,18 @@ rendering the language model does (flow 17).
 
 | Component | Process | Trust context |
 |---|---|---|
-| Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid`; host access `https://*.cliniko.com/*` only, no `tabs` permission |
+| Chrome extension (`extension/`): the service worker, the side panel (an extension page) and the page script on Cliniko pages (flow 20) | Chrome's service-worker, extension-page and Cliniko-tab renderer processes | Sandboxed by Chrome; ID pinned `mbmhglgadhdohpgbmpbjnaifjagfdfid` (the developer build's own extension: `pecfiifdlmdbkifmjkbkeiaflpenfejd`, flow 24); host access `https://*.cliniko.com/*` only, no `tabs` permission |
 | Native host (`scribe-host`) | Spawned by Chrome per connection | Runs as the logged-in Windows user |
-| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / past sessions / practitioner / clinics / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the Cliniko client — reads and the one draft write (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
-| Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime |
-| Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
+| Recorder app (`scribe-app`) | Standalone PySide6 process (multi-screen: microphone / session / recovery / transcript / note / past sessions / practitioner / clinics / status); single instance per user enforced by a per-user lock file every instance must hold (`%LOCALAPPDATA%\ClinikoScribe\app.lock`, empty, held open with no sharing; unopenable → the app refuses to start; rounds 69–70; since the installation plan the SAME file for the installed app and the developer build, so only one of them runs at a time — flow 24), behind a named mutex that only refuses a normal second launch early; the Phase-3A note pipeline (compose → confirm → check → write), the practitioner-profile voice enrolment (flow 12) and the consented phrase learning (flow 13) run in-process here; its one network-capable module is the Cliniko client — reads and the one draft write (flow 18); it listens on one per-user named pipe for the native host (flow 19) | Runs as the logged-in Windows user |
+| Model setup script (`scripts/setup-models.py`) | Separate explicit process, run once per machine BY THE USER from a normal terminal — for a source checkout only (the installed app's models come in its model pack, flow 23) | Runs as the logged-in Windows user; setup-time only, never at runtime |
+| Prose-runtime install (`pip` over `desktop/requirements-ml-prose.txt`) | Separate explicit process, run once per machine BY THE USER from a normal terminal — for a source checkout only (the installed app is built with the runtime inside it, flow 9 (c)) | Runs as the logged-in Windows user; setup-time only, never at runtime — the app never installs, updates or checks for a runtime |
+| Release build (`scripts/build-release.py`, `scripts/lock-build-requirements.py`, the `Release` workflow) | Build-time processes on a GitHub Windows runner or, for spikes and the model pack, the practitioner's own normal terminal (flow 9 (c)) | Build-time only; never on the clinic computer at run time |
+| Installer (`ClinikoScribe-<version>-setup.exe`, Inno Setup) | Run once per install or upgrade by the practitioner, elevated with one administrator approval (flow 23) | Writes the install folder, an all-users Start-menu shortcut and HKLM only, nothing per user; makes no network connection; never launches the app |
 
 ## Flows
 
 1. **Chrome ↔ native host (stdio, the ONLY browser transport).**
-   Chrome spawns the registered launcher and connects stdin/stdout pipes.
+   Chrome spawns the registered host (`scribe-host.exe`, flow 5) and connects stdin/stdout pipes.
    Framed JSON (4-byte native-order length prefix + UTF-8, ≤1 MB per frame,
    project policy both directions). Phase-1 messages: `hello`, `hello_ack`,
    `ping`, `pong`, `error`. Contains: protocol version, request IDs, a random
@@ -116,13 +125,29 @@ rendering the language model does (flow 17).
    (`audit\key.dpapi`) — flow 22.
 
 5. **Registration artifacts (machine-local, outside the repo).**
-   `%LOCALAPPDATA%\ClinikoScribe\` holds the host manifest and a copy of
-   `scribe-host.exe`, referenced from
-   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`.
-   Contain paths and the pinned extension ID — no secrets. (Chrome resolves
-   the manifest only from a space-free path — see the threat model.) Since the
-   privacy-professional-controls plan's Task 4.2 the same script also writes
-   three per-user Windows Error Reporting values (flow 22, EXCLUSIONS);
+   The INSTALLED app's Chrome link is the installer's: the host manifest
+   `com.scribe.cliniko_host.json` beside `scribe-host.exe` in
+   `C:\Program Files\ClinikoScribe`, referenced from
+   `HKLM\SOFTWARE\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host`
+   (flow 23). A SOURCE checkout (the developer build, flow 24) registers its
+   own host with `scripts/register-native-host.py` (dev-only since the
+   installation plan's Task 3.7): `%LOCALAPPDATA%\ClinikoScribe-dev\` holds
+   the dev host manifest `com.scribe.cliniko_host_dev.json` and a copy of the
+   venv's `scribe-host.exe`, referenced from
+   `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host_dev`.
+   Both contain paths and the pinned extension ID of their channel — no
+   secrets. (The developer build's host folder is kept space-free as a
+   conservative guard from the Phase-1 gate; a space alone is not Chrome's
+   rule — the installed host links from `C:\Program Files\ClinikoScribe`,
+   installation plan Task 0.2.) Chrome reads a per-user entry before the machine-wide
+   one, so a per-user entry under the PRODUCTION name would shadow the
+   installed link (threat model, "Installation", HKCU SHADOWING); the
+   register script's `--unregister` also removes the old per-user
+   production-name key and its two files in `%LOCALAPPDATA%\ClinikoScribe\`
+   (`com.scribe.cliniko_host.json`, `scribe-host.exe`) that earlier builds of
+   the script wrote — the installation's migration step. Since the
+   privacy-professional-controls plan's Task 4.2 the script also writes three
+   per-user Windows Error Reporting values (flow 22, EXCLUSIONS);
    `--unregister` removes them with the rest.
 
 6. **Microphone → encrypted session store (Phase 2).** `scribe-app` captures
@@ -162,7 +187,11 @@ rendering the language model does (flow 17).
    place `sessions\` (and the model cache) on SMB storage — runtime
    assumes the local profile; refusing here would block recording
    entirely, unlike the model paths, which DO refuse UNC before any stat
-   (cheap, report-only).
+   (cheap, report-only; the benchmark's model, audio and worker paths too
+   since round 27, and its temporary folder since round 28, in every
+   separator form `install_layout.is_unc_path` normalises; an extended
+   `\\?\C:\…` drive path counts as local, every other device form as
+   network).
 
 7. **Local transcription (Phase 2, in-process, zero network).** On Finish,
    chunks are decrypted streamwise → silero-VAD segmentation → faster-whisper
@@ -204,7 +233,15 @@ rendering the language model does (flow 17).
    alone can miss short-lived telemetry.
 
 8. **Model cache (read-only at runtime).**
-   `%LOCALAPPDATA%\ClinikoScribe\models\` — `silero-vad\silero_vad.onnx`
+   Where it is (installation plan D5, `install_layout.models_root`): for the
+   INSTALLED app, `C:\Program Files\ClinikoScribe\models\` — copied there
+   from the model pack by the installer, each file checked against the
+   manifest's SHA-256 before and after the copy (flow 23), and read-only to
+   standard users; for a SOURCE checkout (the developer build, flow 24),
+   `%LOCALAPPDATA%\ClinikoScribe-dev\models\`. (Before the installation plan a
+   source run used `%LOCALAPPDATA%\ClinikoScribe\models\`; the practitioner
+   copies it to the dev folder (Task 2.6) and deletes the old copy at Phase
+   P, after the installed app's models verify.) Contents: `silero-vad\silero_vad.onnx`
    (~2 MiB) plus CTranslate2 whisper snapshots (runtime default
    `whisper\medium`, ~1.43 GiB, with `whisper\small` ~465 MiB as the
    visible fallback; with all four benchmark candidates those come to
@@ -214,17 +251,30 @@ rendering the language model does (flow 17).
    2026-09-15) and, for the prose styles (note-learning-and-styles plan Phase
    4), `language-model\Qwen3-4B-Instruct-2507-Q4_K_M.gguf` (~2.33 GiB; size
    and SHA-256 verified again at every load, flow 17) — so the whole cache is
-   ~5.3 GiB with all four benchmark candidates and the language model. Static
-   program data, no clinical content. Written ONLY by flow 9; runtime processes never write
-   here. The hardware benchmark additionally synthesizes its fixed
+   ~5.3 GiB with all four benchmark candidates and the language model (of the
+   whisper models, the installed app's model pack holds only `medium`; it
+   also carries the speaker model's CC BY 4.0 attribution notice). Static
+   program data, no clinical content. Written ONLY by flow 9 (a source
+   checkout) or the installer (flow 23); runtime processes never write
+   here. The speaker model and the language model are re-verified against
+   their pinned SHA-256 at every load; silero and whisper are not. The hardware benchmark additionally synthesizes its fixed
    NON-CLINICAL sample script to a transient plaintext WAV (Windows SAPI)
    inside an auto-deleted temp directory — no clinical content ever takes
-   that path.
+   that path. Since the installation plan (D11, Task 2.5) the same hardware
+   check also times the prose stage in-process over fixed NON-CLINICAL lines
+   held in memory (`ui/hardware_check.py`), through the Note tab's one loaded
+   language model; nothing is written, and its report holds timings only,
+   never text the model wrote. A packaged build runs whisper's timing by
+   starting itself as the worker (`scribe-app.exe --benchmark-worker …`); a
+   source checkout starts `python -m scribe_desktop.benchmark`.
 
 9. **The TWO setup-time network steps (separate processes the user runs;
-   the app's own network use is flow 18 alone).**
+   the app's own network use is flow 18 alone) — plus, since the installation
+   plan, the build-time steps in (c).**
    (a) `scripts/setup-models.py`. Explicit one-time HTTPS downloads into
-   the model cache: silero-vad from its pinned GitHub release tag
+   the model cache of a source checkout (`ClinikoScribe-dev\models`, flow
+   24) or, with `--root DIR`, into a staging folder for the release model
+   pack (nothing under `%LOCALAPPDATA%` is then touched): silero-vad from its pinned GitHub release tag
    (SHA-256-verified), whisper snapshots from Hugging Face pinned to
    immutable commit SHAs, the speaker-embedding model (WeSpeaker
    VoxCeleb ResNet34-LM ONNX export, `Wespeaker/wespeaker-voxceleb-resnet34-LM`
@@ -264,6 +314,24 @@ rendering the language model does (flow 17).
    Run once per machine BY THE USER from a normal terminal, exactly like
    (a); the app never installs, updates or checks for a runtime, and never
    downloads a model.
+   (c) BUILD TIME (installation plan D7, Tasks 3.1–3.6; none of it on the
+   clinic computer at run time, and none of it run yet). `scripts/lock-
+   build-requirements.py` downloads one Windows wheel per dependency from
+   PyPI to write the hashed `desktop/requirements-build.txt`, pinned to the
+   versions of an environment already proved (practitioner-run, normal
+   terminal). `scripts/build-release.py`'s build installs that lock and the
+   prose wheel (`--require-hashes`) into a clean build environment, takes
+   PyInstaller from a git clone at a pinned tag that must match its pinned
+   commit, and runs `npm ci` for the extension. The `Release` workflow does
+   the same on a GitHub Windows runner (every action pinned to a commit, no
+   restored cache), after downloading Inno Setup 6.7.3 and checking its
+   SHA-256; the extension is built into the bundle BEFORE the bundle audit,
+   so no npm code runs after it. It then uploads `setup.exe`, `SHA256SUMS.txt`,
+   `BUILD-INFO.txt` and `models-manifest.json` and records a build-provenance
+   attestation with GitHub (Sigstore). `build-release.py --write-manifest`
+   and `--model-pack` read and copy local model files only — no network.
+   None of these carries clinical data: they read the repository, the
+   package indexes and the model files.
 
 10. **Note pipeline (Phase 3A, in-process, zero network).** After transcription,
     `scribe-app` composes a draft note from the immutable transcript
@@ -715,7 +783,8 @@ rendering the language model does (flow 17).
     connected (`test_scribe_app_with_the_chrome_link_open_has_no_sockets`),
     and a real host process relaying to a real app over it
     (`test_host_relays_to_an_open_app_pipe_with_no_sockets`).
-    The app creates `\\.\pipe\ClinikoScribe-<user SID>` after its
+    The app creates `\\.\pipe\ClinikoScribe-<user SID>` (the developer
+    build's is `\\.\pipe\ClinikoScribe-dev-<user SID>`, flow 24) after its
     single-instance guard (`pipe_server.py`): first instance only (a held name
     is refused, never shared — the Session screen then says the Chrome link is
     unavailable and desktop recording still works), one instance, remote
@@ -919,21 +988,82 @@ rendering the language model does (flow 17).
       (`deleted_early` / `expired`). Settings: `config\past_sessions.json`
       (`retention_days` — null or 7 years; a removed shorter value loads as
       7 years — and `hide_names`).
-    - EXCLUSIONS. `scripts/register-native-host.py` (run from a normal
+    - EXCLUSIONS. For a source checkout (the developer build),
+      `scripts/register-native-host.py` (run from a normal
       terminal) writes and reads back `pythonw.exe`, `scribe-app.exe` and
       `scribe-host.exe` = DWORD 1 under `HKCU\Software\Microsoft\Windows\
       Windows Error Reporting\ExcludedApplications`; `--unregister` removes
-      them. At every start-up, before the window, `app.main` marks
-      `%LOCALAPPDATA%\ClinikoScribe` and its folders not-content-indexed (best
-      effort, folders only, links skipped) and runs two READ-ONLY checks — the
-      data folder's resolved location (OneDrive, a network path or drive, the
-      roaming profile) and the three WER values plus the running program's
-      name — whose warning lines show on the Status and Past sessions tabs and
-      are logged by code only; nothing is moved and recording is never
-      refused. Both processes install the type-name-only exception hooks
+      them. For the installed app the installer writes `scribe-app.exe` and
+      `scribe-host.exe` = DWORD 1 under the same key in HKLM, plus the
+      backup and snapshot values for live sessions and logs (flow 23). At
+      every start-up, before the window, `app.main` marks the channel's data
+      folder (`%LOCALAPPDATA%\ClinikoScribe`, or `ClinikoScribe-dev`) and its
+      folders not-content-indexed (best effort, folders only, links skipped)
+      and runs READ-ONLY checks — the data folder's resolved location
+      (OneDrive, a network path or drive, the roaming profile), the
+      channel's WER values (HKLM then HKCU for the installed app, HKCU for a
+      source checkout) plus the running program's name, and, installed app
+      only, the two HKLM backup and snapshot values — whose warning lines
+      show on the Status and Past sessions tabs and are logged by code only;
+      nothing is moved and recording is never refused. Both processes install the type-name-only exception hooks
       (flow 2). Every attribute, drive-type, environment, path-resolution and
       registry call goes through one injected layer, which tests replace (C6);
       the folder walk itself uses `os.scandir` and the link checks directly.
+
+23. **Installer → install folder and HKLM (installation plan D1, D5, D6, D8,
+    C3, C4; `packaging/scribe.iss`; BUILT, compiled with Inno Setup 6.7.3,
+    NOT YET RUN on a real install).** No clinical data and no network
+    connection. Run elevated by the practitioner (one administrator
+    approval), after checking the download (`gh attestation verify`,
+    `Get-FileHash` against `SHA256SUMS.txt` — `docs/release/pilot-builds.md`).
+    It first refuses while `scribe-app.exe`, `scribe-host.exe` or
+    `chrome.exe` runs (or when it cannot check), for any folder but
+    `C:\Program Files\ClinikoScribe`, and — when the installed models do not
+    already match — when the model pack beside `setup.exe` is missing or any
+    of its files fails the manifest's SHA-256; a refusal changes nothing.
+    WRITES: the packaged program into `C:\Program Files\ClinikoScribe`
+    (`scribe-app.exe`, `scribe-host.exe`, `_internal\`, the host manifest,
+    the release extension in `extension\`; an upgrade clears `_internal\` and
+    `extension\` first); the models into `{app}\models\` (every copy checked
+    again, a damaged one deleted where Windows allows it — one that could not
+    be removed is named — the Finish page saying the app is NOT completely
+    installed and Setup exiting 9); a Start-menu shortcut for all users; Inno's own
+    uninstaller (`unins000.*` in `{app}`, its HKLM Uninstall entry, which
+    holds whether this installer set the policy); and in HKLM only — the
+    Chrome link for `com.scribe.cliniko_host`, the WER values for its two
+    programs, the `ClinikoScribe` value under `BackupRestore\FilesNotToBackup`
+    and `\FilesNotToSnapshot` (`$UserProfile$\AppData\Local\ClinikoScribe\
+    sessions\* /s` and `...\logs\* /s`, a best-effort request — threat model
+    residue (g)), and, only when ticked, the clinic-only Chrome policy
+    `NativeMessagingUserLevelHosts` = 0. It writes NOTHING per user and
+    never launches the app. Its own log is off (`SetupLogging=no`).
+    UNINSTALL removes the program, `{app}\models` and those HKLM values (a
+    policy value only if this installer set it) and never
+    `%LOCALAPPDATA%\ClinikoScribe`, which it says stays. The installed app
+    then reads the same data folder as before — no persisted schema changed.
+
+24. **The developer build (installation plan D2–D4, C8; BUILT).** Any source
+    checkout (not frozen) is the DEV channel; nothing selects it but
+    `sys.frozen`. Its data AND models live in
+    `%LOCALAPPDATA%\ClinikoScribe-dev` (the same layout as the production
+    folder), its Chrome host is `com.scribe.cliniko_host_dev` (registered per
+    user, flow 5), its extension is the dev build (`npm run build -- --mode
+    dev` → `extension/dist-dev`, its own key `extension/key-dev.pem`, its own
+    ID; loaded in a SEPARATE Chrome profile) and its pipe is
+    `\\.\pipe\ClinikoScribe-dev-<user SID>`. It reads and writes nothing in
+    the production folder except the shared `app.lock` (the Components
+    table: one app at a time across both channels) and, through
+    `register-native-host.py --unregister` only, the two old registration
+    files named in flow 5. Its "Write draft to Cliniko" is refused before any
+    read or request unless the Status tab's "Allow Cliniko writes from this
+    developer build" is ticked, saved as `config\dev.json` in the dev folder
+    (`{"schema_version": 1, "allow_cliniko_writes": bool}`, default false);
+    note verification and the Clinics tab's Validate still call Cliniko
+    (flow 18). It SHARES with production the Credential Manager namespace
+    `ClinikoScribe/<clinic id>` (entries apart only because clinic ids are
+    random per data folder; the self-test's `test` entry is common) and the
+    DPAPI key descriptions — the same Windows user either way (threat model,
+    "Installation").
 
 ## Explicit non-flows
 
@@ -994,7 +1124,9 @@ rendering the language model does (flow 17).
   generation). No other destination: the client's host is built only from a
   documented Cliniko shard, and no other module may import a network module
   (flow 18). Model downloads and the prose-runtime install happen only in the
-  separate setup-time processes (flow 9).
+  separate setup-time processes (flow 9), the release build's network use
+  only at build time (flow 9 (c)), and the installer makes no connection
+  (flow 23).
 - No cloud AI services; no telemetry (HF telemetry disabled; onnxruntime
   telemetry off).
 - No clinical content in logs — the whitelist + tripwire now also drops
@@ -1039,11 +1171,15 @@ rendering the language model does (flow 17).
 - Log/temp locations are user-local. Since the privacy-professional-controls
   plan the app marks its data folder not-content-indexed and WARNS (never
   refuses) at start-up when that folder resolves inside OneDrive, onto a
-  network drive or into the roaming profile, and the register script excludes
-  the app's programs from Windows Error Reporting per user (flow 22). The
-  app does not exclude itself from Windows Backup / Volume Shadow Copy or
-  third-party backup tools (admin-only — PLAN.md Phase 7's installer; the
-  retention schedule names the residue).
+  network drive or into the roaming profile, and the app's programs are
+  excluded from Windows Error Reporting (per user by the register script for
+  a source checkout; machine-wide by the installer for the installed app —
+  flow 22). Since the installation plan the installer also asks Windows
+  backup and snapshot tools to leave out the installed app's live sessions
+  and logs — a best-effort request that not every tool honours, covering
+  nothing else in the data folder (flow 23; threat model residue (g)); a
+  source checkout's folder is never covered, and until the app is installed
+  nothing is.
 - No uploaded sample note on disk (note-learning-and-styles plan, D9; BUILT,
   Phase 3): the 1–5 notes the practitioner chooses are read into memory by
   `sample_notes.read_sample_note`, never copied and never moved — pinned by a

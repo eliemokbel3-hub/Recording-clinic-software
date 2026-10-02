@@ -53,6 +53,7 @@ from typing import Any, Final, Literal, Protocol
 
 from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
+from scribe_desktop.install_layout import is_unc_path
 
 # --- the pinned model (single source; scripts/setup-models.py imports these) ---
 
@@ -243,10 +244,6 @@ def fbank(pcm16: bytes, *, window: str = DEFAULT_WINDOW, mean_normalise: bool = 
 
 def default_speaker_model_path() -> Path:
     return default_models_root() / SPEAKER_MODEL_SUBDIR / f"{SPEAKER_MODEL_NAME}.onnx"
-
-
-def is_unc_path(path: Path) -> bool:
-    return str(path).startswith(("\\\\", "//"))
 
 
 def speaker_model_available(model_path: Path | None = None) -> bool:

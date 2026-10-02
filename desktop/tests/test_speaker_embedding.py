@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from conftest import on_real_ml_root, real_ml_skip_reason
+from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason
 from scribe_desktop import speaker_embedding as se
 from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 from scribe_desktop.speaker_embedding import (
@@ -289,6 +289,10 @@ class TestLoadContract:
         # ``None`` in sys.modules makes ``import onnxruntime`` raise ImportError,
         # so a check that ran AFTER the import would fail this test loudly.
         monkeypatch.setitem(sys.modules, "onnxruntime", None)
+        # Installation plan round 29 PR-LOW-033: the presence check and the
+        # digest read come BEFORE the import, so a regressed UNC guard must
+        # fail at the filesystem call, not reach the share.
+        forbid_network_io(monkeypatch)
         with pytest.raises(SpeakerModelError, match="setup-models"):
             load_onnx_session(tmp_path / "nope.onnx")
         with pytest.raises(SpeakerModelError, match="UNC"):
@@ -553,10 +557,10 @@ class TestAvailabilityAndFactory:
     def test_unc_availability_probe_refuses_without_io(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        def _boom(self: Path) -> bool:
-            raise AssertionError("stat/is_file reached on a UNC path")
-
-        monkeypatch.setattr(Path, "is_file", _boom)
+        # Installation plan round 29 PR-LOW-033: the shared tripwire (each
+        # `Path` method in `NETWORK_IO_METHODS` raises on a network path),
+        # not only `is_file`.
+        forbid_network_io(monkeypatch)
         assert speaker_model_available(Path(r"\\evil-host\share\model.onnx")) is False
         monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
         assert speaker_model_available() is False

@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import on_real_ml_root, real_ml_skip_reason
+from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason
 from sapi_fixture import synthesize_speech_pcm
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.secure_storage import SessionCrypto
@@ -324,8 +324,11 @@ class TestSileroVadOffline:
         with pytest.raises(VadModelError, match="setup-models"):
             SileroVad(model_path=tmp_path / "nope.onnx")
 
-    def test_unc_model_path_rejected(self) -> None:
+    def test_unc_model_path_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         apply_offline_env()
+        # Installation plan round 28 PR-LOW-030: a regressed guard fails here
+        # at its first listed `Path` call on the network path.
+        forbid_network_io(monkeypatch)
         with pytest.raises(VadModelError, match="UNC"):
             SileroVad(model_path=Path(r"\\evil-host\share\model.onnx"))
 
@@ -335,10 +338,10 @@ class TestSileroVadOffline:
         # Round 42 MED-004 (peer-36 pattern sibling): the availability
         # probe must refuse UNC BEFORE any stat — a UNC-redirected
         # LOCALAPPDATA must cause zero SMB I/O from the report path.
-        def _boom(self: Path) -> bool:
-            raise AssertionError("stat/is_file reached on a UNC path")
-
-        monkeypatch.setattr(Path, "is_file", _boom)
+        # Installation plan round 29 PR-LOW-033: the shared tripwire (each
+        # `Path` method in `NETWORK_IO_METHODS` raises on a network path),
+        # not only `is_file`.
+        forbid_network_io(monkeypatch)
         assert vad_model_available(Path(r"\\evil-host\share\model.onnx")) is False
         monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
         assert vad_model_available() is False

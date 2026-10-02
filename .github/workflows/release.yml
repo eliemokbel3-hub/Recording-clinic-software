@@ -1,13 +1,16 @@
 # Installation plan Task 3.6 (D7): the build of record. A manual run on main
 # builds the installer on a Windows runner with scripts/build-release.py
-# (without the model pack, which the practitioner builds once, D5), then
-# attests and uploads setup.exe with its SHA256SUMS.txt. Verify a download
-# with:
+# (without the model pack, which the practitioner builds once, D5) and
+# uploads it; a second job, the only one with an OIDC token, attests
+# setup.exe and its SHA256SUMS.txt. Verify a download with (pilot-builds.md):
 #   gh attestation verify <setup.exe> --repo eliemokbel3-hub/Recording-clinic-software
+#     --signer-workflow eliemokbel3-hub/Recording-clinic-software/.github/workflows/release.yml
+#     --source-ref refs/heads/main
 #
 # BEFORE THE FIRST RUN (practitioner/composer, needs the network; until then
 # the job fails closed at the step that needs it):
-#   - every "PIN-REQUIRED" below: pin the action to a full commit SHA
+#   - every "PIN-REQUIRED" below: pin the action to a full commit SHA of the
+#     release its comment names - all six, ci.yml's three included
 #     (desktop/tests/test_release_workflow.py checks that, once replaced);
 #   - the Inno Setup 6.7.3 installer's SHA-256, read from the downloaded file
 #     with Get-FileHash, in the "Install Inno Setup" step - and confirm its
@@ -23,28 +26,31 @@ permissions:
   contents: read
 
 jobs:
-  release:
-    name: build, attest and upload the installer
+  # The build runs third-party code (npm packages' install scripts, the
+  # actions), so it holds NO OIDC token: only the attest job below can sign
+  # provenance, and it runs nothing but the download and the attestation of
+  # exactly what this job uploaded (round 22).
+  build:
+    name: build and upload the installer
     if: github.ref == 'refs/heads/main'
     # A fixed image label, not windows-latest (its moves are gradual; Task 0.3).
     runs-on: windows-2025
     permissions:
       contents: read
-      id-token: write
-      attestations: write
+    # H.4 SEC-002: every action here is pinned to a commit (the build of
+    # record runs them; a moved tag would run in it), and no shared cache is
+    # restored into this job. The comment names the release to pin.
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@PIN-REQUIRED # v5
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@PIN-REQUIRED # v6
         with:
           # Task 0.1's interpreter (D12 build input).
           python-version: "3.14.6"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@PIN-REQUIRED # v5
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: extension/package-lock.json
       - name: Install Inno Setup 6.7.3 (pinned, SHA-256 checked)
         shell: pwsh
         run: |
@@ -58,7 +64,13 @@ jobs:
           if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $expected.ToUpper()) {
             throw "The Inno Setup installer does not match its pinned SHA-256."
           }
-          Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+          $setup = Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait -PassThru
+          if ($setup.ExitCode -ne 0) {
+            throw "The Inno Setup $version install failed (exit $($setup.ExitCode))."
+          }
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            throw "Inno Setup $version installed, but ISCC.exe is not where the build looks for it."
+          }
       - name: PyInstaller source at the pinned tag
         shell: pwsh
         # build-release.py refuses any commit but its pinned one (D1).
@@ -66,15 +78,30 @@ jobs:
       - name: Build the installer (no model pack)
         shell: pwsh
         run: python scripts/build-release.py --pyinstaller-src "$env:RUNNER_TEMP\pyinstaller-src" --out "$env:RUNNER_TEMP\release"
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@PIN-REQUIRED
-        with:
-          subject-path: |
-            ${{ runner.temp }}/release/installer/*.exe
-            ${{ runner.temp }}/release/installer/SHA256SUMS.txt
       - name: Upload the installer
         uses: actions/upload-artifact@PIN-REQUIRED
         with:
           name: clinic-scribe-installer
           path: ${{ runner.temp }}/release/installer/
           if-no-files-found: error
+
+  attest:
+    name: attest the installer
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the installer
+        uses: actions/download-artifact@PIN-REQUIRED
+        with:
+          name: clinic-scribe-installer
+          path: installer
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@PIN-REQUIRED
+        with:
+          subject-path: |
+            installer/*.exe
+            installer/SHA256SUMS.txt

@@ -358,6 +358,12 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from scribe_desktop.benchmark import apply_offline_env, assert_offline_env\n"
         "apply_offline_env()\n"
         "assert_offline_env()\n"
+        # Installation plan D2 (round 22 LOW): the child proves what SHIPS, so
+        # it is pinned to the production channel as the parent is (a bare
+        # source run is the dev channel: no backup check, the dev checkbox).
+        "from scribe_desktop import install_layout\n"
+        "install_layout.channel = lambda: 'production'\n"
+        "install_layout.is_frozen = lambda: False\n"
         "from PySide6.QtWidgets import QApplication\n"
         "from scribe_desktop.audio_capture import MockCaptureBackend\n"
         "from scribe_desktop.session import SessionController\n"
@@ -470,6 +476,9 @@ from pathlib import Path
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
+from scribe_desktop import install_layout
+install_layout.channel = lambda: "production"  # D2: what ships (round 22)
+install_layout.is_frozen = lambda: False
 import win32con, win32file
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -573,6 +582,9 @@ from pathlib import Path
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
+from scribe_desktop import install_layout
+install_layout.channel = lambda: "production"  # D2: what ships (round 22)
+install_layout.is_frozen = lambda: False
 from PySide6.QtWidgets import QApplication
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.clinics import ClinicRegistry
@@ -1498,6 +1510,10 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"  # D2: what ships (round 22)
+install_layout.is_frozen = lambda: False
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.language_model import MockLanguageModel, echo_prompt_lines
@@ -1675,6 +1691,10 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"  # D2: what ships (round 22)
+install_layout.is_frozen = lambda: False
 
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.encounter import unlinked_consent

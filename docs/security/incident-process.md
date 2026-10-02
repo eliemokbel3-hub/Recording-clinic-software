@@ -7,9 +7,23 @@ When in doubt, stop using the software and investigate before resuming.
 
 - Suspected compromise of the clinic machine or Windows user account
 - Unexpected change to the registration chain: the startup tripwire log
-  (`host_manifest` / `host_launcher` (the host exe) / `host_start` paths in
-  `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-host.log`) shows a path you did
-  not set, or registration verification fails
+  (`host_manifest` / `host_manifest_other` / `host_launcher` (the host exe) /
+  `host_start` paths in `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-host.log`;
+  a developer build's in `ClinikoScribe-dev\logs\`) shows a path you did
+  not set, a `host_manifest state=network_path` line (a link pointing at a
+  network share — the app and host never open it, but Chrome would), or
+  registration verification fails. For the INSTALLED app the
+  expected paths are all under `C:\Program Files\ClinikoScribe`, reached
+  through the machine-wide (HKLM) link; the Status tab's "Warning: a
+  per-user Chrome link overrides the installed one." means a per-user entry
+  now wins — investigate it unless you know you made it (installation plan:
+  until Phase P step 2 removes it, the old source-run registration is one)
+- (Installation) a downloaded installer that fails `gh attestation verify` or
+  whose SHA-256 does not match `SHA256SUMS.txt` and `docs/release/pilot-builds.md`
+  (do not run it); a Defender detection in a build; the box "Clinic Scribe is
+  not running from its install folder" when you started it from the Start
+  menu; or the installed program folder found changed or writable by a
+  standard user
 - Any sign of payload content in log files (the tripwire also counts drops —
   a nonzero drop count means misuse of the logger somewhere)
 - A Cliniko API key exposed anywhere outside Windows Credential Manager
@@ -60,8 +74,12 @@ When in doubt, stop using the software and investigate before resuming.
 
 1. **Stop the software.** Close Chrome (kills the host); export the audit
    record first if `scribe-app` is still open (step 4), then close it.
-2. **Disconnect the channel:** `scripts/register-native-host.py --unregister`
-   and remove/disable the unpacked extension in `chrome://extensions`.
+2. **Disconnect the channel:** remove/disable the unpacked extension in
+   `chrome://extensions`. For a developer build (a source checkout) also run
+   `scripts/register-native-host.py --unregister` from a normal terminal.
+   For the installed app, uninstalling it (Windows Settings > Apps) removes
+   its Chrome link and keeps the data folder; do that only after step 4's
+   evidence is copied, and keep the installer you used.
 3. **Revoke secrets (once clinic keys are stored):** regenerate the affected clinic's Cliniko
    API key(s) in Cliniko itself, then delete the local entries from Windows
    Credential Manager.
@@ -79,8 +97,11 @@ When in doubt, stop using the software and investigate before resuming.
    incident's Past-sessions entry only once it is 7 years old, or sooner if
    the clock was jumped forward. If that entry or session matters, copy the whole
    `%LOCALAPPDATA%\ClinikoScribe\` folder aside as evidence before reopening
-   (on this machine, under this account; `models\`, static program data of
-   several GiB, can be left out; the app never reads the copy). The copy is
+   — for a developer build, `%LOCALAPPDATA%\ClinikoScribe-dev\`, whose
+   sessions, Past sessions and audit record are its own —
+   (on this machine, under this account; a `models\` folder, static program
+   data of several GiB, can be left out — the installed app keeps its models
+   in its install folder instead; the app never reads the copy). The copy is
    NOT all encrypted: beside the encrypted stores (`sessions\`,
    `past_sessions\` entries, `audit\`, `profile\`, `style\`) it holds
    plaintext files — the logs, `clinics.json` (ids and the contact email),
@@ -128,8 +149,13 @@ When in doubt, stop using the software and investigate before resuming.
 
 ## Assess
 
-- Compare tripwire-logged paths against the expected repo paths; inspect the
-  registry key, manifest, and launcher contents.
+- Compare tripwire-logged paths against the expected ones (the installed
+  app: `C:\Program Files\ClinikoScribe`; a developer build: the repo's venv
+  and `%LOCALAPPDATA%\ClinikoScribe-dev`); inspect the registry keys (HKCU
+  and HKLM), manifest, and launcher contents.
+- For the installed app, `icacls "C:\Program Files\ClinikoScribe"` should
+  show standard users with read and execute only; compare `Get-FileHash` of
+  the installer you used with `docs/release/pilot-builds.md`.
 - Check `git status` / `git log` for unexpected repo modifications.
 - If clinical data may have been exposed (Phase 2+), treat it as a notifiable
   privacy matter: assess against the Australian Privacy Act's Notifiable Data
@@ -137,9 +163,14 @@ When in doubt, stop using the software and investigate before resuming.
 
 ## Recover
 
-1. Rebuild trust bottom-up on a machine you trust: fresh `git pull` from
+1. Rebuild trust bottom-up on a machine you trust. The installed app:
+   download the build of record again, check it (`gh attestation verify` and
+   `Get-FileHash` against `SHA256SUMS.txt` and `docs/release/pilot-builds.md`),
+   reinstall it with the model pack beside it, reload the extension from the
+   install folder, and confirm the Status tab names this computer's Chrome
+   link with no per-user warning. A developer build: fresh `git pull` from
    GitHub, fresh venv, `pip install -e desktop`, re-run
-   `scripts/register-native-host.py`, reload the extension, and confirm the
+   `scripts/register-native-host.py`, reload the dev extension. Then confirm the
    Step-12 gate checks (the badge shows **OK** with the app running, self-test passes, and —
    with Chrome closed, so no Cliniko note report arrives, and no practitioner
    action such as a Validate or a "Write draft to Cliniko" — `netstat` shows

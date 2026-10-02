@@ -1,10 +1,59 @@
 # Scripts
 
-- `register-native-host.py` (plan Step 6) — generates the Chrome native-messaging
-  host manifest and `dev-host-launcher.bat` from the current interpreter path,
-  writes and verifies the HKCU registry entry; `--unregister` reverses it.
-- `generate-extension-key.py` or documented openssl commands (plan Step 3) —
-  extension identity keypair; `key.pem` is gitignored and never committed.
+Every script here is run by the practitioner from a normal PowerShell at the
+repository root (agent shells on this machine are MSIX-virtualized, so their
+`%LOCALAPPDATA%` and registry writes prove nothing — `docs/lessons.md`). Since
+the installation plan a source checkout is the DEVELOPER build: these scripts
+set up and build it, and make releases; the installed app needs none of them.
+
+## The developer build
+
+- `register-native-host.py` (plan Step 6; dev-only since installation plan
+  Task 3.7) — registers the DEVELOPER build's Chrome link: copies the venv's
+  `scribe-host.exe` and writes the host manifest for `com.scribe.cliniko_host_dev`
+  (the dev extension's origin only) into `%LOCALAPPDATA%\ClinikoScribe-dev\`,
+  then writes and verifies the HKCU registry entry, plus the three per-user
+  Windows Error Reporting exclusions. `--unregister` reverses it and also
+  removes what earlier versions wrote under the PRODUCTION name (the per-user
+  `com.scribe.cliniko_host` key and its two files in
+  `%LOCALAPPDATA%\ClinikoScribe\` — nothing else there). Until the app is
+  installed that is the everyday app's live Chrome link, so run
+  `--unregister` only as the installation's step (Phase P step 2). The
+  installed app's Chrome link is its installer's, never this script's.
+- `setup-models.py [--only NAME] [--root DIR]` — downloads the pinned models
+  (setup-time network) into the developer build's
+  `%LOCALAPPDATA%\ClinikoScribe-dev\models\`, or with `--root DIR` into a
+  staging folder for the release model pack (then nothing under
+  `%LOCALAPPDATA%` is touched).
+- `generate-extension-key.py [--out PATH]` or documented openssl commands (plan
+  Step 3) — an extension identity keypair: `extension/key.pem` (the release
+  extension) by default, `--out extension/key-dev.pem` for the developer
+  build's extension; any other `--out` is refused before a key is read or
+  written. Both private keys are gitignored and never committed;
+  `extension/KEY.md` records both IDs.
+
+## Making a release (installation plan, D7)
+
+- `lock-build-requirements.py --constraints <freeze>` (Task 3.1) — writes the
+  hashed build lock `desktop/requirements-build.txt` from an environment
+  already proved (build-time network: one wheel per dependency from PyPI).
+  Commit the lock it writes.
+- `build-release.py` (Tasks 3.3 and 3.5) — four modes:
+  `--write-manifest --models DIR` writes `packaging/models-manifest.json`
+  (commit it); `--model-pack --models DIR --out DIR` copies the manifest's
+  files into `ClinikoScribe-models-<8 hex>\`; `--audit DIST` checks a
+  PyInstaller bundle (fails closed, a Defender detection included); and the
+  build itself, `--pyinstaller-src DIR --out DIR` (a clean environment from
+  the lock, PyInstaller from a clean clone at its pinned commit, the bundle
+  audit, the release extension, Inno Setup 6.7.3, `BUILD-INFO.txt` and
+  `SHA256SUMS.txt`). The build of record is the CI `Release` workflow's; a
+  local build is for spikes and the model pack. See `docs/release/pilot-builds.md`.
+- `check-installed-sockets.py --seconds N` (Task 3.8) — watches the INSTALLED
+  app's processes for network connections during a transcription and a prose
+  render (Phase P step 10); prints connections only, never app text.
+
+## Measurement and checks
+
 - `measure-speakers.py <recordings-dir>` (Phase 3A Task 2.3a) — thin launcher for
   `scribe_desktop.speaker_eval`: speaker-cluster and clinician-role accuracy on
   labelled recordings (`<name>.wav` 16 kHz mono 16-bit + `<name>.txt` Audacity

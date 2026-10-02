@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import on_real_ml_root, real_ml_skip_reason, start_unlinked
+from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason, start_unlinked
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
@@ -976,8 +976,11 @@ class TestWhisperProviderGuards:
         with pytest.raises(TranscriptionModelError, match="setup-models"):
             WhisperSpeechProvider(model_dir=tmp_path / "no-model")
 
-    def test_unc_model_path_rejected(self) -> None:
+    def test_unc_model_path_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         apply_offline_env()
+        # Installation plan round 28 PR-LOW-030: a regressed guard fails here
+        # at its first listed `Path` call on the network path.
+        forbid_network_io(monkeypatch)
         with pytest.raises(TranscriptionModelError, match="UNC"):
             WhisperSpeechProvider(model_dir=Path(r"\\evil-host\share\whisper"))
 
@@ -1053,6 +1056,9 @@ class TestModelPolicy:
         # LOCALAPPDATA must short-circuit to False BEFORE any filesystem
         # touch (no SMB I/O), for the default, the fallback, and the
         # resolver; the provider then raises its explicit UNC error.
+        # Installation plan round 29 PR-LOW-033: a regressed guard fails here
+        # at its first listed `Path` call on the network path.
+        forbid_network_io(monkeypatch)
         monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
         assert not whisper_model_available()
         assert not whisper_model_available(FALLBACK_WHISPER_MODEL)

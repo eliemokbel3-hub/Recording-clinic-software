@@ -5,8 +5,8 @@ the pinned prose-runtime wheel install, desktop/requirements-ml-prose.txt; see
 flow 9 of docs/security/data-flow-map.md). It runs as a separate, explicit
 setup step -- never at runtime, and the app never downloads a model. Runtime
 processes load models from the local cache with the ML stack's network access
-disabled and asserted off; the app's only network use is its read-only Cliniko
-API client (flow 18).
+disabled and asserted off; the app's only network use is its Cliniko API
+client — reads, and the one guarded draft write (flow 18).
 
 Downloads into the models folder of this checkout's data folder -- since
 installation plan Phase 1 a source checkout is the DEV channel, so that is

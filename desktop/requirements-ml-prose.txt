@@ -17,7 +17,8 @@
 # (3.14 confirmed at Task P.0).
 #
 # Install (the SECOND setup-time network step beside scripts/setup-models.py —
-# the app's own only network use is its read-only Cliniko API client — run
+# the app's own only network use is its Cliniko API client: reads and the one
+# guarded draft write — run
 # from a normal terminal at the repository root):
 #
 #     .venv\Scripts\python.exe -m pip install --require-hashes --no-deps -r desktop\requirements-ml-prose.txt

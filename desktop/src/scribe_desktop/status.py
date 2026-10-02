@@ -49,14 +49,22 @@ def read_registration_status(layer: WindowsLayer | None) -> RegistrationStatus:
         return RegistrationStatus(None, False, False, checked=False)
     winner = entries[0] if entries else None
     registry_value = winner.manifest if winner is not None else None
-    manifest = Path(registry_value) if registry_value else None
+    # H.4 SEC-003: a network-share manifest or launcher path is never opened
+    # or stat'ed here — a planted registry value must cause no SMB I/O at
+    # start-up (C1); it reads as not registered.
+    manifest = (
+        Path(registry_value)
+        if registry_value and not install_layout.is_unc_path(registry_value)
+        else None
+    )
     launcher_exists = False
     if manifest is not None and manifest.is_file():
         import json
 
         try:
-            launcher_exists = Path(
-                json.loads(manifest.read_text(encoding="utf-8"))["path"]
+            launcher = json.loads(manifest.read_text(encoding="utf-8"))["path"]
+            launcher_exists = not install_layout.is_unc_path(launcher) and Path(
+                launcher
             ).is_file()
         # TypeError (round 13 LOW-011): a manifest that is not a JSON object,
         # or whose "path" is not a string — never a crash of the Status tab.
@@ -79,6 +87,13 @@ _WHERE: dict[str, str] = {"HKCU": "per-user", "HKLM": "this computer's"}
 # shadowed by a per-user one (Task 0.2 confirmed Chrome uses the HKCU entry).
 PER_USER_OVERRIDE_LINE = "Warning: a per-user Chrome link overrides the installed one."
 
+# Round 23: in the installed app a broken per-user entry that wins is not
+# fixed by a reinstall — the installer writes HKLM only (C3) and never removes
+# it — so the remedy is removing that entry, which the warning line names.
+PER_USER_BROKEN_REMEDY = (
+    "the per-user Chrome link that Chrome uses is broken, and reinstalling does not remove it"
+)
+
 
 def registration_lines(status: RegistrationStatus) -> tuple[str, ...]:
     """The Status tab's registration text (no path is ever shown): the
@@ -94,7 +109,14 @@ def registration_lines(status: RegistrationStatus) -> tuple[str, ...]:
             detail += f"; {count} other link{'s' if count > 1 else ''} found, not used"
         first = f"Registration: registered ✓ ({detail})"
     else:
-        first = f"Registration: NOT registered — {install_layout.registration_remedy()}"
+        # A per-user override means an HKCU entry exists, and Chrome reads
+        # HKCU first, so that entry is the broken winner.
+        remedy = (
+            PER_USER_BROKEN_REMEDY
+            if status.per_user_override
+            else install_layout.registration_remedy()
+        )
+        first = f"Registration: NOT registered — {remedy}"
     if status.per_user_override:
         return (first, PER_USER_OVERRIDE_LINE)
     return (first,)

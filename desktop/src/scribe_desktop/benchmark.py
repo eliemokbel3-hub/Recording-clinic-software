@@ -115,6 +115,12 @@ WORKER_FLAG: Final = "--benchmark-worker"
 # The worker's options, in the order ``worker_argv`` writes them; each takes
 # exactly one value.
 _WORKER_OPTIONS: Final = ("--single", "--models-root", "--audio", "--audio-seconds")
+# The options whose value becomes a path (the model name is joined to the
+# models root); a network (UNC) value is not the worker (round 27 PR-MED-021).
+_WORKER_PATH_OPTIONS: Final = ("--single", "--models-root", "--audio")
+# The environment variables ``tempfile.gettempdir`` tries first, in its order
+# (round 28 PR-LOW-029).
+_TEMP_VARIABLES: Final = ("TMPDIR", "TEMP", "TMP")
 
 # Round 45 SEC-001 (availability): a hung model subprocess must never pin
 # the benchmark TaskThread forever (the close guard would then refuse
@@ -192,7 +198,11 @@ def whisper_snapshot_complete(model_dir: Path) -> bool:
 
 
 def list_whisper_candidates(models_root: Path) -> list[str]:
-    """Model names present in the local cache (complete CT2 snapshots)."""
+    """Model names present in the local cache (complete CT2 snapshots). A
+    network (UNC) root is never touched and lists nothing (round 27
+    PR-MED-021, like the other model probes)."""
+    if install_layout.is_unc_path(models_root):
+        return []
     whisper_dir = models_root / "whisper"
     if not whisper_dir.is_dir():
         return []
@@ -313,7 +323,8 @@ def classify_prose(seconds_per_section: float) -> str:
 
 
 # The whisper model the installed build ships (D5); its verdict is summarised
-# beside the prose stage's.
+# beside the prose stage's. The ONE spelling (H.3 SIMP-001): transcription's
+# default and the release model pack (`scripts/build-release.py`) read it.
 SHIPPED_WHISPER_MODEL: Final = "medium"
 
 
@@ -427,8 +438,11 @@ def generate_speech_sample(target: Path) -> float:
     consumes the raw frames as 16 kHz PCM must resample first — see
     ``tests/sapi_fixture.py``.
 
-    Windows-only (uses SAPI COM). No network, no clinical content.
+    Windows-only (uses SAPI COM). No network, no clinical content: a network
+    (UNC) target is refused before SAPI opens it (round 28 PR-LOW-029).
     """
+    if install_layout.is_unc_path(target):
+        raise RuntimeError(f"benchmark path must be a local path, not UNC: {target}")
     import wave
 
     import win32com.client
@@ -448,6 +462,12 @@ def generate_speech_sample(target: Path) -> float:
 def run_single(model_dir: Path, audio_path: Path, audio_seconds: float) -> BenchmarkResult:
     """Benchmark one local model in THIS process. Offline env must be active."""
     assert_offline_env()
+    # Round 27 PR-MED-021: the same UNC refusal as the other model loaders,
+    # before any filesystem touch — a network model or audio path would be
+    # SMB I/O (C1).
+    for path in (model_dir, audio_path):
+        if install_layout.is_unc_path(path):
+            raise RuntimeError(f"benchmark path must be a local path, not UNC: {path}")
     import psutil
     from faster_whisper import WhisperModel
 
@@ -507,7 +527,9 @@ def is_worker_argv(argv: Sequence[str]) -> bool:
     worker's shape — ``WORKER_FLAG`` then each worker option once, in
     ``worker_argv``'s order, each with one value that is not itself an
     option. Anything else (a missing, extra, reordered or repeated argument)
-    is not the worker."""
+    is not the worker, and neither is a network (UNC) value of a path option
+    (round 27 PR-MED-021) — the model name included, since a UNC name would
+    replace the models root it is joined to."""
     rest = list(argv[1:])
     if len(rest) != 1 + 2 * len(_WORKER_OPTIONS) or rest[0] != WORKER_FLAG:
         return False
@@ -516,11 +538,20 @@ def is_worker_argv(argv: Sequence[str]) -> bool:
         value = pairs[2 * index + 1]
         if pairs[2 * index] != option or not value or value.startswith("-"):
             return False
+        if option in _WORKER_PATH_OPTIONS and install_layout.is_unc_path(value):
+            return False
+    # Round 24: every value is one ``main``'s parser takes (only the seconds
+    # are typed), so the worker never ends in argparse's usage text and exit 2.
+    try:
+        float(pairs[2 * _WORKER_OPTIONS.index("--audio-seconds") + 1])
+    except ValueError:
+        return False
     return True
 
 
 def run_worker(argv: Sequence[str]) -> int | None:
-    """``app.main``'s first step (installation plan Task 2.1): when this
+    """``app.main``'s third step, after the build audit's offline self-check
+    and the install-folder refusal (installation plan Task 2.1): when this
     launch is the frozen benchmark worker — ``SCRIBE_BENCHMARK_WORKER=1`` set
     by ``run_all`` AND ``is_worker_argv`` — run ``main`` on the options and
     return its exit code. Otherwise ``None``: the launch is not the worker,
@@ -547,6 +578,8 @@ def run_worker(argv: Sequence[str]) -> int | None:
 
 def run_all(models_root: Path, names: list[str] | None = None) -> list[BenchmarkResult]:
     """Benchmark each candidate in a fresh subprocess; aggregate results."""
+    if install_layout.is_unc_path(models_root):
+        raise RuntimeError(f"models folder must be a local path, not UNC: {models_root}")
     candidates = list_whisper_candidates(models_root)
     if names:
         unknown = sorted(set(names) - set(candidates))
@@ -558,6 +591,13 @@ def run_all(models_root: Path, names: list[str] | None = None) -> list[Benchmark
             f"no whisper models under {models_root} - {install_layout.model_remedy()}"
         )
 
+    # Round 28 PR-LOW-029: tempfile's first use PROBES its candidate folders
+    # by writing a file in each, so a network temporary folder is refused
+    # from the values themselves (a cached ``tempfile.tempdir``, then the
+    # variables tempfile reads first), before any tempfile call.
+    for parent in (tempfile.tempdir, *(os.environ.get(name) for name in _TEMP_VARIABLES)):
+        if parent and install_layout.is_unc_path(parent):
+            raise RuntimeError(f"temporary folder must be a local path, not UNC: {parent}")
     with tempfile.TemporaryDirectory() as tmp:
         audio_path = Path(tmp) / "benchmark_sample.wav"
         audio_seconds = generate_speech_sample(audio_path)

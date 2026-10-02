@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -21,7 +21,15 @@ under "Cliniko API client" below); plus the privacy and professional controls
 (PLAN.md Phase 6, the privacy-professional-controls plan, built 2026-10-01):
 the durable audit record, the Past-sessions archive and its tab, the CSV
 export, the exclusions and the exception hooks ("Privacy and professional
-controls" below).
+controls" below); plus the installation (PLAN.md Phase 7, the installation
+plan, built 2026-10-02 → 2026-10-03 and NOT YET INSTALLED — no real build has
+run and Phase P is the practitioner's): the packaged build and its
+per-machine installer, the separately shipped model pack, the build of record,
+and the developer build as a separate channel ("Installation" below). Every
+`%LOCALAPPDATA%\ClinikoScribe` path in this document is the installed
+(production) app's data folder; a source checkout — the developer build —
+keeps the same layout under `%LOCALAPPDATA%\ClinikoScribe-dev`, plus its own
+`models\` there (the installed app's models are in its install folder).
 Clinical data now exists: audio,
 transcripts, and the composed note artifact, encrypted at rest under
 per-session keys; an UNPROTECTED recovery store expires at ~24 h (eligible at
@@ -58,27 +66,45 @@ never in `encounter.enc`, the audit row, the CSV or a log).
 
 2. **The same-user attacker (ACCEPTED RESIDUAL RISK).**
    Malware running as the logged-in Windows user owns both endpoints. It can:
-   - repoint `HKCU\...\NativeMessagingHosts\com.scribe.cliniko_host` at its
-     own binary (registration hijack);
-   - replace or edit the host manifest or the installed `scribe-host.exe` in
-     `%LOCALAPPDATA%\ClinikoScribe\` (both user-writable);
-   - modify the venv's interpreter or site-packages (code hijack through the
-     host executable);
-   - read process memory, including session keys and — in later phases —
-     Credential Manager secrets accessible to the user session.
+   - write a per-user `HKCU\...\NativeMessagingHosts\com.scribe.cliniko_host`
+     entry pointing at its own binary (registration hijack). Chrome reads a
+     per-user entry BEFORE the installed machine-wide one, so this still works
+     against the installed app; the Status tab warns when it sees one
+     ("Installation" below, HKCU SHADOWING), and the optional clinic-only
+     Chrome policy makes Chrome ignore every per-user entry;
+   - read process memory, including session keys and Credential Manager
+     secrets accessible to the user session.
+   Against a SOURCE checkout (the developer build — since the installation
+   plan the dev channel, with its own host name) it can also replace or edit
+   the dev host manifest or the copied `scribe-host.exe` in
+   `%LOCALAPPDATA%\ClinikoScribe-dev\`, or the venv's interpreter and
+   site-packages (code hijack through the host executable): all
+   user-writable. Against the INSTALLED app that launcher hijack is retired:
+   the program, the host manifest and `scribe-host.exe` live in
+   `C:\Program Files\ClinikoScribe`, which a standard user can read and run
+   but not change ("Installation" below, THE INSTALL FOLDER).
    No extension-side or pipe-side control changes this; message-level crypto
    would be theater against an attacker who owns both endpoints. **Cheap
    tripwire in place:** the host logs its resolved executable, module, cwd,
-   registry-resolved manifest path, and the manifest's host-executable path at
-   every startup, so a hijacked chain is visible in the log history. **Real
-   mitigation** is Phase 7 packaging/signing plus normal OS hygiene
-   (up-to-date OS, AV, no untrusted software in the clinic user session).
+   every registry entry for its host name in Chrome's lookup order (the
+   winning one and any others), and the winning manifest's host-executable
+   path at every startup, so a hijacked chain is visible in the log history.
+   **Mitigation:** the admin-only install folder (built — installation plan
+   D1/D-I1, installed at its Phase P), signing (deferred; the pilot build is
+   unsigned), plus normal OS hygiene (up-to-date OS, AV, no untrusted
+   software in the clinic user session).
 
 3. **Extension identity.** The pinned manifest `key` gives ID *stability*,
    not secrecy — for an unpacked extension the public key is visible by
-   design. `key.pem` is gitignored; losing it means a new ID and mandatory
-   re-registration. The Chrome Web Store will assign a different ID at
-   Phase-7 publication (allowed_origins must be updated then).
+   design. `key.pem` is gitignored; losing it changes nothing (the ID comes
+   from the committed public key in `extension/src/channel.ts`) — only a NEW
+   key whose public half is committed means a new ID and mandatory
+   re-registration (round 27). The installed app's extension is the same pinned ID,
+   loaded unpacked from `C:\Program Files\ClinikoScribe\extension`; the
+   developer build's extension has its own key (`extension/key-dev.pem`,
+   gitignored) and ID, accepted only by the dev host (`extension/KEY.md`). A
+   Chrome Web Store listing is deferred (installation plan, Excluded); it
+   would assign a different ID, and `allowed_origins` would change then.
 
 4. **Protocol robustness (untrusted peer input).** The host treats every
    frame as untrusted: length prefix bounded at 1 MB and rejected WITHOUT
@@ -159,9 +185,13 @@ remains an accepted residual.
    This control keeps the ML stack off the network; it says nothing about
    the Cliniko client, which is the app's ONE network-capable module and
    has its own surface ("Cliniko API client" below). Outside the app, the
-   network users are two explicit setup-time steps the user runs:
-   `scripts/setup-models.py` (SHA-pinned downloads) and the pinned
-   prose-runtime wheel install (surface 17 of the note-learning section).
+   network users are two explicit setup-time steps the user runs from a
+   source checkout — `scripts/setup-models.py` (SHA-pinned downloads) and the
+   pinned prose-runtime wheel install (surface 17 of the note-learning
+   section) — and, since the installation plan, the BUILD-time steps that make
+   a release (data-flow-map flow 9). The installer and the installed app
+   download nothing: the models arrive in a separately copied, hash-checked
+   model pack.
 4. **Clipboard / same-user UI surface.** The transcript-inspection view is
    display-only (`NoTextInteraction`) so clinical text cannot drift into the
    Windows clipboard (clipboard history / cloud clipboard sync) through
@@ -178,7 +208,15 @@ remains an accepted residual.
    - **The lock file is required.** `%LOCALAPPDATA%\ClinikoScribe\app.lock`
      is empty, opened with no sharing and held for the process lifetime. It
      sits inside this user's profile, where another standard account can
-     neither open nor create it. No instance ever starts without it.
+     neither open nor create it. No instance ever starts without it. Since
+     the installation plan (D3, Task 1.5) it is the SAME file for both
+     channels: a developer build also holds it in the production folder
+     (creating the folder if absent, and touching nothing else there), so the
+     installed app and a developer build never run at once — the running
+     developer app's one use of the production folder. (The other named C8
+     exception is not the app: the one-time `register-native-host.py
+     --unregister` migration, which deletes the old per-user registration's
+     two files there — see "Installation" below.)
      - Busy (another instance holds it, after a short retry for a scanner) →
        "already running".
      - Unopenable for any other reason (permissions, path, disk) → the app
@@ -1226,10 +1264,12 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     who forges that record over locally built bytes is inside boundary 2 and
     is not defended (it SKIPS BY NAME when the runtime is absent, so the gate
     cannot pass silently on a machine that simply has no runtime — which is
-    every CI runner: CI installs `[dev]` / `[dev,ml]` and never the
-    requirements file, so this gate is evidence from the practitioner's
-    machine ONLY and a source-built copy on CI would merely skip; Phase H
-    round 24). The
+    every CI runner: the `CI` workflow installs `[dev]` / `[dev,ml]` and
+    never the requirements file, so this gate is evidence from the
+    practitioner's machine ONLY and a source-built copy on CI would merely
+    skip; Phase H round 24 — the one exception since the installation plan is
+    the `Release` workflow's build, which installs the requirements file with
+    `--require-hashes` into its build environment and runs no tests). The
     runtime's own native-library override is refused at the offline contract
     (codex round 22 PR-MED-033): `llama_cpp` loads its DLL from
     `LLAMA_CPP_LIB_PATH` when that variable is set, so
@@ -1253,7 +1293,8 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     pin (checked BEFORE 2.3 GiB is hashed), the streamed SHA-256 == the pin,
     the runtime imported lazily, then — because the runtime's `verbose=False`
     path duplicates file descriptors 1 and 2 to silence the native log, which
-    a windowed process (`scribe-app.exe` is a `pythonw` launcher) cannot
+    a windowed process (a source checkout's `scribe-app.exe` is a `pythonw`
+    launcher; the installed one is a windowed PyInstaller program) cannot
     satisfy — any of the two that cannot be duplicated is given `devnull` as
     its sink (`_give_std_fds_a_sink`, Phase H round 28; a console process is
     untouched), then the load, then a short smoke generation. Every failure
@@ -1379,8 +1420,10 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `ui/models.language_model_available()` is true (the runtime importable AND
     the model file present — an import probe and a stat, never a load and
     never a decrypt, which is why the tab's 5 s poll may ask it), and
-    `LANGUAGE_MODEL_ABSENT_REASON` names the remedy (`setup-models.py --only
-    language-model` plus the prose-runtime install). A saved-but-unavailable
+    `ui/models.language_model_absent_reason()` names the remedy (from a
+    source checkout `setup-models.py --only language-model` plus the
+    prose-runtime install; in the installed app "reinstall Clinic Scribe" —
+    installation plan Task 1.7, `install_layout.model_remedy`). A saved-but-unavailable
     style is still shown selected-and-disabled beside `style_fallback_line`,
     and Check 5's connective allow-list still ships as
     `config_defaults/prose_connectives.json` (`note_config.PROSE_CONNECTIVES`,
@@ -2056,7 +2099,9 @@ verification are the bridge's. (2) The TypeScript mirror cannot tell `1.0`
 from `1` (a JSON number); Python refuses the float.
 
 THE PIPE (Task 4.2, `pipe_server.py`). Enforced by the OS: the name
-`\\.\pipe\ClinikoScribe-<user SID>` is created with
+`\\.\pipe\ClinikoScribe-<user SID>` (the developer build's is
+`\\.\pipe\ClinikoScribe-dev-<user SID>`, `identity.pipe_prefix`; installation
+plan D3 — its own host connects only to its own app) is created with
 `FILE_FLAG_FIRST_PIPE_INSTANCE`, so a name already held — by an earlier app or
 by anything else — makes creation FAIL (`PipeUnavailable("name_taken")`) and
 the app never shares it; `nMaxInstances = 1`, so one client at a time;
@@ -2781,20 +2826,45 @@ Its temporary file is a fresh name in the chosen folder
 file is removed on every path unless Windows refuses that removal, when it
 stays and the tab shows its one export-failed line.
 
-EXCLUSIONS (`exclusions.py`, `scripts/register-native-host.py`; D10).
-- Windows Error Reporting: the register script writes, and reads back, the
-  per-user values `pythonw.exe`, `scribe-app.exe` and `scribe-host.exe` = 1
-  under `HKCU\Software\Microsoft\Windows\Windows Error Reporting\
-  ExcludedApplications` (what `WerAddExcludedApplication(..., FALSE)` writes);
-  `--unregister` removes only those three values. `pythonw.exe` is needed
-  because the venv launchers start the BASE `pythonw.exe` as a child.
+EXCLUSIONS (`exclusions.py`, `scripts/register-native-host.py`; D10; since
+the installation plan also `packaging/scribe.iss`, its D6/D10).
+- Windows Error Reporting, by channel (installation plan D10, Task 2.4):
+  - the INSTALLED app: the installer writes `scribe-app.exe` and
+    `scribe-host.exe` = 1 under `HKLM\SOFTWARE\Microsoft\Windows\Windows Error
+    Reporting\ExcludedApplications` (machine-wide; uninstall removes them);
+    the start-up check reads HKLM, then HKCU, and is satisfied by either;
+  - a SOURCE checkout (the developer build): the register script writes, and
+    reads back, the per-user values `pythonw.exe`, `scribe-app.exe` and
+    `scribe-host.exe` = 1 under `HKCU\Software\Microsoft\Windows\Windows
+    Error Reporting\ExcludedApplications` (what
+    `WerAddExcludedApplication(..., FALSE)` writes); `--unregister` removes
+    only those three values. `pythonw.exe` is needed because the venv
+    launchers start the BASE `pythonw.exe` as a child.
+- Backup and snapshot (installation plan D6, installed app only): the
+  installer writes one `REG_MULTI_SZ` value `ClinikoScribe` under each of
+  `HKLM\SYSTEM\CurrentControlSet\Control\BackupRestore\FilesNotToBackup` and
+  `...\FilesNotToSnapshot`, holding `$UserProfile$\AppData\Local\ClinikoScribe\
+  sessions\* /s` and `...\logs\* /s` — the live sessions and the logs ONLY.
+  These are REQUESTS that some Windows backup and snapshot tools honour, in
+  part and not all (residue (g)); Past sessions, the audit record, the voice
+  profile, the learned style and the configuration stay backup-eligible by
+  the practitioner's choice, because those are long-lived records whose only
+  other copy would otherwise be none. The developer build's folder is never
+  covered.
 - At start-up, before the window is built, `startup_exclusions` (best effort,
-  never refusing start-up): marks `%LOCALAPPDATA%\ClinikoScribe` and every
-  folder beneath it not-content-indexed; checks, READ-ONLY, where the data
+  never refusing start-up): marks the channel's data folder
+  (`%LOCALAPPDATA%\ClinikoScribe`, or `ClinikoScribe-dev` for a source
+  checkout) and every folder beneath it not-content-indexed; checks,
+  READ-ONLY, where the data
   folder resolves (`realpath`) — inside `%OneDrive%` / `%OneDriveCommercial%`
   / `%OneDriveConsumer%`, on a `\\` path or a remote drive, or inside
   `%APPDATA%` each shows a warning, any other unusual place is logged by code
-  only; and checks the three WER values and the RUNNING program's file name.
+  only; checks the channel's WER values and the RUNNING program's file name;
+  and, in the installed app only, checks that both backup values hold both
+  patterns (`check_backup_exclusions`; a missing or short value is the
+  warning "… not marked to be left out of Windows backups and snapshots (a
+  best-effort setting) — reinstall Clinic Scribe.", an unreadable one "could
+  not check").
   The warnings show on the Status tab and the Past sessions tab and never stop
   recording; each is logged by its code only. Every attribute, drive-type,
   environment, path-resolution and registry call goes through an injected
@@ -2842,15 +2912,23 @@ written in a note is shown as kept. An unsaved Hide-names choice (the file
 could not be written) lasts until the app closes.
 (f) THE CSV IS OUTSIDE CUSTODY — unencrypted, wherever it was saved, holding
 Cliniko ids that identify appointments (THE CSV above).
-(g) ADMIN-ONLY EXCLUSIONS ARE NOT SET. Windows Backup / Volume Shadow Copy
-and third-party backup tools may copy `%LOCALAPPDATA%` (HKLM
-`FilesNotToBackup` / `FilesNotToSnapshot` need admin rights — PLAN.md
-Phase 7's installer).
+(g) BACKUP AND SNAPSHOT EXCLUSIONS ARE BEST-EFFORT AND PARTIAL. Since the
+installation plan the installer sets HKLM `FilesNotToBackup` /
+`FilesNotToSnapshot` for the live sessions and logs of the PRODUCTION folder
+(EXCLUSIONS above), so those files are only MARKED to be left out. What
+honours the marks: Windows Server Backup and wbadmin honour
+`FilesNotToBackup`, partly by deleting matching files at restore, and System
+Restore does not; `FilesNotToSnapshot` is best-effort and not applied to
+`vssadmin` snapshots or Previous Versions; third-party backup tools need
+honour neither. Everything else in the data folder is deliberately
+NOT covered (D6), and a source checkout's `ClinikoScribe-dev` folder is never
+covered. Until the app is installed (Phase P) none of this is set.
 (h) THE PAGEFILE AND HIBERNATION FILE may hold anything the process held in
 memory, including an opened entry's text and names (BitLocker is the
 mitigation, as for NTFS residue).
-(i) THE `pythonw.exe` WER BREADTH. The exclusion stops crash reports for
-EVERY pythonw program of this Windows user, not only the app's
+(i) THE `pythonw.exe` WER BREADTH (a source checkout only — the installed
+app's exclusions name only its own two programs). The exclusion stops crash
+reports for EVERY pythonw program of this Windows user, not only the app's
 (practitioner-accepted). The documented console launch runs `python.exe`,
 which is NOT excluded, and the app says so at start-up ("Crash reports are
 not excluded for this launch (python.exe) — start the app with
@@ -2865,7 +2943,8 @@ refuses recording, and a folder outside `%USERPROFILE%\AppData\Local` for any
 reason other than the three named is logged, not shown.
 (l) VERIFYING ANY OF THIS FROM AN AGENT SHELL PROVES NOTHING: agent shells on
 this machine are MSIX-virtualized for `%LOCALAPPDATA%` and HKCU
-(`docs/lessons.md`); only a run from a normal terminal counts (smoke P.3).
+(`docs/lessons.md`); only a run from a normal terminal counts (smoke P.3; for
+the installed app, the installation plan's Task P.1).
 (m) THIRD-PARTY LOGGERS: a library logger with no handler of its own falls to
 Python's last-resort handler, which prints WARNING and above to stderr —
 outside the app's handlers and the quiet-error rule — with the TRACEBACK of a
@@ -2943,6 +3022,216 @@ the voice-profile and style stores and the configuration files under
 an oversized file to exhaust memory — a denial of service inside boundary 2,
 not a disclosure.
 
+## Installation (installation plan, PLAN.md Phase 7; BUILT 2026-10-02 → 2026-10-03 on branch `installation-build`, NOT YET INSTALLED)
+
+What exists: a packaged (PyInstaller one-folder) build of `scribe-app.exe` and
+`scribe-host.exe`, a per-machine Inno Setup installer (`packaging/scribe.iss`),
+a release build script with a fail-closed bundle audit
+(`scripts/build-release.py`), a CI release workflow with a build-provenance
+attestation (`.github/workflows/release.yml`), a separately shipped model pack
+checked against a committed manifest, and the developer build split off as
+its own channel (`install_layout.py`, `identity.py`). What has NOT run yet,
+so nothing below is proven on a real install: the hashed build lock, the
+models manifest, a real build, the workflow's pins and first run, and the
+installation on this computer (the plan's Phase P, practitioner-run from a
+normal terminal). Everything here is the plan's D1–D12 and C1–C10;
+data-flow-map flows 23–24 and the retention schedule's "Installation" rows
+describe the same surfaces.
+
+THE CHANNEL (D2). A packaged build is the PRODUCTION channel and a source
+checkout the DEV channel, decided by `sys.frozen` alone
+(`install_layout.is_frozen`, never an environment variable). Every production
+identity keeps its value (C2): host name `com.scribe.cliniko_host`, extension
+ID, origin, pipe prefix, data folder `ClinikoScribe`, keyring prefix, every
+DPAPI key description and the mutex name — so the installed app opens the
+existing data, keys and clinic entries unchanged. Only per-channel accessors
+differ (`identity.host_name()`, `install_layout.data_root()`, …). Tests pin
+the production channel by default, so the suite tests what ships.
+
+THE INSTALL FOLDER (D1, D-I1). `C:\Program Files\ClinikoScribe`, installed
+per machine with one administrator approval; its inherited ACL gives standard
+users read and execute only (measured at Task 0.3). Enforced by Windows: a
+standard-user process cannot change the program, the host manifest
+(`{app}\com.scribe.cliniko_host.json`, `allowed_origins` = the production
+origin) or `scribe-host.exe` — which RETIRES the launcher-hijack part of
+boundary 2 for the installed app. Enforced by the code: a packaged build
+started from anywhere else refuses before the log file, the instance guard,
+any data folder or the main window (`install_layout.outside_install_folder`,
+links and junctions resolved first; the app writes one type-name line to
+stderr, when it has one, and shows "Clinic Scribe is not running from
+its install folder — reinstall Clinic Scribe.", the host exits with one
+type-name line on stderr, which Chrome does not show — Task 2.7). The one
+earlier exit is `--self-check-offline`, the build audit's check, which opens
+no window, log or data folder. RESIDUE: an administrator, or malware running
+elevated, can change the folder; the location check is not an integrity
+check; and the build is unsigned, so Windows verifies no signature at run
+time (THE BUILD OF RECORD below).
+
+THE MODELS (D5). The installer copies the model pack (a folder
+`ClinikoScribe-models-<8 hex>` beside `setup.exe`) into `{app}\models`,
+read-only to users. Every file's SHA-256 is compiled into the installer from
+`packaging/models-manifest.json`: all are checked BEFORE anything is copied
+(any mismatch refuses, "Nothing was changed"), and every copy is checked
+AFTER — a damaged copy is deleted where Windows allows it (a delete that
+fails is named, "damaged, and could not be removed"), the Finish page says
+"Clinic Scribe is NOT completely installed … before you open Clinic Scribe"
+and Setup exits 9, never its success code. RESIDUE: a damaged copy that could
+not be deleted stays in `{app}\models` until Setup is run again; whisper and
+silero are not re-verified at load (below), so the practitioner must not open
+the app before that rerun. An upgrade whose installed models already match
+skips the copy. At run time the language model and the speaker model are
+re-verified against their pinned digests at every load; whisper and silero
+are not (their integrity rests on the install-time check and the admin-only
+folder). Contents: silero, whisper `medium`, the speaker model with its
+CC BY 4.0 attribution notice (D-I2) and the language model.
+
+THE INSTALLER (D8, C3). It writes the install folder, an all-users Start-menu
+shortcut and HKLM only, never anything per-user: the Chrome link for the
+production host name, the two
+WER exclusions, the two backup/snapshot values (EXCLUSIONS above) and,
+only if ticked, the clinic-only policy. It never launches the app (no `[Run]`
+section; the Finish page says "Open Clinic Scribe from the Start menu"), so
+the app never runs elevated; `SetupLogging=no`. It refuses while
+`scribe-app.exe`, `scribe-host.exe` or `chrome.exe` runs, and FAILS CLOSED when
+that check cannot run (WMI); it refuses any folder but D-I1; and an upgrade
+or reinstall clears `{app}\_internal` and `{app}\extension` first, so those
+two folders hold exactly the audited bundle (the top-level files are replaced
+by name). RESIDUES: (1) the running-process check is by program name only;
+(2) those folders are cleared before the copy and Inno's rollback does not
+restore them, so an upgrade that fails part-way (a full disk — nothing checks
+free space first — or a Cancel during the long model copy) leaves a program
+that will not start until Setup is run again to the end; the data folder is
+untouched.
+
+THE OPTIONAL CLINIC-ONLY POLICY (D8). An unticked-by-default checkbox writes
+`HKLM\SOFTWARE\Policies\Google\Chrome\NativeMessagingUserLevelHosts` = 0;
+Chrome then ignores EVERY per-user native host (closing HKCU shadowing below)
+and shows "managed by your organization". A value already present that this
+installer did not write is left alone and never removed by this run; a box
+ticked over such a value writes nothing, and the Finish page says the
+setting was already set by something else. An unticked value this installer
+set that could not be removed is said on the Finish page, and Setup exits
+10 (round 27). RESIDUES: (1) an
+upgrade that unticks the box removes the value only if an earlier run of THIS
+installer set it, and Inno's uninstall log keeps that earlier
+`uninsdeletevalue`, so a policy someone else sets AFTER such an untick is
+still removed at uninstall; (2) the app does not read the policy, so with it
+set the Status tab and the host log still read the per-user entries first:
+they can name a per-user entry as the winner (and its verdict — "registered"
+or "NOT registered" — and the per-user warning) while Chrome ignores it and
+uses the installed link; (3) it must stay unticked on a computer that also
+runs the developer build, whose Chrome link is per-user.
+
+HKCU SHADOWING (D9). Chrome looks up a native host per user before machine
+wide (confirmed on this computer at Task 0.2), and in each hive the 32-bit
+registry view before the 64-bit one (from Chromium's source, not observed
+here). The Status tab and the host log read the entries in that order
+(`exclusions.WindowsLayer.native_host_entries`) and report the winning one
+and every other; in a packaged build any per-user entry for the production
+host name adds "Warning: a per-user Chrome link overrides the installed
+one." A manifest or launcher path on a network share — in every separator
+form Windows reads as one, the mixed `\/` and `/\` included (round 27: the
+one test, `install_layout.is_unc_path`, normalises first) — is never opened or
+stat'ed by the app or the host (H.4: no SMB I/O from their own start-up; the
+host logs `host_manifest state=network_path` and the Status tab reads it as
+not registered); Chrome itself would still open it when it launches the
+host — part of the planted-entry residue below. RESIDUE — THE DUAL-USE COMPUTER: on a computer that is also a
+development machine, a per-user production-name entry (today's source-run
+registration, until Phase P step 2 removes it with `register-native-host.py
+--unregister`, or one planted by a same-user process) silently wins over the
+installed link. The warning names it but gives no remedy; nothing refuses
+it; a reinstall does NOT remove it (the installer writes HKLM only, C3) — the
+per-user entry is removed with `register-native-host.py --unregister` from a
+source checkout, or by hand in the registry, from a normal terminal; the
+clinic-only policy is the only control that closes it for good, and it is
+off here. The dev build registers its OWN host name, so it never shadows the
+installed link.
+
+THE BUILD OF RECORD (D7). The `Release` workflow (manual, on `main` only,
+`windows-2025`) installs the hashed build lock and the hash-pinned prose
+wheel into a clean environment, builds PyInstaller from source at a pinned
+commit with its bootloader rebuilt, builds the release extension into the
+bundle, and only then runs the bundle audit (so no third-party npm code runs
+after it, H.4), which fails closed: both programs and the shipped config
+present, NO Qt networking file, the packaged app's offline self-check
+passing with every offline variable set wrong within a time limit, and a
+Defender scan where the runner allows one (a detection fails the build; C10:
+never an exclusion). It then compiles the installer and uploads it; every
+action the workflow runs is pinned to a commit and no shared cache is
+restored into it (H.4); a second job, the only one
+holding an OIDC token and running no command of its own, downloads that
+upload and attests `setup.exe` and `SHA256SUMS.txt` with GitHub's
+build-provenance attestation; `BUILD-INFO.txt`
+records the commit and whether the tree was clean. RESIDUES: (1) THE BUILD IS
+UNSIGNED: Windows cannot vouch for it, SmartScreen may warn, and its
+integrity on this computer rests ENTIRELY on the practitioner running `gh
+attestation verify` and `Get-FileHash` against `SHA256SUMS.txt` before every
+install (`docs/release/pilot-builds.md`) — a skipped check proves nothing;
+(2) the model pack is built once by the practitioner on their own computer
+(`build-release.py --model-pack`), so its integrity rests on the committed
+manifest the installer checks, not on the attestation; (3) a local build is
+for spikes and the model pack, never the build of record, and is marked
+`tree=DIRTY` when built from uncommitted work; (4) until the action pins,
+the Inno Setup installer's SHA-256, the build lock and the models manifest
+land, the workflow fails closed at the first step that needs them; (5)
+GitHub attests only a PUBLIC repository, or a private one on GitHub
+Enterprise Cloud. This repository was checked PUBLIC on 2026-10-03 (plan
+Task 3.6 step 0, round 23), so attestation is available; it stays so only
+while the repository stays public (or moves to Enterprise Cloud). Made
+private without that plan, the attest job fails, no build is attested and
+the first install check can never pass — the build of record then needs a
+decision, never a skipped check.
+
+THE DEVELOPER BUILD (D3, D4, C8). A source checkout keeps its data AND models
+in `%LOCALAPPDATA%\ClinikoScribe-dev`, registers its own host
+`com.scribe.cliniko_host_dev` per user (`register-native-host.py`, dev-only
+since Task 3.7), answers only its own extension (built with `npm run build --
+--mode dev`, its own key and ID, loaded in a SEPARATE Chrome profile) and
+listens on its own pipe. Enforced by the code: it never reads or writes the
+production data folder or models, with two named exceptions: the shared
+`app.lock` (the instance guard above), and `register-native-host.py
+--unregister`, which deletes the old per-user production-name key and the two
+files that registration wrote in the production folder
+(`com.scribe.cliniko_host.json`, `scribe-host.exe` — nothing else), as Phase
+P's migration step. THE DEV WRITE GUARD (D4): in the dev channel "Write draft
+to Cliniko" is refused before anything is read or sent (`dev_build_writes_off`)
+unless "Allow Cliniko writes from this developer build" is ticked on the
+Status tab (`config\dev.json` in the dev folder, off by default); note
+verification and the Clinics tab's Validate still run. A production build has
+no checkbox, never reads the file, and the refusal never applies there.
+RESIDUES: (1) the guard is a setting the same user can tick — it prevents an
+accidental write from a developer build, not a deliberate one; (2) THE
+SHARED CREDENTIAL MANAGER NAMESPACE: both channels store clinic keys under
+`ClinikoScribe/<clinic id>` (the keyring prefix is kept, D3/C2); their entries
+stay apart only because clinic ids are random per data folder, and the
+self-test's `test` entry is common to both; (3) both channels share the
+DPAPI key descriptions, so either channel's process can unwrap the other's
+keys — they are the same Windows user (boundary 2).
+
+UNINSTALL LEAVES THE DATA (C4). Uninstall refuses while the app, its host or
+Chrome runs, then removes the program, `{app}\models` and every HKLM value it
+wrote, and NEVER `%LOCALAPPDATA%\ClinikoScribe`; it says "Your sessions, Past
+sessions and audit record were left in your Windows profile, unchanged." — no
+retention period, since nothing sweeps the folder while the app is
+uninstalled (round 27). RESIDUE: everything in the data folder — Past sessions, the audit record, the
+voice profile, the learned style, the configuration, the logs and any
+unfinished session — and the clinic keys in Credential Manager stay until the
+practitioner removes them; an upgrade or a rollback never touches them.
+
+THE OFFLINE CONTRACT (C1) is unchanged: the installer makes no network
+connection and the installed app downloads nothing. `scripts/check-installed-
+sockets.py` watches the installed app's process tree for connections during a
+transcription and a prose render (Phase P step 10, practitioner-run).
+
+PACKAGED-BUILD ERRORS. A missing or damaged installed file names "reinstall
+Clinic Scribe" instead of a developer script (Task 1.7,
+`install_layout.FROZEN_REMEDY`). The packaged hardware check spawns the app
+itself as its whisper worker (`scribe-app.exe --benchmark-worker` with an
+exact argument shape and an environment gate, D11), which is its own exception
+boundary (one type-name line, exit 1). RESIDUE: a source run's worker
+(`python -m scribe_desktop.benchmark`) still prints a Python traceback to its
+stderr on an exception — developer build only.
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -2951,10 +3240,13 @@ assertion's display `speaker` field, as the spoken-injection defence for
 clinician-owned sections; the ML model's own injection resistance is 3B),
 clinic 2's draft write (its template is unverified until its own test write;
 the write-time template match is the check there — THE DRAFT WRITE residue
-(j)), the admin-only exclusions (HKLM `FilesNotToBackup` /
-`FilesNotToSnapshot`, an installer step — Phase 7), backup/restore of
-Past sessions (deferred by the privacy-professional-controls plan),
-packaging/signing (Phase 7).
+(j)), backup/restore of Past sessions (deferred by the
+privacy-professional-controls plan), code signing (deferred by the
+installation plan: the pilot build is unsigned, D7), an enforced allow-list of
+programs (deferred), a Chrome Web Store listing (excluded), Defender
+exclusions or any weakening of Smart App Control (excluded, C10: a blocked
+unsigned build is a signing trigger), and the second clinic computer's
+installation (the pilot plan).
 
 ## Review triggers
 
@@ -2975,7 +3267,15 @@ for one, cannot write today); the client gains a request shape, a resource or
 a second write, or Cliniko adds a conditional write (a version field — THE
 DRAFT WRITE residue (a) could then close); clinic 2's first draft write;
 or the software is installed on the
-second clinic machine (Phase 7). The local language model HAS landed
+second clinic machine — the installed build on it, which may be a clinic-only
+computer where the optional policy and a different HKCU picture apply. For
+the installation: the first real install on this computer (Phase P — the
+installed app's Status lines, the `reg query` and `icacls` results and the
+socket check are its evidence), signing the build, a change of the install
+folder or its ACL, a new installer write (any key, value or folder), the
+installer gaining a network step or a launch of the app, a change to what the
+model pack contains, or the developer build sharing anything more with the
+production channel. The local language model HAS landed
 (note-learning-and-styles plan Phase 4, 2026-09-20, surface 17), so the next
 trigger on that surface is a change of MODEL or of RUNTIME — a new pin, a new
 quantisation, a different inference library, or a runtime installed by any
@@ -2984,4 +3284,5 @@ controls: a field added to the audit row or the Past-sessions label, a new
 file kept in an entry, a backup or restore of Past sessions (deferred), the
 practice relying on Past sessions as part of the health record, a change of
 the retention default, a second Windows user or machine reading the stores,
-or the admin-only exclusions landing with the Phase 7 installer.
+or the backup and snapshot exclusions widening beyond live sessions and logs
+(they are built into the installer, residue (g)).

@@ -13,6 +13,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import ModuleType, SimpleNamespace
@@ -337,6 +338,17 @@ class _Runner:
         return SimpleNamespace(returncode=code, stdout=out, stderr=err)
 
 
+def test_the_pack_ships_the_apps_own_whisper_model() -> None:
+    """H.3 SIMP-001: the whisper model is named once (``benchmark``); the
+    app's default and the model pack read it, so they cannot drift apart."""
+    from scribe_desktop import benchmark, transcription
+
+    assert transcription.DEFAULT_WHISPER_MODEL is benchmark.SHIPPED_WHISPER_MODEL
+    source = (REPO / "scripts" / "build-release.py").read_text(encoding="utf-8")
+    assert '"medium"' not in source and "WHISPER_PACK_MODEL" not in source
+    assert "SHIPPED_WHISPER_MODEL" in source
+
+
 def test_the_fake_runner_matches_words_never_paths() -> None:
     """Round 20 fix-delta: pytest names a test's temporary folder after the
     test (``…_status0``), so a key found ANYWHERE in the joined command line
@@ -444,6 +456,41 @@ class TestTheAudit:
             "(1: the offline variables; 2: a Qt networking module is importable)"
         ]
 
+    def test_a_self_check_that_never_ends_fails(
+        self, release: ModuleType, tmp_path: Path
+    ) -> None:
+        """Round 23: the self-check is bounded (a start-up error box nobody
+        clicks would otherwise hang the build), and a timeout is a failure."""
+        bundle = _bundle(release, tmp_path)
+        run = _Runner({"--self-check-offline": release.TIMED_OUT})
+        timeouts: list[object] = []
+
+        def recording(command: Any, **kwargs: Any) -> Any:
+            timeouts.append(kwargs.get("timeout"))
+            return run(command, **kwargs)
+
+        assert release.audit_bundle(bundle, recording) == [
+            f"the offline self-check did not finish within {release.SELF_CHECK_TIMEOUT_S} s "
+            "(a start-up error box waiting for a click?)"
+        ]
+        assert timeouts == [release.SELF_CHECK_TIMEOUT_S]
+
+    def test_the_runner_reports_a_timeout_and_refuses_a_missing_tool(
+        self, release: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 23: ``_run`` turns a timeout into ``TIMED_OUT`` and a program
+        that cannot be started into a named refusal, never a traceback."""
+
+        def expire(*args: Any, **kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired(cmd="x", timeout=kwargs["timeout"])
+
+        with monkeypatch.context() as patch:
+            patch.setattr(release.subprocess, "run", expire)
+            assert release._run(["x"], timeout=1).returncode == release.TIMED_OUT
+        missing = tmp_path / "ISCC.exe"
+        with pytest.raises(release.ReleaseError, match="could not start .*ISCC.exe"):
+            release._run([missing, "/?"])
+
     @pytest.mark.parametrize(
         ("code", "verdict"), [(0, "clean"), (3, "detected"), (1, "not run (exit 1)")]
     )
@@ -454,6 +501,18 @@ class TestTheAudit:
         assert release.defender_scan(tmp_path, run) == verdict
         [command] = run.commands
         assert "Start-MpScan -ScanType CustomScan" in command[-1]
+
+    @pytest.mark.parametrize("quote", ["'", "‘", "’", "‚", "‛"])
+    def test_a_quote_in_the_path_never_reaches_powershell(
+        self, release: ModuleType, tmp_path: Path, quote: str
+    ) -> None:
+        """H.4 SEC-004: every character PowerShell reads as a single quote is
+        refused before the scan's command line is built."""
+        run = _Runner()
+        assert release.defender_scan(tmp_path / f"a{quote}b", run) == (
+            "not run (the path holds a quote)"
+        )
+        assert run.commands == []
 
     @pytest.mark.parametrize(("code", "exit_code"), [(3, 1), (0, 0), (1, 0)])
     def test_a_defender_detection_fails_the_audit_cli(
@@ -784,6 +843,37 @@ class TestTheBuildRecord:
         printed = capsys.readouterr().out
         assert f"source   : {'b' * 40} (DIRTY)" in printed
         assert "never the build of record (D7)" in printed
+
+    def test_the_bundle_is_audited_after_the_extension_build(
+        self,
+        release: ModuleType,
+        build_inputs: dict[str, Path],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """H.4 SEC-001: the npm build can write into the bundle, so the bundle
+        audit runs after it and only then is the installer compiled."""
+        out = build_inputs["out"]
+        (out / "dist" / release.COLLECT_NAME).mkdir(parents=True)
+        order: list[str] = []
+
+        def fake_compile(bundle: Path, work: Path, out: Path, iscc: Path, run: Any) -> Path:
+            order.append("compile")
+            setup = out / "installer" / "ClinikoScribe-0.1.0-setup.exe"
+            setup.parent.mkdir(parents=True)
+            setup.write_bytes(b"setup")
+            return setup
+
+        monkeypatch.setattr(
+            release, "build_extension", lambda target, run: order.append("extension")
+        )
+        monkeypatch.setattr(
+            release, "audit_bundle", lambda bundle, run: order.append("audit") or []
+        )
+        monkeypatch.setattr(release, "audit_extension", lambda folder: [])
+        monkeypatch.setattr(release, "compile_installer", fake_compile)
+        run = _Runner(outputs={"rev-parse": "b" * 40 + "\n"})
+        assert release.stage_two(out, Path("ISCC.exe"), defender=False, run=run) == 0
+        assert order == ["extension", "audit", "compile"]
 
 
 class TestTheInstallerCompile:

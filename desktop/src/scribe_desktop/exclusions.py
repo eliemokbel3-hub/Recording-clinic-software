@@ -72,16 +72,15 @@ from scribe_desktop.logging_setup import exception_type_name, log_event
 # process of this user) is the agreed residue. The same key path holds the
 # machine-wide values under HKLM (installation plan D10).
 WER_EXCLUDED_KEY: Final = r"Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications"
-WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
-    "pythonw.exe",
-    "scribe-app.exe",
-    "scribe-host.exe",
-)
 # Installation plan D10 (Task 2.4): the production channel — the installed
 # build — runs only its two executables, and the installer excludes them in
-# HKLM (a per-user value is accepted too). The dev channel keeps the three
-# above, per user.
+# HKLM (a per-user value is accepted too). The dev channel excludes those two
+# plus ``pythonw.exe``, per user (H.3 SIMP-003: the two are named once).
 WER_PRODUCTION_APPLICATIONS: Final[tuple[str, ...]] = ("scribe-app.exe", "scribe-host.exe")
+WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
+    "pythonw.exe",
+    *WER_PRODUCTION_APPLICATIONS,
+)
 WER_EXCLUDED_VALUE: Final = 1
 
 Hive = Literal["HKCU", "HKLM"]

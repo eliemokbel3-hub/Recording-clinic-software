@@ -59,8 +59,10 @@ practice's existing collection notice.]**
 - The program itself sends nothing anywhere else. Windows and other software on the
   computer are a separate matter, and the program's protections there depend on it
   being set up correctly: once set up, Windows does not collect crash reports about it,
-  and it asks Windows not to index the contents of its folder. It cannot stop backup or
-  sync software copying its folder. If crash reports are not excluded, or its folder is
+  and it asks Windows not to index the contents of its folder. Once installed, it also
+  asks Windows backup tools to leave out recordings in progress and its logs; some tools
+  ignore that request, and it never covers the kept transcripts and notes. It cannot
+  stop backup or sync software copying its folder. If crash reports are not excluded, or its folder is
   somewhere that could be copied off the computer (such as OneDrive or a network drive),
   it **warns** your practitioner but keeps working — the practitioner must fix the cause.
   **[Practice: confirm the computer's backup and sync settings.]**

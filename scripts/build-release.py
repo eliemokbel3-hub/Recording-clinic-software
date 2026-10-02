@@ -30,9 +30,11 @@ repository root (or by the CI release job, Task 3.6, for the build itself):
    changed, extra or ignored file), with the bootloader built here (D1;
    the C++ build tools must be installed); ``pip check``. Stage two (the
    build environment's interpreter): PyInstaller over packaging/scribe.spec,
-   the host manifest, ``--audit``, the extension (``npm ci`` and
+   the host manifest, the extension (``npm ci`` and
    ``npm run build -- --mode release``) into the bundle's ``extension``
-   folder, Inno Setup over packaging/scribe.iss with the version from
+   folder, THEN the bundle and extension audits (so no npm code runs after
+   them, round 26 SEC-001) and the Defender scan, then Inno Setup over
+   packaging/scribe.iss with the version from
    desktop/pyproject.toml (D12) and the manifest's hashes compiled in,
    BUILD-INFO.txt (this checkout's commit and whether its tree was clean: a
    local build may carry uncommitted work, D7) and SHA256SUMS.txt over every
@@ -119,7 +121,6 @@ _HEX64 = re.compile(r"^[0-9a-f]{64}$")
 # A manifest path: forward slashes, relative, no dot segments, and nothing an
 # Inno Setup script would read as a constant or a quote.
 _MANIFEST_PATH_PART = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]*$")
-WHISPER_PACK_MODEL = "medium"
 WHISPER_PACK_SUFFIXES = (".bin", ".json", ".txt")
 
 
@@ -211,14 +212,15 @@ def _entry(path: str, file: Path) -> dict[str, Any]:
 
 def _whisper_files(models: Path) -> list[str]:
     _use_this_checkout()
-    from scribe_desktop.benchmark import whisper_snapshot_missing
+    # H.3 SIMP-001: the pack ships the app's own default model, named once.
+    from scribe_desktop.benchmark import SHIPPED_WHISPER_MODEL, whisper_snapshot_missing
 
-    folder = models / "whisper" / WHISPER_PACK_MODEL
+    folder = models / "whisper" / SHIPPED_WHISPER_MODEL
     missing = whisper_snapshot_missing(folder)
     if missing:
         raise ReleaseError(
-            f"whisper/{WHISPER_PACK_MODEL} is incomplete ({', '.join(missing)}); "
-            "fetch it with scripts/setup-models.py --only medium"
+            f"whisper/{SHIPPED_WHISPER_MODEL} is incomplete ({', '.join(missing)}); "
+            f"fetch it with scripts/setup-models.py --only {SHIPPED_WHISPER_MODEL}"
         )
     found = []
     for file in sorted(folder.rglob("*")):
@@ -388,6 +390,13 @@ class Completed:
 
 Runner = Callable[..., Completed]
 
+# Round 23: the return code ``_run`` reports when a command was stopped at its
+# time limit (``subprocess.run`` kills it) — no real process exits with it.
+TIMED_OUT = -999
+# A frozen app that fails at start shows the windowed bootloader's error box,
+# which nobody clicks on a build runner; the self-check is bounded instead.
+SELF_CHECK_TIMEOUT_S = 120
+
 
 def _run(
     command: Sequence[str | os.PathLike[str]],
@@ -395,15 +404,27 @@ def _run(
     cwd: Path | None = None,
     env: Mapping[str, str] | None = None,
     capture: bool = False,
+    timeout: float | None = None,
 ) -> Completed:
-    result = subprocess.run(  # noqa: S603 - fixed argv lists built here
-        [str(part) for part in command],
-        cwd=cwd,
-        env=None if env is None else dict(env),
-        check=False,
-        capture_output=capture,
-        text=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603 - fixed argv lists built here
+            [str(part) for part in command],
+            cwd=cwd,
+            env=None if env is None else dict(env),
+            check=False,
+            capture_output=capture,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return Completed(TIMED_OUT)
+    except OSError as exc:
+        # Round 23: a tool that is not there (ISCC, git, …) is a refusal with
+        # its name, never a raw traceback.
+        raise ReleaseError(
+            f"could not start {command[0]} ({exc.strerror or type(exc).__name__}); "
+            "is it installed, and is the path right?"
+        ) from exc
     return Completed(result.returncode, result.stdout or "", result.stderr or "")
 
 
@@ -429,9 +450,16 @@ def audit_bundle(bundle: Path, run: Runner = _run) -> list[str]:
                 failures.append(f"Qt networking is bundled: {relative.as_posix()}")
     if (bundle / APP_EXE).is_file():
         result = run(
-            [bundle / APP_EXE, SELF_CHECK_FLAG], env=dict(os.environ) | dict(HOSTILE_ENV)
+            [bundle / APP_EXE, SELF_CHECK_FLAG],
+            env=dict(os.environ) | dict(HOSTILE_ENV),
+            timeout=SELF_CHECK_TIMEOUT_S,
         )
-        if result.returncode != 0:
+        if result.returncode == TIMED_OUT:
+            failures.append(
+                f"the offline self-check did not finish within {SELF_CHECK_TIMEOUT_S} s "
+                "(a start-up error box waiting for a click?)"
+            )
+        elif result.returncode != 0:
             failures.append(
                 f"the offline self-check exited {result.returncode} "
                 "(1: the offline variables; 2: a Qt networking module is importable)"
@@ -444,7 +472,9 @@ def defender_scan(bundle: Path, run: Runner = _run) -> str:
     bundle, then the detections that name it. Where Defender cannot run (no
     module, not permitted) the scan is reported as not run, never as clean."""
     folder = str(bundle)
-    if "'" in folder:
+    # H.4 SEC-004: PowerShell also ends a single-quoted string at the curly
+    # single quotes U+2018–U+201B, so they are refused with the plain one.
+    if any(quote in folder for quote in "'‘’‚‛"):
         return "not run (the path holds a quote)"
     script = (
         f"Start-MpScan -ScanType CustomScan -ScanPath '{folder}' -ErrorAction Stop; "
@@ -728,8 +758,11 @@ def stage_two(out: Path, iscc: Path, *, defender: bool, run: Runner = _run) -> i
     (bundle / host_manifest_name()).write_text(
         json.dumps(host_manifest(), indent=2) + "\n", encoding="utf-8"
     )
-    failures = audit_bundle(bundle, run)
+    # H.4 SEC-001: the extension's build (third-party npm code, with write
+    # access to the bundle) runs BEFORE the bundle audit, so nothing it could
+    # change in the program goes unaudited into the installer.
     build_extension(bundle / "extension", run)
+    failures = audit_bundle(bundle, run)
     failures += audit_extension(bundle / "extension")
     if failures:
         raise ReleaseError("the bundle audit failed: " + "; ".join(failures))

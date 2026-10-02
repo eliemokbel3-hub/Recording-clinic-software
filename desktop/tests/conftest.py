@@ -147,6 +147,47 @@ def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         pytest.fail("a test left the app's exception hooks installed (C6)")
 
 
+NETWORK_IO_METHODS: tuple[str, ...] = (
+    "exists",
+    "is_file",
+    "is_dir",
+    "stat",
+    "open",
+    "read_text",
+    "read_bytes",
+    "iterdir",
+)
+
+
+def forbid_network_io(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installation plan round 28 PR-LOW-030: for a network-refusal test,
+    each ``pathlib.Path`` method in ``NETWORK_IO_METHODS`` RAISES on a network
+    path (``install_layout.is_unc_path``) before it reaches the filesystem,
+    so a regressed guard whose I/O goes through one of those methods fails
+    the test with no SMB I/O; local paths (the test's own ``tmp_path``
+    files) pass through.
+
+    Round 30 PR-LOW-034 — what it does NOT cover: direct ``os`` calls
+    (``os.stat``, ``os.path.*``), the built-in ``open``, ``Path`` methods not
+    listed, and a native library handed a ``str`` path (CTranslate2,
+    onnxruntime, llama.cpp — each test stubs that import or factory
+    instead). Today every guarded function's post-guard file access is a
+    listed method."""
+    import pathlib
+
+    for method in NETWORK_IO_METHODS:
+        real = getattr(pathlib.Path, method)
+
+        def guarded(
+            self: pathlib.Path, *args: Any, _real: Any = real, _method: str = method, **kwargs: Any
+        ) -> Any:
+            if install_layout.is_unc_path(self):
+                raise AssertionError(f"Path.{_method} reached a network path: {self}")
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, method, guarded)
+
+
 def bounded_read_spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:
     """Privacy-professional-controls round 37 PR-LOW-031: record the size
     every ``read`` asks for on a binary stream opened (``Path.open("rb")``)

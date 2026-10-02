@@ -169,7 +169,7 @@ def _install_under(
     """Every path the script writes points under ``tmp_path``; ``winreg`` is
     the fake (the script imports it inside ``register`` / ``unregister``)."""
     if " " in str(tmp_path):
-        pytest.skip("the script refuses an install folder with a space (Chrome's rule)")
+        pytest.skip("the script refuses an install folder with a space (a conservative guard)")
     venv = tmp_path / "venv"
     venv.mkdir()
     (venv / "scribe-host.exe").write_bytes(b"MZ")
@@ -270,9 +270,11 @@ def test_unregister_removes_a_stray_production_link_and_only_its_two_files(
     assert f"HKCU\\{identity.REGISTRY_KEY}" in capsys.readouterr().out
 
 
-def _in_use_error() -> PermissionError:
+def _in_use_error(winerror: int = 32) -> PermissionError:
     error = PermissionError(13, "The process cannot access the file")
-    error.winerror = 32  # type: ignore[attr-defined]  # ERROR_SHARING_VIOLATION
+    # 32 ERROR_SHARING_VIOLATION (a held file); 5 ERROR_ACCESS_DENIED (a
+    # running program's image being deleted).
+    error.winerror = winerror  # type: ignore[attr-defined]
     return error
 
 
@@ -297,12 +299,16 @@ def test_register_says_close_chrome_when_the_host_is_held(
     assert registry.keys == {}  # nothing registered
 
 
+@pytest.mark.parametrize("winerror", [32, 5], ids=["held-open", "running-image"])
 def test_unregister_says_close_chrome_when_a_file_is_held(
     script: ModuleType,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    winerror: int,
 ) -> None:
+    # Round 22: deleting the host exe Chrome is RUNNING is refused with
+    # ERROR_ACCESS_DENIED (5), not the sharing violation (32) a copy meets.
     registry = FakeWinreg()
     _install_under(script, tmp_path, monkeypatch, registry)
     assert script.register() == 0
@@ -311,12 +317,29 @@ def test_unregister_says_close_chrome_when_a_file_is_held(
 
     def unlink(self: Path, missing_ok: bool = False) -> None:
         if self.name == "scribe-host.exe":
-            raise _in_use_error()
+            raise _in_use_error(winerror)
         original(self, missing_ok)
 
     monkeypatch.setattr(Path, "unlink", unlink)
     assert script.unregister() == 1
-    assert "Close Clinic Scribe and Chrome completely" in capsys.readouterr().err
+    out = capsys.readouterr()
+    assert "Close Clinic Scribe and Chrome completely" in out.err
+    assert out.out.startswith("removed  : ")  # what was already removed is said
+
+
+def test_a_running_image_is_in_use_only_when_deleting(
+    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A register COPY refused with ERROR_ACCESS_DENIED is a real permission
+    problem, raised as before; only a delete reads it as the running host."""
+    _install_under(script, tmp_path, monkeypatch, FakeWinreg())
+
+    def denied(*args: object, **kwargs: object) -> None:
+        raise _in_use_error(5)
+
+    monkeypatch.setattr(script.shutil, "copy2", denied)
+    with pytest.raises(PermissionError):
+        script.register()
 
 
 def test_another_os_error_is_not_mistaken_for_in_use(

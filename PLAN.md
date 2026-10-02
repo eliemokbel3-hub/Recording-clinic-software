@@ -164,6 +164,16 @@ See `docs/security/threat-model.md` ("Privacy and professional controls") for wh
 - Connect each machine only to its authorised Cliniko account or accounts.
 - Proceed to routine personal use only after high-risk findings are resolved or explicitly controlled.
 
+**Delivery note — installation, BUILT but NOT YET INSTALLED (2026-10-03).** Phase 7 is split in two plans. The installation half (bullets 4–5) is `.cursor/plans/plan-installation.md`, built on branch `installation-build`; the pilot half (bullets 1–3 and 6) is the next plan, `plan-pilot.md`, not yet written. As built:
+- *Installed separately:* a packaged desktop companion (`scribe-app.exe`, `scribe-host.exe`) and a per-machine installer that puts it in `C:\Program Files\ClinikoScribe`, a folder a standard user cannot change; the extension ships inside it and is loaded unpacked from there; the models come as a separate model pack that the installer checks file by file against hashes compiled into it, and the app never downloads anything. The installer writes the Chrome link, the crash-report exclusions and — best-effort — the backup and snapshot exclusions for live recordings and logs, all machine-wide, never launches the app, and on uninstall keeps the data folder.
+- *Build of record:* a manual CI `Release` workflow on `main` with a build-provenance attestation; the build is UNSIGNED for the pilot, so every install starts with `gh attestation verify` and a hash check (`docs/release/pilot-builds.md`).
+- *Developer build kept apart:* a source checkout is now a separate developer channel with its own data and models folder, Chrome link and extension, and it refuses Cliniko writes unless its own setting allows them; only one of the two runs at a time.
+- *Hardware check:* the Microphone tab's benchmark now also times the local language model's prose stage, so the installed computer is benchmarked after install.
+- *Authorised accounts* (bullet 5): unchanged by this plan — each clinic is added and validated on the Clinics tab; the installation records the authorised hosts at its Phase P.
+- **Still to run (practitioner):** the hashed build lock, the models manifest and model pack, a re-check that GitHub can still attest this repository (it was public on 2026-10-03, which attestation needs unless it moves to GitHub Enterprise Cloud), the workflow's pins and its first green run, the Inno Setup licence question, and the plan's Phase P — the first install on this computer (verify, install, the Status, registry, ACL, no-network and crash-recovery checks), the hardware check on it, and an upgrade-and-rollback smoke. The second clinic computer follows with the pilot.
+
+See `docs/security/threat-model.md` ("Installation") for what each control does and does not enforce.
+
 ## Test plan and acceptance criteria
 
 ### Safety and workflow

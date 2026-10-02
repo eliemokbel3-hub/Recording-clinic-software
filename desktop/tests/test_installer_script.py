@@ -91,6 +91,18 @@ def _code() -> str:
     return re.split(r"^\[Code\]$", TEXT, maxsplit=1, flags=re.MULTILINE)[1]
 
 
+def _com_objects() -> list[str]:
+    """Every COM object ``[Code]`` creates or gets (by ProgID)."""
+    return re.findall(r"\b(?:CreateOleObject|GetActiveOleObject)\('([^']*)'\)", _code())
+
+
+# A WMI call that changes anything — starting a process included — rather
+# than reading (round 22).
+_WMI_ACTIONS = re.compile(
+    r"\.(?:Get|Create|ExecMethod_?|SpawnInstance_?|Put_?|Delete_?)\s*\(", re.IGNORECASE
+)
+
+
 class TestSetup:
     def test_per_machine_admin_install_with_no_setup_log(self) -> None:
         setup = _setup()
@@ -126,6 +138,34 @@ class TestSetup:
         assert all(entry["Root"] == "HKLM64" for entry in _registry())
 
 
+class TestNoNetworkAndNoDefenderChange:
+    """Round 22: C1 (the installer makes no network connection) and C10 (no
+    Defender exclusion or weakening anywhere in the release path), pinned on
+    the surfaces that could do either."""
+
+    def test_the_installer_reaches_no_network(self) -> None:
+        for forbidden in ("DownloadTemporaryFile", "CreateDownloadPage", "://"):
+            assert forbidden not in TEXT, forbidden
+        # The only COM object is the local WMI locator, on this computer ('.').
+        assert _com_objects() == ["WbemScripting.SWbemLocator"]
+        assert "ConnectServer('.', 'root\\CIMV2')" in _code()
+
+    def test_no_release_file_touches_defender_settings(self) -> None:
+        files = (
+            ISS,
+            REPO / "scripts" / "build-release.py",
+            REPO / ".github" / "workflows" / "release.yml",
+        )
+        forbidden = re.compile(
+            r"Add-MpPreference|Set-MpPreference|Exclusion(?:Path|Process|Extension)|"
+            r"DisableRealtimeMonitoring|Windows Defender\\Exclusions",
+            re.IGNORECASE,
+        )
+        for path in files:
+            assert not forbidden.search(path.read_text(encoding="utf-8")), path.name
+        assert forbidden.search("Add-MpPreference -ExclusionPath C:\\x")
+
+
 class TestNeverLaunchesTheApp:
     def test_nothing_launches_a_program(self) -> None:
         """D8: Inno's runasoriginaluser cannot guarantee an unelevated launch,
@@ -143,6 +183,18 @@ class TestNeverLaunchesTheApp:
             re.IGNORECASE,
         )
         assert not launches.search(_code())
+        # Round 22: WMI can start a process too (Win32_Process.Create). The
+        # one COM object is the WMI locator, and its one use is a SELECT.
+        assert _com_objects() == ["WbemScripting.SWbemLocator"]
+        assert not _WMI_ACTIONS.search(_code())
+        [query] = re.findall(r"ExecQuery\('([^']*)", _code())
+        assert query.startswith("SELECT ")
+
+    def test_the_wmi_check_sees_a_wmi_launch(self) -> None:
+        """The WMI half above is not vacuous."""
+        assert _WMI_ACTIONS.search("Service.Get('Win32_Process').Create('scribe-app.exe', ...)")
+        assert _WMI_ACTIONS.search("Proc.ExecMethod_('Create', Params)")
+        assert not _WMI_ACTIONS.search("Found := Service.ExecQuery('SELECT ProcessId')")
 
     def test_the_launch_check_sees_a_launch(self) -> None:
         """The check above is not vacuous: each launching form is caught."""
@@ -237,6 +289,16 @@ class TestTheRegistry:
         assert "if PolicyLeft then" in finish
         assert "The clinic-only Chrome setting could not be removed." in finish
 
+    def test_a_ticked_box_over_someone_elses_value_is_said(self) -> None:
+        """Round 22: ticked, but the value is someone else's, so nothing is
+        written (``Check: PolicyIsOurs``) — the Finish page says so instead of
+        a silent "installed"."""
+        [policy] = [e for e in _registry() if e.get("ValueName") == "{#PolicyValue}"]
+        assert policy["Check"] == "PolicyIsOurs" and policy["Tasks"] == "clinicpolicy"
+        finish = _body("procedure CurPageChanged")
+        assert "if WizardIsTaskSelected('clinicpolicy') and PolicyForeign then" in finish
+        assert "was already set on this computer by something else" in finish
+
 
 class TestTheModels:
     def test_every_model_is_checked_before_anything_is_copied(self) -> None:
@@ -301,6 +363,14 @@ class TestTheModels:
         assert "'Clinic Scribe is NOT completely installed.'" in finish
         assert "Run Setup again with the model pack beside it" in finish
 
+    def test_an_incomplete_install_never_exits_with_success(self) -> None:
+        """Round 27 PR-MED-019: a damaged model (or a policy that could not be
+        removed) makes Setup's exit code non-zero, past Inno's own 0-8."""
+        exit_code = _body("function GetCustomSetupExitCode(): Integer;")
+        assert "Result := 0;" in exit_code
+        assert "if ModelsIncomplete then\n    Result := 9" in exit_code
+        assert "else if PolicyLeft then\n    Result := 10;" in exit_code
+
     def test_the_checks_share_one_file_test(self) -> None:
         first = _body("function FirstModelMismatch")
         assert "ModelFileMatches(Folder + ModelPaths[I], ModelHashes[I])" in first
@@ -324,10 +394,13 @@ class TestRunningProgramsAndUninstall:
 
     def test_uninstall_says_the_data_stays_c4(self) -> None:
         code = _code()
+        # Round 27 PR-LOW-020: no retention period is claimed (nothing sweeps
+        # after an uninstall).
         assert (
-            "Your sessions, Past sessions and audit record stay in your Windows profile "
-            "(kept 7 years)."
+            "Your sessions, Past sessions and audit record were left in your Windows "
+            "profile, unchanged."
         ) in code
+        assert "kept 7 years" not in code
         assert "usPostUninstall" in code
         # Nothing under the user's profile is named for deletion.
         for section in ("UninstallDelete", "InstallDelete"):

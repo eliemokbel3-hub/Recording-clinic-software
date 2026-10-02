@@ -40,7 +40,7 @@ from typing import Any
 
 import pytest
 
-from conftest import real_ml_skip_reason
+from conftest import forbid_network_io, real_ml_skip_reason
 from scribe_desktop import language_model as lm
 from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 
@@ -442,7 +442,11 @@ class TestLoadContract:
         assert "LLAMA_CPP_LIB_PATH" not in os.environ
         assert_offline_env()
 
-    def test_unc_path_is_refused_before_the_factory(self) -> None:
+    def test_unc_path_is_refused_before_the_factory(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Installation plan round 29 PR-LOW-033: the presence check runs
+        # before the factory, so a regressed UNC guard must fail at the
+        # filesystem call, not reach the share.
+        forbid_network_io(monkeypatch)
         record: list[dict[str, Any]] = []
         with pytest.raises(lm.LanguageModelError, match="UNC"):
             lm.LocalLanguageModel(
@@ -711,7 +715,13 @@ class TestAvailability:
         present.write_bytes(b"not really a model")
         assert lm.language_model_file_available(present) is True
 
-    def test_unc_path_reports_unavailable_without_touching_it(self) -> None:
+    def test_unc_path_reports_unavailable_without_touching_it(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Installation plan round 29 PR-LOW-033: "without touching it" is
+        # enforced through the probe's file access — each `Path` method in
+        # `NETWORK_IO_METHODS` raises on the network path (round 30).
+        forbid_network_io(monkeypatch)
         assert lm.language_model_file_available(Path(r"\\server\share\m.gguf")) is False
 
     def test_default_path_probe_follows_localappdata(

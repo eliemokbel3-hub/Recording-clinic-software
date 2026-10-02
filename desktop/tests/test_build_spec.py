@@ -106,9 +106,39 @@ class TestTheTwoPrograms:
         assert "sys.exit(main())" in app_entry and "sys.exit(main())" in host_entry
 
     def test_the_version_comes_from_pyproject(self) -> None:
-        source = SPEC.read_text(encoding="utf-8")
-        assert '"pyproject.toml"' in source and '["version"]' in source
-        assert "VSVersionInfo" in source
+        """D12, on the semantic surface (round 22): ``VERSION`` is read from
+        pyproject's ``[project] version``, every program's resource is built
+        by ``_version_info``, and that function — executed with recording
+        stand-ins for PyInstaller's classes — puts ``VERSION`` and nothing
+        else in every version field."""
+        expected = ast.parse(
+            'tomllib.loads((REPO / "desktop" / "pyproject.toml")'
+            '.read_text(encoding="utf-8"))["project"]["version"]'
+        ).body[0]
+        assert isinstance(expected, ast.Expr)
+        assert ast.unparse(_assigned("VERSION")) == ast.unparse(expected.value)
+        for exe in _calls("EXE"):
+            call = _kwargs(exe)["version"]
+            assert isinstance(call, ast.Call) and ast.unparse(call.func) == "_version_info"
+        [node] = [
+            n for n in _tree().body if isinstance(n, ast.FunctionDef) and n.name == "_version_info"
+        ]
+        namespace: dict[str, Any] = {
+            "VERSION": "7.8.9",
+            "StringStruct": lambda key, value: (key, value),
+            "StringTable": lambda _lang, strings: strings,
+            "StringFileInfo": lambda tables: tables,
+            "VarStruct": lambda *args: args,
+            "VarFileInfo": lambda structs: structs,
+            "FixedFileInfo": lambda **fields: fields,
+            "VSVersionInfo": lambda **fields: fields,
+        }
+        exec(compile(ast.Module([node], []), str(SPEC), "exec"), namespace)  # noqa: S102
+        info = namespace["_version_info"]("Clinic Scribe", "scribe-app.exe")
+        assert info["ffi"] == {"filevers": (7, 8, 9, 0), "prodvers": (7, 8, 9, 0)}
+        [[strings], _var] = info["kids"]
+        fields = dict(strings)
+        assert fields["FileVersion"] == fields["ProductVersion"] == "7.8.9"
 
 
 class TestTheBundleScope:

@@ -121,7 +121,9 @@ end;
 
 function KeptDataMessage(): String;
 begin
-  Result := 'Your sessions, Past sessions and audit record stay in your Windows profile (kept 7 years).';
+  // Round 27 PR-LOW-020: no retention period is claimed — after an uninstall
+  // nothing sweeps, so the data stays exactly as it was.
+  Result := 'Your sessions, Past sessions and audit record were left in your Windows profile, unchanged.';
 end;
 
 var
@@ -208,9 +210,12 @@ begin
 end;
 
 // Round 20 PR-HIGH-003: AFTER the copy, EVERY manifest file under Folder is
-// checked, never only the first. Each bad copy is removed, so the app reports
-// the model missing and never loads damaged bytes; a removal that fails is
-// named. The bad files, one per line, or '' when every one matches.
+// checked, never only the first. Removing each bad copy is ATTEMPTED (a
+// removed one then reads as missing); one that could not be removed is named
+// "(damaged, and could not be removed)", Setup exits 9
+// (GetCustomSetupExitCode) and the app must not be opened before Setup is run
+// again (round 28 PR-LOW-031). The bad files, one per line, or '' when every
+// one matches.
 function RemoveDamagedModels(const Folder: String): String;
 var
   I: Integer;
@@ -256,7 +261,10 @@ end;
 procedure InitializeWizard();
 begin
   // Set by someone else (a value present that this installer did not
-  // write): left exactly as it is, and never removed on uninstall.
+  // write): left exactly as it is, and not removed by THIS run's uninstall
+  // record. Residue (threat model, "Installation"): an earlier run that set
+  // the value logged its removal, and Inno keeps that log entry, so a value
+  // someone sets after a later untick is still removed at uninstall.
   PolicyForeign := RegValueExists(HKLM64, '{#PolicyKey}', '{#PolicyValue}') and
     (GetPreviousData('ClinicOnlyPolicy', '0') <> '1');
 end;
@@ -356,6 +364,25 @@ begin
     WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
       'The clinic-only Chrome setting could not be removed. Run Setup again; if it stays, ' +
       'ask whoever manages this computer.';
+  // Round 22: a ticked box over a value someone else set writes nothing (the
+  // value is left exactly as it is), so the Finish page says so.
+  if WizardIsTaskSelected('clinicpolicy') and PolicyForeign then
+    WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+      'The clinic-only Chrome setting was already set on this computer by something else, ' +
+      'so Setup left it exactly as it is. Ask whoever manages this computer what it is set to.';
+end;
+
+// Round 27 PR-MED-019: a run that left a damaged model, or could not remove
+// the clinic-only setting an earlier run set, does not end with Setup's
+// success code. Inno calls this only when Setup ran to completion and would
+// otherwise exit 0; 1-8 are Inno's own codes, so these are 9 and 10.
+function GetCustomSetupExitCode(): Integer;
+begin
+  Result := 0;
+  if ModelsIncomplete then
+    Result := 9
+  else if PolicyLeft then
+    Result := 10;
 end;
 
 function InitializeUninstall(): Boolean;

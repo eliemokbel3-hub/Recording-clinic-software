@@ -35,6 +35,7 @@ import pytest
 
 from conftest import (
     REAL_MODELS_ROOT,
+    forbid_network_io,
     on_real_ml_root,
     real_ml_models_root,
     real_ml_skip_reason,
@@ -156,10 +157,27 @@ class TestWorkerDispatch:
              "--audio", "a", "--audio-seconds", "1"],
             # the flag anywhere but first
             ["x", *_TAIL, "--benchmark-worker", "--audio-seconds", "1"],
+            # round 24: seconds the worker's parser would refuse (exit 2)
+            ["x", "--benchmark-worker", *_TAIL, "--audio-seconds", "abc"],
+            # round 27 PR-MED-021: a network value of any path option
+            ["x", "--benchmark-worker", "--single", "medium", "--models-root", r"\\h\s",
+             "--audio", r"C:\t\s.wav", "--audio-seconds", "1"],
+            ["x", "--benchmark-worker", "--single", "medium", "--models-root", r"C:\m",
+             "--audio", "//h/s/a.wav", "--audio-seconds", "1"],
+            ["x", "--benchmark-worker", "--single", r"\/h/s/medium", "--models-root", r"C:\m",
+             "--audio", r"C:\t\s.wav", "--audio-seconds", "1"],
         ],
     )
     def test_anything_else_is_not_the_worker(self, argv: list[str]) -> None:
         assert not benchmark.is_worker_argv(argv)
+
+    def test_a_packaged_build_never_spawns_a_network_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 27 PR-MED-021: the frozen worker_argv refuses its own UNC shape.
+        use_frozen(monkeypatch, True)
+        with pytest.raises(RuntimeError, match="not admissible"):
+            _worker(Path(r"\\h\s\models"))
 
     def test_run_worker_needs_the_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
         use_frozen(monkeypatch, True)
@@ -755,6 +773,61 @@ class TestRegistrationStatus:
         )
         assert not status.read_registration_status(_Layer((machine,))).per_user_override
 
+    def test_a_broken_per_user_winner_is_not_told_to_reinstall(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 23: the installer writes HKLM only, so "reinstall" cannot fix
+        # a broken per-user entry that Chrome uses.
+        broken = HostEntry("HKCU", "32", _manifest(tmp_path, "u", launcher=False))
+        good = HostEntry("HKLM", "64", _manifest(tmp_path, "m"))
+        use_frozen(monkeypatch, True)
+        got = status.read_registration_status(_Layer((broken, good)))
+        assert not got.registered and got.per_user_override
+        assert status.registration_lines(got) == (
+            "Registration: NOT registered — the per-user Chrome link that Chrome uses is "
+            "broken, and reinstalling does not remove it",
+            status.PER_USER_OVERRIDE_LINE,
+        )
+        # With no per-user entry the installed app's remedy is still a reinstall.
+        missing = HostEntry("HKLM", "64", _manifest(tmp_path, "m2", launcher=False))
+        lines = status.registration_lines(status.read_registration_status(_Layer((missing,))))
+        assert lines == ("Registration: NOT registered — reinstall Clinic Scribe",)
+
+    @pytest.mark.parametrize(
+        "unc",
+        [
+            r"\\host\share\host.json",
+            "//host/share/host.json",
+            # Round 27 PR-MED-020: the mixed-separator forms Windows reads as UNC.
+            r"\/host/share/host.json",
+            "/\\host\\share\\host.json",
+        ],
+    )
+    def test_a_network_manifest_is_never_touched(
+        self, unc: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # H.4 SEC-003: no stat or read of a network-share path (no SMB I/O at
+        # start-up, C1); it reads as not registered. Round 28 PR-LOW-030: a
+        # regressed guard fails here at its first listed `Path` call.
+        forbid_network_io(monkeypatch)
+        got = status.read_registration_status(_Layer((HostEntry("HKCU", "32", unc),)))
+        assert got.checked and not got.registered and not got.manifest_exists
+
+    @pytest.mark.parametrize(
+        "launcher",
+        [r"\\host\share\scribe-host.exe", r"\/host/share/scribe-host.exe"],
+    )
+    def test_a_network_launcher_is_never_touched(
+        self, launcher: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        manifest = tmp_path / "host.json"
+        manifest.write_text(json.dumps({"path": launcher}), "utf-8")
+        # Round 28 PR-LOW-030: the local manifest is read; the network
+        # launcher fails the test at its first listed `Path` call if reached.
+        forbid_network_io(monkeypatch)
+        got = status.read_registration_status(_Layer((HostEntry("HKLM", "64", str(manifest)),)))
+        assert got.manifest_exists and not got.launcher_exists and not got.registered
+
     @pytest.mark.parametrize("body", ['["x"]', '{"path": 7}', '"text"', "not json"])
     def test_a_malformed_manifest_is_not_registered_never_a_crash(
         self, tmp_path: Path, body: str
@@ -814,12 +887,48 @@ class TestHostRegistrationLog:
     def test_none_found(self, caplog: pytest.LogCaptureFixture) -> None:
         assert self._messages(caplog, _Layer()) == ["host_manifest state=absent"]
 
+    @pytest.mark.parametrize("which", ["production", "dev"])
+    def test_it_reads_this_channels_key(
+        self, which: install_layout.Channel, monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        # Round 22 (D9): the host log and the Status line read the SAME key —
+        # this channel's host name — so the log's winner is Chrome's.
+        use_channel(monkeypatch, which)
+        layer = _Layer()
+        self._messages(caplog, layer)
+        status_layer = _Layer()
+        status.read_registration_status(status_layer)
+        assert layer.keys == status_layer.keys == [nh.identity.registry_key(which)]
+
     def test_anything_unreadable_is_one_line_never_a_crash(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
         assert self._messages(caplog, _Layer(broken=True)) == ["host_manifest state=unreadable"]
         missing = HostEntry("HKLM", "64", str(tmp_path / "absent.json"))
         assert self._messages(caplog, _Layer((missing,)))[-1] == "host_manifest state=unreadable"
+
+    @pytest.mark.parametrize(
+        "unc",
+        [
+            r"\\host\share\host.json",
+            "//host/share/host.json",
+            r"\/host/share/host.json",
+            "/\\host\\share\\host.json",
+        ],
+    )
+    def test_a_network_manifest_is_logged_never_opened(
+        self, unc: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # H.4 SEC-003: a planted network-share value causes no SMB I/O.
+        def refuse(self: Path, *args: Any, **kwargs: Any) -> str:
+            raise AssertionError(f"opened {self}")
+
+        monkeypatch.setattr(Path, "read_text", refuse)
+        assert self._messages(caplog, _Layer((HostEntry("HKCU", "32", unc),))) == [
+            f"host_manifest count=1 detail_code=hkcu_32 path={unc}",
+            "host_manifest state=network_path",
+        ]
 
     def test_reaching_the_real_layer_is_never_swallowed(self) -> None:
         # Round 13 LOW-003: the conftest's C6 sentinel fails loudly, not as
@@ -1074,6 +1183,25 @@ def test_every_real_model_child_loads_from_the_dev_root() -> None:
         ), name
     for name in set(children) - real:
         assert _CHILD_PIN not in children[name], name
+
+
+# The one child that is the source run's own native host (the dev channel by
+# design: the parent speaks the dev origin to it, as Chrome would to a dev host).
+_DEV_HOST_CHILDREN = frozenset({"_HOST_RELAY_CHILD"})
+
+
+def test_every_app_child_proves_the_production_channel() -> None:
+    """Round 22 (D2): the no-sockets proof children run the app as it SHIPS,
+    so each pins the production channel and a source run's ``is_frozen``,
+    class-closed over the integration module's child scripts."""
+    children = _child_sources()
+    assert _DEV_HOST_CHILDREN <= set(children)
+    for name in set(children) - _DEV_HOST_CHILDREN:
+        source = children[name]
+        assert 'install_layout.channel = lambda: "production"' in source, name
+        assert "install_layout.is_frozen = lambda: False" in source, name
+    for name in _DEV_HOST_CHILDREN:
+        assert "install_layout.channel = lambda" not in children[name], name
 
 
 _REAL_MODEL_PROBES = frozenset(

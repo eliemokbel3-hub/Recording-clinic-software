@@ -162,10 +162,13 @@ def instance_guard_root() -> Path:
     installed app and a dev run then all contend for one file; (b) it lies in
     this user's own profile, which another standard account can neither open
     nor create in (the property the lock relies on); (c) D3/C8 name the guard
-    as the one thing the dev channel shares. The dev channel only ever holds
+    as the one thing the RUNNING dev app shares. The dev app only ever holds
     ``app.lock`` there, creating the folder if it is absent, and reads or
-    writes nothing else in it."""
-    return _data_root_from(os.environ.get("LOCALAPPDATA"), "production")
+    writes nothing else in it; C8's other named exception is not the app but
+    the one-time ``register-native-host.py --unregister`` migration, which
+    deletes the old per-user registration's two files there (round 28
+    PR-LOW-032)."""
+    return data_root("production")
 
 
 def executable() -> str:
@@ -244,6 +247,46 @@ def registration_remedy() -> str:
     return "run scripts/register-native-host.py again from a normal terminal"
 
 
+# The Win32 extended-length and device prefixes and the NT object-namespace
+# prefix, after ``/`` → ``\`` (round 28 PR-LOW-028).
+_DEVICE_PREFIXES: Final = ("\\\\?\\", "\\\\.\\", "\\??\\")
+
+
+def is_unc_path(path: str | os.PathLike[str]) -> bool:
+    """A network (UNC) path, or a device-namespace path that is not a plain
+    drive: ``\\\\server\\share…``, ``//server/share…`` and the mixed
+    ``\\/server/…`` / ``/\\server\\…`` forms, which Windows reads as UNC too —
+    so the separators are normalised the way ``pathlib`` does before the test
+    (round 27 PR-MED-020: a RAW string, such as a registry value, would
+    otherwise pass). The one definition (H.4 SEC-003).
+
+    Round 28 PR-LOW-028: the extended and device prefixes (``\\\\?\\``,
+    ``\\\\.\\`` and the NT ``\\??\\``) are judged by an ALLOW-list — local only
+    when a drive follows (``\\\\?\\C:\\…``); ``\\\\?\\UNC\\…`` and every other
+    form after them (``GLOBALROOT\\Device\\Mup\\…`` reaches the network too,
+    ``Volume{…}``, pipes) count as network, failing closed. Mapped network
+    drive letters stay the documented residue.
+
+    Its callers refuse such a path BEFORE any filesystem touch: the model
+    loaders and probes, the benchmark, and the Chrome-link registry readers.
+    The custody stores (sessions, audit, Past sessions, profile, config,
+    clinics) deliberately do NOT refuse — a folder-redirected
+    ``LOCALAPPDATA`` puts them on SMB, the accepted residue
+    (``session_store.default_sessions_root``)."""
+    text = str(path).replace("/", "\\")
+    for prefix in _DEVICE_PREFIXES:
+        if text.startswith(prefix):
+            rest = text[len(prefix) :]
+            return not (
+                len(rest) >= 2
+                and rest[0].isascii()
+                and rest[0].isalpha()
+                and rest[1] == ":"
+                and (len(rest) == 2 or rest[2] == "\\")
+            )
+    return text.startswith("\\\\")
+
+
 __all__ = [
     "APP_FOLDER_NAME",
     "BACKUP_VALUE_NAME",
@@ -267,6 +310,7 @@ __all__ = [
     "install_root",
     "instance_guard_root",
     "is_frozen",
+    "is_unc_path",
     "model_pack_name",
     "model_remedy",
     "models_root",

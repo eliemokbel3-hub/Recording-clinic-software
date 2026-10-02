@@ -176,7 +176,7 @@ class SileroVad:
         # network drives are not cheaply distinguishable and stay a
         # documented same-user-boundary residual; runtime always uses the
         # LOCALAPPDATA default.
-        if str(path).startswith(("\\\\", "//")):
+        if install_layout.is_unc_path(path):
             raise VadModelError(f"VAD model path must be a local path, not UNC: {path}")
         if not path.is_file():
             raise VadModelError(
@@ -373,7 +373,7 @@ def vad_model_available(model_path: Path | None = None) -> bool:
         path = model_path if model_path is not None else default_vad_model_path()
     except (RuntimeError, OSError):
         return False
-    if str(path).startswith(("\\\\", "//")):
+    if install_layout.is_unc_path(path):
         return False  # UNC: never stat (no SMB I/O); unusable by policy
     return path.is_file()
 

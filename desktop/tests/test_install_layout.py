@@ -22,7 +22,14 @@ from types import ModuleType
 
 import pytest
 
-from conftest import REAL_CHANNEL, REAL_IS_FROZEN, use_channel, use_frozen
+from conftest import (
+    NETWORK_IO_METHODS,
+    REAL_CHANNEL,
+    REAL_IS_FROZEN,
+    forbid_network_io,
+    use_channel,
+    use_frozen,
+)
 from scribe_desktop import (
     __version__,
     app,
@@ -288,6 +295,69 @@ def _builders() -> dict[str, Path]:
         "style": practitioner_profile.default_style_root(),
         "models": benchmark.default_models_root(),
     }
+
+
+class TestIsUncPath:
+    """Round 27 PR-MED-020: the one UNC test normalises separators first, so a
+    RAW string in a mixed form Windows reads as UNC is refused too."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            r"\\server\share\x",
+            "//server/share/x",
+            r"\/server/share/x",
+            "/\\server\\share\\x",
+            Path(r"\\server\share\x"),
+        ],
+    )
+    def test_a_network_path_in_any_separator_form(self, path: str | Path) -> None:
+        assert install_layout.is_unc_path(path)
+
+    @pytest.mark.parametrize("path", [r"C:\x\y", "C:/x/y", "/x/y", r"\x\y", "x/y", ""])
+    def test_a_local_path_is_not_network(self, path: str) -> None:
+        assert not install_layout.is_unc_path(path)
+
+    @pytest.mark.parametrize(
+        "path", [r"\\?\C:\x", r"\\.\C:\x", "//?/C:/x", r"\??\C:\x", r"\\?\d:", r"\\.\C:"]
+    )
+    def test_an_extended_drive_path_is_local(self, path: str) -> None:
+        # Round 28 PR-LOW-028: a drive after the extended or device prefix is
+        # local storage, never refused.
+        assert not install_layout.is_unc_path(path)
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            r"\\?\UNC\server\share\x",
+            r"\\.\UNC\server\share\x",
+            "//?/UNC/server/share/x",
+            r"\??\UNC\server\share\x",
+            r"\\?\GLOBALROOT\Device\Mup\server\share\x",
+            r"\\?\Volume{0b1c2d3e-0000-0000-0000-000000000000}\x",
+            r"\\.\pipe\x",
+            r"\\?\C",
+            r"\\?\CC:\x",
+            r"\\?\C:x",
+        ],
+    )
+    def test_any_other_device_form_is_refused(self, path: str) -> None:
+        # Round 28 PR-LOW-028: an allow-list — anything after the prefix but a
+        # plain drive fails closed (GLOBALROOT\Device\Mup reaches the network).
+        assert install_layout.is_unc_path(path)
+
+    @pytest.mark.parametrize("method", NETWORK_IO_METHODS)
+    def test_the_network_tripwire_raises_before_the_filesystem(
+        self, method: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Round 28 PR-LOW-030: the conftest helper the network-refusal tests
+        # use — a network path raises at the call; a local one passes.
+        local = tmp_path / "local.txt"
+        local.write_text("x", "utf-8")
+        forbid_network_io(monkeypatch)
+        assert local.is_file()
+        with pytest.raises(AssertionError, match="reached a network path"):
+            getattr(Path(r"\\h\s\x"), method)()
 
 
 def _load_register_script() -> ModuleType:

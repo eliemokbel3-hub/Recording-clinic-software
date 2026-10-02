@@ -85,6 +85,7 @@ from pydantic import (
 
 from scribe_desktop import install_layout
 from scribe_desktop.benchmark import (
+    SHIPPED_WHISPER_MODEL,
     assert_offline_env,
     default_models_root,
     whisper_snapshot_complete,
@@ -140,7 +141,9 @@ from scribe_desktop.speech import (
 # speed numbers). `small` stays fully supported as the graceful fallback
 # when the medium snapshot was never downloaded: degrade VISIBLY (UI
 # report names the fallback), never fail outright and never silently.
-DEFAULT_WHISPER_MODEL = "medium"
+# The installed build ships exactly this model (installation plan D5), so the
+# one spelling lives in ``benchmark`` (H.3 SIMP-001).
+DEFAULT_WHISPER_MODEL = SHIPPED_WHISPER_MODEL
 FALLBACK_WHISPER_MODEL = "small"
 
 # ---------------------------------------------------------------------------
@@ -919,7 +922,7 @@ def whisper_model_available(model_name: str = DEFAULT_WHISPER_MODEL) -> bool:
         model_dir = default_whisper_model_dir(model_name)
     except (RuntimeError, OSError):
         return False
-    if str(model_dir).startswith(("\\\\", "//")):
+    if install_layout.is_unc_path(model_dir):
         return False  # UNC: never stat (no SMB I/O); unusable by policy
     return whisper_snapshot_complete(model_dir)
 
@@ -979,7 +982,7 @@ class WhisperSpeechProvider:
         path = model_dir if model_dir is not None else default_whisper_model_dir(model_name)
         # Defense-in-depth (PR-MED-012 precedent): refuse UNC paths so a
         # misconfigured model path cannot cause SMB network I/O.
-        if str(path).startswith(("\\\\", "//")):
+        if install_layout.is_unc_path(path):
             raise TranscriptionModelError(
                 f"whisper model path must be a local path, not UNC: {path}"
             )
