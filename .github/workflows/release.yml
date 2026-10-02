@@ -7,15 +7,16 @@
 #     --signer-workflow eliemokbel3-hub/Recording-clinic-software/.github/workflows/release.yml
 #     --source-ref refs/heads/main
 #
-# BEFORE THE FIRST RUN (practitioner/composer, needs the network; until then
-# the job fails closed at the step that needs it):
-#   - every "PIN-REQUIRED" below: pin the action to a full commit SHA of the
-#     release its comment names - all six, ci.yml's three included
-#     (desktop/tests/test_release_workflow.py checks that, once replaced);
-#   - the Inno Setup 6.7.3 installer's SHA-256, read from the downloaded file
-#     with Get-FileHash, in the "Install Inno Setup" step - and confirm its
-#     download URL there, which was written without network access;
-#   - the Inno Setup licence question (it prints "Non-commercial use only").
+# PINS (recorded by the composer 2026-10-03, Task 3.6, read-only GitHub API):
+#   - every action is pinned to the full commit SHA of the release in its
+#     comment (desktop/tests/test_release_workflow.py checks the shape); the
+#     majors match ci.yml's for checkout, setup-python and setup-node;
+#   - the Inno Setup 6.7.3 installer's SHA-256 (the "Install Inno Setup" step) is
+#     the digest GitHub records for jrsoftware/issrc's is-6_7_3 release asset, and equals Get-FileHash of the
+#     copy the practitioner installed. The download is that release asset
+#     (jrsoftware.org's download page links it; files.jrsoftware.org answers
+#     404 for 6.7.3). Re-pin both when the Inno version changes.
+#   - the Inno Setup licence: decided 2026-10-03 (plan Open blockers item 1).
 
 name: Release
 
@@ -41,26 +42,27 @@ jobs:
     # record runs them; a moved tag would run in it), and no shared cache is
     # restored into this job. The comment names the release to pin.
     steps:
-      - uses: actions/checkout@PIN-REQUIRED # v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@PIN-REQUIRED # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           # Task 0.1's interpreter (D12 build input).
           python-version: "3.14.6"
-      - uses: actions/setup-node@PIN-REQUIRED # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
       - name: Install Inno Setup 6.7.3 (pinned, SHA-256 checked)
         shell: pwsh
         run: |
           $version = "6.7.3"
-          $expected = "PIN-REQUIRED"
+          $expected = "9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732"
           if ($expected -notmatch '^[0-9a-fA-F]{64}$') {
             throw "The Inno Setup $version installer's SHA-256 is not recorded yet (Task 3.6)."
           }
           $installer = Join-Path $env:RUNNER_TEMP "innosetup-$version.exe"
-          Invoke-WebRequest "https://files.jrsoftware.org/is/6/innosetup-$version.exe" -OutFile $installer
+          $tag = "is-" + $version.Replace(".", "_")
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$version.exe" -OutFile $installer
           if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne $expected.ToUpper()) {
             throw "The Inno Setup installer does not match its pinned SHA-256."
           }
@@ -79,7 +81,7 @@ jobs:
         shell: pwsh
         run: python scripts/build-release.py --pyinstaller-src "$env:RUNNER_TEMP\pyinstaller-src" --out "$env:RUNNER_TEMP\release"
       - name: Upload the installer
-        uses: actions/upload-artifact@PIN-REQUIRED
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: clinic-scribe-installer
           path: ${{ runner.temp }}/release/installer/
@@ -95,12 +97,12 @@ jobs:
       attestations: write
     steps:
       - name: Download the installer
-        uses: actions/download-artifact@PIN-REQUIRED
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: clinic-scribe-installer
           path: installer
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@PIN-REQUIRED
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             installer/*.exe
