@@ -472,7 +472,7 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
        - the `windows-2025` label stands.
      - This supersedes the leg i0-x2 recommendation of 6.7.1. Downgrading the practitioner's machine to 6.7.1 would also work, but it pins the build to whatever the image happens to carry.
      - Take it together with item 1, since a licence decision may change the version.
-  3. **Frozen benchmark speed** `[practitioner run]`. The GUI benchmark through the frozen worker path gave medium RTF **1.27** (FAIL) ON BATTERY. The in-process spike check gave **0.482** on the same 53.2 s sample (Task 0.1). The cause — frozen worker, the benchmark's measurement, or battery — is NOT established.
+  3. **Frozen benchmark speed** `[practitioner run]`. The GUI benchmark through the frozen worker path gave medium RTF **1.27** (FAIL) ON BATTERY. The in-process spike check gave **0.482** on the same 53.2 s sample (Task 0.1). The cause — frozen worker, the benchmark's measurement, or battery — is NOT established. **RESOLVED 2026-10-02 (practitioner, on mains, recorded by the composer 2026-10-03):** frozen spike app medium RTF **0.676** (load 13.65 s, 53.2 s audio, peak 1494.6 MiB, 142 words, OK; live window 20.3 s per 30 s, keeps up) vs the everyday app **0.589** on the same sample — the 1.27 was battery throttling; the frozen build passes (< 1.00, within the 0.75 margin), about 15% slower than the everyday app with a slower first model load. `C:\scribe-spike` was then deleted.
      - rec= the PRACTITIONER, ON MAINS, before `C:\scribe-spike` is deleted, runs:
        - (a) the everyday app's Microphone-tab benchmark;
        - (b) the spike app's GUI benchmark from a scratch window (runbook 0.1 steps 14 and 18–19);
@@ -1076,7 +1076,7 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
       - 3.2 / 3.5 (a real build with `--audit`);
       - 3.6 (the visibility re-check, six action pins and the Inno installer hash, push, the first CI run);
       - the Inno Setup "Non-commercial use only" licence question;
-      - the frozen-vs-everyday benchmark on mains power;
+      - ~~the frozen-vs-everyday benchmark on mains power~~ — done 2026-10-02 (0.676 frozen vs 0.589 everyday; PASS);
       - deleting `C:\scribe-iss-check`;
       - Phase P (the first install on this computer).
     - **Pending hardening:** Task H.6 (the conftest-level pin of `install_layout.models_root` for every test, closing PR-MED-022's C6 class) is `[pending-hardening]`. It needs a scoped `/review-plan` before it can run.
@@ -2940,6 +2940,7 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
       - On the same 53.2 s / 142-word sample, the in-process `sapi_whisper` check measured `rtf=0.482` at 16:13.
       - The laptop was ON BATTERY during the GUI benchmark (practitioner confirmed).
       - Whether 1.27 comes from the frozen worker path, the benchmark's own measurement, or battery throttling is NOT established.
+      - **RESOLVED 2026-10-02 (practitioner, on mains, recorded by the composer 2026-10-03):** frozen spike app medium RTF **0.676** (load 13.65 s, 53.2 s audio, peak 1494.6 MiB, 142 words, OK; live window 20.3 s per 30 s, keeps up) vs the everyday app **0.589** on the same sample — the 1.27 was battery throttling; the frozen build passes (< 1.00, within the 0.75 margin), about 15% slower than the everyday app with a slower first model load. `C:\scribe-spike` was then deleted.
       - Owner: the PRACTITIONER, from a normal terminal, ON MAINS power, BEFORE `C:\scribe-spike` is deleted (Finishing up step 3):
         - (a) the everyday app's Microphone-tab benchmark — record the `medium RTF … load_s …` line;
         - (b) the spike app's GUI benchmark again, from a scratch window (runbook 0.1 steps 14 and 18–19).
