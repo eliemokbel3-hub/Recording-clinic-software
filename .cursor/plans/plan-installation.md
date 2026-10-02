@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `70%`
+**Overall Progress:** `75%`
 
 ## Lifecycle State
 - Active
@@ -3208,7 +3208,8 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
       - Neither D11 nor the plan gives a number. The bar reads the practitioner's 2026-09-18 note-learning decision ("CPU inference … acceptable for a few seconds per section").
       - It only ever produces a local line. One constant pair, pinned by `test_the_prose_bar_is_the_recorded_interpretation`.
     - Tests: the new `test_hardware_check.py`.
-- [ ] 🟨 **2.6 The real-ML test legs follow the source-run models root** (added by Phase 1 review round 9, MED-003).
+- [x] 🟩 **2.6 The real-ML test legs follow the source-run models root** (added by Phase 1 review round 9, MED-003).
+  - DONE 2026-10-03 (composer): the practitioner copied the production models into `%LOCALAPPDATA%\ClinikoScribe-dev\models` from a normal PowerShell (Test-Path False before; 5,670,532,487 bytes after). Composer suite at `f8744f6`: **5846 passed / 12 skipped** — all 11 real-ML legs RAN and passed; the 12 skips are the 9 directory-symlink variants and the 3 artefact skips (lock, manifest — run before the file existed — and workflow pins).
   - Today the conftest pins the production channel, so every real-ML gate and child resolves `%LOCALAPPDATA%\ClinikoScribe\models`: `test_integration_no_sockets.py`'s `requires_ml_models` (~L126) and its children, `test_speech.py` (~L461), `test_speaker_embedding.py` (~L575), `test_benchmark.py` (~L250) and `test_transcription.py` (~L1384). Once the models live only in `ClinikoScribe-dev\models` (the source checkout's root after P.1) or in the install folder, these legs SKIP silently and the suite still reads green.
   - Resolve these gates' models root as a source run's dev root (`install_layout` with the dev channel, never the production data folder — C8), keep every other test on the production pin, and make the skip reason name the dev root it looked in.
   - Done when: a test pins the gates' root to `ClinikoScribe-dev\models` under an injected `LOCALAPPDATA`, the composer's suite runs the real-ML legs against a populated dev root (the practitioner copies or re-fetches the models there first, from a normal terminal — C7), and the composer reports the run/skip count of those legs.
@@ -3281,7 +3282,8 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
     - **The trims are verified on the INSTALLED app, not on a scratch run:** Task 2.7 stops a packaged build from running outside `C:\Program Files\ClinikoScribe`, so the spike's 12-check scratch launch no longer applies. The audit's self-check runs from anywhere (Task 3.5), and P.1 steps 7 and 10–12 plus P.2 exercise the runtime (self-test, a transcription, a prose render, the hardware check).
     - **Tests:** `test_build_spec.py` (syntax-tree pins).
     - **The integration gate (PRACTITIONER or composer, normal PowerShell at `C:\scribe-build`; no network if `C:\scribe-spike\venv-build` still exists — it holds PyInstaller 6.22.3 with the from-source bootloader):** `C:\scribe-spike\venv-build\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath C:\scribe-spike\p3\dist --workpath C:\scribe-spike\p3\work packaging\scribe.spec`, then `.venv\Scripts\python.exe scripts\build-release.py --audit C:\scribe-spike\p3\dist\scribe --no-defender`. Report the build's last line, every `FILTERED` line, and the audit's `FAIL` / `audit:` lines. Otherwise, the full `build-release.py` run (Task 3.5) is the gate.
-- [ ] 🟨 **3.3 Models manifest** (D5, D-I2).
+- [x] 🟩 **3.3 Models manifest** (D5, D-I2).
+  - DONE 2026-10-03: the practitioner ran `build-release.py --write-manifest --models "$env:LOCALAPPDATA\ClinikoScribe\models"` (the read-only everyday-models alternative): "wrote … packaging\models-manifest.json (8 files)", pack name `ClinikoScribe-models-10a83493`. The committed-manifest test now RUNS and passes (`test_build_release.py` 90 passed). Composer committed the manifest.
   - `scripts/setup-models.py --root <dir>` stages into a gitignored `build/models`; `%LOCALAPPDATA%` is never touched when `--root` is given.
   - `packaging/models-manifest.json` lists every file's relative path, size and SHA-256 (silero; whisper `medium` every file; the speaker model per D-I2; the language model). It is generated once by the practitioner and committed.
   - A test checks it against the existing pins (setup-models silero, `speaker_embedding.py:58-66`, `language_model.py:57-87`).

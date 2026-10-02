@@ -1,0 +1,45 @@
+{
+  "files": [
+    {
+      "path": "language-model/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+      "size": 2497281120
+    },
+    {
+      "path": "silero-vad/silero_vad.onnx",
+      "sha256": "2623a2953f6ff3d2c1e61740c6cdb7168133479b267dfef114a4a3cc5bdd788f",
+      "size": 2327524
+    },
+    {
+      "path": "speaker-embedding/ATTRIBUTION.txt",
+      "sha256": "670a25322750dad362177f26739ca3ae657d92b2b5362038cd5eb3cf42c24e2e",
+      "size": 686
+    },
+    {
+      "path": "speaker-embedding/wespeaker-voxceleb-resnet34-LM.onnx",
+      "sha256": "7bb2f06e9df17cdf1ef14ee8a15ab08ed28e8d0ef5054ee135741560df2ec068",
+      "size": 26530309
+    },
+    {
+      "path": "whisper/medium/config.json",
+      "sha256": "3622a2ddc41ec0e0fd4e68c13c6830f03b90c38d89aaad184de02c8c642cf807",
+      "size": 2257
+    },
+    {
+      "path": "whisper/medium/model.bin",
+      "sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+      "size": 1527906378
+    },
+    {
+      "path": "whisper/medium/tokenizer.json",
+      "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+      "size": 2203239
+    },
+    {
+      "path": "whisper/medium/vocabulary.txt",
+      "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+      "size": 459861
+    }
+  ],
+  "version": 1
+}
