@@ -2,7 +2,10 @@
 
 The Phase-1 status window is now the Status tab of the multi-screen
 main window (microphone / session / recovery / transcript-inspection).
-Startup order (binding): offline kill-switches set AND asserted before
+Startup order (binding): a packaged build outside its install folder is
+refused first, and a packaged build's benchmark worker is dispatched next,
+before anything else runs (installation plan Tasks 2.7 and 2.1); then the
+offline kill-switches set AND asserted before
 any ML code can run; then the single-instance guard — the per-user lock
 file every instance must hold, behind the named mutex's friendly "already
 running" check (a second instance must never run its own controller/sweep
@@ -24,7 +27,7 @@ import getpass
 import logging
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import NamedTuple
 
@@ -35,12 +38,13 @@ from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
+from scribe_desktop.benchmark import run_worker as run_benchmark_worker
 from scribe_desktop.exclusions import (
     Win32WindowsLayer,
     install_exception_hooks,
     startup_exclusions,
 )
-from scribe_desktop.logging_setup import log_event, setup_logging
+from scribe_desktop.logging_setup import exception_type_name, log_event, setup_logging
 from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user_sid
 from scribe_desktop.session import SessionController
@@ -534,7 +538,34 @@ def _start_chrome_link(window: MainWindow, logger: logging.Logger) -> PipeServer
     return server
 
 
-def main() -> int:
+def _show_not_installed_warning() -> None:
+    box = QMessageBox(QMessageBox.Icon.Warning, "Clinic Scribe", install_layout.NOT_INSTALLED_LINE)
+    box.exec()
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    # Installation plan Task 2.7: a packaged build copied anywhere but its
+    # install folder never starts — checked before logging, the guard, every
+    # data root and the window. One type-name line to stderr (when there is
+    # one: never the data folder's log), then the refusal box.
+    refused = install_layout.outside_install_folder()
+    if refused is not None:
+        log_event(
+            setup_logging("scribe-app", file=False),
+            "app_exit",
+            state="not_installed",
+            error_code=exception_type_name(type(refused)),
+        )
+        _app = QApplication([])
+        _show_not_installed_warning()
+        return 1
+    # Task 2.1 (D11): the packaged build's benchmark worker — this same exe,
+    # spawned by `benchmark.run_all` — runs before logging (it never opens
+    # the app's log), the guard and `QApplication`. Any other arguments are
+    # ignored, as they always were.
+    worker = run_benchmark_worker(sys.argv if argv is None else argv)
+    if worker is not None:
+        return worker
     logger = setup_logging("scribe-app")
     # Privacy-professional-controls Task 4.1 (C3): from here on an uncaught
     # exception — the main thread, a Qt slot, a worker thread, an unraisable
@@ -599,8 +630,9 @@ def main() -> int:
     # WER checks run against the RUNNING interpreter. Their warning lines show
     # on the Status tab and the Past sessions status line; nothing here can
     # refuse start-up, and nothing opens a connection.
+    windows_layer = Win32WindowsLayer()
     exclusion_warnings = startup_exclusions(
-        Win32WindowsLayer(), executable=sys.executable, logger=logger
+        windows_layer, executable=sys.executable, logger=logger
     )
     window = MainWindow(
         controller,
@@ -609,6 +641,9 @@ def main() -> int:
         audit=audit,
         past_sessions=past_sessions,
         exclusion_warnings=exclusion_warnings,
+        # Installation plan Task 2.3: the Status tab's registration line
+        # reads the Chrome link through the same read-only layer.
+        windows_layer=windows_layer,
     )
     # D8: a linked Start's audit row names the clinic's Cliniko user id,
     # read from the window's clinic registry at each Start.

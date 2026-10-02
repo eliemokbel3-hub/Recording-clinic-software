@@ -23,8 +23,11 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from conftest import use_channel, use_frozen  # noqa: E402
-from scribe_desktop import exclusions  # noqa: E402
+from scribe_desktop import exclusions, install_layout  # noqa: E402
 from scribe_desktop.exclusions import (  # noqa: E402
+    BACKUP_EXCLUSION_KEYS,
+    BACKUP_NOT_EXCLUDED,
+    BACKUP_UNCHECKED,
     DRIVE_REMOTE,
     FILE_ATTRIBUTE_NOT_CONTENT_INDEXED,
     LOCATION_NETWORK,
@@ -36,6 +39,7 @@ from scribe_desktop.exclusions import (  # noqa: E402
     WER_EXCLUDED_KEY,
     WER_UNCHECKED,
     ExceptionHook,
+    check_backup_exclusions,
     check_location,
     check_wer,
     exception_type_name,
@@ -50,6 +54,8 @@ from scribe_desktop.exclusions import (  # noqa: E402
 _DIRECTORY = 0x10
 _HIDDEN = 0x2
 _ALL_EXCLUDED = dict.fromkeys(WER_EXCLUDED_APPLICATIONS, 1)
+# Installation plan Task 2.4: what the installer writes (Task 3.4's forms).
+_ALL_BACKUP = dict.fromkeys(BACKUP_EXCLUSION_KEYS, install_layout.backup_exclusion_patterns())
 _LOCAL = r"C:\Users\pat\AppData\Local"
 _PROFILE_ENV = {"LOCALAPPDATA": _LOCAL, "USERPROFILE": r"C:\Users\pat"}
 
@@ -71,6 +77,10 @@ class FakeLayer:
         refuse: tuple[str, ...] = (),
         wer: dict[str, int] | None = None,
         wer_error: Exception | None = None,
+        hklm_wer: dict[str, int] | None = None,
+        backup: dict[str, tuple[str, ...]] | None = None,
+        backup_error: Exception | None = None,
+        entries: tuple[exclusions.HostEntry, ...] = (),
         broken: tuple[str, ...] = (),
     ) -> None:
         self.env = dict(env or {})
@@ -78,11 +88,19 @@ class FakeLayer:
         self.drives = dict(drives or {})
         self.attributes = dict(attributes or {})
         self.refuse = set(refuse)
+        # ``wer`` is the per-user (HKCU) set; ``hklm_wer`` the machine set,
+        # the same as HKCU unless given (installation plan Task 2.4).
         self.wer = dict(_ALL_EXCLUDED if wer is None else wer)
+        self.hklm_wer = dict(self.wer if hklm_wer is None else hklm_wer)
         self.wer_error = wer_error
+        self.backup = dict(_ALL_BACKUP if backup is None else backup)
+        self.backup_error = backup_error
+        self.entries = entries
         self.broken = set(broken)
         self.set_calls: list[tuple[str, int]] = []
         self.drive_calls: list[str] = []
+        self.wer_hives: list[str] = []
+        self.backup_reads = 0
 
     def _check(self, name: str) -> None:
         if name in self.broken:
@@ -113,11 +131,23 @@ class FakeLayer:
         self.attributes[path] = attributes
         return True
 
-    def wer_exclusions(self) -> dict[str, int]:
+    def wer_exclusions(self, hive: str = "HKCU") -> dict[str, int]:
         self._check("wer_exclusions")
+        self.wer_hives.append(hive)
         if self.wer_error is not None:
             raise self.wer_error
-        return dict(self.wer)
+        return dict(self.hklm_wer if hive == "HKLM" else self.wer)
+
+    def backup_exclusions(self) -> dict[str, tuple[str, ...]]:
+        self._check("backup_exclusions")
+        self.backup_reads += 1
+        if self.backup_error is not None:
+            raise self.backup_error
+        return dict(self.backup)
+
+    def native_host_entries(self, key: str) -> tuple[exclusions.HostEntry, ...]:
+        self._check("native_host_entries")
+        return self.entries
 
 
 def _codes(warnings: list[exclusions.ExclusionWarning]) -> list[str]:
@@ -245,6 +275,15 @@ class TestCheckLocation:
 
 
 class TestCheckWer:
+    """D10's DEV branch — a source checkout, the three per-user values —
+    which is what these cases always described (installation plan Task 2.4
+    made the set follow the channel; the production branch is
+    ``TestCheckWerProduction``)."""
+
+    @pytest.fixture(autouse=True)
+    def _dev_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        use_channel(monkeypatch, "dev")
+
     @pytest.mark.parametrize(
         "executable",
         [
@@ -310,6 +349,176 @@ class TestCheckWer:
             "Crash reports are not excluded for this launch (this program) — "
             "start the app with scribe-app.exe."
         )
+
+    def test_the_dev_channel_reads_only_the_per_user_values(self) -> None:
+        layer = FakeLayer(hklm_wer={})
+        assert check_wer(layer, "pythonw.exe") == []
+        assert layer.wer_hives == ["HKCU"]
+
+
+class TestCheckWerProduction:
+    """Installation plan D10 / Task 2.4, the production channel (the
+    installed build): its two executables, read in HKLM then HKCU — a value
+    in either hive excludes that executable — and ``pythonw.exe`` is neither
+    needed nor a covered launch."""
+
+    def test_the_sets_and_hives_follow_the_channel(self) -> None:
+        assert exclusions.wer_applications("production") == ("scribe-app.exe", "scribe-host.exe")
+        assert exclusions.wer_applications("dev") == WER_EXCLUDED_APPLICATIONS
+        assert exclusions.wer_applications() == ("scribe-app.exe", "scribe-host.exe")  # pinned
+        assert exclusions.wer_hives("production") == ("HKLM", "HKCU")
+        assert exclusions.wer_hives("dev") == ("HKCU",)
+
+    @pytest.mark.parametrize(
+        "executable", ["scribe-app.exe", r"C:\Program Files\X\SCRIBE-HOST.EXE"]
+    )
+    def test_the_two_machine_values_clear_an_installed_launch(self, executable: str) -> None:
+        layer = FakeLayer(wer={}, hklm_wer={"scribe-app.exe": 1, "scribe-host.exe": 1})
+        assert check_wer(layer, executable) == []
+        assert layer.wer_hives == ["HKLM", "HKCU"]
+
+    def test_a_per_user_value_is_accepted_for_either_executable(self) -> None:
+        layer = FakeLayer(wer={"scribe-host.exe": 1}, hklm_wer={"scribe-app.exe": 1})
+        assert check_wer(layer, "scribe-app.exe") == []
+
+    @pytest.mark.parametrize(
+        ("hkcu", "hklm"),
+        [
+            ({}, {}),
+            ({}, {"scribe-app.exe": 1}),
+            ({"scribe-app.exe": 1}, {"scribe-app.exe": 1}),
+            ({"scribe-host.exe": 0}, {"scribe-app.exe": 1, "scribe-host.exe": 2}),
+            # pythonw.exe alone excludes nothing the installed build runs.
+            ({"pythonw.exe": 1}, {"pythonw.exe": 1}),
+        ],
+    )
+    def test_an_executable_excluded_in_neither_hive_warns(
+        self, hkcu: dict[str, int], hklm: dict[str, int]
+    ) -> None:
+        assert check_wer(FakeLayer(wer=hkcu, hklm_wer=hklm), "scribe-app.exe") == [
+            exclusions.ExclusionWarning("wer_not_excluded", wer_not_excluded_line())
+        ]
+
+    @pytest.mark.parametrize("executable", ["pythonw.exe", "python.exe"])
+    def test_a_python_launch_is_uncovered_in_production(self, executable: str) -> None:
+        assert _codes(check_wer(FakeLayer(), executable)) == ["wer_uncovered_launch"]
+
+    def test_an_unreadable_hive_says_so(self) -> None:
+        warnings = check_wer(FakeLayer(wer_error=PermissionError("denied")), "scribe-app.exe")
+        assert _codes(warnings) == ["wer_unchecked"]
+
+    @pytest.mark.parametrize(
+        ("unreadable", "readable", "expected"),
+        [
+            # Round 14 LOW-003: the readable hive answers when it covers both.
+            ("HKLM", {"scribe-app.exe": 1, "scribe-host.exe": 1}, []),
+            ("HKCU", {"scribe-app.exe": 1, "scribe-host.exe": 1}, []),
+            # ...and "could not check" only when it leaves one uncovered.
+            ("HKLM", {"scribe-app.exe": 1}, ["wer_unchecked"]),
+            ("HKCU", {}, ["wer_unchecked"]),
+        ],
+    )
+    def test_one_unreadable_hive_does_not_hide_the_other(
+        self, unreadable: str, readable: dict[str, int], expected: list[str]
+    ) -> None:
+        class OneHiveDenied(FakeLayer):
+            def wer_exclusions(self, hive: str = "HKCU") -> dict[str, int]:
+                self.wer_hives.append(hive)
+                if hive == unreadable:
+                    raise PermissionError("denied")
+                return dict(readable)
+
+        layer = OneHiveDenied()
+        assert _codes(check_wer(layer, "scribe-app.exe")) == expected
+        assert layer.wer_hives == ["HKLM", "HKCU"]
+
+
+class TestCheckBackupExclusions:
+    """Installation plan D6 / Task 2.4: the installer's two HKLM values must
+    name the live sessions and the logs; production only, warnings only."""
+
+    def test_the_patterns_are_task_3_4s(self) -> None:
+        assert install_layout.backup_exclusion_patterns() == (
+            r"$UserProfile$\AppData\Local\ClinikoScribe\sessions\* /s",
+            r"$UserProfile$\AppData\Local\ClinikoScribe\logs\* /s",
+        )
+        assert install_layout.BACKUP_VALUE_NAME == "ClinikoScribe"
+        assert exclusions.BACKUP_RESTORE_KEY == r"SYSTEM\CurrentControlSet\Control\BackupRestore"
+        assert BACKUP_EXCLUSION_KEYS == ("FilesNotToBackup", "FilesNotToSnapshot")
+
+    def test_both_values_in_place_are_clear(self) -> None:
+        assert check_backup_exclusions(FakeLayer()) == []
+
+    def test_case_space_and_extra_patterns_do_not_matter(self) -> None:
+        held = tuple(
+            f"  {pattern.upper()} " for pattern in install_layout.backup_exclusion_patterns()
+        ) + (r"C:\Other\* /s",)
+        layer = FakeLayer(backup=dict.fromkeys(BACKUP_EXCLUSION_KEYS, held))
+        assert check_backup_exclusions(layer) == []
+
+    @pytest.mark.parametrize(
+        "backup",
+        [
+            {},
+            {"FilesNotToBackup": install_layout.backup_exclusion_patterns()},
+            {"FilesNotToSnapshot": install_layout.backup_exclusion_patterns()},
+            dict.fromkeys(
+                BACKUP_EXCLUSION_KEYS, install_layout.backup_exclusion_patterns()[:1]
+            ),  # sessions only
+            dict.fromkeys(
+                BACKUP_EXCLUSION_KEYS, install_layout.backup_exclusion_patterns()[1:]
+            ),  # logs only
+            dict.fromkeys(
+                BACKUP_EXCLUSION_KEYS, (r"%LOCALAPPDATA%\ClinikoScribe\sessions\* /s",)
+            ),
+        ],
+    )
+    def test_a_missing_value_or_pattern_warns(self, backup: dict[str, tuple[str, ...]]) -> None:
+        assert check_backup_exclusions(FakeLayer(backup=backup)) == [
+            exclusions.ExclusionWarning("backup_not_excluded", BACKUP_NOT_EXCLUDED)
+        ]
+
+    def test_an_unreadable_value_says_so(self) -> None:
+        assert check_backup_exclusions(FakeLayer(backup_error=PermissionError("denied"))) == [
+            exclusions.ExclusionWarning("backup_unchecked", BACKUP_UNCHECKED)
+        ]
+
+    def test_the_lines_are_best_effort_wording(self) -> None:
+        # C5: never "excluded from backups"; the installed build's remedy.
+        assert "best-effort" in BACKUP_NOT_EXCLUDED
+        assert "excluded from" not in BACKUP_NOT_EXCLUDED + BACKUP_UNCHECKED
+        assert BACKUP_NOT_EXCLUDED.endswith("reinstall Clinic Scribe.")
+
+    def test_the_dev_channel_never_reads_or_warns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        use_channel(monkeypatch, "dev")
+        layer = FakeLayer(backup={}, broken=("backup_exclusions",))
+        assert check_backup_exclusions(layer) == []
+        assert layer.backup_reads == 0
+
+    def test_start_up_shows_the_line_and_a_broken_read_is_only_a_warning(
+        self, tmp_path: Path
+    ) -> None:
+        root = _real_root(tmp_path)
+        logger = logging.getLogger("t-backup")
+        assert startup_exclusions(
+            FakeLayer(backup={}), executable="scribe-app.exe", logger=logger, root=root
+        ) == (BACKUP_NOT_EXCLUDED,)
+        assert startup_exclusions(
+            FakeLayer(broken=("backup_exclusions",)),
+            executable="scribe-app.exe",
+            logger=logger,
+            root=root,
+        ) == (BACKUP_UNCHECKED,)
+
+    def test_the_dev_start_up_never_warns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        use_channel(monkeypatch, "dev")
+        root = _real_root(tmp_path)
+        layer = FakeLayer(backup={})
+        logger = logging.getLogger("t")
+        assert startup_exclusions(layer, executable="pythonw.exe", logger=logger, root=root) == ()
+        assert layer.backup_reads == 0
 
 
 def test_the_checked_data_folder_follows_the_channel(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -407,6 +616,15 @@ def _real_root(tmp_path: Path) -> Path:
 
 
 class TestStartupExclusions:
+    """A source checkout's start-up — the DEV channel, whose WER branch these
+    cases always described (installation plan Task 2.4: the WER set follows
+    the channel, and the dev channel has no backup check). The production
+    start-up's backup line: ``TestCheckBackupExclusions``."""
+
+    @pytest.fixture(autouse=True)
+    def _dev_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        use_channel(monkeypatch, "dev")
+
     def test_a_clean_start_has_no_line(self, tmp_path: Path) -> None:
         root = _real_root(tmp_path)
         layer = FakeLayer(env=_PROFILE_ENV, real={str(root): _LOCAL + r"\ClinikoScribe"})
@@ -464,7 +682,10 @@ class TestStartupExclusions:
         )
         assert lines == (NOT_INDEXED_FAILED, LOCATION_UNCHECKED, WER_UNCHECKED)
 
-    def test_the_default_root_is_localappdatas_clinikoscribe(self, tmp_path: Path) -> None:
+    def test_the_default_root_is_localappdatas_clinikoscribe(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        use_channel(monkeypatch, "production")  # the production folder's name
         root = _real_root(tmp_path)
         layer = FakeLayer(env={"LOCALAPPDATA": str(tmp_path), "USERPROFILE": str(tmp_path)})
         startup_exclusions(layer, executable="pythonw.exe", logger=logging.getLogger("t"))
@@ -830,7 +1051,9 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
 
     class FakeWindow:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
-            events.append(("window", kwargs["exclusion_warnings"]))
+            # Installation plan Task 2.3: the same layer reaches the window.
+            layer = type(kwargs["windows_layer"]).__name__
+            events.append(("window", kwargs["exclusion_warnings"], layer))
 
         def clinic_user_id(self, clinic_id: str) -> str | None:
             return None
@@ -870,5 +1093,5 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
         ("controller",),
         ("layer",),
         ("checks", "FakeWindowsLayer", sys.executable, logger),
-        ("window", _LINES),
+        ("window", _LINES, "FakeWindowsLayer"),
     ]

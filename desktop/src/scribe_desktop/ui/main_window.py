@@ -72,6 +72,7 @@ from scribe_desktop.encounter import (
     verify_note_context,
     writeback_context,
 )
+from scribe_desktop.exclusions import WindowsLayer
 from scribe_desktop.hotkey import (
     NOT_SET_UP,
     GlobalHotkey,
@@ -104,7 +105,7 @@ from scribe_desktop.session import (
     WriteReservation,
 )
 from scribe_desktop.session_store import KEY_FILENAME, audit_created_at, session_expires_at
-from scribe_desktop.status import read_registration_status, run_self_test
+from scribe_desktop.status import read_registration_status, registration_lines, run_self_test
 from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
 from scribe_desktop.system_events import (
     SystemEventRegistrar,
@@ -240,9 +241,11 @@ class StatusPanel(QWidget):
         *,
         exclusion_warnings: Sequence[str] = (),
         config_root: Path | None = None,
+        windows_layer: WindowsLayer | None = None,
     ) -> None:
         super().__init__(parent)
         self._config_root = config_root
+        self._windows_layer = windows_layer
         self.intended_use_label = QLabel(models.INTENDED_USE_LINE)
         self.intended_use_label.setWordWrap(True)
         self.intended_use_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -301,12 +304,11 @@ class StatusPanel(QWidget):
         self.dev_writes_changed.emit()
 
     def refresh_registration(self) -> None:
-        status = read_registration_status()
-        if status.registered:
-            text = "registered ✓"
-        else:
-            text = f"NOT registered — {install_layout.registration_remedy()}"
-        self.registration_label.setText(f"Registration: {text}")
+        # Installation plan Task 2.3 (D9): read in Chrome's order through the
+        # Windows layer `app.main` hands in (C6: none in a test window, which
+        # then reads nothing and says "not checked").
+        status = read_registration_status(self._windows_layer)
+        self.registration_label.setText("\n".join(registration_lines(status)))
 
     def on_self_test(self) -> None:
         results = run_self_test()
@@ -349,6 +351,7 @@ class MainWindow(QMainWindow):
         past_sessions_confirm: Callable[[str, str], bool] | None = None,
         past_sessions_save_path: Callable[[], Path | None] | None = None,
         exclusion_warnings: Sequence[str] = (),
+        windows_layer: WindowsLayer | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
@@ -539,8 +542,12 @@ class MainWindow(QMainWindow):
         # (`exclusions.startup_exclusions`) and shown on the Status tab and the
         # Past sessions status line. The window itself makes no Windows call
         # for them; the default `()` (every test that does not ask) shows none.
+        # Installation plan Task 2.3: the registration line reads the registry
+        # through the Windows layer `app.main` built (None reads nothing).
         self.status_panel = StatusPanel(
-            exclusion_warnings=exclusion_warnings, config_root=config_root
+            exclusion_warnings=exclusion_warnings,
+            config_root=config_root,
+            windows_layer=windows_layer,
         )
         # Installation plan D4: the dev write setting changed — the Note tab's
         # Write button re-reads it now (a click always re-reads it anyway).

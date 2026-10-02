@@ -363,9 +363,14 @@ def _fake_whisper_snapshot(local_app_data: Path, name: str) -> None:
 
 
 class TestModelReport:
-    def test_report_lines_name_the_default_model(self, tmp_path: Path) -> None:
+    def test_report_lines_name_the_default_model(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from scribe_desktop.transcription import DEFAULT_WHISPER_MODEL
 
+        # Installation plan round 13 LOW-009 (C6/C8): never this computer's
+        # models folder.
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
         lines = models.model_report_lines(profile_root=tmp_path)
         assert len(lines) == 4
         assert lines[0].startswith(f"Whisper model ({DEFAULT_WHISPER_MODEL}):")
@@ -378,17 +383,29 @@ class TestModelReport:
         # line names the Practitioner tab, not a setup script.
         assert ("installed" in lines[2]) or ("setup-models" in lines[2])
 
-    def test_models_ready_matches_resolved_availability(self) -> None:
+    def test_models_ready_matches_resolved_availability(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         from scribe_desktop.speech import vad_model_available
         from scribe_desktop.transcription import (
+            DEFAULT_WHISPER_MODEL,
             resolve_whisper_model,
             whisper_model_available,
         )
 
-        expected = vad_model_available() and whisper_model_available(
-            resolve_whisper_model()
-        )
-        assert models.models_ready() == expected
+        # Installation plan round 13 LOW-009 (C6/C8): an injected models
+        # folder, empty and then complete — never this computer's.
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+        def expected() -> bool:
+            return vad_model_available() and whisper_model_available(resolve_whisper_model())
+
+        assert models.models_ready() is expected() is False
+        vad_dir = tmp_path / "ClinikoScribe" / "models" / "silero-vad"
+        vad_dir.mkdir(parents=True)
+        (vad_dir / "silero_vad.onnx").write_bytes(b"onnx")
+        _fake_whisper_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
+        assert models.models_ready() is expected() is True
 
     def test_vad_availability_is_a_file_presence_check(self, tmp_path: Path) -> None:
         # Smoke round 21: silero presence regression alongside the whisper

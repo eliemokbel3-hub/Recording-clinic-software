@@ -7,7 +7,8 @@ exception hooks (Task 4.1)."""
 import io
 import json
 import struct
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -23,6 +24,7 @@ NONCE = "f" * 32
 # for the tests of the functions themselves (test_install_layout.py).
 REAL_CHANNEL = install_layout.channel
 REAL_IS_FROZEN = install_layout.is_frozen
+REAL_MODELS_ROOT = install_layout.models_root
 
 
 def _production() -> Channel:
@@ -72,6 +74,54 @@ def use_frozen(monkeypatch: pytest.MonkeyPatch, frozen: bool) -> None:
     ``False`` unless a test says otherwise; the channel stays as pinned: pin
     both for a packaged-build scenario)."""
     monkeypatch.setattr(install_layout, "is_frozen", lambda: frozen)
+
+
+def real_ml_models_root() -> Path | None:
+    """Installation plan Task 2.6: the ONE models root every real-ML test leg
+    — its skip gate, its body and the child processes it starts — loads
+    from: a source run's DEV root (``install_layout.models_root("dev")``,
+    ``%LOCALAPPDATA%\\ClinikoScribe-dev\\models``), never the production data
+    folder (C8), whatever the channel pin. ``None`` when ``LOCALAPPDATA`` is
+    unset. Every other test stays on the production pin."""
+    try:
+        return REAL_MODELS_ROOT("dev")
+    except RuntimeError:
+        return None
+
+
+def on_real_ml_root(probe: Callable[[], bool]) -> bool:
+    """A real-ML gate's presence ``probe``, run with every model path
+    resolving under ``real_ml_models_root()`` (False when there is none).
+    Safe at import time (a module-level ``skipif``)."""
+    root = real_ml_models_root()
+    if root is None:
+        return False
+    pinned = install_layout.models_root
+    install_layout.models_root = lambda of=None: root  # type: ignore[assignment]
+    try:
+        return probe()
+    finally:
+        install_layout.models_root = pinned  # type: ignore[assignment]
+
+
+def real_ml_skip_reason(what: str) -> str:
+    """A real-ML gate's skip reason, naming the dev root it looked in."""
+    return (
+        f"{what} not found under the source run's dev models root "
+        f"{real_ml_models_root()} (installation plan Task 2.6: copy or fetch the "
+        "models there from a normal terminal)"
+    )
+
+
+@pytest.fixture
+def real_ml_models(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """For a real-ML leg's BODY (``usefixtures``): every model path resolves
+    under ``real_ml_models_root()``, as its gate looked (Task 2.6)."""
+    root = real_ml_models_root()
+    if root is None:
+        pytest.skip("LOCALAPPDATA is not set; no dev models root")
+    monkeypatch.setattr(install_layout, "models_root", lambda of=None: root)
+    return root
 
 
 @pytest.fixture(autouse=True)

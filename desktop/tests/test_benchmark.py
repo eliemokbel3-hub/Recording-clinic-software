@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import real_ml_models_root, real_ml_skip_reason
 from scribe_desktop import benchmark
 from scribe_desktop.benchmark import (
     LIVE_WINDOW_SECONDS,
@@ -247,16 +248,14 @@ class TestSnapshotCompleteness:
         assert "model.bin" in benchmark.whisper_snapshot_missing(target)
 
 
+# Installation plan Task 2.6: the source run's DEV models root, never the
+# production data folder (C8).
+_REAL_ML_ROOT = real_ml_models_root()
+
+
 @pytest.mark.skipif(
-    not (
-        Path(os.environ.get("LOCALAPPDATA", ""))
-        / "ClinikoScribe"
-        / "models"
-        / "whisper"
-        / "small"
-        / "model.bin"
-    ).is_file(),
-    reason="local model cache absent (run scripts/setup-models.py)",
+    _REAL_ML_ROOT is None or not (_REAL_ML_ROOT / "whisper" / "small" / "model.bin").is_file(),
+    reason=real_ml_skip_reason("whisper small"),
 )
 class TestRealModelSmoke:
     def test_small_model_loads_offline(self) -> None:
@@ -265,9 +264,8 @@ class TestRealModelSmoke:
         apply_offline_env()
         assert_offline_env()
         faster_whisper = pytest.importorskip("faster_whisper")
-        model_dir = (
-            Path(os.environ["LOCALAPPDATA"]) / "ClinikoScribe" / "models" / "whisper" / "small"
-        )
+        assert _REAL_ML_ROOT is not None  # the skip gate above
+        model_dir = _REAL_ML_ROOT / "whisper" / "small"
         model = faster_whisper.WhisperModel(
             str(model_dir), device="cpu", compute_type="int8", local_files_only=True
         )

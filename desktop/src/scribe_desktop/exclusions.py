@@ -17,10 +17,15 @@ At start-up, before the window is built, ``app.main`` runs
   (``realpath``) and warns when it is inside OneDrive, on a network drive (a
   ``\\`` path or a remote drive letter) or in the roaming part of the profile;
   a folder outside ``%USERPROFILE%\AppData\Local`` for any other reason is
-  logged (content-free), not shown. The WER check reads the three per-user
-  ``ExcludedApplications`` values ``scripts/register-native-host.py`` writes,
-  and checks the RUNNING interpreter's file name against them (D10, round 2
-  PR-MED-006): the console launch runs ``python.exe``, which is not excluded.
+  logged (content-free), not shown. The WER check reads the channel's
+  ``ExcludedApplications`` values — from a source checkout the three per-user
+  ones ``scripts/register-native-host.py`` writes; in the installed build its
+  two executables, HKLM then HKCU (installation plan D10) — and checks the
+  RUNNING interpreter's file name against them (D10, round 2 PR-MED-006): the
+  console launch runs ``python.exe``, which is not excluded.
+- ``check_backup_exclusions`` (installation plan D6, Task 2.4), production
+  only, READ-ONLY and never refusing: the installer's two HKLM backup and
+  snapshot values must name the live sessions and logs.
 
 ``install_exception_hooks`` replaces ``sys.excepthook``,
 ``threading.excepthook`` and ``sys.unraisablehook`` with hooks that log ONLY
@@ -54,7 +59,7 @@ import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 from scribe_desktop import install_layout
 from scribe_desktop.logging_setup import exception_type_name, log_event
@@ -64,14 +69,76 @@ from scribe_desktop.logging_setup import exception_type_name, log_event
 # Per user (HKCU), DWORD 1 each — what ``WerAddExcludedApplication(..., FALSE)``
 # writes. ``pythonw.exe`` because the venv launchers start the BASE
 # ``pythonw.exe`` as a child (docs/lessons.md); the breadth (every pythonw
-# process of this user) is the agreed residue.
+# process of this user) is the agreed residue. The same key path holds the
+# machine-wide values under HKLM (installation plan D10).
 WER_EXCLUDED_KEY: Final = r"Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications"
 WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
     "pythonw.exe",
     "scribe-app.exe",
     "scribe-host.exe",
 )
+# Installation plan D10 (Task 2.4): the production channel — the installed
+# build — runs only its two executables, and the installer excludes them in
+# HKLM (a per-user value is accepted too). The dev channel keeps the three
+# above, per user.
+WER_PRODUCTION_APPLICATIONS: Final[tuple[str, ...]] = ("scribe-app.exe", "scribe-host.exe")
 WER_EXCLUDED_VALUE: Final = 1
+
+Hive = Literal["HKCU", "HKLM"]
+
+
+def wer_applications(of: install_layout.Channel | None = None) -> tuple[str, ...]:
+    """The executables whose crash reports must be excluded for ``of``
+    (default: this process's channel) — D10."""
+    which = of if of is not None else install_layout.channel()
+    return WER_PRODUCTION_APPLICATIONS if which == "production" else WER_EXCLUDED_APPLICATIONS
+
+
+def wer_hives(of: install_layout.Channel | None = None) -> tuple[Hive, ...]:
+    """Where ``check_wer`` reads the values for ``of`` (D10): HKLM then HKCU
+    in production, HKCU only in dev."""
+    which = of if of is not None else install_layout.channel()
+    return ("HKLM", "HKCU") if which == "production" else ("HKCU",)
+
+
+# --- backup and snapshot exclusions (D6, Task 2.4) -----------------------------
+
+# Under HKLM; each subkey holds one REG_MULTI_SZ value named
+# ``install_layout.BACKUP_VALUE_NAME`` that the installer writes (Task 3.4)
+# with ``install_layout.backup_exclusion_patterns()``.
+BACKUP_RESTORE_KEY: Final = r"SYSTEM\CurrentControlSet\Control\BackupRestore"
+BACKUP_EXCLUSION_KEYS: Final[tuple[str, ...]] = ("FilesNotToBackup", "FilesNotToSnapshot")
+
+# --- the Chrome link's registry entries (D9, Task 2.3) --------------------------
+
+# Chrome's lookup order for a native host's registry entry: the per-user hive
+# before the machine one (Task 0.2 confirmed HKCU shadows HKLM on this
+# computer), and in each the 32-bit registry view before the 64-bit one (as
+# Chromium's ``GetManifestPathFromRegistry`` reads them — from its source,
+# not observed here). A view whose key or default value cannot be read is
+# passed over, as Chrome passes over it.
+CHROME_LOOKUP_ORDER: Final[tuple[tuple[Hive, str], ...]] = (
+    ("HKCU", "32"),
+    ("HKCU", "64"),
+    ("HKLM", "32"),
+    ("HKLM", "64"),
+)
+
+
+@dataclass(frozen=True)
+class HostEntry:
+    """One registry entry for the native host's name: where it was found
+    and the manifest path it names. Never shown on screen (a path); logged
+    by the host as a hijack tripwire."""
+
+    hive: Hive
+    view: str
+    manifest: str
+
+    @property
+    def place(self) -> str:
+        """A content-free code for the log: ``hkcu_32`` ... ``hklm_64``."""
+        return f"{self.hive.lower()}_{self.view}"
 
 # --- Windows constants ----------------------------------------------------------
 
@@ -108,6 +175,16 @@ def wer_not_excluded_line() -> str:
 
 
 WER_UNCHECKED: Final = "Clinic Scribe could not check whether crash reports are excluded."
+# D6 / C5: the values are a best-effort request to Windows backup and
+# snapshot tools, so the lines say "marked to be left out", never "excluded".
+BACKUP_NOT_EXCLUDED: Final = (
+    "Clinic Scribe's live recordings and logs are not marked to be left out of Windows "
+    f"backups and snapshots (a best-effort setting) — {install_layout.FROZEN_REMEDY}."
+)
+BACKUP_UNCHECKED: Final = (
+    "Clinic Scribe could not check whether its live recordings and logs are marked to be "
+    "left out of Windows backups and snapshots."
+)
 NOT_INDEXED_FAILED: Final = (
     "Some of Clinic Scribe's folders could not be marked to stay out of Windows Search."
 )
@@ -162,11 +239,28 @@ class WindowsLayer(Protocol):
         """``SetFileAttributesW``; False when Windows refused (never raises)."""
         ...
 
-    def wer_exclusions(self) -> dict[str, int]:
-        """The DWORD values present under ``HKCU\\<WER_EXCLUDED_KEY>`` for the
-        names in ``WER_EXCLUDED_APPLICATIONS`` (an absent key or value, or a
-        value of another type, is simply missing). Raises ``OSError`` when the
+    def wer_exclusions(self, hive: Hive = "HKCU") -> dict[str, int]:
+        """The DWORD values present under ``<hive>\\<WER_EXCLUDED_KEY>`` for
+        the names in ``WER_EXCLUDED_APPLICATIONS`` (an absent key or value, or
+        a value of another type, is simply missing). Raises ``OSError`` when
+        the key exists but cannot be read."""
+        ...
+
+    def backup_exclusions(self) -> dict[str, tuple[str, ...]]:
+        """For each of ``BACKUP_EXCLUSION_KEYS`` under
+        ``HKLM\\<BACKUP_RESTORE_KEY>``, the strings of its REG_MULTI_SZ value
+        ``install_layout.BACKUP_VALUE_NAME`` (an absent key or value, or a
+        value of another type, is simply missing). Raises ``OSError`` when a
         key exists but cannot be read."""
+        ...
+
+    def native_host_entries(self, key: str) -> tuple[HostEntry, ...]:
+        """The native host's registry entries — the default (string) value
+        of ``key`` under HKCU and HKLM, each in both registry views — in
+        ``CHROME_LOOKUP_ORDER``, so the first is the one Chrome uses. A view
+        that cannot be read is passed over (Chrome passes over it too); the
+        same value found in both views of one hive (HKCU is shared between
+        them) is listed once."""
         ...
 
 
@@ -183,7 +277,7 @@ def _kernel32() -> Any:
 class Win32WindowsLayer:
     """The real layer: ``os.environ``, ``os.path.realpath``, one
     ``GetDriveTypeW``, ``os.stat``'s attributes, one ``SetFileAttributesW`` and
-    a read-only ``winreg`` read. Never built in tests (the conftest sentinel
+    read-only ``winreg`` reads. Never built in tests (the conftest sentinel
     makes it raise)."""
 
     def environ(self, name: str) -> str | None:
@@ -201,13 +295,16 @@ class Win32WindowsLayer:
     def set_file_attributes(self, path: str, attributes: int) -> bool:
         return bool(_kernel32().SetFileAttributesW(path, attributes))
 
-    def wer_exclusions(self) -> dict[str, int]:
+    def wer_exclusions(self, hive: Hive = "HKCU") -> dict[str, int]:
         if sys.platform != "win32":
             return {}
         import winreg
 
+        root = winreg.HKEY_LOCAL_MACHINE if hive == "HKLM" else winreg.HKEY_CURRENT_USER
         try:
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, WER_EXCLUDED_KEY)
+            key = winreg.OpenKey(
+                root, WER_EXCLUDED_KEY, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY
+            )
         except FileNotFoundError:
             return {}
         values: dict[str, int] = {}
@@ -220,6 +317,57 @@ class Win32WindowsLayer:
                 if kind == winreg.REG_DWORD and isinstance(value, int):
                     values[name] = value
         return values
+
+    def backup_exclusions(self) -> dict[str, tuple[str, ...]]:
+        if sys.platform != "win32":
+            return {}
+        import winreg
+
+        found: dict[str, tuple[str, ...]] = {}
+        for subkey in BACKUP_EXCLUSION_KEYS:
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    f"{BACKUP_RESTORE_KEY}\\{subkey}",
+                    0,
+                    winreg.KEY_READ | winreg.KEY_WOW64_64KEY,
+                )
+            except FileNotFoundError:
+                continue
+            with key:
+                try:
+                    value, kind = winreg.QueryValueEx(key, install_layout.BACKUP_VALUE_NAME)
+                except FileNotFoundError:
+                    continue
+            if kind == winreg.REG_MULTI_SZ and isinstance(value, list):
+                found[subkey] = tuple(str(item) for item in value)
+        return found
+
+    def native_host_entries(self, key: str) -> tuple[HostEntry, ...]:
+        if sys.platform != "win32":
+            return ()
+        import winreg
+
+        hives = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}
+        views = {"32": winreg.KEY_WOW64_32KEY, "64": winreg.KEY_WOW64_64KEY}
+        entries: list[HostEntry] = []
+        # Chromium opens these keys with KEY_QUERY_VALUE (round 13 LOW-005):
+        # a query-only ACL that Chrome can use is read here too.
+        access = winreg.KEY_QUERY_VALUE
+        for hive, view in CHROME_LOOKUP_ORDER:
+            try:
+                with winreg.OpenKey(hives[hive], key, 0, access | views[view]) as handle:
+                    value, kind = winreg.QueryValueEx(handle, "")
+            except OSError:
+                continue  # absent or unreadable: Chrome passes over it too
+            if kind == winreg.REG_EXPAND_SZ and isinstance(value, str):
+                value = winreg.ExpandEnvironmentStrings(value)
+            elif kind != winreg.REG_SZ or not isinstance(value, str):
+                continue
+            entry = HostEntry(hive, view, value)
+            if not any(e.hive == hive and e.manifest == value for e in entries):
+                entries.append(entry)
+        return tuple(entries)
 
 
 # --- the data folder ------------------------------------------------------------
@@ -296,22 +444,53 @@ def check_location(
 
 
 def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
-    """D10's WER check. Read-only. Warns when any of the three exclusions is
-    missing (or not DWORD 1), and when the RUNNING interpreter's file name is
-    not one of them — the console launch (``python.exe``) — whatever the
-    registry holds. A registry that cannot be read is said so."""
+    """D10's WER check. Read-only. Warns when any of the channel's exclusions
+    (``wer_applications``) is missing (or not DWORD 1) in every hive the
+    channel reads (``wer_hives``: HKLM then HKCU in production, HKCU in
+    dev), and when the RUNNING interpreter's file name is not one of them —
+    the console launch (``python.exe``) — whatever the registry holds. Each
+    hive is read on its own (round 14 LOW-003): the hives that could be read
+    give the answer, and only when they leave an executable uncovered AND a
+    hive could not be read is it "could not check"."""
+    names = wer_applications()
     warnings: list[ExclusionWarning] = []
-    try:
-        values = layer.wer_exclusions()
-    except OSError:
-        warnings.append(ExclusionWarning("wer_unchecked", WER_UNCHECKED))
-    else:
-        if any(values.get(name) != WER_EXCLUDED_VALUE for name in WER_EXCLUDED_APPLICATIONS):
+    found: list[dict[str, int]] = []
+    unreadable = False
+    for hive in wer_hives():
+        try:
+            found.append(layer.wer_exclusions(hive))
+        except OSError:
+            unreadable = True
+    if any(all(values.get(name) != WER_EXCLUDED_VALUE for values in found) for name in names):
+        if unreadable:
+            warnings.append(ExclusionWarning("wer_unchecked", WER_UNCHECKED))
+        else:
             warnings.append(ExclusionWarning("wer_not_excluded", wer_not_excluded_line()))
     name = ntpath.basename(executable)
-    if name.casefold() not in WER_EXCLUDED_APPLICATIONS:
+    if name.casefold() not in names:
         warnings.append(ExclusionWarning("wer_uncovered_launch", uncovered_launch_line(name)))
     return warnings
+
+
+def check_backup_exclusions(layer: WindowsLayer) -> list[ExclusionWarning]:
+    """D6's check (Task 2.4). Read-only, and production only — the dev
+    channel never reads or warns about these machine-wide values. Warns
+    when either HKLM value (``BACKUP_EXCLUSION_KEYS``) is missing or does
+    not hold every pattern ``install_layout.backup_exclusion_patterns()``
+    names (live sessions and logs; compared without case or surrounding
+    space); a value that cannot be read is said so."""
+    if install_layout.channel() != "production":
+        return []
+    try:
+        values = layer.backup_exclusions()
+    except OSError:
+        return [ExclusionWarning("backup_unchecked", BACKUP_UNCHECKED)]
+    wanted = {pattern.casefold() for pattern in install_layout.backup_exclusion_patterns()}
+    for subkey in BACKUP_EXCLUSION_KEYS:
+        held = {item.strip().casefold() for item in values.get(subkey, ())}
+        if not wanted <= held:
+            return [ExclusionWarning("backup_not_excluded", BACKUP_NOT_EXCLUDED)]
+    return []
 
 
 def mark_not_indexed(layer: WindowsLayer, root: Path) -> int:
@@ -352,8 +531,9 @@ def startup_exclusions(
     logger: logging.Logger,
     root: Path | None = None,
 ) -> tuple[str, ...]:
-    """Flow 6 at start-up: mark the data folder, then the location and WER
-    checks. Returns the warning lines to show (Status tab and Past sessions);
+    """Flow 6 at start-up: mark the data folder, then the location, WER and
+    (production only) backup-exclusion checks. Returns the warning lines to
+    show (Status tab and Past sessions);
     each warning is logged by its code only. Never raises and never refuses
     start-up: a check that fails unexpectedly says it could not check."""
     warnings: list[ExclusionWarning] = []
@@ -368,6 +548,10 @@ def startup_exclusions(
         warnings.extend(check_wer(layer, executable))
     except Exception:  # noqa: BLE001
         warnings.append(ExclusionWarning("wer_unchecked", WER_UNCHECKED))
+    try:
+        warnings.extend(check_backup_exclusions(layer))
+    except Exception:  # noqa: BLE001 - only ever a warning (Task 2.4)
+        warnings.append(ExclusionWarning("backup_unchecked", BACKUP_UNCHECKED))
     try:
         for warning in warnings:
             log_event(logger, "exclusions", detail_code=warning.code)

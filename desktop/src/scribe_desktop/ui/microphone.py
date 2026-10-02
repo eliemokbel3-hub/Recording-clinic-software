@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -22,12 +23,14 @@ from PySide6.QtWidgets import (
 from scribe_desktop.audio_capture import CaptureBackend, CaptureStream, pcm16_rms_level
 from scribe_desktop.benchmark import (
     BenchmarkResult,
+    ProseBenchmark,
     default_models_root,
     run_all,
     threshold_report,
 )
 from scribe_desktop.session import ACTIVE_STATES, CAPTURING_STATES, SessionState
 from scribe_desktop.ui import models
+from scribe_desktop.ui.hardware_check import run_prose_benchmark
 from scribe_desktop.ui.tasks import TaskThread
 
 _LEVEL_POLL_MS = 100
@@ -43,19 +46,40 @@ _PRIVACY_HINT = (
     "check Windows Settings > Privacy & security > Microphone "
     "(allow desktop apps to access your microphone) and the mic's mute switch."
 )
+# Installation plan Task 2.5: the warning label's sentence for a prose stage
+# at or past the bar (``benchmark.PROSE_REQUIRED_S``).
+PROSE_SLOW_WARNING = (
+    "The prose writing styles are slow on this machine. They stay local; "
+    "the Clean clinical style does not wait for them."
+)
 
 
 def _default_benchmark_runner() -> list[BenchmarkResult]:
     return run_all(default_models_root())
 
 
+class HardwareCheck(NamedTuple):
+    """One benchmark run's results: whisper's, and the prose stage's when it
+    was timed (installation plan Task 2.5)."""
+
+    results: list[BenchmarkResult]
+    prose: ProseBenchmark | None
+
+
 class MicrophoneScreen(QWidget):
+    """``prose_runner`` (installation plan Task 2.5) times the prose stage
+    after whisper. Its default — the real ``run_prose_benchmark`` — applies
+    only with the default whisper runner: a screen given its own
+    ``benchmark_runner`` (every test) times no prose unless it passes a
+    ``prose_runner`` too, so no test reaches the real language model (C6)."""
+
     def __init__(
         self,
         controller: models.SessionControllerLike,
         backend: CaptureBackend,
         *,
         benchmark_runner: Callable[[], list[BenchmarkResult]] | None = None,
+        prose_runner: Callable[[], ProseBenchmark] | None = None,
         profile_root: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -78,6 +102,11 @@ class MicrophoneScreen(QWidget):
         self._profile_line_model_present: bool | None = None
         self._benchmark_runner = (
             benchmark_runner if benchmark_runner is not None else _default_benchmark_runner
+        )
+        self._prose_runner: Callable[[], ProseBenchmark] | None = (
+            prose_runner
+            if prose_runner is not None
+            else (run_prose_benchmark if benchmark_runner is None else None)
         )
         self._benchmark_task: TaskThread | None = None
 
@@ -350,11 +379,18 @@ class MicrophoneScreen(QWidget):
         self.benchmark_button.setEnabled(False)
         self.benchmark_warning_label.hide()
         self.benchmark_output.setPlainText("Benchmark running (local only)...")
-        task = TaskThread(self._benchmark_runner, self)
+        task = TaskThread(self._run_hardware_check, self)
         task.succeeded.connect(self._on_benchmark_done)
         task.failed.connect(self._on_benchmark_failed)
         self._benchmark_task = task
         task.start()
+
+    def _run_hardware_check(self) -> HardwareCheck:
+        """The benchmark task's body (worker thread): whisper, then the prose
+        stage when there is a runner for it."""
+        results = self._benchmark_runner()
+        prose = self._prose_runner() if self._prose_runner is not None else None
+        return HardwareCheck(results, prose)
 
     @property
     def is_busy(self) -> bool:
@@ -366,19 +402,26 @@ class MicrophoneScreen(QWidget):
             self._benchmark_task.finish()
             self._benchmark_task = None
 
-    def _on_benchmark_done(self, results: object) -> None:
+    def _on_benchmark_done(self, check: object) -> None:
         self._join_task()
-        assert isinstance(results, list)
-        self.benchmark_output.setPlainText("\n".join(threshold_report(results)))
+        assert isinstance(check, HardwareCheck)
+        results = check.results
+        self.benchmark_output.setPlainText("\n".join(threshold_report(results, check.prose)))
         failed = [r.model_name for r in results if r.status == "fail"]
+        warnings: list[str] = []
         if failed:
             # Plan: warning on failure — NEVER a cloud fallback.
-            self.benchmark_warning_label.setText(
+            warnings.append(
                 "Benchmark threshold FAILED for: "
                 + ", ".join(failed)
                 + ". Transcription will run slower than real time on this "
                 "machine. It stays local; there is no cloud fallback."
             )
+        prose = check.prose
+        if prose is not None and prose.skipped is None and prose.status == "fail":
+            warnings.append(PROSE_SLOW_WARNING)
+        if warnings:
+            self.benchmark_warning_label.setText(" ".join(warnings))
             self.benchmark_warning_label.show()
         self.refresh_model_status()
         self.benchmark_button.setEnabled(True)

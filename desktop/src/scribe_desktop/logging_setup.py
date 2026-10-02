@@ -474,6 +474,7 @@ def setup_logging(
     *,
     log_dir: Path | None = None,
     stderr: bool = True,
+    file: bool = True,
     max_bytes: int = 1_000_000,
 ) -> logging.Logger:
     """Configure the process logger: rotating file + optional stderr, tripwired.
@@ -481,6 +482,9 @@ def setup_logging(
     NEVER attaches a stdout handler (Critical Constraint: stdout purity).
     Replaced handlers are CLOSED, not just detached (MED-002: an orphaned
     open handle on the log file breaks rotation renames on Windows).
+    ``file=False`` (installation plan Task 2.7: a packaged build refusing to
+    run outside its install folder) builds no file handler and creates no
+    log folder — stderr only, when there is one.
     """
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
@@ -492,21 +496,22 @@ def setup_logging(
     # its scanned fields from, shared by every handler (pinned by test).
     formatter = logging.Formatter(LOG_FORMAT)
 
-    directory = log_dir if log_dir is not None else default_log_dir()
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        # Round 23 PR-MED-020: both handlers report a write failure as one
-        # fixed line (``QuietHandlerErrors``), never the handled exception.
-        file_handler = _QuietRotatingFileHandler(
-            directory / f"{name}.log", maxBytes=max_bytes, backupCount=3, encoding="utf-8"
-        )
-        file_handler.setFormatter(formatter)
-        file_handler.addFilter(tripwire)
-        logger.addHandler(file_handler)
-    except OSError:
-        # LOW-012: an unwritable log dir must not kill the process before the
-        # origin check — fall back to stderr-only logging.
-        pass
+    if file:
+        directory = log_dir if log_dir is not None else default_log_dir()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            # Round 23 PR-MED-020: both handlers report a write failure as one
+            # fixed line (``QuietHandlerErrors``), never the handled exception.
+            file_handler = _QuietRotatingFileHandler(
+                directory / f"{name}.log", maxBytes=max_bytes, backupCount=3, encoding="utf-8"
+            )
+            file_handler.setFormatter(formatter)
+            file_handler.addFilter(tripwire)
+            logger.addHandler(file_handler)
+        except OSError:
+            # LOW-012: an unwritable log dir must not kill the process before
+            # the origin check — fall back to stderr-only logging.
+            pass
 
     # sys.stderr is None under a pythonw-backed launcher with no redirection.
     if stderr and sys.stderr is not None:

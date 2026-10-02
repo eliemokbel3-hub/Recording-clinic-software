@@ -35,11 +35,13 @@ import subprocess  # noqa: S404 - spawns only sys.executable on this module
 import sys
 import tempfile
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
 
 from scribe_desktop import install_layout
+from scribe_desktop.logging_setup import exception_type_name
 
 # RTF thresholds (plan Step 5 / Step 10). RTF < 1.0 is required; the margin
 # leaves headroom for clinic machines slower than the dev machine.
@@ -102,6 +104,17 @@ BENCHMARK_TEXT = (
 # run_all() on its own synthesized sample; it is not a user-facing entry for
 # arbitrary audio (the benchmark path never touches clinical recordings).
 _WORKER_ENV = "SCRIBE_BENCHMARK_WORKER"
+
+# Installation plan Task 2.1 (D11): a packaged build has no ``-m`` — its
+# ``sys.executable`` is ``scribe-app.exe`` — so the worker is that exe with
+# this flag first, dispatched by ``app.main`` right after the install-folder
+# check (Task 2.7) and before anything else runs (``is_worker_argv``). The
+# worker's JSON stays on stdout: Task 0.1 measured the windowed bootloader
+# handing a child its parent's pipes intact.
+WORKER_FLAG: Final = "--benchmark-worker"
+# The worker's options, in the order ``worker_argv`` writes them; each takes
+# exactly one value.
+_WORKER_OPTIONS: Final = ("--single", "--models-root", "--audio", "--audio-seconds")
 
 # Round 45 SEC-001 (availability): a hung model subprocess must never pin
 # the benchmark TaskThread forever (the close guard would then refuse
@@ -241,8 +254,118 @@ def live_keeps_up(result: BenchmarkResult) -> bool:
     return result.status != "fail"
 
 
-def threshold_report(results: list[BenchmarkResult]) -> list[str]:
-    """Human-readable threshold report. Never suggests any cloud fallback."""
+@dataclass(frozen=True)
+class ProseBenchmark:
+    """Installation plan Task 2.5 (D11): one timing of the prose stage (the
+    Narrative style over fixed, non-clinical lines). Numbers only — the
+    rendered text is never kept. ``skipped`` is the named line when it was
+    not timed (the language model absent, its load failed, a model call
+    failed, or no section could be given to it). ``load_seconds`` is the
+    model's load, and ``preloaded`` says the process already held the model,
+    so no load was timed; ``wall_seconds``
+    and ``cpu_seconds`` cover the sections only, the load excluded (round 13
+    LOW-001)."""
+
+    sections: int = 0
+    rendered: int = 0
+    load_seconds: float = 0.0
+    model_seconds: float = 0.0
+    wall_seconds: float = 0.0
+    cpu_seconds: float = 0.0
+    skipped: str | None = None
+    preloaded: bool = False
+
+    @property
+    def seconds_per_section(self) -> float:
+        """The model's wall seconds per section it rendered (``rendered``)."""
+        return self.model_seconds / self.rendered if self.rendered else 0.0
+
+    @property
+    def cpu_per_section(self) -> float:
+        """This process's CPU seconds (every thread, the load excluded) per
+        section the model rendered."""
+        return self.cpu_seconds / self.rendered if self.rendered else 0.0
+
+    @property
+    def status(self) -> str:
+        return classify_prose(self.seconds_per_section)
+
+
+# Task 2.5's verdict on the prose stage, in the model's wall seconds per
+# section — an INTERPRETATION of the practitioner's 2026-09-18 note-learning
+# decision that CPU inference is "acceptable for a few seconds per section",
+# pending their ratification: within PROSE_MARGIN_S is OK, below
+# PROSE_REQUIRED_S a NOTE, at or above it a WARNING. Like the RTF bar it only
+# ever produces a local line; the Clean clinical style never waits on it.
+PROSE_MARGIN_S: Final = 5.0
+PROSE_REQUIRED_S: Final = 10.0
+
+
+def classify_prose(seconds_per_section: float) -> str:
+    """'ok', 'warning' or 'fail' for the prose stage (``PROSE_*_S``)."""
+    if seconds_per_section < 0:
+        raise ValueError("seconds cannot be negative")
+    if seconds_per_section <= PROSE_MARGIN_S:
+        return "ok"
+    if seconds_per_section < PROSE_REQUIRED_S:
+        return "warning"
+    return "fail"
+
+
+# The whisper model the installed build ships (D5); its verdict is summarised
+# beside the prose stage's.
+SHIPPED_WHISPER_MODEL: Final = "medium"
+
+
+def prose_report(prose: ProseBenchmark) -> list[str]:
+    """Task 2.5's lines for the prose stage: the timing, then the verdict
+    when it is not OK. Never any text the model wrote."""
+    if prose.skipped is not None:
+        return [f"Prose stage: not timed - {prose.skipped}"]
+    load = "model already loaded" if prose.preloaded else f"load {prose.load_seconds:.1f} s"
+    lines = [
+        f"Prose stage (Narrative style): {prose.rendered} of {prose.sections} sections, "
+        f"{load}; sections {prose.wall_seconds:.1f} s wall, "
+        f"{prose.cpu_seconds:.1f} s CPU; {prose.seconds_per_section:.1f} s wall and "
+        f"{prose.cpu_per_section:.1f} s CPU per section  {prose.status.upper()}"
+    ]
+    if prose.status == "fail":
+        lines.append(
+            f"WARNING: the prose styles take {prose.seconds_per_section:.1f} s per section "
+            f"(>= {PROSE_REQUIRED_S:.0f} s) on this machine. They stay local; the Clean "
+            "clinical style does not use the language model."
+        )
+    elif prose.status == "warning":
+        lines.append(
+            f"NOTE: the prose styles take {prose.seconds_per_section:.1f} s per section "
+            f"(> {PROSE_MARGIN_S:.0f} s) on this machine; a long note waits longer for them."
+        )
+    return lines
+
+
+def hardware_verdict(results: list[BenchmarkResult], prose: ProseBenchmark) -> str:
+    """Task 2.5: one line with the verdict for both — whisper ``medium``
+    (the shipped model) and the prose stage."""
+    medium = next((r for r in results if r.model_name == SHIPPED_WHISPER_MODEL), None)
+    whisper = (
+        f"whisper {SHIPPED_WHISPER_MODEL} RTF {medium.rtf:.2f} {medium.status.upper()}"
+        if medium is not None
+        else f"whisper {SHIPPED_WHISPER_MODEL} not measured (not installed)"
+    )
+    stage = (
+        "prose stage not timed"
+        if prose.skipped is not None
+        else f"prose stage {prose.seconds_per_section:.1f} s per section {prose.status.upper()}"
+    )
+    return f"Hardware check: {whisper}; {stage}"
+
+
+def threshold_report(
+    results: list[BenchmarkResult], prose: ProseBenchmark | None = None
+) -> list[str]:
+    """Human-readable threshold report. Never suggests any cloud fallback.
+    With ``prose`` (installation plan Task 2.5) the prose stage's lines and
+    the verdict for both follow."""
     lines = [
         f"RTF thresholds: required < {RTF_REQUIRED:.2f}, margin <= {RTF_MARGIN:.2f}",
         f"{'model':<20} {'RTF':>6} {'load s':>7} {'audio s':>8} "
@@ -285,6 +408,9 @@ def threshold_report(results: list[BenchmarkResult]) -> list[str]:
                 f"(RTF {r.rtf:.2f} > {RTF_MARGIN:.2f}); slower clinic hardware "
                 "may fall behind real time."
             )
+    if prose is not None:
+        lines.extend(prose_report(prose))
+        lines.append(hardware_verdict(results, prose))
     return lines
 
 
@@ -349,6 +475,76 @@ def run_single(model_dir: Path, audio_path: Path, audio_seconds: float) -> Bench
     )
 
 
+def worker_argv(
+    name: str, models_root: Path, audio_path: Path, audio_seconds: float
+) -> list[str]:
+    """The argv ``run_all`` spawns for one model: this module under ``-m``
+    from a source run; ``scribe-app.exe --benchmark-worker`` in a packaged
+    build (installation plan Task 2.1), never a second app — so a packaged
+    build refuses (``RuntimeError``) a shape its own dispatch would not
+    take, such as a candidate folder named like an option (round 13
+    LOW-004)."""
+    tail = [
+        "--single",
+        name,
+        "--models-root",
+        str(models_root),
+        "--audio",
+        str(audio_path),
+        "--audio-seconds",
+        f"{audio_seconds}",
+    ]
+    if install_layout.is_frozen():
+        argv = [sys.executable, WORKER_FLAG, *tail]
+        if not is_worker_argv(argv):
+            raise RuntimeError(f"benchmark worker arguments for {name} are not admissible")
+        return argv
+    return [sys.executable, "-m", "scribe_desktop.benchmark", *tail]
+
+
+def is_worker_argv(argv: Sequence[str]) -> bool:
+    """Whether ``argv`` (``sys.argv``, program first) is EXACTLY the frozen
+    worker's shape — ``WORKER_FLAG`` then each worker option once, in
+    ``worker_argv``'s order, each with one value that is not itself an
+    option. Anything else (a missing, extra, reordered or repeated argument)
+    is not the worker."""
+    rest = list(argv[1:])
+    if len(rest) != 1 + 2 * len(_WORKER_OPTIONS) or rest[0] != WORKER_FLAG:
+        return False
+    pairs = rest[1:]
+    for index, option in enumerate(_WORKER_OPTIONS):
+        value = pairs[2 * index + 1]
+        if pairs[2 * index] != option or not value or value.startswith("-"):
+            return False
+    return True
+
+
+def run_worker(argv: Sequence[str]) -> int | None:
+    """``app.main``'s first step (installation plan Task 2.1): when this
+    launch is the frozen benchmark worker — ``SCRIBE_BENCHMARK_WORKER=1`` set
+    by ``run_all`` AND ``is_worker_argv`` — run ``main`` on the options and
+    return its exit code. Otherwise ``None``: the launch is not the worker,
+    and the arguments are ignored.
+
+    Round 13 MED-003 (C3): the worker runs before ``app.main`` installs its
+    exception hooks, so it is its own boundary — an exception is ONE
+    ``benchmark_worker error_code=<type name>`` line on stderr (which
+    ``run_all`` shows) and exit 1, never a traceback or its message, and
+    never the windowed bootloader's traceback box."""
+    if os.environ.get(_WORKER_ENV) != "1" or not is_worker_argv(argv):
+        return None
+    try:
+        return main(list(argv[2:]))
+    except Exception as exc:  # noqa: BLE001 - the worker's one boundary
+        if sys.stderr is not None:
+            print(
+                f"benchmark_worker error_code={exception_type_name(type(exc))}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return 1
+
+
 def run_all(models_root: Path, names: list[str] | None = None) -> list[BenchmarkResult]:
     """Benchmark each candidate in a fresh subprocess; aggregate results."""
     candidates = list_whisper_candidates(models_root)
@@ -370,19 +566,7 @@ def run_all(models_root: Path, names: list[str] | None = None) -> list[Benchmark
             env = dict(os.environ) | OFFLINE_ENV | {_WORKER_ENV: "1"}
             try:
                 proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
-                    [
-                        sys.executable,
-                        "-m",
-                        "scribe_desktop.benchmark",
-                        "--single",
-                        name,
-                        "--models-root",
-                        str(models_root),
-                        "--audio",
-                        str(audio_path),
-                        "--audio-seconds",
-                        f"{audio_seconds}",
-                    ],
+                    worker_argv(name, models_root, audio_path, audio_seconds),
                     env=env,
                     capture_output=True,
                     text=True,

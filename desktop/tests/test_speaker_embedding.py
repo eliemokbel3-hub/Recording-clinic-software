@@ -7,8 +7,10 @@ shipped front-end and the D-P1 evidence are one piece of code and it is
 tested once, here. Everything runs without the real model: the load
 contract is driven through ``sys.modules`` stubs (an un-importable
 ``onnxruntime``, a fake session factory) against files under ``tmp_path``,
-and the real-model tests are skip-marked when the local cache is absent
-(agent shells cannot see the practitioner's cache — ``docs/lessons.md``).
+and the real-model tests are skip-marked when the speaker model is absent
+from the source run's dev models root
+(``%LOCALAPPDATA%\\ClinikoScribe-dev\\models``, installation plan Task 2.6)
+— the skip reason names that root.
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ from typing import Any
 
 import pytest
 
+from conftest import on_real_ml_root, real_ml_skip_reason
 from scribe_desktop import speaker_embedding as se
 from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 from scribe_desktop.speaker_embedding import (
@@ -572,10 +575,13 @@ class TestAvailabilityAndFactory:
 # --- the real model, when the cache is visible ------------------------------------------
 
 
+# Installation plan Task 2.6: the gate and the body (``real_ml_models``) look
+# in the source run's DEV models root, never the production data folder.
 @pytest.mark.skipif(
-    not speaker_model_available(),
-    reason="local model cache absent (run scripts/setup-models.py --only speaker-embedding)",
+    not on_real_ml_root(speaker_model_available),
+    reason=real_ml_skip_reason("the pinned speaker model"),
 )
+@pytest.mark.usefixtures("real_ml_models")
 class TestRealModel:
     def test_pinned_model_loads_and_embeds(self) -> None:
         np = pytest.importorskip("numpy")

@@ -45,14 +45,20 @@ class EndOfStream(Exception):
     """Clean EOF before a length prefix — the peer closed the pipe."""
 
 
-def set_binary_stdio() -> None:
-    """Put stdin/stdout into binary mode on Windows (no-op elsewhere)."""
+class _HasFileno(Protocol):
+    def fileno(self) -> int: ...
+
+
+def set_binary_stdio(stdin: _HasFileno | None = None, stdout: _HasFileno | None = None) -> None:
+    """Put stdin/stdout into binary mode on Windows (no-op elsewhere): the
+    streams given (installation plan Task 2.2: whichever the native host
+    obtained), else ``sys.stdin`` / ``sys.stdout``."""
     if sys.platform == "win32":
         import msvcrt
         import os
 
-        msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
-        msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+        msvcrt.setmode((stdin if stdin is not None else sys.stdin).fileno(), os.O_BINARY)
+        msvcrt.setmode((stdout if stdout is not None else sys.stdout).fileno(), os.O_BINARY)
 
 
 def _read_exact(stream: ByteReader, size: int) -> bytes:

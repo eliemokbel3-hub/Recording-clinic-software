@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import start_unlinked
+from conftest import on_real_ml_root, real_ml_skip_reason, start_unlinked
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
@@ -1081,10 +1081,13 @@ class TestClinicalPrompt:
         assert len(CLINICAL_INITIAL_PROMPT.split()) <= 70
         assert len(CLINICAL_INITIAL_PROMPT) <= 650
 
+    # Installation plan Task 2.6: the gate and the body look in the source
+    # run's DEV models root, never the production data folder.
     @pytest.mark.skipif(
-        not whisper_model_available(resolve_whisper_model()),
-        reason="exact token count needs a local whisper snapshot's tokenizer",
+        not on_real_ml_root(lambda: whisper_model_available(resolve_whisper_model())),
+        reason=real_ml_skip_reason("a whisper snapshot (for its tokenizer)"),
     )
+    @pytest.mark.usefixtures("real_ml_models")
     def test_prompt_token_count_exact_with_real_tokenizer(self) -> None:
         # The binding budget check (peer round 36): measure the prompt the
         # exact way faster-whisper encodes it (leading space, no special
@@ -1381,16 +1384,20 @@ class TestControllerTranscription:
 # default, small fallback — mirrors production composition; skip-if-absent)
 # ---------------------------------------------------------------------------
 
+# Installation plan Task 2.6: the gate and the class body (``real_ml_models``)
+# look in the source run's DEV models root, never the production data folder.
 requires_live_stack = pytest.mark.skipif(
     sys.platform != "win32"
-    or not vad_model_available()
-    or not whisper_model_available(resolve_whisper_model()),
-    reason="live e2e needs Windows (SAPI) + local silero and a whisper model "
-    "(medium, or the small fallback)",
+    or not on_real_ml_root(
+        lambda: vad_model_available() and whisper_model_available(resolve_whisper_model())
+    ),
+    reason="live e2e needs Windows (SAPI) + "
+    + real_ml_skip_reason("local silero and a whisper model (medium, or the small fallback)"),
 )
 
 
 @requires_live_stack
+@pytest.mark.usefixtures("real_ml_models")
 class TestLiveEndToEnd:
     def test_record_transcribe_verify(self, tmp_path: Path) -> None:
         # offline env BEFORE any ML import (PR-MED-009/-014 pattern)

@@ -237,7 +237,7 @@ def _panel(monkeypatch: pytest.MonkeyPatch, config_root: Path, which: Channel) -
     monkeypatch.setattr(
         main_window,
         "read_registration_status",
-        lambda: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
+        lambda layer: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
     )
     return main_window.StatusPanel(config_root=config_root)
 

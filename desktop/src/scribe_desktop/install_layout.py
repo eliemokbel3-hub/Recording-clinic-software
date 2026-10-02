@@ -60,9 +60,21 @@ MODELS_DIRNAME: Final = "models"
 # root through the same seam; its pin is in test_install_layout.py.
 INSTALL_ROOTS: Final[tuple[str, ...]] = (r"C:\Program Files\ClinikoScribe",)
 
+# D6 / Task 3.4 (the forms Task 0.3 fixed): the installer's backup and
+# snapshot exclusion value, named after the production folder, holding the
+# two ``$UserProfile$``-relative patterns ``backup_exclusion_patterns``
+# returns. Only the production folder is ever covered (the dev folder is a
+# developer's own, C8).
+BACKUP_VALUE_NAME: Final = APP_FOLDER_NAME
+
 # Task 1.7: what a packaged build tells the user when an installed file is
 # missing or damaged. The source-run commands are below, in the two remedies.
 FROZEN_REMEDY: Final = "reinstall Clinic Scribe"
+
+_NOT_INSTALLED: Final = "Clinic Scribe is not running from its install folder"
+# Task 2.7: what a packaged build copied outside its install folder says
+# instead of starting (``scribe-app``'s message box).
+NOT_INSTALLED_LINE: Final = f"{_NOT_INSTALLED} — {FROZEN_REMEDY}."
 
 
 class InstallLayoutError(RuntimeError):
@@ -117,6 +129,14 @@ def app_data_root_via(layer: WindowsLayer) -> Path:
     return _data_root_from(layer.environ("LOCALAPPDATA"))
 
 
+def backup_exclusion_patterns() -> tuple[str, ...]:
+    """D6: the live-session and log patterns of the installer's
+    ``FilesNotToBackup`` / ``FilesNotToSnapshot`` value
+    (``BACKUP_VALUE_NAME``), written literally (Task 3.4)."""
+    base = "$UserProfile$\\AppData\\Local\\" + APP_FOLDER_NAME
+    return (f"{base}\\sessions\\* /s", f"{base}\\logs\\* /s")
+
+
 def instance_guard_root() -> Path:
     """Task 1.5 (D3): the folder of the ONE single-instance lock file, the
     same for both channels — the PRODUCTION data folder, where every earlier
@@ -150,21 +170,37 @@ def install_root(accepted: Sequence[str] | None = None) -> Path | None:
     folder = Path(os.path.realpath(executable())).parent
     roots = INSTALL_ROOTS if accepted is None else accepted
     if _normalised(str(folder)) not in {_normalised(root) for root in roots}:
-        raise InstallLayoutError("Clinic Scribe is not running from its install folder")
+        raise InstallLayoutError(_NOT_INSTALLED)
     return folder
 
 
-def models_root() -> Path:
+def outside_install_folder() -> InstallLayoutError | None:
+    """Task 2.7: the refusal ``app.main`` and ``native_host.main`` check
+    FIRST — before logging, the single-instance guard, any data root and
+    any window. The ``InstallLayoutError`` when a packaged build is not
+    running from an accepted install folder (``install_root``); ``None``
+    for a source run or a packaged build where it belongs. Touches no data
+    root."""
+    try:
+        install_root()
+    except InstallLayoutError as exc:
+        return exc
+    return None
+
+
+def models_root(of: Channel | None = None) -> Path:
     """``<install folder>\\models`` when frozen; ``<data root>\\models`` for a
-    source run, raising ``RuntimeError`` when ``LOCALAPPDATA`` is unset (no
-    home fallback for models — the long-standing contract)."""
+    source run — of channel ``of``, default this process's — raising
+    ``RuntimeError`` when ``LOCALAPPDATA`` is unset (no home fallback for
+    models — the long-standing contract). ``of="dev"`` is the source run's
+    own root whatever the channel pin (the real-ML test legs, Task 2.6)."""
     root = install_root()
     if root is not None:
         return root / MODELS_DIRNAME
     local_app_data = os.environ.get("LOCALAPPDATA")
     if not local_app_data:
         raise RuntimeError("LOCALAPPDATA is not set; model cache location unknown")
-    return _data_root_from(local_app_data) / MODELS_DIRNAME
+    return _data_root_from(local_app_data, of) / MODELS_DIRNAME
 
 
 # --- the remedies (Task 1.7) --------------------------------------------------------
@@ -191,14 +227,17 @@ def registration_remedy() -> str:
 
 __all__ = [
     "APP_FOLDER_NAME",
+    "BACKUP_VALUE_NAME",
     "DEV_FOLDER_NAME",
     "FROZEN_REMEDY",
     "INSTALL_ROOTS",
     "MODELS_DIRNAME",
+    "NOT_INSTALLED_LINE",
     "Channel",
     "InstallLayoutError",
     "ModelEntry",
     "app_data_root_via",
+    "backup_exclusion_patterns",
     "channel",
     "channel_for",
     "data_root",
@@ -209,5 +248,6 @@ __all__ = [
     "is_frozen",
     "model_remedy",
     "models_root",
+    "outside_install_folder",
     "registration_remedy",
 ]

@@ -951,7 +951,7 @@ class TestPollNeverDecrypts:
         ``refresh_style_profile_state`` decrypts the style store, and it is
         called on the tab's own learn / remove / delete / consent-renewal
         events."""
-        from scribe_desktop.ui.microphone import MicrophoneScreen
+        from scribe_desktop.ui.microphone import HardwareCheck, MicrophoneScreen
 
         screen = _screen(tmp_path)
         mic = MicrophoneScreen(
@@ -973,7 +973,7 @@ class TestPollNeverDecrypts:
         mic.refresh_model_status()
         mic.refresh_model_status()
         mic.refresh_model_status()
-        mic._on_benchmark_done([])
+        mic._on_benchmark_done(HardwareCheck([], None))
 
         assert opened == []
 

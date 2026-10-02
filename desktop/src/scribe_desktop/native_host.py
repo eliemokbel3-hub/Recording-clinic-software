@@ -5,9 +5,13 @@ extension may launch this host; the origin argv check here is defence-in-depth,
 and the session nonce is a session/correlation IDENTIFIER, not authentication.
 
 Startup contract:
+- a packaged host outside its install folder exits first, before logging
+  or any data root (installation plan Task 2.7)
 - right after logging, an uncaught exception anywhere in the process is
   logged by its type name only (``exclusions.install_exception_hooks``)
-- binary stdio is set before any pipe I/O (executor facts)
+- binary stdio is set before any pipe I/O (executor facts), on whichever
+  streams the host obtained (Task 2.2: Python's, else the Win32 standard
+  handles; neither present is exit 4 before protocol mode)
 - resolved executable/module/cwd paths are logged as a hijack tripwire
 - with a missing or unknown origin argv the host exits non-zero BEFORE
   reading stdin (never enters protocol mode)
@@ -59,8 +63,8 @@ from typing import Any, BinaryIO, Final, Protocol
 
 from pydantic import ValidationError
 
-from scribe_desktop import identity
-from scribe_desktop.exclusions import install_exception_hooks
+from scribe_desktop import identity, install_layout
+from scribe_desktop.exclusions import Win32WindowsLayer, WindowsLayer, install_exception_hooks
 from scribe_desktop.framing import (
     EndOfStream,
     FramingError,
@@ -73,7 +77,7 @@ from scribe_desktop.framing import (
 # Task 1.4): ``verify_origin`` checks the running channel's
 # ``identity.expected_origin()``, which IS this value in a production build.
 from scribe_desktop.identity import EXPECTED_ORIGIN as EXPECTED_ORIGIN
-from scribe_desktop.logging_setup import log_event, setup_logging
+from scribe_desktop.logging_setup import exception_type_name, log_event, setup_logging
 from scribe_desktop.pipe_client import AppPipeConnector, ServerUnverified
 from scribe_desktop.protocol import (
     MIN_SUPPORTED_VERSION,
@@ -534,25 +538,106 @@ def _main_loop(
         )
 
 
-def _log_registration_paths(logger: logging.Logger) -> None:
+def _log_registration_paths(logger: logging.Logger, layer: WindowsLayer | None = None) -> None:
     """Hijack tripwire (MED-007): log the registry-resolved manifest path and
-    the launcher path it points at, alongside our own executable paths."""
-    if sys.platform != "win32":
-        return
-    import json
-    import winreg
+    the launcher path it points at, alongside our own executable paths.
 
+    Installation plan Task 2.3 (D9): the entries are read in Chrome's lookup
+    order (``exclusions.native_host_entries``, HKCU then HKLM, each in both
+    registry views); the WINNING one is ``host_manifest`` (its place in
+    ``detail_code``, the number found in ``count``) and every other is a
+    ``host_manifest_other`` line. Never raises: anything unreadable is one
+    ``state=unreadable`` line."""
+    import json
+
+    # Built outside the tripwire's `except` (round 13 LOW-003): building the
+    # real layer never fails, and a test that reaches it fails loudly (the
+    # conftest's C6 sentinel) instead of logging `state=unreadable`.
+    reader = layer if layer is not None else Win32WindowsLayer()
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, identity.registry_key()) as key:
-            manifest_path, _ = winreg.QueryValueEx(key, "")
-        log_event(logger, "host_manifest", path=str(manifest_path))
-        launcher = json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("path", "")
+        entries = reader.native_host_entries(identity.registry_key())
+        if not entries:
+            log_event(logger, "host_manifest", state="absent")
+            return
+        winner, *others = entries
+        log_event(
+            logger,
+            "host_manifest",
+            path=winner.manifest,
+            detail_code=winner.place,
+            count=len(entries),
+        )
+        for other in others:
+            log_event(logger, "host_manifest_other", path=other.manifest, detail_code=other.place)
+        launcher = json.loads(Path(winner.manifest).read_text(encoding="utf-8")).get("path", "")
         log_event(logger, "host_launcher", path=str(launcher))
-    except (OSError, ValueError):
+    except Exception:  # noqa: BLE001 - a tripwire line never stops the host
         log_event(logger, "host_manifest", state="unreadable")
 
 
+# The Win32 standard-handle ids (``GetStdHandle``) of the two streams the host
+# speaks over (installation plan Task 2.2).
+_STD_HANDLE_IDS: Final[dict[str, int]] = {"stdin": -10, "stdout": -11}
+
+StdStreamOpener = Callable[[str], BinaryIO | None]
+
+
+def open_std_stream(which: str) -> BinaryIO | None:
+    """``which`` (``"stdin"`` / ``"stdout"``) as a binary stream over the
+    process's Win32 standard handle (``msvcrt.open_osfhandle(GetStdHandle)``),
+    or ``None`` when the process has no such handle, or one the C runtime
+    will not take (a stale handle: round 13 LOW-002). Kept open for the
+    process lifetime (the stream never closes the handle)."""
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetStdHandle.argtypes = [ctypes.c_uint32]
+        kernel32.GetStdHandle.restype = ctypes.c_void_p
+        handle = kernel32.GetStdHandle(ctypes.c_uint32(_STD_HANDLE_IDS[which] & 0xFFFFFFFF))
+        if not handle or handle == ctypes.c_void_p(-1).value:
+            return None
+        reading = which == "stdin"
+        try:
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY if reading else 0)
+            return open(fd, "rb" if reading else "wb", closefd=False)  # noqa: SIM115 - process lifetime
+        except OSError:
+            return None
+    return None
+
+
+def binary_stdio(
+    stdin: Any, stdout: Any, open_std: StdStreamOpener = open_std_stream
+) -> tuple[BinaryIO, BinaryIO] | None:
+    """Installation plan Task 2.2 (defence-in-depth; Task 0.2 measured that
+    Chrome GIVES the packaged host its stdin/stdout): the binary streams the
+    host speaks over — each text stream's ``buffer`` when Python has the
+    stream, else ``open_std`` over the Win32 standard handle (a windowed
+    packaged build started with no streams has ``sys.stdin`` /
+    ``sys.stdout`` None). ``None`` when either cannot be had."""
+    pair: list[BinaryIO | None] = []
+    for name, stream in (("stdin", stdin), ("stdout", stdout)):
+        pair.append(stream.buffer if stream is not None else open_std(name))
+    binary_in, binary_out = pair
+    if binary_in is None or binary_out is None:
+        return None
+    return binary_in, binary_out
+
+
 def main() -> int:
+    # Installation plan Task 2.7: a packaged host outside its install folder
+    # never starts — checked before logging, so no data root is touched; one
+    # type-name line to stderr (Chrome gives the host none: Task 0.2).
+    refused = install_layout.outside_install_folder()
+    if refused is not None:
+        log_event(
+            setup_logging("scribe-host", file=False),
+            "host_exit",
+            state="not_installed",
+            error_code=exception_type_name(type(refused)),
+        )
+        return 3
     logger = setup_logging("scribe-host")
     # Privacy-professional-controls round 21 MED-001 (C3, as Task 4.1 does for
     # scribe-app): an uncaught exception in this process — the main loop, the
@@ -573,11 +658,15 @@ def main() -> int:
         log_event(logger, "origin_rejected", state="refused", count=len(sys.argv) - 1)
         return 2
 
-    set_binary_stdio()
+    # Task 2.2: whichever streams the host obtained are put into binary mode.
+    streams = binary_stdio(sys.stdin, sys.stdout)
+    if streams is None:
+        log_event(logger, "host_stdio", state="absent")
+        return 4
+    stdin, stdout = streams
+    set_binary_stdio(stdin, stdout)
     log_event(logger, "origin_verified", state="ok")
-    return run_host(
-        sys.stdin.buffer, sys.stdout.buffer, logger, relay_factory=app_relay_factory()
-    )
+    return run_host(stdin, stdout, logger, relay_factory=app_relay_factory())
 
 
 if __name__ == "__main__":

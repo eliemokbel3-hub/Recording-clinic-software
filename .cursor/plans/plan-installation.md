@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `38%`
+**Overall Progress:** `54%`
 
 ## Lifecycle State
 - Active
@@ -456,13 +456,8 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 
 ## Current State / Handoff Note
 - Last completed step: **Phase 0 COMPLETE** — every spike run by the practitioner from a normal PowerShell (C7) on 2026-10-02 and recorded on its task by stage-0 executor leg i0-x12 (2026-10-02T22:46+10:00). Tasks 0.1, 0.2, 0.3, 0.4 and 0.5 are 🟩, and D-I1 / D-I2 are chosen 🟩. Earlier: the spike inputs (leg i0-x1), the peer pass stage-0.p1 (rounds 4–8, closed at the cap), and planning hardened by `/review-plan` and `/peer-loop` rounds 1–3.
-- Current in-progress step: Phase 0 closed in the plan, awaiting the composer's Phase 0 commit. Phase 1 is BUILT and held in `git stash` (see COMPOSER RUN-STATE).
-- Immediate next action (composer):
-  1. Commit Phase 0 (the plan plus `packaging/spike/`; never `extension/key-dev.pem`).
-  2. `git stash pop`.
-  3. Apply Task 1.1's D-I1 narrowing (`INSTALL_ROOTS` → `C:\Program Files\ClinikoScribe`).
-  4. The composer-run suites, then `/review-loop` for Phase 1.
-  5. Keep `C:\scribe-spike` until the benchmark comparison below is done (Finishing up step 3 is held).
+- Current in-progress step (2026-10-03T02:11:26+10:00): **Phase 2 `/review-loop` CONVERGED at round 14** (no CRIT/HIGH/MED; round 14 Closed on composer suite 3, pytest 5559 passed / 20 skipped). Tasks 2.1–2.5 and 2.7 are 🟩 and 2.6 is 🟨 (the practitioner's dev-models copy is outstanding). The work sits in the worktree on top of Phase 1 committed `a7337a2`. See the leg i2-x3 brief below. (Phase 0 is committed as `9f43f8c`, Phase 1 as `a7337a2`.)
+- Immediate next action (composer): the codex peer pass over the Phase 2 diff, then the Phase 2 commit on `installation-build`. Ask the practitioner for the Task 2.6 dev-models copy (the command is on Task 2.6), then re-run and report the real-ML legs' run/skip count. Keep `C:\scribe-spike` until the benchmark comparison (item 3 below) is done. No Phase 2 code draws a speed conclusion: Task 2.5 only measures and states its verdict line.
 - Open blockers / open questions: the Phase 0 MUST-PAUSE for practitioner runs is DISCHARGED (2026-10-02). None of the following blocks Phase 0's close; each is owned and has a recommendation.
   1. **Inno Setup licensing** `[practitioner]`. The local ISCC 6.7.3 prints **"Non-commercial use only"** (Task 0.3).
      - The plan currently ASSUMES Inno Setup is freely usable: Config / Deployment Impact lists it only as "a pinned version on the CI runner and on the practitioner's machine". No licence term is recorded, and PLAN.md has a commercial path.
@@ -677,7 +672,103 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
   - **Untouched:** `src`, scripts, the extension and git refs.
   - **Fix-delta self-check:** PASS.
   - **Composer to verify:** the full desktop suite. Expect 5422 passed / 9 skipped, unchanged: no test was added or removed, only assertions. The real-ML legs should still RUN.
-- Last plan sync: 2026-10-03T00:41:10+10:00
+- **EXECUTOR stage-2 leg i2-x1 (2026-10-03T01:22:34+10:00) — Phase 2 (Tasks 2.1–2.7) BUILT in the worktree `C:\scribe-build`; every task 🟨; ruff clean, mypy clean (58 source files, +1 `ui/hardware_check.py`):** the per-task notes are on each task.
+  - **Built:**
+    - 2.1: the frozen worker argv and its exact-shape dispatch, first in `app.main`. The temp-file fallback is NOT built; Task 0.1's evidence shows working pipes.
+    - 2.2: the `binary_stdio` seam, built as defence-in-depth, and `set_binary_stdio(stdin, stdout)`. A None stderr is pinned as tolerated.
+    - 2.3: `WindowsLayer.native_host_entries` in Chrome's order; the Status line (winner, the others, the frozen per-user override warning); the host log; the layer passed `app.main` → `MainWindow` → `StatusPanel`.
+    - 2.4: the WER set and hives by channel, and `check_backup_exclusions` (production only).
+    - 2.5: the prose-stage timing (`ui/hardware_check.py`), the `ProseBenchmark` lines and the verdict for both, on the Microphone panel.
+    - 2.6: the real-ML legs (gates, bodies, children) on the dev models root.
+    - 2.7: a packaged build outside its install folder refuses in both entry points before any data root.
+  - **Enumerations (from the code, on the tasks):**
+    - the real-ML legs: 7 gates, plus 3 child scripts pinned by a class-closed test and an AST `skipif` scan;
+    - the `WindowsLayer` fakes updated: `test_exclusions.FakeLayer` and the integration child's string fake;
+    - the callers of `read_registration_status` and `_on_benchmark_done`, all updated.
+  - **Composer to verify:**
+    - The full desktop suite (`.venv/Scripts/python.exe -m pytest` in `desktop/`). Expect about +115 tests: `test_frozen_runtime.py` ≈68 new, `test_hardware_check.py` ≈22 new, `test_exclusions.py` +27, and `test_status_and_app.py` −2 +1 (two real-machine HKCU registration tests replaced; Task 2.3), so about 5537 passed.
+    - **The skip count rises:** until the practitioner populates `%LOCALAPPDATA%\ClinikoScribe-dev\models`, every real-ML leg SKIPS with a reason naming that root. Please report the skip list.
+    - `npm run qa`: the extension is untouched; re-run only if the suite set requires it.
+  - **Open items:**
+    - **PRACTITIONER (Task 2.6, normal PowerShell, C7):** `Copy-Item -Recurse "$env:LOCALAPPDATA\ClinikoScribe\models" "$env:LOCALAPPDATA\ClinikoScribe-dev\models"`, about 5.3 GiB if every model is present. Then report the summed size (the command is on Task 2.6). The composer then re-runs the suite and reports the run/skip count of the real-ML legs. Only then can 2.6 go 🟩. rec= do it before the Phase 2 commit, so the real-ML no-sockets legs run on Phase 2's code.
+    - **Ratify (Task 2.5):** the prose verdict bar, 5 s OK / 10 s warning per section. rec= accept; it is a local line only and one constant pair.
+  - **For H.1:**
+    - the D9 policy residue (`NativeMessagingUserLevelHosts=0` makes the override warning moot; the policy is not read);
+    - the frozen refusal's stderr-only line (usually unseen);
+    - the Status registration wording, the WER/backup lines and the hardware-check lines in `docs/design-system.md`;
+    - `threat-model.md`'s EXCLUSIONS paragraph (HKLM WER, the backup check) and its Chrome-link section (Chrome's lookup order, the 32-bit-view-first claim from Chromium's source);
+    - `docs/testing/` or AGENTS.md Local Run Steps: the real-ML legs now need the dev models root.
+  - **Not touched:** the extension, `scripts/`, `docs/`, git refs and the main checkout.
+- **EXECUTOR stage-2 leg i2-x2 (2026-10-03T01:48:24+10:00) — Phase 2 markers, then `/review-loop` round 13 (loop round 1 of cap 3); all 14 findings applied; composer-run suite pending:**
+  - **Markers:** on composer suite 1 (pytest 5527 passed / 20 skipped, ruff clean, mypy 58, `npm run qa` 13 / 313), Tasks 2.1–2.5 and 2.7 are 🟩. Overall Progress is 21 of 39 task lines, 54%.
+    - Task 2.6 stays 🟨. What remains: (1) the practitioner's dev-models copy (the command is on Task 2.6, normal PowerShell, C7); (2) the composer re-runs pytest and reports how many of the 11 real-ML legs run and how many skip.
+    - The prose bar is ACCEPTED by the composer (recorded on Task 2.5).
+  - **Round 13:** two read-only lenses (correctness/security; plan adherence and tests), merged and re-verified at their lines. 0 CRIT / 0 HIGH / 3 MED / 11 LOW, all applied. Details are in the Findings Log.
+    - MED-001: the hardware check uses the Note tab's ONE language-model cache, never a second 2.3 GiB copy.
+    - MED-002: a failed model call, or nothing rendered, is a named skip, never an "OK".
+    - MED-003: the frozen benchmark worker is its own exception boundary, one type-name line and exit 1; Task 3.2 gains `disable_windowed_traceback=True`.
+    - The LOWs:
+      - the load excluded from the per-section CPU;
+      - a stale std handle → `None`;
+      - the host's registry tripwire no longer swallows the C6 sentinel;
+      - the packaged spawn shape is checked against its dispatch;
+      - `KEY_QUERY_VALUE` as Chromium opens the keys;
+      - a stricter gate scan;
+      - `BACKUP_VALUE_NAME` in the source scan;
+      - a 32-bit-view-only real-layer case;
+      - `test_ui_models`' two host-state reads, now on an injected `LOCALAPPDATA`;
+      - a comment fix;
+      - a malformed manifest never crashes the Status tab.
+    - In-leg: ruff clean, mypy 58 files.
+  - **Composer to run:** the full desktop suite. Expected pytest **5555 passed / 20 skipped** (+28: `test_hardware_check.py` +6, `test_frozen_runtime.py` +21 of which 2 are Windows-only, `test_install_layout.py` +1). The extension is untouched.
+  - **Then:** resume the executor for `/review-loop` round 14, the re-review after round 13's fix.
+  - **Residue for H.1 (new):** the SOURCE-run benchmark worker (`python -m scribe_desktop.benchmark`, `__main__`) still prints a traceback to stderr on an exception. That behaviour predates Phase 2 and has no windowed box; it is dev channel only.
+  - **The one open item:** Task 2.6's practitioner step. It does not block convergence.
+  - **Not touched:** the extension, `scripts/`, `docs/`, git refs and the main checkout.
+- **EXECUTOR stage-2 leg i2-x3 (2026-10-03T02:05:35+10:00) — round 13 Closed on composer suite 2; `/review-loop` round 14 (loop round 2 of cap 3) found 0 CRIT / 0 HIGH / 0 MED / 4 LOW, all applied; /review-loop CONVERGED (no CRIT/HIGH/MED), pending the composer-run suite for the 4 LOW fixes:**
+  - **Round 13 closed:** composer suite 2 had pytest 5555 passed / 20 skipped, exactly the expected count.
+  - **Round 14** (two lenses: post-fix regression, missed-issue):
+    - LOW-001: one load-failure line, with the restart advice, whichever of the Note tab and the check failed first, and never "this note".
+    - LOW-002: the model is taken before the stage is clocked, so a wait on another thread's load is never section time.
+    - LOW-003: the production crash-report check reads each hive on its own, so one unreadable hive no longer hides the other.
+    - LOW-004: a docstring.
+    - Three are ⚡ in round 13's hardware-check fix, all LOW, in one function.
+    - In-leg: ruff clean, mypy 58 files.
+  - **Composer to run:** the full desktop suite. Expected pytest **5559 passed / 20 skipped** (+4, all `test_exclusions.py`). The extension is untouched.
+  - **Then:** resume the executor to close round 14 on that suite and END `phase-complete`. No round 15 is owed, since round 14 had no CRIT/HIGH/MED. A failure there is a /fix stop-on-failure (must-pause).
+  - **The one open item:** Task 2.6's practitioner step (the dev-models copy, then the composer's real-ML run/skip report). It does not block convergence.
+  - **Not touched:** the extension, `scripts/`, `docs/`, git refs and the main checkout.
+- **EXECUTOR stage-2 leg i2-x4 (2026-10-03T02:11:26+10:00) — round 14 Closed on composer suite 3 (ruff clean, mypy 58, pytest 5559 passed / 20 skipped); Phase 2 `/review-loop` CONVERGED at loop round 2 of cap 3; plan-only leg, no code changed:**
+  - **Trajectory:** round 13 found 3 MED / 11 LOW, round 14 found 0 MED / 4 LOW. Every finding is applied and verified, with no CRIT or HIGH in either round.
+  - **Markers:** Tasks 2.1–2.5 and 2.7 are 🟩, and 2.6 is 🟨. Overall Progress is unchanged at 21 of 39 task lines (54%).
+  - **Next (composer):** the codex peer pass over the Phase 2 diff (`git diff HEAD` plus the three untracked files), then the Phase 2 commit on `installation-build`.
+  - **The one open item:** Task 2.6's PRACTITIONER step. Copy the models into `%LOCALAPPDATA%\ClinikoScribe-dev\models` from a normal PowerShell (the command is on Task 2.6). The composer then re-runs pytest and reports the 11 real-ML legs' run/skip count. Only then can 2.6 go 🟩.
+  - **Carried for H.1:**
+    - the D9 policy residue;
+    - the frozen refusal's stderr-only line;
+    - the source-run benchmark worker's traceback;
+    - the Status registration, WER/backup and hardware-check lines in `docs/design-system.md`;
+    - `threat-model.md`'s EXCLUSIONS and Chrome-link sections;
+    - the real-ML legs' dev models root in `docs/testing/` or AGENTS.md.
+  - **Not touched:** the extension, `scripts/`, `docs/`, code, git refs and the main checkout.
+- **EXECUTOR stage-2 leg i2-x6 (2026-10-03T02:22:51+10:00) — LEG 2 (/fix) of codex peer round 15 (pass stage-2.p1, peer_round 1 of cap 5); round 15 Closed pending the composer-run suite:**
+  - **Applied:**
+    - PR-LOW-017: `test_frozen_runtime.py`'s module docstring is narrowed to the isolation enforced; `sys.executable` is read only as the spawn's argv[0], never run.
+    - PR-LOW-018, with both leg-1 siblings: `test_language_model_runtime.py`'s module bullet, comment and class docstring, and `test_speaker_embedding.py`'s module docstring, now name the dev models root (Task 2.6) as the prerequisite. The "always skips" and "agent shells cannot see" wording is gone.
+    - Docstrings and comments only; no test or code changed.
+  - In-leg: ruff clean, mypy 58 files.
+  - **Composer to run:** the full desktop suite. Expected pytest **5559 passed / 20 skipped**, unchanged, since there is no new or removed test.
+  - **Then:** a confirmation round of the peer pass (stage-2.p1 peer_round 2), then the Phase 2 commit.
+  - **The one open item:** Task 2.6's practitioner step (the dev-models copy, then the composer's real-ML run/skip report).
+  - **Not touched:** source code, the extension, `scripts/`, `docs/`, git refs and the main checkout.
+- **EXECUTOR stage-2 leg i2-x8 (2026-10-03T02:31:49+10:00) — LEG 2 (/fix) of codex peer round 16 (pass stage-2.p1, peer_round 2 of cap 5; trajectory 2 → 1); round 16 Closed pending the composer-run suite:**
+  - **Applied:** PR-LOW-019. `test_language_model_runtime.py`'s module bullet and `TestRealModelSmoke` docstring now say a missing runtime skips as "the prose runtime is not installed" and a missing model skips naming the dev root. Siblings: none. Docstrings only.
+  - In-leg: ruff clean, mypy 58 files.
+  - **Composer to run:** the full desktop suite. Expected pytest **5559 passed / 20 skipped**, unchanged.
+  - **Then:** the composer decides whether a confirmation round is owed for a two-clause docstring fix, then the Phase 2 commit.
+  - **The one open item:** Task 2.6's practitioner step.
+  - **Not touched:** source code, the extension, `scripts/`, `docs/`, git refs and the main checkout.
+- Last plan sync: 2026-10-03T02:31:49+10:00
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0 spikes; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 CLOSED and committed `9f43f8c` on `main` (2026-10-02T22:49). **From Phase 1 on the run builds in a git WORKTREE** — practitioner decision 2026-10-02 ~22:51: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install), and Phase 1 turns a source checkout into the dev channel, so Phases 1-3 build at `C:\scribe-build` on branch `installation-build` with its own `.venv` copy whose editable `.pth` points at `C:\scribe-build\desktop\src` (run mypy/pytest as `.venv/Scripts/python.exe -m …` there; the copied `mypy.exe` launcher still names the main venv's python). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges. Phase 1 (built by leg i1-x2, session 2c6ee9f4-c834-41e3-a814-f9ffeff0da77; session file copied to the `C--scribe-build` project dir for resume) was applied from `stash@{0}` into the worktree (the stash is kept as a backup until Phase 1 commits). `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. The branch merges to `main` only when the practitioner switches to the installed build (Phase P), never before. Next: composer-run Phase 1 suites in the worktree -> resume i1-x2 there for /review-loop -> codex peer pass -> Phase 1 commit on `installation-build`.
 
@@ -694,6 +785,11 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-02 round 10: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=fix → all 5 Applied (tests, `KEY.md` and D4's as-built note; 2 ⚡ fix-induced LOW, 3 🆕); round Closed on composer suite 5 (pytest 5422 passed / 9 skipped); /review-loop CONVERGED at loop round 2 of cap 3 (in-session /review-loop pass 2, executor stage-1 leg i1-x6; 18 candidates, 13 dropped)
 - 2026-10-03 round 11: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=fix → 1 Applied with every enumerated sibling (one class-level conftest pin covers them all), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-1.p1 peer_round 1 of cap 5, four file-scoped slices; LEG 1 leg i1-x8 verified PR-LOW-016 low test-harness, CONFIRMED; LEG 2 /fix leg i1-x9 2026-10-03T00:41:10+10:00 edited `desktop/tests/conftest.py`, `test_install_layout.py` and `test_integration_no_sockets.py` only)
 - 2026-10-03 round 12: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 11's PR-LOW-016 fix confirmed closed as a class (codex gpt-6-astra medium, pass stage-1.p1 peer_round 2 of cap 5; peer pass CONVERGED, trajectory 1 → 0)
+- 2026-10-03 round 13: 0 CRIT / 0 HIGH / 3 MED / 11 LOW; skew=none; action=none → all 14 Applied (code, tests, and a Task 3.2 spec note); round Closed on composer suite 2 (pytest 5555 passed / 20 skipped) (in-session /review-loop pass 1 over Phase 2, executor stage-2 leg i2-x2; 17 candidates, 1 dropped, 2 merged)
+- 2026-10-03 round 14: 0 CRIT / 0 HIGH / 0 MED / 4 LOW; skew=fix-induced; action=none → all 4 Applied (3 ⚡ in round 13's hardware-check fix, all LOW, already on the premium executor; 1 🆕); round Closed on composer suite 3 (pytest 5559 passed / 20 skipped); /review-loop CONVERGED at loop round 2 of cap 3 (in-session /review-loop pass 2, executor stage-2 leg i2-x3; 5 candidates, 1 dropped)
+- 2026-10-03 round 15: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=fix → both Applied with every enumerated sibling (4 docstring/comment sites in 3 test files, no code change), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-2.p1 peer_round 1 of cap 5, three file-scoped slices; LEG 1 leg i2-x5 verified both docs-only, test-harness, CONFIRMED; LEG 2 /fix leg i2-x6 2026-10-03T02:22:51+10:00 edited `test_frozen_runtime.py`, `test_language_model_runtime.py` and `test_speaker_embedding.py` docstrings/comments only)
+- 2026-10-03 round 16: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=fix-induced; action=fix → 1 Applied (two docstring clauses in `test_language_model_runtime.py`, no code change), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-2.p1 peer_round 2 of cap 5, confirmation of round 15; one docs-only LOW in round 15's own docstring fix; LEG 1 leg i2-x7 CONFIRMED, rec=Fix-now over the D9 Accept default; LEG 2 /fix leg i2-x8 2026-10-03T02:31:49+10:00)
+- 2026-10-03 round 17: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 16's PR-LOW-019 fix confirmed (codex gpt-6-astra medium, pass stage-2.p1 peer_round 3 of cap 5; peer pass CONVERGED, trajectory 2 → 1 → 0)
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -1479,6 +1575,251 @@ No neighbouring exit path changed. `REAL_IS_FROZEN` is captured at conftest impo
 - Verification counts: 12 claims checked, 0 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-10-03
 
+### Round 13 - 2026-10-03 - Phase 2 (Tasks 2.1–2.7), in-session /review-loop pass 1 (executor stage-2 leg i2-x2)
+
+- Round status: Closed. All 14 were Applied by leg i2-x2 at 2026-10-03T01:48:24+10:00. Composer-run suite 2 is green: ruff clean, mypy 58 files, pytest 5555 passed / 20 skipped, exactly the expected +28. The 20 skips are unchanged (9 symlink, 11 real-ML on the empty dev root); the run is in `.cursor/loops/stage-2-suite2-pytest.txt` in the main checkout. Closed by executor leg i2-x3 at 2026-10-03T01:54:55+10:00.
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high). Two independent read-only lenses ran in parallel, then the executor re-read every survivor at its cited lines and merged them:
+  - **(a) correctness and security** over every changed source file, read in full;
+  - **(b) plan adherence, test quality and missed issues**: each task's `Done when:` and as-built claims checked against the code, plus C2, C6, C8 and the source scan.
+- Baseline: `git diff HEAD` in `C:\scribe-build` (branch `installation-build`, HEAD `a7337a2` = Phase 1), plus the untracked `ui/hardware_check.py`, `tests/test_frozen_runtime.py` and `tests/test_hardware_check.py`. The plan file was read as context only.
+- Files read: the 11 changed or new modules under `desktop/src/scribe_desktop/` in full, the 16 changed or new test modules, and this plan's D6/D8–D11, C1–C8 and Phase 2 task text.
+- Suites at review (composer suite 1): pytest 5527 passed / 20 skipped; ruff clean; mypy 58 files; `npm run qa` 13 files / 313 tests.
+- Finding verification: 17 candidates (lens (a) 6, lens (b) 9, the executor's own read 2); 1 dropped; 0 downgraded; 2 merged (the executor's and lens (b)'s duplicate-model finding are MED-001; the two lenses' worker-exception findings are MED-003).
+- Dropped in verification:
+  - An empty REG_SZ default value read as the winning Chrome link. Chromium's `RegKey::ReadValue` succeeds on an empty string, so Chrome uses it too, and our reading matches.
+  - Lens (a) confirmed the rest as fine; its list is not repeated here.
+
+#### Findings
+
+**MED-001 — the hardware check can hold a second 2.3 GiB language model**
+
+- File: `desktop/src/scribe_desktop/ui/hardware_check.py:127-129` (`build_prose_stage(..., cache=None, ...)`)
+- Triage: Fix-now
+- Why it matters: `ui/models.py:3238-3244` keeps ONE resident model per process because "two copies must never be resident", and `cache=None` is documented as a test seam (`:3305`). After the Note tab has rendered any prose note, the benchmark loads a fresh copy beside the cached one, about 4.7 GiB in total, on the clinic hardware the check is meant to judge.
+- Current behaviour: a fresh model per check. Desired behaviour: the check uses the process's one cache (`LocalLanguageModel.complete` holds its own lock, so sharing is safe). When the model is already resident the load is not timed, and the line says so.
+- Pattern to follow: `build_prose_stage`'s default `cache` (the Note tab's).
+- Pattern siblings: `cache=None` elsewhere in `src`: none (the other uses are tests).
+- Verification: a test with an injected cache that already holds the model shows "model already loaded" and makes no factory call. A test with an empty cache loads once and leaves the model in that cache. No test touches the process-wide cache.
+- /fix decision: Applied
+- /fix notes:
+  - **The change:** `run_prose_benchmark` gained a `cache` seam, defaulting to `models._LANGUAGE_MODEL_CACHE` (the Note tab's), and passes it to `build_prose_stage`.
+  - **The result:** `benchmark.ProseBenchmark` gained `preloaded`, set when the factory was never called. `prose_report` then says "model already loaded" in place of "load x s".
+  - **Loading:** a model this check loads stays resident, as the Note tab's first prose note would leave it. A load failure the cache remembers comes back as the stage's own load-failed line.
+  - **Docs:** the module docstring and Task 2.5's as-built note are updated.
+  - **Tests (`test_hardware_check.py`):** every runner test passes a fresh `_LanguageModelCache`. Added:
+    - `test_a_resident_model_is_used_and_no_load_is_timed`;
+    - `test_the_default_cache_is_the_note_tabs`;
+    - `test_a_load_failure_the_cache_remembers_is_skipped_with_its_line`;
+    - in the timing test, the model staying in the one cache it was given.
+  - **Siblings:** none; `cache=None` in `src` was only here.
+- /fix date: 2026-10-03T01:48:24+10:00
+- /fix applied by: Claude Code (executor stage-2 leg i2-x2)
+
+**MED-002 — a prose stage whose every model call fails is reported as OK**
+
+- File: `desktop/src/scribe_desktop/ui/hardware_check.py:145`
+- Triage: Fix-now
+- Why it matters: `errored` counts `model_error` sections, which have no rendering and whose time is only the time to fail (`prose_style.py:548-551,566-571`). These are counted in `rendered`, so a runtime that raises on every call gives "3 of 3 sections … 0.1 s per section OK".
+- Desired behaviour:
+  - Any model error is a named skip: "the language model failed on N of M sections".
+  - `rendered` is `passed + failed`, the calls that returned text.
+  - Nothing rendered (every section too long) is a named skip, never an "ok" from 0.0 s.
+- Verification: tests where the mock model raises on one call and on every call, and where every section is too long. Each must be skipped with its line.
+- /fix decision: Applied
+- /fix notes:
+  - **The change:** `model_errors = errored - too_long`. Any model error skips with "the language model failed on N of 3 sections".
+  - `rendered = passed + failed`. When it is 0, the run skips with "no section could be given to the language model".
+  - **Tests:** `test_a_failed_model_call_is_never_a_verdict`, for 1 and 3 failing calls; its verdict reads "prose stage not timed". Also `test_nothing_rendered_is_never_a_verdict`, where a mock's tokenizer overflows the window.
+  - **Siblings:** none. `rendered` is computed only here, and the Note tab's counts (`ui/models.py:3436-3450`) already split errors from too-long sections.
+- /fix date: 2026-10-03T01:48:24+10:00
+- /fix applied by: Claude Code (executor stage-2 leg i2-x2)
+
+**MED-003 — the packaged benchmark worker has no exception boundary**
+
+- File: `desktop/src/scribe_desktop/benchmark.py` `run_worker` (`return main(list(argv[2:]))`); `app.py:566`
+- Triage: Fix-now
+- Why it matters: the worker is dispatched before `install_exception_hooks`. Any error — a corrupt model, `OfflineEnvError` — escapes `app.main` in a windowed packaged exe.
+  - PyInstaller's windowed bootloader then shows an "Unhandled exception" traceback box from a child the user never started (unless the spec sets `disable_windowed_traceback=True`; the Phase 0 spike spec does not). `run_all` waits up to its 600 s timeout.
+  - Without the box, the full traceback (paths included) reaches the panel through `proc.stderr` (`benchmark.py:554`). That breaks the Phase 6 rule that `scribe-app` reports type names only (C3).
+  - Lens (b) also raised this as a LOW (worker traceback on screen); merged.
+- Desired behaviour: `run_worker` catches `Exception` around `main`, writes ONE `benchmark_worker error_code=<type name>` line to stderr (stderr only, no log file) and returns 1. Task 3.2's spec sets `disable_windowed_traceback=True` for both executables (recorded on Task 3.2).
+- Verification: a test whose worker `main` raises a `ValueError` carrying a name returns 1, and stderr holds the type name and not the message. The `SystemExit` of an argparse error still passes through.
+- /fix decision: Applied
+- /fix notes:
+  - **The change:** `benchmark.run_worker` wraps `main` in `except Exception`. It prints `benchmark_worker error_code=<exception_type_name>` to stderr (when there is one) and returns 1.
+  - `benchmark.py` now imports `exception_type_name` from `logging_setup`, which imports only `install_layout`, so there is no cycle.
+  - **The spec half:** recorded on Task 3.2 as `disable_windowed_traceback=True` for both executables. That box can also come from an exception escaping `app.main` itself.
+  - **Tests (`test_frozen_runtime.py`):**
+    - `test_a_worker_exception_is_one_type_name_line`: stderr is exactly the line, "Jane" is absent, and stdout is empty.
+    - `test_a_worker_exception_with_no_stderr_is_still_exit_1`.
+    - `test_an_argparse_exit_passes_through`.
+  - **Siblings:** none. The source-run worker (`python -m scribe_desktop.benchmark`) runs `main` from `__main__`, which is the pre-existing Phase 2 baseline, not this task's entry; it is named as a residue in the handoff.
+- /fix date: 2026-10-03T01:48:24+10:00
+- /fix applied by: Claude Code (executor stage-2 leg i2-x2)
+
+- **[LOW]** LOW-001: `ui/hardware_check.py:132-134` — the per-section CPU figure includes the model load, while the wall figure (`model_seconds`) excludes it, so "4.0 s wall and 10.0 s CPU per section" mixes bases — Triage: Fix-now; Decision: Applied. `timed_factory` clocks wall and CPU around the load. `ProseBenchmark.wall_seconds` and `cpu_seconds` cover the sections only, with the load subtracted. The line reads "load x s; sections y s wall, z s CPU; …". The timing test pins the subtraction (7.5 s wall, 3.0 s CPU).
+- **[LOW]** LOW-002: `native_host.py` `open_std_stream` — `msvcrt.open_osfhandle` on a stale or invalid non-null handle raises `OSError`, which escapes `binary_stdio` and `main` instead of `host_stdio state=absent` and exit 4 — Triage: Fix-now; Decision: Applied. `open_osfhandle` and `open` are wrapped in `except OSError: return None`. `test_a_handle_the_c_runtime_refuses_is_none` covers stdin and stdout on Windows, with a fake `kernel32` and a refusing `open_osfhandle`, so no real handle is used.
+- **[LOW]** LOW-003: `native_host.py` `_log_registration_paths` — `Win32WindowsLayer()` is built inside the broad `except`, so the conftest's C6 sentinel (an `AssertionError` from `__init__`) is swallowed as `state=unreadable` instead of failing a test loudly — Triage: Fix-now; Decision: Applied. The reader is built before the `try`; building the real layer never fails outside tests. Pinned by `test_reaching_the_real_layer_is_never_swallowed`.
+- **[LOW]** LOW-004: `benchmark.py` `run_all` / `worker_argv` — the spawn shape is not checked against `is_worker_argv`. In a packaged build a candidate folder named `-x` would start a full second app (its "already running" box), not fail the benchmark — Triage: Fix-now; Decision: Applied. When frozen, `worker_argv` raises `RuntimeError("benchmark worker arguments for <name> are not admissible")`, which reaches the panel's failure line. A source run is unchanged. Pinned by `test_a_packaged_build_refuses_a_shape_its_dispatch_would_not_take` (`-x`, `--models`, empty).
+- **[LOW]** LOW-005: `exclusions.py` `native_host_entries` — opens with `KEY_READ`, while Chromium opens these keys with `KEY_QUERY_VALUE`, so a query-only ACL would be passed over here but used by Chrome — Triage: Fix-now; Decision: Applied. Now `KEY_QUERY_VALUE | <view>`. The fake `winreg` records each open's access mask, and the order test asserts it is query-only. The WER and backup reads keep `KEY_READ`; they are not Chrome's lookup.
+- **[LOW]** LOW-006: `tests/test_frozen_runtime.py:883-884` — the Task 2.6 skip-gate scan collects only `ast.Name` probes (an attribute call such as `lm.language_model_file_available()` slips through), and it passes any condition that mentions `on_real_ml_root` anywhere, even with an unguarded probe beside it — Triage: Fix-now; Decision: Applied. `_gate_offences` now:
+  - matches probes by `Name` or `Attribute`;
+  - requires each probe node to sit inside an `on_real_ml_root(...)` argument;
+  - finds `skipif` and `on_real_ml_root` called either way.
+  - `test_the_gate_scan_sees_what_it_claims` has 6 cases: a bare probe, an attribute probe, and an unguarded probe beside a guarded one are flagged; two guarded forms and a platform gate pass.
+- **[LOW]** LOW-007: `install_layout.py:68` `BACKUP_VALUE_NAME = APP_FOLDER_NAME` — a new name carrying the folder name, invisible to Task 1.2's source scan (`test_install_layout.py:355` `_FOLDER_NAME_REFS`) — Triage: Fix-now; Decision: Applied.
+  - `BACKUP_VALUE_NAME` joins `_FOLDER_NAME_REFS`.
+  - `("exclusions.py", "backup_exclusions")` is allow-listed by name: it reads a registry value of that name and builds no folder.
+  - `test_every_allow_listed_literal_still_exists` proves the entry is needed.
+  - Added a must-see case (`Path(base) / install_layout.BACKUP_VALUE_NAME`) and a must-pass case.
+- **[LOW]** LOW-008: `tests/test_frozen_runtime.py:536-539` `test_the_32_bit_view_only` — checks only `.place` of an entry the test built itself; no real-layer case has only a 32-bit view — Triage: Fix-now; Decision: Applied. Added `TestRealLayerOverAFakeWinreg.test_a_32_bit_view_only_entry_wins` for HKCU and HKLM: only that view populated, it wins, and all four views are looked at. The reader-side test now also pins its Status line.
+- **[LOW]** LOW-009: `tests/test_ui_models.py:381-391` `test_models_ready_matches_resolved_availability` — under the production pin and the real `LOCALAPPDATA` it stats this computer's `ClinikoScribe\models` (C6/C8). It is a Task 2.6 sibling that is not a skip gate, so neither the enumeration nor the scan saw it — 🆕 — Triage: Fix-now (test harness, AUTO-DISPOSABLE); Decision: Applied.
+  - The test now injects `LOCALAPPDATA=tmp_path` and checks agreement in both states, empty (False) and complete (True).
+  - **Sibling found by the exhaustive search:** `test_report_lines_name_the_default_model` (`:366`) also had no injected `LOCALAPPDATA`, and now has one.
+  - **Search:** every test call of `model_report_lines(`, `models_ready()`, `vad_model_available()`, `whisper_model_available(resolve`, `speaker_model_available()`, `language_model_available()`, `language_model_file_available()` and `default_models_root()`. Every other hit injects `LOCALAPPDATA`, a `tmp_path` model path, or the dev-root gate.
+- **[LOW]** LOW-010: `benchmark.py:109` — the comment says the worker is "dispatched by `app.main` before anything else runs", but it runs after Task 2.7's install-folder check (the `app.py` docstring is right) — Triage: Fix-now; Decision: Applied. The comment now names the install-folder check first.
+- **[LOW]** LOW-011: `status.py:57-62` `read_registration_status` — a manifest whose JSON is not an object (`["x"]`), or whose `path` is not a string, raises `TypeError` out of `refresh_registration`. The function's own docstring says a failure "must not crash the app" (LOW-010 of Phase 1's era) — 🆕 — Triage: Fix-now; Decision: Applied. `TypeError` joins the caught set. `test_a_malformed_manifest_is_not_registered_never_a_crash` covers `["x"]`, `{"path": 7}`, `"text"` and non-JSON. The host's own launcher read is already inside its broad `except`.
+
+Fix-delta self-check: PASS. I re-read the 14 applied hunks across 9 files. No neighbouring exit path changed. Points checked:
+- **The timing:** `timed_factory` runs only inside `cache.get`, so `preloaded` is exactly "not loaded here". The four-call clock order in the timing test matches the code's order (stage start, load start, load end, stage end; wall then CPU each time).
+- **The shared cache:** a remembered failure reaches the stage's `reason` without a factory call. `LocalLanguageModel` serialises `complete` and `count_tokens` under its own lock, so a Note-tab job and the check can share the model.
+- **The worker:** `run_worker` still returns `None` before `main` for any non-worker launch.
+- **The registry reader:** building it outside the `try` changes nothing in production.
+- **No drive-by edit.**
+- ruff clean; mypy clean (58 files). The pytest run is the composer's.
+
+### Round 14 - 2026-10-03 - Phase 2 (Tasks 2.1–2.7), in-session /review-loop pass 2 — re-review after round 13's fix (executor stage-2 leg i2-x3)
+
+- Round status: Closed. All 4 were Applied by leg i2-x3 at 2026-10-03T02:05:35+10:00. Composer-run suite 3 is green: ruff clean, mypy 58 files, pytest 5559 passed / 20 skipped, exactly the expected +4. The run is in `.cursor/loops/stage-2-suite3-pytest.txt` in the main checkout. Closed by executor leg i2-x4 at 2026-10-03T02:11:26+10:00. `/review-loop` CONVERGED here: no CRIT/HIGH/MED, and every survivor is a LOW that is now fixed and verified.
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high), two independent read-only lenses run in parallel, then each survivor re-read at its cited lines by the executor:
+  - **(a) post-fix regression** over each of round 13's 14 fixes: callers, neighbouring exits, sibling sweeps, vacuous tests, and the plan record;
+  - **(b) missed-issue** with fresh eyes over the whole Phase 2 diff (round 13's findings not re-reported).
+- Baseline: `git diff HEAD` in `C:\scribe-build` plus the three untracked files (as round 13). The regression baseline is round 13's pre-`/fix` state, as recorded in its Findings Log entries.
+- Finding verification: 5 candidates; 1 dropped; 0 downgraded.
+  - Dropped: `native_host.open_std_stream`'s `os.O_RDONLY if reading else 0`. Both values are 0 and the C runtime's `_open_osfhandle` ignores the access mode, so it is cosmetic only. Lens (b) did not count it either.
+- Round classification: ⚡ fix-induced LOW-001, LOW-002 and LOW-004 (round 13's MED-001/MED-002 fixes); 🆕 pre-existing LOW-003; no 🔁.
+  - skew=fix-induced, but all LOW and in one function. The executor is already the premium model, so there is no model to escalate to; action=none.
+- Lens (a) confirmed the rest of round 13 as sound: MED-002, MED-003 and LOW-001–011 match the code, each test fails when its fix is reverted, and C1/C2/C3/C6/C8 hold.
+- Lens (b) confirmed the rest of the diff as sound: the install-folder refusal's order and comparison, the log keys, the worker, the Chrome lookup, the WER and backup checks, the panel defaults, imports, and C6 across the changed tests.
+
+#### Findings
+
+- **[LOW]** LOW-001: `ui/hardware_check.py:147-152` — since MED-001 the check shares the Note tab's cache, and the load-failure line no longer fits. Two cases — ⚡ — Triage: Fix-now; Decision: Applied.
+  - **The cases:**
+    - The Note tab failed first: the check showed the Note tab's own line, which ends "this note is shown as Clean clinical", on the Microphone panel.
+    - The check failed first: the cache now remembers it for the Note tab too, but the line dropped the "restart the app after fixing this" advice.
+  - **The fix:** `run_prose_benchmark` takes the model through `cache.get(timed_factory)` BEFORE building the stage. A `LanguageModelError` there is ONE line, "the language model could not be loaded (<reason>; restart the app after fixing this)", in both cases. The new `hardware_check.RESTART_ADVICE` is added only when the factory ran; the cache's remembered failure already carries it.
+  - **Tests:** `test_a_load_failure_is_skipped_with_its_reason` now pins the exact line and that the cache remembers it. `test_a_load_failure_the_cache_remembers_is_the_same_line` (renamed from `…_is_skipped_with_its_line`) pins the same exact line and no "this note". Together they pin `RESTART_ADVICE` to the cache's wording.
+  - Task 2.5's as-built note records that a failed load during the check blocks the Note tab's prose until restart.
+- **[LOW]** LOW-002: `ui/hardware_check.py:144-146,171-173` — a check that waited on the cache lock for another thread's in-progress load counted that wait as section wall and CPU time, and still said "model already loaded" — ⚡ — Triage: Fix-now; Decision: Applied.
+  - The same up-front `cache.get` now runs before the stage clocks start, so the section figures never hold a load (no subtraction left).
+  - The timing test's clock order is now load start, load end, stage start, stage end. It pins 2.5 s load, 7.0 s wall and 3.0 s CPU.
+  - The verdict was never affected (it uses `model_seconds`).
+- **[LOW]** LOW-003: `exclusions.py:456` `check_wer` — in production one unreadable hive (an HKLM key a managed computer denies) made the whole check "could not check", even when the other hive covered both executables — 🆕 — Triage: Fix-now; Decision: Applied.
+  - Each hive is now read in its own `try`. The readable hives answer. Only when they leave an executable uncovered AND a hive could not be read is it `wer_unchecked`.
+  - Dev (one hive) and both-unreadable behave as before, and the existing tests are unchanged.
+  - New: `TestCheckWerProduction.test_one_unreadable_hive_does_not_hide_the_other`, 4 cases (HKLM or HKCU denied; the other covering both → `[]`, or covering one or none → `wer_unchecked`).
+- **[LOW]** LOW-004: `benchmark.py` `ProseBenchmark` docstring — listed three skip causes; MED-002 added a fourth ("no section could be given to the language model") — ⚡ — Triage: Fix-now; Decision: Applied (docstring now names all four).
+
+Fix-delta self-check: PASS. I re-read the 4 applied hunks across 3 source files and 2 test files. Points checked:
+- **Up-front load:** `cache.get` runs once before the stage, so the stage's own `cache.get` returns the cached model without calling the factory. `load_wall` is non-empty exactly when this check ran the factory, which keeps `preloaded` and the advice choice consistent.
+- **`result.reason`:** that path is kept for any other stage refusal.
+- **`check_wer`:** with every hive readable, the answer is the same as before. With every hive unreadable it is still `wer_unchecked`, because `all()` over an empty list is True for every name.
+- **No drive-by edit.**
+
+### Round 15 - 2026-10-03 - Phase 2 (Tasks 2.1–2.7), independent cross-family codex peer review (pass stage-2.p1, peer_round 1 of cap 5; three file-scoped slices)
+
+- Round status: Closed (0 pending). PR-LOW-017 and PR-LOW-018, with both siblings, were Applied by leg i2-x6 at 2026-10-03T02:22:51+10:00. They are docstring and comment changes only; the composer-run full desktop suite confirms them.
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: the whole uncommitted Phase 2 diff in worktree `C:/scribe-build` (`git diff HEAD` + untracked new files), read in three slices — A source (11 files), B frozen-runtime/registry/exclusion/hardware-check tests (7), C real-ML gates and remaining tests (9); composer transcription of the slice outputs (`.cursor/loops/stage-2-peer-r15{A,B,C}.log`), slice-local IDs `PR-LOW-B01` / `PR-LOW-C01` renumbered to the plan's one counter.
+
+#### Findings
+- **PR-LOW-017** (LOW, docs-only, `desktop/tests/test_frozen_runtime.py:13`): The module overstates its host-state isolation: `sys.executable` is not injected in the worker-spawn tests. — Evidence: lines 13–14 claim "`sys.executable` … [is] injected per test"; lines 89–94 only pin `is_frozen` and then expect the real `sys.executable`. Recommendation: Fix-now — Inject an explicit executable in these tests or narrow the module's claim to the isolation actually enforced (C9). /fix decision: Applied — /fix notes: the module docstring (`test_frozen_runtime.py:13-18`) now names what IS injected — `sys.frozen` through `install_layout.is_frozen`, the packaged path through `install_layout.executable`, `LOCALAPPDATA`, the registry and every stream. It also states that `sys.executable` is the one host value used as it is: read only as the benchmark spawn's argv[0], compared as a string, never run (every spawn is faked). No test changed; siblings none (leg 1). /fix date: 2026-10-03T02:22:51+10:00 — /fix applied by: Claude Code (executor stage-2 leg i2-x6).
+- **PR-LOW-018** (LOW, docs-only, `desktop/tests/test_language_model_runtime.py:161`): The real-model smoke's documentation claims agent shells cannot read the practitioner's model cache, although the revised test runs whenever the dev model is available. This misstates Task 2.6's execution gate. — Evidence: "agent shells cannot see the practitioner's model cache" (lines 163–164), while lines 171–172 skip only on `if not lm.language_model_file_available():`; the adjacent comment also says "it always skips" (line 159). Recommendation: Fix-now — Describe the actual prerequisites: the pinned runtime and a populated dev model root; remove the unconditional agent-shell claims from both comments. /fix decision: Applied — /fix notes:
+  - **The cited lines:** `test_language_model_runtime.py`'s comment above `TestRealModelSmoke` and its class docstring now say it runs wherever the pinned wheel is installed and the dev models root holds the model (Task 2.6, `real_ml_models`). Otherwise it skips by name, the reason naming that root. The "always skips" and "agent shells cannot see" wording is gone.
+  - **Both leg-1 siblings, same fix:**
+    - `test_language_model_runtime.py`'s module docstring, `TestRealModelSmoke` bullet: the wheel plus the GGUF in `%LOCALAPPDATA%\ClinikoScribe-dev\models`, "skips by name, naming that root, when either is absent - in any shell";
+    - `test_speaker_embedding.py:10-13`'s module docstring: skip-marked when the speaker model is absent from the dev models root, the reason naming it. That matches its gate `on_real_ml_root(speaker_model_available)` / `real_ml_skip_reason(...)` (`:578-584`).
+  - **Left as is, per leg 1:** the not-siblings (`:18` about the runtime wheel, `speaker_eval.py:1286`, and the register-script and lock-file lines).
+  - Comments and docstrings only; no test changed.
+  - /fix date: 2026-10-03T02:22:51+10:00 — /fix applied by: Claude Code (executor stage-2 leg i2-x6).
+- Verification counts: 27 claims checked, 2 confirmed, 3 dropped as unverifiable (slice A 12/0/2, B 14/1/1, C 1/1/0); slice A reported 0 findings.
+- Last reviewed: 2026-10-03
+
+#### LEG 1 verified tuples
+
+Executor leg i2-x5, 2026-10-03T02:20:52+10:00, verification only. Nothing was fixed. Both claims were checked against the current worktree and are CONFIRMED.
+
+- PR-LOW-017: materiality=docs-only severity=verified low surface=test-harness rec=Fix-now siblings=none — CONFIRMED. **Final disposition (LEG 2, leg i2-x6, 2026-10-03T02:22:51+10:00): Applied** — the module docstring is narrowed to the isolation the tests enforce.
+  - **What the docstring claims:** `test_frozen_runtime.py:13-14` says "Host state is never read (C6): ``sys.frozen``, ``sys.executable``, ``LOCALAPPDATA``, the registry and every stream are injected per test."
+  - **What the tests do:** the Task 2.1 tests use the REAL `sys.executable` without injecting it:
+    - `_worker()` (`:73-74`) and `TestWorkerArgv` (`:78-123`): `assert _worker() == [sys.executable, "-m", …]`, `[sys.executable, "--benchmark-worker", …]` and `assert argv[0] == sys.executable`;
+    - `TestWorkerDispatch`'s `_worker()` callers, the two `app_module.main(_worker())` tests among them;
+    - `test_a_packaged_build_refuses_a_shape_its_dispatch_would_not_take`.
+  - **Impact:** the value is read as a string only; every spawn is faked (`benchmark.subprocess.run` patched), so nothing is launched and no behaviour changes. Only the docstring overclaims.
+  - **The smaller fix:** narrow the claim to what is enforced. `sys.frozen` / `install_layout.executable()` are injected, and `sys.executable` is read only as the spawn's argv[0] and never run. The alternative is to inject `sys.executable` in those tests.
+  - **Siblings:** none. The search covered the docstrings and comments of every Phase 2 test addition and change: `test_hardware_check.py` (presence and clocks injected — true), `TestRealLayerOverAFakeWinreg` ("nothing real is read" — true), conftest `real_ml_*`, `test_status_and_app.py`, and the round-13 `test_ui_models.py` comments. Every other "injected" claim in this module holds: `LOCALAPPDATA` via `setenv`/`delenv`, streams via `SimpleNamespace`/`BytesIO`/fake `kernel32`, the registry via `_Layer`/`FakeWinreg`.
+- PR-LOW-018: materiality=docs-only severity=verified low surface=test-harness rec=Fix-now siblings=`test_language_model_runtime.py:19-21` (module docstring); `test_speaker_embedding.py:10-11` (module docstring) — CONFIRMED. **Final disposition (LEG 2, leg i2-x6, 2026-10-03T02:22:51+10:00): Applied**, with both siblings: three docstrings and one comment now name the dev models root (Task 2.6) as the prerequisite.
+  - **What the comments say:** `test_language_model_runtime.py:157-159` says "…that file is absent in the executor's shell, so it always skips by name there." `:161-164` says "…it skips by name everywhere else (the file is absent in the executor's shell - agent shells cannot see the practitioner's model cache, docs/lessons.md)."
+  - **What the test does:** since Task 2.6 it runs under `@pytest.mark.usefixtures("real_ml_models")` and skips only on `if not lm.language_model_file_available(): pytest.skip(real_ml_skip_reason(...))` (`:166-172`). So it RUNS in any shell, an agent's included, once the dev root holds the model.
+  - **Why the claim is unsupported:** Task 2.6's own as-built record names reading the practitioner-created dev folder from the composer's agent shell as the assumption to confirm. `docs/lessons.md`'s MSIX finding concerns redirected WRITES, so "agent shells cannot see" is not established.
+  - **Siblings, the same over-claim:**
+    - `test_language_model_runtime.py:19-21`: "it skips by name in every other shell (the model file is absent in the executor's)";
+    - `test_speaker_embedding.py:10-11`: "the real-model tests are skip-marked when the local cache is absent (agent shells cannot see the practitioner's cache)". Its gate (`TestRealModel`) now looks in the dev root (Task 2.6).
+  - **Desired fix:** each should name the real prerequisites — the pinned runtime (for the prose smoke) and a populated `ClinikoScribe-dev\models` root (Task 2.6) — and drop the unconditional agent-shell and "always skips" wording.
+  - **Not siblings:** `test_language_model_runtime.py:18` is about the prose RUNTIME wheel not being installed in agent shells and CI, not the model cache. `speaker_eval.py:1286` and the `test_register_native_host.py` / `test_status_and_app.py:411` lines are about write virtualization or a script run from a normal terminal, outside Task 2.6's gates. All are left as they are.
+
+Cap verdict: accept — docs-only — peer_round 1 of cap 5. Both survivors are LOW test-module docstring or comment corrections (4 sites in 3 test files), with no production or test behaviour change. Slice A, all 11 source files, reported 0 findings. A fix plus one confirmation round fits well inside the cap, and no raise is warranted.
+
+Fix-delta self-check: PASS. I re-read the 4 applied hunks across 3 test files: the `test_frozen_runtime.py` module docstring, the `test_language_model_runtime.py` module bullet, its comment and class docstring, and the `test_speaker_embedding.py` module docstring.
+- Each claim matches the code: the `real_ml_models` / `on_real_ml_root` / `real_ml_skip_reason` gates, and `_worker()`'s real `sys.executable` used as a string under a faked `subprocess.run`.
+- The regular-string backslashes are escaped.
+- No code, assertion or test changed, and no drive-by edit.
+- ruff clean; mypy clean (58 files).
+
+### Round 16 - 2026-10-03 - Phase 2 confirmation of round 15's fix, independent cross-family codex peer review (pass stage-2.p1)
+
+- Round status: Closed (0 pending) — PR-LOW-019 Applied by leg i2-x8 2026-10-03T02:31:49+10:00 (docstrings only); the composer-run full desktop suite confirms it
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Round 15’s fixes and enumerated siblings in the three specified test modules, checked against their current test code; read-only, no tests or network commands.
+
+#### Findings
+
+- **PR-LOW-019** (LOW, docs-only, `desktop/tests/test_language_model_runtime.py:22`): The revised module and class docstrings incorrectly claim that the missing-runtime skip reason names the dev models root. — Evidence: line 22 says “skips by name, naming that root, when either is absent”; lines 165–166 repeat “without either it skips by name, the reason naming that root.” However, line 170 uses `pytest.importorskip("llama_cpp", reason="the prose runtime is not installed")`; only the missing-model branch at lines 173–174 calls `real_ml_skip_reason`. Recommendation: Fix-now — Narrow both docstrings to say that the missing-model skip names the dev root, while the missing-runtime skip names the runtime. /fix decision: Applied — /fix notes: both docstrings narrowed as recommended. The module bullet (`:19-23`) now reads "skips by name when either is absent, in any shell: a missing runtime says the prose runtime is not installed, a missing model names that root". The class docstring (`:163-167`) reads "a missing runtime as "the prose runtime is not installed", a missing model with the reason naming that root". Both match `:170` (`importorskip(..., reason="the prose runtime is not installed")`) and `:173-174` (`real_ml_skip_reason(...)`). Siblings none (leg 1). Docstrings only; no test changed. /fix date: 2026-10-03T02:31:49+10:00 — /fix applied by: Claude Code (executor stage-2 leg i2-x8).
+
+- Verification counts: 5 claims checked, 1 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-03
+
+#### LEG 1 verified tuples
+
+Executor leg i2-x7, 2026-10-03T02:30:32+10:00, verification only. Nothing was fixed. The claim was checked against the current worktree and is CONFIRMED. It is fix-induced: leg i2-x6's round-15 wording.
+
+- PR-LOW-019: materiality=docs-only severity=verified low surface=test-harness rec=Fix-now siblings=none. **Final disposition (LEG 2, leg i2-x8, 2026-10-03T02:31:49+10:00): Applied** — both docstrings now separate the runtime skip from the model skip.
+  - **The over-claim:** `test_language_model_runtime.py:19-22` (module bullet) says "…and skips by name, naming that root, when either is absent - in any shell." `:163-166` (class docstring) says "…without either it skips by name, the reason naming that root."
+  - **The code:** `:170` is `pytest.importorskip("llama_cpp", reason="the prose runtime is not installed")`, which names the runtime, not the root. Only `:173-174` (`if not lm.language_model_file_available(): pytest.skip(real_ml_skip_reason("the pinned language model"))`) names the dev root. The comment at `:158-161` ("skips by name otherwise") is accurate.
+  - **Why Fix-now over the D9 default `Accept-with-record`:** the false sentence is OUR round-15 wording, so accepting it would commit a docstring known to be wrong about the gate Task 2.6 depends on. The fix is two clause-level narrowings in one file: the missing-model skip names the dev root, and the missing-runtime skip names the runtime. That is nearly free, carries no behaviour risk, and needs only ruff in-leg.
+  - **Siblings:** none. `test_speaker_embedding.py:10-13` claims only that the tests are "skip-marked when the speaker model is absent from the source run's dev models root … the skip reason names that root". Its class gate (`:580-583`, `real_ml_skip_reason("the pinned speaker model")`) does exactly that. The body's `importorskip("numpy")` / `("onnxruntime")` (`:587-588`) is a different case the docstring does not describe. `test_frozen_runtime.py:13-18` (PR-LOW-017's fix) is accurate.
+
+Cap verdict: accept — docs-only — peer_round 2 of cap 5. The trajectory is 2 → 1, and the one survivor is a LOW docstring narrowing in one test file, with no production or test behaviour change. The pass can continue normally after the fix. A confirmation round for a two-clause docstring fix is optional; the composer decides.
+
+Fix-delta self-check: PASS. I re-read the 2 applied docstring hunks in `test_language_model_runtime.py` against `:168-174`. Each skip's stated wording matches its code, the regular-string backslashes are unchanged, there is no drive-by edit, and ruff is clean with mypy clean (58 files).
+
+### Round 17 - 2026-10-03 - Phase 2 confirmation of round 16's fix, independent cross-family codex peer review (pass stage-2.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Current docstrings, edited comments and corresponding test code in the three specified modules; rounds 15–16, their verified tuples and enumerated siblings. Read-only verification; no tests, builds or network commands.
+
+#### Findings
+
+- Verification counts: 5 claims checked, 0 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-03
+
 ## Tasks
 Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's verification is the plan's Validation section (composer-run suites) unless the task names its own. Phases are grouped for `/execute-loop`: foundational layout and identity (Phase 1) are isolated ahead of the frozen-runtime work (Phase 2) and the build (Phase 3).
 
@@ -1736,26 +2077,65 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   - Leg i1-x2: the pin is in `test_install_layout.py` and also covers both `package-lock.json` copies (root and `packages[""]`), which the plan did not list.
 
 ### Phase 2 — Frozen-runtime support
-- [ ] 🟥 **2.1 Benchmark worker entry.**
+- [x] 🟩 **2.1 Benchmark worker entry.**
   - When frozen, `benchmark.run_all` spawns `[sys.executable, "--benchmark-worker", "--single", …]`.
   - `app.main` dispatches `--benchmark-worker` to `benchmark.main(argv)` BEFORE `QApplication` (`app.py:549`) and before the guard, only when `_WORKER_ENV == "1"` and the argv shape matches exactly. Anything else is ignored, not started.
   - The worker's stdout must exist under the windowed bootloader. If Task 0.1 found it None, write the JSON to a temp file whose path is passed in argv.
   - Done when: tests cover the frozen and dev spawn shapes, and that the dispatch refuses without the env var or with extra arguments.
-- [ ] 🟥 **2.2 Native-host stdio fallback** (integrates and hardens the adaptation Task 0.2 proved).
+  - **Leg i2-x1 (built; 🟩 leg i2-x2 on composer suite 1: pytest 5527 passed / 20 skipped, ruff clean, mypy 58 files, `npm run qa` 13 files / 313 tests):**
+    - `benchmark.worker_argv` is the one spawn shape: `-m scribe_desktop.benchmark` from source, `WORKER_FLAG` (`--benchmark-worker`) when `install_layout.is_frozen()`.
+    - `benchmark.is_worker_argv` admits only the exact shape: the flag first, then the four options once each in order, each value non-empty and not starting with `-`. `benchmark.run_worker` also needs `SCRIBE_BENCHMARK_WORKER=1`.
+    - `app.main(argv=None)` calls it right after Task 2.7's check, before logging (so the worker never opens `scribe-app.log` beside the running app), the guard and `QApplication`. Any other arguments are ignored and the app starts as it always has.
+    - **The temp-file fallback is NOT built.** Task 0.1's RESULT measured the frozen worker under `subprocess` pipes with stdin/stdout/stderr all `present(handle=valid)`, and the frozen GUI benchmark returned full JSON. The plan's condition ("if Task 0.1 found it None") is not met, so there is nothing for the fallback to defend.
+    - Tests: `test_frozen_runtime.py` `TestWorkerArgv`, `TestWorkerDispatch`.
+- [x] 🟩 **2.2 Native-host stdio fallback** (integrates and hardens the adaptation Task 0.2 proved).
   - `native_host.main` obtains binary stdin/stdout from `sys.stdin.buffer`, or, when None (frozen windowed), from `msvcrt.open_osfhandle(GetStdHandle(...))` through a small seam.
   - `set_binary_stdio` applies to whichever it got.
   - Done when: the seam is tested with both shapes and protocol tests are unchanged.
-- [ ] 🟥 **2.3 Registry readers in Chrome's order (D9).**
+  - **Leg i2-x1 (built as defence-in-depth; 🟩 leg i2-x2 on composer suite 1):**
+    - Task 0.2 measured that Chrome GIVES the frozen host stdin/stdout, so the fallback is not a proven need. It covers only the no-pipes launch shape Task 0.1 measured.
+    - `native_host.binary_stdio(stdin, stdout, open_std=open_std_stream)` returns each stream's `.buffer`, or for a None stream `open_std_stream` (a binary stream over `msvcrt.open_osfhandle(GetStdHandle(...))`, never closing the handle). It returns `None` when either stream cannot be had.
+    - `main` then calls `framing.set_binary_stdio(stdin, stdout)`, which now takes the streams it is given and keeps its no-argument default, and `run_host(stdin, stdout, …)`. With no streams the host logs `host_stdio state=absent` and exits 4 before protocol mode.
+    - The rebuild branch has never run live: in Task 0.1's no-pipes GUI launch the Win32 handles were invalid as well.
+    - **stderr None (Task 0.2's recommendation):** a test pins that `setup_logging` builds no stderr handler, that the main exception hook still writes its one type-name line to the file, and that `QuietHandlerErrors.handleError` does not raise.
+    - Tests: `test_frozen_runtime.py` `TestBinaryStdio` and the host-stream tests. `test_native_host.py` / `test_protocol.py` are unchanged.
+- [x] 🟩 **2.3 Registry readers in Chrome's order (D9).**
   - A new `WindowsLayer` method returns the host entries for a name in HKCU and HKLM, in both views.
   - `status.read_registration_status` and `_log_registration_paths` report the winning entry and the others.
   - In a frozen build a production-name HKCU entry raises the Status warning.
   - Fake-layer tests cover none, HKCU-only, HKLM-only, both, and the 32-bit view only.
-- [ ] 🟥 **2.4 The WER set by channel, plus a backup-exclusion check (D10, D6).**
+  - **Leg i2-x1 (built; 🟩 leg i2-x2 on composer suite 1):**
+    - **The layer method:** `WindowsLayer.native_host_entries(key)` returns `exclusions.HostEntry(hive, view, manifest)` entries in `CHROME_LOOKUP_ORDER`: HKCU 32 → HKCU 64 → HKLM 32 → HKLM 64.
+      - The 32-bit-view-first order is Chromium's `GetManifestPathFromRegistry`, taken from its source and not observed here. Task 0.2 observed only HKCU over HKLM.
+      - A view whose key or default value cannot be read is passed over, as Chrome passes over it. `REG_EXPAND_SZ` is expanded and other value types are skipped.
+      - The same value in both views of one hive is listed once (HKCU's `Software` is shared between the views).
+    - **The Status reader:** `status.read_registration_status(layer)` uses the winning entry for the verdict, and records `others` and `per_user_override` (`is_frozen()` and any HKCU entry).
+      - A broken winner is NOT rescued by a good later entry, because Chrome uses the first.
+      - `layer=None`, or a layer that raises, gives `checked=False` and the line "Registration: not checked".
+    - **The Status line:** `status.registration_lines` shows no path. It reads, for example, "registered ✓ (per-user Chrome link; 1 other link found, not used)", plus D9's warning "Warning: a per-user Chrome link overrides the installed one."
+    - **The host log:** `native_host._log_registration_paths(logger, layer=None)` logs `host_manifest path= detail_code=<hkcu_32…> count=` for the winner, one `host_manifest_other` line per other entry, `host_launcher`, `state=absent` when there are none, and `state=unreadable` on any failure. It never raises.
+    - **The wiring:** `app.main` builds ONE `Win32WindowsLayer` for `startup_exclusions` and passes it to `MainWindow(windows_layer=)` → `StatusPanel(windows_layer=)`.
+      - Every test window has no layer, so it now reads no registry. Before, every `MainWindow` test read the real HKCU.
+      - **The removed tests:** `test_status_and_app.py`'s two real-machine registration tests read this computer's HKCU (a C6 breach) and were replaced by one no-layer test. Their no-spaces rule is also superseded by Task 0.2, which ran the installed host from Program Files. The count is −2 +1.
+    - **Residue for H.1:** with the clinic-only policy `NativeMessagingUserLevelHosts=0` set (D8's optional checkbox), Chrome ignores HKCU entries. The D9 warning would then name an override that does not happen. The policy is not read.
+    - Tests: `test_frozen_runtime.py` `TestRegistrationStatus`, `TestHostRegistrationLog`, `TestRealLayerOverAFakeWinreg` (the real layer's methods over a fake `winreg` module; `__init__`, the conftest sentinel, is not run) and the Status-panel test. `test_exclusions.py`'s app-main test also pins that the same layer reaches the window.
+- [x] 🟩 **2.4 The WER set by channel, plus a backup-exclusion check (D10, D6).**
   - `check_wer` takes the channel's set and reads HKLM then HKCU.
   - New `check_backup_exclusions` reads the two HKLM `ClinikoScribe` values and checks they cover `sessions` and `logs`.
   - Both only ever warn, wrapped so a read error is a warning (`startup_exclusions`, `exclusions.py:338-365`).
   - Done when: FakeLayer tests cover each state, and the dev channel never warns about the HKLM values.
-- [ ] 🟥 **2.5 Hardware check (D11).**
+  - **Leg i2-x1 (built; 🟩 leg i2-x2 on composer suite 1):**
+    - **The WER set by channel:** `exclusions.wer_applications(of)` is production `WER_PRODUCTION_APPLICATIONS` (`scribe-app.exe`, `scribe-host.exe`) or dev `WER_EXCLUDED_APPLICATIONS` (the three, unchanged; the register script still uses them). `wer_hives(of)` is production HKLM then HKCU, dev HKCU only (D10).
+      - `check_wer` warns when any of the channel's executables is excluded in NONE of its hives, and checks the uncovered launch against the channel's set.
+      - `WindowsLayer.wer_exclusions(hive="HKCU")` reads that hive's 64-bit view.
+    - **The backup check:** `check_backup_exclusions(layer)` runs in production only. It reads `WindowsLayer.backup_exclusions()`: the REG_MULTI_SZ `ClinikoScribe` value under `HKLM\SYSTEM\CurrentControlSet\Control\BackupRestore\{FilesNotToBackup,FilesNotToSnapshot}`.
+      - Both values must hold every `install_layout.backup_exclusion_patterns()` entry, which are Task 3.4's `$UserProfile$` forms, built from `APP_FOLDER_NAME` so the source scan holds. Matching ignores case and surrounding spaces.
+      - The lines are `BACKUP_NOT_EXCLUDED`, best-effort wording per C5 with the remedy "reinstall Clinic Scribe", and `BACKUP_UNCHECKED`.
+      - `startup_exclusions` wraps it, so any error becomes `backup_unchecked`.
+    - **Test edits (the dev branch):** the existing `TestCheckWer` and `TestStartupExclusions` describe a source run's start-up. Under the production pin they would now see the installed build's set, so each gained a class-level `use_channel("dev")` fixture, with every assertion unchanged. The one default-root test pins production inside itself.
+    - The integration child's string fake layer gained the two new methods and the `hive` parameter.
+    - Tests: `test_exclusions.py` `TestCheckWerProduction`, `TestCheckBackupExclusions`, and the dev-channel WER test.
+- [x] 🟩 **2.5 Hardware check (D11).**
   - The Microphone tab's benchmark gains a prose-stage timing:
     - fixed non-clinical lines;
     - `build_prose_stage` in-process, timed per section;
@@ -1764,19 +2144,74 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
     - the injectable runner keeps tests model-free.
   - It also shows whisper `medium`'s real-time factor and `threshold_report`'s verdict for both. The results are text-free.
   - Done when: tests inject the model present and absent, and the panel lines are pinned.
-- [ ] 🟥 **2.6 The real-ML test legs follow the source-run models root** (added by Phase 1 review round 9, MED-003).
+  - **Leg i2-x1 (built; 🟩 leg i2-x2 on composer suite 1):**
+    - **The timing:** the new `ui/hardware_check.py` `run_prose_benchmark(model_factory=, available=, wall_clock=, cpu_clock=)` runs the REAL `models.build_prose_stage("narrative", cache=None)` in-process.
+      - The input is `prose_benchmark_note()`: three sections of two fixed lines, each a phrase of `benchmark.BENCHMARK_TEXT` (pinned by test), held in memory for the one call.
+      - ~~The model is loaded fresh, so its load is measured, and released, so nothing stays resident.~~ **Round 13 MED-001:** the model comes from the process's ONE language-model cache, the Note tab's, so there is never a second resident copy.
+      - A model already loaded is used as it is, and the line says "model already loaded".
+      - Otherwise this check loads it, timed, and it stays resident.
+      - Any failed model call, or no section rendered, is a named skip, never a verdict (MED-002).
+      - The sections' wall and CPU exclude the load (LOW-001); since round 14 LOW-002 the model is taken before the stage is clocked.
+      - **Round 14 LOW-001:** a load that fails during the check is remembered by that cache for the process, so the Note tab's prose styles also refuse until a restart. Either way the check's line is "the language model could not be loaded (<reason>; restart the app after fixing this)".
+      - The absent model gives `skipped = language_model_absent_reason()`. A load failure gives "the language model could not be loaded (<reason>)".
+    - **The result:** `benchmark.ProseBenchmark` holds numbers only — sections, sections the model was called for, load, model seconds, wall, process CPU, and the per-section wall and CPU.
+    - **The lines:** `benchmark.prose_report`, `hardware_verdict` ("Hardware check: whisper medium RTF x OK|…; prose stage y s per section OK|…", or "not measured (not installed)" / "not timed"), and `threshold_report(results, prose=None)` appending both (unchanged without `prose`).
+    - **The panel:** `MicrophoneScreen(prose_runner=)` runs whisper then prose on one `TaskThread`, and a slow prose stage adds `PROSE_SLOW_WARNING` to the warning label.
+      - The real prose runner is the default ONLY alongside the default whisper runner. A screen given its own `benchmark_runner` (every test) times no prose, so no test reaches the real language model (C6).
+      - The result type `HardwareCheck` is public. Two tests that called `_on_benchmark_done([])` now pass `HardwareCheck([], None)`.
+    - **Interpretation call (ACCEPTED by the composer at leg i2-x2's resume; the practitioner may still revise it):** the verdict bar is `PROSE_MARGIN_S = 5.0` / `PROSE_REQUIRED_S = 10.0` model-wall seconds per section (OK / NOTE / WARNING).
+      - Neither D11 nor the plan gives a number. The bar reads the practitioner's 2026-09-18 note-learning decision ("CPU inference … acceptable for a few seconds per section").
+      - It only ever produces a local line. One constant pair, pinned by `test_the_prose_bar_is_the_recorded_interpretation`.
+    - Tests: the new `test_hardware_check.py`.
+- [ ] 🟨 **2.6 The real-ML test legs follow the source-run models root** (added by Phase 1 review round 9, MED-003).
   - Today the conftest pins the production channel, so every real-ML gate and child resolves `%LOCALAPPDATA%\ClinikoScribe\models`: `test_integration_no_sockets.py`'s `requires_ml_models` (~L126) and its children, `test_speech.py` (~L461), `test_speaker_embedding.py` (~L575), `test_benchmark.py` (~L250) and `test_transcription.py` (~L1384). Once the models live only in `ClinikoScribe-dev\models` (the source checkout's root after P.1) or in the install folder, these legs SKIP silently and the suite still reads green.
   - Resolve these gates' models root as a source run's dev root (`install_layout` with the dev channel, never the production data folder — C8), keep every other test on the production pin, and make the skip reason name the dev root it looked in.
   - Done when: a test pins the gates' root to `ClinikoScribe-dev\models` under an injected `LOCALAPPDATA`, the composer's suite runs the real-ML legs against a populated dev root (the practitioner copies or re-fetches the models there first, from a normal terminal — C7), and the composer reports the run/skip count of those legs.
-- [ ] 🟥 **2.7 A packaged build refuses to start outside its install folder** (added by Phase 1 review round 9, LOW-009).
+  - **Leg i2-x1 (code and pinning tests built; stays 🟨 until the practitioner populates the dev root and the composer reports the legs' run/skip count):**
+    - **Leg i2-x2 status:** the pinning tests pass in composer suite 1 (pytest 5527 passed / 20 skipped). The 11 real-ML legs SKIP there, each naming the empty `ClinikoScribe-dev\models` root. What remains: (1) the PRACTITIONER STEP below; (2) the composer re-runs pytest and reports how many of those 11 legs ran and how many skipped.
+    - **The helpers:** `install_layout.models_root(of=None)` gained a channel argument, the same `of` idiom as `folder_name` and the identity accessors. The conftest gained:
+      - `real_ml_models_root()` = `models_root("dev")` = `%LOCALAPPDATA%\ClinikoScribe-dev\models`, whatever the pin, or `None` when `LOCALAPPDATA` is unset;
+      - `on_real_ml_root(probe)`, a gate's presence probe run with every model path resolving there, safe at import time and restoring the pin;
+      - `real_ml_skip_reason(what)`, which names the dev root it looked in;
+      - the `real_ml_models` fixture, which pins a leg's BODY to the same root.
+    - **The legs, enumerated from the code** (every `skipif` or in-body skip whose condition calls a model-presence probe, plus every real-model child script):
+      - `test_speech.py` `TestSileroVadRealModel`;
+      - `test_speaker_embedding.py` `TestRealModel`;
+      - `test_benchmark.py` `TestRealModelSmoke` (its explicit `ClinikoScribe\models` path replaced);
+      - `test_transcription.py` `test_prompt_token_count_exact_with_real_tokenizer` (not in the plan's list; same class) and `TestLiveEndToEnd`;
+      - `test_language_model_runtime.py` `TestRealModelSmoke` (not in the plan's list);
+      - `test_integration_no_sockets.py` `requires_ml_models` (two tests) and `test_prose_generation_no_sockets_with_the_real_model` (not in the plan's list).
+      - Their three child scripts (`_REAL_TRANSCRIBE_CHILD`, `_REAL_PROSE_CHILD`, `_STUBBED_NETWORK_CHILD`) pin `install_layout.models_root` to `models_root("dev")` right after their channel pin.
+    - **The pins:**
+      - `test_frozen_runtime.py` `TestRealMlModelsRoot` checks the root under an injected `LOCALAPPDATA` for both channel pins, the probe-then-restore, the skip reason and the body fixture.
+      - `test_every_real_model_child_loads_from_the_dev_root` is class-closed over the module's `*_CHILD` constants: exactly those three construct a real model, and each pins after its channel pin.
+      - `test_every_real_model_skip_gate_looks_in_the_dev_root` is an AST scan of every test module's `skipif`. It is a scan, not a proof; the two in-body language-model skips are enumerated above.
+    - **Consequence until the practitioner step runs:** with `ClinikoScribe-dev\models` empty, every real-ML leg SKIPS, and its reason names the dev root. That is the intended loud form of the silent skip MED-003 described.
+    - **PRACTITIONER STEP (normal PowerShell, C7 — not from an agent shell).** Copy the everyday app's models into the dev root. No network is needed, and the production copy is untouched:
+      `Copy-Item -Recurse "$env:LOCALAPPDATA\ClinikoScribe\models" "$env:LOCALAPPDATA\ClinikoScribe-dev\models"`
+      Then report `(Get-ChildItem "$env:LOCALAPPDATA\ClinikoScribe-dev\models" -Recurse -File | Measure-Object Length -Sum).Sum`.
+      - The size is whatever the everyday folder holds: about 5.3 GiB with all four whisper candidates, the speaker model and the language model (silero + whisper `small` alone ≈ 470 MiB; the language model 2.33 GiB).
+      - The alternative is a re-fetch from the worktree's venv, which Phase 1 points at the dev root: `C:\scribe-build\.venv\Scripts\python.exe C:\scribe-build\scripts\setup-models.py`. It downloads the same pinned files over the network.
+      - Assumption to confirm on the composer's run: the composer's agent shell READS the practitioner-created dev folder, as it already reads the production models (MSIX virtualization redirects writes, not these reads).
+- [x] 🟩 **2.7 A packaged build refuses to start outside its install folder** (added by Phase 1 review round 9, LOW-009).
   - Only `models_root` calls `install_root()` today, so a frozen build copied anywhere else still runs as production with full access to the production data folder; only its model loads fail.
   - `app.main` and `native_host.main`, when `install_layout.is_frozen()`, call `install_root()` before the guard, the data roots and any window; an `InstallLayoutError` is one type-name log line and a plain refusal ("Clinic Scribe is not running from its install folder — reinstall Clinic Scribe"), never a start. A source run is unaffected.
   - Done when: tests inject frozen inside and outside `INSTALL_ROOTS` (and a link to it) for both entry points, and the refusal touches no data root.
+  - **Leg i2-x1 (built; 🟩 leg i2-x2 on composer suite 1):**
+    - **The check:** `install_layout.outside_install_folder()` returns the `InstallLayoutError`, or `None` for a source run or the install folder. `app.main` and `native_host.main` call it FIRST, before logging, the guard, every data root and any window.
+    - **The refusal:**
+      - The type-name line goes through `setup_logging(name, file=False)`, a new keyword: stderr only, no log folder created. It reads `app_exit` / `host_exit error_code=InstallLayoutError state=not_installed`.
+      - `scribe-app` then shows `install_layout.NOT_INSTALLED_LINE` ("Clinic Scribe is not running from its install folder — reinstall Clinic Scribe.") in a box and returns 1. `scribe-host` returns 3.
+      - **Residue for H.1:** a windowed packaged build usually has no stderr (Task 0.2: Chrome gives the host none), so the line is mostly unseen. The app's box is the visible refusal; for the host it is Chrome's failed link.
+    - Tests: `test_frozen_runtime.py` `TestOutsideTheInstallFolder`, parametrized over both entry points.
+      - The cases: outside (refused; the injected `LOCALAPPDATA` stays empty), the install folder, a source run that never reads the executable, a junction INTO the folder (proceeds), and a junction AT the install path pointing elsewhere (refused).
+      - Also `test_stderr_only_logging_creates_no_folder`.
 
 ### Phase 3 — Build and installer
 - [ ] 🟥 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
 - [ ] 🟥 **3.2 `packaging/scribe.spec`** (D1). Two windowed EXEs in one COLLECT. Collect `scribe_desktop` package data, apply Task 0.1's hidden imports and hooks, exclude the network Qt modules, no UPX, and add a version resource from D12.
   - Done when: `pyinstaller packaging/scribe.spec` builds on the composer's machine. The bundle audit runs on that output once Task 3.5 lands; this task is not blocked on it.
+  - **From Phase 2 review round 13 (MED-003):** both EXEs set `disable_windowed_traceback=True`. The Phase 0 spike spec left it `False`. With it `False`, an exception escaping `app.main` or the host's `main` — the benchmark worker's included, whose own boundary is now `benchmark.run_worker` — shows PyInstaller's windowed "Unhandled exception" box with the full traceback, against C3's type-name-only rule.
 - [ ] 🟥 **3.3 Models manifest** (D5, D-I2).
   - `scripts/setup-models.py --root <dir>` stages into a gitignored `build/models`; `%LOCALAPPDATA%` is never touched when `--root` is given.
   - `packaging/models-manifest.json` lists every file's relative path, size and SHA-256 (silero; whisper `medium` every file; the speaker model per D-I2; the language model). It is generated once by the practitioner and committed.

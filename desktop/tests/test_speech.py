@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from conftest import on_real_ml_root, real_ml_skip_reason
 from sapi_fixture import synthesize_speech_pcm
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.secure_storage import SessionCrypto
@@ -458,8 +459,10 @@ class TestSegmentPcmResetContract:
         assert segment_pcm([silence_pcm(1.0)], amplitude_vad) == []
 
 
+# Installation plan Task 2.6: the gate and the class body (``real_ml_models``)
+# look in the source run's DEV models root, never the production data folder.
 requires_real_model = pytest.mark.skipif(
-    not vad_model_available(), reason="silero VAD model not in local cache"
+    not on_real_ml_root(vad_model_available), reason=real_ml_skip_reason("silero VAD model")
 )
 requires_sapi_fixture = pytest.mark.skipif(
     sys.platform != "win32" or importlib.util.find_spec("av") is None,
@@ -469,6 +472,7 @@ requires_sapi_fixture = pytest.mark.skipif(
 
 
 @requires_real_model
+@pytest.mark.usefixtures("real_ml_models")
 class TestSileroVadRealModel:
     @pytest.fixture()
     def vad(self) -> Iterator[SileroVad]:

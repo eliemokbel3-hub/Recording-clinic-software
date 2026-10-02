@@ -83,6 +83,7 @@ from typing import IO, Any, NamedTuple
 import psutil
 import pytest
 
+from conftest import on_real_ml_root, real_ml_skip_reason
 from scribe_desktop.benchmark import apply_offline_env
 from scribe_desktop.identity import NONCE_HEX_LENGTH, expected_origin, pipe_prefix
 from scribe_desktop.protocol import PROTOCOL_VERSION
@@ -123,9 +124,12 @@ pytestmark = [
 # The gate IS production readiness (round 42 LOW-013: `models_ready` is
 # the same VAD+resolved-whisper check the app's report uses — the gate
 # can no longer drift from production model resolution).
+# Installation plan Task 2.6: the gate looks in the source run's DEV models
+# root — the root the real-ML children load from (each pins it after its
+# channel pin) — never the production data folder (C8).
 requires_ml_models = pytest.mark.skipif(
-    not models_ready(),
-    reason="local silero + whisper models required (run scripts/setup-models.py)",
+    not on_real_ml_root(models_ready),
+    reason=real_ml_skip_reason("local silero + whisper models"),
 )
 
 
@@ -407,8 +411,12 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "        return 0\n"
         "    def set_file_attributes(self, path, attributes):\n"
         "        return True\n"
-        "    def wer_exclusions(self):\n"
+        "    def wer_exclusions(self, hive='HKCU'):\n"
         "        return {}\n"
+        "    def backup_exclusions(self):\n"
+        "        return {}\n"
+        "    def native_host_entries(self, key):\n"
+        "        return ()\n"
         "warnings = startup_exclusions(FakeLayer(), executable='pythonw.exe',\n"
         "                              logger=logging.getLogger('no-sockets-child'), root=base)\n"
         "w = MainWindow(controller, backend, sessions_root=root,\n"
@@ -1312,12 +1320,14 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
 # Installation plan D2: the parent test is pinned to the production channel
-# (conftest), and so is this child, so it loads any model where the
-# parent's skip check found it (a bare source run is the dev channel).
+# (conftest), and so is this child. Task 2.6: it loads its models from the
+# source run's DEV root, where the parent's skip check found them.
 from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+_real_ml_root = install_layout.models_root("dev")
+install_layout.models_root = lambda of=None: _real_ml_root
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1571,11 +1581,14 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
 # Installation plan D2: pinned to the production channel, as the parent
-# test is, so the model is the one the parent's skip check found.
+# test is. Task 2.6: the model is loaded from the source run's DEV root,
+# where the parent's skip check found it.
 from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+_real_ml_root = install_layout.models_root("dev")
+install_layout.models_root = lambda of=None: _real_ml_root
 print("OFFLINE-OK", flush=True)
 line = sys.stdin.readline()
 assert line.strip() == "GO", "parent gate broken: %r" % line
@@ -1614,8 +1627,10 @@ def test_prose_generation_no_sockets_with_the_real_model(tmp_path: Path) -> None
 
     if not language_runtime_importable():
         pytest.skip("the prose runtime is not installed (desktop/requirements-ml-prose.txt)")
-    if not language_model_file_available():
-        pytest.skip("the pinned language model is not downloaded (Task P.1)")
+    # Installation plan Task 2.6: looked for in the source run's DEV models
+    # root, where the child loads it from.
+    if not on_real_ml_root(language_model_file_available):
+        pytest.skip(real_ml_skip_reason("the pinned language model"))
     apply_offline_env()
     script = _write_child(tmp_path, "real_prose_child.py", _REAL_PROSE_CHILD)
     stderr_path = tmp_path / "child-stderr.txt"
@@ -1836,11 +1851,14 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 apply_offline_env()
 assert_offline_env()
 # Installation plan D2: pinned to the production channel, as the parent
-# test is, so the models are the ones the parent's skip check found.
+# test is. Task 2.6: the models are loaded from the source run's DEV root,
+# where the parent's skip check found them.
 from scribe_desktop import install_layout
 
 install_layout.channel = lambda: "production"
 install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
+_real_ml_root = install_layout.models_root("dev")
+install_layout.models_root = lambda of=None: _real_ml_root
 
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (

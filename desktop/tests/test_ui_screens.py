@@ -710,7 +710,7 @@ class TestMicrophoneScreen:
         once (peer round 55 PR-REG-006: the line's text folds that stat in, so
         the report must not keep saying the model is absent after
         setup-models ran); steady presence still reads nothing."""
-        from scribe_desktop.ui.microphone import MicrophoneScreen
+        from scribe_desktop.ui.microphone import HardwareCheck, MicrophoneScreen
 
         reads: list[Path | None] = []
         real = models.attribution_readiness
@@ -730,7 +730,7 @@ class TestMicrophoneScreen:
         assert reads == [tmp_path]  # construction: exactly one read, off the default store
         screen.refresh_model_status()
         screen.refresh_model_status()
-        screen._on_benchmark_done([])
+        screen._on_benchmark_done(HardwareCheck([], None))
         assert reads == [tmp_path]  # the poll's slot and a finished benchmark read nothing
         lines = screen.model_status_label.text().split("\n")
         assert len(lines) == 4

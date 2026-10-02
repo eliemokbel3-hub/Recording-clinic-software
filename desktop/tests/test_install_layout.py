@@ -347,12 +347,19 @@ _NON_PATH_LITERALS: dict[tuple[str, str], str] = {
     ("exclusions.py", "APP_FOLDER_NAME"): (
         "a re-export of the production name, read by tests only (no folder is built)"
     ),
+    ("exclusions.py", "backup_exclusions"): (
+        "reads the installer's registry VALUE named BACKUP_VALUE_NAME (D6, Task 3.4); "
+        "no folder is built"
+    ),
 }
 _NAME = "clinikoscribe"
 # The names that carry the folder name without spelling it: a reference to
 # one outside install_layout (a read, an attribute, an import) is an offence
-# too, by the same by-name allow-list.
-_FOLDER_NAME_REFS = frozenset({"APP_FOLDER_NAME", "DEV_FOLDER_NAME", "folder_name"})
+# too, by the same by-name allow-list (``BACKUP_VALUE_NAME``: round 13
+# LOW-007, the production name under another name).
+_FOLDER_NAME_REFS = frozenset(
+    {"APP_FOLDER_NAME", "BACKUP_VALUE_NAME", "DEV_FOLDER_NAME", "folder_name"}
+)
 
 
 def _folder_name_ref(node: ast.AST) -> str | None:
@@ -490,6 +497,7 @@ def test_every_allow_listed_literal_still_exists() -> None:
         "def f(base):\n    return Path(base) / folder_name()\n",
         "APP_FOLDER_NAME = install_layout.APP_FOLDER_NAME\n",  # allowed only in exclusions
         'def f(base, x):\n    return f"{base}\\\\Cliniko{x}Scribe"\n',
+        "ROOT = Path(base) / install_layout.BACKUP_VALUE_NAME\n",
     ],
 )
 def test_the_scan_sees_every_spelling_it_claims(source: str) -> None:
@@ -503,6 +511,14 @@ def test_the_scan_passes_docstrings_and_allowed_names() -> None:
         == []
     )
     assert _offences('AUDIT_KEY_DESCRIPTION = "ClinikoScribe audit key"\n', "audit.py") == []
+    assert (
+        _offences(
+            "def backup_exclusions(self):\n"
+            "    return QueryValueEx(key, install_layout.BACKUP_VALUE_NAME)\n",
+            "exclusions.py",
+        )
+        == []
+    )
     assert (
         _offences(
             'def _single_instance_mutex_name():\n    return f"Global\\\\ClinikoScribe-app-{u}"\n',
@@ -741,7 +757,7 @@ class TestEveryRaisedModelLineFollowsTheBuild:
         monkeypatch.setattr(
             main_window,
             "read_registration_status",
-            lambda: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
+            lambda layer: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
         )
         panel = main_window.StatusPanel(config_root=tmp_path / "config")
         _says(panel.registration_label.text(), install_layout.registration_remedy(), frozen)

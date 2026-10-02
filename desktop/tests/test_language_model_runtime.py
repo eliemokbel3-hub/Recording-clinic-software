@@ -16,9 +16,11 @@ two classes that explicitly ``importorskip`` it:
   wheel has a different ``url``/hash. This audits a local record, never the
   installed bytes (codex round 22 PR-LOW-039). The gate skips BY NAME when
   the runtime is absent, never fails: agent shells and CI do not install it.
-- the real-model SMOKE (``TestRealModelSmoke``): practitioner/composer only -
-  it needs both the wheel and the 2.3 GiB GGUF, so it skips by name in every
-  other shell (the model file is absent in the executor's).
+- the real-model SMOKE (``TestRealModelSmoke``): it needs both the pinned
+  wheel and the 2.3 GiB GGUF in the source run's DEV models root
+  (``%LOCALAPPDATA%\\ClinikoScribe-dev\\models``, installation plan Task 2.6),
+  and skips by name when either is absent, in any shell: a missing runtime
+  says the prose runtime is not installed, a missing model names that root.
 - the LOAD CONTRACT (``TestLoadContract``) and the test double
   (``TestMockLanguageModel``, ``TestAvailability``), driven entirely through
   a fake runtime class and files under ``tmp_path``: offline env first, UNC
@@ -38,6 +40,7 @@ from typing import Any
 
 import pytest
 
+from conftest import real_ml_skip_reason
 from scribe_desktop import language_model as lm
 from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 
@@ -153,19 +156,24 @@ class TestInstalledRuntimeGate:
         assert llama_cpp.__version__ == "0.3.35"
 
 
-# The class below is the PRACTITIONER/COMPOSER real-model smoke: it is the
-# only place the actual 2.3 GiB GGUF is loaded, and that file is absent in the
-# executor's shell, so it always skips by name there.
+# The class below is the real-model smoke: the only place in this module the
+# actual 2.3 GiB GGUF is loaded. It runs wherever the pinned wheel is
+# installed and the dev models root holds the model (Task 2.6), and skips by
+# name otherwise.
 class TestRealModelSmoke:
-    """The practitioner/composer real-model smoke: it needs the pinned wheel
-    AND the 2.3 GiB GGUF, so it skips by name everywhere else (the file is
-    absent in the executor's shell - agent shells cannot see the
-    practitioner's model cache, docs/lessons.md)."""
+    """The real-model smoke: it needs the pinned wheel AND the 2.3 GiB GGUF
+    in the source run's dev models root (installation plan Task 2.6 -
+    ``real_ml_models``); without either it skips by name - a missing runtime
+    as "the prose runtime is not installed", a missing model with the reason
+    naming that root."""
 
+    @pytest.mark.usefixtures("real_ml_models")
     def test_pinned_model_loads_and_generates(self) -> None:
         pytest.importorskip("llama_cpp", reason="the prose runtime is not installed")
+        # Installation plan Task 2.6: the source run's DEV models root
+        # (``real_ml_models`` pins every model path there), never production.
         if not lm.language_model_file_available():
-            pytest.skip("the pinned language model is not downloaded - Task P.1")
+            pytest.skip(real_ml_skip_reason("the pinned language model"))
         apply_offline_env()
         model = lm.LocalLanguageModel()
         text = model.complete(
