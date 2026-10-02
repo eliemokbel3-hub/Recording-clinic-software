@@ -3,7 +3,8 @@ D1, D3, D5, D6, D13; Critical Constraints C1 and C4).
 
 At every non-mock Complete the app keeps, encrypted, the session's
 transcript, its saved note and its generated note — never audio. On-disk
-layout (D1 / D3), all under ``%LOCALAPPDATA%\\ClinikoScribe\\past_sessions\\``:
+layout (D1 / D3), all under ``%LOCALAPPDATA%\\ClinikoScribe\\past_sessions\\``
+(``ClinikoScribe-dev`` from a source checkout — ``install_layout``):
 
 - ``<session id>\\`` — ONE entry per session id, holding the SAME filenames
   a session holds, so the existing readers (``read_transcript``,
@@ -78,6 +79,7 @@ from pydantic import (
     field_validator,
 )
 
+from scribe_desktop import install_layout
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.note_config import (
@@ -141,8 +143,7 @@ RecordingKind = Literal["linked", "desktop", "unknown"]
 def default_past_sessions_root() -> Path:
     # No UNC refusal, exactly like the other custody roots (default_sessions_
     # root): a redirected LOCALAPPDATA is an accepted same-user residual.
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / PAST_SESSIONS_DIRNAME
+    return install_layout.data_root() / PAST_SESSIONS_DIRNAME
 
 
 def _utc_now() -> datetime:

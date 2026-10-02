@@ -11,7 +11,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from scribe_desktop.identity import REGISTRY_KEY
+from scribe_desktop import identity
 from scribe_desktop.secure_storage import SecureStorageProvider, SessionCrypto
 
 
@@ -32,7 +32,7 @@ def read_registration_status() -> RegistrationStatus:
         import winreg
 
         try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, identity.registry_key()) as key:
                 value, _ = winreg.QueryValueEx(key, "")
                 registry_value = str(value)
         except OSError:  # LOW-010: PermissionError etc. must not crash the app

@@ -1,7 +1,8 @@
 """The practitioner's voice profile: model, custody, deletion (plan Task 1.2).
 
 What is stored (plan Design Decision D5), under
-``%LOCALAPPDATA%\\ClinikoScribe\\profile\\``:
+``%LOCALAPPDATA%\\ClinikoScribe\\profile\\`` (``ClinikoScribe-dev`` from a source
+checkout — ``install_layout``; the same for the style store below):
 
 - ``key.dpapi`` — an AES-256-GCM key, DPAPI-wrapped (current-user scope)
   with the description ``"ClinikoScribe practitioner profile key"``, generated
@@ -77,7 +78,6 @@ filter (``logging_setup._PAYLOAD_SIGNATURES``).
 from __future__ import annotations
 
 import math
-import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -86,6 +86,7 @@ from typing import TYPE_CHECKING, Final, Literal, NamedTuple, get_args
 from cryptography.exceptions import InvalidTag
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
+from scribe_desktop import install_layout
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
     KEY_FILENAME,
@@ -272,15 +273,13 @@ def default_profile_root() -> Path:
     # Deliberately NO UNC refusal, exactly like default_sessions_root: a
     # folder-redirected LOCALAPPDATA is an accepted same-user deployment
     # residual for the custody stores (data-flow map, flow 6).
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / "profile"
+    return install_layout.data_root() / "profile"
 
 
 def default_style_root() -> Path:
     """The learned-style store's root (D9): a SIBLING of the profile root,
     never a second artefact under it — the voice key must not open it."""
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / STYLE_DIRNAME
+    return install_layout.data_root() / STYLE_DIRNAME
 
 
 class _SealedStore(NamedTuple):

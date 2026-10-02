@@ -22,7 +22,6 @@ from __future__ import annotations
 import ctypes
 import getpass
 import logging
-import os
 import sys
 import time
 from collections.abc import Callable
@@ -32,6 +31,7 @@ from typing import NamedTuple
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
@@ -247,9 +247,12 @@ def release_single_instance_lock(handle: int) -> None:
 def default_instance_lock_path() -> Path:
     """``%LOCALAPPDATA%\\ClinikoScribe\\app.lock``: inside this user's
     profile, which another standard account can neither open nor create in.
-    The file is empty; it is only ever held open."""
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / _INSTANCE_LOCK_FILENAME
+    The file is empty; it is only ever held open.
+
+    Installation plan Task 1.5 (D3): the SAME file for both channels
+    (``install_layout.instance_guard_root``), so the installed app and a dev
+    run exclude each other whichever starts first."""
+    return install_layout.instance_guard_root() / _INSTANCE_LOCK_FILENAME
 
 
 def _hold_lock_file(path: Path) -> tuple[str, int]:

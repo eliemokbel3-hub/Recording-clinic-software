@@ -153,10 +153,10 @@ class TestWritingStyleGroup:
         lines = screen.style_reason_label.text().split("\n")
         assert len(lines) == 2
         assert lines[0].startswith(models.STYLE_LABELS["own_voice"])
-        assert models.LANGUAGE_MODEL_ABSENT_REASON in lines[0]
+        assert models.language_model_absent_reason() in lines[0]
         assert models.STYLE_PROFILE_EMPTY_REASON in lines[0]
         assert lines[1].startswith(models.STYLE_LABELS["narrative"])
-        assert models.LANGUAGE_MODEL_ABSENT_REASON in lines[1]
+        assert models.language_model_absent_reason() in lines[1]
         assert models.STYLE_PROFILE_EMPTY_REASON not in lines[1]
 
         assert screen.style_status_label.isHidden()
@@ -240,7 +240,7 @@ class TestWritingStyleGroup:
         assert not screen.style_radios["own_voice"].isEnabled()
         text = screen.style_status_label.text()
         assert models.STYLE_PROFILE_EMPTY_REASON in text
-        assert models.LANGUAGE_MODEL_ABSENT_REASON not in text
+        assert models.language_model_absent_reason() not in text
         assert "shown as Clean clinical" in text
         screen.deleteLater()
 

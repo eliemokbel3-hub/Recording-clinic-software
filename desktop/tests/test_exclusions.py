@@ -22,6 +22,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from conftest import use_channel, use_frozen  # noqa: E402
 from scribe_desktop import exclusions  # noqa: E402
 from scribe_desktop.exclusions import (  # noqa: E402
     DRIVE_REMOTE,
@@ -33,7 +34,6 @@ from scribe_desktop.exclusions import (  # noqa: E402
     NOT_INDEXED_FAILED,
     WER_EXCLUDED_APPLICATIONS,
     WER_EXCLUDED_KEY,
-    WER_NOT_EXCLUDED,
     WER_UNCHECKED,
     ExceptionHook,
     check_location,
@@ -44,6 +44,7 @@ from scribe_desktop.exclusions import (  # noqa: E402
     remove_exception_hooks,
     startup_exclusions,
     uncovered_launch_line,
+    wer_not_excluded_line,
 )
 
 _DIRECTORY = 0x10
@@ -278,8 +279,25 @@ class TestCheckWer:
     )
     def test_a_missing_or_wrong_value_warns(self, values: dict[str, int]) -> None:
         assert check_wer(FakeLayer(wer=values), "pythonw.exe") == [
-            exclusions.ExclusionWarning("wer_not_excluded", WER_NOT_EXCLUDED)
+            exclusions.ExclusionWarning("wer_not_excluded", wer_not_excluded_line())
         ]
+
+    @pytest.mark.parametrize(
+        ("frozen", "remedy"),
+        [
+            (False, "run scripts/register-native-host.py again from a normal terminal"),
+            (True, "reinstall Clinic Scribe"),
+        ],
+    )
+    def test_the_missing_exclusion_names_this_builds_remedy(
+        self, monkeypatch: pytest.MonkeyPatch, frozen: bool, remedy: str
+    ) -> None:
+        # Installation plan Task 1.7: a packaged build has no scripts folder.
+        use_frozen(monkeypatch, frozen)
+        assert wer_not_excluded_line() == (
+            f"Crash reports are not excluded for Clinic Scribe — {remedy}, then restart "
+            "Clinic Scribe."
+        )
 
     def test_an_unreadable_registry_says_so_and_still_checks_the_launch(self) -> None:
         warnings = check_wer(FakeLayer(wer_error=PermissionError("denied")), "python.exe")
@@ -292,6 +310,18 @@ class TestCheckWer:
             "Crash reports are not excluded for this launch (this program) — "
             "start the app with scribe-app.exe."
         )
+
+
+def test_the_checked_data_folder_follows_the_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installation plan Task 1.2 (C8): the start-up checks look at the
+    channel's own folder, read through the layer (``LOCALAPPDATA`` unset
+    there falls back to the home folder, as every store does)."""
+    layer = FakeLayer(env=_PROFILE_ENV)
+    assert exclusions.app_data_root(layer) == Path(_LOCAL) / "ClinikoScribe"
+    use_channel(monkeypatch, "dev")
+    assert exclusions.app_data_root(layer) == Path(_LOCAL) / "ClinikoScribe-dev"
+    assert exclusions.app_data_root(FakeLayer(env={})) == Path.home() / "ClinikoScribe-dev"
+    assert exclusions.APP_FOLDER_NAME == "ClinikoScribe"
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +431,7 @@ class TestStartupExclusions:
         assert lines == (
             NOT_INDEXED_FAILED,
             LOCATION_ONEDRIVE,
-            WER_NOT_EXCLUDED,
+            wer_not_excluded_line(),
             uncovered_launch_line("python.exe"),
         )
         records = [record for record in caplog.records if record.name == logger.name]

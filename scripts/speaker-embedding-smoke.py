@@ -9,7 +9,7 @@ entry is PINNED (practitioner-profile plan Task 0.5), so
 promoted model in the cache and the command is:
 
     .venv\\Scripts\\python.exe scripts\\speaker-embedding-smoke.py ^
-        --model "%LOCALAPPDATA%\\ClinikoScribe\\models\\speaker-embedding\\wespeaker-voxceleb-resnet34-LM.onnx" ^
+        --model "%LOCALAPPDATA%\\ClinikoScribe-dev\\models\\speaker-embedding\\wespeaker-voxceleb-resnet34-LM.onnx" ^
         me-day1.wav me-day2.wav other-person.wav
 
 The model path is EXPLICIT so that an UNPINNED candidate - what a

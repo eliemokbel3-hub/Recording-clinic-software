@@ -610,6 +610,14 @@ class TestRowStore:
         assert log.record_write_refusal(other, "write_forbidden", created_at=created)
         assert _only_row(log, other).session_date == date(2026, 9, 30)
 
+    def test_the_dev_build_refusal_is_recorded(self, tmp_path: Path) -> None:
+        """Installation plan Task 1.6 (round 9): the dev write guard's code
+        is a refusal code the real store accepts, not only the fake one."""
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        assert log.record_write_refusal(sid, "dev_build_writes_off")
+        assert _only_row(log, sid).write.last_refusal == "dev_build_writes_off"
+
     def test_a_refusal_code_that_is_not_a_code_is_refused(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         sid = _begin_linked(log)

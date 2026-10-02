@@ -19,6 +19,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from conftest import use_channel  # noqa: E402
 from encounter_fakes import (  # noqa: E402
     CLINIC_ID,
     HOST,
@@ -1293,6 +1294,43 @@ class TestDraftWrite:
         assert audit.calls == [("refusal", controller.session_value.session_id, "mock_note")]
         assert len(audit.created) == 1 and isinstance(audit.created[0], float)
         assert controller.write_releases == 1
+        window.close()
+
+    def test_a_dev_build_refuses_until_its_status_setting_allows_writes(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Installation plan D4 (Task 1.6): in the dev channel, Write is
+        disabled with the guard's line and a click (the slot reached
+        directly) makes no request and records ``dev_build_writes_off`` as
+        the session's pre-send refusal; once the Status tab's checkbox is
+        ticked the Write button is enabled and the write proceeds."""
+        use_channel(monkeypatch, "dev")
+        audit = _AuditRecorder()
+        window, controller, cliniko, _store = self._window(tmp_path, audit=audit)
+        session_id = controller.session_value.session_id
+        line = models.write_line("dev_build_writes_off")
+        screen = window.note_screen
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == line
+        window._on_write_requested(session_id)
+        assert cliniko.calls == []
+        assert audit.calls == [("refusal", session_id, "dev_build_writes_off")]
+        assert controller.write_releases == 1
+        assert self._line(window) == line
+        checkbox = window.status_panel.dev_writes_checkbox
+        assert checkbox is not None and not checkbox.isChecked()
+        checkbox.setChecked(True)
+        assert screen.write_button.isEnabled()
+        self._click(qapp, window, controller)
+        assert cliniko.calls[0] == ("GET", f"/v1/treatment_notes/{NOTE}")
+        assert self._line(window) == models.write_line("written_seen")
+        window.close()
+
+    def test_a_production_build_has_no_dev_guard(self, qapp: Any, tmp_path: Path) -> None:
+        # The conftest pin: production — no checkbox, Write ready as before.
+        window, _controller, _cliniko, _store = self._window(tmp_path)
+        assert window.status_panel.dev_writes_checkbox is None
+        assert window.note_screen.write_button.isEnabled()
         window.close()
 
     @pytest.mark.skipif(sys.platform != "win32", reason="DPAPI custody is Windows-only")

@@ -53,6 +53,7 @@ import threading
 from dataclasses import dataclass
 from typing import Any, Final
 
+from scribe_desktop import identity
 from scribe_desktop.framing import EndOfStream, FramingError, read_frame, write_frame
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.pipe_server import (
@@ -305,7 +306,7 @@ class AppPipeConnector:
             sid: str | None = current_user_sid()
         except PipeUnavailable:
             sid = None
-        name = pipe_name(sid) if sid is not None else "\\\\.\\pipe\\ClinikoScribe-unknown"
+        name = pipe_name(sid) if sid is not None else f"{identity.pipe_prefix()}unknown"
         return cls(name, own_sid=sid, logger=logger)
 
     def _identity(self) -> tuple[int, str]:

@@ -16,7 +16,9 @@ WARNING (usable but slow), RTF >= RTF_REQUIRED FAILS the threshold. A failed
 threshold only ever produces a local warning; there is no cloud fallback.
 
 Offline enforcement: the offline env kill-switches are set AND asserted before
-any ML import. Models must already be local (scripts/setup-models.py); this
+any ML import. Models must already be local (``install_layout.models_root``:
+scripts/setup-models.py from a source checkout, the installer's model pack in
+a packaged build); this
 module performs zero network I/O. ML imports are lazy so the module stays
 importable without the ML stack installed.
 
@@ -36,6 +38,8 @@ import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Final
+
+from scribe_desktop import install_layout
 
 # RTF thresholds (plan Step 5 / Step 10). RTF < 1.0 is required; the margin
 # leaves headroom for clinic machines slower than the dev machine.
@@ -140,10 +144,10 @@ def assert_offline_env() -> None:
 
 
 def default_models_root() -> Path:
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if not local_app_data:
-        raise RuntimeError("LOCALAPPDATA is not set; model cache location unknown")
-    return Path(local_app_data) / "ClinikoScribe" / "models"
+    """Installation plan Task 1.2: ``install_layout.models_root()`` — the
+    install folder's ``models`` when frozen, else the channel's data folder's;
+    raises ``RuntimeError`` when ``LOCALAPPDATA`` is unset (source run)."""
+    return install_layout.models_root()
 
 
 # --- shared whisper snapshot completeness (smoke round 21) -----------------
@@ -355,7 +359,7 @@ def run_all(models_root: Path, names: list[str] | None = None) -> list[Benchmark
         candidates = [n for n in candidates if n in names]
     if not candidates:
         raise RuntimeError(
-            f"no whisper models under {models_root} - run scripts/setup-models.py first"
+            f"no whisper models under {models_root} - {install_layout.model_remedy()}"
         )
 
     with tempfile.TemporaryDirectory() as tmp:

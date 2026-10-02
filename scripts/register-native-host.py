@@ -1,15 +1,17 @@
 r"""Register (or unregister) the Chrome native-messaging host — plan Step 6.
 
-Installs the native-messaging registration into %LOCALAPPDATA%\ClinikoScribe:
-a copy of the venv's `scribe-host.exe` plus the host manifest, then writes and
-verifies the HKCU registry value. Rerun after any venv move; registration is
-per Windows user.
+Installs the native-messaging registration into the source checkout's data
+folder, %LOCALAPPDATA%\ClinikoScribe-dev (installation plan Task 1.4: a source
+run is the dev channel, registered under the dev host name
+`com.scribe.cliniko_host_dev` for the dev extension): a copy of the venv's
+`scribe-host.exe` plus the host manifest, then writes and verifies the HKCU
+registry value. Rerun after any venv move; registration is per Windows user.
 
 Two hard requirements learned at the Phase-1 gate, both of which fail SILENTLY
 (Chrome reports only "Specified native messaging host not found"):
 1. The install path must contain NO SPACES. A manifest under
    `C:\Recording clinic software\...` is never resolved by Chrome — which is
-   why %LOCALAPPDATA%\ClinikoScribe is used instead of the repo.
+   why the %LOCALAPPDATA% data folder is used instead of the repo.
 2. The host must be an `.exe` (not `.bat`/`.cmd`). `scribe-host.exe` comes
    from the gui-scripts entry point, so it is windowless and receives
    Chrome's bare origin argv plus `--parent-window` directly. The copy still
@@ -41,7 +43,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -54,21 +55,27 @@ from scribe_desktop.exclusions import (
     WER_EXCLUDED_VALUE,
 )
 
-# Canonical identity constants — the script runs inside the project venv
-# (see usage), so it imports the same definitions the host enforces.
-from scribe_desktop.identity import EXPECTED_ORIGIN as ALLOWED_ORIGIN
-from scribe_desktop.identity import HOST_NAME, REGISTRY_KEY
+from scribe_desktop import identity, install_layout
 
 REPO = Path(__file__).resolve().parents[1]
+# Installation plan Task 1.4 (D3): the script runs from a source checkout, so
+# it registers the DEV channel — the dev host name, the dev extension's origin
+# and the dev data folder (%LOCALAPPDATA%\ClinikoScribe-dev). The installed
+# app's Chrome link is the installer's (HKLM), never this script's. The
+# identities come from the same accessors the host enforces.
+HOST_NAME = identity.host_name()
+ALLOWED_ORIGIN = identity.expected_origin()
+REGISTRY_KEY = identity.registry_key()
 # Install target: space-free, stable, outside the repo (see module docstring).
-INSTALL_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "ClinikoScribe"
+INSTALL_DIR = install_layout.data_root()
 MANIFEST_PATH = INSTALL_DIR / f"{HOST_NAME}.json"
 INSTALLED_EXE = INSTALL_DIR / "scribe-host.exe"
 
 # Pre-gate artifacts that lived in the repo; removed on register/unregister.
+# They were only ever written under the production host name.
 LEGACY_ARTIFACTS = (
     REPO / "scripts" / "dev-host-launcher.bat",
-    REPO / "scripts" / f"{HOST_NAME}.json",
+    REPO / "scripts" / f"{identity.HOST_NAME}.json",
 )
 
 

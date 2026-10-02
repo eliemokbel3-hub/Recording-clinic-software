@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `19%`
+**Overall Progress:** `38%`
 
 ## Lifecycle State
 - Active
@@ -343,6 +343,7 @@ Checked by the critique lens on 2026-10-02. Each one still needs Phase 0's live 
   - In the dev channel, `refuse_before_read` and `ui/models.write_control` refuse with `dev_build_writes_off` unless `config\dev.json` (dev data root only, `extra="forbid"`, `allow_cliniko_writes: bool`, default false) allows it.
   - The setting is a dev-only Status-tab checkbox. A production build never reads the file, and the name never applies there.
   - Reads and verification still work, so the safeguards can be smoke-tested without writing.
+    - AS BUILT (Phase 1 review round 10, LOW-004): "reads and verification" are the note verification when a treatment note opens or a linked recording is reopened, the encounter checks it feeds, and the Clinics tab's Validate. The Write click's own hop-1 read (`read_for_write`) and the pre-write checks in `prepare_write` (template match, finalised draft, the open-record reconcile) run only when writes are allowed, because the guard sits in `refuse_before_read` as this decision's first bullet says, so a refused click makes no request. Two consequences follow. To smoke-test those pre-write checks, the practitioner ticks the box against a disposable draft. And an attempt left open, after which the box is unticked, stays open with the `write_uncertain`-prefixed line until the box is ticked again (the next click then reconciles it before any PATCH).
   - Why: practitioner decision 2026-10-02.
   - Alternatives rejected: a Cliniko trial account (depends on Cliniko); no guard.
 - **D5 — The models ship as a separate, verified pack.**
@@ -542,7 +543,7 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
     - The `ClinikoScribe\models` paths in the docstrings of `scripts/setup-models.py` and `scripts/speaker-embedding-smoke.py`.
     - Test child processes are real source runs, so they were the dev channel. Each now pins production after `assert_offline_env()`.
     - Collection-time `skipif`s would have seen dev and silently skipped the real-ML tests. Fixed by also installing the pin in `pytest_configure`.
-  - **Docs left for H.1:** `docs/security/threat-model.md` (still names the old remedy constants and the single data folder), `scripts/README.md`, `extension/KEY.md` (the dev key), and AGENTS.md Local Run Steps (dev folder, `--mode dev`).
+  - **Docs left for H.1:** `docs/security/threat-model.md` (still names the old remedy constants and the single data folder), `scripts/README.md`, and AGENTS.md Local Run Steps (dev folder, `--mode dev`). (`extension/KEY.md`'s dev key was done in Phase 1 review round 9, LOW-007.)
   - **Interpretation calls:**
     - Remedies and the models root key on `is_frozen()`, not the channel.
     - The lock stays in the production folder.
@@ -588,9 +589,97 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
     - Task 2.2's reading;
     - the VoxCeleb caveat to the `docs/practice/` review.
   - **Not touched:** `desktop/`, `extension/`, `scripts/`, `docs/`, the git stash and every ref. No code changed, so no suite was run.
-- Last plan sync: 2026-10-02T22:46+10:00
+- **EXECUTOR stage-1 leg i1-x3 (2026-10-02T23:01:22+10:00) — the composer's first Phase 1 suite, fixed (in the worktree `C:\scribe-build`):** ruff clean and mypy clean (57 files) again. The pytest, `npm run qa` and both builds are re-requested; every Phase 1 task stays 🟨.
+  - **pytest collection error, fixed as a class.**
+    - The cause: `test_native_host.py` imports `EXPECTED_ORIGIN` from `native_host`, and leg i1-x2 had dropped that import. mypy checks `src` only, so it could not see a test importing a removed name.
+    - The enumeration: every top-level name the Phase 1 diff removed from `desktop/src`, `scripts/` and `extension/` (from `git diff -U0`), each grepped across tests, scripts and src, including attribute and string-path monkeypatches.
+    - The removed names: the `os` imports in five modules, `exclusions.WER_NOT_EXCLUDED`, `native_host.EXPECTED_ORIGIN`, `status.REGISTRY_KEY`, `main_window.HOST_NAME` and `Literal`, the three `ui/models` reason constants, the key script's `load_or_create_private_key()` signature, and the register script's `os`.
+    - The result: `native_host.EXPECTED_ORIGIN` was the ONLY removed name with a remaining consumer. It is restored as an explicit re-export of the production constant (`from scribe_desktop.identity import EXPECTED_ORIGIN as EXPECTED_ORIGIN`), so the pin passes UNCHANGED. A module constant cannot follow the channel, so `verify_origin` still checks `identity.expected_origin()`, which is that same value in production.
+    - Not re-added: `status.REGISTRY_KEY` and `main_window.HOST_NAME`. They have no consumers, and a production-only name in those modules would invite a dev-channel caller to use the production key. The three reason constants became functions in i1-x2, and every consumer was moved then.
+    - Every attribute the register-script tests patch (`INSTALL_DIR`, `MANIFEST_PATH`, `INSTALLED_EXE`, `LEGACY_ARTIFACTS`, `venv_executable`, the WER names) still exists.
+  - **`npm run qa` dom suite, fixed for every environment.**
+    - The cause: in a jsdom (client-transformed) project, vite leaves `define` to its dev client script, which jsdom never loads. the free identifier `__SCRIBE_HOST_NAME__` was therefore unbound under jsdom, while node replaces them statically.
+    - The fix: a new setup file, `extension/src/test/build-defines.ts`, assigns `buildDefines("release")`, the build's one source, onto `globalThis`. `vitest.config.ts` lists it as `setupFiles` for BOTH projects, beside the existing `define`, with a comment that a new project must list both. `src/test/` is outside the `sinks.test.ts` production scan.
+    - New pin: `extension/src/channel.dom.test.ts` asserts that the jsdom project sees the release host name. The node twin is `manifest.test.ts`.
+    - `__SCRIBE_HOST_NAME__` is the only build-time define in `extension/src`; there is no `import.meta.env`.
+  - **D-I1 applied:** see Task 1.1.
+  - **Composer to verify:**
+    - The full desktop suite (`.venv/Scripts/python.exe -m pytest` in `desktop/`). Expect 5301+ passing and 9 skips. The real-ML legs should RUN.
+    - `npm run qa`: every file loads, and the new `channel.dom.test.ts` passes.
+    - Both builds, as before.
+- **EXECUTOR stage-1 leg i1-x4 (2026-10-02T23:12:42+10:00) — the second composer suite's one diff-caused failure, fixed at the classification, not the pin:** ruff clean, mypy clean (57 files). The full desktop suite is re-requested. Every Phase 1 task stays 🟨.
+  - **The failure:** `test_write_lines.py::TestUncertainPrefix::test_the_progress_success_in_flight_and_open_outcome_lines_are_never_prefixed`. The new kind was outside that test's never-prefixed set.
+  - **The decision:** it does NOT belong in that set. Its line invites Copy, and PR-MED-017 prefixes every Copy-inviting refusal while an earlier attempt is open. A refusal before anything is sent is not by itself a reason to skip the prefix: `mock_note`, `not_saved` and `unlinked` are pre-send and prefixed.
+  - **The real bug behind it:** the guard ran BEFORE the record's checks and never carried `earlier_attempt_open`. So "allowed → write left open → unticked" showed a bare "copy the note instead".
+  - **The fix:**
+    - `dev_build_writes_off` added to `WRITE_UNCERTAIN_PREFIXED`. The failing pin now passes UNCHANGED.
+    - `draft_write.refuse_before_read` checks the guard after the record's refusals and sets `earlier_attempt_open` from the record.
+    - `ui/models.write_control` checks the guard after `write_record_block`, prefixed by `status.open_attempt`. This mirrors the click path, which decides the record first.
+    - The two `WRITE_LINES` / docstring comments were corrected.
+  - **Tests:**
+    - `test_draft_write.py`: the PR-MED-017 unprefixed set is back to its original three names. `TestTheDevBuildWriteGuard` now pins the record-first order (the dev result equals production's for an unreadable or written record) and the open-attempt flag (`attempting` / `unknown` → True, `refused` → False). `test_its_line_is_never_prefixed` became `test_its_line_is_prefixed_while_an_earlier_attempt_is_open`.
+    - `test_dev_write_guard.py`: the open-attempt prefix and the record lines' precedence on the button.
+    - `test_write_lines.py`: `test_every_copy_inviting_line_is_prefixed` now matches "copy" in any case. That is the gap that let the lowercase dev line through; the case-insensitive `\bcopy\b` adds no other line, because "copying" is not the word.
+  - **The class check:** every enumeration of write-line or refusal kinds was found through sibling names (`write_forbidden`, `nothing_to_write`, `mock_note`, …). They are `WriteRefusalName`, `WRITE_LINES`, `WRITE_UNCERTAIN_PREFIXED`, `test_write_lines._EXPECTED`, the two `test_draft_write` refusal sweeps (`get_args`) and `test_audit.py`'s code-pattern test (`get_args`). All account for the new kind. `ui/note.py` holds no such enumeration.
+  - **For H.1:** `docs/design-system.md`'s copy of `WRITE_LINES` gains the dev line and its prefix.
+  - **Extension:** green in suite 2 (13 files / 313 tests, both builds) and untouched by this leg.
+  - **Launcher:** the composer's venv-launcher regeneration was not touched.
+- **EXECUTOR stage-1 leg i1-x5 (2026-10-02T23:39:30+10:00) — Phase 1 marked 🟩, then `/review-loop` round 9, fixed; the composer's suite is needed before it Closes:** ruff clean, mypy clean (57 files).
+  - **Markers:** Tasks 1.1–1.8 are 🟩. Every `Done when:` is met by the composer's suite 3 (pytest 5393 passed / 9 skipped; `npm run qa` 13 files / 313 tests; both builds, with the `dist-dev` and `dist` manifests and bundles checked). None of them needs a practitioner smoke to be done. Overall Progress is 15 of 39 task lines (38%), after round 9 added Tasks 2.6 and 2.7.
+  - **Round 9:** 0 CRIT / 0 HIGH / 3 MED / 10 LOW, every one Applied. There were 19 candidates; 6 were dropped and 1 downgraded. The full block is in the Findings Log.
+    - **Code fixes:** MED-001 (5 `TestCheckWer` items were not collected); LOW-001 (the onnxruntime remedy in a packaged build); LOW-006 (the Status checkbox re-reads the file when a save fails).
+    - **Test fixes:** MED-002 (frozen-side tests for every raised model or runtime line and for the registration line); LOW-002 and LOW-003 (the two source scans); LOW-008 (the real-store audit row).
+    - **Doc fixes:** LOW-004 (`.gitignore`); LOW-005 (10 module docstrings); LOW-007 (`extension/KEY.md`).
+    - **Plan work:** MED-003 → Task 2.6 (the real-ML test legs follow the dev models root); LOW-009 → Task 2.7 (a packaged build refuses to start outside its install folder); LOW-010 → H.1's pointer list.
+    - **The extension:** only `KEY.md` changed (a document no test reads), so `npm run qa` and the builds are not re-requested.
+  - **Composer to verify:** the full desktop suite. Expect about 5417 passed (+5 restored, +19 new) and 9 skips, with the real-ML legs RUNNING. Then round 10, the re-review, runs in-session.
+  - **For H.1** (besides its own list):
+    - `docs/design-system.md`'s copy of `WRITE_LINES` gains the `dev_build_writes_off` line with its `write_uncertain` prefix, and the dev-only Status checkbox with its new save-failure line;
+    - the round-9 pointers listed on H.1, including the shared Credential Manager namespace residue.
+  - **Practitioner smoke for Phase 1: NOT needed before Phase 2.**
+    - Phase 1 lives only in this worktree, on `installation-build`. The everyday app runs from `main` in `C:\Recording clinic software` with its own `.venv`, and nothing in Phase 1 touches it: no registration, no data folder, no Chrome profile.
+    - Every Phase 1 behaviour is pinned by the suite with injected channels, folders and registries (C6).
+    - An OPTIONAL dev-channel smoke can wait until Task 2.6 needs the dev models anyway. From a normal terminal it would be: populate `%LOCALAPPDATA%\ClinikoScribe-dev\models`; run `register-native-host.py` from this worktree's venv (the dev host); load `extension\dist-dev` in a SEPARATE Chrome profile; then check for the green OK badge, "(dev)" in the name, and the Write button off until the Status checkbox is ticked.
+- **EXECUTOR stage-1 leg i1-x6 (2026-10-02T23:58:08+10:00) — round 9 Closed on composer suite 4, round 10 (the re-review) run and fixed; the loop converges on the next composer suite:** ruff clean, mypy clean (57 files). Review History integrity: OK (`loop-history-check`: 10 + 10, strictly increasing).
+  - **Round 9:** Closed on composer suite 4 (pytest 5417 passed / 9 skipped, exactly the +24 expected).
+  - **Round 10 (loop round 2 of cap 3):** 0 CRIT / 0 HIGH / 0 MED / 5 LOW, all Applied. There were 18 candidates, 13 dropped.
+    - **LOW-001 ⚡:** the remedy scan now ignores case and accepts either slash, and its self-test uses the scan's own pattern, with 4 cases.
+    - **LOW-002:** the folder-scan docstring is corrected, with one f-string case added.
+    - **LOW-003 ⚡:** `KEY.md` names `identity.py` as well as `channel.ts`.
+    - **LOW-004:** D4 gains an AS-BUILT note. With dev writes off, the Write click's own read and pre-write checks do not run. The code is unchanged because it follows D4's first bullet.
+    - **LOW-005:** a new AST pin says only `prepare_write` builds a `PreparedWrite`, so hop 2 cannot bypass the dev guard.
+  - **What changed:** test files (`test_install_layout.py`, `test_dev_write_guard.py`), `extension/KEY.md` and the plan. No `src` code changed and no extension source changed.
+  - **Composer to verify:** the full desktop suite. Expect 5417 + 5 = about 5422 passed (+4 remedy self-test cases replacing 1, +1 folder case, +1 PreparedWrite pin) and 9 skips.
+  - **Next:** on green the round Closes and `/review-loop` has CONVERGED (no CRIT/HIGH/MED in round 10). The next leg records that and hands off `reason=phase-complete` for the composer's codex peer pass. `/peer-loop` was not run.
+  - **H.1 and the practitioner-smoke statement:** unchanged from leg i1-x5. No smoke is needed before Phase 2. The D4 AS-BUILT note adds one optional dev-smoke step: tick the box against a disposable draft to exercise the pre-write checks.
+- **EXECUTOR stage-1 leg i1-x7 (2026-10-03T00:05:37+10:00) — round 10 Closed on composer suite 5; Phase 1's `/review-loop` CONVERGED:**
+  - **Evidence:** pytest 5422 passed / 9 skipped; ruff clean; mypy 57 files. The extension is unchanged since suite 2: 13 files / 313 tests, both builds OK.
+  - **Convergence, per the `/review-loop` SKILL termination check:**
+    - Round 10 (loop round 2 of cap 3) found no CRIT, HIGH or MED findings.
+    - Its Round Classification is 3 🆕 + 2 ⚡, all LOW, with skew=none and no 🔁 recurrence.
+    - Every Fix-now finding was applied and is green on suite 5.
+    - No Defer, Accept or MUST-PAUSE item is open.
+  - **Trajectory:** round 9 had 3 MED + 10 LOW; round 10 had 5 LOW. `loop-history-check` reports 10 + 10 rounds, strictly increasing.
+  - **Markers:** Tasks 1.1–1.8 stay 🟩. Overall Progress is unchanged at 38% (15 of 39 task lines).
+  - **This leg changed** the plan only.
+  - **Next (composer):** the cross-family codex peer pass over Phase 1, then the Phase 1 commit on `installation-build`. `/peer-loop` was not run here.
+  - **Carried forward unchanged from legs i1-x5 and i1-x6:**
+    - the H.1 items;
+    - no practitioner smoke is needed before Phase 2;
+    - the optional dev-channel smoke, which now includes ticking the box against a disposable draft to exercise the pre-write checks;
+    - the new Phase 2 Tasks 2.6 and 2.7.
+- **EXECUTOR stage-1 leg i1-x9 (2026-10-03T00:41:10+10:00) — LEG 2 (/fix) of peer round 11: PR-LOW-016 Applied with every sibling:** ruff clean, mypy clean (57 files).
+  - **The fix:** `desktop/tests/conftest.py` pins `install_layout.is_frozen` to `False` before collection (`pytest_configure`, which covers the import-time real-ML gates) and per test (the autouse fixture, via `use_frozen`). `REAL_IS_FROZEN` is kept for the one test of the real function.
+  - **The other test edits:**
+    - `test_integration_no_sockets.py`: the five child processes pin it beside their channel pin.
+    - `test_install_layout.py`: the real-function test restores `REAL_IS_FROZEN`, and the pinned-state test now proves the pin holds with `sys.frozen = True`.
+  - **Covered with no assertion changed:** every sibling the leg-1 tuple listed.
+  - **Untouched:** `src`, scripts, the extension and git refs.
+  - **Fix-delta self-check:** PASS.
+  - **Composer to verify:** the full desktop suite. Expect 5422 passed / 9 skipped, unchanged: no test was added or removed, only assertions. The real-ML legs should still RUN.
+- Last plan sync: 2026-10-03T00:41:10+10:00
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
-- COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920` (isolation=none, checkout base), started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0 spikes; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `.cursor/loops/stage-N-probe.log`; spawn helper `.cursor/loops/inst-spawn.sh`. Phase 0 peer pass stage-0.p1 CLOSED at the cap (rounds 4–8; runbook hardened); Phase 0 stays OPEN (MUST-PAUSE practitioner-spikes, uncommitted). Practitioner chose 2026-10-02 to start Phase 1 meanwhile (install_root's D-I1 left as a marked placeholder). Phase 1 BUILT by leg i1-x2 (2026-10-02T13:36, session 2c6ee9f4-c834-41e3-a814-f9ffeff0da77; ruff+mypy clean, suites NOT yet run). Its code is HELD in `git stash` entry "installation Phase 1 (stage-1 leg i1-x2) …" (51 files) because the venv's editable install makes the working tree live for the everyday app and Chrome host and for the Phase 0 spike runbook (which assumes today's code). `extension/key-dev.pem` is untracked while the stash holds its .gitignore line — never commit it. Resume order: practitioner spikes → Phase 0 results/close/commit → `git stash pop` → composer-run suites → resume i1-x2's session for /review-loop.
+- COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0 spikes; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 CLOSED and committed `9f43f8c` on `main` (2026-10-02T22:49). **From Phase 1 on the run builds in a git WORKTREE** — practitioner decision 2026-10-02 ~22:51: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install), and Phase 1 turns a source checkout into the dev channel, so Phases 1-3 build at `C:\scribe-build` on branch `installation-build` with its own `.venv` copy whose editable `.pth` points at `C:\scribe-build\desktop\src` (run mypy/pytest as `.venv/Scripts/python.exe -m …` there; the copied `mypy.exe` launcher still names the main venv's python). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges. Phase 1 (built by leg i1-x2, session 2c6ee9f4-c834-41e3-a814-f9ffeff0da77; session file copied to the `C--scribe-build` project dir for resume) was applied from `stash@{0}` into the worktree (the stash is kept as a backup until Phase 1 commits). `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. The branch merges to `main` only when the practitioner switches to the installed build (Phase P), never before. Next: composer-run Phase 1 suites in the worktree -> resume i1-x2 there for /review-loop -> codex peer pass -> Phase 1 commit on `installation-build`.
 
 ## Review History
 - 2026-10-02 round 1: 0 CRIT / 0 HIGH / 3 MED / 0 LOW; skew=none; action=amend (codex gpt-6-astra medium plan peer-review; 3 build-affecting, all applied by the owning planning session)
@@ -601,6 +690,10 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-02 round 6: 0 CRIT / 0 HIGH / 2 MED / 1 LOW; skew=fix-induced; action=fix → all 3 Applied with every sibling, round Closed (codex gpt-6-astra medium, pass stage-0.p1 peer_round 3 — confirmation of round 5's fix; LEG 1 leg i0-x7 verified 1 MED + 2 LOW, all CONFIRMED; LEG 2 /fix leg i0-x8 2026-10-02T12:53+10:00 edited `packaging/spike/RUNBOOK.md` only: the venv half closed by DESIGN — the build runs in a copy `C:\scribe-spike\venv-build`, the everyday `.venv` is only read, and the backup/restore is removed — plus record-gated, verified install-folder cleanup; the class is closed)
 - 2026-10-02 round 7: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=none; action=fix → 1 Applied with both siblings, round Closed (codex gpt-6-astra medium, pass stage-0.p1 peer_round 4 — confirmation of round 6's redesign; LEG 1 leg i0-x9 verified 1 LOW (peer MED), test-harness, CONFIRMED; LEG 2 /fix leg i0-x10 2026-10-02T12:59+10:00 edited `packaging/spike/RUNBOOK.md` only: the 3.12 fallback is a numbered procedure that replaces every build-copy call, and 0.2 step 2 gives the `venv312` host-build command)
 - 2026-10-02 round 8: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=accept-close (codex gpt-6-astra medium, pass stage-0.p1 peer_round 5 = cap — confirmation of round 7's fix; PR-LOW-015 verified low test-harness, Accepted with record per the executor's cap verdict; peer pass stage-0.p1 CLOSED at the cap, trajectory 4 → 3 → 3 → 1 → 1)
+- 2026-10-02 round 9: 0 CRIT / 0 HIGH / 3 MED / 10 LOW; skew=none; action=fix → all 13 Applied (10 in code/tests/docs, 3 as plan work: Tasks 2.6, 2.7 and H.1's pointer list), round Closed on composer suite 4 (pytest 5417 passed / 9 skipped) (in-session /review-loop pass 1 over Phase 1, executor stage-1 leg i1-x5; 19 candidates, 6 dropped, 1 downgraded)
+- 2026-10-02 round 10: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=fix → all 5 Applied (tests, `KEY.md` and D4's as-built note; 2 ⚡ fix-induced LOW, 3 🆕); round Closed on composer suite 5 (pytest 5422 passed / 9 skipped); /review-loop CONVERGED at loop round 2 of cap 3 (in-session /review-loop pass 2, executor stage-1 leg i1-x6; 18 candidates, 13 dropped)
+- 2026-10-03 round 11: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=fix → 1 Applied with every enumerated sibling (one class-level conftest pin covers them all), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-1.p1 peer_round 1 of cap 5, four file-scoped slices; LEG 1 leg i1-x8 verified PR-LOW-016 low test-harness, CONFIRMED; LEG 2 /fix leg i1-x9 2026-10-03T00:41:10+10:00 edited `desktop/tests/conftest.py`, `test_install_layout.py` and `test_integration_no_sockets.py` only)
+- 2026-10-03 round 12: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 11's PR-LOW-016 fix confirmed closed as a class (codex gpt-6-astra medium, pass stage-1.p1 peer_round 2 of cap 5; peer pass CONVERGED, trajectory 1 → 0)
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -1226,6 +1319,166 @@ Cap verdict: accept — test-harness — CAP round, peer_round 5 of 5; close the
 - No production-surface or behavioral-to-the-practitioner finding remains, so a `raise +1` would buy only a third branch in a one-line command.
 - The class closed in rounds 6–7 (prior-state check + exact undo + failure route) holds: this path's failure route ends in a report rather than an undo, by design, in the safe direction.
 
+### Round 9 - 2026-10-02 - Phase 1 (Tasks 1.1–1.8), in-session /review-loop pass 1 (executor stage-1 leg i1-x5)
+
+- Round status: Closed — all 13 dispositions applied; composer-run suite 4 green 2026-10-02 ~23:47 (ruff clean, mypy 57 files, pytest 5417 passed / 9 skipped in 309 s — the expected +24; `.cursor/loops/stage-1-suite4-pytest.txt` in the main checkout); closed by executor leg i1-x6 2026-10-02T23:47:10+10:00
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high), two independent lenses run in parallel — correctness/security and plan-adherence — over one changed-files set
+- Baseline: `git diff main` in the worktree `C:\scribe-build` (branch `installation-build`), plus the untracked new files (`install_layout.py`, `test_install_layout.py`, `test_identity.py`, `test_dev_write_guard.py`, `extension/src/channel.ts`, `channel.dom.test.ts`, `src/test/build-defines.ts`). Skipped with reason: `packaging/spike/` (Phase 0, closed) and the Findings-Log rounds 1–8 (not this round's).
+- Files read: every changed file under `desktop/src/scribe_desktop/` (27), `desktop/tests/` (13 changed + 3 new), `extension/` (6 changed + 3 new), `scripts/` (4), `.gitignore`, and this plan's Phase 1–3 and H task text.
+- Finding verification: 19 candidates; 6 dropped (no matching file:line evidence, or already covered by a planned task); 1 downgraded (MED-001, HIGH → MED: test collection only, no runtime behaviour)
+- Dropped in verification: the merge-to-`main` hazard (the branch merges only at Phase P, COMPOSER RUN-STATE); HKCU-only registry reading (Task 2.3); the stray production HKCU key at unregister (Task 3.7, which P.1 step 2 depends on); `scaffold.test.ts` covering one mode (`manifest.test.ts` pins both channels' host names, `buildDefines` and `channelForMode`); `vite.config.ts`'s wiring being checked only by the build (by design `vitest.config.ts` never loads the crx plugin, and both builds are in every composer suite with their manifests checked); the shared keyring prefix as a defect (D3/C2 keep it — recorded as an H.1 residue instead, LOW-010).
+- Suites at review: pytest 5393 passed / 9 skipped; ruff clean; mypy 57 files; `npm run qa` 13 files / 313 tests; both builds OK (composer, suite 3).
+
+#### Findings
+
+**MED-001 — `test_exclusions.py`: a module-level test inserted inside `class TestCheckWer` swallowed two of the class's tests**
+
+- File: `desktop/tests/test_exclusions.py:303-324`
+- Triage: Fix-now
+- Why it matters: `test_the_checked_data_folder_follows_the_channel` was written at module level between `TestCheckWer`'s methods, so `test_an_unreadable_registry_says_so_and_still_checks_the_launch` and the four `test_a_name_that_is_not_plain_is_never_shown` cases became nested functions and were never collected (5 items silently lost; the WER-unchecked line and the plain-name guard lost their pins).
+- Current behaviour: 5 test items not collected. Desired behaviour: all collected.
+- Pattern siblings: a multiline search over `desktop/tests` for a module-level `def` followed by an indented `def …(self` found no other site.
+- /fix decision: Applied
+- /fix notes: the module-level function moved below the class, before the `mark_not_indexed` section; the two methods are back inside `TestCheckWer` unchanged. The suite count should rise by 5 (plus the new tests below).
+- /fix date: 2026-10-02T23:38:40+10:00
+- /fix applied by: Claude Code (executor stage-1 leg i1-x5)
+
+**MED-002 — Task 1.7's "both channels tested" covered the `ui/models` lines only; the raised model and runtime errors had no frozen-side test**
+
+- File: `desktop/tests/test_install_layout.py` (`TestRemedies`); sources `speech.py:183`, `transcription.py:990`, `language_model.py:166-177,259-281`, `speaker_embedding.py:289-322`, `benchmark.py:360`, `ui/main_window.py:302`
+- Triage: Fix-now
+- Why it matters: the remedy text a packaged build shows comes from these raise sites, and a regression to a "scripts/…" or ".venv" line in a frozen build (where neither exists) would pass every test.
+- Desired behaviour: each site tested with `use_frozen` True and False, asserting this build's remedy and, when frozen, no "scripts/" or ".venv".
+- /fix decision: Applied
+- /fix notes: new `TestEveryRaisedModelLineFollowsTheBuild` (parametrised on frozen, 6 tests × 2): the VAD and Whisper not-found lines, `benchmark.run_all` with no models, the language model's not-found / size / digest lines, `_import_llama` (FROZEN_REMEDY and no "AGENTS.md" when frozen), the speaker model's not-found (the `.onnx.candidate` note only from a source run) / digest / onnxruntime-import lines, and the Status tab's registration line. Explicit `tmp_path` files and a faked registry only (C6); import failures by `sys.modules[...] = None`.
+- /fix date: 2026-10-02T23:38:40+10:00
+- /fix applied by: Claude Code (executor stage-1 leg i1-x5)
+
+**MED-003 — after P.1 the production-pinned real-ML test legs will skip silently**
+
+- File: `desktop/tests/test_integration_no_sockets.py:126` (`requires_ml_models`), `test_speech.py:461`, `test_speaker_embedding.py:575`, `test_benchmark.py:250`, `test_transcription.py:1384`
+- Triage: Fix-now (as a planned task — the change needs a populated dev models root, which only the practitioner can create from a normal terminal, C7)
+- Why it matters: the conftest pins the production channel, so these gates look in `%LOCALAPPDATA%\ClinikoScribe\models`. Once a source checkout's models live in `ClinikoScribe-dev\models`, the real-ML legs skip and the suite still reads green.
+- /fix decision: Applied — included in the plan as Task 2.6 (resolve the gates through the dev root, a loud skip reason naming it, and a composer-reported run/skip count). AUTO-DISPOSABLE: MED, test-harness only, do-the-work.
+- /fix date: 2026-10-02T23:38:40+10:00
+- /fix applied by: Claude Code (executor stage-1 leg i1-x5)
+
+- **[LOW]** LOW-001: `desktop/src/scribe_desktop/speaker_embedding.py:319-322` — the onnxruntime "not importable" line names the source checkout's pip command in a packaged build — Triage: Fix-now; Decision: Applied (an `is_frozen()` → `FROZEN_REMEDY` branch, as `_import_llama` has; pinned by MED-002's test).
+- **[LOW]** LOW-002: `desktop/tests/test_install_layout.py` (the Task 1.2 AST scan) — references to `APP_FOLDER_NAME` / `DEV_FOLDER_NAME` / `folder_name` outside `install_layout` were unseen, and `install_layout.py:4-5` claimed more than a scan proves — Triage: Fix-now; Decision: Applied (`ast.Name` / `ast.Attribute` / import-alias references are offences under the same by-name allow-list; `exclusions.APP_FOLDER_NAME` allow-listed by name; four new must-see cases and one must-pass case; the module docstring now says "a scan, not a proof").
+- **[LOW]** LOW-003: `desktop/tests/test_install_layout.py` `test_no_other_script_remedy_is_spelled_in_src` — a line-by-line grep misses a remedy split across lines or a `+` — Triage: Fix-now; Decision: Applied (folds each parsed string as the folder scan does; a split-remedy self-test added).
+- **[LOW]** LOW-004: `.gitignore:32` — the comment says registration installs into `%LOCALAPPDATA%\ClinikoScribe` only — Triage: Fix-now; Decision: Applied (names the channel's folder, `ClinikoScribe-dev` from a source checkout).
+- **[LOW]** LOW-005: module docstrings name the production paths only — `exclusions.py:8`, `pipe_server.py:9`, `session_store.py:4`, `audit.py:6`, `clinics.py:7`, `note_config.py:12`, `practitioner_profile.py:4` (and the style store at :54), `past_sessions.py:6`, `benchmark.py:19`, `ui/practitioner.py:109` — Triage: Fix-now; Decision: Applied (each names the dev folder or pipe and its `install_layout` / `identity` source; `benchmark` and `ui/practitioner` name this build's model remedy).
+- **[LOW]** LOW-006: `desktop/src/scribe_desktop/ui/main_window.py` `_on_dev_writes_toggled` — on a failed save the box showed the inverse of the click, not the file, and the Write button was not told — Triage: Fix-now; Decision: Applied (re-reads `load_dev_settings` with signals blocked, emits `dev_writes_changed`; `DEV_WRITES_SAVE_FAILED` now says the box shows the setting in use; new test for a save that landed then raised).
+- **[LOW]** LOW-007: `extension/KEY.md:5` — says the key is pinned in `src/manifest.ts` and does not record the dev ID, `key-dev.pem` or `--out` — Triage: Fix-now; Decision: Applied (both channels' IDs, `channel.ts` `CHANNELS`, both private keys, `--out extension/key-dev.pem`; Task 1.7's "Docs left for H.1" note updated).
+- **[LOW]** LOW-008: `desktop/tests/test_ui_encounter.py` — the dev refusal's audit row is pinned only through the fake recorder — Triage: Fix-now; Decision: Applied (`test_audit.py::…test_the_dev_build_refusal_is_recorded` writes it through a real `AuditLog`).
+- **[LOW]** LOW-009: `desktop/src/scribe_desktop/install_layout.py:140-152` — only `models_root` calls `install_root()`, so a frozen build outside `INSTALL_ROOTS` still runs as production with full data access — Triage: Fix-now (scope-expansion, LOW, as a planned task); Decision: Applied — included in the plan as Task 2.7 (both entry points refuse to start; AUTO-DISPOSABLE: LOW, no production build exists before Phase 3).
+- **[LOW]** LOW-010: the Phase 1 documentation residue — AGENTS.md Database Notes and Local Run Steps 3–8, `data-flow-map.md`, `threat-model.md` (`language_model_absent_reason`, the pipe name, the old remedy constants), `retention-schedule.md`, `docs/lessons.md`, `incident-process.md`, `docs/design-system.md` (the dev line and its prefix, the Status checkbox), `scripts/README.md`, and the shared Credential Manager namespace as a named residue — Triage: Fix-now (as planned work); Decision: Applied — included in H.1 as the "Phase 1 review round 9 pointers" list (`scripts/README.md` and `docs/design-system.md` were already there).
+
+### Round 10 - 2026-10-02 - Phase 1 (Tasks 1.1–1.8), in-session /review-loop pass 2 — re-review after round 9's fix (executor stage-1 leg i1-x6)
+
+- Round status: Closed — all 5 dispositions applied; composer-run suite 5 green on 2026-10-03 (ruff clean, mypy 57 files, pytest 5422 passed / 9 skipped, the expected +5; `.cursor/loops/stage-1-suite5-pytest.txt` in the main checkout). Closed by executor leg i1-x7 at 2026-10-03T00:05:37+10:00. `/review-loop` CONVERGED here: there are no CRIT/HIGH/MED findings, and every survivor is a LOW that is now fixed and verified.
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high), two independent read-only lenses run in parallel:
+  - **(a) post-fix regression** over each round-9 fix, its tests and docstrings, plus a sweep of `desktop/src/scribe_desktop/` for source-checkout-only commands (`.venv`, `pip install`, `scripts/`, `AGENTS.md`) that a packaged build could show;
+  - **(b) missed-issue** over the whole Phase 1 diff, covering C8 (every store root, the lock, the exclusions walk), every path to the one Cliniko write under the dev guard, the identity of both processes and the register script, and the extension builds.
+- Baseline: `git diff main` in `C:\scribe-build` plus the untracked new files (as round 9). Rounds 1–9 were not re-read except as context.
+- Finding verification: 18 candidates; 13 dropped (no matching file:line evidence, or already handled); 0 downgraded. Every survivor was re-read at its cited lines by the executor.
+- Round classification:
+  - ⚡ fix-induced: LOW-001 and LOW-003 (round 9's new scan and its `KEY.md` rewrite, each left incomplete);
+  - 🆕 pre-existing: LOW-002, LOW-004 and LOW-005;
+  - no 🔁 same-family recurrence.
+  - skew=none: 2 of 5 are fix-induced, both LOW and test-harness or documentation only, and no runtime behaviour changed.
+- Dropped in verification:
+  - **The round-9 fixes:** both restored `TestCheckWer` methods are collected. The frozen-parametrised raises all fire before any ML import, under `tmp_path` with the registry patched. The dev-write tests fail under the old behaviour. No signal loop: `blockSignals` wraps the re-set, and `refresh_write_control` only reads the file. The checkbox and the Write button read the same file and root, and `load_dev_settings` never raises. `NoteConfigError` covers every save failure. The `exclusions.py` allow-list entry is matched by owner, so it covers only that one assignment.
+  - **The source-command sweep:** every `.venv`, pip or `AGENTS.md` line sits behind an `is_frozen()` branch, and every other hit is a docstring or comment.
+  - **C8:** a dev run touches the production folder only through `_hold_lock_file`'s `mkdir` and the empty `app.lock`; `mark_not_indexed` and `check_location` walk only the dev folder.
+  - **The write path:** the one `write_draft_note` call is reached only through `_on_write_requested` → `refuse_before_read` → hop 1 → `_prepare_attempt` → `prepare_write`, which re-reads the setting → hop 2, back to back on the GUI thread. `ui/bridge.py` and `ui/recovery.py` have no write path, and production never reads `dev.json`.
+  - **Identity:** each process takes its channel from its own `sys.frozen`, and every accessor is read at call time. The register script never touches the production key, manifest or launcher.
+  - **Extension:** an unknown mode is refused, the two output folders are separate, and the vitest setup file is never in a bundle.
+  - **Minor items:** a dev-created production folder holding only `app.lock` without the not-indexed mark (a later production start marks it); `pipe_client`'s local variables shadowing the module; reading `dev.json` per control update (dev only, negligible); pipe-name collision (a SID starts with `S-`); `--out` outside `extension/` (the key gives ID stability only); dev `--unregister` removing the shared per-user WER values (Task 2.4); 8.3 names and junctions in `install_root` (`realpath`; Task 2.7); the HKCU-only read (Task 2.3).
+
+#### Findings
+
+- **[LOW]** LOW-001: `desktop/tests/test_install_layout.py` `test_no_other_script_remedy_is_spelled_in_src` — round 9's AST remedy scan was case-sensitive and forward-slash only (`run\s+scripts/`), and its self-test checked `"run scripts/" in text` instead of the scan's own pattern, so a "Run scripts\…" line or a broken regex would pass — ⚡ — Triage: Fix-now; Decision: Applied. A module-level `_REMEDY_PATTERN = re.compile(r"run\s+scripts[/\\]", re.IGNORECASE)` is shared by the scan and by a now-parametrised self-test with four cases (`+` concatenation, a newline split, a capitalised backslash f-string, an implicit concatenation across lines). A pre-check grep of `src` (single-line and across lines) found no current match outside `install_layout.py`.
+- **[LOW]** LOW-002: `desktop/tests/test_install_layout.py` `test_no_cliniko_scribe_folder_is_built_outside_install_layout` — the docstring listed "an f-string that splits the name around a placeholder" as unseen, but `_folded_str` joins an f-string's literal parts, so `f"Cliniko{x}Scribe"` IS seen — 🆕 — Triage: Fix-now; Decision: Applied. The docstring now says so and keeps "a placeholder that supplies part of the name" as unseen; a must-see case `f"{base}\\Cliniko{x}Scribe"` was added.
+- **[LOW]** LOW-003: `extension/KEY.md` — round 9's lost-key steps named `src/channel.ts` only, but the host registration writes `allowed_origins` from `identity.py`'s `EXTENSION_ID` / `DEV_EXTENSION_ID`, so following them would register the old id ("host not found") — ⚡ — Triage: Fix-now; Decision: Applied (it now names both files and why).
+- **[LOW]** LOW-004: `desktop/src/scribe_desktop/draft_write.py:1158-1160` vs D4 — with dev writes off, the Write click is refused before hop 1, so D4's "reads and verification still work, so the safeguards can be smoke-tested without writing" overstated what is reachable. The write path's own pre-write checks and the reconcile of an attempt left open do not run until the box is ticked — 🆕 — Triage: Fix-now (plan record; dev channel only, no production surface); Decision: Applied. The code keeps D4's first bullet as written (the guard in `refuse_before_read`, no request on a refused click), and D4 gains an AS-BUILT sub-bullet that names what "reads and verification" covers and how to smoke-test the pre-write checks or reconcile an open attempt. AUTO-DISPOSABLE: LOW, dev-only, do-the-work.
+- **[LOW]** LOW-005: `desktop/src/scribe_desktop/draft_write.py:1323-1378` (`send_write`, `write_for_click`) — hop 2 does not re-check the dev guard; it holds only because `prepare_write` is the sole builder of a `PreparedWrite` (defence in depth; no bypass exists today) — 🆕 — Triage: Fix-now; Decision: Applied. `test_dev_write_guard.py::test_only_prepare_write_builds_a_prepared_write` is an AST pin: every `PreparedWrite(...)` call in `src` must sit in `draft_write.prepare_write`, with a self-check that the visitor sees an attribute-form call.
+
+### Round 11 - 2026-10-03 - Phase 1 (Tasks 1.1–1.8), independent cross-family codex peer review (pass stage-1.p1, peer_round 1 of cap 5; four file-scoped slices)
+
+- Round status: Closed (0 pending — PR-LOW-016 Applied by leg i1-x9; the composer-run full desktop suite confirms it)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: the whole uncommitted Phase 1 diff in worktree `C:/scribe-build` (`git diff main` + the 7 new files), read in four slices — A identity/layout/Chrome link/scripts (15 files), B data stores/models/app write guard (17), C extension channel build + new test modules (12), D changed existing tests (11); composer transcription of the four slice outputs (`.cursor/loops/stage-1-peer-r11{A,B,C,D}.log`), slice-local ID `PR-LOW-C01` renumbered to the plan's one counter.
+
+#### Findings
+- **PR-LOW-016** (LOW, test-harness, `desktop/tests/test_install_layout.py:231`): Source-model tests leave `is_frozen()` dependent on host state, contrary to C6 and the module's injection claim. The same omission affects the unset-environment test and `test_every_store_is_under_the_channels_folder`. — Evidence: "`use_channel(monkeypatch, which)`" followed by "`assert install_layout.models_root() == tmp_path / folder / "models"`"; `desktop/tests/conftest.py:45` explicitly says "`is_frozen()` is NOT pinned", and `desktop/src/scribe_desktop/install_layout.py:148–150` branches on it before resolving the actual executable. Recommendation: Fix-now — Explicitly call `use_frozen(monkeypatch, False)` in these source-layout tests. /fix decision: Applied — /fix notes:
+  - **The class-level form of the peer's remedy.** `conftest.py` pins `install_layout.is_frozen` to `False` in two places: `pytest_configure`, before collection, so the import-time real-ML `skipif` gates are covered; and the autouse `_production_channel`, through `use_frozen(monkeypatch, False)`.
+  - `REAL_IS_FROZEN` is captured beside `REAL_CHANNEL`, and both docstrings are updated.
+  - Every source-run test is now independent of the host's `sys.frozen`, and `use_frozen(monkeypatch, True)` still overrides per test.
+  - **Siblings:** all of them are covered by the pin with no assertion changed. That includes the three cited tests, the dev-registration test, the `setup-models` remedy tests in `test_ui_models` / `test_language_model_runtime` / `test_speaker_embedding` / `test_transcription` / `test_speech`, `test_exclusions`' `check_wer` comparisons, and the five real-ML gates.
+  - **The five child processes in `test_integration_no_sockets.py`** each pin `install_layout.is_frozen = lambda: False` beside their existing channel pin.
+  - **`test_install_layout.py`:** `test_is_frozen_reads_sys_frozen` now restores `REAL_IS_FROZEN` before checking the real function. `test_the_tests_run_pinned_to_production` sets `sys.frozen = True` and asserts `is_frozen()` stays `False` and `install_root()` is `None`, so the pin is proven against the host value. The module docstring now says how `sys.frozen` is injected.
+  - **Verified:**
+    - every reader of `sys.frozen` in `src`/`scripts` goes through `install_layout.is_frozen` (only `install_layout.py:81` reads it);
+    - no `src` or `scripts` module binds `is_frozen` by `from … import`, so the module-attribute pin reaches every caller;
+    - ruff clean, mypy clean (57 files);
+    - the full desktop suite is composer-run.
+  - /fix date: 2026-10-03T00:41:10+10:00 — /fix applied by: Claude Code (executor stage-1 leg i1-x9).
+- Verification counts: 41 claims checked, 1 confirmed, 3 dropped as unverifiable (slice A 15/0/0, B 3/0/3, C 12/1/0, D 11/0/0); slices A, B and D reported 0 findings.
+- Last reviewed: 2026-10-03
+
+#### LEG 1 verified tuples
+
+Executor leg i1-x8, 2026-10-03T00:37:33+10:00, verification only. Nothing was fixed. The claim was checked against the current worktree and is CONFIRMED.
+
+- PR-LOW-016: materiality=behavioral severity=verified low surface=test-harness rec=Fix-now — CONFIRMED. **Final disposition (LEG 2, leg i1-x9, 2026-10-03T00:41:10+10:00): Applied**, with every sibling below covered by the class-level conftest pin plus the five child-process pins. The composer-run suite is pending.
+  - **The cited lines:**
+    - `test_install_layout.py:231-234` runs `use_channel(monkeypatch, which)` / `monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))` / `assert install_layout.models_root() == tmp_path / folder / "models"` with no `use_frozen`;
+    - `:242-245` (`test_a_source_run_without_localappdata_raises`) and `:284-300` (`test_every_store_is_under_the_channels_folder`, through `_builders()`'s `benchmark.default_models_root()`) do the same.
+    - `install_layout.py:159` `root = install_root()` → `:146` `if not is_frozen(): return None` → `:148` `Path(os.path.realpath(executable()))`.
+    - `conftest.py:45-47` says "``is_frozen()`` is NOT pinned — a source run's models root and remedies stay as they are".
+    - So each test reads the real `sys.frozen`, contrary to C6 and to the module docstring ("``sys.frozen``, ``sys.executable`` and ``LOCALAPPDATA`` are injected per test").
+  - **Impact:** test-harness only. pytest under a PyInstaller interpreter is the only host where `sys.frozen` is set, so no runtime behaviour or current result changes. But the C6 promise is unenforced: under such a host these tests would hit the real `sys.executable` and fail with `InstallLayoutError` rather than test anything.
+  - **The fix, at the class level rather than per test:**
+    - pin `is_frozen()` to `False` in the conftest's autouse fixture beside the production channel (source run: production channel, not frozen — today's real state, now injected);
+    - keep a `REAL_IS_FROZEN` capture, as `REAL_CHANNEL` is kept, for `TestChannel.test_is_frozen_reads_sys_frozen` and `test_the_channel_is_production_exactly_when_frozen`;
+    - update the conftest docstring;
+    - `use_frozen` still overrides per test.
+    - This also covers every sibling below without touching them, and no assertion changes.
+  - siblings (every other test that resolves a frozen-branching `install_layout` path or line — `install_root`, `models_root`, `default_models_root`, `model_remedy`, `registration_remedy`, or the `is_frozen()` branches in `language_model._import_llama`, `speaker_embedding.load_onnx_session`, `ui/models.language_model_absent_reason`, `exclusions.wer_not_excluded_line` and `StatusPanel.refresh_registration` — without `use_frozen`):
+    - `test_install_layout.py`: the three tests above, plus `test_the_dev_registration_names_the_dev_host_and_extension` (`:303`, the register script at import);
+    - `test_ui_models.py:376,379,447,454,543` (the "setup-models" remedy lines);
+    - `test_language_model_runtime.py:91` (default path under the models root) and `:446-452` (`--only language-model` / `setup-models.py`);
+    - `test_speaker_embedding.py:95` (default path), `:289`, `:318` (`[ml]`), `:459` and `:568` (`setup-models`);
+    - `test_transcription.py:976` and `:1034`, and `test_speech.py:323` (`setup-models`);
+    - `test_exclusions.py`'s `check_wer` tests that compare against `wer_not_excluded_line()` (they compute both sides from the same function, so they cannot diverge, but they still read the host);
+    - the import-time real-ML skip gates through `benchmark.default_models_root()` — `test_integration_no_sockets.py:126`, `test_speech.py:461`, `test_speaker_embedding.py:575`, `test_benchmark.py:250`, `test_transcription.py:1384` — which the conftest's `pytest_configure` should pin too, since they run before any fixture (Task 2.6 then re-points them at the dev root).
+    - Tests that already pin it: `TestInstallRoot`, the frozen `TestModelsRoot` cases, `TestRemedies`, `TestEveryRaisedModelLineFollowsTheBuild`, `test_exclusions.py:292`.
+
+Cap verdict: accept — test-harness — peer_round 1 of cap 5. This is the pass's only survivor, a LOW harness gap with no production surface and no current failing or wrong result. Its fix is one conftest pin of a state the suite already runs in. Slices A, B and D (43 of 55 files) reported 0 findings. So a fix plus one confirmation round fits well inside the existing cap, and no raise is warranted.
+
+Fix-delta self-check: PASS. I re-read the 5 applied hunks across 3 files:
+- the conftest pin, its capture and its docstrings;
+- the two `TestChannel` tests and the module docstring;
+- the five child-process pins.
+
+No neighbouring exit path changed. `REAL_IS_FROZEN` is captured at conftest import, before `pytest_configure` replaces the function, as `REAL_CHANNEL` is. Monkeypatch teardown restores the configure-time pin, not the host function. The `sys.frozen = True` assertion is undone by monkeypatch at teardown. No drive-by edit.
+
+### Round 12 - 2026-10-03 - Phase 1 confirmation of round 11's fix, independent cross-family codex peer review (pass stage-1.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Specified conftest and child-process diffs, complete test_install_layout.py, install_layout.py function lookup, and Round 11’s finding and sibling record; read-only confirmation of PR-LOW-016, pin coverage, teardown, non-vacuous assertions, and comment accuracy.
+
+#### Findings
+
+- Verification counts: 12 claims checked, 0 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-03
+
 ## Tasks
 Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's verification is the plan's Validation section (composer-run suites) unless the task names its own. Phases are grouped for `/execute-loop`: foundational layout and identity (Phase 1) are isolated ahead of the frozen-runtime work (Phase 2) and the build (Phase 3).
 
@@ -1427,7 +1680,7 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
     - The one open point is the VoxCeleb dataset page's "for research purposes" wording (Task 0.4 caveat). It bears on using the model at all, bundled or fetched, so it is a separate practitioner/legal check, best taken with `docs/practice/`'s independent review or at commercialisation. It is not a reason to prefer the fetch.
 
 ### Phase 1 — Channel, layout and the dev separation
-- [ ] 🟨 **1.1 `install_layout.py` (new).** It provides:
+- [x] 🟩 **1.1 `install_layout.py` (new).** It provides:
   - `is_frozen()`, injectable;
   - `channel() -> Literal["production","dev"]`;
   - `install_root()`: frozen → the folder of `sys.executable`, checked against D-I1; dev → `None`;
@@ -1440,17 +1693,18 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   Done when: tests cover both channels, frozen and not, and `LOCALAPPDATA` set and unset.
   - Leg i1-x2 (built; awaiting the composer suite): D-I1 is a PLACEHOLDER — `install_layout.INSTALL_ROOTS` (one named constant, marked `# D-I1 pending — set when the practitioner decides after Task 0.2`) accepts both candidates (`C:\Program Files\ClinikoScribe`, `C:\ClinikoScribe`); the decision narrows that one line plus the pin in `test_install_layout.py`.
   - **D-I1 decided 2026-10-02 (recorded leg i0-x12): `C:\Program Files\ClinikoScribe`.** When Phase 1 resumes (`git stash pop`; the code is held in the stash and was NOT touched here), narrow the placeholder `install_layout.INSTALL_ROOTS` to that one path, drop its `# D-I1 pending` marker, and update the pin in `test_install_layout.py` to match. Tests go through the seams (`is_frozen`, `executable`, `install_root(accepted=)`). Frozen-only behaviour (install root, models root, remedies) keys on `is_frozen()`; channel behaviour (data folder, identities, write guard) keys on `channel()`. The conftest pin is also installed in `pytest_configure`, so collection-time `skipif`s see production; test child processes pin production themselves.
-- [ ] 🟨 **1.2 Repoint every data-folder builder** (the table in Key Findings) to `install_layout`. `benchmark.default_models_root` delegates to `models_root()`.
+  - **Leg i1-x3: D-I1 APPLIED.** `INSTALL_ROOTS = (r"C:\Program Files\ClinikoScribe",)` (still a tuple, so tests inject their own root through the same seam); the `# D-I1 pending` marker is replaced by the decision's comment, and the pin is now `test_install_layout.py::TestInstallRoot::test_d_i1_the_one_accepted_root_is_program_files`.
+- [x] 🟩 **1.2 Repoint every data-folder builder** (the table in Key Findings) to `install_layout`. `benchmark.default_models_root` delegates to `models_root()`.
   - Add a grep test: no `ClinikoScribe` path built outside `install_layout`, with the non-path literals allow-listed BY NAME.
   - Done when: the suite is green with the channel pinned to production, and a dev-channel test shows each store under `ClinikoScribe-dev` (C8).
-- [ ] 🟨 **1.3 Extension `--mode dev|release` and the dev key** (first: Task 1.4 needs the dev ID). Leg i1-x1: `--out` added to the key script (default unchanged; a relative path is from the repo root) and `extension/key-dev.pem` added to `.gitignore` (the bare `key.pem` entry does not match it); the key run is composer-run.
+- [x] 🟩 **1.3 Extension `--mode dev|release` and the dev key** (first: Task 1.4 needs the dev ID). Leg i1-x1: `--out` added to the key script (default unchanged; a relative path is from the repo root) and `extension/key-dev.pem` added to `.gitignore` (the bare `key.pem` entry does not match it); the key run is composer-run.
   - `vite.config.ts`/`manifest.ts` take the key, name suffix (" (dev)") and host name from the mode. `protocol.ts` `HOST_NAME` is injected at build (`define`).
   - FIRST, `scripts/generate-extension-key.py --out extension/key-dev.pem` (gitignored; the script gains `--out`, default unchanged); the dev PUBLIC key is committed and the dev extension ID derived from it is recorded on this task.
   - `manifest.test.ts`/`scaffold.test.ts` cover both modes, and the release mode keeps `mbmh…`.
   - The default `npm run build` stays release, so today's `extension/dist` is unchanged.
   - Done when: `npm run qa` passes, and both builds produce manifests with their own key and host name.
   - Leg i1-x2: the composer ran the key script (exit 0; `git check-ignore` → `.gitignore:28`). **Dev extension ID: `pecfiifdlmdbkifmjkbkeiaflpenfejd`.** The dev PUBLIC key is committed in the new `extension/src/channel.ts` (`CHANNELS.dev.key`), beside the unchanged release key and `mbmh…` id; `channelForMode` maps `dev` → dev, `release`/`production` (Vite's default) → release, and refuses anything else. The dev build outputs to `extension/dist-dev` (gitignored), so `extension/dist` stays release. `HOST_NAME` is `__SCRIBE_HOST_NAME__` from `buildDefines` (vitest injects the release value). `manifest.test.ts` derives each id from its key; `test_identity.py` cross-checks `channel.ts` against `identity.py`.
-- [ ] 🟨 **1.4 Identity accessors** in `identity.py` (desktop) for each channel:
+- [x] 🟩 **1.4 Identity accessors** in `identity.py` (desktop) for each channel:
   - `host_name()`, `extension_id()`, `expected_origin()`, `registry_key()` and `pipe_prefix()`;
   - dev values: `com.scribe.cliniko_host_dev`, the dev ID recorded by Task 1.3, and `ClinikoScribe-dev-`.
 
@@ -1458,10 +1712,10 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
 
   Done when: the pins in `test_protocol.py:58`, `test_display_name.py` and `test_pipe_server.py` pass unchanged, and new dev-channel tests pass.
   - Leg i1-x2: the accessors take `of: Channel | None = None` and read `install_layout.channel()` at call time; production constants (`HOST_NAME`, `EXTENSION_ID`, `EXPECTED_ORIGIN`, `REGISTRY_KEY`, new `PIPE_PREFIX`) are unchanged, and `pipe_server.PIPE_PREFIX` is still exported. `scripts/register-native-host.py` registers the running channel's host, origin and install folder (`ClinikoScribe-dev` from source); its legacy-artifact sweep stays on the production name. `test_display_name.py`'s literal `INSTALL_DIR` source pin (not an identity value) was updated to the new expression.
-- [ ] 🟨 **1.5 One single-instance guard across channels** (D3). Both channels acquire the same per-user exclusion (today's mutex name, plus a lock in a channel-independent location chosen and justified by the executor), so the second app shows "already running" whichever channel started first.
+- [x] 🟩 **1.5 One single-instance guard across channels** (D3). Both channels acquire the same per-user exclusion (today's mutex name, plus a lock in a channel-independent location chosen and justified by the executor), so the second app shows "already running" whichever channel started first.
   - Done when: `test_status_and_app.py`'s guard tests pass for both channels, and a cross-channel test proves mutual exclusion through the seam.
   - Leg i1-x2: the lock is `%LOCALAPPDATA%\ClinikoScribe\app.lock` for BOTH channels (`install_layout.instance_guard_root()`), with the mutex name unchanged. Justification: the production folder is the one per-user location both channels already resolve and that a dev build may touch (C8's named exception), and keeping it there leaves today's production lock where it is. The dev build creates only `app.lock` there (pinned by test).
-- [ ] 🟨 **1.6 Dev write guard (D4).**
+- [x] 🟩 **1.6 Dev write guard (D4).**
   - Add `dev_build_writes_off` to `WriteRefusalName` (`draft_write.py:1054`).
   - `refuse_before_read` gains a `channel`/`allow` input from its two callers (`main_window.py:1874`, `draft_write.py:1180`), and `ui/models.write_control` disables Write with the same reason.
   - Add the wording in `write_refusal_line`; decide whether it joins `WRITE_UNCERTAIN_PREFIXED` (`ui/models.py:399`; expected: no).
@@ -1469,11 +1723,16 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   - The dev-only Status checkbox, worded "Allow Cliniko writes from this developer build", default off.
   - Update pins `test_write_lines.py:70`, `test_draft_write.py:1649,1666`, `test_audit.py:204-208`.
   - Done when: in production the guard can never refuse (test); in dev it refuses until ticked; the audit row records `last_refusal=dev_build_writes_off`.
-  - Leg i1-x2: the pure check is `draft_write.dev_build_writes_off(channel, allow)`, run after `mock_note` and before `record_unreadable`. The settings file lives in `note_config` (`DevSettings`, `load_dev_settings`, `save_dev_settings`, `dev_writes_allowed`), not `draft_write`, because `draft_write` is pinned disk-free. A file it cannot use reads as writes OFF, and production never reads it. NOT in `WRITE_UNCERTAIN_PREFIXED`. If saving the Status checkbox fails, the box is put back and a line says why.
-- [ ] 🟨 **1.7 Remedy lines.** One `install_layout.model_remedy()` and one `registration_remedy()`. Frozen: "Missing or damaged — reinstall Clinic Scribe". Dev: today's script commands. They replace every string in Key Findings' remedy list and update the listed test pins.
+  - Leg i1-x2: the pure check is `draft_write.dev_build_writes_off(channel, allow)`, run after `mock_note` and before `record_unreadable`. The settings file lives in `note_config` (`DevSettings`, `load_dev_settings`, `save_dev_settings`, `dev_writes_allowed`), not `draft_write`, because `draft_write` is pinned disk-free. A file it cannot use reads as writes OFF, and production never reads it. If saving the Status checkbox fails, the box is put back and a line says why.
+  - **Leg i1-x4: the prefix decision REVERSED and the order moved.**
+    - The plan's "expected: no" for `WRITE_UNCERTAIN_PREFIXED` does not survive PR-MED-017's rule, which keys on whether the line invites a Copy, not on whether it refuses before any read (`mock_note` refuses before any read and IS prefixed). The dev line says "copy the note instead", so it IS in `WRITE_UNCERTAIN_PREFIXED`.
+    - The guard now runs AFTER the record's own refusals in both `refuse_before_read` and `write_control`: mock → `record_unreadable` → `already_written` / `write_uncertain` → `dev_build_writes_off`. The click path already decides the record first (`write_record_block`), so this matches it. The refusal carries `earlier_attempt_open` from the record.
+    - The scenario it closes: in a dev build, a write is allowed and its outcome stays open, then the setting is unticked. The click or button then showed a bare "copy the note instead" with no warning that the earlier write may have reached Cliniko.
+    - The audit row still records `last_refusal=dev_build_writes_off`.
+- [x] 🟩 **1.7 Remedy lines.** One `install_layout.model_remedy()` and one `registration_remedy()`. Frozen: "Missing or damaged — reinstall Clinic Scribe". Dev: today's script commands. They replace every string in Key Findings' remedy list and update the listed test pins.
   - Done when: both channels are tested and a grep finds no other "run scripts/" string in `src`.
   - Leg i1-x2: remedies key on `is_frozen()` (a source run of either channel has the scripts). The frozen clause is `FROZEN_REMEDY = "reinstall Clinic Scribe"`, placed after each line's own "missing or damaged" wording. The former constants are now functions (`models.language_model_absent_reason()`, `speaker_model_missing_reason()`, `attribution_did_not_run_reason()`, `exclusions.wer_not_excluded_line()`). Not in the plan's list but covered: `language_model._import_llama`'s prose-runtime remedy.
-- [ ] 🟨 **1.8 Version pin (D12).** One test asserts that pyproject, `__init__.__version__`, `manifest.ts` and `package.json` agree. Version stays `0.1.0` until the first release task bumps it.
+- [x] 🟩 **1.8 Version pin (D12).** One test asserts that pyproject, `__init__.__version__`, `manifest.ts` and `package.json` agree. Version stays `0.1.0` until the first release task bumps it.
   - Leg i1-x2: the pin is in `test_install_layout.py` and also covers both `package-lock.json` copies (root and `packages[""]`), which the plan did not list.
 
 ### Phase 2 — Frozen-runtime support
@@ -1505,6 +1764,14 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
     - the injectable runner keeps tests model-free.
   - It also shows whisper `medium`'s real-time factor and `threshold_report`'s verdict for both. The results are text-free.
   - Done when: tests inject the model present and absent, and the panel lines are pinned.
+- [ ] 🟥 **2.6 The real-ML test legs follow the source-run models root** (added by Phase 1 review round 9, MED-003).
+  - Today the conftest pins the production channel, so every real-ML gate and child resolves `%LOCALAPPDATA%\ClinikoScribe\models`: `test_integration_no_sockets.py`'s `requires_ml_models` (~L126) and its children, `test_speech.py` (~L461), `test_speaker_embedding.py` (~L575), `test_benchmark.py` (~L250) and `test_transcription.py` (~L1384). Once the models live only in `ClinikoScribe-dev\models` (the source checkout's root after P.1) or in the install folder, these legs SKIP silently and the suite still reads green.
+  - Resolve these gates' models root as a source run's dev root (`install_layout` with the dev channel, never the production data folder — C8), keep every other test on the production pin, and make the skip reason name the dev root it looked in.
+  - Done when: a test pins the gates' root to `ClinikoScribe-dev\models` under an injected `LOCALAPPDATA`, the composer's suite runs the real-ML legs against a populated dev root (the practitioner copies or re-fetches the models there first, from a normal terminal — C7), and the composer reports the run/skip count of those legs.
+- [ ] 🟥 **2.7 A packaged build refuses to start outside its install folder** (added by Phase 1 review round 9, LOW-009).
+  - Only `models_root` calls `install_root()` today, so a frozen build copied anywhere else still runs as production with full access to the production data folder; only its model loads fail.
+  - `app.main` and `native_host.main`, when `install_layout.is_frozen()`, call `install_root()` before the guard, the data roots and any window; an `InstallLayoutError` is one type-name log line and a plain refusal ("Clinic Scribe is not running from its install folder — reinstall Clinic Scribe"), never a start. A source run is unaffected.
+  - Done when: tests inject frozen inside and outside `INSTALL_ROOTS` (and a link to it) for both entry points, and the refusal touches no data root.
 
 ### Phase 3 — Build and installer
 - [ ] 🟥 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
@@ -1582,6 +1849,14 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   - `PLAN.md`: a Phase 7 installation delivery note.
   - `docs/design-system.md`: the dev-build lines and the Status warnings.
   - `scripts/README.md`.
+  - **Phase 1 review round 9 pointers (LOW-010), each to be re-found by text, not line:**
+    - AGENTS.md Database Notes (the dev folder) and Local Run Steps 3–8 (the dev models root, `npm run build -- --mode dev` → `dist-dev`, a separate Chrome profile, the dev host registration);
+    - `docs/security/data-flow-map.md` ~L54, ~L207 and ~L718 (the single data folder);
+    - `docs/security/threat-model.md` ~L1382 (`language_model_absent_reason`, now a function) and ~L2059 (the pipe name, now per channel), plus every old remedy constant it names;
+    - `docs/security/retention-schedule.md` ~L39 (the data folder);
+    - `docs/lessons.md` and `docs/security/incident-process.md` where they name the data folder;
+    - `docs/design-system.md`: the `dev_build_writes_off` line with its `write_uncertain` prefix, and the dev-only Status checkbox and its save-failure line;
+    - the threat model names as a residue that the dev and production channels SHARE the Credential Manager namespace (`secure_storage._SERVICE_PREFIX`, kept by D3/C2): clinic entries stay apart only because clinic ids are random per data folder, and the self-test's `test` entry is common to both.
 - [ ] 🟥 **H.2 `/review-loop`** over the whole plan's diff to convergence.
 - [ ] 🟥 **H.3 `/simplify`.** Log findings; trivial ones go to `/fix`, substantial ones to a scoped `/review-plan`.
 - [ ] 🟥 **H.4 `/security-review`.** Same routing.

@@ -32,12 +32,13 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import os
 import re
 import sys
 import traceback
 from pathlib import Path
 from typing import Final, TextIO
+
+from scribe_desktop import install_layout
 
 # Whitelisted metadata keys accepted by log_event (plan: whitelisted schema).
 ALLOWED_KEYS: Final[frozenset[str]] = frozenset(
@@ -465,8 +466,7 @@ class PayloadTripwireFilter(logging.Filter):
 
 
 def default_log_dir() -> Path:
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / "logs"
+    return install_layout.data_root() / "logs"
 
 
 def setup_logging(

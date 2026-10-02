@@ -1,7 +1,8 @@
 """Encrypted session store + DPAPI key custody (Phase 2 Step 2).
 
 On-disk layout (plan Schema / Data Changes), all under
-``%LOCALAPPDATA%\\ClinikoScribe\\sessions\\<session_id>\\``:
+``%LOCALAPPDATA%\\ClinikoScribe\\sessions\\<session_id>\\`` (``ClinikoScribe-dev``
+from a source checkout — ``install_layout``):
 
 - ``key.dpapi``   — the per-session AES-256-GCM key, DPAPI-wrapped
   (CryptProtectData, current-user scope). Deleting this blob IS the
@@ -98,6 +99,7 @@ from cryptography.exceptions import InvalidTag
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from pydantic_core import PydanticSerializationError
 
+from scribe_desktop import install_layout
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
 
@@ -242,8 +244,7 @@ def default_sessions_root() -> Path:
     # refusing would block recording entirely, so this stays an accepted
     # same-user deployment residual (documented in the data-flow map).
     # Model paths DO refuse UNC: there refusal is cheap and report-only.
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / "sessions"
+    return install_layout.data_root() / "sessions"
 
 
 def validate_session_id(session_id: str) -> str:

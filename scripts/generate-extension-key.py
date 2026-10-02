@@ -9,15 +9,20 @@ manifest's `allowed_origins` never drifts.
 - `extension/key.pem` (private key) is GITIGNORED and never committed; it is
   only needed to regenerate the same public key. The `key` value grants ID
   *stability*, not secrecy.
-- Re-running with an existing key.pem is idempotent: it re-derives and
+- Re-running with an existing key file is idempotent: it re-derives and
   re-prints the same values.
+- `--out` names another key file (installation plan Task 1.3: the dev
+  channel's `extension/key-dev.pem`, also gitignored). A relative path is
+  taken from the repo root. The default is unchanged: `extension/key.pem`.
 
 Usage (from the repo root):
     .venv/Scripts/python.exe scripts/generate-extension-key.py
+    .venv/Scripts/python.exe scripts/generate-extension-key.py --out extension/key-dev.pem
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 from pathlib import Path
@@ -29,13 +34,13 @@ REPO = Path(__file__).resolve().parents[1]
 KEY_PEM = REPO / "extension" / "key.pem"
 
 
-def load_or_create_private_key() -> rsa.RSAPrivateKey:
-    if KEY_PEM.exists():
-        key = serialization.load_pem_private_key(KEY_PEM.read_bytes(), password=None)
+def load_or_create_private_key(key_pem: Path) -> rsa.RSAPrivateKey:
+    if key_pem.exists():
+        key = serialization.load_pem_private_key(key_pem.read_bytes(), password=None)
         assert isinstance(key, rsa.RSAPrivateKey)
         return key
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    KEY_PEM.write_bytes(
+    key_pem.write_bytes(
         key.private_bytes(
             serialization.Encoding.PEM,
             serialization.PrivateFormat.PKCS8,
@@ -45,9 +50,19 @@ def load_or_create_private_key() -> rsa.RSAPrivateKey:
     return key
 
 
-def main() -> int:
-    created = not KEY_PEM.exists()
-    key = load_or_create_private_key()
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=KEY_PEM,
+        help="the private key file (default: extension/key.pem; a relative path is from the repo root)",
+    )
+    args = parser.parse_args(argv)
+    key_pem: Path = args.out if args.out.is_absolute() else REPO / args.out
+
+    created = not key_pem.exists()
+    key = load_or_create_private_key(key_pem)
     spki_der = key.public_key().public_bytes(
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
@@ -56,7 +71,7 @@ def main() -> int:
     digest = hashlib.sha256(spki_der).digest()
     extension_id = "".join(chr(ord("a") + (b >> 4)) + chr(ord("a") + (b & 0xF)) for b in digest[:16])
 
-    print(f"key.pem: {'created' if created else 'already existed (reused)'} at {KEY_PEM}")
+    print(f"{key_pem.name}: {'created' if created else 'already existed (reused)'} at {key_pem}")
     print(f"manifest key: {manifest_key}")
     print(f"extension id: {extension_id}")
     print(f"allowed_origins entry: chrome-extension://{extension_id}/")

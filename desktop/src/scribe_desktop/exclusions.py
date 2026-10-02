@@ -5,7 +5,8 @@ At start-up, before the window is built, ``app.main`` runs
 ``startup_exclusions``:
 
 - ``mark_not_indexed`` sets ``FILE_ATTRIBUTE_NOT_CONTENT_INDEXED`` on the app's
-  data folder (``%LOCALAPPDATA%\ClinikoScribe``) and every folder beneath it,
+  data folder (``%LOCALAPPDATA%\ClinikoScribe``; ``ClinikoScribe-dev`` from a
+  source checkout — ``install_layout``) and every folder beneath it,
   BEST EFFORT. Only folders are marked: a file created afterwards in a marked
   folder takes the attribute from it, while a file written before its folder
   was first marked keeps the attribute it had until it is rewritten (a named
@@ -55,6 +56,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+from scribe_desktop import install_layout
 from scribe_desktop.logging_setup import exception_type_name, log_event
 
 # --- WER (D10) ----------------------------------------------------------------
@@ -79,7 +81,7 @@ FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: Final = 0x2000
 # is kept, everything else (DIRECTORY, REPARSE_POINT, ...) is masked off.
 _SETTABLE_ATTRIBUTES: Final = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | 0x2000
 
-APP_FOLDER_NAME: Final = "ClinikoScribe"
+APP_FOLDER_NAME: Final = install_layout.APP_FOLDER_NAME
 
 # --- the warning lines (fixed text; no path is ever shown) --------------------
 
@@ -94,10 +96,17 @@ LOCATION_ROAMING: Final = (
     "which Windows can copy to other computers."
 )
 LOCATION_UNCHECKED: Final = "Clinic Scribe could not check where its data folder is kept."
-WER_NOT_EXCLUDED: Final = (
-    "Crash reports are not excluded for Clinic Scribe — run "
-    "scripts/register-native-host.py again from a normal terminal, then restart Clinic Scribe."
-)
+
+
+def wer_not_excluded_line() -> str:
+    """The missing-WER-exclusion warning with this build's remedy
+    (installation plan Task 1.7: ``install_layout.registration_remedy``)."""
+    return (
+        "Crash reports are not excluded for Clinic Scribe — "
+        f"{install_layout.registration_remedy()}, then restart Clinic Scribe."
+    )
+
+
 WER_UNCHECKED: Final = "Clinic Scribe could not check whether crash reports are excluded."
 NOT_INDEXED_FAILED: Final = (
     "Some of Clinic Scribe's folders could not be marked to stay out of Windows Search."
@@ -217,10 +226,11 @@ class Win32WindowsLayer:
 
 
 def app_data_root(layer: WindowsLayer) -> Path:
-    """``%LOCALAPPDATA%\\ClinikoScribe`` — the rule every store's default root
-    follows (``LOCALAPPDATA``, else the home folder)."""
-    base = layer.environ("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / APP_FOLDER_NAME
+    """``%LOCALAPPDATA%\\ClinikoScribe`` (``ClinikoScribe-dev`` for the dev
+    channel) — the rule every store's default root follows (``LOCALAPPDATA``,
+    else the home folder), read through the layer
+    (``install_layout.app_data_root_via``)."""
+    return install_layout.app_data_root_via(layer)
 
 
 def _normalised(path: str) -> str:
@@ -297,7 +307,7 @@ def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
         warnings.append(ExclusionWarning("wer_unchecked", WER_UNCHECKED))
     else:
         if any(values.get(name) != WER_EXCLUDED_VALUE for name in WER_EXCLUDED_APPLICATIONS):
-            warnings.append(ExclusionWarning("wer_not_excluded", WER_NOT_EXCLUDED))
+            warnings.append(ExclusionWarning("wer_not_excluded", wer_not_excluded_line()))
     name = ntpath.basename(executable)
     if name.casefold() not in WER_EXCLUDED_APPLICATIONS:
         warnings.append(ExclusionWarning("wer_uncovered_launch", uncovered_launch_line(name)))

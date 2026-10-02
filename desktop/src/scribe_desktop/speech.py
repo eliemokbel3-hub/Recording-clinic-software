@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import iter_chunks
@@ -179,7 +180,7 @@ class SileroVad:
             raise VadModelError(f"VAD model path must be a local path, not UNC: {path}")
         if not path.is_file():
             raise VadModelError(
-                f"silero VAD model not found at {path} - run scripts/setup-models.py"
+                f"silero VAD model not found at {path} - {install_layout.model_remedy()}"
             )
         import numpy
         import onnxruntime

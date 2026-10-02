@@ -84,8 +84,7 @@ import psutil
 import pytest
 
 from scribe_desktop.benchmark import apply_offline_env
-from scribe_desktop.identity import EXPECTED_ORIGIN as ORIGIN
-from scribe_desktop.identity import NONCE_HEX_LENGTH
+from scribe_desktop.identity import NONCE_HEX_LENGTH, expected_origin, pipe_prefix
 from scribe_desktop.protocol import PROTOCOL_VERSION
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
@@ -104,6 +103,10 @@ from scribe_desktop.ui.models import models_ready
 REPO = Path(__file__).resolve().parents[2]
 TESTS_DIR = Path(__file__).resolve().parent
 LAUNCHER = Path(sys.executable).parent / "scribe-host.exe"
+# Installation plan D2: the launcher's host is a real source run, so it is
+# the DEV channel — it accepts only the dev extension's origin and relays to
+# the dev app's pipe (this process's channel is pinned to production).
+ORIGIN = expected_origin("dev")
 CREATE_NO_WINDOW = 0x08000000  # Chrome spawns native hosts windowless
 
 pytestmark = [
@@ -259,10 +262,10 @@ def _real_app_pipe_exists() -> bool:
     import pywintypes
     import win32pipe
 
-    from scribe_desktop.pipe_server import current_user_sid, pipe_name
+    from scribe_desktop.pipe_server import current_user_sid
 
     try:
-        win32pipe.WaitNamedPipe(pipe_name(current_user_sid()), 1)
+        win32pipe.WaitNamedPipe(f"{pipe_prefix('dev')}{current_user_sid()}", 1)
     except pywintypes.error as error:
         return error.winerror != 2  # ERROR_FILE_NOT_FOUND: no app
     return True
@@ -896,6 +899,13 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 # AND asserted before any further scribe/ML code runs.
 apply_offline_env()
 assert_offline_env()
+# Installation plan D2: the parent test is pinned to the production channel
+# (conftest), and so is this child, so it loads any model where the
+# parent's skip check found it (a bare source run is the dev channel).
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1063,6 +1073,13 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+# Installation plan D2: the parent test is pinned to the production channel
+# (conftest), and so is this child, so it loads any model where the
+# parent's skip check found it (a bare source run is the dev channel).
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1294,6 +1311,13 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+# Installation plan D2: the parent test is pinned to the production channel
+# (conftest), and so is this child, so it loads any model where the
+# parent's skip check found it (a bare source run is the dev channel).
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
 print("OFFLINE-OK", flush=True)
 
 from scribe_desktop.audio_capture import MockCaptureBackend
@@ -1546,6 +1570,12 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+# Installation plan D2: pinned to the production channel, as the parent
+# test is, so the model is the one the parent's skip check found.
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
 print("OFFLINE-OK", flush=True)
 line = sys.stdin.readline()
 assert line.strip() == "GO", "parent gate broken: %r" % line
@@ -1805,6 +1835,12 @@ from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 
 apply_offline_env()
 assert_offline_env()
+# Installation plan D2: pinned to the production channel, as the parent
+# test is, so the models are the ones the parent's skip check found.
+from scribe_desktop import install_layout
+
+install_layout.channel = lambda: "production"
+install_layout.is_frozen = lambda: False  # a source run, as the parent pins (C6)
 
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (

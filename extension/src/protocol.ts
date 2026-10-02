@@ -14,7 +14,12 @@
 
 export const PROTOCOL_VERSION = 2;
 export const MIN_SUPPORTED_VERSION = 2;
-export const HOST_NAME = "com.scribe.cliniko_host";
+// Installation plan Task 1.3: the native host this build connects to,
+// injected at build from the channel (`channel.ts`): com.scribe.cliniko_host
+// in the release build and under test, com.scribe.cliniko_host_dev in a
+// `--mode dev` build. A bundler that does not define it fails at load.
+declare const __SCRIBE_HOST_NAME__: string;
+export const HOST_NAME: string = __SCRIBE_HOST_NAME__;
 // Project policy bound, both directions (platform allows more Chrome->host).
 export const MAX_FRAME_BYTES = 1_048_576;
 

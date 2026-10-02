@@ -127,6 +127,7 @@ from scribe_desktop.encounter import (
     note_state,
     writeback_context,
 )
+from scribe_desktop.install_layout import Channel
 from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
     # the record's target ids use the profile's own id grammar.
@@ -1062,7 +1063,16 @@ WriteRefusalName = Literal[
     "nothing_to_write",
     "note_unreadable",
     "answer_unreadable",
+    "dev_build_writes_off",
 ]
+
+
+def dev_build_writes_off(channel: Channel, allow_dev_writes: bool) -> bool:
+    """Installation plan D4 (Task 1.6): True only in the dev channel with
+    its "Allow Cliniko writes from this developer build" setting off
+    (``note_config.dev_writes_allowed`` reads it). In production the answer
+    is False whatever ``allow_dev_writes`` says."""
+    return channel == "dev" and not allow_dev_writes
 
 
 @dataclass(frozen=True)
@@ -1119,12 +1129,19 @@ def refuse_before_read(
     note: GeneratedNote,
     record: WriteRecord | RecordUnreadable | None,
     note_identity: str,
+    *,
+    channel: Channel,
+    allow_dev_writes: bool,
 ) -> WriteRefusal | None:
     """The refusals that need no Cliniko read (D5, D10): a mock note
     (``mock_note``); an unreadable record (``record_unreadable``); a record
     already ``written`` — for THIS saved note ``already_written`` (the
-    seen-mode line), for another ``write_uncertain`` (never completed).
-    None: the click may read.
+    seen-mode line), for another ``write_uncertain`` (never completed); a dev
+    build whose writes are off (``dev_build_writes_off``, installation plan
+    D4 — never in production), AFTER the record, so an earlier write's lines
+    keep their precedence, and prefixed while an earlier attempt is open (a
+    write allowed, then the setting unticked: PR-MED-017 — its line invites
+    Copy). None: the click may read.
 
     The click (Task 5.2) must run this BEFORE dispatching hop 1 — that is
     what keeps those cases free of any request. ``prepare_write`` runs it
@@ -1138,6 +1155,9 @@ def refuse_before_read(
         if record.note_identity != note_identity:
             return WriteRefusal("write_uncertain")
         return WriteRefusal("already_written")
+    if dev_build_writes_off(channel, allow_dev_writes):
+        open_attempt = record is not None and record.open_attempt
+        return WriteRefusal("dev_build_writes_off", earlier_attempt_open=open_attempt)
     return None
 
 
@@ -1151,6 +1171,8 @@ def prepare_write(
     note: GeneratedNote,
     note_identity: str,
     profile: TemplateProfile | None,
+    channel: Channel,
+    allow_dev_writes: bool,
 ) -> PreparedWrite | AlreadyWritten | WriteRefusal:
     """GUI thread, between the hops: the whole decision, in D15's order,
     after ``refuse_before_read`` (which the click must already have run
@@ -1177,7 +1199,9 @@ def prepare_write(
     7. the full body; unencodable → ``answer_unreadable``.
 
     Never raises for Cliniko's answers."""
-    early = refuse_before_read(note, record, note_identity)
+    early = refuse_before_read(
+        note, record, note_identity, channel=channel, allow_dev_writes=allow_dev_writes
+    )
     if early is not None:
         return early
     assert not isinstance(record, RecordUnreadable)  # refuse_before_read refused it

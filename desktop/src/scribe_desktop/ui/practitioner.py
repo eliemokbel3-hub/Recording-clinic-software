@@ -106,7 +106,9 @@ either list rewrites the store; "Delete learned style" is key-first through
 change re-computes the writing-style options (``refresh_style_options``).
 
 Enrolment is disabled only when the SELECTED embedder or the VAD model is
-unavailable, and the message names ``scripts/setup-models.py`` (D16).
+unavailable, and the message names this build's remedy (D16;
+``install_layout.model_remedy``: ``scripts/setup-models.py`` from a source
+checkout, "reinstall Clinic Scribe" in a packaged build).
 
 Nothing here logs, and no label ever renders a field of the profile beyond
 its creation date and the embedder's ``model_id``.
@@ -141,7 +143,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scribe_desktop import note_config
+from scribe_desktop import install_layout, note_config
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.enrolment import (
     DEFAULT_TARGET_SPEECH_SECONDS,
@@ -765,12 +767,12 @@ class PractitionerScreen(QWidget):
         if not model_ok:
             lines.append(
                 "Voice enrolment is unavailable: the speaker model is not installed - "
-                "run scripts/setup-models.py --only speaker-embedding."
+                f"{install_layout.model_remedy('speaker-embedding')}."
             )
         if not vad_ok:
             lines.append(
                 "Voice enrolment is unavailable: the VAD model (silero) is not "
-                "installed - run scripts/setup-models.py."
+                f"installed - {install_layout.model_remedy()}."
             )
         self._available = model_ok and vad_ok
         self.availability_label.setText("\n".join(lines))
@@ -821,7 +823,7 @@ class PractitionerScreen(QWidget):
             )
         else:
             self.profile_status_label.setText(
-                readiness.reason or models.ATTRIBUTION_DID_NOT_RUN_REASON
+                readiness.reason or models.attribution_did_not_run_reason()
             )
         self.consent_notice_label.setVisible(
             self._profile is not None and not self._consent_current

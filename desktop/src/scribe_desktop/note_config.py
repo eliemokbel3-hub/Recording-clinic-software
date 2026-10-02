@@ -9,7 +9,8 @@ in-place residue is named and bounded on ``NoteConfig.section_cues``).
 
 Config files are INTENDED to be clinician-authored boilerplate rather than
 patient data (plan Schema / Data Changes): they live in plaintext under
-``%LOCALAPPDATA%\\ClinikoScribe\\config\\``, deliberately outside the
+``%LOCALAPPDATA%\\ClinikoScribe\\config\\`` (``ClinikoScribe-dev`` from a source
+checkout — ``install_layout``), deliberately outside the
 encrypted session store and the 24 h rule, so they survive session
 destruction.
 
@@ -115,7 +116,6 @@ Safety properties, structural as ever:
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 import unicodedata
@@ -137,6 +137,7 @@ from pydantic import (
 )
 from pydantic_core import PydanticSerializationError
 
+from scribe_desktop import install_layout
 from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
     # one id grammar, one digest primitive, and one raw request assembler
@@ -910,8 +911,7 @@ class NoteConfig(BaseModel):
 def default_config_root() -> Path:
     # Same root idiom AND same deliberate no-UNC-refusal posture as
     # default_sessions_root (module docstring records why).
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / CONFIG_DIRNAME
+    return install_layout.data_root() / CONFIG_DIRNAME
 
 
 def _read_config_blob(config_root: Path, filename: str) -> tuple[bytes, str]:
@@ -1042,6 +1042,67 @@ def save_practitioner_settings(
     root = config_root if config_root is not None else default_config_root()
     _write_config_file(root, PRACTITIONER_SETTINGS_FILENAME, settings.to_bytes())
     return root / PRACTITIONER_SETTINGS_FILENAME
+
+
+# ---------------------------------------------------------------------------
+# The developer build's write setting (installation plan D4, Task 1.6).
+# ---------------------------------------------------------------------------
+
+DEV_SETTINGS_FILENAME: Final = "dev.json"
+# The file holds one flag; anything larger is not this file.
+MAX_DEV_SETTINGS_BYTES: Final = 4096
+
+
+class DevSettings(BaseModel):
+    """On-disk shape of ``config\\dev.json``, which exists only under the DEV
+    data folder: ``{"schema_version": 1, "allow_cliniko_writes": bool}``.
+    The ``PastSessionSettings`` pattern — ``extra="forbid"``, a strict bool,
+    a size cap, an absent file is the default — except that a file which
+    cannot be read or parsed is the default too: the safe answer here is
+    "writes off" (the dev guard keeps refusing), never a failed app."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    allow_cliniko_writes: bool = Field(default=False, strict=True)
+
+    def to_bytes(self) -> bytes:
+        return (self.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+
+def load_dev_settings(config_root: Path | None = None) -> DevSettings:
+    """The dev settings file, or the defaults (writes off) when it is absent,
+    over its bound, unreadable or not valid. Never raises."""
+    root = config_root if config_root is not None else default_config_root()
+    try:
+        with (root / DEV_SETTINGS_FILENAME).open("rb") as stream:
+            blob = stream.read(MAX_DEV_SETTINGS_BYTES + 1)
+    except (OSError, ValueError):  # ValueError: a NUL in the path
+        return DevSettings()
+    if len(blob) > MAX_DEV_SETTINGS_BYTES:
+        return DevSettings()
+    try:
+        return DevSettings.model_validate_json(blob)
+    except ValidationError:
+        return DevSettings()
+
+
+def save_dev_settings(settings: DevSettings, *, config_root: Path | None = None) -> Path:
+    """Replace the dev settings file atomically through the config
+    directory's one write path; ``NoteConfigWriteError`` on any failure,
+    the file never partial."""
+    root = config_root if config_root is not None else default_config_root()
+    _write_config_file(root, DEV_SETTINGS_FILENAME, settings.to_bytes())
+    return root / DEV_SETTINGS_FILENAME
+
+
+def dev_writes_allowed(config_root: Path | None = None) -> bool:
+    """Whether the developer build's setting allows Cliniko writes. A
+    production build never reads the file: False, unread — and the guard
+    never applies there anyway (``draft_write.dev_build_writes_off``)."""
+    if install_layout.channel() != "dev":
+        return False
+    return load_dev_settings(config_root).allow_cliniko_writes
 
 
 # ---------------------------------------------------------------------------

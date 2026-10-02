@@ -49,6 +49,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Protocol
 
+from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
 from scribe_desktop.speaker_embedding import is_unc_path, sha256_of_file
 
@@ -161,10 +162,18 @@ def _import_llama() -> Callable[..., Any]:
     try:
         from llama_cpp import Llama
     except Exception as exc:  # ImportError, or a DLL failure surfacing as OSError
+        # Installation plan Task 1.7: a packaged build bundles the runtime, so
+        # its remedy is a reinstall, never the source checkout's wheel step.
+        remedy = (
+            install_layout.FROZEN_REMEDY
+            if install_layout.is_frozen()
+            else (
+                f"install it from the pinned wheel ({LANGUAGE_RUNTIME_REQUIREMENTS}, the "
+                "two-step command in AGENTS.md Local Run Steps, step 2)"
+            )
+        )
         raise LanguageModelError(
-            f"the prose runtime ({LANGUAGE_RUNTIME_NAME}) is not importable ({exc}); "
-            f"install it from the pinned wheel ({LANGUAGE_RUNTIME_REQUIREMENTS}, the "
-            "two-step command in AGENTS.md Local Run Steps, step 2)"
+            f"the prose runtime ({LANGUAGE_RUNTIME_NAME}) is not importable ({exc}); {remedy}"
         ) from exc
     factory: Callable[..., Any] = Llama
     return factory
@@ -248,8 +257,8 @@ class LocalLanguageModel:
             )
         if not path.is_file():
             raise LanguageModelError(
-                f"language model not found at {path} - run scripts/setup-models.py "
-                "--only language-model from a normal terminal"
+                f"language model not found at {path} - "
+                f"{install_layout.model_remedy('language-model')}"
             )
         try:
             size = path.stat().st_size
@@ -258,7 +267,7 @@ class LocalLanguageModel:
         if expected_size is not None and size != expected_size:
             raise LanguageModelError(
                 f"language model at {path} is {size} bytes, not the pinned "
-                f"{expected_size} - re-run scripts/setup-models.py --only language-model"
+                f"{expected_size} - {install_layout.model_remedy('language-model')}"
             )
         try:
             actual = sha256_of_file(path)
@@ -267,8 +276,8 @@ class LocalLanguageModel:
         if actual != expected_sha256:
             raise LanguageModelError(
                 f"language model at {path} is not the pinned model: expected SHA-256 "
-                f"{expected_sha256}, got {actual} - re-run scripts/setup-models.py "
-                "--only language-model"
+                f"{expected_sha256}, got {actual} - "
+                f"{install_layout.model_remedy('language-model')}"
             )
         factory = llama_factory if llama_factory is not None else _import_llama()
         _give_std_fds_a_sink()  # SEC-003: before the runtime dup()s fds 1 and 2

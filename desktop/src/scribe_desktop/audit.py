@@ -3,7 +3,8 @@ D7, D8, D9; Critical Constraints C2 and C3).
 
 One encrypted, CONTENT-FREE row per session, kept seven years from the
 session's month, exportable as CSV. On-disk layout (D7), all under
-``%LOCALAPPDATA%\\ClinikoScribe\\audit\\``:
+``%LOCALAPPDATA%\\ClinikoScribe\\audit\\`` (``ClinikoScribe-dev`` from a source
+checkout — ``install_layout``):
 
 - ``key.dpapi`` — ONE store key, DPAPI-wrapped with the description
   ``AUDIT_KEY_DESCRIPTION`` (``unwrap_key_from_file`` refuses a blob wrapped
@@ -72,6 +73,7 @@ from pydantic import (
     model_validator,
 )
 
+from scribe_desktop import install_layout
 from scribe_desktop.encounter import ConsentAttestation, EncounterContext
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
@@ -142,8 +144,7 @@ WriteOutcomeCode = Literal["attempting", "written", "refused", "unknown"]
 def default_audit_root() -> Path:
     # No UNC refusal, exactly like the other custody roots (default_sessions_
     # root): a redirected LOCALAPPDATA is an accepted same-user residual.
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / AUDIT_DIRNAME
+    return install_layout.data_root() / AUDIT_DIRNAME
 
 
 def _utc_now() -> datetime:

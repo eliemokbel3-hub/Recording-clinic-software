@@ -20,11 +20,16 @@ __pycache__/
 # Node / extension build
 node_modules/
 extension/dist/
+extension/dist-dev/
 
 # Extension signing key — never commit (see plan Critical Constraints)
 key.pem
+# The dev-channel key (installation plan Task 1.3); the bare name above does
+# not match it
+extension/key-dev.pem
 
 # Machine-generated native-host registration artifacts (pre-gate locations;
-# registration now installs into %LOCALAPPDATA%\ClinikoScribe, outside the repo)
+# registration now installs into the channel's data folder under %LOCALAPPDATA% —
+# ClinikoScribe, or ClinikoScribe-dev from a source checkout — outside the repo)
 scripts/com.scribe.cliniko_host.json
 scripts/dev-host-launcher.bat

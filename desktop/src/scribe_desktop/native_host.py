@@ -59,6 +59,7 @@ from typing import Any, BinaryIO, Final, Protocol
 
 from pydantic import ValidationError
 
+from scribe_desktop import identity
 from scribe_desktop.exclusions import install_exception_hooks
 from scribe_desktop.framing import (
     EndOfStream,
@@ -67,7 +68,11 @@ from scribe_desktop.framing import (
     set_binary_stdio,
     write_frame,
 )
-from scribe_desktop.identity import EXPECTED_ORIGIN
+
+# The production origin keeps its importable name here (C2; installation plan
+# Task 1.4): ``verify_origin`` checks the running channel's
+# ``identity.expected_origin()``, which IS this value in a production build.
+from scribe_desktop.identity import EXPECTED_ORIGIN as EXPECTED_ORIGIN
 from scribe_desktop.logging_setup import log_event, setup_logging
 from scribe_desktop.pipe_client import AppPipeConnector, ServerUnverified
 from scribe_desktop.protocol import (
@@ -111,7 +116,10 @@ def find_origin(argv: list[str]) -> str | None:
 
 
 def verify_origin(argv: list[str]) -> bool:
-    return find_origin(argv) == EXPECTED_ORIGIN
+    """The caller is this channel's extension (installation plan Task 1.4:
+    a dev host accepts only the dev extension, the installed host only the
+    release one)."""
+    return find_origin(argv) == identity.expected_origin()
 
 
 class SessionViolation(Exception):
@@ -534,10 +542,8 @@ def _log_registration_paths(logger: logging.Logger) -> None:
     import json
     import winreg
 
-    from scribe_desktop.identity import REGISTRY_KEY
-
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, identity.registry_key()) as key:
             manifest_path, _ = winreg.QueryValueEx(key, "")
         log_event(logger, "host_manifest", path=str(manifest_path))
         launcher = json.loads(Path(manifest_path).read_text(encoding="utf-8")).get("path", "")

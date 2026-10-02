@@ -4,7 +4,8 @@ Cliniko workflow safeguards plan, Tasks 2.1a (the record type and the
 loader, no network) and 2.1b (key validation and storage).
 
 WHAT IS KEPT WHERE. ``clinics.json`` (default
-``%LOCALAPPDATA%\\ClinikoScribe\\clinics.json``) holds NON-SECRET records —
+``%LOCALAPPDATA%\\ClinikoScribe\\clinics.json``; ``ClinikoScribe-dev`` from a
+source checkout — ``install_layout``) holds NON-SECRET records —
 clinic id, display name, subdomain, shard, the key user's user and
 practitioner ids, the validation time and whether the subdomain is
 confirmed — plus the practitioner's contact email (the client's
@@ -77,7 +78,6 @@ zeroed (threat model, Cliniko API client residue (2)).
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
 from collections.abc import Callable, Mapping, Sequence
@@ -100,6 +100,7 @@ from pydantic import (
     model_validator,
 )
 
+from scribe_desktop import install_layout
 from scribe_desktop.cliniko_client import (
     SHARDS,
     CertificateRejected,
@@ -330,9 +331,8 @@ def parse_clinic_address(text: str) -> ClinicHost:
 
 
 def default_registry_path() -> Path:
-    # The same root idiom (and no-UNC-refusal posture) as the other stores.
-    base = os.environ.get("LOCALAPPDATA") or str(Path.home())
-    return Path(base) / "ClinikoScribe" / REGISTRY_FILENAME
+    # The same root (and no-UNC-refusal posture) as the other stores.
+    return install_layout.data_root() / REGISTRY_FILENAME
 
 
 # --- outcomes -----------------------------------------------------------------

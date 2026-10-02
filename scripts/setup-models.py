@@ -8,7 +8,10 @@ processes load models from the local cache with the ML stack's network access
 disabled and asserted off; the app's only network use is its read-only Cliniko
 API client (flow 18).
 
-Downloads into %LOCALAPPDATA%\\ClinikoScribe\\models\\:
+Downloads into the models folder of this checkout's data folder -- since
+installation plan Phase 1 a source checkout is the DEV channel, so that is
+%LOCALAPPDATA%\\ClinikoScribe-dev\\models\\ (the installed app's models come
+with its installer, never from this script):
   - silero-vad ONNX model (voice activity detection)
   - faster-whisper (CTranslate2) model candidates for the Step D6 benchmark
   - speaker-embedding ONNX model (voice enrolment; practitioner-profile plan)

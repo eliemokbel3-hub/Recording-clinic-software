@@ -10,12 +10,13 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from PySide6.QtCore import QByteArray, Qt, Signal
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop import identity, install_layout
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import BenchmarkResult
@@ -79,12 +81,16 @@ from scribe_desktop.hotkey import (
 )
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.note_config import (
+    DevSettings,
     NoteConfig,
+    NoteConfigError,
     TemplateProfile,
+    dev_writes_allowed,
+    load_dev_settings,
     load_note_config,
+    save_dev_settings,
 )
 from scribe_desktop.past_sessions import KeepLabel, PastSessionStore, keep_label
-from scribe_desktop.protocol import HOST_NAME
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
     CAPTURING_STATES,
@@ -205,16 +211,38 @@ def _is_suspend_event(event_type: object, message: object) -> bool:
     return head is not None and is_suspend_message(*head)
 
 
+# Installation plan D4: the dev-only Status checkbox and its save failure.
+DEV_WRITES_CHECKBOX_TEXT: Final = "Allow Cliniko writes from this developer build"
+DEV_WRITES_SAVE_FAILED: Final = (
+    "The developer build's write setting could not be saved; the box shows the setting "
+    "in use."
+)
+
+
 class StatusPanel(QWidget):
     """The Phase-1 status window content (registration + self-test), under
     the intended-use line (privacy-professional-controls D14) and the
     start-up exclusion warnings (Task 4.1, Flow 6 — fixed lines computed once
-    by ``app.main`` before the window is built; hidden when there are none)."""
+    by ``app.main`` before the window is built; hidden when there are none).
+
+    Installation plan D4 (Task 1.6): in the DEV channel only, the "Allow
+    Cliniko writes from this developer build" checkbox — off by default, read
+    from and saved to ``config\\dev.json`` under ``config_root``; a failed
+    save says so and shows the setting re-read from the file. A production
+    build has no checkbox and never reads the file. ``dev_writes_changed``
+    fires after every save attempt, failed or not."""
+
+    dev_writes_changed = Signal()
 
     def __init__(
-        self, parent: QWidget | None = None, *, exclusion_warnings: Sequence[str] = ()
+        self,
+        parent: QWidget | None = None,
+        *,
+        exclusion_warnings: Sequence[str] = (),
+        config_root: Path | None = None,
     ) -> None:
         super().__init__(parent)
+        self._config_root = config_root
         self.intended_use_label = QLabel(models.INTENDED_USE_LINE)
         self.intended_use_label.setWordWrap(True)
         self.intended_use_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -227,24 +255,57 @@ class StatusPanel(QWidget):
         self.self_test_label = QLabel("Self-test: not run")
         self.self_test_button = QPushButton("Run self-test")
         self.self_test_button.clicked.connect(self.on_self_test)
+        self.dev_writes_checkbox: QCheckBox | None = None
+        self.dev_writes_label = QLabel()
+        self.dev_writes_label.setWordWrap(True)
+        self.dev_writes_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.dev_writes_label.hide()
 
         layout = QVBoxLayout()
         layout.addWidget(self.intended_use_label)
         layout.addWidget(self.exclusions_label)
-        layout.addWidget(QLabel(f"Native host: {HOST_NAME}"))
+        layout.addWidget(QLabel(f"Native host: {identity.host_name()}"))
         layout.addWidget(self.registration_label)
+        if install_layout.channel() == "dev":
+            checkbox = QCheckBox(DEV_WRITES_CHECKBOX_TEXT)
+            checkbox.setChecked(load_dev_settings(config_root).allow_cliniko_writes)
+            checkbox.toggled.connect(self._on_dev_writes_toggled)
+            self.dev_writes_checkbox = checkbox
+            layout.addWidget(checkbox)
+            layout.addWidget(self.dev_writes_label)
         layout.addWidget(self.self_test_button)
         layout.addWidget(self.self_test_label)
         layout.addStretch(1)
         self.setLayout(layout)
         self.refresh_registration()
 
+    def _on_dev_writes_toggled(self, checked: bool) -> None:
+        checkbox = self.dev_writes_checkbox
+        assert checkbox is not None  # connected only when it exists
+        try:
+            save_dev_settings(
+                DevSettings(allow_cliniko_writes=checked), config_root=self._config_root
+            )
+        except NoteConfigError:
+            # The box shows what is ON DISK, re-read (a failure after the
+            # replace landed still saved the tick), and the Write button
+            # re-reads it too; an unreadable file reads as writes off.
+            checkbox.blockSignals(True)
+            checkbox.setChecked(load_dev_settings(self._config_root).allow_cliniko_writes)
+            checkbox.blockSignals(False)
+            self.dev_writes_label.setText(DEV_WRITES_SAVE_FAILED)
+            self.dev_writes_label.show()
+            self.dev_writes_changed.emit()
+            return
+        self.dev_writes_label.hide()
+        self.dev_writes_changed.emit()
+
     def refresh_registration(self) -> None:
         status = read_registration_status()
         if status.registered:
             text = "registered ✓"
         else:
-            text = "NOT registered — run scripts/register-native-host.py"
+            text = f"NOT registered — {install_layout.registration_remedy()}"
         self.registration_label.setText(f"Registration: {text}")
 
     def on_self_test(self) -> None:
@@ -478,7 +539,12 @@ class MainWindow(QMainWindow):
         # (`exclusions.startup_exclusions`) and shown on the Status tab and the
         # Past sessions status line. The window itself makes no Windows call
         # for them; the default `()` (every test that does not ask) shows none.
-        self.status_panel = StatusPanel(exclusion_warnings=exclusion_warnings)
+        self.status_panel = StatusPanel(
+            exclusion_warnings=exclusion_warnings, config_root=config_root
+        )
+        # Installation plan D4: the dev write setting changed — the Note tab's
+        # Write button re-reads it now (a click always re-reads it anyway).
+        self.status_panel.dev_writes_changed.connect(self.note_screen.refresh_write_control)
         # Privacy-professional-controls Task 3.1: what the archive kept, its
         # retention setting and the audit record's export. Construction reads
         # only the settings file under `config_root`; the archive is listed
@@ -1871,7 +1937,13 @@ class MainWindow(QMainWindow):
             inputs = self._controller.with_write_custody(
                 reservation, lambda directory, crypto: store.load(directory, crypto, session_id)
             )
-            early = refuse_before_read(inputs.note, inputs.record, inputs.note_identity)
+            early = refuse_before_read(
+                inputs.note,
+                inputs.record,
+                inputs.note_identity,
+                channel=install_layout.channel(),
+                allow_dev_writes=dev_writes_allowed(self._config_root),
+            )
             if early is not None:
                 if self._audit is not None:
                     # Flow 2 (round 7 LOW-001): every pre-send refusal records
@@ -1989,6 +2061,8 @@ class MainWindow(QMainWindow):
             note=inputs.note,
             note_identity=inputs.note_identity,
             profile=self._write_profile(inputs.note),
+            channel=install_layout.channel(),
+            allow_dev_writes=dev_writes_allowed(self._config_root),
         )
         if isinstance(prepared, WriteRefusal):
             # Task 1.4 (round 1 PR-MED-005): the refusal's FIXED code, never

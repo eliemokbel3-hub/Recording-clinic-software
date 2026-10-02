@@ -15,6 +15,7 @@ from pathlib import Path
 
 from scribe_desktop import (
     audit,
+    install_layout,
     past_sessions,
     practitioner_profile,
     secure_storage,
@@ -60,5 +61,10 @@ def test_the_internal_identifiers_are_unchanged() -> None:
     assert past_sessions.PAST_SESSION_KEY_DESCRIPTION == "ClinikoScribe past-session key"
     assert PIPE_PREFIX == "\\\\.\\pipe\\ClinikoScribe-"
     assert HOST_NAME == "com.scribe.cliniko_host"
+    # Installation plan Task 1.2: the registration script's install folder is
+    # the data root (``install_layout``, the one place a ``ClinikoScribe``
+    # path is built), whose production name is pinned here instead of the
+    # script's former literal.
+    assert install_layout.APP_FOLDER_NAME == "ClinikoScribe"
     register = (REPO / "scripts" / "register-native-host.py").read_text(encoding="utf-8")
-    assert '/ "ClinikoScribe"' in register
+    assert "INSTALL_DIR = install_layout.data_root()" in register

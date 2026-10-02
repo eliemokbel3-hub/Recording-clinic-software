@@ -12,11 +12,66 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions
+from scribe_desktop import exclusions, install_layout
 from scribe_desktop.encounter import unlinked_consent
+from scribe_desktop.install_layout import Channel
 from scribe_desktop.protocol import PROTOCOL_VERSION
 
 NONCE = "f" * 32
+
+# The real channel and frozen functions, captured before any test pins them,
+# for the tests of the functions themselves (test_install_layout.py).
+REAL_CHANNEL = install_layout.channel
+REAL_IS_FROZEN = install_layout.is_frozen
+
+
+def _production() -> Channel:
+    return "production"
+
+
+def _not_frozen() -> bool:
+    return False
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Installation plan D2, from before collection: a test module's
+    import-time code — a ``skipif`` that looks for a local model, a root
+    computed at module level — sees the production channel in a source run
+    (not frozen), as every test does (``_production_channel`` re-pins both
+    per test; a test child process pins them itself, see
+    ``test_integration_no_sockets.py``). Neither is read from ``sys.frozen``
+    (C6, round 11 PR-LOW-016)."""
+    install_layout.channel = _production  # type: ignore[assignment]
+    install_layout.is_frozen = _not_frozen  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _production_channel(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Installation plan D2, for EVERY test: the channel is pinned to
+    production, so the existing tests and pins test what ships (the
+    production data folder name, host name, extension id, pipe prefix, and
+    no dev write guard). ``is_frozen()`` is pinned to ``False`` — a source
+    run, so the models root and the remedies are a source checkout's — and
+    never read from the host's ``sys.frozen`` (C6, round 11 PR-LOW-016). A
+    test that needs the dev channel calls ``use_channel(monkeypatch, "dev")``;
+    one that needs a packaged build calls ``use_frozen(monkeypatch, True)``
+    (with the channel too, for the whole scenario). A subprocess a test
+    starts is a real source run, so it is the dev channel unless it pins
+    itself."""
+    use_channel(monkeypatch, "production")
+    use_frozen(monkeypatch, False)
+
+
+def use_channel(monkeypatch: pytest.MonkeyPatch, which: Channel) -> None:
+    """Pin ``install_layout.channel()`` to ``which`` for this test."""
+    monkeypatch.setattr(install_layout, "channel", lambda: which)
+
+
+def use_frozen(monkeypatch: pytest.MonkeyPatch, frozen: bool) -> None:
+    """Pin ``install_layout.is_frozen()`` to ``frozen`` for this test (it is
+    ``False`` unless a test says otherwise; the channel stays as pinned: pin
+    both for a packaged-build scenario)."""
+    monkeypatch.setattr(install_layout, "is_frozen", lambda: frozen)
 
 
 @pytest.fixture(autouse=True)

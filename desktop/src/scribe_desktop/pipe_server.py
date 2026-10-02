@@ -6,7 +6,8 @@ socket. ``scribe-app`` creates it; the native host (Task 4.4) connects to it.
 
 THE PIPE, as created (``PipeServer.start``; every flag pinned by test):
 
-- name ``\\\\.\\pipe\\ClinikoScribe-<user SID>`` (per Windows user);
+- name ``\\\\.\\pipe\\ClinikoScribe-<user SID>`` (per Windows user;
+  ``ClinikoScribe-dev-<user SID>`` for the dev channel — ``identity``);
 - ``FILE_FLAG_FIRST_PIPE_INSTANCE`` (the literal ``0x00080000`` — pywin32 has
   no constant): creation FAILS if any process already holds the name, so the
   app never shares its name with a squatter (``PipeUnavailable``,
@@ -73,6 +74,7 @@ from typing import Any, Final, Protocol
 
 from pydantic import ValidationError
 
+from scribe_desktop import identity
 from scribe_desktop.framing import EndOfStream, FramingError, read_frame, write_frame
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.protocol import Envelope, parse_pipe_envelope
@@ -86,7 +88,10 @@ if sys.platform == "win32":
     import win32pipe
     import win32security
 
-PIPE_PREFIX: Final = "\\\\.\\pipe\\ClinikoScribe-"
+# The production prefix keeps its name here (C2; ``identity.PIPE_PREFIX`` is
+# its definition). ``pipe_name`` follows the channel (installation plan Task
+# 1.4): the dev app's pipe is ``ClinikoScribe-dev-<SID>``.
+PIPE_PREFIX: Final = identity.PIPE_PREFIX
 
 # CreateNamedPipe flags, as literals (pinned by test_pipe_server.py).
 PIPE_ACCESS_DUPLEX: Final = 0x00000003
@@ -170,10 +175,10 @@ def current_user_sid() -> str:
 
 
 def pipe_name(sid: str) -> str:
-    """The per-user pipe name (plan Config Impact)."""
+    """The per-user pipe name for this channel (plan Config Impact)."""
     if _SID_RE.fullmatch(sid) is None:
         raise ValueError("not a SID string")
-    return f"{PIPE_PREFIX}{sid}"
+    return f"{identity.pipe_prefix()}{sid}"
 
 
 def pipe_sddl(sid: str) -> str:

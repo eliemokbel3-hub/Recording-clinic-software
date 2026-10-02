@@ -51,6 +51,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final, Literal, Protocol
 
+from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
 
 # --- the pinned model (single source; scripts/setup-models.py imports these) ---
@@ -286,10 +287,18 @@ def load_onnx_session(model_path: Path, *, expected_sha256: str | None = None) -
     if is_unc_path(model_path):
         raise SpeakerModelError(f"speaker model path must be a local path, not UNC: {model_path}")
     if not model_path.is_file():
+        # The setup script's naming note means nothing in a packaged build.
+        detail = (
+            ""
+            if install_layout.is_frozen()
+            else (
+                " (the pinned entry is written or promoted as <name>.onnx; an unpinned "
+                "candidate fetch leaves <name>.onnx.candidate)"
+            )
+        )
         raise SpeakerModelError(
-            f"speaker model not found at {model_path} - run scripts/setup-models.py "
-            "--only speaker-embedding (the pinned entry is written or promoted as "
-            "<name>.onnx; an unpinned candidate fetch leaves <name>.onnx.candidate)"
+            f"speaker model not found at {model_path} - "
+            f"{install_layout.model_remedy('speaker-embedding')}{detail}"
         )
     if expected_sha256 is not None:
         try:
@@ -301,16 +310,23 @@ def load_onnx_session(model_path: Path, *, expected_sha256: str | None = None) -
         if actual != expected_sha256:
             raise SpeakerModelError(
                 f"speaker model at {model_path} is not the pinned model: expected SHA-256 "
-                f"{expected_sha256}, got {actual} - re-run scripts/setup-models.py "
-                "--only speaker-embedding"
+                f"{expected_sha256}, got {actual} - "
+                f"{install_layout.model_remedy('speaker-embedding')}"
             )
     try:
         import onnxruntime
     except Exception as exc:  # ImportError, or a DLL failure surfacing as OSError
-        raise SpeakerModelError(
-            f"onnxruntime is not importable ({exc}); it is part of the desktop [ml] "
-            'extra: .venv\\Scripts\\python.exe -m pip install -e ".\\desktop[dev,ml]"'
-        ) from exc
+        # Installation plan Task 1.7: a packaged build bundles onnxruntime, so
+        # its remedy is a reinstall, never the source checkout's pip step.
+        remedy = (
+            install_layout.FROZEN_REMEDY
+            if install_layout.is_frozen()
+            else (
+                "it is part of the desktop [ml] extra: "
+                '.venv\\Scripts\\python.exe -m pip install -e ".\\desktop[dev,ml]"'
+            )
+        )
+        raise SpeakerModelError(f"onnxruntime is not importable ({exc}); {remedy}") from exc
     step = "session options"
     try:
         options = onnxruntime.SessionOptions()

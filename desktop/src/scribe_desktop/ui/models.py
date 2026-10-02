@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Final, Literal, Protocol
 
+from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import AudioCaptureError
 from scribe_desktop.clinics import (
     ClinicRecord,
@@ -37,6 +38,7 @@ from scribe_desktop.draft_write import (
     WriteRecordStatus,
     WriteRecordUnreadable,
     WriteRefusal,
+    dev_build_writes_off,
 )
 from scribe_desktop.encounter import (
     RECORDING_CONSENT_TEXT,
@@ -318,6 +320,14 @@ WRITE_LINES: Final[Mapping[str, str]] = {
     "not_saved": "Save the note first.",
     "unlinked": "This recording is not linked to a Cliniko note. Copy the note instead.",
     "mock_note": "This note came from the test provider and cannot be written to a chart.",
+    # Installation plan D4 (Task 1.6): the dev channel only. It invites Copy,
+    # so it is in ``WRITE_UNCERTAIN_PREFIXED``: a write allowed, left open,
+    # then the setting unticked must not read as a bare Copy (PR-MED-017).
+    "dev_build_writes_off": (
+        "Writing to Cliniko is off in this developer build. To allow it, tick \"Allow "
+        "Cliniko writes from this developer build\" on the Status tab, or copy the note "
+        "instead."
+    ),
     "check_failed": (
         "The note could not be checked with Cliniko just now ({reason}). Copy the note, or "
         "try again."
@@ -413,6 +423,7 @@ WRITE_UNCERTAIN_PREFIXED: Final[frozenset[str]] = frozenset(
         "check_refused",
         "finalised_before_write",
         "write_forbidden",
+        "dev_build_writes_off",
     }
 )
 
@@ -667,7 +678,13 @@ class WriteControl:
 
 
 def write_control(
-    *, saved: bool, binding: WriteBinding, mock: bool, status: WriteRecordStatus | None
+    *,
+    saved: bool,
+    binding: WriteBinding,
+    mock: bool,
+    status: WriteRecordStatus | None,
+    channel: install_layout.Channel,
+    allow_dev_writes: bool,
 ) -> WriteControl:
     """D2's ``_write_ready`` outside the in-flight and rendering checks, in
     this order: a note not yet saved (and ratified) → ``not_saved``; an
@@ -676,8 +693,12 @@ def write_control(
     read — fail closed, ``record_unreadable``): unreadable →
     ``record_unreadable``; ``written`` for this saved note → ``written_seen``
     with Write disabled (seen mode, D6 — only Complete consumes it), for
-    another → ``write_uncertain``; an open attempt keeps Write enabled (the
-    click reconciles) and shows ``unknown``; otherwise ready."""
+    another → ``write_uncertain``; then a dev build whose writes are off →
+    ``dev_build_writes_off`` with Write disabled (installation plan D4,
+    ``draft_write.dev_build_writes_off`` — never in production; prefixed
+    while an attempt is open, ``draft_write.refuse_before_read``'s order);
+    an open attempt keeps Write enabled (the click reconciles) and shows
+    ``unknown``; otherwise ready."""
     if not saved:
         return WriteControl(False, write_line("not_saved"))
     if not binding.linked:
@@ -688,6 +709,9 @@ def write_control(
     if blocked is not None:
         return WriteControl(False, blocked)
     assert status is not None  # write_record_block refuses None
+    if dev_build_writes_off(channel, allow_dev_writes):
+        line = write_line("dev_build_writes_off", uncertain=status.open_attempt)
+        return WriteControl(False, line)
     if status.open_attempt:
         return WriteControl(True, write_line("unknown"))
     return WriteControl(True)
@@ -2769,14 +2793,14 @@ def model_file_report_lines(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> li
     discover the quality difference by surprise.
     """
     resolved = resolve_whisper_model()
-    missing = "MISSING - run scripts/setup-models.py"
+    remedy = install_layout.model_remedy()
+    missing = f"MISSING - {remedy}"
     if whisper_model_available(DEFAULT_WHISPER_MODEL):
         whisper_line = f"Whisper model ({DEFAULT_WHISPER_MODEL}): ready"
     elif resolved != DEFAULT_WHISPER_MODEL and whisper_model_available(resolved):
         whisper_line = (
             f"Whisper model ({DEFAULT_WHISPER_MODEL}): MISSING - using "
-            f"fallback {resolved}; run scripts/setup-models.py for "
-            f"{DEFAULT_WHISPER_MODEL}"
+            f"fallback {resolved}; {remedy} for {DEFAULT_WHISPER_MODEL}"
         )
     else:
         whisper_line = f"Whisper model ({DEFAULT_WHISPER_MODEL}): {missing}"
@@ -2820,15 +2844,16 @@ def speaker_model_report_line(kind: EmbedderKind = SHIPPED_SPEAKER_EMBEDDER) -> 
     claims only what the stat establishes (peer round 27 PR-LOW-029): the
     file is INSTALLED; its digest and I/O contract are verified when the
     worker loads it, and a failure there is reported on the Transcript
-    screen (``ATTRIBUTION_DID_NOT_RUN_REASON``)."""
+    screen (``attribution_did_not_run_reason()``)."""
     model_id, _sha = shipped_embedder_identity(kind)
     if kind == "spectral":
         return f"Speaker model ({model_id}): ready (built in)"
     if speaker_embedder_available(kind):
         return f"Speaker model ({model_id}): installed - verified when it loads"
     return (
-        f"Speaker model ({model_id}): MISSING - run scripts/setup-models.py "
-        "--only speaker-embedding (voice attribution is off until then)"
+        f"Speaker model ({model_id}): MISSING - "
+        f"{install_layout.model_remedy('speaker-embedding')} "
+        "(voice attribution is off until then)"
     )
 
 
@@ -2850,7 +2875,7 @@ def voice_profile_report_line(
         return PROFILE_NOT_ENROLLED_LINE
     profile = readiness.profile
     if profile is None:
-        return readiness.reason or ATTRIBUTION_DID_NOT_RUN_REASON
+        return readiness.reason or attribution_did_not_run_reason()
     line = f"Voice profile: enrolled {profile.created_at:%Y-%m-%d} (model {profile.model_id})"
     if not consent_is_current(profile):
         # Task 5.0: a readable record carrying an older consent text — the
@@ -3009,11 +3034,24 @@ STYLE_LABELS: Final[Mapping[NoteStyle, str]] = {
     "narrative": "Narrative",
 }
 # C8: every disabled option and every fallback names its reason on screen.
-LANGUAGE_MODEL_ABSENT_REASON: Final = (
-    "needs the local language model, which is not installed - run "
-    "scripts/setup-models.py --only language-model from a normal terminal and install "
-    "the prose runtime (AGENTS.md Local Run Steps)"
-)
+
+
+def language_model_absent_reason() -> str:
+    """Why the two prose styles are disabled when the language model or its
+    runtime is missing, with the remedy for this build (installation plan
+    Task 1.7: a function, so it follows ``install_layout.is_frozen()``)."""
+    if install_layout.is_frozen():
+        return (
+            "needs the local language model, which is not installed - "
+            f"{install_layout.FROZEN_REMEDY}"
+        )
+    return (
+        "needs the local language model, which is not installed - "
+        f"{install_layout.model_remedy('language-model')} and install the prose runtime "
+        "(AGENTS.md Local Run Steps)"
+    )
+
+
 STYLE_PROFILE_EMPTY_REASON: Final = (
     "needs a learned style - teach the scribe your note style below first"
 )
@@ -3036,7 +3074,7 @@ def language_model_available() -> bool:
     and never a load, so the Practitioner tab's 5 s poll may ask it; the
     digest is verified by ``LocalLanguageModel`` when the prose stage first
     loads the model. False keeps the prose radios disabled with
-    ``LANGUAGE_MODEL_ABSENT_REASON`` (C8)."""
+    ``language_model_absent_reason()`` (C8)."""
     return language_runtime_importable() and language_model_file_available()
 
 
@@ -3075,7 +3113,7 @@ def style_options(
     for style in NOTE_STYLES:
         reasons: list[str] = []
         if style in ("own_voice", "narrative") and not model:
-            reasons.append(LANGUAGE_MODEL_ABSENT_REASON)
+            reasons.append(language_model_absent_reason())
         if style == "own_voice" and not present:
             reasons.append(STYLE_PROFILE_EMPTY_REASON)
         reason = None if not reasons else f"{STYLE_LABELS[style]} {'; '.join(reasons)}."
@@ -3085,18 +3123,19 @@ def style_options(
     return tuple(options)
 
 
-def style_fallback_line(
-    style: NoteStyle, reasons: Sequence[str] = (LANGUAGE_MODEL_ABSENT_REASON,)
-) -> str | None:
+def style_fallback_line(style: NoteStyle, reasons: Sequence[str] | None = None) -> str | None:
     """The C8 line for a note whose chosen style is a prose style the app
     cannot render now: it renders as ``clean`` and says WHY. The default
-    reason is the absent language model — the Note tab's and the stage's
+    reason (``None``) is the absent language model
+    (``language_model_absent_reason()``) — the Note tab's and the stage's
     case, where that is the one reason; the Practitioner tab passes the
     disabled option's own ``reasons`` (Phase H round 24 MED-005: a saved
     Own voice with the model installed but no learned style must name the
     learned style, not the model). None for the two deterministic styles."""
     if style in ("verbatim", "clean"):
         return None
+    if reasons is None:
+        reasons = (language_model_absent_reason(),)
     return (
         f"Writing style '{STYLE_LABELS[style]}' {'; '.join(reasons)} - this note "
         "is shown as Clean clinical."
@@ -3476,11 +3515,18 @@ def style_profile_line(profile: StyleProfile | None) -> str:
 # Voice attribution readiness (practitioner-profile plan D2 / D3 / D16).
 # ---------------------------------------------------------------------------
 
-# The D2 fallback lines. Plain clinical English, each naming the remedy.
-SPEAKER_MODEL_MISSING_REASON: Final = (
-    "Voice attribution is off: the speaker model is not installed - run "
-    "scripts/setup-models.py --only speaker-embedding."
-)
+# The D2 fallback lines. Plain clinical English, each naming the remedy (the
+# two that name a model's remedy are functions — installation plan Task 1.7 —
+# so they follow ``install_layout.is_frozen()``).
+
+
+def speaker_model_missing_reason() -> str:
+    return (
+        "Voice attribution is off: the speaker model is not installed - "
+        f"{install_layout.model_remedy('speaker-embedding')}."
+    )
+
+
 PROFILE_REENROL_REASON: Final = (
     "Voice attribution is off: your voice profile was made with a different speaker "
     "model - re-enrol on the Practitioner tab."
@@ -3489,11 +3535,14 @@ PROFILE_UNUSABLE_REASON: Final = (
     "Voice attribution is off: your voice profile cannot be read ({reason}) - re-enrol "
     "or delete it on the Practitioner tab."
 )
-ATTRIBUTION_DID_NOT_RUN_REASON: Final = (
-    "Voice attribution did not run for this transcript: the speaker model could not be "
-    "loaded - run scripts/setup-models.py --only speaker-embedding, then re-check on the "
-    "Practitioner tab."
-)
+
+
+def attribution_did_not_run_reason() -> str:
+    return (
+        "Voice attribution did not run for this transcript: the speaker model could not be "
+        f"loaded - {install_layout.model_remedy('speaker-embedding')}, then re-check on the "
+        "Practitioner tab."
+    )
 
 
 @dataclass(frozen=True)
@@ -3512,7 +3561,7 @@ class AttributionReadiness:
     or otherwise unloadable — the worker discovers that at load and falls
     back; the Transcript screen then reads the fallback off the DOCUMENT
     (no attribution fields with a profile present) and shows
-    ``ATTRIBUTION_DID_NOT_RUN_REASON``."""
+    ``attribution_did_not_run_reason()``."""
 
     profile_present: bool
     profile: PractitionerProfile | None
@@ -3547,7 +3596,7 @@ def attribution_readiness(
         return AttributionReadiness(profile_present=False, profile=None, reason=None)
     if not speaker_embedder_available(kind):
         return AttributionReadiness(
-            profile_present=True, profile=None, reason=SPEAKER_MODEL_MISSING_REASON
+            profile_present=True, profile=None, reason=speaker_model_missing_reason()
         )
     return AttributionReadiness(profile_present=True, profile=profile, reason=None)
 
@@ -3980,7 +4029,7 @@ def clinic_remove_prompt(clinic_name: str) -> str:
 
 
 __all__ = [
-    "ATTRIBUTION_DID_NOT_RUN_REASON",
+    "attribution_did_not_run_reason",
     "CLINICS_INTRO",
     "CLINIC_ADDRESS_HINT",
     "CLINIC_CHECKING_LINE",
@@ -4007,7 +4056,7 @@ __all__ = [
     "FIRST_RUN_BANNER",
     "FIRST_RUN_STYLE_LINE",
     "INTENDED_USE_LINE",
-    "LANGUAGE_MODEL_ABSENT_REASON",
+    "language_model_absent_reason",
     "LANGUAGE_MODEL_LOAD_FAILED_LINE",
     "NOTE_STYLES",
     "PROSE_STYLES",
@@ -4137,7 +4186,7 @@ __all__ = [
     "PROFILE_REENROL_REASON",
     "PROFILE_UNUSABLE_REASON",
     "SAVE_BUTTON_LABEL",
-    "SPEAKER_MODEL_MISSING_REASON",
+    "speaker_model_missing_reason",
     "UNFINISHED_STORE_WARNING",
     "WARNING_COPY",
     "AttributionInputs",

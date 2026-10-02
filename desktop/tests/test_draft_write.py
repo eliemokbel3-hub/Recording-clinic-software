@@ -36,6 +36,7 @@ the plain-text path, which other clinics' templates may need.
 from __future__ import annotations
 
 import ast
+import functools
 import hashlib
 import json
 import math
@@ -84,6 +85,7 @@ from scribe_desktop.encounter import (
     WritebackRefusal,
     WritebackRefused,
 )
+from scribe_desktop.install_layout import Channel
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     PREFILLED_MARK,
@@ -483,6 +485,8 @@ def _prepare(
     profile: TemplateProfile | None = _UNSET,
     consent: Any = _UNSET,
     context: Any = _UNSET,
+    channel: Channel = "production",
+    allow_dev_writes: bool = False,
 ) -> draft_write.PreparedWrite | draft_write.AlreadyWritten | draft_write.WriteRefusal:
     ctx = enc_context() if context is _UNSET else context
     return draft_write.prepare_write(
@@ -494,6 +498,8 @@ def _prepare(
         note=_write_note() if note is None else note,
         note_identity=identity,
         profile=_profile() if profile is _UNSET else profile,
+        channel=channel,
+        allow_dev_writes=allow_dev_writes,
     )
 
 
@@ -1243,7 +1249,9 @@ class TestPrepareWrite:
         BEFORE hop 1 (so these cases make no request); a ``written`` record
         of ANOTHER saved note is ``write_uncertain``, never the seen-mode
         line (D5)."""
-        check = draft_write.refuse_before_read
+        check = functools.partial(
+            draft_write.refuse_before_read, channel="production", allow_dev_writes=False
+        )
         note = _write_note()
         mock = _write_note(provider_name="mock-extractive")
         assert check(mock, None, _IDENTITY) == draft_write.WriteRefusal("mock_note")
@@ -2181,3 +2189,78 @@ def test_the_module_is_qt_free_and_touches_no_disk_and_no_log() -> None:
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     }
     assert not bare_calls & {"open", "print", "log_event"}
+
+
+class TestTheDevBuildWriteGuard:
+    """Installation plan D4 (Task 1.6): ``dev_build_writes_off`` refuses a
+    write in the DEV channel until its setting allows it, before any Cliniko
+    read but after the write record's own refusals — and never in
+    production, whatever the setting says."""
+
+    def test_the_guard_applies_only_in_the_dev_channel_with_writes_off(self) -> None:
+        assert draft_write.dev_build_writes_off("dev", False) is True
+        assert draft_write.dev_build_writes_off("dev", True) is False
+        assert draft_write.dev_build_writes_off("production", False) is False
+        assert draft_write.dev_build_writes_off("production", True) is False
+
+    @pytest.mark.parametrize("allow", [False, True])
+    def test_in_production_the_guard_can_never_refuse(self, allow: bool) -> None:
+        note = _write_note()
+        for record in (None, _record("attempting"), _record("unknown")):
+            assert (
+                draft_write.refuse_before_read(
+                    note, record, _IDENTITY, channel="production", allow_dev_writes=allow
+                )
+                is None
+            )
+
+    def test_in_dev_it_refuses_until_allowed(self) -> None:
+        note = _write_note()
+        check = draft_write.refuse_before_read
+        assert check(note, None, _IDENTITY, channel="dev", allow_dev_writes=False) == (
+            draft_write.WriteRefusal("dev_build_writes_off")
+        )
+        assert check(note, None, _IDENTITY, channel="dev", allow_dev_writes=True) is None
+        # The mock note's own refusal still comes first (D10).
+        mock = _write_note(provider_name="mock-extractive")
+        assert check(mock, None, _IDENTITY, channel="dev", allow_dev_writes=False) == (
+            draft_write.WriteRefusal("mock_note")
+        )
+        # After the record: an unreadable or written record keeps its own
+        # refusal, exactly as in production (an earlier write's line wins).
+        for record in (draft_write.RECORD_UNREADABLE, _record("written")):
+            expected = check(note, record, _IDENTITY, channel="production", allow_dev_writes=False)
+            assert expected is not None
+            assert check(note, record, _IDENTITY, channel="dev", allow_dev_writes=False) == (
+                expected
+            )
+        # An open earlier attempt (written while allowed, then unticked)
+        # carries the PR-MED-017 flag; a finished one does not.
+        refused = _record("refused", refusal="cliniko_rejected")
+        for record, open_attempt in (
+            (_record("attempting"), True),
+            (_record("unknown"), True),
+            (refused, False),
+        ):
+            assert check(
+                note, record, _IDENTITY, channel="dev", allow_dev_writes=False
+            ) == draft_write.WriteRefusal("dev_build_writes_off", earlier_attempt_open=open_attempt)
+
+    def test_prepare_write_refuses_it_too(self, tmp_path: Path) -> None:
+        registry, _ = _registry(tmp_path)
+        assert _prepare(registry, channel="dev") == draft_write.WriteRefusal(
+            "dev_build_writes_off"
+        )
+        assert isinstance(
+            _prepare(registry, channel="dev", allow_dev_writes=True), draft_write.PreparedWrite
+        )
+        assert isinstance(_prepare(registry, channel="production"), draft_write.PreparedWrite)
+
+    def test_its_line_is_prefixed_while_an_earlier_attempt_is_open(self) -> None:
+        """Its line invites Copy, so PR-MED-017 applies."""
+        line = models.WRITE_LINES["dev_build_writes_off"]
+        warning = models.WRITE_LINES["write_uncertain"]
+        refusal = draft_write.WriteRefusal("dev_build_writes_off", earlier_attempt_open=True)
+        assert models.write_refusal_line(refusal) == f"{warning} {line}"
+        assert models.write_refusal_line(replace(refusal, earlier_attempt_open=False)) == line
+        assert "dev_build_writes_off" in models.WRITE_UNCERTAIN_PREFIXED

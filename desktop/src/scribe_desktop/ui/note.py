@@ -170,6 +170,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from scribe_desktop import install_layout
 from scribe_desktop.draft_write import WriteRecordStatus, is_mock_note
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -196,6 +197,7 @@ from scribe_desktop.note_config import (
     NoteConfigError,
     append_learned_rules,
     append_user_cues,
+    dev_writes_allowed,
     plain_skip_reason,
     record_rule_outcomes,
     replace_learned_rule_wording,
@@ -2287,7 +2289,21 @@ class NoteScreen(QWidget):
             if saved and binding.linked and not mock
             else WriteRecordStatus("none")
         )
-        return models.write_control(saved=saved, binding=binding, mock=mock, status=status)
+        return models.write_control(
+            saved=saved,
+            binding=binding,
+            mock=mock,
+            status=status,
+            channel=install_layout.channel(),
+            # Installation plan D4: read only in the dev channel (a production
+            # build never reads config\dev.json).
+            allow_dev_writes=dev_writes_allowed(self._config_root),
+        )
+
+    def refresh_write_control(self) -> None:
+        """Re-derive the Write button now (installation plan D4: the Status
+        tab's dev write setting changed)."""
+        self._apply_write_binding()
 
     def _apply_write_binding(self) -> None:
         """Bind the Write button: shown only with a binding; enabled only

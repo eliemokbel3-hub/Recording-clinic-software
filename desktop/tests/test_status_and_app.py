@@ -12,7 +12,8 @@ from uuid import uuid4
 
 import pytest
 
-from conftest import start_unlinked
+from conftest import start_unlinked, use_channel
+from scribe_desktop.install_layout import Channel
 from scribe_desktop.status import read_registration_status, run_self_test
 
 windows_only = pytest.mark.skipif(
@@ -620,6 +621,56 @@ class TestInstanceExclusion:
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
         assert app.default_instance_lock_path() == tmp_path / "ClinikoScribe" / "app.lock"
         assert not (tmp_path / "ClinikoScribe").exists()  # computing it creates nothing
+
+    # Installation plan Task 1.5 (D3): ONE guard across both channels.
+
+    @pytest.mark.parametrize("which", ["production", "dev"])
+    def test_both_channels_use_the_same_lock_file_and_mutex_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, which: Channel
+    ) -> None:
+        from scribe_desktop import app, install_layout
+
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        production_name = app._single_instance_mutex_name()
+        use_channel(monkeypatch, which)
+        assert app.default_instance_lock_path() == tmp_path / "ClinikoScribe" / "app.lock"
+        assert app._single_instance_mutex_name() == production_name
+        # ... while the channel's own data folder is the dev one in dev.
+        expected = "ClinikoScribe" if which == "production" else "ClinikoScribe-dev"
+        assert install_layout.data_root() == tmp_path / expected
+        assert not tmp_path.joinpath("ClinikoScribe").exists()
+
+    @pytest.mark.parametrize("first", ["production", "dev"])
+    @pytest.mark.parametrize("mutex", ["created", "foreign_or_failed"])
+    def test_whichever_channel_starts_first_excludes_the_other(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, first: Channel, mutex: str
+    ) -> None:
+        # Through the seam: the default lock path (LOCALAPPDATA redirected),
+        # one channel's instance holding it, the other channel's launch
+        # refused — with the mutex working, and with only the file deciding.
+        from scribe_desktop import app
+
+        second: Channel = "dev" if first == "production" else "production"
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        if mutex == "foreign_or_failed":
+            monkeypatch.setattr(app, "acquire_single_instance_lock", lambda name=None: (True, 0))
+        name = _unique_mutex_name()
+        use_channel(monkeypatch, first)
+        holder = app.acquire_instance_exclusion(name)
+        assert holder.state == "acquired"
+        try:
+            use_channel(monkeypatch, second)
+            assert app.acquire_instance_exclusion(name) == ("already_running", ())
+        finally:
+            app.release_instance_exclusion(holder)
+        after = app.acquire_instance_exclusion(name)
+        try:
+            assert after.state == "acquired"
+        finally:
+            app.release_instance_exclusion(after)
+        # Only the shared lock file was made in the production folder.
+        assert sorted(p.name for p in (tmp_path / "ClinikoScribe").iterdir()) == ["app.lock"]
+        assert not (tmp_path / "ClinikoScribe-dev").exists()
 
 
 @windows_only

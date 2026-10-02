@@ -30,7 +30,8 @@ What is pinned here:
   shows any other error as ``CUSTODY_UNEXPECTED_REASON`` alone (round 49
   PR-LOW-044: never its message or type).
 - ``write_control`` (Task 5.2, the Note tab's ``_write_ready``) takes its
-  standing reasons in order — not saved, unlinked, mock, then the record —
+  standing reasons in order — not saved, unlinked, mock, then the record,
+  then (dev channel only, ``test_dev_write_guard.py``) the dev write guard —
   and ``write_record_block`` is the one record-status mapping the button and
   the main window's slot share.
 """
@@ -68,6 +69,12 @@ _EXPECTED = {
     "not_saved": "Save the note first.",
     "unlinked": "This recording is not linked to a Cliniko note. Copy the note instead.",
     "mock_note": "This note came from the test provider and cannot be written to a chart.",
+    # Installation plan Task 1.6 (D4).
+    "dev_build_writes_off": (
+        "Writing to Cliniko is off in this developer build. To allow it, tick \"Allow "
+        "Cliniko writes from this developer build\" on the Status tab, or copy the note "
+        "instead."
+    ),
     "check_failed": (
         "The note could not be checked with Cliniko just now ({reason}). Copy the note, or "
         "try again."
@@ -278,9 +285,11 @@ class TestUncertainPrefix:
 
     def test_every_copy_inviting_line_is_prefixed(self) -> None:
         """PR-MED-017's point: a line that suggests Copy must never stand
-        alone after an attempt whose outcome is open."""
+        alone after an attempt whose outcome is open. Any case: the dev
+        guard's line says "copy the note" mid-sentence (installation plan
+        Task 1.6)."""
         for key, template in models.WRITE_LINES.items():
-            if re.search(r"\bCopy\b", template):
+            if re.search(r"\bcopy\b", template, re.IGNORECASE):
                 assert key in models.WRITE_UNCERTAIN_PREFIXED, key
 
 
@@ -368,6 +377,8 @@ class TestWriteControl:
             "binding": self._BINDING,
             "mock": False,
             "status": WriteRecordStatus("none"),
+            "channel": "production",
+            "allow_dev_writes": False,
         }
         fields.update(overrides)
         return models.write_control(**fields)  # type: ignore[arg-type]

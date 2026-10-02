@@ -83,6 +83,7 @@ from pydantic import (
     model_validator,
 )
 
+from scribe_desktop import install_layout
 from scribe_desktop.benchmark import (
     assert_offline_env,
     default_models_root,
@@ -986,7 +987,7 @@ class WhisperSpeechProvider:
         if missing:
             raise TranscriptionModelError(
                 f"whisper model at {path} is missing {', '.join(missing)} - "
-                "run scripts/setup-models.py"
+                f"{install_layout.model_remedy()}"
             )
         self._np = _numpy()
         from faster_whisper import WhisperModel

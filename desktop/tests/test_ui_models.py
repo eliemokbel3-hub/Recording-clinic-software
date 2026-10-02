@@ -539,8 +539,8 @@ class TestAttributionReadiness:
         monkeypatch.setattr(models, "load_profile", lambda **k: usable)
         readiness = models.attribution_readiness(profile_root=tmp_path)
         assert readiness.profile_present and readiness.profile is None
-        assert readiness.reason == models.SPEAKER_MODEL_MISSING_REASON
-        assert "setup-models" in models.SPEAKER_MODEL_MISSING_REASON
+        assert readiness.reason == models.speaker_model_missing_reason()
+        assert "setup-models" in models.speaker_model_missing_reason()
 
     @pytest.mark.parametrize("reason", ["blob", "authentication"])
     def test_an_existing_unusable_blob_is_present_not_never_enrolled(
@@ -706,7 +706,7 @@ class TestPractitionerReportLines:
         monkeypatch.setattr(models, "speaker_embedder_available", lambda *a, **k: False)
         assert (
             models.voice_profile_report_line(profile_root=tmp_path)
-            == models.SPEAKER_MODEL_MISSING_REASON
+            == models.speaker_model_missing_reason()
         )
 
     @windows_only
@@ -1447,10 +1447,10 @@ class TestStyleOptions:
         assert options["verbatim"].reason is None
         assert options["clean"].reason is None
         own_voice = options["own_voice"].reason or ""
-        assert models.LANGUAGE_MODEL_ABSENT_REASON in own_voice
+        assert models.language_model_absent_reason() in own_voice
         assert models.STYLE_PROFILE_EMPTY_REASON in own_voice
         narrative = options["narrative"].reason or ""
-        assert models.LANGUAGE_MODEL_ABSENT_REASON in narrative
+        assert models.language_model_absent_reason() in narrative
         assert models.STYLE_PROFILE_EMPTY_REASON not in narrative
 
     def test_a_learned_style_without_the_model_leaves_only_the_model_clause(self) -> None:
@@ -1462,7 +1462,7 @@ class TestStyleOptions:
             False,
         )
         own_voice = options["own_voice"].reason or ""
-        assert models.LANGUAGE_MODEL_ABSENT_REASON in own_voice
+        assert models.language_model_absent_reason() in own_voice
         assert models.STYLE_PROFILE_EMPTY_REASON not in own_voice
 
     def test_the_model_without_a_learned_style_disables_own_voice_alone(self) -> None:
@@ -1489,7 +1489,7 @@ class TestStyleOptions:
         for style in ("own_voice", "narrative"):
             line = models.style_fallback_line(style) or ""
             assert models.STYLE_LABELS[style] in line
-            assert models.LANGUAGE_MODEL_ABSENT_REASON in line
+            assert models.language_model_absent_reason() in line
 
     def test_the_fallback_line_names_the_reasons_it_is_given(self) -> None:
         # Phase H round 24 MED-005.
@@ -1502,10 +1502,10 @@ class TestStyleOptions:
     def test_style_options_carry_their_bare_reasons(self) -> None:
         options = self._options(model=False, present=False)
         assert options["own_voice"].reasons == (
-            models.LANGUAGE_MODEL_ABSENT_REASON,
+            models.language_model_absent_reason(),
             models.STYLE_PROFILE_EMPTY_REASON,
         )
-        assert options["narrative"].reasons == (models.LANGUAGE_MODEL_ABSENT_REASON,)
+        assert options["narrative"].reasons == (models.language_model_absent_reason(),)
         assert options["clean"].reasons == ()
 
     def test_the_saved_style_round_trips_and_an_unreadable_file_names_itself(

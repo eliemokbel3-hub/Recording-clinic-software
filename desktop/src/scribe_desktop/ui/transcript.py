@@ -458,7 +458,7 @@ class TranscriptScreen(QWidget):
         """D2's visible fallback, independent of note generation: for a
         transcript that holds speech but carries no attribution, name why a
         present voice profile was not applied — the readiness probe's reason,
-        or ``ATTRIBUTION_DID_NOT_RUN_REASON`` when the probe sees nothing
+        or ``attribution_did_not_run_reason()`` when the probe sees nothing
         wrong (a model file that failed to LOAD in the worker). Shown on both
         entry points, whether or not generation controls exist; touches no
         Generate gate. Nothing is shown when no profile exists (the
@@ -472,7 +472,7 @@ class TranscriptScreen(QWidget):
         readiness = self._attribution_readiness_provider()
         if readiness.profile_present:
             self.attribution_status_label.setText(
-                readiness.reason or models.ATTRIBUTION_DID_NOT_RUN_REASON
+                readiness.reason or models.attribution_did_not_run_reason()
             )
             self.attribution_status_label.show()
 

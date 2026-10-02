@@ -3665,7 +3665,7 @@ class TestMainWindow:
         # stands in for the saved-on date; either is correct here.
         status = screen.profile_status_label.text()
         assert status.startswith("Voice profile saved") or (
-            status == models.SPEAKER_MODEL_MISSING_REASON
+            status == models.speaker_model_missing_reason()
         )
         window.close()
 
@@ -8426,7 +8426,7 @@ class TestTranscriptAutoConfirm:
     @pytest.mark.parametrize(
         "reason",
         [
-            models.SPEAKER_MODEL_MISSING_REASON,
+            models.speaker_model_missing_reason(),
             models.PROFILE_REENROL_REASON,
             models.PROFILE_UNUSABLE_REASON.format(reason="authentication"),
         ],
@@ -8451,7 +8451,7 @@ class TestTranscriptAutoConfirm:
     ) -> None:
         screen, _controller, _kwargs = self._screen(_note_document(), readiness=_readiness(True))
         assert screen.attribution_status_label.isVisibleTo(screen)
-        assert screen.attribution_status_label.text() == models.ATTRIBUTION_DID_NOT_RUN_REASON
+        assert screen.attribution_status_label.text() == models.attribution_did_not_run_reason()
         screen.deleteLater()
 
     def test_the_recovered_view_still_names_the_fallback(self, qapp: Any) -> None:
@@ -8483,7 +8483,7 @@ class TestTranscriptAutoConfirm:
         def broken() -> Any:
             raise NoteConfigError("template_profiles.json: field x is invalid")
 
-        reason = models.SPEAKER_MODEL_MISSING_REASON
+        reason = models.speaker_model_missing_reason()
         screen, _controller, _kwargs = self._screen(
             _note_document(), readiness=_readiness(True, reason), config_loader=broken
         )

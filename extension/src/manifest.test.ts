@@ -6,8 +6,10 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, test } from "vitest";
 
-import manifestExport from "./manifest";
+import { CHANNELS, buildDefines, channelForMode } from "./channel";
+import manifestExport, { manifestFor } from "./manifest";
 import { CLINIKO_MATCH, PANEL_PATH } from "./manifest-paths";
+import { HOST_NAME } from "./protocol";
 
 interface Manifest {
   key: string;
@@ -63,5 +65,54 @@ describe("manifest pin", () => {
 
   test("the pinned key still yields the registered extension id", () => {
     expect(extensionId(manifest.key)).toBe("mbmhglgadhdohpgbmpbjnaifjagfdfid");
+  });
+});
+
+// Installation plan Task 1.3: the build channels. The default export is the
+// release manifest (above); `--mode dev` builds manifestFor("dev").
+describe("build channels", () => {
+  const release = manifestFor("release") as unknown as Manifest & { name: string; action: { default_title: string } };
+  const dev = manifestFor("dev") as unknown as Manifest & { name: string; action: { default_title: string } };
+
+  test("the release manifest is the default export, name unchanged", () => {
+    expect(release).toEqual(manifest);
+    expect(release.name).toBe("Clinic Scribe Companion");
+    expect(release.action.default_title).toBe("Clinic Scribe Companion");
+  });
+
+  test("the dev key yields the dev extension id, never the release one", () => {
+    expect(extensionId(dev.key)).toBe("pecfiifdlmdbkifmjkbkeiaflpenfejd");
+    expect(extensionId(CHANNELS.dev.key)).toBe(CHANNELS.dev.extensionId);
+    expect(extensionId(CHANNELS.release.key)).toBe(CHANNELS.release.extensionId);
+    expect(CHANNELS.dev.extensionId).not.toBe(CHANNELS.release.extensionId);
+  });
+
+  test("the dev build is named as such and otherwise asks for exactly the same", () => {
+    expect(dev.name).toBe("Clinic Scribe Companion (dev)");
+    expect(dev.action.default_title).toBe("Clinic Scribe Companion (dev)");
+    const strip = (m: Manifest & { name: string; action: unknown }) => ({ ...m, key: "", name: "", action: "" });
+    expect(strip(dev)).toEqual(strip(release));
+  });
+
+  test("each channel has its own host name and output folder", () => {
+    expect(CHANNELS.release.hostName).toBe("com.scribe.cliniko_host");
+    expect(CHANNELS.dev.hostName).toBe("com.scribe.cliniko_host_dev");
+    expect(CHANNELS.release.outDir).toBe("dist");
+    expect(CHANNELS.dev.outDir).toBe("dist-dev");
+    expect(buildDefines("release")).toEqual({ __SCRIBE_HOST_NAME__: '"com.scribe.cliniko_host"' });
+    expect(buildDefines("dev")).toEqual({ __SCRIBE_HOST_NAME__: '"com.scribe.cliniko_host_dev"' });
+  });
+
+  test("the build mode picks the channel; the default is release and anything else is refused", () => {
+    expect(channelForMode("production")).toBe("release");
+    expect(channelForMode("release")).toBe("release");
+    expect(channelForMode("dev")).toBe("dev");
+    for (const mode of ["development", "Dev", "", "test", "staging"]) {
+      expect(() => channelForMode(mode)).toThrow(/unknown build mode/);
+    }
+  });
+
+  test("the tests run against the release host name (D2)", () => {
+    expect(HOST_NAME).toBe(CHANNELS.release.hostName);
   });
 });
