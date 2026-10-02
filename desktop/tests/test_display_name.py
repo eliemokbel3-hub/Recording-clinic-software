@@ -64,7 +64,8 @@ def test_the_internal_identifiers_are_unchanged() -> None:
     # Installation plan Task 1.2: the registration script's install folder is
     # the data root (``install_layout``, the one place a ``ClinikoScribe``
     # path is built), whose production name is pinned here instead of the
-    # script's former literal.
+    # script's former literal; since Task 3.7 it is the DEV channel's root,
+    # named outright (the script is dev-only).
     assert install_layout.APP_FOLDER_NAME == "ClinikoScribe"
     register = (REPO / "scripts" / "register-native-host.py").read_text(encoding="utf-8")
-    assert "INSTALL_DIR = install_layout.data_root()" in register
+    assert 'INSTALL_DIR = install_layout.data_root("dev")' in register

@@ -11,3 +11,9 @@
 # The installer parses this file and verifies every extracted payload
 # against the byte counts and hashes embedded in it.
 bootstrap.md text eol=lf
+
+# Installation plan Task 3.3: the model pack ships this file and the
+# committed packaging/models-manifest.json pins its SHA-256, so its bytes must
+# be the same on every checkout (the practitioner's and the CI runner's).
+packaging/speaker-model-ATTRIBUTION.txt text eol=lf
+packaging/models-manifest.json text eol=lf

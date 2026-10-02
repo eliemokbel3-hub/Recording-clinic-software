@@ -53,8 +53,15 @@ is checked but never trusted as an allocation bound); the candidate is
 promoted to ``<name>.gguf`` only after its size AND SHA-256 match the pin. A
 run without ``--only`` includes it.
 
+``--root DIR`` (installation plan Task 3.3) stages the downloads into DIR
+instead - for the release model pack, the gitignored ``build\\models`` of this
+checkout - and never touches %LOCALAPPDATA%: no folder there is created, read
+or written when ``--root`` is given. The pack needs four entries, one run
+each: ``--only silero-vad``, ``--only medium``, ``--only speaker-embedding``
+and ``--only language-model``.
+
 Usage:
-    .venv\\Scripts\\python.exe scripts\\setup-models.py [--only NAME]
+    .venv\\Scripts\\python.exe scripts\\setup-models.py [--only NAME] [--root DIR]
 """
 
 from __future__ import annotations
@@ -600,6 +607,13 @@ def main(argv: list[str] | None = None) -> int:
         help="https URL of the speaker-embedding CANDIDATE (only with --only "
         "speaker-embedding, only while the entry is unpinned)",
     )
+    parser.add_argument(
+        "--root",
+        type=Path,
+        metavar="DIR",
+        help="stage into DIR instead of this checkout's models folder (the release "
+        "model pack's build\\models); %%LOCALAPPDATA%% is then never touched",
+    )
     args = parser.parse_args(argv)
 
     valid_only = valid_only_names()
@@ -611,7 +625,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.candidate_url is not None and args.only != "speaker-embedding":
         parser.error("--candidate-url is only meaningful with --only speaker-embedding")
 
-    root = models_root()
+    # Task 3.3: with --root, the default root is never computed, so nothing
+    # under %LOCALAPPDATA% is created, read or written.
+    root = args.root.resolve() if args.root is not None else models_root()
     root.mkdir(parents=True, exist_ok=True)
     print(f"Model cache: {root}")
 

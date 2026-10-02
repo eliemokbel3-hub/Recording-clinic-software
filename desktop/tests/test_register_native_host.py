@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions
+from scribe_desktop import exclusions, identity, install_layout
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -178,6 +178,14 @@ def _install_under(
     monkeypatch.setattr(script, "MANIFEST_PATH", install / "host.json")
     monkeypatch.setattr(script, "INSTALLED_EXE", install / "scribe-host.exe")
     monkeypatch.setattr(script, "LEGACY_ARTIFACTS", ())
+    # Task 3.7: the stray production registration's files, under tmp_path
+    # (the real ones are computed from the real LOCALAPPDATA at load).
+    production = tmp_path / "production"
+    monkeypatch.setattr(
+        script,
+        "STRAY_PRODUCTION_FILES",
+        (production / "com.scribe.cliniko_host.json", production / "scribe-host.exe"),
+    )
     monkeypatch.setattr(script, "venv_executable", lambda: venv / "scribe-host.exe")
     monkeypatch.setitem(sys.modules, "winreg", registry)
 
@@ -226,6 +234,102 @@ def test_unregister_removes_the_exclusions_too(
     for name in _NAMES:
         assert f"WER exclusion {name}" in out
     assert registry.keys[_KEY] == {}
+
+
+# --- Task 3.7: dev-only, the stray production link, WinError 32 ----------------------
+
+
+def test_the_script_registers_the_dev_channel_whatever_the_pin(script: ModuleType) -> None:
+    """The tests run pinned to production (conftest); the script still names
+    the dev host, origin, key and data folder — outright, not by channel."""
+    assert install_layout.channel() == "production"
+    assert script.HOST_NAME == identity.DEV_HOST_NAME
+    assert script.ALLOWED_ORIGIN == identity.expected_origin("dev")
+    assert script.REGISTRY_KEY == identity.registry_key("dev")
+    assert script.INSTALL_DIR.name == install_layout.DEV_FOLDER_NAME
+    assert script.STRAY_PRODUCTION_KEY == identity.REGISTRY_KEY
+
+
+def test_unregister_removes_a_stray_production_link_and_only_its_two_files(
+    script: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = FakeWinreg()
+    _install_under(script, tmp_path, monkeypatch, registry)
+    registry.keys[identity.REGISTRY_KEY] = {"": (r"C:\old\host.json", FakeWinreg.REG_SZ)}
+    production = tmp_path / "production"
+    production.mkdir()
+    for name in ("com.scribe.cliniko_host.json", "scribe-host.exe", "app.lock", "clinics.json"):
+        (production / name).write_bytes(b"x")
+    assert script.unregister() == 0
+    assert identity.REGISTRY_KEY not in registry.keys
+    assert sorted(p.name for p in production.iterdir()) == ["app.lock", "clinics.json"]
+    assert set(registry.roots) == {"HKCU"}  # the installed HKLM link is never touched
+    assert f"HKCU\\{identity.REGISTRY_KEY}" in capsys.readouterr().out
+
+
+def _in_use_error() -> PermissionError:
+    error = PermissionError(13, "The process cannot access the file")
+    error.winerror = 32  # type: ignore[attr-defined]  # ERROR_SHARING_VIOLATION
+    return error
+
+
+def test_register_says_close_chrome_when_the_host_is_held(
+    script: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = FakeWinreg()
+    _install_under(script, tmp_path, monkeypatch, registry)
+
+    def held(*args: object, **kwargs: object) -> None:
+        raise _in_use_error()
+
+    monkeypatch.setattr(script.shutil, "copy2", held)
+    assert script.register() == 1
+    assert (
+        "Close Clinic Scribe and Chrome completely, then run this again."
+        in capsys.readouterr().err
+    )
+    assert registry.keys == {}  # nothing registered
+
+
+def test_unregister_says_close_chrome_when_a_file_is_held(
+    script: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    registry = FakeWinreg()
+    _install_under(script, tmp_path, monkeypatch, registry)
+    assert script.register() == 0
+    capsys.readouterr()
+    original = Path.unlink
+
+    def unlink(self: Path, missing_ok: bool = False) -> None:
+        if self.name == "scribe-host.exe":
+            raise _in_use_error()
+        original(self, missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert script.unregister() == 1
+    assert "Close Clinic Scribe and Chrome completely" in capsys.readouterr().err
+
+
+def test_another_os_error_is_not_mistaken_for_in_use(
+    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _install_under(script, tmp_path, monkeypatch, FakeWinreg())
+
+    def denied(*args: object, **kwargs: object) -> None:
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(script.shutil, "copy2", denied)
+    with pytest.raises(PermissionError):
+        script.register()
 
 
 def test_the_docs_say_an_agent_shell_proves_nothing(

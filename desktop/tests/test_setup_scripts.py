@@ -272,6 +272,59 @@ class TestSetupModelsCli:
         assert "[skip] speaker-embedding" in out and "--only speaker-embedding" in out
         assert not (tmp_path / "speaker-embedding").exists()
 
+    @pytest.mark.parametrize(
+        ("only", "fetched"),
+        [
+            ("silero-vad", "silero"),
+            ("medium", "whisper/medium"),
+            ("speaker-embedding", "speaker"),
+            ("language-model", "language-model"),
+        ],
+    )
+    def test_root_stages_there_and_never_touches_localappdata(
+        self,
+        setup_models: ModuleType,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        only: str,
+        fetched: str,
+    ) -> None:
+        """Installation plan Task 3.3: ``--root`` is where every fetch lands,
+        and the default root is never even computed — so no folder under an
+        (injected) ``LOCALAPPDATA`` appears."""
+        local = tmp_path / "Local"
+        local.mkdir()
+        monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+        def _boom() -> Path:
+            raise AssertionError("the default models root was computed under --root")
+
+        monkeypatch.setattr(setup_models, "models_root", _boom)
+        calls: list[tuple[str, Path]] = []
+        monkeypatch.setattr(
+            setup_models, "fetch_silero_vad", lambda root: calls.append(("silero", root))
+        )
+        monkeypatch.setattr(
+            setup_models,
+            "fetch_whisper",
+            lambda root, name, repo, rev: calls.append((f"whisper/{name}", root)),
+        )
+        monkeypatch.setattr(
+            setup_models,
+            "fetch_speaker_embedding",
+            lambda root, **kw: calls.append(("speaker", root)),
+        )
+        monkeypatch.setattr(
+            setup_models,
+            "fetch_language_model",
+            lambda root: calls.append(("language-model", root)),
+        )
+        staged = tmp_path / "build" / "models"
+        assert setup_models.main(["--only", only, "--root", str(staged)]) == 0
+        assert calls == [(fetched, staged.resolve())]
+        assert staged.is_dir()
+        assert list(local.iterdir()) == []
+
     def test_default_run_includes_the_entry_under_the_shipped_pin(
         self,
         setup_models: ModuleType,

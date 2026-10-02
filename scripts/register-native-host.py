@@ -1,11 +1,27 @@
-r"""Register (or unregister) the Chrome native-messaging host — plan Step 6.
+r"""Register (or unregister) the DEV channel's Chrome native-messaging host —
+plan Step 6; dev-only since installation plan Task 3.7.
 
 Installs the native-messaging registration into the source checkout's data
-folder, %LOCALAPPDATA%\ClinikoScribe-dev (installation plan Task 1.4: a source
-run is the dev channel, registered under the dev host name
-`com.scribe.cliniko_host_dev` for the dev extension): a copy of the venv's
-`scribe-host.exe` plus the host manifest, then writes and verifies the HKCU
-registry value. Rerun after any venv move; registration is per Windows user.
+folder, %LOCALAPPDATA%\ClinikoScribe-dev, ALWAYS the dev channel (installation
+plan Tasks 1.4 and 3.7): the dev host name `com.scribe.cliniko_host_dev` for
+the dev extension, a copy of the venv's `scribe-host.exe` plus the host
+manifest, then writes and verifies the HKCU registry value. The installed
+app's Chrome link is its installer's (HKLM), never this script's. Rerun after
+any venv move; registration is per Windows user.
+
+`--unregister` also removes what this script wrote before the installed app
+existed: a per-user `com.scribe.cliniko_host` key (it would shadow the
+installed link, D9) and that registration's two files in the production data
+folder (`com.scribe.cliniko_host.json` and `scribe-host.exe` — only those two
+files, never the folder or anything else in it). UNTIL THE APP IS INSTALLED
+that key and those files are the source-run app's own LIVE Chrome link (a
+checkout of `main` still registers the production name), so `--unregister`
+also unlinks it from Chrome: run it only as the installation's step (Phase P
+step 2) or when you mean to unlink that app; register it again from its own
+checkout to undo.
+
+A file Chrome or the app still holds (Windows error 32) stops the run with
+"Close Clinic Scribe and Chrome completely, then run this again".
 
 Two hard requirements learned at the Phase-1 gate, both of which fail SILENTLY
 (Chrome reports only "Specified native messaging host not found"):
@@ -58,16 +74,17 @@ from scribe_desktop.exclusions import (
 from scribe_desktop import identity, install_layout
 
 REPO = Path(__file__).resolve().parents[1]
-# Installation plan Task 1.4 (D3): the script runs from a source checkout, so
-# it registers the DEV channel — the dev host name, the dev extension's origin
-# and the dev data folder (%LOCALAPPDATA%\ClinikoScribe-dev). The installed
-# app's Chrome link is the installer's (HKLM), never this script's. The
-# identities come from the same accessors the host enforces.
-HOST_NAME = identity.host_name()
-ALLOWED_ORIGIN = identity.expected_origin()
-REGISTRY_KEY = identity.registry_key()
+# Installation plan Tasks 1.4 and 3.7 (D3): the DEV channel, named outright —
+# the dev host name, the dev extension's origin and the dev data folder
+# (%LOCALAPPDATA%\ClinikoScribe-dev), whatever channel the importing process
+# is pinned to. The installed app's Chrome link is the installer's (HKLM),
+# never this script's. The identities come from the same accessors the host
+# enforces.
+HOST_NAME = identity.host_name("dev")
+ALLOWED_ORIGIN = identity.expected_origin("dev")
+REGISTRY_KEY = identity.registry_key("dev")
 # Install target: space-free, stable, outside the repo (see module docstring).
-INSTALL_DIR = install_layout.data_root()
+INSTALL_DIR = install_layout.data_root("dev")
 MANIFEST_PATH = INSTALL_DIR / f"{HOST_NAME}.json"
 INSTALLED_EXE = INSTALL_DIR / "scribe-host.exe"
 
@@ -77,6 +94,24 @@ LEGACY_ARTIFACTS = (
     REPO / "scripts" / "dev-host-launcher.bat",
     REPO / "scripts" / f"{identity.HOST_NAME}.json",
 )
+
+# Task 3.7: what this script wrote before the installed app existed, removed
+# by --unregister — the per-user link under the PRODUCTION host name (it
+# would shadow the installed HKLM link, D9) and that registration's two files
+# in the production data folder.
+STRAY_PRODUCTION_KEY = identity.registry_key("production")
+STRAY_PRODUCTION_FILES = (
+    install_layout.data_root("production") / f"{identity.HOST_NAME}.json",
+    install_layout.data_root("production") / "scribe-host.exe",
+)
+
+# Windows' ERROR_SHARING_VIOLATION: Chrome (or the app) holds the file.
+_ERROR_SHARING_VIOLATION = 32
+IN_USE_LINE = "Close Clinic Scribe and Chrome completely, then run this again."
+
+
+def _in_use(exc: OSError) -> bool:
+    return getattr(exc, "winerror", None) == _ERROR_SHARING_VIOLATION
 
 
 def venv_executable() -> Path:
@@ -158,11 +193,19 @@ def register() -> int:
         return 1
 
     INSTALL_DIR.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source_exe, INSTALLED_EXE)
-    MANIFEST_PATH.write_text(json.dumps(generate_manifest(), indent=2) + "\n", encoding="utf-8")
-    for stale in LEGACY_ARTIFACTS:
-        if stale.exists():
-            stale.unlink()
+    try:
+        shutil.copy2(source_exe, INSTALLED_EXE)
+        MANIFEST_PATH.write_text(
+            json.dumps(generate_manifest(), indent=2) + "\n", encoding="utf-8"
+        )
+        for stale in LEGACY_ARTIFACTS:
+            if stale.exists():
+                stale.unlink()
+    except OSError as exc:
+        if not _in_use(exc):
+            raise
+        print(f"ERROR: {IN_USE_LINE}", file=sys.stderr)
+        return 1
 
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY) as key:
         winreg.SetValueEx(key, "", 0, winreg.REG_SZ, str(MANIFEST_PATH))
@@ -197,16 +240,26 @@ def unregister() -> int:
     import winreg
 
     removed = []
-    try:
-        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, REGISTRY_KEY)
-        removed.append(f"HKCU\\{REGISTRY_KEY}")
-    except FileNotFoundError:
-        pass
+    # Task 3.7: the dev key, and a stray per-user key under the production
+    # name (an HKCU key only — the installed HKLM link is never touched).
+    for key in (REGISTRY_KEY, STRAY_PRODUCTION_KEY):
+        try:
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key)
+            removed.append(f"HKCU\\{key}")
+        except FileNotFoundError:
+            pass
     removed.extend(f"WER exclusion {name}" for name in unregister_wer(winreg))
-    for path in (MANIFEST_PATH, INSTALLED_EXE, *LEGACY_ARTIFACTS):
-        if path.exists():
-            path.unlink()
-            removed.append(str(path))
+    for path in (MANIFEST_PATH, INSTALLED_EXE, *LEGACY_ARTIFACTS, *STRAY_PRODUCTION_FILES):
+        try:
+            if path.exists():
+                path.unlink()
+                removed.append(str(path))
+        except OSError as exc:
+            if not _in_use(exc):
+                raise
+            print("removed  : " + ("; ".join(removed) if removed else "nothing"))
+            print(f"ERROR: {IN_USE_LINE}", file=sys.stderr)
+            return 1
     print("removed  : " + ("; ".join(removed) if removed else "nothing (already clean)"))
     return 0
 
@@ -214,15 +267,19 @@ def unregister() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Register the Chrome native-messaging host and the three per-user "
-            "crash-report (WER) exclusions. Run it from a normal terminal: a run "
-            "or check from an agent shell proves nothing on this machine."
+            "Register the DEV channel's Chrome native-messaging host and the three "
+            "per-user crash-report (WER) exclusions (the installed app's link is its "
+            "installer's). Run it from a normal terminal: a run or check from an agent "
+            "shell proves nothing on this machine."
         )
     )
     parser.add_argument(
         "--unregister",
         action="store_true",
-        help="remove the registration, generated files and the three WER values",
+        help="remove the dev registration, its generated files and the three WER values, "
+        "plus the per-user link under the installed app's name and its two files - until "
+        "the app is installed, that is the source-run app's live Chrome link (Phase P "
+        "step 2 removes it on purpose)",
     )
     args = parser.parse_args()
     if sys.platform != "win32":

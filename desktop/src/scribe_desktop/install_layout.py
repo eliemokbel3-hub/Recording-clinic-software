@@ -67,6 +67,12 @@ INSTALL_ROOTS: Final[tuple[str, ...]] = (r"C:\Program Files\ClinikoScribe",)
 # developer's own, C8).
 BACKUP_VALUE_NAME: Final = APP_FOLDER_NAME
 
+# D5 / Task 3.5: the release model pack is a folder beside setup.exe named
+# after the production folder and the models manifest's digest
+# (``model_pack_name``); the installer looks for exactly that name.
+MODEL_PACK_INFIX: Final = "-models-"
+MODEL_PACK_DIGEST_CHARS: Final = 8
+
 # Task 1.7: what a packaged build tells the user when an installed file is
 # missing or damaged. The source-run commands are below, in the two remedies.
 FROZEN_REMEDY: Final = "reinstall Clinic Scribe"
@@ -116,11 +122,13 @@ def _data_root_from(local_app_data: str | None, of: Channel | None = None) -> Pa
     return Path(local_app_data or str(Path.home())) / folder_name(of)
 
 
-def data_root() -> Path:
+def data_root(of: Channel | None = None) -> Path:
     """``%LOCALAPPDATA%\\ClinikoScribe`` (production) or ``…\\ClinikoScribe-dev``
-    (dev); the home folder stands in for an unset or empty ``LOCALAPPDATA``.
-    Read on every call — never cached."""
-    return _data_root_from(os.environ.get("LOCALAPPDATA"))
+    (dev) — of channel ``of``, default this process's; the home folder stands
+    in for an unset or empty ``LOCALAPPDATA``. Read on every call — never
+    cached. ``of="dev"`` is what the dev-only registration script installs
+    into whatever the channel pin (Task 3.7)."""
+    return _data_root_from(os.environ.get("LOCALAPPDATA"), of)
 
 
 def app_data_root_via(layer: WindowsLayer) -> Path:
@@ -135,6 +143,16 @@ def backup_exclusion_patterns() -> tuple[str, ...]:
     (``BACKUP_VALUE_NAME``), written literally (Task 3.4)."""
     base = "$UserProfile$\\AppData\\Local\\" + APP_FOLDER_NAME
     return (f"{base}\\sessions\\* /s", f"{base}\\logs\\* /s")
+
+
+def model_pack_name(manifest_sha256: str) -> str:
+    """D5 / Task 3.5: the release model pack's folder name —
+    ``ClinikoScribe-models-<the manifest's SHA-256, first 8 hex>`` — so a pack
+    is tied to the one manifest its installer compiled in."""
+    digest = manifest_sha256.lower()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise ValueError("a model pack is named by a SHA-256 hex digest")
+    return f"{APP_FOLDER_NAME}{MODEL_PACK_INFIX}{digest[:MODEL_PACK_DIGEST_CHARS]}"
 
 
 def instance_guard_root() -> Path:
@@ -176,8 +194,9 @@ def install_root(accepted: Sequence[str] | None = None) -> Path | None:
 
 def outside_install_folder() -> InstallLayoutError | None:
     """Task 2.7: the refusal ``app.main`` and ``native_host.main`` check
-    FIRST — before logging, the single-instance guard, any data root and
-    any window. The ``InstallLayoutError`` when a packaged build is not
+    before logging, the single-instance guard, any data root and any window
+    (only ``app.main``'s build-audit self-check, Task 3.5, which touches none
+    of them, answers earlier). The ``InstallLayoutError`` when a packaged build is not
     running from an accepted install folder (``install_root``); ``None``
     for a source run or a packaged build where it belongs. Touches no data
     root."""
@@ -232,6 +251,8 @@ __all__ = [
     "FROZEN_REMEDY",
     "INSTALL_ROOTS",
     "MODELS_DIRNAME",
+    "MODEL_PACK_DIGEST_CHARS",
+    "MODEL_PACK_INFIX",
     "NOT_INSTALLED_LINE",
     "Channel",
     "InstallLayoutError",
@@ -246,6 +267,7 @@ __all__ = [
     "install_root",
     "instance_guard_root",
     "is_frozen",
+    "model_pack_name",
     "model_remedy",
     "models_root",
     "outside_install_folder",

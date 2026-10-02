@@ -17,6 +17,10 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Installation plan Task 3.3: the staged release models
+# (scripts/setup-models.py --root build/models) and other local build output
+/build/
+
 # Node / extension build
 node_modules/
 extension/dist/

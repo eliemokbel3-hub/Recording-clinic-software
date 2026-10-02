@@ -2,9 +2,11 @@
 
 The Phase-1 status window is now the Status tab of the multi-screen
 main window (microphone / session / recovery / transcript-inspection).
-Startup order (binding): a packaged build outside its install folder is
-refused first, and a packaged build's benchmark worker is dispatched next,
-before anything else runs (installation plan Tasks 2.7 and 2.1); then the
+Startup order (binding): the build audit's offline self-check, which touches
+nothing but this process's own environment, answers first (installation plan
+Task 3.5); a packaged build outside its install folder is refused next, and a
+packaged build's benchmark worker is dispatched after that, before anything
+else runs (Tasks 2.7 and 2.1); then the
 offline kill-switches set AND asserted before
 any ML code can run; then the single-instance guard — the per-user lock
 file every instance must hold, behind the named mutex's friendly "already
@@ -24,12 +26,13 @@ from __future__ import annotations
 
 import ctypes
 import getpass
+import importlib.util
 import logging
 import sys
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, Final, NamedTuple
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
@@ -538,12 +541,59 @@ def _start_chrome_link(window: MainWindow, logger: logging.Logger) -> PipeServer
     return server
 
 
+# Installation plan Task 3.5: the build audit's check that the packaged app
+# sets up its own offline environment (``scripts/build-release.py --audit``
+# runs ``scribe-app.exe --self-check-offline`` with every variable set wrong
+# and needs exit 0). Exit-code only: a windowed build has no console.
+SELF_CHECK_FLAG: Final = "--self-check-offline"
+SELF_CHECK_OK: Final = 0
+SELF_CHECK_OFFLINE_ENV: Final = 1
+SELF_CHECK_QT_NETWORK: Final = 2
+_QT_NETWORK_MODULES: Final = ("PySide6.QtNetwork", "PySide6.QtWebSockets")
+
+
+def run_offline_self_check(
+    argv: Sequence[str], find_spec: Callable[[str], Any] | None = None
+) -> int | None:
+    """``app.main``'s first step: when ``argv`` is EXACTLY the program and
+    ``SELF_CHECK_FLAG``, apply and assert the offline environment exactly as a
+    start does, then check no Qt networking module can be found — and return
+    the exit code (``SELF_CHECK_*``). Otherwise ``None``: not the check, and
+    the arguments are ignored. It opens no window, writes no log and reads no
+    data root, so it may run before the install-folder check (an audit runs
+    the bundle where it was built, never from the install folder)."""
+    if list(argv[1:]) != [SELF_CHECK_FLAG]:
+        return None
+    try:
+        apply_offline_env()
+        assert_offline_env()
+    except Exception:  # noqa: BLE001 - exit code only, by design
+        return SELF_CHECK_OFFLINE_ENV
+    finder = find_spec if find_spec is not None else importlib.util.find_spec
+    for module in _QT_NETWORK_MODULES:
+        try:
+            found = finder(module) is not None
+        except Exception:  # noqa: BLE001 - a broken parent package is not "absent"
+            found = True
+        if found:
+            return SELF_CHECK_QT_NETWORK
+    return SELF_CHECK_OK
+
+
 def _show_not_installed_warning() -> None:
     box = QMessageBox(QMessageBox.Icon.Warning, "Clinic Scribe", install_layout.NOT_INSTALLED_LINE)
     box.exec()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    arguments = sys.argv if argv is None else argv
+    # Installation plan Task 3.5: the build audit's offline self-check. It
+    # touches only this process's environment (no log, no window, no data
+    # root), so it answers before the install-folder check below, which an
+    # audit of a fresh bundle would otherwise always meet.
+    self_check = run_offline_self_check(arguments)
+    if self_check is not None:
+        return self_check
     # Installation plan Task 2.7: a packaged build copied anywhere but its
     # install folder never starts — checked before logging, the guard, every
     # data root and the window. One type-name line to stderr (when there is
@@ -563,7 +613,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     # spawned by `benchmark.run_all` — runs before logging (it never opens
     # the app's log), the guard and `QApplication`. Any other arguments are
     # ignored, as they always were.
-    worker = run_benchmark_worker(sys.argv if argv is None else argv)
+    worker = run_benchmark_worker(arguments)
     if worker is not None:
         return worker
     logger = setup_logging("scribe-app")

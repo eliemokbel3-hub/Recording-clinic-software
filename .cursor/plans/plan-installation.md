@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `54%`
+**Overall Progress:** `59%`
 
 ## Lifecycle State
 - Active
@@ -768,9 +768,194 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
   - **Then:** the composer decides whether a confirmation round is owed for a two-clause docstring fix, then the Phase 2 commit.
   - **The one open item:** Task 2.6's practitioner step.
   - **Not touched:** source code, the extension, `scripts/`, `docs/`, git refs and the main checkout.
-- Last plan sync: 2026-10-03T02:31:49+10:00
+- **EXECUTOR stage-3 leg i3-x1 (2026-10-03T03:11:20+10:00) — Phase 3 (Tasks 3.1–3.9) BUILT in the worktree `C:\scribe-build`; every task 🟨; ruff clean, mypy clean (58 source files):** each task's "Leg i3-x1" note carries its detail, interpretation calls and practitioner step.
+  - **New:**
+    - `scripts/lock-build-requirements.py` (3.1)
+    - `packaging/scribe.spec`, `packaging/entry_app.py`, `packaging/entry_host.py` (3.2)
+    - `packaging/speaker-model-ATTRIBUTION.txt` (3.3, D-I2)
+    - `scripts/build-release.py` (3.3 and 3.5)
+    - `packaging/scribe.iss` (3.4)
+    - `.github/workflows/release.yml` (3.6)
+    - `scripts/check-installed-sockets.py` (3.8)
+    - `docs/release/pilot-builds.md` (3.9)
+    - tests: `test_build_lock.py`, `test_build_spec.py`, `test_build_release.py`, `test_installer_script.py`, `test_release_workflow.py`, `test_check_installed_sockets.py`
+  - **Changed:**
+    - `install_layout.py`: `data_root(of=)`, plus `model_pack_name` and its two constants.
+    - `app.py`: `--self-check-offline` (3.2), dispatched FIRST in `main`, before Task 2.7's install-folder check.
+    - `scripts/register-native-host.py`: dev-only (3.7).
+    - `scripts/setup-models.py`: `--root` (3.3).
+    - `.gitattributes`: `eol=lf` for the attribution notice and `packaging/models-manifest.json`.
+    - `.gitignore`: `/build/`.
+    - Their tests: `test_register_native_host.py`, `test_install_layout.py`, `test_display_name.py`, `test_setup_scripts.py`, `test_frozen_runtime.py`.
+  - **Composer to run:** the full desktop suite and the extension `npm run qa`.
+    - The baseline is 5559 passed / 20 skipped. Expected about **+159 passed / +3 skipped**, roughly 5718 / 23; the count is estimated, not exact.
+    - The extension is unchanged, so `npm run qa` should be 13 files / 313 tests.
+    - The three new skips are named:
+      - the committed lock (`_LOCK_ABSENT`, Task 3.1);
+      - the committed model manifest (`_MANIFEST_ABSENT`, Task 3.3);
+      - the workflow's commit pins (`PIN-REQUIRED`, Task 3.6).
+    - Markers go 🟩 only on that green suite, and only for tasks whose Done needs no practitioner step: 3.7 and 3.9.
+  - **Interpretation calls** (each recorded on its task):
+    - PyInstaller is pinned by source commit, not in the hashed lock (D1).
+    - The offline self-check runs before Task 2.7's check, so a scratch-run bundle can answer it.
+    - `model_pack_name` lives in `install_layout`, because of the source scan.
+    - The policy's untick removal uses Inno's previous data. Residue: the uninstall log can still remove a foreign policy written later.
+    - The WMI running-process check fails closed.
+    - The installer refuses any `{app}` other than D-I1.
+    - Bundle trims are evidence-based: `huggingface_hub` and `av` are kept, since faster_whisper imports them at module level.
+    - The Qt network filter is broadened past the spike's two prefixes, to `Qt6NetworkAuth` and `Qt6QmlNetwork`.
+    - `windows-2025` instead of `windows-latest`.
+    - Every action beyond `ci.yml`'s three is commit-pinned.
+  - **PRACTITIONER/COMPOSER STEPS** (none can run from this shell; exact commands are on each task):
+    1. 3.1: generate and commit `desktop/requirements-build.txt` from the worktree `.venv`'s freeze (network; the exact commands are on Task 3.1).
+    2. 3.3: `--write-manifest` over the dev models root, then commit `packaging/models-manifest.json`. This needs the models, so Task 2.6 comes first.
+    3. 3.4: the ISCC 6.7.3 compile check.
+    4. 3.2: the bundle gate (self-check and trims) on a build from `venv-build`.
+    5. 3.5: the full local build plus `--model-pack`.
+    6. 3.6: the two action SHAs, the Inno installer SHA-256 and its URL, push `main`, dispatch, `gh attestation verify`. Remote-affecting, so it is the practitioner's call.
+    7. 3.8: run in P.1.
+    - Task 2.6 (the dev-models copy) is still open.
+  - **Open (not decided here):**
+    - Inno Setup's "Non-commercial use only" licence notice.
+    - The Inno version pin: built to the recommendation, 6.7.3 on both sides (`INNO_VERSION`, release.yml). CI's preinstalled 6.7.1 is therefore not used.
+  - **H.1 doc items to add (not changed here, by the brief):**
+    - data-flow flow 9: the lock generation, the PyInstaller clone and CI's Inno download as setup/build-time network;
+    - threat-model installation residues: the policy untick, WMI fail-closed, the self-check ordering, and the register script's one production-folder delete (C8 migration);
+    - `scripts/README.md`: the four new scripts and the dev-only register;
+    - AGENTS.md: the release steps;
+    - the retention schedule: the model pack, `SHA256SUMS.txt` and `build/`.
+  - **Not touched:** the extension, `ci.yml`, git refs, private keys and the main checkout.
+- **EXECUTOR stage-3 leg i3-x2 (2026-10-03T03:21:04+10:00) — composer suite 1's 8 failures fixed at their roots, each as a class; ruff clean, mypy clean (58 source files); every Phase 3 task stays 🟨:**
+  - **Root 1, the bound default (5 failures; C6):**
+    - The failures: `TestStageOne` ×3 (the clean environment, preflight `out`, preflight `commit`) and `TestTheInstallerCompile` ×2.
+    - The cause: `build-release.py`'s `load_manifest(path=MANIFEST_PATH)` bound the REAL repo path at definition, so the `build_inputs` fixture's stand-in never reached it. Every reader died on the absent practitioner artefact. The `manifest` refusal passed only because the real file is absent.
+    - The fix: the default resolves at CALL time.
+    - Class guards:
+      - `TestNoRepoArtefactIsRead`: the reader follows the stand-in, present and absent;
+      - an AST scan of `build-release.py` and `lock-build-requirements.py`: no function binds an UPPER-CASE module constant as a default (it is clean today).
+    - The lock already resolved at call time, and the lock script has no bound path defaults.
+  - **Root 2, spelling pins in place of semantic surfaces (3 failures):**
+    - **`test_installer_script.py`:**
+      - D8 now pins the launch surface: no `[Run]` or `[UninstallRun]`, no `postinstall` or `runasoriginaluser` flag on any entry, no process-starting call in `[Code]`. A companion proves the check is not vacuous.
+      - The policy entry is matched by its `#define`-expanded key.
+      - `_code()` splits at the header line.
+      - `scribe.iss` is unchanged.
+    - **`test_release_workflow.py`:**
+      - The pins read the workflow with full-line comments removed (`BODY`), and each step is found by its own first line (`_step`). The old slice started at the header comment's "Install Inno Setup", which is why the hash pin was not found.
+      - The hash pin now also checks the order: refuse, then download, then compare.
+      - New: the comment can never be taken for the step.
+      - **Also fixed, the same class but latent:** the commit-pin test's skip condition read `TEXT`, whose header comment mentions PIN-REQUIRED. It would have skipped forever after the real pins land; it now reads `BODY`.
+      - `release.yml` is unchanged.
+  - **Recorded on Task 3.4:** the composer's ISCC 6.7.3 compile check PASSED, and the practitioner is to delete `C:\scribe-iss-check`.
+  - **Composer to run:** the full desktop suite. Expected **5723 passed / 23 skipped**: 5741 tests before, +5 new; the 3 named skips are unchanged. The extension is untouched, so suite 1's `npm run qa` (13 / 313) stands.
+  - **Then:** markers per leg i3-x1 (🟩 only for 3.7 and 3.9 on green), then `/review-loop` from round 18.
+  - **Not touched:** `scribe.iss`, `release.yml`, app source, the extension, git refs and the main checkout.
+- **EXECUTOR stage-3 leg i3-x3 (2026-10-03T03:32:20+10:00) — Phase 3 markers on composer suite 2, then `/review-loop` round 18 (loop round 1 of cap 3): 1 MED + 4 LOW, all Applied; ruff clean, mypy clean (58 source files):**
+  - **Markers:** on composer suite 2 (pytest 5723 passed / 23 skipped; `npm run qa` 13 / 313), Tasks 3.7 and 3.9 are 🟩: their Done needs no practitioner step.
+    - Tasks 3.1–3.6 and 3.8 stay 🟨, each with its remaining step named on the task: the lock (network), the manifest (Task 2.6's models first), the real PyInstaller and ISCC builds, the CI pins and run, and the P.1 socket run.
+    - Overall Progress is 23 of 39 task lines, 59%.
+  - **Round 18:** read every changed file in full; the composer's focus points (C2/C8, C3/D8, C4, C1, C6) all HOLD, with the evidence recorded in the round header.
+    - **MED-001:** `scribe.iss` now clears `{app}\_internal` and `{app}\extension` at every install, so an upgrade or rollback installs exactly the audited bundle.
+    - **LOW-001:** the register script's docs warn that, until Phase P, the production-named HKCU link is the everyday app's live one.
+    - **LOW-002:** `HOSTILE_ENV` is pinned equal to everything the app enforces.
+    - **LOW-003:** the pilot-builds doc says to compare hashes ignoring capitals.
+    - **LOW-004:** this plan's step 1 now names the right lock file and freeze source.
+    - Review History integrity: OK (18 + 18).
+  - **Composer to run:** the full desktop suite. Expected **5725 passed / 23 skipped** (+2 new tests: `test_an_upgrade_replaces_the_program_whole`, `test_every_variable_the_app_enforces_is_set_wrong`). The extension is untouched.
+    - **Optional but cheap:** re-run the Task 3.4 ISCC compile check, since `scribe.iss` changed (the same command; it last passed in suite 1).
+  - **Then:** `/review-loop` round 19 (loop round 2 of cap 3), the re-review, to convergence.
+  - **Open items, not convergence blockers:**
+    - the practitioner and network steps on Tasks 3.1–3.6 and 3.8;
+    - Task 2.6;
+    - the Inno licence notice and the 6.7.3 pin;
+    - deleting `C:\scribe-iss-check`.
+  - **Not touched:** app source, the extension, `release.yml`, `ci.yml`, git refs and the main checkout.
+- **EXECUTOR stage-3 leg i3-x4 (2026-10-03T03:41:41+10:00) — round 18 Closed on composer suite 3; `/review-loop` round 19 (loop round 2 of cap 3): 0 CRIT / 0 HIGH / 0 MED / 1 LOW, Applied; ruff clean, mypy clean (58 source files):**
+  - **Recorded:** the composer's ISCC 6.7.3 re-compile after MED-001 ("Successful compile (2.203 sec)") on Task 3.4. Round 18 is Closed.
+  - **Round 19:** a full re-review plus the post-fix regression check over round 18. No regression. One 🆕 LOW, applied: `build-release.py` now shows ISCC's own output when a compile is refused (`Completed.stderr`), with 2 new tests.
+  - **The loop CONVERGES** (no CRIT/HIGH/MED; 1 🆕 LOW fixed) once the composer's suite confirms the fix.
+  - **Composer to run:** the full desktop suite. Expected **5727 passed / 23 skipped** (+2: `test_a_refused_compile_shows_the_compilers_own_words`, `test_a_good_compile_prints_nothing_extra`). The extension and `scribe.iss` are untouched.
+  - **Then:** close round 19 and mark the phase's review CONVERGED (the next leg ends `reason=phase-complete`), then the Phase 3 commit.
+  - **Markers:** unchanged. 3.7 and 3.9 are 🟩; 3.1–3.6 and 3.8 stay 🟨 on their named practitioner, network or build steps; Overall Progress is 59%.
+  - **Open items, not convergence blockers:**
+    - those steps;
+    - Task 2.6;
+    - the Inno licence notice and the 6.7.3 pin;
+    - deleting `C:\scribe-iss-check`;
+    - the H.1 doc items listed in leg i3-x1.
+  - **Not touched:** app source, the extension, `scribe.iss`, `release.yml`, `ci.yml`, git refs and the main checkout.
+- **EXECUTOR stage-3 leg i3-x5 (2026-10-03T03:46:58+10:00) — round 19 Closed on composer suite 4 (ruff clean, mypy 58, pytest 5727 passed / 23 skipped); Phase 3 `/review-loop` CONVERGED at loop round 2 of cap 3 (rounds 18–19); plan-only leg, no code changed:**
+  - **Markers, unchanged and truthful:** 3.7 and 3.9 are 🟩. Overall Progress is 23 of 39 task lines (59%). The rest stay 🟨, each on a named step:
+    - 3.1: the practitioner generates and commits `desktop/requirements-build.txt` (network).
+    - 3.2: a real PyInstaller build passes `--audit`.
+    - 3.3: `--write-manifest` over the dev models, after Task 2.6; commit `packaging/models-manifest.json`.
+    - 3.4: installs in Phase P. It COMPILES with ISCC 6.7.3 already (twice).
+    - 3.5: the full local build plus `--model-pack`.
+    - 3.6: the two action SHAs, the Inno installer SHA-256 and URL, then push and dispatch on `main` and `gh attestation verify` (remote-affecting; the practitioner decides).
+    - 3.8: the P.1 step 10 socket run.
+    - 2.6 is still 🟨.
+  - **The 23 skips:** 9 directory-symlink variants, 11 real-ML legs (Task 2.6), and the 3 named artefact skips (lock 3.1, manifest 3.3, workflow pins 3.6). Each turns into a run when its artefact lands.
+  - **Open (not decided here):** Inno Setup's "Non-commercial use only" licence notice; the 6.7.3 pin (built to it on both sides); deleting `C:\scribe-iss-check`; the H.1 doc items listed in leg i3-x1.
+  - **Files for the composer's codex peer pass** (27 files, every Phase 3 change; source and its tests together):
+    - **Slice A, build and lock (11):**
+      - `scripts/build-release.py` and `desktop/tests/test_build_release.py`
+      - `scripts/lock-build-requirements.py` and `desktop/tests/test_build_lock.py`
+      - `packaging/scribe.spec`, `packaging/entry_app.py`, `packaging/entry_host.py` and `desktop/tests/test_build_spec.py`
+      - `packaging/speaker-model-ATTRIBUTION.txt`, `.gitattributes`, `.gitignore`
+    - **Slice B, installer, CI, release record and socket check (7):**
+      - `packaging/scribe.iss` and `desktop/tests/test_installer_script.py`
+      - `.github/workflows/release.yml` and `desktop/tests/test_release_workflow.py`
+      - `docs/release/pilot-builds.md`
+      - `scripts/check-installed-sockets.py` and `desktop/tests/test_check_installed_sockets.py`
+    - **Slice C, app, layout and the source-run scripts (9):**
+      - `desktop/src/scribe_desktop/app.py` (the self-check) and `desktop/tests/test_frozen_runtime.py`
+      - `desktop/src/scribe_desktop/install_layout.py` and `desktop/tests/test_install_layout.py`
+      - `scripts/register-native-host.py`, `desktop/tests/test_register_native_host.py` and `desktop/tests/test_display_name.py`
+      - `scripts/setup-models.py` and `desktop/tests/test_setup_scripts.py`
+    - **Peer focus worth naming:**
+      - C2/C8: `--unregister`'s two production files and its one HKCU key.
+      - C3/D8/C4: the installer's HKLM-only writes, no launch, `{app}`-only deletes (including round 18's unconditional `_internal` and `extension` clear).
+      - C1: the network at build time only, and the self-check opens nothing.
+      - C6: the tests read no artefact or host state; leg i3-x2's call-time defaults and comment-free pins.
+      - The interpretation calls on each task's leg i3-x1 note: PyInstaller pinned by commit (not in the lock), the self-check before Task 2.7's check, the policy's previous-data untick and its uninstall residue, WMI failing closed, `windows-2025`, and commit-pinned new actions.
+  - **Then:** the Phase 3 commit, after the composer's peer pass.
+  - **Not touched this leg:** any code, test, doc or script; git refs; the main checkout.
+- **EXECUTOR stage-3 leg i3-x7 (2026-10-03T04:05:03+10:00) — LEG 2 (/fix) of codex peer round 20 (pass stage-3.p1, peer_round 1 of cap 5): all 4 Applied with their siblings; ruff clean, mypy clean (58 source files); the round stays Open for codex confirmation round 21:**
+  - **PR-HIGH-001 (verified MED), `scripts/build-release.py`:**
+    - `preflight` `:589-599` refuses a PyInstaller source with any changed, untracked or IGNORED file (`git status --porcelain --untracked-files=all --ignored`), before waf, with a re-clone line (`PYINSTALLER_CLONE` `:84`).
+    - The sibling is RECORDED, not refused (D7, local builds are for spikes). `source_state` `:689` and `write_build_info` `:705` write `BUILD-INFO.txt` (commit, `tree=clean|DIRTY|unknown`), which is summed (`:740`), and `stage_two` prints it.
+  - **PR-HIGH-002 (verified MED), `scripts/build-release.py`:** standalone `--audit` returns 1 on `detected` (`:797-803`), with `DEFENDER_DETECTED` `:115` shared with `stage_two`'s refusal (`:738`).
+  - **PR-HIGH-003 (verified MED), `packaging/scribe.iss`:**
+    - `ModelFileMatches` `:179` is the one file test.
+    - `RemoveDamagedModels` `:214` checks EVERY copy, deletes each bad one and checks each delete.
+    - `ssPostInstall` `:324` sets `ModelsIncomplete`, and the Finish page `:341` says "NOT completely installed".
+    - **Sibling:** the policy removal moved to `ssInstall` `:313` and is checked with `RegValueExists` `:317`; `RegisterPreviousData` `:300` keeps it "ours" (`or PolicyLeft`), and the Finish page says it stayed (`:355`).
+    - **Assumption for P.3:** Inno writes the previous data after `ssInstall`.
+  - **PR-MED-018 (verified LOW), `desktop/tests/test_frozen_runtime.py:324`:** seamed. A fake `find_spec` stands in, and the test still pins the call-time default and exit 2.
+  - **Docs:** `docs/release/pilot-builds.md` (Commit) records only a `tree=clean` build.
+  - **Files changed (for the confirmation slice), 7:**
+    - `scripts/build-release.py`
+    - `packaging/scribe.iss`
+    - `desktop/tests/test_build_release.py`
+    - `desktop/tests/test_installer_script.py`
+    - `desktop/tests/test_frozen_runtime.py`
+    - `docs/release/pilot-builds.md`
+    - `.cursor/plans/plan-installation.md` (round 20 only, plus this bullet and the round-20 History line)
+  - **Composer to run:**
+    1. The full desktop suite. Expected **5742 passed / 23 skipped** (+15: `test_preflight_refusals` +3; `test_the_source_tree_is_checked_whole_before_waf` +1; `test_a_defender_detection_fails_the_audit_cli` +3; `test_the_source_state` +4; `test_the_build_writes_it_beside_the_setup_and_sums_it` +1; installer +3, one renamed; the frozen-runtime test renamed, 0).
+    2. The ISCC 6.7.3 compile re-check with the placeholder command, since `scribe.iss`'s `[Code]` changed.
+  - **Then:** codex confirmation round 21 over the 7 files above.
+  - **Not touched:** app source, the extension, `release.yml`, `ci.yml`, git refs and the main checkout.
+- **EXECUTOR stage-3 leg i3-x8 (2026-10-03T04:12:03+10:00) — composer suite 5 was RED with 1 failure (5741 passed / 23 skipped), a test-harness defect, now fixed as a class; ruff clean, mypy clean (58 source files):**
+  - **The failure:** `test_preflight_refusals[status fails-…]` got the commit refusal. The fake `_Runner` matched keys as substrings of the whole command line, and pytest's temporary folder for that case is named `…_status0`, so `git -C <that folder>\pyinstaller-src rev-parse HEAD` answered with the `status` key's exit 128.
+  - **The fix:** `desktop/tests/test_build_release.py` `_names` / `_Runner` now match a key against a command word, or the name and stem of its last path part, never part of a path. The new `test_the_fake_runner_matches_words_never_paths` guards it. `build-release.py` is UNCHANGED: a failing `git status` already refuses, fail-closed, after the commit check. Recorded under round 20 PR-HIGH-001 as a fix-delta correction.
+  - **Recorded:** the composer's ISCC 6.7.3 re-check of round 20's `scribe.iss` ("Successful compile (2.235 sec)") on Task 3.4.
+  - **Composer to run:** the full desktop suite. Expected **5743 passed / 23 skipped**: the 5742 expected before plus this leg's guard test.
+  - **Then:** codex confirmation round 21 over leg i3-x7's 7 files (this leg touched only `test_build_release.py` and the plan).
+  - **Not touched:** `build-release.py`, `scribe.iss`, app source, the extension, git refs and the main checkout.
+- Last plan sync: 2026-10-03T04:12:03+10:00
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
-- COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0 spikes; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 CLOSED and committed `9f43f8c` on `main` (2026-10-02T22:49). **From Phase 1 on the run builds in a git WORKTREE** — practitioner decision 2026-10-02 ~22:51: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install), and Phase 1 turns a source checkout into the dev channel, so Phases 1-3 build at `C:\scribe-build` on branch `installation-build` with its own `.venv` copy whose editable `.pth` points at `C:\scribe-build\desktop\src` (run mypy/pytest as `.venv/Scripts/python.exe -m …` there; the copied `mypy.exe` launcher still names the main venv's python). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges. Phase 1 (built by leg i1-x2, session 2c6ee9f4-c834-41e3-a814-f9ffeff0da77; session file copied to the `C--scribe-build` project dir for resume) was applied from `stash@{0}` into the worktree (the stash is kept as a backup until Phase 1 commits). `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. The branch merges to `main` only when the practitioner switches to the installed build (Phase P), never before. Next: composer-run Phase 1 suites in the worktree -> resume i1-x2 there for /review-loop -> codex peer pass -> Phase 1 commit on `installation-build`.
+- COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 committed `9f43f8c` on `main`. **From Phase 1 on the run builds in the git WORKTREE `C:\scribe-build` (branch `installation-build`)** — practitioner decision 2026-10-02: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install) and stays on `main` until Phase P. The worktree has its own `.venv` copy (editable `.pth` → `C:\scribe-build\desktop\src`; `scribe-app.exe`/`scribe-host.exe` launchers regenerated for it; run mypy/pytest as `.venv/Scripts/python.exe -m …`). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges, which happens only when the practitioner switches to the installed build. Phase 1 committed `a7337a2` (rounds 9–12), Phase 2 committed `7cfed96` (rounds 13–17) on `installation-build`. Phase 3 built and peer-converged (rounds 18–21), committed on `installation-build` by the composer at its close; its tasks stay 🟨 on their named practitioner/network/remote steps. Phase 2's Task 2.6 stays 🟨 until the practitioner fills `%LOCALAPPDATA%\ClinikoScribe-dev\models` and the composer re-runs the 11 real-ML legs. `stash@{0}` (the pre-worktree Phase 1 copy) is now redundant. `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. Peer passes run as file-scoped codex slices (`.cursor/loops/inst-peer-run-wt.sh`). Next: Phase H (stage-4).
 
 ## Review History
 - 2026-10-02 round 1: 0 CRIT / 0 HIGH / 3 MED / 0 LOW; skew=none; action=amend (codex gpt-6-astra medium plan peer-review; 3 build-affecting, all applied by the owning planning session)
@@ -790,6 +975,10 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-03 round 15: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=fix → both Applied with every enumerated sibling (4 docstring/comment sites in 3 test files, no code change), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-2.p1 peer_round 1 of cap 5, three file-scoped slices; LEG 1 leg i2-x5 verified both docs-only, test-harness, CONFIRMED; LEG 2 /fix leg i2-x6 2026-10-03T02:22:51+10:00 edited `test_frozen_runtime.py`, `test_language_model_runtime.py` and `test_speaker_embedding.py` docstrings/comments only)
 - 2026-10-03 round 16: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=fix-induced; action=fix → 1 Applied (two docstring clauses in `test_language_model_runtime.py`, no code change), round Closed pending the composer-run full desktop suite (codex gpt-6-astra medium, pass stage-2.p1 peer_round 2 of cap 5, confirmation of round 15; one docs-only LOW in round 15's own docstring fix; LEG 1 leg i2-x7 CONFIRMED, rec=Fix-now over the D9 Accept default; LEG 2 /fix leg i2-x8 2026-10-03T02:31:49+10:00)
 - 2026-10-03 round 17: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 16's PR-LOW-019 fix confirmed (codex gpt-6-astra medium, pass stage-2.p1 peer_round 3 of cap 5; peer pass CONVERGED, trajectory 2 → 1 → 0)
+- 2026-10-03 round 18: 0 CRIT / 0 HIGH / 1 MED / 4 LOW; skew=none; action=none → all 5 Applied (the installer's upgrade cleanup, a docstring, a test pin, a doc line, a plan line); round Closes on the composer-run full desktop suite (in-session /review-loop pass 1 over Phase 3, executor stage-3 leg i3-x3; 7 candidates, 2 dropped); Closed on composer suite 3 (pytest 5725 passed / 23 skipped; ISCC re-compile OK)
+- 2026-10-03 round 19: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=pre-existing; action=triage-and-ship → 1 Applied (ISCC's own output shown on a refused compile); no CRIT/HIGH/MED; Closed on composer suite 4 (pytest 5727 passed / 23 skipped); /review-loop CONVERGED at loop round 2 of cap 3 (in-session /review-loop pass 2, executor stage-3 leg i3-x4; 3 candidates, 2 dropped)
+- 2026-10-03 round 20: 0 CRIT / 3 HIGH / 1 MED / 0 LOW; skew=none; action=verify → codex gpt-6-astra medium, pass stage-3.p1 peer_round 1 of cap 5, three slices (A 2 HIGH, B 1 HIGH, C 1 MED); LEG 1 leg i3-x6 verified 3 MED (downgraded from HIGH) + 1 LOW test-harness, all CONFIRMED; LEG 2 /fix leg i3-x7 2026-10-03T04:05:03+10:00 → all 4 Applied with siblings (`build-release.py`, `scribe.iss`, three test modules, `pilot-builds.md`); the round closes on codex confirmation round 21
+- 2026-10-03 round 21: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 20's four fixes and siblings confirmed (codex gpt-6-astra medium, pass stage-3.p1 peer_round 2 of cap 5; peer pass CONVERGED, trajectory 4 → 0)
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -1820,6 +2009,241 @@ Fix-delta self-check: PASS. I re-read the 2 applied docstring hunks in `test_lan
 - Verification counts: 5 claims checked, 0 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-10-03
 
+### Round 18 - 2026-10-03 - Phase 3 (Tasks 3.1–3.9), in-session /review-loop pass 1 (executor stage-3 leg i3-x3)
+
+- Round status: Closed. All 5 were Applied by leg i3-x3 at 2026-10-03T03:31:53+10:00.
+  - Composer suite 3 is green: ruff clean, mypy 58 files, pytest 5725 passed / 23 skipped, exactly the expected +2.
+  - The ISCC 6.7.3 re-compile succeeded (2.203 s).
+  - Closed by executor leg i3-x4.
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high), sequential passes in this session: correctness/security, executor judgment, structural quality, post-fix regression, missed-issue, then finding verification.
+- Baseline: HEAD `7cfed96` (the Phase 2 commit, before any Phase 3 work) → `git diff HEAD` in `C:\scribe-build` plus the untracked Phase 3 files. Loop round 1 of cap 3.
+- **Changed files, all read in full:**
+  - Source: `install_layout.py` and `app.py` (diff hunks, with the surrounding functions).
+  - Scripts: `register-native-host.py`, `setup-models.py` (the `--root` hunks plus `models_root` and `fetch_whisper`), and the new `build-release.py`, `lock-build-requirements.py` and `check-installed-sockets.py`.
+  - Packaging: `scribe.spec`, `scribe.iss`, `entry_app.py`, `entry_host.py` and `speaker-model-ATTRIBUTION.txt`.
+  - CI and docs: `.github/workflows/release.yml`, `docs/release/pilot-builds.md`, `.gitattributes` and `.gitignore`.
+  - Tests: the six new modules, and the hunks of the five changed ones.
+  - The plan's own text is checked only where a finding cites it.
+- **No generated artefacts are in scope.** The lock, the models manifest and the bundle do not exist yet.
+- **Focus asked by the composer, each checked:**
+  - **C2/C8 — HOLDS:** `--unregister` deletes the dev key, ONE production-named HKCU key and exactly two named files. It never touches HKLM or the folder; the test asserts the registry roots touched are `{"HKCU"}` and that the folder's other files survive.
+  - **C3/D8 — HOLDS:** every `[Registry]` entry is `HKLM64`; there is no `{user*}` / `{localappdata}` constant and no `[Run]` / `[UninstallRun]` section; the only process query is WMI `ExecQuery`.
+  - **C4 — HOLDS:** `[InstallDelete]` / `[UninstallDelete]` name only `{app}\…` paths, and uninstall's message says the data stays.
+  - **C1 — HOLDS:** the network is used only at build and setup time — pip download, `npm ci`, the PyInstaller clone, CI's Inno download, and `setup-models --root`, which downloads into DIR (Hugging Face's default cache is the home folder, not `%LOCALAPPDATA%`). The app adds only the self-check, which opens nothing. `check-installed-sockets.py` uses `psutil`, already a runtime dependency (`pyproject.toml:16`).
+  - **C6 — HOLDS after leg i3-x2:** every new test reads fixtures or committed source; a grep for `LOCALAPPDATA` / `os.environ` / `sys.executable` / `subprocess` / `winreg` / `.venv` / `Path.home` across the six new modules finds only the `.iss` text pins.
+  - **Task 3.1's freeze source (verified, not assumed):** the worktree `.venv` holds `setuptools`, `packaging` and `pywin32-ctypes`, so `EXTRA_REQUIREMENTS` is pinnable from it.
+- Finding verification: 7 candidates; 2 dropped; 0 downgraded.
+  - **Dropped 1:** "the Defender scan's 'not run' lets a release pass". This is Task 3.5's chosen behaviour ("where one can run"), and the result is printed.
+  - **Dropped 2:** "the model checks hash ~4 GB twice at install, with no progress". This is the D5 design (verify before and after the copy); UX only.
+- Round classification: round 1 of this phase's loop, so skew=none.
+
+#### Findings
+
+**MED-001 — an upgrade or rollback leaves the previous build's program files in `{app}`, so the installed tree is not the audited bundle**
+
+- File: `packaging/scribe.iss:68-75` (`[InstallDelete]`, `[Files]`)
+- Triage: Fix-now
+- Fix route: fix-on-fast (one section of one script, plus its pin)
+- **Why it matters:**
+  - `[Files] Source: "{#DistDir}\*"; … recursesubdirs` copies over an existing `{app}`, but nothing removes what the previous build had and this one does not. An in-place upgrade (Task 0.3, P.3 step 1) and the rollback "reinstall N over N+1" (P.3 step 2) therefore leave a superset.
+  - The concrete risk: a dependency bump renames its `*.dist-info` folder, and then TWO metadata folders for one package sit in `_internal`. `keyring`'s Windows backend is found through that metadata (the spec's `copy_metadata("keyring")`), so its discovery can change after an upgrade.
+  - **More generally:** `build-release.py --audit` (no Qt networking file, the offline self-check) proves the BUILT bundle. The installed `_internal` must equal that bundle, or the audit's guarantee does not carry to the computer.
+  - The same applies to stale files in `{app}\extension`, the folder Chrome loads unpacked.
+- Current behaviour: `[InstallDelete]` clears only `{app}\models`, and only when the models need copying.
+- Desired behaviour: `[InstallDelete]` also clears `{app}\_internal` and `{app}\extension` unconditionally. This is safe because the running-process check has already refused while either program or Chrome runs, and the frozen app writes nothing under `{app}`. The folder's top-level files (the two programs and the host manifest) are replaced by name. `{app}\models` keeps its own rule.
+- Pattern to follow: the existing `{app}\models` "replaced whole" entry.
+- Pattern siblings: none found. Searched: `[InstallDelete]`, `[UninstallDelete]` and `[Files]` (`DestDir:`, `recursesubdirs`) in `scribe.iss`. The `{app}` root holds only the files named by the bundle; the models are covered.
+- Verification: `test_installer_script.py` pins both new entries (unconditional, `{app}`-relative), and the models entry is unchanged.
+- Regression risk: the uninstall log is unchanged (the files are logged by `[Files]`); C4 holds (`{app}` only).
+- /fix decision: Applied
+- /fix notes:
+  - **The change:** two unconditional `[InstallDelete]` entries, `{app}\_internal` and `{app}\extension`, placed before the models' conditional entry, with a comment giving the reason and the safety argument.
+  - **Tests:** the models test now selects its entry by name. The new `test_an_upgrade_replaces_the_program_whole` pins exactly the two unconditional entries and checks that the only conditional deletion is the models'.
+  - Task 3.4's note records it.
+  - The ISCC compile check still applies: `[InstallDelete]` uses the same syntax as the existing models entry.
+- /fix date: 2026-10-03T03:31:53+10:00
+- /fix applied by: Claude Code (executor stage-3 leg i3-x3)
+
+- **[LOW]** LOW-001: `scripts/register-native-host.py:15-19` (docstring) and its `--unregister` help — they call the production-named HKCU key "stray", but until Phase P that key is the EVERYDAY source-run app's live Chrome link (`main` still registers the production name). An `--unregister` run in this worktree to clean the dev registration would unlink the clinical app until it is re-registered — Triage: Fix-now; Decision: Applied.
+  - The docstring now says that until the app is installed, the key and files are the source-run app's LIVE link. It says to run `--unregister` only as Phase P step 2, or when you mean to unlink that app, and to re-register from its own checkout to undo.
+  - The help says the same in short form.
+  - The behaviour is Task 3.7's spec and is unchanged.
+- **[LOW]** LOW-002: `desktop/tests/test_build_release.py:356` — `HOSTILE_ENV` is a hand-kept copy of `benchmark.OFFLINE_ENV` + `FORBIDDEN_NATIVE_OVERRIDES` + `FORBIDDEN_TLS_OVERRIDES`, but the test pins only a three-name subset. A kill-switch added to the app would not be set wrong by the audit, so its self-check would not exercise it — Triage: Fix-now; Decision: Applied. The new `test_every_variable_the_app_enforces_is_set_wrong` pins the key set EQUAL to those three sources, every kill-switch's value to differ from its required one, and every override to be non-empty. `HOSTILE_ENV` is unchanged; it already matched.
+- **[LOW]** LOW-003: `docs/release/pilot-builds.md:37-43` — `Get-FileHash` prints the hash in CAPITALS while `SHA256SUMS.txt` (sha256sum format) is lower case. "The hash must equal" invites a false mismatch for a reader comparing by eye — Triage: Fix-now; Decision: Applied. The doc now says to compare the letters and digits, ignoring capitals.
+- **[LOW]** LOW-004: `.cursor/plans/plan-installation.md` (leg i3-x1 handoff bullet, practitioner step 1) — it names `desktop/requirements-build.lock`, but the file the generator writes, the tests read and Task 3.1 names is `desktop/requirements-build.txt` — Triage: Fix-now; Decision: Applied. The step now names `desktop/requirements-build.txt` and "the worktree `.venv`'s freeze", the source Task 3.1's own practitioner step uses (it had said `C:\scribe-spike\venv-build`), and points to Task 3.1 for the commands.
+
+Fix-delta self-check: PASS. I re-read the 5 applied hunks across `scribe.iss`, `register-native-host.py`, two test modules, the doc and the plan.
+- **`[InstallDelete]`:** the order is the program folders, then the models. Every `Name` is `{app}`-relative (C4's test still passes over all of them), and `_entry` parses the new lines to exactly the pinned dicts.
+- **The register script:** the help string names no `ClinikoScribe` spelling (Task 1.2's source scan) and no "Cliniko Scribe" (the display-name scan).
+- **The hostile-env test:** imports `benchmark` only inside the test.
+- **No drive-by edit.**
+- ruff clean; mypy clean (58 files). The pytest run is the composer's.
+
+### Round 19 - 2026-10-03 - Phase 3 (Tasks 3.1–3.9), in-session /review-loop pass 2 — re-review after round 18's fix (executor stage-3 leg i3-x4)
+
+- Round status: Closed. LOW-001 was Applied by leg i3-x4 at 2026-10-03T03:41:41+10:00.
+  - Composer suite 4 is green: ruff clean, mypy 58 files, pytest 5727 passed / 23 skipped, exactly the expected +2.
+  - Closed by executor leg i3-x5 at 2026-10-03T03:46:58+10:00.
+  - `/review-loop` CONVERGED here at loop round 2 of cap 3: no CRIT/HIGH/MED, and the one 🆕 LOW is fixed and verified.
+- Source: Claude Code
+- Reviewer: executor `claude-opus-5-5` (high), the full set of sequential passes again over the whole Phase 3 scope (not only the fix delta).
+- **Baselines:**
+  - Primary: HEAD `7cfed96` (as round 18) → `git diff HEAD` plus the untracked files.
+  - Regression: round 18's pre-`/fix` state, recorded in its entries.
+- **Read in full this round:**
+  - The three new test modules not read in full in round 18: `test_build_lock.py`, `test_build_spec.py` and `test_check_installed_sockets.py`.
+  - Every round-18 hunk and its neighbours: `scribe.iss` `[InstallDelete]`, the register script's docstring and help, the hostile-env test, and the pilot-builds doc.
+  - `build-release.py`'s run and compile paths.
+  - The rest as round 18.
+- **Post-fix regression (round 18):**
+  - MED-001's entries parse to the pinned dicts. C4 still holds (only `{app}` paths). The delete runs after `PrepareToInstall`'s refusal, and the ISCC re-compile passed.
+  - A cancelled upgrade after the program folders are cleared leaves an incomplete install, but Inno never restored overwritten files before this fix either, so a rerun of Setup was already the remedy. Not worse; noted, not a finding.
+  - LOW-001–004 changed only documentation and test pins. LOW-002's new test holds against the current `HOSTILE_ENV`.
+  - **No regression.**
+- **Verified, not assumed:** `INNO_BANNER` ("Compiler engine version: Inno Setup 6.7.3") is the wording the practitioner's real 6.7.3 compile printed (Task 0.3's result, recorded in the plan).
+- **Missed-issue pass:** I re-read `build-release.py` `_run`, `preflight`, `compile_installer` and `stage_two`; `release.yml`'s Inno step; `check-installed-sockets.py` `sample` / `watch`; and the three tests above. Result: LOW-001.
+- Finding verification: 3 candidates; 2 dropped; 0 downgraded.
+  - **Dropped 1:** "`release.yml`'s `cache: npm` can poison a release build". `npm ci` checks every package against the lock's integrity hashes, so a poisoned cache entry fails instead of building.
+  - **Dropped 2:** "`SHA256SUMS.txt` is written with Windows line endings, so `sha256sum -c` breaks". There is no evidence: whether the checker accepts CRLF was not established, and the documented check is `Get-FileHash`.
+- Round classification: 1 🆕 (pre-existing in the Phase 3 code, not made by round 18's fixes); 0 ⚡; 0 🔁. skew=pre-existing; action=triage-and-ship.
+
+#### Findings
+
+- **[LOW]** LOW-001: `scripts/build-release.py` `compile_installer` (and `_run`'s `Completed`) — ISCC runs with its output captured (for the 6.7.3 banner check), and a failed compile raised only "Inno Setup failed (exit N)". `Completed` kept stdout alone, and stderr, where a compiler error goes, was dropped, so a red CI or local build had no reason on screen — 🆕 — Triage: Fix-now; Decision: Applied.
+  - **The fix:** `Completed` carries `stderr`. When the compile fails, or the banner is not the pinned one, `compile_installer` writes ISCC's stdout and stderr to the build's stderr before refusing.
+  - The output is the build's own: paths and script lines, never a person's data.
+  - **Tests:** the fake runner gains `errors`. New: `test_a_refused_compile_shows_the_compilers_own_words` (exit 2 → the error line on stderr) and `test_a_good_compile_prints_nothing_extra`.
+  - **Siblings:** the one other captured call, preflight's `git rev-parse`, already refuses with its own specific line ("is not PyInstaller 6.22.3 at commit …"). Every other build step (pip, waf, PyInstaller, npm, the Defender scan) is not captured and streams to the console. Searched: `capture=True` and `capture_output` in `build-release.py`.
+
+Fix-delta self-check: PASS. I re-read the 3 hunks in `build-release.py` and the 2 test additions.
+- `Completed`'s new field has a default, so the existing constructions are unchanged.
+- The banner-mismatch path still deletes the output, after printing.
+- The good path prints nothing.
+- No drive-by edit.
+- ruff clean; mypy clean (58 files).
+
+### Round 20 - 2026-10-03 - Phase 3 (Tasks 3.1–3.9), independent cross-family codex peer review (pass stage-3.p1, peer_round 1 of cap 5; three file-scoped slices)
+
+- Round status: Closed (0 pending). All four (PR-HIGH-001–003 verified MED, PR-MED-018 verified LOW) and their siblings were Applied by leg i3-x7 (fix-delta correction to the test fake by leg i3-x8); composer suite 6 5743 passed / 23 skipped, ISCC 6.7.3 re-compile exit 0; confirmed by codex round 21 (0 findings).
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: the whole uncommitted Phase 3 diff in worktree `C:/scribe-build` (`git diff HEAD` + untracked new files), read in three slices — A build, lock and PyInstaller spec (11 files), B installer, release workflow, release record and socket check (7), C app self-check, install layout and the source-run scripts (9); composer transcription of the slice outputs (`.cursor/loops/stage-3-peer-r20{A,B,C}.log`), slice-local IDs `PR-HIGH-A01`/`A02`/`B01` and `PR-MED-C01` renumbered to the plan's counters (PR-HIGH-001–003, PR-MED-018).
+
+#### Findings
+- **PR-HIGH-001** (HIGH, behavioral, `scripts/build-release.py:570`): The PyInstaller pin verifies HEAD but accepts modified source files, allowing an unverified bootloader or packager into the release. — Evidence: `head = run(["git", "-C", pyinstaller_src, "rev-parse", "HEAD"], capture=True)` checks only the commit; lines 594 and 600 subsequently build and install that working tree. Recommendation: Fix-now — Verify source-tree integrity before executing it, including tracked changes and untracked build inputs; use a clean checkout of the pinned commit. /fix decision: Applied (as verified MED) — /fix notes:
+  - **The tree check:** `preflight` (`build-release.py:589-599`) now runs, after the commit check and before anything is built, `git -C <src> status --porcelain --untracked-files=all --ignored`. A failing status or ANY line refuses with "has local changes or extra files (an earlier build's among them); clone it again into an empty folder: `PYINSTALLER_CLONE`" (`:84`).
+    - `--ignored` catches an earlier waf build's ignored output.
+    - The check runs before waf, which rewrites the tracked `runw.exe`.
+  - **The repository-tree sibling: RECORDED, not refused.** D7 (`:360-362`) says local builds serve "spikes and the model pack", which may carry uncommitted work, and the build of record is CI's clean checkout.
+    - `source_state` (`:689`) returns this checkout's commit (or `unknown`) and `clean` / `DIRTY` / `unknown`.
+    - `write_build_info` (`:705`) writes `BUILD-INFO.txt` (version, commit, tree) beside the setup program BEFORE `SHA256SUMS.txt`, so it is summed (`:740`).
+    - `stage_two` prints `source   : <commit> (<tree>)`, plus a "never the build of record (D7)" warning when the tree is not clean.
+    - `docs/release/pilot-builds.md` now records only a build whose `BUILD-INFO.txt` says `tree=clean`.
+  - **Tests (`test_build_release.py`):**
+    - `test_preflight_refusals` gains `dirty`, `ignored` and `status fails`.
+    - `test_the_source_tree_is_checked_whole_before_waf` (`:672`): the exact status argv, on the source, BEFORE `./waf`, with the interpreter and platform injected (C6).
+    - `TestTheBuildRecord`: `test_the_source_state` (`:723`, 4 cases: clean, dirty, git failing, not a commit) and `test_the_build_writes_it_beside_the_setup_and_sums_it` (`:734`, a faked `stage_two`).
+  - /fix date: 2026-10-03T04:05:03+10:00 — /fix applied by: Claude Code (executor stage-3 leg i3-x7)
+  - **Fix-delta correction (leg i3-x8, 2026-10-03T04:12:03+10:00) — a TEST-HARNESS defect, the code unchanged:**
+    - **Symptom:** composer suite 5 failed one case, `test_preflight_refusals[status fails-…]`, with the COMMIT refusal.
+    - **Cause:** the fake `_Runner` matched each key as a SUBSTRING of the whole joined command line. pytest names the case's temporary folder `test_preflight_refusals_status0`, so the `rev-parse` call (`git -C …\test_preflight_refusals_status0\pyinstaller-src rev-parse HEAD`) also "contained" `status` and got its exit code 128.
+    - **Why `preflight` is right as written:** a failing `git status` refuses with "has local changes or extra files … clone it again", fail-closed, and it comes after the commit check. This is the chosen wording for "cannot verify the tree": a fresh clone is the remedy either way.
+    - **The fix, as a class:** `_Runner` now matches a key against each command WORD, or the name and stem of its last path part (`_names`: `ISCC` for `…\ISCC.exe`), and never against any part of a path. Every key the tests use is one of those: `--self-check-offline`, `powershell.exe`, `rev-parse`, `status` and `ISCC`.
+    - **Guard:** `test_the_fake_runner_matches_words_never_paths` pins this, including a key inside a folder name (`…_status0`, `C:\ISCC-builds`) not answering.
+    - **Siblings:** none. The search covered every test fake that matches on a joined line; `test_build_lock.py`'s fake indexes `--dest` by position.
+- **PR-HIGH-002** (HIGH, behavioral, `scripts/build-release.py:737`): Standalone `--audit` exits successfully when Defender detects a threat, allowing its documented integration gate to pass a detected bundle. — Evidence: `code = _print_failures("audit", audit_bundle(args.audit, run))`, followed by `print(f"defender : {defender_scan(args.audit, run)}")` and `return code`; the detection never changes the exit status, unlike `stage_two` at lines 683–685. Recommendation: Fix-now — Return nonzero for `detected` and add a fake-runner CLI regression test. /fix decision: Applied (as verified MED) — /fix notes:
+  - **The change:** standalone `--audit` now keeps the scan's verdict. On `detected` it prints `FAIL     : <DEFENDER_DETECTED>` and returns 1 (`build-release.py:797-803`). `DEFENDER_DETECTED` (`:115`) is the one wording, which `stage_two`'s refusal now also uses (`:738`, C10).
+  - **Unchanged:** `not run (…)` keeps a passing audit's exit 0 (Task 3.5's choice, shown as such).
+  - **Test:** `test_a_defender_detection_fails_the_audit_cli` (`test_build_release.py:436`), 3 cases: detected → 1 with both lines; clean → 0; not run → 0.
+  - Siblings: none (LEG 1).
+  - /fix date: 2026-10-03T04:05:03+10:00 — /fix applied by: Claude Code (executor stage-3 leg i3-x7)
+- **PR-HIGH-003** (HIGH, behavioral, `packaging/scribe.iss:288`): Post-copy verification can leave unverified models installed and still display success. If two files change after pack preflight, `FirstModelMismatch` stops at the first; only that file is deleted, leaving the second unchecked. Deletion failure is also ignored. — Evidence: “`Mismatch := FirstModelMismatch(ExpandConstant('{app}\models\'));`”, “`DeleteFile(ExpandConstant('{app}\models\') + Mismatch);`” (288–291), followed by “`Clinic Scribe is installed.`” (308). The generated copy entries use “`Flags: external ignoreversion; Check: ModelsNeedCopy`” without per-copy verification (`scripts/build-release.py:513–514`). Recommendation: Fix-now — Verify every installed model, check cleanup results, and fail installation on any mismatch rather than reaching the success page. /fix decision: Applied (as verified MED, with the sibling) — /fix notes:
+  - **One file test:** `ModelFileMatches` (`scribe.iss:179`) is now the single check, used by both `FirstModelMismatch` (before the copy, where any mismatch still refuses) and the new `RemoveDamagedModels` (`:214`).
+  - **`RemoveDamagedModels`** checks EVERY manifest file after the copy, with no early exit. It deletes each bad one, checks each `DeleteFile` result (nested `if`s, so it never relies on short-circuit evaluation), and names a removal that failed "(damaged, and could not be removed)".
+  - **`ssPostInstall`** (`:324`): any bad copy sets `ModelsIncomplete` and shows "These model files did not copy correctly: … Clinic Scribe is NOT completely installed. Run Setup again with the model pack beside it."
+  - **The Finish page** (`:341`) then says "Clinic Scribe is NOT completely installed. … Run Setup again with the model pack beside it, before you open Clinic Scribe." It never says "installed" or "updated".
+  - **Sibling (the policy untick):**
+    - The removal moved to `ssInstall` (`:313`), so it is done before the previous data is written.
+    - It is checked gone: `PolicyLeft := RegValueExists(HKLM64, …)` (`:317`).
+    - `RegisterPreviousData` keeps a value that stayed recorded as this installer's (`or PolicyLeft`, `:300`), so the next run retries it and never treats it as someone else's.
+    - The Finish page adds "The clinic-only Chrome setting could not be removed. Run Setup again; if it stays, ask whoever manages this computer." (`:355`). HKLM only (C3).
+  - **Order assumption, which ISCC cannot check:** Inno writes the previous data (with the uninstall entry) after `ssInstall`. P.3's upgrade smoke exercises it.
+  - **Tests (`test_installer_script.py`):**
+    - `test_every_copy_is_checked_again` (`:279`, replaces `test_the_copies_are_checked_again`): no `Exit;` in the loop, the delete result checked, `ModelsIncomplete` and the message.
+    - `test_a_failed_copy_is_never_called_installed` (`:297`).
+    - `test_the_checks_share_one_file_test` (`:304`).
+    - `test_a_removal_that_did_not_take_is_said_and_kept_ours` (`:225`).
+    - A new `_body()` helper reads one `[Code]` routine.
+  - **ISCC re-check:** owed (composer).
+  - /fix date: 2026-10-03T04:05:03+10:00 — /fix applied by: Claude Code (executor stage-3 leg i3-x7)
+- **PR-MED-018** (MED, test-harness, `desktop/tests/test_frozen_runtime.py:329`): The new self-check test probes the real environment’s installed Qt modules without a seam or named skip, contrary to C6’s review requirement. Its result depends on the executing venv. — Evidence: “The real finder: a source checkout HAS PySide6.QtNetwork” (line 325) and `assert app_module.run_offline_self_check(_SELF_CHECK) == 2` (line 329); `desktop/src/scribe_desktop/app.py:569` selects `importlib.util.find_spec` when no finder is supplied. Recommendation: Fix-now — Patch the default finder for this unit test; keep real package discovery in the packaged audit integration gate. /fix decision: Applied (as verified LOW; SEAMED, not dropped) — /fix notes:
+  - **The change:** `test_a_source_run_finds_qt_networking` is now `test_the_default_finder_is_importlibs_at_call_time` (`test_frozen_runtime.py:324`). It patches `app_module.importlib.util.find_spec` to a fake that finds only `PySide6.QtNetwork`, asserts exit 2, and asserts that exactly that one module was asked.
+  - **Why seamed rather than dropped:** it still pins what only it pins. With no finder passed, the check asks `importlib.util.find_spec` resolved at CALL time, and a findable module is exit 2 (the `main` test covers only the exit-0 side). It now does so without reading this venv's packages (C6). Real discovery remains the packaged audit's (Task 3.5).
+  - Siblings: none (LEG 1).
+  - /fix date: 2026-10-03T04:05:03+10:00 — /fix applied by: Claude Code (executor stage-3 leg i3-x7)
+- Verification counts: 6 claims checked, 4 confirmed, 2 dropped as unverifiable (slice A 4/2/2, B 1/1/0, C 1/1/0)
+- Last reviewed: 2026-10-03
+
+#### LEG 1 verified tuples
+
+Executor leg i3-x6, 2026-10-03T03:58:31+10:00. Verification only; nothing was fixed. Each claim was checked against the current worktree. All four defects are REAL. None meets this round's HIGH bar (ships an unverified binary or model, exposes or alters clinical data, or crashes the installed app at start), so the three HIGHs are DOWNGRADED to MED and PR-MED-018 to LOW.
+
+- PR-HIGH-001: materiality=behavioral severity=verified MED (downgraded from HIGH) surface=build rec=Fix-now siblings=`build-release.py` builds the REPOSITORY working tree as it stands (the spec over `desktop/src`, `scribe.iss`, `npm ci` + build of `extension/`, and the copied `packaging/models-manifest.json`), with no clean-tree check and no commit recorded; that is the same class for a local build — CONFIRMED. **Final disposition (LEG 2, leg i3-x7, 2026-10-03T04:05:03+10:00): Applied** — the PyInstaller source is checked clean before waf; the repository tree is RECORDED in `BUILD-INFO.txt` (D7).
+  - **The defect:**
+    - `build-release.py:570-575` checks only `head = run(["git", "-C", pyinstaller_src, "rev-parse", "HEAD"], capture=True)` against `PYINSTALLER_COMMIT`.
+    - `:594` then builds that WORKING TREE's bootloader (`./waf all`, `cwd=pyinstaller_src / "bootloader"`).
+    - `:600` installs it (`pip install --no-deps --no-build-isolation pyinstaller_src`).
+    - So modified tracked files or untracked inputs pass the pin. The plan's notes say "the build refuses any commit but `ecd7993…`", which is a commit check, not a tree check; the defect is that the pin is weaker than its purpose (D1: the bootloader built from the pinned SOURCE).
+  - **Why not HIGH:**
+    - The build of record is the CI artifact (D7, `:360`: "CI artifact with attestation as the build of record"; `build-release.py` "builds the same thing locally, for spikes and the model pack").
+    - CI's step is a fresh `git clone --depth 1 --branch v6.22.3`, which cannot be dirty.
+    - P.1 step 3 verifies the attestation, so a locally built installer is never what this computer installs.
+    - A dirty tree is in reach only of a reused local checkout (for example, a rerun into the same `C:\scribe-release\pyinstaller-src`, Task 3.5's step 1).
+  - **Fix note:** waf REWRITES the tracked `PyInstaller/bootloader/Windows-64bit-intel/runw.exe`, so any clean-tree check (`git status --porcelain --untracked-files=all` empty) must run in `preflight`, BEFORE waf. A rerun over an already-built checkout would then be refused with a "clone it again" line. The repository-tree sibling is clean by construction on CI; for a local build, refusing a dirty repo or recording `git rev-parse HEAD` plus a dirty flag in the output would close it.
+- PR-HIGH-002: materiality=behavioral severity=verified MED (downgraded from HIGH) surface=build rec=Fix-now siblings=none — CONFIRMED. **Final disposition (LEG 2, leg i3-x7, 2026-10-03T04:05:03+10:00): Applied** — `--audit` exits 1 on a detection.
+  - **The defect:** `build-release.py:736-740`:
+
+    ```python
+    code = _print_failures("audit", audit_bundle(args.audit, run))
+    if not args.no_defender:
+        print(f"defender : {defender_scan(args.audit, run)}")
+    return code
+    ```
+
+    A `detected` verdict is printed but never changes the exit status. `stage_two` refuses it (`:684` `if scan == "detected": raise ReleaseError(... C10 ...)`).
+  - **Why not HIGH:** the release build, which is the only path to an installer, refuses a detection, and the line "defender : detected" is on screen. Task 3.2's documented integration gate runs `--audit … --no-defender`, so Defender is not run there at all. What fails open is the exit code of a standalone gate command, which nothing in CI consumes.
+  - **Siblings:** none. A standalone "not run (…)" verdict proceeding with exit 0 is Task 3.5's recorded choice ("where one can run", round 18 drop 1), not this defect. Every other exit path in `main` raises `ReleaseError` (exit 1), or crashes non-zero on an unexpected exception.
+- PR-HIGH-003: materiality=behavioral severity=verified MED (downgraded from HIGH) surface=production rec=Fix-now siblings=`scribe.iss:283` `RegDeleteValue(HKLM64, '{#PolicyKey}', '{#PolicyValue}')`, the policy untick, also ignores its result (a failed removal is silent and the policy stays); `PrepareToInstall`'s first-match-only checks (`:249`, `:261`) are NOT siblings, since any mismatch there refuses the whole install ("Nothing was changed") — CONFIRMED. **Final disposition (LEG 2, leg i3-x7, 2026-10-03T04:05:03+10:00): Applied, with the sibling** — every copy is checked and removed, each removal is checked, and the Finish page says "NOT completely installed"; the policy removal is checked, kept ours and said.
+  - **The defect:** `scribe.iss:288-294`. `Mismatch := FirstModelMismatch(ExpandConstant('{app}\models\'));` stops at the first bad file. `DeleteFile(...)` removes only that one and its Boolean result is discarded. The `MsgBox` is `mbError`, and then `:304-311` shows "Clinic Scribe is installed." / "…is updated.". So a SECOND damaged copy stays in `{app}\models`, unverified, and the install completes.
+  - **Why not HIGH:**
+    - `PrepareToInstall` (`:259-264`) hashes EVERY pack file before anything is copied, and any mismatch refuses with "Nothing was changed". The post-copy case therefore needs the pack to change, or a copy to corrupt silently, between that check and the copy (a time-of-check-to-time-of-use window), and the double-fault case needs it twice.
+    - Inno's own copy reports I/O errors (Retry/Abort).
+    - The models are only ever under `{app}` (admin-only, D-I1).
+    - The app re-verifies two of the four models at load: the speaker model (`speaker_embedding.py:455` `load_onnx_session(path, expected_sha256=SPEAKER_MODEL_SHA256)`) and the language model (`language_model.py:245` `expected_sha256: str = LANGUAGE_MODEL_SHA256`).
+    - **Residue:** whisper `medium`, pinned by commit with no per-file hash at load, has the installer as its only byte check. A damaged copy could degrade transcripts, which the clinician reviews before any note is saved.
+  - **Fix note:** check EVERY file post-copy, delete each mismatch and check each `DeleteFile`, and on any failure make the Finish page say the install is NOT complete ("run Setup again with the model pack beside it"). `ssPostInstall` cannot roll the install back, so the honest Finish text plus the deletion is the fail-closed shape.
+- PR-MED-018: materiality=test-harness severity=verified LOW (downgraded from MED) surface=test-harness rec=Fix-now — CONFIRMED. **Final disposition (LEG 2, leg i3-x7, 2026-10-03T04:05:03+10:00): Applied** — the test is SEAMED, not dropped.
+  - **The test:** `test_frozen_runtime.py:324-329` `test_a_source_run_finds_qt_networking` calls `run_offline_self_check(_SELF_CHECK)` with no finder, so `app.py`'s default `importlib.util.find_spec` probes the executing venv.
+  - **Why LOW:** the probed module ships inside a declared hard dependency (`pyproject.toml:12` `"PySide6>=6.8"`; the venv's PySide6 includes `QtNetwork`; `pyproject.toml:96` bans its import). The test cannot vary with this machine's state: if PySide6 were absent, `app` itself would not import. It is still a real package probe with no seam, against C6's letter.
+  - **The redundancy:** the default-finder WIRING is already proven seam-fully by `test_app_main_answers_before_the_install_folder_logging_and_qt` (`:357` `monkeypatch.setattr(app_module.importlib.util, "find_spec", lambda name: None)` → exit 0).
+  - **Fix note:** patch `app_module.importlib.util.find_spec` to a fake that finds `PySide6.QtNetwork` (it then pins that the default resolves at CALL time to `importlib.util.find_spec`), or drop the test as redundant.
+  - **Siblings:** none. The search covered every Phase 3 test for an unseamed host or venv read: `test_build_release.py` reads committed pins and source, and its runner is faked; `test_build_spec.py` executes the spec's own source; `test_build_lock.py`, `test_check_installed_sockets.py` and `test_release_workflow.py` use fakes or committed text; `test_setup_scripts.py` and `test_install_layout.py` inject `LOCALAPPDATA`; `test_register_native_host.py` redirects every production path.
+
+Cap verdict: accept — production-behavioral — peer_round 1 of cap 5. The four survivors are 3 verified MED (one installer path that ships and two build-tool exit paths) and 1 test-harness LOW. Each fix is local: one `[Code]` procedure plus its Finish text; one `preflight` check; one `--audit` exit code; one test seam. All fit one fix leg plus a confirmation round well inside the cap, so no raise is warranted.
+
+### Round 21 - 2026-10-03 - Phase 3 confirmation of round 20's fix, independent cross-family codex peer review (pass stage-3.p1)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Read-only confirmation of round 20’s four fixes, their in-scope siblings, regression risks, test seams and documentation; only the specified files and plan sections. No builds or tests run.
+
+#### Findings
+
+- Verification counts: 4 claims checked, 4 confirmed, 0 dropped as unverifiable (fix closures confirmed; no new findings).
+- Last reviewed: 2026-10-03
+
 ## Tasks
 Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's verification is the plan's Validation section (composer-run suites) unless the task names its own. Phases are grouped for `/execute-loop`: foundational layout and identity (Phase 1) are isolated ahead of the frozen-runtime work (Phase 2) and the build (Phase 3).
 
@@ -2208,11 +2632,35 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
       - Also `test_stderr_only_logging_creates_no_folder`.
 
 ### Phase 3 — Build and installer
-- [ ] 🟥 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
-- [ ] 🟥 **3.2 `packaging/scribe.spec`** (D1). Two windowed EXEs in one COLLECT. Collect `scribe_desktop` package data, apply Task 0.1's hidden imports and hooks, exclude the network Qt modules, no UPX, and add a version resource from D12.
+- [ ] 🟨 **3.1 `desktop/requirements-build.txt`.** Every runtime dependency (the `[ml]` extra, `sounddevice`), PyInstaller and its hooks package, all `--require-hashes`. The prose wheel stays in `requirements-ml-prose.txt`. A test checks that every `pyproject` runtime dependency appears in the lock.
+  - **Leg i3-x1 (generator and tests built; stays 🟨 until the practitioner generates and commits the lock — a build-time network step):**
+    - **`scripts/lock-build-requirements.py`** writes the lock; it chooses NO version itself. The versions come from a `pip freeze --all` of the proven environment (`--constraints`) plus `BUILD_TOOL_PINS` (Task 0.1 RESULT: `pyinstaller-hooks-contrib` 2026.8, `altgraph` 0.17.5, `pefile` 2024.8.26). One `pip download --only-binary=:all:` resolves pyproject's dependencies + `[ml]` + `EXTRA_REQUIREMENTS` (`sounddevice`; the prose runtime's own Requires-Dist, read from the installed wheel's METADATA: `typing-extensions`, `numpy`, `diskcache`, `jinja2`; PyInstaller's install needs: hooks-contrib, altgraph, pefile, `pywin32-ctypes`, `packaging`, `setuptools`). It refuses, by name: a wheel whose version the proven environment does not pin, an sdist, anything in `NEVER_LOCKED` (`pyinstaller`, `llama-cpp-python`, the dev tools), and a lock that would miss a runtime dependency.
+    - **Interpretation call (D1 over the task's wording):** PyInstaller itself is NOT in the lock. D1 needs the bootloader built from source, and Task 0.1 proved that route (6a: the source at tag v6.22.3, commit `ecd7993…`, `waf`, `pip install` of the tree). So `build-release.py` pins PyInstaller by that COMMIT and checks it, and the lock carries its hooks package and its dependencies. A PyPI PyInstaller wheel would ship the prebuilt bootloader that D1 and Task 0.5's Defender result excluded.
+    - **Tests:** `test_build_lock.py`, covering the generator on a fixture freeze and a fake `pip download`, each refusal, and the task's check on a fixture lock. The committed-lock test **SKIPS BY NAME** ("desktop/requirements-build.txt is not generated yet …") until the lock exists; it then checks the runtime coverage, a hash on every entry, no `NEVER_LOCKED` name, and the tool pins.
+    - **PRACTITIONER STEP (normal PowerShell at `C:\scribe-build`; network):** `.venv\Scripts\python.exe -m pip freeze --all | Out-File -Encoding utf8 "$env:TEMP\proven-freeze.txt"` then `.venv\Scripts\python.exe scripts\lock-build-requirements.py --constraints "$env:TEMP\proven-freeze.txt"`. Report the "wrote N pinned wheels" line, or the refusal. Then the composer commits `desktop/requirements-build.txt` and re-runs the suite: the skipped test must then RUN and pass.
+- [ ] 🟨 **3.2 `packaging/scribe.spec`** (D1). Two windowed EXEs in one COLLECT. Collect `scribe_desktop` package data, apply Task 0.1's hidden imports and hooks, exclude the network Qt modules, no UPX, and add a version resource from D12.
   - Done when: `pyinstaller packaging/scribe.spec` builds on the composer's machine. The bundle audit runs on that output once Task 3.5 lands; this task is not blocked on it.
   - **From Phase 2 review round 13 (MED-003):** both EXEs set `disable_windowed_traceback=True`. The Phase 0 spike spec left it `False`. With it `False`, an exception escaping `app.main` or the host's `main` — the benchmark worker's included, whose own boundary is now `benchmark.run_worker` — shows PyInstaller's windowed "Unhandled exception" box with the full traceback, against C3's type-name-only rule.
-- [ ] 🟥 **3.3 Models manifest** (D5, D-I2).
+  - **Leg i3-x1 (spec, entries and pins built; stays 🟨 until a real PyInstaller build passes `build-release.py --audit` — the practitioner's or composer's step):**
+    - **`packaging/scribe.spec`:** two Analyses (`packaging/entry_app.py`, `packaging/entry_host.py`, each calling the real `main`), two windowed EXEs (`scribe-app`, `scribe-host`; `console=False`, `upx=False`, `disable_windowed_traceback=True`, a `VSVersionInfo` from pyproject's version, D12) and ONE `COLLECT` named `scribe` (`<dist>\scribe\`).
+      - `pathex` is `desktop\src` ONLY (Task 0.1 found the repository root first).
+      - The app's modules and its `config_defaults/*.json` are enumerated from the source tree, not imported. The hidden imports are Task 0.1's: the app's modules (with `native_host` and `speaker_eval`), `keyring.backends.Windows`, `win32com.client` and `win32timezone`. The spike's `collect_dynamic_libs` (ctranslate2, onnxruntime, llama_cpp), `collect_data_files("faster_whisper")` and `copy_metadata("keyring")` are kept.
+    - **The Qt-network filter (LOAD-BEARING, Task 0.1):** it runs over both Analyses' binaries AND datas, using one rule, `is_qt_network_file`, written identically in the spec and in `build-release.py`. The rule is broader than the spike's two prefixes: any Qt file whose name says network or websockets, so `Qt6NetworkAuth.dll` and `Qt6QmlNetwork.dll` (both present in the venv's PySide6) are covered, plus Qt's `plugins\tls` and `plugins\networkinformation`. A test executes the spec's copy and checks it equal to the audit's on 13 names.
+    - **Bundle trims from Task 0.1's list, with the evidence:**
+      - TRIMMED: `mypy`, `pydantic.mypy` and `pydantic.v1.mypy` (a type checker the pydantic hook drags in), plus `setuptools`, `pkg_resources` and `_distutils_hack`. The only runtime-package importer found of these is cffi's build-time `setuptools_ext`.
+      - NOT trimmed, because the app imports them at run time:
+        - `huggingface_hub` and `av`: `faster_whisper/utils.py:7` and `faster_whisper/audio.py:15` import them at module level;
+        - `httpx`, `anyio` and `certifi`: the client `huggingface_hub` uses;
+        - `jinja2`: llama_cpp's chat format;
+        - `sqlite3`: `diskcache/core.py`, which llama_cpp's cache imports;
+        - lxml: python-docx.
+      - `tzdata` (a hook warning): the app uses no `zoneinfo`.
+      - `_rocm_sdk_core` (Task 0.1): harmless when absent, because `ctranslate2/__init__.py` wraps `os.add_dll_directory` in `except (FileNotFoundError, OSError)`, and nobody but an admin can create it under the admin-only install folder.
+      - A test pins that no trimmed module is imported anywhere in `scribe_desktop`. It is a scan, not the proof.
+    - **The trims are verified on the INSTALLED app, not on a scratch run:** Task 2.7 stops a packaged build from running outside `C:\Program Files\ClinikoScribe`, so the spike's 12-check scratch launch no longer applies. The audit's self-check runs from anywhere (Task 3.5), and P.1 steps 7 and 10–12 plus P.2 exercise the runtime (self-test, a transcription, a prose render, the hardware check).
+    - **Tests:** `test_build_spec.py` (syntax-tree pins).
+    - **The integration gate (PRACTITIONER or composer, normal PowerShell at `C:\scribe-build`; no network if `C:\scribe-spike\venv-build` still exists — it holds PyInstaller 6.22.3 with the from-source bootloader):** `C:\scribe-spike\venv-build\Scripts\python.exe -m PyInstaller --noconfirm --clean --distpath C:\scribe-spike\p3\dist --workpath C:\scribe-spike\p3\work packaging\scribe.spec`, then `.venv\Scripts\python.exe scripts\build-release.py --audit C:\scribe-spike\p3\dist\scribe --no-defender`. Report the build's last line, every `FILTERED` line, and the audit's `FAIL` / `audit:` lines. Otherwise, the full `build-release.py` run (Task 3.5) is the gate.
+- [ ] 🟨 **3.3 Models manifest** (D5, D-I2).
   - `scripts/setup-models.py --root <dir>` stages into a gitignored `build/models`; `%LOCALAPPDATA%` is never touched when `--root` is given.
   - `packaging/models-manifest.json` lists every file's relative path, size and SHA-256 (silero; whisper `medium` every file; the speaker model per D-I2; the language model). It is generated once by the practitioner and committed.
   - A test checks it against the existing pins (setup-models silero, `speaker_embedding.py:58-66`, `language_model.py:57-87`).
@@ -2223,7 +2671,23 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
     - the source URL (`scripts/setup-models.py`'s pinned Hugging Face URL);
     - "unmodified (byte-identical, SHA-256-pinned)".
     - H.1's documents mention it.
-- [ ] 🟥 **3.4 `packaging/scribe.iss`** (D1, D5, D6, D8, D-I1). It covers:
+  - **Leg i3-x1 (staging, generator, notice and tests built; stays 🟨 until the practitioner writes and commits the manifest):**
+    - **`setup-models.py --root DIR`** stages a fetch into DIR, and the default root is then never computed. A test, over each of the four pack entries, proves an injected `LOCALAPPDATA` stays empty.
+    - **`build-release.py --write-manifest --models DIR`** reads DIR only and writes `packaging/models-manifest.json` (`{"version": 1, "files": [{path, size, sha256}]}`, sorted, in one canonical JSON form).
+      - It REFUSES a pinned file that is off its pin: silero against `setup-models.SILERO_VAD_SHA256`, the speaker model against `speaker_embedding`'s size and SHA-256, the language model against `language_model`'s. It also refuses an incomplete whisper `medium`, using `benchmark.whisper_snapshot_missing`.
+      - It lists every whisper `medium` file with a `.bin`/`.json`/`.txt` suffix, skipping huggingface_hub's `.cache` bookkeeping, and only `medium` (the Excluded item: no `small`).
+      - It lists the attribution notice as `speaker-embedding/ATTRIBUTION.txt`, from the committed `packaging/speaker-model-ATTRIBUTION.txt`, which carries Task 0.4's terms (the "Wang et al." citation as Task 0.4 recorded it, CC BY 4.0 and its link, the pinned source URL, "unmodified (byte-identical, SHA-256-pinned)").
+      - It checks every path as plain, relative and Inno-safe (no `..`, no backslash, no quote, no brace).
+    - **Line endings:** `.gitattributes` gains `text eol=lf` for the notice and the manifest, so their bytes, and so the manifest's hashes and the pack's name, are the same on the practitioner's checkout and the CI runner (`core.autocrlf=true` here). The pack name is also taken over the canonical form, never the file bytes.
+    - **Tests:** `test_build_release.py` `TestTheManifest` and `TestTheAttributionNotice`, on fake models with fake pins: each refusal, the selection, the digest, and that the real pins are the runtime's. The committed-manifest test **SKIPS BY NAME** until the file exists. It then checks every pin, the notice's hash, the whisper set, the four top folders, and the bytes being the canonical form.
+    - **PRACTITIONER STEP (normal PowerShell at `C:\scribe-build`):**
+      - **rec — the plan's route, network:** stage fresh copies, one run each:
+        - `.venv\Scripts\python.exe scripts\setup-models.py --root build\models --only silero-vad`
+        - the same with `--only medium`, `--only speaker-embedding` and `--only language-model` (about 3.9 GB in all);
+        - then `.venv\Scripts\python.exe scripts\build-release.py --write-manifest --models build\models`.
+      - **Alternative (no network, read only):** `--models "$env:LOCALAPPDATA\ClinikoScribe\models"`, the everyday models, which hold the same pinned files.
+      - Report the "wrote … (N files)" and "pack name: ClinikoScribe-models-xxxxxxxx" lines. The composer then commits the manifest and re-runs the suite: the skipped test must then RUN and pass.
+- [ ] 🟨 **3.4 `packaging/scribe.iss`** (D1, D5, D6, D8, D-I1). It covers:
   - `PrivilegesRequired=admin`, a fixed AppId and `SetupLogging=no`;
   - a running-process check (`scribe-app.exe`, `scribe-host.exe`, `chrome.exe`) with the "Close Clinic Scribe and Chrome completely" message;
   - the install folder with D-I1's ACL (D-I1 chosen 2026-10-02: `C:\Program Files\ClinikoScribe`, whose inherited ACL Task 0.3 showed is Users RX, so no custom ACL);
@@ -2244,7 +2708,64 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   - uninstall removes the app, the models, the host key, the WER values, the backup and snapshot values and the policy (only if this installer set it), and shows "Your sessions, Past sessions and audit record stay in your Windows profile (kept 7 years)".
 
   A text-pin test (`desktop/tests/test_installer_script.py`) checks the keys, flags and wording.
-- [ ] 🟥 **3.5 `scripts/build-release.py`** (needs Tasks 3.1–3.4).
+  - **Leg i3-x1 (script and text pins built; stays 🟨 until it COMPILES with ISCC 6.7.3, then installs in Phase P):**
+    - **[Setup]:**
+      - a fixed new AppId `{8F3A6C2E-4D1B-4B7A-9E35-6C0D2F81A947}`;
+      - `PrivilegesRequired=admin`, `SetupLogging=no`, x64;
+      - `DefaultDirName={commonpf64}\ClinikoScribe` with `DisableDirPage=yes`;
+      - `OutputBaseFilename=ClinikoScribe-<version>-setup`.
+      - Every input arrives as a `/D` define from `build-release.py`, and `#error` fires without one.
+    - **[Code] `PrepareToInstall`** refuses (before anything changes) when:
+      - `scribe-app.exe`, `scribe-host.exe` or `chrome.exe` runs (WMI `Win32_Process`; the check FAILS CLOSED when WMI cannot run, which is named for H.1);
+      - `{app}` is not D-I1's `C:\Program Files\ClinikoScribe` (pinned equal to `install_layout.INSTALL_ROOTS`);
+      - the installed models do not all match the compiled SHA-256s and the pack `{src}\ClinikoScribe-models-<sha8>\` is absent, or one of its files is missing or does not match. The message names the file and says "Nothing was changed".
+    - **The models:**
+      - When they need copying, `[InstallDelete]` clears `{app}\models` and the generated `[Files]` entries copy each file (`external`, `Check: ModelsNeedCopy`).
+      - `ssPostInstall` re-hashes the copies. A bad copy is deleted (so the app reports it missing and says reinstall, never loads damaged bytes) and a message names it.
+      - An upgrade with matching models needs no pack.
+    - **[Registry], all `HKLM64`:**
+      - the Chrome link `SOFTWARE\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host` → `{app}\com.scribe.cliniko_host.json` (`uninsdeletekey`). `build-release.py` writes the manifest into the bundle: production identities, path `C:\Program Files\ClinikoScribe\scribe-host.exe`;
+      - WER DWORD 1 for `exclusions.WER_PRODUCTION_APPLICATIONS`;
+      - `FilesNotToBackup` and `FilesNotToSnapshot` value `ClinikoScribe` = exactly `install_layout.backup_exclusion_patterns()` joined by `{break}` (Task 0.3's `$UserProfile$` form);
+      - the policy, only with the unticked-by-default `[Tasks]` box (D8's wording) AND `Check: PolicyIsOurs`. A value someone else set is left alone and never removed.
+    - **The policy's interpretation call:** an upgrade that unticks the box removes the value only if an earlier run of THIS installer set it (`GetPreviousData`). **Residue for H.1:** Inno's uninstall log keeps the earlier install's `uninsdeletevalue`, so a policy someone sets AFTER such an untick would still be removed at uninstall.
+    - **The rest:**
+      - no `[Run]` section (D8);
+      - the Finish text in `CurPageChanged` follows Flow 2 step 4: Load unpacked `{app}\extension` / reload on an upgrade, fully restart Chrome, open from the Start menu, with a Start-menu shortcut in `[Icons]`;
+      - `[UninstallDelete]` covers `{app}\models` only;
+      - uninstall shows "Your sessions, Past sessions and audit record stay in your Windows profile (kept 7 years)." and refuses while any of the three programs runs.
+    - **Inno syntax care:** `[Code]` uses `//` comments only, because a Pascal brace comment ends at the first `}` and Inno's constants are braces. A test pins that.
+    - **Tests:** `test_installer_script.py` (21 text pins), plus `test_build_release.py` `TestTheInstallerInputs` (the host manifest and the generated includes).
+    - **COMPILE CHECK (PRACTITIONER or composer, normal PowerShell at `C:\scribe-build`; no network). It only compiles; nothing installs.**
+      ```powershell
+      New-Item -ItemType Directory -Force C:\scribe-iss-check\dist | Out-Null
+      Set-Content C:\scribe-iss-check\dist\placeholder.txt "x"
+      Set-Content C:\scribe-iss-check\files.iss "; none"
+      Set-Content C:\scribe-iss-check\code.iss "procedure AddModelFiles();`r`nbegin`r`nend;"
+      & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=0.1.0 /DDistDir=C:\scribe-iss-check\dist /DModelPackDir=ClinikoScribe-models-00000000 /DModelsFiles=C:\scribe-iss-check\files.iss /DModelsCode=C:\scribe-iss-check\code.iss /OC:\scribe-iss-check\out packaging\scribe.iss
+      ```
+      - Report "Successful compile" or the first error line, then delete `C:\scribe-iss-check`.
+      - The real compile is inside `build-release.py` (Task 3.5).
+    - **COMPILE CHECK RESULT (composer, 2026-10-03 ~03:20, from `C:\scribe-build` with the command above):** Inno Setup 6.7.3 ISCC "Successful compile (3.594 sec) … ClinikoScribe-0.1.0-setup.exe", exit 0. Output is in `C:/Recording clinic software/.cursor/loops/stage-3-iscc-check.txt`.
+      - The script compiles with placeholder model includes.
+      - Still owed: the real-include compile (Task 3.5) and the install (Phase P).
+      - **PRACTITIONER:** delete `C:\scribe-iss-check`; the composer's tool could not.
+    - **Leg i3-x2 (composer suite 1's two `.iss` pin failures, fixed in the TEST, as a class; `scribe.iss` unchanged):**
+      - **D8 pin:** it now checks the launch SURFACE, no longer the spelling. It forbids:
+        - any `[Run]` or `[UninstallRun]` section;
+        - any entry whose `Flags` include `postinstall` or `runasoriginaluser`;
+        - any `[Code]` call to `Exec`, `ShellExec`, `*AsOriginalUser`, `ExecAndCaptureOutput` or `ExecAndLogOutput`.
+        - `ssPostInstall`, an install step, is now allowed. A companion test proves the check catches a launch and passes over WMI's `ExecQuery`.
+      - **Policy pin:** it matches the entry by the EXPANDED key (the script's own `#define`s resolved), the key Inno writes.
+      - `_code()` splits at the `[Code]` header LINE, never at a mention of it.
+    - **Round 18 MED-001 (leg i3-x3):** `[InstallDelete]` now also clears `{app}\_internal` and `{app}\extension`, UNCONDITIONALLY. An in-place upgrade (P.3 step 1) or a rollback (P.3 step 2) therefore installs exactly the audited bundle, never the previous build's leftovers; one such leftover is a second `*.dist-info` for a package, and keyring's backend is found through that metadata.
+      - It runs after `PrepareToInstall`'s running-process refusal. The app writes nothing under `{app}`, and the top-level files are replaced by name.
+      - `{app}\models` keeps its own conditional rule.
+      - Pinned by `test_an_upgrade_replaces_the_program_whole`.
+      - **ISCC re-check after MED-001 (composer, 2026-10-03 ~03:45, the same placeholder command):** Inno Setup 6.7.3 "Successful compile (2.203 sec)", exit 0.
+    - **Round 20 PR-HIGH-003 and its sibling (leg i3-x7):** `RemoveDamagedModels` checks every copied model and each removal; the Finish page says "NOT completely installed" on any failure; the policy untick is removed at `ssInstall`, checked gone, and kept "ours" if it stayed.
+      - **ISCC re-check (composer, 2026-10-03 ~04:12):** Inno Setup 6.7.3 "Successful compile (2.235 sec)", exit 0.
+- [ ] 🟨 **3.5 `scripts/build-release.py`** (needs Tasks 3.1–3.4).
   - Steps: clean build venv, `pip install --require-hashes -r desktop/requirements-build.txt` plus the prose wheel, PyInstaller with Task 3.2's spec, then `--audit`:
     - the expected files are present;
     - no `Qt6Network`/`QtWebSockets`;
@@ -2254,16 +2775,99 @@ Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's v
   - `--model-pack` copies Task 3.3's `build/models` into `ClinikoScribe-models-<sha8>/` and verifies it against the manifest.
   - Run by the practitioner for local builds.
   - Done when: `--audit` and `--model-pack` are tested against fake trees for each refusal, and one local build passes the audit (the integration gate for Task 3.2).
-- [ ] 🟥 **3.6 `.github/workflows/release.yml`** (D7; needs Task 3.5). `workflow_dispatch` on `main` only, `windows-latest`, the pinned Python from D12, Inno from Task 0.3 (preinstalled or a pinned install), `build-release.py` without the model pack, `actions/attest-build-provenance` over `setup.exe` and `SHA256SUMS.txt`, then upload the artifact. Permissions are least-privilege.
+  - **Leg i3-x1 (script, the app's self-check and tests built; stays 🟨 until one local build passes the audit — practitioner):**
+    - **Modes:** `--write-manifest` (Task 3.3), `--model-pack`, `--audit DIST`, and the build.
+    - **`--model-pack --models DIR --out DIR`:** checks EVERY source file against the manifest first (missing, size, SHA-256), so a refusal writes nothing. It then copies exactly the manifest's files into `<out>\ClinikoScribe-models-<sha8>` and checks each copy. It never overwrites a pack.
+      - The name comes from the new `install_layout.model_pack_name`, so no script spells the folder name (the Task 1.2 source scan).
+    - **`--audit DIST`** reports:
+      - both programs;
+      - every shipped `config_defaults/*.json` (enumerated from the source);
+      - a native library in each of `_internal/ctranslate2`, `onnxruntime/capi` and `llama_cpp/lib`;
+      - NO Qt networking file (`is_qt_network_file`, Task 3.2);
+      - the self-check, `scribe-app.exe --self-check-offline` run with `HOSTILE_ENV` (the three kill-switches at `0`, `SSLKEYLOGFILE` and `LLAMA_CPP_LIB_PATH` set), which must exit 0;
+      - then a Defender custom scan (`Start-MpScan`, then the detections naming the bundle), reported `clean` / `detected` / `not run (…)` and never "clean" when it did not run.
+      - A detection fails the build, never an exclusion (C10).
+    - **The app's self-check (new, `app.run_offline_self_check`, `SELF_CHECK_FLAG`):** the exact argv `[exe, --self-check-offline]` applies and asserts the offline environment as a start does, then checks that `PySide6.QtNetwork` and `PySide6.QtWebSockets` cannot be found. Exit codes: 0, 1 (the offline environment), 2 (a Qt network module). It opens no window, writes no log and reads no data root.
+      - **Interpretation call:** it runs FIRST in `app.main`, BEFORE Task 2.7's install-folder check, because an audit runs the bundle where it was built, which Task 2.7 would always refuse. The install-folder refusal still comes before logging, the guard, every data root and any window; `install_layout.outside_install_folder`'s docstring says so. The host is unchanged.
+    - **The build, stage one** (any Python 3.14, standard library only), refusing first on each of these:
+      - not Windows;
+      - not Python 3.14;
+      - no lock (Task 3.1);
+      - no manifest (Task 3.3);
+      - a non-empty `--out`;
+      - `--pyinstaller-src` not at commit `ecd7993d…` (`git rev-parse HEAD`).
+      - Then: a clean `build-venv`; `pip install --require-hashes --no-deps` of the lock and of the prose wheel; `waf all --target-arch=64bit` (the C++ build tools); a refusal if `runw.exe` still has the SHIPPED SHA-256 `2291f269…` (Task 0.1), i.e. was not rebuilt; `pip install --no-deps --no-build-isolation` of the source; `pip check`; then stage two under the build venv's own interpreter.
+    - **The build, stage two:**
+      - PyInstaller over the spec;
+      - the host manifest written into the bundle;
+      - the audit and Defender;
+      - `npm ci` and `npm run build -- --mode release`, copied to `<bundle>\extension`, then the extension audit: not the dev name, no dev host, names the installed host;
+      - the two generated Inno includes;
+      - ISCC with `/DAppVersion` (pyproject, D12), `/DDistDir`, `/DModelPackDir`, `/DModelsFiles`, `/DModelsCode` and `/O`. It refuses, deleting the output, unless ISCC printed `Compiler engine version: Inno Setup 6.7.3`;
+      - the manifest copied beside the setup;
+      - `SHA256SUMS.txt` over both.
+    - **Tests:** `test_build_release.py`: the model pack, the audit (each refusal, the hostile environment, the CLI), Defender's three verdicts, the extension audit, the includes, the sums, stage one's command sequence and its seven refusals, and ISCC's defines and banner refusal. Also `test_frozen_runtime.py` `TestOfflineSelfCheck` (11 tests, including `app.main` answering before the install-folder check, logging, Qt and the worker).
+    - **PRACTITIONER STEP (the integration gate; normal PowerShell at `C:\scribe-build`, after Tasks 3.1 and 3.3 are committed; network for the lock install, `npm ci` and the source clone):**
+      1. `git clone --depth 1 --branch v6.22.3 https://github.com/pyinstaller/pyinstaller.git C:\scribe-release\pyinstaller-src`
+      2. `py -3.14 scripts\build-release.py --pyinstaller-src C:\scribe-release\pyinstaller-src --out C:\scribe-release\out` (any Python 3.14; the `.venv` interpreter works too).
+      3. `.venv\Scripts\python.exe scripts\build-release.py --model-pack --models build\models --out C:\scribe-release\out\installer`
+      - Report the final `version` / `installer` / `sha256` / `models` / `defender` lines, or the `ERROR:` line.
+      - Building from Program Files is not needed: the audit's self-check runs from the build folder.
+- [ ] 🟨 **3.6 `.github/workflows/release.yml`** (D7; needs Task 3.5). `workflow_dispatch` on `main` only, `windows-latest`, the pinned Python from D12, Inno from Task 0.3 (preinstalled or a pinned install), `build-release.py` without the model pack, `actions/attest-build-provenance` over `setup.exe` and `SHA256SUMS.txt`, then upload the artifact. Permissions are least-privilege.
   - Done when: one green run is attested and `gh attestation verify` passes (practitioner); the existing `ci.yml` is unchanged.
-- [ ] 🟥 **3.7 `scripts/register-native-host.py` becomes dev-only.**
+  - **Leg i3-x1 (workflow and text pins built; stays 🟨 — its pins need the network, and its run needs a push to `main`, the practitioner's call):**
+    - **What it does:**
+      - `workflow_dispatch` only, with the job `if: github.ref == 'refs/heads/main'`;
+      - top-level `contents: read`, and the job adds only `id-token: write` and `attestations: write`;
+      - `persist-credentials: false`;
+      - `runs-on: windows-2025` (Task 0.3's recommendation over the task's `windows-latest`: that label's moves are gradual);
+      - Python `3.14.6` (Task 0.1) and Node 24;
+      - Inno Setup **6.7.3** installed from a SHA-256-checked download (the handoff's open item 2 recommendation, built to it), and the build's own banner check refuses any other compiler;
+      - the PyInstaller source cloned at `v6.22.3` (the build refuses any commit but `ecd7993…`);
+      - `build-release.py` with no model pack and the Defender scan on;
+      - an attestation over `release/installer/*.exe` and `SHA256SUMS.txt`, and an upload with `if-no-files-found: error`.
+      - `ci.yml` is unchanged.
+    - **Fail-closed placeholders, not invented values:**
+      - `actions/attest-build-provenance@PIN-REQUIRED` and `actions/upload-artifact@PIN-REQUIRED`: no ref for either is recorded in the repo. The three actions `ci.yml` already uses keep `ci.yml`'s tags.
+      - The Inno installer's SHA-256 is `"PIN-REQUIRED"`, so the step throws "not recorded yet".
+      - The Inno download URL (`https://files.jrsoftware.org/is/6/innosetup-6.7.3.exe`) was written without network access and is to be confirmed.
+    - **Tests:** `test_release_workflow.py` (7 pins). `test_every_new_action_is_pinned_to_a_commit` **SKIPS BY NAME** while any `PIN-REQUIRED` remains, then requires a 40-hex commit for every action beyond `ci.yml`'s three. The job holds an OIDC token, so that is this leg's interpretation call.
+    - **PRACTITIONER/COMPOSER STEP (needs the network; remote-affecting, the practitioner decides):**
+      1. Record the commit SHA of the chosen release of each of the two actions, and the Inno 6.7.3 installer's `Get-FileHash` from the official download; confirm the URL.
+      2. Settle the open Inno licence item first ("Non-commercial use only").
+      3. Push `main` with the workflow.
+      4. Run `Release` once, then `gh attestation verify <setup.exe> --repo eliemokbel3-hub/Recording-clinic-software` on the downloaded artifact.
+- [x] 🟩 **3.7 `scripts/register-native-host.py` becomes dev-only.**
   - It registers `com.scribe.cliniko_host_dev` in HKCU only, installing to `%LOCALAPPDATA%\ClinikoScribe-dev`.
   - `--unregister` also removes a stray HKCU `com.scribe.cliniko_host` key and the legacy production-folder copy.
   - A `PermissionError` with winerror 32 gives "Close Clinic Scribe and Chrome completely, then run this again" (retires `plan-privacy-professional-controls.md` L1313).
   - Update `test_register_native_host.py` and `test_display_name.py:64`.
-- [ ] 🟥 **3.8 `scripts/check-installed-sockets.py`.** Run from a normal terminal while the installed app transcribes and renders prose. It walks the `scribe-app.exe` and `scribe-host.exe` process trees with psutil (lessons: walk the tree) and reports any inet connection, text-free.
+  - **Leg i3-x1 (built; 🟩 on a green composer suite — no practitioner step is part of its Done):**
+    - The script names the dev channel OUTRIGHT, whatever the importing process's pin: `identity.host_name("dev")`, `expected_origin("dev")`, `registry_key("dev")`, and `install_layout.data_root("dev")`, a new `of` argument on `data_root`, the same idiom as `models_root`.
+    - `--unregister` also deletes the HKCU key `identity.REGISTRY_KEY` (production name, HKCU only — never HKLM) and exactly two files in the production data folder, `com.scribe.cliniko_host.json` and `scribe-host.exe`. It never deletes the folder or anything else in it. This is the one place a source checkout's tool writes the production folder, as P.1 step 2's migration (C8 note for H.1).
+    - Windows error 32 on the copy or on any delete prints the task's line and exits 1; any other `OSError` still raises.
+    - **Tests:**
+      - `test_register_native_host.py` +5: the dev identities under the production pin, the stray link and only its two files, the in-use line for register and unregister, and another error not mistaken. `_install_under` now also redirects `STRAY_PRODUCTION_FILES`, so no test can reach the real folder (C6).
+      - `test_install_layout.py`: the script's folder is the dev one in either pin, `data_root(of)`, and `model_pack_name`.
+      - `test_display_name.py`: the literal is now `data_root("dev")`.
+- [ ] 🟨 **3.8 `scripts/check-installed-sockets.py`.** Run from a normal terminal while the installed app transcribes and renders prose. It walks the `scribe-app.exe` and `scribe-host.exe` process trees with psutil (lessons: walk the tree) and reports any inet connection, text-free.
   - Done when: it is tested against a fake process table, and the practitioner runs it in P.1.
-- [ ] 🟥 **3.9 `docs/release/pilot-builds.md`.** A table of version, commit, CI run, the installer SHA-256 and the model-pack manifest SHA-256, plus the two verification commands (`gh attestation verify`, `Get-FileHash`).
+  - **Leg i3-x1 (built and tested; stays 🟨 until the practitioner's P.1 step 10 run):**
+    - **What it does:** each second for `--seconds` (default 60), it lists every process named `scribe-app.exe` or `scribe-host.exe` (any case), adds all their descendants (`children(recursive=True)`), and reads `net_connections(kind="inet")`.
+    - **What it prints:** each distinct connection once, as `CONNECTION <program> pid= status= remote=`, and nothing else of the process.
+    - **Exit codes:**
+      - 0: none seen;
+      - 1: a connection seen;
+      - 2: no target running;
+      - 3: a process could not be read, so nothing is proven.
+      - A process that ends during a look is "gone", not an error.
+    - **Tests:** `test_check_installed_sockets.py` (7, a fake process table and a fake clock).
+    - **P.1 step 10's command:** `.venv\Scripts\python.exe scripts\check-installed-sockets.py --seconds 120`, from the repository root, run during a desktop transcription and a prose render.
+- [x] 🟩 **3.9 `docs/release/pilot-builds.md`.** A table of version, commit, CI run, the installer SHA-256 and the model-pack manifest SHA-256, plus the two verification commands (`gh attestation verify`, `Get-FileHash`).
+  - **Leg i3-x1 (written; 🟩 on the composer's review — a document with no test):**
+    - The table has an empty first row, and each field's source (the run's `SHA256SUMS.txt`; the manifest's first 8 hex name the pack folder).
+    - Both commands come with what each must show, and "if either check fails, do not run the installer".
+    - Rows are added from the first green `Release` run (Task 3.6).
 
 ### Phase H — Documents and hardening
 - [ ] 🟥 **H.1 Security and project documents, as one class (C9).**

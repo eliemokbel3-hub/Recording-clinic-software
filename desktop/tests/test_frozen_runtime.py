@@ -256,6 +256,120 @@ class TestWorkerDispatch:
             app_module.main(_worker())
 
 
+# --- Task 3.5: the build audit's offline self-check ----------------------------------
+
+
+_SELF_CHECK = ["scribe-app.exe", "--self-check-offline"]
+
+
+class TestOfflineSelfCheck:
+    """``scribe-app.exe --self-check-offline`` (installation plan Task 3.5):
+    exit-code only, run by ``build-release.py --audit`` against a fresh
+    bundle with every offline variable set wrong."""
+
+    @pytest.fixture(autouse=True)
+    def _restore_the_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The check really applies the offline environment: every variable
+        it sets or removes is registered with ``monkeypatch`` first, so the
+        test process is restored afterwards."""
+        for name in benchmark.OFFLINE_ENV:
+            monkeypatch.setenv(name, os.environ.get(name, "1"))
+        for name in ("SSLKEYLOGFILE", "LLAMA_CPP_LIB_PATH"):
+            monkeypatch.delenv(name, raising=False)
+
+    def _absent(self, name: str) -> None:
+        return None
+
+    def test_it_applies_the_offline_environment_over_hostile_values(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app as app_module
+
+        for name in benchmark.OFFLINE_ENV:
+            monkeypatch.setenv(name, "0")
+        monkeypatch.setenv("SSLKEYLOGFILE", r"C:\nowhere\keys.log")
+        monkeypatch.setenv("LLAMA_CPP_LIB_PATH", r"C:\nowhere")
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 0
+        assert all(os.environ[name] == "1" for name in benchmark.OFFLINE_ENV)
+        assert "SSLKEYLOGFILE" not in os.environ and "LLAMA_CPP_LIB_PATH" not in os.environ
+
+    def test_a_failed_assertion_is_exit_1(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from scribe_desktop import app as app_module
+
+        def broken() -> None:
+            raise benchmark.OfflineEnvError("offline kill-switches not active")
+
+        monkeypatch.setattr(app_module, "assert_offline_env", broken)
+        assert app_module.run_offline_self_check(_SELF_CHECK, self._absent) == 1
+
+    @pytest.mark.parametrize("module", ["PySide6.QtNetwork", "PySide6.QtWebSockets"])
+    def test_a_findable_qt_network_module_is_exit_2(
+        self, monkeypatch: pytest.MonkeyPatch, module: str
+    ) -> None:
+        from scribe_desktop import app as app_module
+
+        def find(name: str) -> object | None:
+            return object() if name == module else None
+
+        assert app_module.run_offline_self_check(_SELF_CHECK, find) == 2
+
+    def test_a_find_that_raises_is_not_absent(self) -> None:
+        from scribe_desktop import app as app_module
+
+        def find(name: str) -> None:
+            raise ImportError(name)
+
+        assert app_module.run_offline_self_check(_SELF_CHECK, find) == 2
+
+    def test_the_default_finder_is_importlibs_at_call_time(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With no finder given, the check asks ``importlib.util.find_spec`` —
+        resolved when it runs — so a findable Qt networking module is exit 2.
+        Round 20 PR-MED-018: the finder is a fake, never this venv's packages
+        (C6); the real discovery is the packaged audit's (Task 3.5)."""
+        from scribe_desktop import app as app_module
+
+        asked: list[str] = []
+
+        def find(name: str) -> object | None:
+            asked.append(name)
+            return object() if name == "PySide6.QtNetwork" else None
+
+        monkeypatch.setattr(app_module.importlib.util, "find_spec", find)
+        assert app_module.run_offline_self_check(_SELF_CHECK) == 2
+        assert asked == ["PySide6.QtNetwork"]
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["scribe-app.exe"],
+            ["scribe-app.exe", "--self-check-offline", "--extra"],
+            ["scribe-app.exe", "--extra", "--self-check-offline"],
+            ["scribe-app.exe", "--self-check"],
+        ],
+    )
+    def test_anything_else_is_not_the_check(self, argv: list[str]) -> None:
+        from scribe_desktop import app as app_module
+
+        assert app_module.run_offline_self_check(argv, lambda n: pytest.fail("checked")) is None
+
+    def test_app_main_answers_before_the_install_folder_logging_and_qt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import app as app_module
+
+        _frozen_at(monkeypatch, Path(r"C:\Users\x\Downloads\dist\scribe\scribe-app.exe"))
+        monkeypatch.setattr(
+            app_module.install_layout, "outside_install_folder", lambda: pytest.fail("checked")
+        )
+        monkeypatch.setattr(app_module, "setup_logging", lambda *a, **k: pytest.fail("logged"))
+        monkeypatch.setattr(app_module, "QApplication", lambda argv: pytest.fail("Qt"))
+        monkeypatch.setattr(app_module, "run_benchmark_worker", lambda argv: pytest.fail("w"))
+        monkeypatch.setattr(app_module.importlib.util, "find_spec", lambda name: None)
+        assert app_module.main(_SELF_CHECK) == 0
+
+
 # --- Task 2.7: a packaged build outside its install folder ---------------------------
 
 

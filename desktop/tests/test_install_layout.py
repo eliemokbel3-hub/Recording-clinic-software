@@ -104,6 +104,25 @@ class TestDataRoot:
             monkeypatch.setenv("LOCALAPPDATA", value)
         assert install_layout.data_root() == Path.home() / install_layout.folder_name(which)
 
+    @pytest.mark.parametrize("pin", ["production", "dev"])
+    def test_a_named_channel_ignores_the_pin(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, pin: Channel
+    ) -> None:
+        # Task 3.7: the dev-only registration script names its channel.
+        use_channel(monkeypatch, pin)
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+        assert install_layout.data_root("dev") == tmp_path / "ClinikoScribe-dev"
+        assert install_layout.data_root("production") == tmp_path / "ClinikoScribe"
+
+    def test_the_model_pack_is_named_by_the_manifest_digest(self) -> None:
+        # D5 / Task 3.5: the folder the installer looks for beside setup.exe.
+        digest = "0123456789abcdef" * 4
+        assert install_layout.model_pack_name(digest) == "ClinikoScribe-models-01234567"
+        assert install_layout.model_pack_name(digest.upper()) == "ClinikoScribe-models-01234567"
+        for bad in ("0123", "g" * 64, "0" * 65):
+            with pytest.raises(ValueError):
+                install_layout.model_pack_name(bad)
+
     def test_the_environment_is_read_on_every_call(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -286,9 +305,10 @@ def _load_register_script() -> ModuleType:
 def test_every_store_is_under_the_channels_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, which: Channel, folder: str
 ) -> None:
-    """C8: in the dev channel every store, the log, the config, the models and
-    the Chrome link's install folder are under ``ClinikoScribe-dev`` — none
-    under the production folder."""
+    """C8: in the dev channel every store, the log, the config and the models
+    are under ``ClinikoScribe-dev`` — none under the production folder. The
+    registration script's install folder is the dev folder in EITHER pin: it
+    is dev-only since Task 3.7."""
     use_channel(monkeypatch, which)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     roots = _builders()
@@ -304,7 +324,7 @@ def test_every_store_is_under_the_channels_folder(
         "models": "models",
     }
     assert roots == {name: tmp_path / folder / leaf for name, leaf in expected.items()}
-    assert _load_register_script().INSTALL_DIR == tmp_path / folder
+    assert _load_register_script().INSTALL_DIR == tmp_path / "ClinikoScribe-dev"
     assert list(tmp_path.iterdir()) == []  # computing the roots creates nothing
 
 

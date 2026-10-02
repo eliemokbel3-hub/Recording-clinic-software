@@ -1,0 +1,17 @@
+Speaker model attribution
+=========================
+
+File: wespeaker-voxceleb-resnet34-LM.onnx (in this folder), the voice-enrolment
+model; downloaded as voxceleb_resnet34_LM.onnx and saved under this name.
+
+Creators: the WeSpeaker authors (the model card's citation):
+  Wang et al., "Wespeaker: A research and production oriented speaker
+  embedding learning toolkit", ICASSP 2023.
+
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+  https://creativecommons.org/licenses/by/4.0/
+
+Source:
+  https://huggingface.co/Wespeaker/wespeaker-voxceleb-resnet34-LM/resolve/main/voxceleb_resnet34_LM.onnx
+
+Changes: none. The file is unmodified (byte-identical, SHA-256-pinned).
