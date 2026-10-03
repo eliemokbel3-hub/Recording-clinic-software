@@ -618,9 +618,12 @@ def build_inputs(
     release: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> dict[str, Path]:
     """A committed lock and manifest stand-in, and a PyInstaller source whose
-    bootloader the fake ``waf`` rebuilds."""
+    bootloader the fake ``waf`` rebuilds and whose pyproject declares the
+    pinned build backend (which the lock stand-in carries, round 31)."""
     lock = tmp_path / "requirements-build.txt"
-    lock.write_text("# lock\n", encoding="utf-8")
+    lock.write_text(
+        "# lock\n" + f"hatchling==1.32.4 \\\n    --hash=sha256:{'0' * 64}\n", encoding="utf-8"
+    )
     manifest_path = tmp_path / "models-manifest.json"
     manifest = {"version": 1, "files": [{"path": "a/b.bin", "size": 1, "sha256": "0" * 64}]}
     manifest_path.write_bytes(release.manifest_bytes(manifest))
@@ -629,7 +632,14 @@ def build_inputs(
     source = tmp_path / "pyinstaller-src"
     (source / release.RUNW).parent.mkdir(parents=True)
     (source / release.RUNW).write_bytes(b"rebuilt bootloader")
+    (source / "pyproject.toml").write_text(_PYINSTALLER_PYPROJECT, encoding="utf-8")
     return {"source": source, "out": tmp_path / "release", "manifest": manifest_path}
+
+
+# PyInstaller v6.22.3's own [build-system] (round 31; the first Release run).
+_PYINSTALLER_PYPROJECT = (
+    '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+)
 
 
 class TestNoRepoArtefactIsRead:
@@ -712,6 +722,10 @@ class TestStageOne:
             ("dirty", "has local changes or extra files"),
             ("ignored", "clone it again into an empty folder"),
             ("status fails", "has local changes or extra files"),
+            ("lock lacks the backend", "lacks hatchling, the build backend"),
+            ("backend changed", "declares the build requirements hatchling, hatch-vcs"),
+            ("no pyproject", "does not declare its build requirements"),
+            ("no build-system", "does not declare its build requirements"),
         ],
     )
     def test_preflight_refusals(
@@ -742,6 +756,20 @@ class TestStageOne:
             (build_inputs["out"] / "stale").write_bytes(b"x")
         elif change == "commit":
             outputs = {"rev-parse": "0" * 40 + "\n"}
+        elif change == "lock lacks the backend":
+            release.LOCK.write_text(
+                f"altgraph==0.17.5 \\\n    --hash=sha256:{'0' * 64}\n", encoding="utf-8"
+            )
+        elif change == "backend changed":
+            (build_inputs["source"] / "pyproject.toml").write_text(
+                '[build-system]\nrequires = ["hatchling>=1.20", "hatch_vcs"]\n', encoding="utf-8"
+            )
+        elif change == "no pyproject":
+            (build_inputs["source"] / "pyproject.toml").unlink()
+        elif change == "no build-system":
+            (build_inputs["source"] / "pyproject.toml").write_text(
+                '[project]\nname = "pyinstaller"\n', encoding="utf-8"
+            )
         with pytest.raises(release.ReleaseError, match=message):
             release.preflight(
                 build_inputs["source"],
@@ -782,6 +810,32 @@ class TestStageOne:
             "2291F269C3A3804FDE1079462239E09A8B32FFFBEEAA8F628A531FAF5BE77D41".lower()
         )
         assert release.INNO_BANNER == "Compiler engine version: Inno Setup 6.7.3"
+
+    def test_every_build_requirement_of_pyinstaller_is_locked(self, release: ModuleType) -> None:
+        """Round 31 (the first Release run failed on it): PyInstaller's source
+        is installed WITHOUT build isolation, so every build requirement of the
+        pinned commit — and the backend's own dependencies — must be pinned in
+        the lock generator, or the build venv cannot build it. A PyInstaller
+        bump changes PYINSTALLER_BUILD_REQUIRES's source and forces this
+        re-check."""
+        assert release.PYINSTALLER_BUILD_REQUIRES == ("hatchling",)
+        lock = _load("lock-build-requirements")
+        for name in release.PYINSTALLER_BUILD_REQUIRES:
+            assert name in lock.BUILD_TOOL_PINS, name
+            assert name in lock.EXTRA_REQUIREMENTS, name
+        # hatchling 1.32.4's Requires-Dist (packaging comes from the freeze).
+        assert {"pathspec", "pluggy", "tomlkit", "trove-classifiers"} <= set(lock.BUILD_TOOL_PINS)
+        assert "packaging" in lock.EXTRA_REQUIREMENTS
+
+    def test_the_backend_is_read_from_the_source(
+        self, release: ModuleType, tmp_path: Path
+    ) -> None:
+        (tmp_path / "pyproject.toml").write_text(_PYINSTALLER_PYPROJECT, encoding="utf-8")
+        assert release.pyinstaller_build_requires(tmp_path) == ["hatchling"]
+        (tmp_path / "pyproject.toml").write_text(
+            '[build-system]\nrequires = ["Hatch_VCS >= 0.3", "hatchling"]\n', encoding="utf-8"
+        )
+        assert release.pyinstaller_build_requires(tmp_path) == ["hatch-vcs", "hatchling"]
 
 
 class TestTheBuildRecord:

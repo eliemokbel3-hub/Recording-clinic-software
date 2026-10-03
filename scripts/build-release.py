@@ -27,7 +27,9 @@ repository root (or by the CI release job, Task 3.6, for the build itself):
    build environment in ``<out>\build-venv`` from the hashed lock
    (desktop/requirements-build.txt) and the prose wheel; PyInstaller from its
    source checkout at the pinned commit, which must be a CLEAN clone (no
-   changed, extra or ignored file), with the bootloader built here (D1;
+   changed, extra or ignored file), built with the LOCKED build backend
+   (hatchling; no build isolation, so nothing unhashed is fetched; the lock
+   must carry it), with the bootloader built here (D1;
    the C++ build tools must be installed); ``pip check``. Stage two (the
    build environment's interpreter): PyInstaller over packaging/scribe.spec,
    the host manifest, the extension (``npm ci`` and
@@ -87,6 +89,15 @@ PYINSTALLER_CLONE = (
     f"git clone --depth 1 --branch v{PYINSTALLER_VERSION} "
     "https://github.com/pyinstaller/pyinstaller.git <an empty folder>"
 )
+# Round 31 (the first Release run failed on it): the pinned source's
+# pyproject.toml declares `[build-system] requires = ["hatchling"]`,
+# `build-backend = "hatchling.build"`. It is installed with
+# --no-build-isolation (no unhashed fetch), so every name here must be in the
+# build lock (lock-build-requirements.py BUILD_TOOL_PINS; pinned equal by
+# test). preflight checks the source still declares no more than this, so a
+# PyInstaller bump forces a re-check.
+PYINSTALLER_BUILD_REQUIRES = ("hatchling",)
+_REQUIREMENT_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 # Task 3.6 / handoff open item 2: Inno Setup 6.7.3 on both sides (the
 # practitioner's local copy; CI installs it). OPEN until the practitioner
@@ -604,6 +615,20 @@ def preflight(
             "desktop/requirements-build.txt does not exist; generate it with "
             "scripts/lock-build-requirements.py (Task 3.1)"
         )
+    # Round 31: the source is installed without build isolation, so its build
+    # backend must come from the lock — checked here, before any install.
+    lock_text = LOCK.read_text(encoding="utf-8")
+    locked = {
+        _normalise(m.group(1))
+        for m in re.finditer(r"^([A-Za-z0-9][A-Za-z0-9._-]*)==", lock_text, re.MULTILINE)
+    }
+    for name in PYINSTALLER_BUILD_REQUIRES:
+        if name not in locked:
+            raise ReleaseError(
+                f"desktop/requirements-build.txt lacks {name}, the build backend of "
+                "PyInstaller's source; generate the lock again with "
+                "scripts/lock-build-requirements.py (Task 3.1)"
+            )
     load_manifest()  # the installer compiles its hashes in
     if out.exists() and any(out.iterdir()):
         raise ReleaseError(f"{out} is not empty; a release builds into an empty folder")
@@ -629,6 +654,40 @@ def preflight(
             f"{pyinstaller_src} has local changes or extra files (an earlier build's among "
             f"them); clone it again into an empty folder: {PYINSTALLER_CLONE}"
         )
+    declared = pyinstaller_build_requires(pyinstaller_src)
+    if not set(declared) <= set(PYINSTALLER_BUILD_REQUIRES):
+        raise ReleaseError(
+            f"PyInstaller's source declares the build requirements {', '.join(declared)}, "
+            f"but this build expects only {', '.join(PYINSTALLER_BUILD_REQUIRES)}: add the new "
+            "ones to PYINSTALLER_BUILD_REQUIRES and the lock's build-tool pins (Task 3.1)"
+        )
+
+
+def _normalise(name: str) -> str:
+    """PEP 503 name normalisation (the lock script's rule)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def pyinstaller_build_requires(pyinstaller_src: Path) -> list[str]:
+    """The normalised names in the source's ``[build-system] requires``. A
+    source with no readable pyproject is refused, never taken as needing
+    nothing."""
+    pyproject = pyinstaller_src / "pyproject.toml"
+    try:
+        requires = tomllib.loads(pyproject.read_text(encoding="utf-8"))["build-system"][
+            "requires"
+        ]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+        raise ReleaseError(
+            f"{pyproject} does not declare its build requirements ({type(exc).__name__})"
+        ) from exc
+    names = []
+    for requirement in requires:
+        match = _REQUIREMENT_NAME.match(requirement) if isinstance(requirement, str) else None
+        if match is None:
+            raise ReleaseError(f"{pyproject} has a build requirement that is not a name")
+        names.append(_normalise(match.group(1)))
+    return names
 
 
 def stage_one(

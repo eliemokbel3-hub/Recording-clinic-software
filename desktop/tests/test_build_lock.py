@@ -109,12 +109,40 @@ class TestGenerator:
         assert "pytest==9.0.0\n" in constraints  # constraints only; never requested
         assert not any(c.startswith("pytest") for c in command[command.index("--constraint") + 2 :])
 
-    def test_the_tool_pins_are_task_0_1s_recorded_versions(self, lock_script: ModuleType) -> None:
+    def test_the_tool_pins_are_the_recorded_versions(self, lock_script: ModuleType) -> None:
         assert dict(lock_script.BUILD_TOOL_PINS) == {
+            # Task 0.1's PyInstaller install
             "pyinstaller-hooks-contrib": "2026.8",
             "altgraph": "0.17.5",
             "pefile": "2024.8.26",
+            # Round 31: PyInstaller's build backend and its dependencies
+            "hatchling": "1.32.4",
+            "pathspec": "1.1.1",
+            "pluggy": "1.6.0",
+            "tomlkit": "0.15.1",
+            "trove-classifiers": "2026.9.21.13",
         }
+
+    def test_a_build_tool_pin_admits_a_package_the_freeze_lacks(
+        self, lock_script: ModuleType, tmp_path: Path
+    ) -> None:
+        """Round 31: hatchling's dependencies are absent from the proven
+        environment; a build-tool pin is what admits them (and only at the
+        pinned version) — any other unpinned package is still refused."""
+        freeze = _freeze(lock_script)
+        assert "pathspec" not in lock_script.proven_pins(freeze)
+        versions = _all_versions(lock_script) | {"pathspec": "1.1.1"}
+        _, run = _fake_download(lock_script, versions)
+        entries = lock_script.parse_lock(
+            lock_script.generate(freeze, PYPROJECT_TEXT, workdir=tmp_path, run=run)
+        )
+        assert entries["pathspec"][0] == "1.1.1"
+        assert entries["hatchling"][0] == "1.32.4"
+        wrong = tmp_path / "wrong"
+        wrong.mkdir()
+        _, run = _fake_download(lock_script, _all_versions(lock_script) | {"pathspec": "1.2.0"})
+        with pytest.raises(lock_script.LockError, match="pathspec 1.2.0 is not pinned"):
+            lock_script.generate(freeze, PYPROJECT_TEXT, workdir=wrong, run=run)
 
     def test_an_unpinned_version_is_refused_by_name(
         self, lock_script: ModuleType, tmp_path: Path
@@ -225,4 +253,7 @@ class TestLockCoversTheRuntime:
         assert len(requirement_lines) == len(entries)  # every entry carries its hash
         assert not set(entries) & lock_script.NEVER_LOCKED
         for name, version in lock_script.BUILD_TOOL_PINS.items():
+            # A pin added since the lock was generated (round 31: hatchling and
+            # its dependencies) fails here until the practitioner regenerates it.
+            assert name in entries, f"{name} is not in the lock: regenerate it (Task 3.1)"
             assert entries[name][0] == version

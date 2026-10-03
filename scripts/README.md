@@ -44,7 +44,8 @@ set up and build it, and make releases; the installed app needs none of them.
   files into `ClinikoScribe-models-<8 hex>\`; `--audit DIST` checks a
   PyInstaller bundle (fails closed, a Defender detection included); and the
   build itself, `--pyinstaller-src DIR --out DIR` (a clean environment from
-  the lock, PyInstaller from a clean clone at its pinned commit, the bundle
+  the lock, PyInstaller from a clean clone at its pinned commit, built with
+  the locked hatchling backend and no build isolation, the bundle
   audit, the release extension, Inno Setup 6.7.3, `BUILD-INFO.txt` and
   `SHA256SUMS.txt`). The build of record is the CI `Release` workflow's; a
   local build is for spikes and the model pack. See `docs/release/pilot-builds.md`.

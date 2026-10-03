@@ -15,8 +15,10 @@ the SHA-256 of its Windows wheel. Two things are deliberately NOT in it:
   that pin and checks it).
 
 THE VERSIONS ARE NOT CHOSEN HERE. They come from a ``pip freeze --all`` of the
-environment the Phase 0 spike proved (``--constraints``), plus the three build
-tools Task 0.1's PyInstaller install added (``BUILD_TOOL_PINS``). pip resolves
+environment the Phase 0 spike proved (``--constraints``), plus the build
+tools pinned here (``BUILD_TOOL_PINS``: the three Task 0.1's PyInstaller
+install added, and PyInstaller's build backend hatchling with its
+dependencies, which a build without isolation needs locked). pip resolves
 the closure of the requirements under those pins and downloads one wheel for
 each package; a package whose version the proven environment does not pin,
 or a download that is not a wheel, is refused by name. So the lock can only
@@ -48,13 +50,29 @@ REPO = Path(__file__).resolve().parents[1]
 PYPROJECT = REPO / "desktop" / "pyproject.toml"
 LOCK_PATH = REPO / "desktop" / "requirements-build.txt"
 
-# Task 0.1 RESULT (the plan): installing PyInstaller 6.22.3 into the proven
-# environment added exactly these, so the everyday environment's freeze does
-# not carry them.
+# The build tools the proven environment's freeze does not carry, each pinned
+# here (a build-tool pin is both a constraint and an allowed version, and it
+# wins over the freeze's version of the same package: these run only while
+# PyInstaller is installed into the build environment, never in the app).
 BUILD_TOOL_PINS: Mapping[str, str] = {
+    # Task 0.1 RESULT (the plan): installing PyInstaller 6.22.3 into the
+    # proven environment added exactly these.
     "pyinstaller-hooks-contrib": "2026.8",
     "altgraph": "0.17.5",
     "pefile": "2024.8.26",
+    # Round 31 (the first Release run): PyInstaller's source builds with the
+    # hatchling backend (its pyproject's [build-system], build-release.py
+    # PYINSTALLER_BUILD_REQUIRES), installed with --no-build-isolation, so the
+    # backend and its runtime dependencies must be in the lock. hatchling
+    # 1.32.4's Requires-Dist: packaging>=24.2 (already locked from the
+    # freeze), pathspec>=0.10.1, pluggy>=1.0.0, tomlkit>=0.11.1,
+    # trove-classifiers (tomli only below Python 3.11). Versions from PyPI on
+    # 2026-10-03; each a py3-none-any wheel.
+    "hatchling": "1.32.4",
+    "pathspec": "1.1.1",
+    "pluggy": "1.6.0",
+    "tomlkit": "0.15.1",
+    "trove-classifiers": "2026.9.21.13",
 }
 
 # Beside pyproject's runtime dependencies: what the packaged app also loads,
@@ -68,13 +86,17 @@ EXTRA_REQUIREMENTS: tuple[str, ...] = (
     "numpy",
     "diskcache",
     "jinja2",
-    # PyInstaller from source, installed with --no-deps --no-build-isolation.
+    # PyInstaller from source, installed with --no-deps --no-build-isolation:
+    # its own Requires-Dist...
     "pyinstaller-hooks-contrib",
     "altgraph",
     "pefile",
     "pywin32-ctypes",
     "packaging",
     "setuptools",
+    # ...and its build backend (round 31), whose dependencies pip resolves
+    # under BUILD_TOOL_PINS.
+    "hatchling",
 )
 
 # Never in a build lock: the prose runtime (its own file) and PyInstaller (its
