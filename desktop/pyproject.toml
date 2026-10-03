@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scribe-desktop"
-version = "0.1.0"
+version = "0.1.1"
 description = "Windows desktop companion for the Cliniko clinical scribe"
 # Plan targets 3.12+; dev machine runs 3.14 (recorded in plan Key Findings)
 requires-python = ">=3.12"

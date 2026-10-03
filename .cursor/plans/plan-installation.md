@@ -3601,6 +3601,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
   2. Reinstall N over N+1; the app starts and reads every store.
   3. Uninstall, check that the data folder remains, then reinstall.
 
+  - **Prepared 2026-10-03 (composer, local commit, not pushed):** version 0.1.1 in every pinned place (`desktop/pyproject.toml`, `__version__`, `extension/src/manifest.ts`, `package.json` and both `package-lock.json` copies; `test_the_version_is_the_same_everywhere` holds), together with the CI timing-test bound (AGENTS.md Known Issues). After P.1 passes: push, run Release, verify the attestation, record the row in `docs/release/pilot-builds.md`, then run steps 1–3.
+
   Done when: each step's result is recorded.
 
 ## Retained Follow-Up Items

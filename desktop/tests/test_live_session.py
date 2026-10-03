@@ -307,7 +307,10 @@ class TestLiveSessionController:
         finished = controller.finish()
         elapsed = time.perf_counter() - started
         assert finished.state is SessionState.PROCESSING
-        assert elapsed < 0.1
+        # Finish does real disk I/O (the flush and the store footer): 0.32 s
+        # once on a shared CI runner (2026-10-03). Waiting on the gated worker
+        # instead would take the 10 s stop timeout, or never return.
+        assert elapsed < 2.0
         assert worker.sealed and worker.running  # sealed, NOT drained
         gate.set()
         statuses: list[str] = []
