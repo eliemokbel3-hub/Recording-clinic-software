@@ -93,6 +93,8 @@ class SessionScreen(QWidget):
         # H1 round 54 MED-052: the bridge's lock check, run first by every
         # Start from this screen (the desktop button and a Chrome Start).
         self._start_guard: Callable[[], str | None] | None = None
+        # Installation plan round 36 MED-001: the start-up warm-up's hold.
+        self._start_hold: Callable[[], bool] | None = None
         # Task 5.2: the first Discard click's session ref and time.
         self._discard_armed: tuple[str | None, float] | None = None
         self.live_status.connect(self._on_live_status)
@@ -258,6 +260,19 @@ class SessionScreen(QWidget):
         returns the refusal to show, or None to go ahead."""
         self._start_guard = guard
 
+    def set_start_hold(self, hold: Callable[[], bool] | None) -> None:
+        """Installation plan round 36 MED-001 (the practitioner's option
+        (b)): True while the start-up import warm-up runs, within its bound
+        (``ml_warmup.ImportWarmup.holds_start``). Every Start — ``on_start``
+        and ``start_linked`` (``ChromeBridge`` also asks ``start_held`` first,
+        to name the code in the panel) — is then refused BEFORE anything is
+        made or the desktop tick cleared. None never holds."""
+        self._start_hold = hold
+
+    def start_held(self) -> bool:
+        hold = self._start_hold
+        return hold is not None and hold()
+
     def set_chrome_view(self, text: str) -> None:
         """Task 4.5: the bridge's Chrome lines (hidden when empty)."""
         self.chrome_label.setText(text)
@@ -282,11 +297,15 @@ class SessionScreen(QWidget):
 
     def on_start(self) -> None:
         """The desktop Start: an UNLINKED recording, behind the consent tick
-        (Constraint 4). The tick is cleared whatever the outcome."""
+        (Constraint 4). The tick is cleared whatever the outcome — except
+        when the start-up warm-up's hold refuses the press (round 36
+        MED-001), which keeps it for the next one."""
         if not self.consent_checkbox.isChecked():
             self._show_message(models.CONSENT_REQUIRED_MESSAGE)
             self.refresh()
             return
+        if self._refuse_while_held():
+            return  # round 36 MED-001: the tick is KEPT for the next press
         self.consent_checkbox.setChecked(False)
         self._start(unlinked_consent(), None)
 
@@ -295,9 +314,20 @@ class SessionScreen(QWidget):
         own consent tick produced ``consent``, and the context is the one the
         bound report's verification produced. The controller refuses a
         consent that does not name the context's note. True when it started.
-        The desktop tick is cleared too (every Start clears it)."""
+        The desktop tick is cleared too (every Start clears it) — but not by
+        a Start the warm-up's hold refuses (round 36 MED-001)."""
+        if self._refuse_while_held():
+            return False
         self.consent_checkbox.setChecked(False)
         return self._start(consent, context)
+
+    def _refuse_while_held(self) -> bool:
+        """Round 36 MED-001: name the hold and refuse, or False to go on."""
+        if not self.start_held():
+            return False
+        self._show_message(models.START_GETTING_READY_MESSAGE)
+        self.refresh()
+        return True
 
     def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> bool:
         guard = self._start_guard

@@ -598,6 +598,8 @@ class TestHotkeyWindow:
             raise RuntimeError("start-up failed")
 
         monkeypatch.setattr(window, "show", fail_show)
+        from conftest import InertWarmup
+
         for name, value in {
             "setup_logging": lambda name: logging.getLogger("test-hands-free"),
             # Privacy-professional-controls Task 4.1 (C6): never this process's
@@ -612,6 +614,7 @@ class TestHotkeyWindow:
                 app_module.InstanceExclusion("acquired")
             ),
             "SoundDeviceBackend": lambda: object(),
+            "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             # Privacy-professional-controls Task 1.3: never the real audit root.
             "AuditLog": lambda **kwargs: _InertAudit(),
             # Task 2.3: never the real archive root either.

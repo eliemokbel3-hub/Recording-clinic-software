@@ -48,8 +48,40 @@ _QUEUE_MAX_BLOCKS: Final = 256  # ~25 s backlog bound; overflow -> failure, neve
 _CONTROL_TIMEOUT_S: Final = 10.0
 
 
+# Installation plan round 35 MED-001: which capture path raised, as a fixed
+# word. ``SessionController`` logs it beside the exception's type name when a
+# recording fails — never the message, which can carry PortAudio's text.
+CAPTURE_DETAIL_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "unspecified",
+        "open_failed",  # the device would not open
+        "stream_ended",  # PortAudio ended the stream (device lost)
+        "queue_full",  # the worker fell ~25 s behind
+        "status_input_overflow",  # PortAudio dropped input frames
+        "status_input_underflow",
+        "status_other",  # a status flag this module does not name
+    }
+)
+
+
 class AudioCaptureError(Exception):
-    """Base class for capture failures."""
+    """Base class for capture failures. ``detail_code`` is one of
+    ``CAPTURE_DETAIL_CODES`` (any other value reads as ``unspecified``)."""
+
+    def __init__(self, *args: object, detail_code: str = "unspecified") -> None:
+        super().__init__(*args)
+        self.detail_code = detail_code if detail_code in CAPTURE_DETAIL_CODES else "unspecified"
+
+
+def status_detail_code(status: object) -> str:
+    """The detail code for a truthy PortAudio callback status: the input
+    flag it carries (``sounddevice.CallbackFlags`` attributes), else
+    ``status_other``. Built from this module's words, never ``str(status)``."""
+    if bool(getattr(status, "input_overflow", False)):
+        return "status_input_overflow"
+    if bool(getattr(status, "input_underflow", False)):
+        return "status_input_underflow"
+    return "status_other"
 
 
 class DeviceLostError(AudioCaptureError):
@@ -170,14 +202,22 @@ class SoundDeviceBackend:
             on_block(bytes(indata))
             if status:
                 on_error(
-                    CaptureOverflowError(f"device reported dropped frames (status: {status})")
+                    CaptureOverflowError(
+                        f"device reported dropped frames (status: {status})",
+                        detail_code=status_detail_code(status),
+                    )
                 )
 
         def finished() -> None:
             # PortAudio fires finished_callback when the stream ends. If WE
             # did not stop it, the device died mid-session.
             if handle is not None and not handle.stopped_by_us:
-                on_error(DeviceLostError("input stream ended unexpectedly (device lost)"))
+                on_error(
+                    DeviceLostError(
+                        "input stream ended unexpectedly (device lost)",
+                        detail_code="stream_ended",
+                    )
+                )
 
         try:
             stream = sd.RawInputStream(
@@ -192,7 +232,9 @@ class SoundDeviceBackend:
             handle = _SoundDeviceStream(stream)
             stream.start()
         except sd.PortAudioError as exc:
-            raise DeviceLostError(f"failed opening input device {device_id}: {exc}") from exc
+            raise DeviceLostError(
+                f"failed opening input device {device_id}: {exc}", detail_code="open_failed"
+            ) from exc
         return handle
 
 
@@ -230,7 +272,7 @@ class MockCaptureBackend:
         on_error: Callable[[Exception], None],
     ) -> CaptureStream:
         if all(device.device_id != device_id for device in self.devices):
-            raise DeviceLostError(f"no such input device {device_id}")
+            raise DeviceLostError(f"no such input device {device_id}", detail_code="open_failed")
         self.opened_device_id = device_id
         self._on_block = on_block
         self._on_error = on_error
@@ -257,7 +299,7 @@ class MockCaptureBackend:
         """Simulate device loss."""
         if self._on_error is None:
             raise AssertionError("no open mock stream")
-        self._on_error(exc or DeviceLostError("mock device lost"))
+        self._on_error(exc or DeviceLostError("mock device lost", detail_code="stream_ended"))
 
 
 # --------------------------------------------------------------------------
@@ -371,7 +413,9 @@ class CaptureWorker:
             self._queue.put_nowait(block)
         except queue.Full:
             # Never silently drop audio mid-recording: surface as a failure.
-            self._on_error(CaptureOverflowError("capture queue overflowed"))
+            self._on_error(
+                CaptureOverflowError("capture queue overflowed", detail_code="queue_full")
+            )
 
     def _on_error(self, exc: Exception) -> None:
         if self._failed.is_set() or self._stopped:

@@ -19,7 +19,10 @@ footer failure and retirement on ``start()`` stop an attached worker; pause
 and resume gate feeding; ``claim_live_transcriber`` is legal only inside a
 run; a transcriber failure after the claim leaves nothing attached; a tee
 exception never reaches the capture worker's failure path; the three C8
-fallback lines; today's behaviour without a factory.
+fallback lines; today's behaviour without a factory. Installation plan
+round 35 MED-001: a blocked model load never fails capture, a factory that
+returns None records without a worker, and a capture failure logs its type
+name and detail word only.
 """
 
 from __future__ import annotations
@@ -38,7 +41,12 @@ import pytest
 
 from conftest import start_unlinked
 from scribe_desktop import session as session_mod
-from scribe_desktop.audio_capture import CHUNK_BYTES, DeviceLostError, MockCaptureBackend
+from scribe_desktop.audio_capture import (
+    CHUNK_BYTES,
+    CaptureOverflowError,
+    DeviceLostError,
+    MockCaptureBackend,
+)
 from scribe_desktop.benchmark import apply_offline_env
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionActivityError, SessionController, SessionState
@@ -46,6 +54,8 @@ from scribe_desktop.session_store import (
     KEY_FILENAME,
     SessionChunkStore,
     StoreWriteError,
+    iter_chunks,
+    unwrap_key_from_file,
 )
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE, MockSpeechProvider, TranscribedWord
 from scribe_desktop.transcription import (
@@ -766,6 +776,141 @@ class TestLiveSessionController:
         gate.set()
         _wait(lambda: not worker.running)
         assert worker.buffers_cleared
+
+    def test_a_slow_model_load_never_fails_capture(
+        self, tmp_path: Path, no_batch_models: None
+    ) -> None:
+        """Installation plan round 35 MED-001: the live worker loads its
+        models on its own thread, so capture never waits on it — five seconds
+        of audio fed while the load is blocked are all in the encrypted store
+        before the load is released (round 38 PR-LOW-B01), the session
+        stays RECORDING, and the worker catches up from its queue once the
+        load returns. (The mock backend has no PortAudio callback, so this
+        pins the controller's half: nothing on the capture path waits for
+        the load; the interpreter-lock half is ``ml_warmup``'s.)"""
+        pytest.importorskip("numpy")
+        gate = threading.Event()
+        loading = threading.Event()
+
+        def slow_provider() -> Any:
+            loading.set()
+            gate.wait()
+            return MockSpeechProvider()
+
+        workers = _Workers(provider_factory=slow_provider)
+        controller, backend = _controller(tmp_path, workers)
+        session = start_unlinked(controller)
+        worker = workers.last
+        pcm = silence_pcm(1.0) + tone_pcm(2.0) + silence_pcm(2.0)
+        expected = [pcm[i : i + CHUNK_BYTES] for i in range(0, len(pcm), CHUNK_BYTES)]
+        session_dir = tmp_path / session.session_id
+        crypto = unwrap_key_from_file(session_dir)
+
+        def stored() -> list[bytes]:
+            return list(iter_chunks(session_dir / "audio.enc", crypto))
+
+        try:
+            assert loading.wait(5.0)
+            _feed(backend, pcm)
+            # Round 38 PR-LOW-B01: every chunk reaches ENCRYPTED STORAGE while
+            # the load is still blocked (bounded wait, the gate still closed).
+            _wait(lambda: len(stored()) == len(expected))
+            assert not gate.is_set()
+            assert stored() == expected
+            assert controller.state is SessionState.RECORDING
+            assert worker.running and not worker.models_loaded
+            assert worker.failed_reason is None
+        finally:
+            gate.set()
+        finished = controller.finish()
+        assert finished.state is SessionState.PROCESSING
+        statuses: list[str] = []
+        document, _directory, _crypto = _transcribe(controller, statuses)
+        assert statuses == [models.LIVE_ASSEMBLED_STATUS]  # no fallback was needed
+        assert len(document.transcript_segments) == 1
+        controller.discard()
+
+    def test_a_factory_returning_none_records_without_a_worker(
+        self, tmp_path: Path, batch_stubs: type[_StubWhisper]
+    ) -> None:
+        """Round 35 MED-001: the window's factory returns None while the
+        import warm-up runs (since round 36, a Start admitted only after the
+        60 s hold) — that Start records without a live worker (one
+        metadata line), and Finish runs the batch path with no fallback line."""
+        pytest.importorskip("numpy")
+        logger = logging.getLogger("test-live-session-not-attached")
+        records = _Records()
+        logger.addHandler(records)
+        logger.setLevel(logging.INFO)
+        try:
+            controller, backend = _controller(tmp_path, None, logger)
+            controller.set_live_transcriber_factory(lambda: None)
+            session = start_unlinked(controller)
+            assert controller.state is SessionState.RECORDING
+            assert not controller.live_transcription_attached
+            assert (
+                f"live_transcriber session_id={session.session_id} state=not_attached"
+                in records.messages
+            )
+            _feed(backend, silence_pcm(0.5) + tone_pcm(1.0))
+            controller.finish()
+            statuses: list[str] = []
+            document, _directory, _crypto = _transcribe(controller, statuses)
+            assert statuses == []
+            assert batch_stubs.constructed == ["mock-batch"]
+            assert len(document.transcript_segments) == 1
+            controller.discard()
+        finally:
+            logger.removeHandler(records)
+
+    @pytest.mark.parametrize(
+        ("failure", "error_code", "detail_code"),
+        [
+            (
+                CaptureOverflowError(
+                    "device reported dropped frames (status: SECRET-TEXT)",
+                    detail_code="status_input_overflow",
+                ),
+                "CaptureOverflowError",
+                "status_input_overflow",
+            ),
+            (
+                DeviceLostError("SECRET-TEXT", detail_code="stream_ended"),
+                "DeviceLostError",
+                "stream_ended",
+            ),
+            (StoreWriteError("SECRET-TEXT disk full"), "StoreWriteError", "none"),
+        ],
+        ids=["overflow", "device-lost", "store"],
+    )
+    def test_a_capture_failure_logs_its_type_name_and_detail_code_only(
+        self, tmp_path: Path, failure: Exception, error_code: str, detail_code: str
+    ) -> None:
+        """Round 35 MED-001: the line that was missing from the installed
+        app's log — the failure's type name and fixed detail word, before
+        the session's transition to failed; never the message."""
+        logger = logging.getLogger("test-live-session-capture-failure")
+        records = _Records()
+        logger.addHandler(records)
+        logger.setLevel(logging.INFO)
+        try:
+            controller, backend = _controller(tmp_path, None, logger)
+            session = start_unlinked(controller)
+            backend.fail(failure)
+            _wait_for_state(controller, SessionState.FAILED)
+            line = (
+                f"capture_failure detail_code={detail_code} error_code={error_code} "
+                f"session_id={session.session_id} session_state=recording"
+            )
+            assert line in records.messages
+            failed = (
+                f"session_transition session_id={session.session_id} session_state=failed"
+            )
+            assert records.messages.index(line) < records.messages.index(failed)
+            assert not any("SECRET" in m or "dropped" in m for m in records.messages)
+            controller.discard()
+        finally:
+            logger.removeHandler(records)
 
     def test_the_factory_can_be_registered_after_construction(self, tmp_path: Path) -> None:
         pytest.importorskip("numpy")

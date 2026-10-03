@@ -11,7 +11,8 @@ offline kill-switches set AND asserted before
 any ML code can run; then the single-instance guard — the per-user lock
 file every instance must hold, behind the named mutex's friendly "already
 running" check (a second instance must never run its own controller/sweep
-over the shared sessions root);
+over the shared sessions root); then the transcription stack's import
+warm-up starts on its own thread (installation plan round 35 MED-001);
 then the 24-hour expiry sweep (Flow 3) before the recovery screen lists
 anything; a periodic sweep re-runs the expiry rule on a best-effort
 cadence while the app stays open (round 47 PR-LOW-001 — "keeps the cap
@@ -48,6 +49,7 @@ from scribe_desktop.exclusions import (
     startup_exclusions,
 )
 from scribe_desktop.logging_setup import exception_type_name, log_event, setup_logging
+from scribe_desktop.ml_warmup import ImportWarmup
 from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user_sid
 from scribe_desktop.session import SessionController
@@ -644,6 +646,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         _show_cannot_start_warning()
         log_event(logger, "app_exit", state="no_single_instance")
         return 1
+    # Installation plan round 35 MED-001: the transcription stack's imports,
+    # off the recording path — started once the guard is held, so a refused
+    # second instance imports nothing. While it runs every Start is refused,
+    # for at most ``ml_warmup.START_HOLD_SECONDS`` (``MainWindow(start_hold=…)``,
+    # round 36 MED-001); a Start admitted before it finishes records without
+    # a live worker (``live_ready``).
+    warmup = ImportWarmup(logger=logger)
+    warmup.start()
     backend = SoundDeviceBackend()
     # Privacy-professional-controls Task 1.3: the audit record. Construction
     # touches nothing on disk; Start writes the first row (and the key).
@@ -694,6 +704,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Installation plan Task 2.3: the Status tab's registration line
         # reads the Chrome link through the same read-only layer.
         windows_layer=windows_layer,
+        live_ready=warmup.is_finished,
+        start_hold=warmup.holds_start,
     )
     # D8: a linked Start's audit row names the clinic's Cliniko user id,
     # read from the window's clinic registry at each Start.

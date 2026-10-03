@@ -1016,6 +1016,12 @@ class ChromeBridge(QObject):
             # (the lock's queued pause ran at IDLE or QUEUED and did nothing).
             self._refuse("start", locked)
             return
+        if self._screen.start_held():
+            # Installation plan round 36 MED-001 (the practitioner's option
+            # (b)): the start-up import warm-up still runs, within its bound —
+            # refused before anything is made (no audit row, no session).
+            self._refuse("start", "getting_ready")
+            return
         if command.state_rev != self._state_rev:
             self._refuse("start", "stale_state")
             return

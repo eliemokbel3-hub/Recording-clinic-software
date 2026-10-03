@@ -164,7 +164,11 @@ def record_enrolment(
         try:
             blocks.put_nowait(block)
         except queue.Full:
-            on_error(CaptureOverflowError("enrolment capture queue overflowed"))
+            on_error(
+                CaptureOverflowError(
+                    "enrolment capture queue overflowed", detail_code="queue_full"
+                )
+            )
 
     def raise_if_failed() -> None:
         with blocks.mutex:

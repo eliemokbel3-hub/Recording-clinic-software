@@ -1049,11 +1049,32 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
         def __init__(self) -> None:
             events.append(("layer",))
 
+    class FakeWarmup:
+        """Installation plan round 35 MED-001: started after the guard,
+        before anything else; its readiness reaches the window."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            assert kwargs == {"logger": logger}
+            warmups.append(self)
+
+        def start(self) -> None:
+            events.append(("warmup",))
+
+        def is_finished(self) -> bool:
+            return False
+
+        def holds_start(self) -> bool:
+            return True
+
+    warmups: list[FakeWarmup] = []
+
     class FakeWindow:
         def __init__(self, *args: Any, **kwargs: Any) -> None:
             # Installation plan Task 2.3: the same layer reaches the window.
             layer = type(kwargs["windows_layer"]).__name__
             events.append(("window", kwargs["exclusion_warnings"], layer))
+            assert kwargs["live_ready"] == warmups[0].is_finished
+            assert kwargs["start_hold"] == warmups[0].holds_start  # round 36 MED-001
 
         def clinic_user_id(self, clinic_id: str) -> str | None:
             return None
@@ -1083,6 +1104,7 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
         "Win32WindowsLayer": FakeWindowsLayer,
         "startup_exclusions": checks,
         "MainWindow": FakeWindow,
+        "ImportWarmup": FakeWarmup,
     }.items():
         monkeypatch.setattr(app_module, name, value)
     with pytest.raises(_StopMain):
@@ -1090,6 +1112,7 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
     assert events == [
         ("hooks", logger),
         ("offline",),
+        ("warmup",),
         ("controller",),
         ("layer",),
         ("checks", "FakeWindowsLayer", sys.executable, logger),

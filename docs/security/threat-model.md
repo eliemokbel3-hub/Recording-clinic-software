@@ -1001,7 +1001,43 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     carry `LIVE_SPEAKER_PENDING`, never a cluster label. LOGGING (C9): the
     worker holds no logger; the ONE new log record is
     `live_transcriber_stop_timeout` with the session id and state only, and
-    the words of a posted window are `word_text` tripwire markers. Residue,
+    the words of a posted window are `word_text` tripwire markers. THE
+    WARM-UP (installation plan round 35 MED-001): the first recording after
+    the 0.1.0 install failed at Start while the worker was making the
+    process's FIRST import of the stack beside the microphone stream; the
+    most likely path (the log could not name it) is an extension module's
+    initialisation holding the interpreter lock the capture callback needs,
+    until the device dropped frames — which fail capture by design. So
+    `ml_warmup.ImportWarmup` imports numpy, onnxruntime and faster-whisper
+    once at app start on its own thread (modules only — no model, audio,
+    session or connection; the offline switches asserted first). While it
+    runs, EVERY Start — the Session tab's and Chrome's — is REFUSED with
+    "Clinic Scribe is still getting ready - start again in a moment" (round
+    36 MED-001, the practitioner's option (b), 2026-10-03:
+    `SessionScreen.start_held`, asked by `on_start` / `start_linked` and by
+    `ChromeBridge._start` as the code `getting_ready`) BEFORE
+    anything is made — no audit `begin`, no session folder, no key, and the
+    desktop consent tick is kept — but only for `START_HOLD_SECONDS` (60 s)
+    from the warm-up's start, so a hung warm-up never blocks recording
+    longer; a failed warm-up holds nothing. A Start admitted after the bound
+    while it still runs gets NO worker (the window's factory returns None
+    until it finishes: `live_transcriber state=not_attached`) and goes to the
+    batch path. A capture failure now logs its type name and a fixed detail
+    word (`capture_failure`), never its message. The never-drop rule is
+    unchanged: dropped frames at any moment, the first second included,
+    still fail the session. The warm-up's own residue: the per-session model
+    construction (the ONNX sessions and the Whisper model) still runs on the
+    worker's thread while capture runs — a same-process retry that rebuilt
+    every model recorded normally, but nothing bounds how long a third-party
+    constructor may hold the interpreter lock; a voice enrolment is held the
+    same way (`MainWindow._enrolment_blocker`, round 37 LOW-002); a recording
+    or enrolment admitted after the 60 s bound while the warm-up still runs,
+    and the Microphone tab's level meter, still overlap its imports
+    (a recording that fails there keeps its audio for recovery and logs its
+    type; the warm-up's length is logged as `ml_warmup duration_ms`); and
+    the Chrome side panel clears its own consent tick when it sends Start, so
+    a refused Chrome Start needs the panel's tick again (the extension's
+    behaviour for every refusal). Residue,
     stated: ≤ 0.25 s of tail speech after a forced 30 s cut is absent from
     the LIVE document (the batch fallback keeps it); the join bounds are
     time-based, so a provider call that blocks past them leaves the worker

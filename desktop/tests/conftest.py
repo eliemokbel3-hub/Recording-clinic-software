@@ -3,7 +3,7 @@ tests build and read native-messaging frames and protocol dicts — the
 consent-bearing Start (Cliniko workflow safeguards plan Task 3.3), the
 privacy-professional-controls C6 sentinel for the Windows layer and the
 exception hooks (Task 4.1), and the installation plan's models-root pin
-(Task H.6)."""
+(Task H.6) and inert ML warm-up importer (round 35 MED-001)."""
 
 import io
 import itertools
@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions, install_layout
+from scribe_desktop import exclusions, install_layout, ml_warmup
 from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.install_layout import Channel
 from scribe_desktop.protocol import PROTOCOL_VERSION
@@ -198,6 +198,48 @@ def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     if exclusions.remove_exception_hooks():
         pytest.fail("a test left the app's exception hooks installed (C6)")
+
+
+class InertWarmup:
+    """An ``ImportWarmup`` that does nothing and is always finished — for an
+    ``app.main`` test that does not test the warm-up itself (no thread, no
+    offline-environment check)."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+    def start(self) -> None:
+        pass
+
+    def is_finished(self) -> bool:
+        return True
+
+    def holds_start(self) -> bool:
+        return False
+
+
+class _InertModule:
+    """What the pinned warm-up importer hands back: onnxruntime's one call."""
+
+    def disable_telemetry_events(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_ml_warmup_imports(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Installation plan round 35 MED-001 (C6), for EVERY test (every
+    ``app.main`` test starts the warm-up): the warm-up's default importer
+    records the module names and imports nothing, so no test depends on
+    whether the ML stack is installed. A test of the warm-up passes its own
+    importer. Returns the recorded names."""
+    imported: list[str] = []
+
+    def record(name: str) -> Any:
+        imported.append(name)
+        return _InertModule()
+
+    monkeypatch.setattr(ml_warmup, "_import_module", record)
+    return imported
 
 
 NETWORK_IO_METHODS: tuple[str, ...] = (

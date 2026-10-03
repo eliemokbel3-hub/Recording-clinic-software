@@ -351,19 +351,28 @@ class TranscriptScreen(QWidget):
             return None
         return segments
 
-    def begin_live_view(self) -> None:
+    def begin_live_view(self, *, ready: bool = True) -> None:
         """GUI thread, at Start: drop whatever the view held (its document,
         custody callbacks and generation controls) and open the empty live
         view under its header. The view stays ``NoTextInteraction`` — the
         display-only rule is the same surface, live or final. The poster made
         for this Start (if any) becomes the only one whose posts count; with
-        none, no post counts."""
+        none, no post counts. ``ready`` False (installation plan round 35
+        MED-001: this Start ran without a live worker because the ML imports
+        were still warming up) names that in the empty view instead, without
+        the header (nothing will update while recording), and adopts no
+        poster — not even one an earlier, failed Start left pending."""
         self._clear()
-        self._live_token, self._pending_live_token = self._pending_live_token, None
+        pending = self._pending_live_token if ready else None
+        self._live_token, self._pending_live_token = pending, None
         self._live_active = True
-        self.transcript_view.setPlaceholderText(models.LIVE_TRANSCRIPT_PLACEHOLDER)
+        self.transcript_view.setPlaceholderText(
+            models.LIVE_TRANSCRIPT_PLACEHOLDER
+            if ready
+            else models.LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER
+        )
         self.transcript_view.setPlainText("")
-        self.live_header_label.show()
+        self.live_header_label.setVisible(ready)
         self.message_label.setText("")
 
     def _on_live_window(self, payload: object) -> None:

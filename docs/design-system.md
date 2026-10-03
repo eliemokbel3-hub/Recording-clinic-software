@@ -334,6 +334,18 @@ view patterns · tokens · microcopy.
   runs only when the recording ends) into the SAME non-interactive box; Discard clears it
   and the final transcript replaces it wholesale (`ui/transcript.py`, `ui/models.py`
   `format_live_segments`; note-learning plan Task 1.4).
+- **Start waits — briefly — while Clinic Scribe is getting ready.** Just after it opens,
+  while the transcription software loads, every Start (the Session tab's and the side
+  panel's) and a voice enrolment's Record are refused with one line, "Clinic Scribe is still getting ready - start again
+  in a moment." (`START_GETTING_READY_MESSAGE`, Chrome code `getting_ready`); nothing is
+  made, and the Session tab keeps its consent tick for the next press. The wait is
+  bounded to 60 seconds after the loading starts (`ml_warmup.START_HOLD_SECONDS`,
+  measured from the warm-up's start, which is moments after launch): after that a Start
+  records even if loading has not finished, without live transcription, and the empty
+  Transcript box says so without the header and without promising anything about the
+  recording (`LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER`, worded like the other live
+  fallback lines; installation plan rounds 35–38 MED-001, the practitioner's option
+  (b)).
 
 ## Chrome side (Cliniko workflow safeguards plan D1, D13; Phase 6)
 The extension REPORTS and the app DECIDES: every button becomes a command the app may

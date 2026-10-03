@@ -3106,6 +3106,29 @@ class TestTranscriptScreen:
         assert screen.live_segments((None, ())) is None  # no current token at all
         screen.deleteLater()
 
+    def test_a_start_made_before_the_warm_up_names_it_in_the_empty_view(
+        self, qapp: Any
+    ) -> None:
+        """Installation plan round 35 MED-001: ``ready=False`` opens the same
+        live view with the not-ready placeholder; the next ready Start shows
+        the ordinary one (and the header) again."""
+        from scribe_desktop.ui.transcript import TranscriptScreen
+
+        screen = TranscriptScreen()
+        stale_post = screen.live_poster()  # an earlier Start that then failed
+        screen.begin_live_view(ready=False)
+        assert not screen.live_header_label.isVisibleTo(screen)  # nothing will update
+        assert screen.transcript_view.placeholderText() == (
+            models.LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER
+        )
+        stale_post(_live_segments(0.0, "Hello", "Margaret"))
+        qapp.processEvents()
+        assert screen.transcript_view.toPlainText() == ""  # its token was not adopted
+        screen.begin_live_view()
+        assert screen.live_header_label.isVisibleTo(screen)
+        assert screen.transcript_view.placeholderText() == models.LIVE_TRANSCRIPT_PLACEHOLDER
+        screen.deleteLater()
+
 
 # ---------------------------------------------------------------------------
 # Main window wiring.
@@ -3167,6 +3190,53 @@ class TestMainWindow:
         window.session_screen.session_discarded.emit()
         assert not header.isVisibleTo(window.transcript_screen)
         window.close()
+
+    def test_the_live_factory_builds_nothing_until_the_warm_up_finishes(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Installation plan round 35 MED-001: while ``live_ready`` is False
+        the factory returns None (the Start records without a live worker)
+        and the live view says why; once it is True the factory builds and
+        the ordinary placeholder returns."""
+        ready = [False]
+        controller = FakeController()
+        window = _main_window(tmp_path, controller, live_ready=lambda: ready[0])
+        factory = controller.live_transcriber_factory
+        assert factory() is None
+        window.session_screen.session_started.emit()
+        view = window.transcript_screen.transcript_view
+        header = window.transcript_screen.live_header_label
+        assert not header.isVisibleTo(window.transcript_screen)
+        assert view.placeholderText() == models.LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER
+        ready[0] = True
+        assert isinstance(factory(), LiveTranscriber)
+        window.session_screen.session_started.emit()
+        assert header.isVisibleTo(window.transcript_screen)
+        assert view.placeholderText() == models.LIVE_TRANSCRIPT_PLACEHOLDER
+        window.close()
+
+    def test_the_start_hold_reaches_the_session_screen(self, qapp: Any, tmp_path: Path) -> None:
+        """Round 36 MED-001: ``start_hold`` is the Session screen's hold, so
+        a desktop Start during the warm-up is refused (tick kept); without
+        one nothing holds."""
+        held = [True]
+        controller = FakeController()
+        window = _main_window(tmp_path, controller, start_hold=lambda: held[0])
+        screen = window.session_screen
+        assert screen.start_held()
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert screen.message_label.text() == models.START_GETTING_READY_MESSAGE
+        assert screen.consent_checkbox.isChecked()
+        # Round 37 LOW-002: a voice enrolment's capture waits on it too.
+        assert window._enrolment_blocker() == models.START_GETTING_READY_MESSAGE
+        held[0] = False
+        assert not screen.start_held()
+        assert window._enrolment_blocker() is None
+        window.close()
+        other = _main_window(tmp_path, FakeController())
+        assert not other.session_screen.start_held()
+        other.close()
 
     def test_a_window_built_with_the_seam_never_probes_the_host(
         self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

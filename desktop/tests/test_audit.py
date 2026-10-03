@@ -22,6 +22,7 @@ from typing import Any
 
 import pytest
 
+from conftest import InertWarmup
 from encounter_fakes import CLINIC_ID, NOTE, PRACTITIONER, consent_for, context
 from scribe_desktop import audit as audit_mod
 from scribe_desktop.audit import (
@@ -1204,6 +1205,7 @@ class TestAppWiring:
                 app_module.InstanceExclusion("acquired")
             ),
             "SoundDeviceBackend": lambda: object(),
+            "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             "AuditLog": FakeAudit,
             "PastSessionStore": FakePastSessions,
             "SessionController": FakeController,
@@ -1326,6 +1328,7 @@ class TestAppWiring:
                 app_module.InstanceExclusion("acquired")
             ),
             "SoundDeviceBackend": lambda: object(),
+            "ImportWarmup": InertWarmup,  # round 35 MED-001: no warm-up thread
             "AuditLog": FakeAudit,
             "PastSessionStore": FakePastSessions,
             "SessionController": FakeController,

@@ -529,7 +529,24 @@ rendering the language model does (flow 17).
     surface 11). A load failure, `fell_behind`, a worker error or a drain error
     falls back to the batch stage (flow 7) with its reason on the Session
     screen. No new logging channel: the one new record is
-    `live_transcriber_stop_timeout` (session id and state only). Flows 15–16
+    `live_transcriber_stop_timeout` (session id and state only). Since
+    installation plan round 35 MED-001 the stack's imports (numpy,
+    onnxruntime, faster-whisper) are warmed once per process at app start on
+    their own thread (`ml_warmup.py`: modules only — no model file, no audio,
+    no session, no connection; offline switches asserted first; logged as
+    `ml_warmup` with state, duration and, on a failure, the type name).
+    While it runs every Start (Session tab and Chrome) is refused as
+    "still getting ready" before anything is made — no audit row, no session
+    folder, no key (round 36 MED-001, the practitioner's option (b)) — for
+    at most 60 s from its start; a Start admitted after that bound while it
+    still runs attaches NO worker (logged `live_transcriber
+    state=not_attached` with the session id) and the session takes the batch
+    path at Finish, the empty live view saying why (the warm-up's imports
+    still run beside such a recording — the threat model's surface 11
+    residue).
+    A capture failure is logged as `capture_failure` with the exception's
+    type name and a fixed detail word (`audio_capture.CAPTURE_DETAIL_CODES`),
+    never its message. Flows 15–16
     and the note-learning non-flows below are likewise BUILT — the Phase 0
     stubs were finalised at that plan's Phase H (task H3, 2026-09-25).
 

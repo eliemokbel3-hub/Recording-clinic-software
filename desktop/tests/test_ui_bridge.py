@@ -961,6 +961,104 @@ class TestStart:
         _, context = h.controller.started_with[0]
         assert context is None  # the desktop Start is unlinked
 
+    def test_a_chrome_start_is_refused_while_the_warm_up_holds(self, harness: Any) -> None:
+        """Installation plan round 36 MED-001 (the practitioner's option
+        (b)): a Chrome Start during the start-up import warm-up is refused
+        with the getting-ready line — the controller is never asked (no
+        audit row, no session) and the desktop tick is untouched; once the
+        hold lifts the same Start records (the control)."""
+        h = harness()
+        h.verified_report()
+        held = [True]
+        h.screen.set_start_hold(lambda: held[0])
+        h.screen.consent_checkbox.setChecked(True)
+        h.start()
+        self._refused(h, "getting_ready")
+        assert h.sender.last.last_refusal is not None
+        assert h.sender.last.last_refusal.message == models.START_GETTING_READY_MESSAGE
+        assert h.screen.consent_checkbox.isChecked()  # nothing consumed it
+        held[0] = False
+        h.start()
+        assert h.sender.last.last_refusal is None
+        assert len(h.controller.started_with) == 1
+
+    def test_the_desktop_start_is_refused_while_the_warm_up_holds_and_keeps_the_tick(
+        self, harness: Any
+    ) -> None:
+        """Round 36 MED-001: the desktop Start names the hold and KEEPS the
+        consent tick, so the next press — once the hold lifts — records."""
+        h = harness()
+        held = [True]
+        h.screen.set_start_hold(lambda: held[0])
+        h.screen.consent_checkbox.setChecked(True)
+        h.screen.on_start()
+        assert h.controller.started_with == []
+        assert h.screen.message_label.text() == models.START_GETTING_READY_MESSAGE
+        assert h.screen.consent_checkbox.isChecked()
+        held[0] = False
+        h.screen.on_start()
+        assert len(h.controller.started_with) == 1
+        assert not h.screen.consent_checkbox.isChecked()  # a Start that ran clears it
+
+    def test_a_linked_start_reaching_the_screen_while_held_is_refused(
+        self, harness: Any
+    ) -> None:
+        """Round 36 MED-001, the screen's own check: ``start_linked`` refuses
+        a held Start before clearing the desktop tick or asking the
+        controller (the bridge asks first; this is the second line)."""
+        h = harness()
+        h.screen.set_start_hold(lambda: True)
+        h.screen.consent_checkbox.setChecked(True)
+        assert h.screen.start_linked(unlinked_consent(), None) is False
+        assert h.controller.started_with == []
+        assert h.screen.consent_checkbox.isChecked()
+        assert h.screen.message_label.text() == models.START_GETTING_READY_MESSAGE
+
+    def test_a_hung_warm_up_holds_start_for_its_bound_only(self, harness: Any) -> None:
+        """Round 36 MED-001: a warm-up that never returns refuses Start only
+        until ``hold_seconds`` after it began (a fake clock, no real import);
+        from then on Start is admitted (Chrome's and the desktop's)."""
+        from scribe_desktop.ml_warmup import ImportWarmup
+
+        h = harness()
+        h.verified_report()
+        gate = threading.Event()
+        now = [100.0]
+
+        def hang() -> None:
+            gate.wait()
+
+        warmup = ImportWarmup(hang, clock=lambda: now[0])
+        warmup.start()
+        try:
+            h.screen.set_start_hold(warmup.holds_start)
+            now[0] = 159.9  # inside the 60 s bound
+            h.start()
+            self._refused(h, "getting_ready")
+            now[0] = 160.0  # the bound: admitted although the warm-up still runs
+            assert not warmup.is_finished()
+            h.start()
+            assert h.sender.last.last_refusal is None
+            assert len(h.controller.started_with) == 1
+        finally:
+            gate.set()
+            assert warmup.wait(5.0)
+
+    def test_a_failed_warm_up_holds_nothing(self, harness: Any) -> None:
+        from scribe_desktop.ml_warmup import ImportWarmup
+
+        def broken() -> None:
+            raise ImportError("no ML stack")
+
+        h = harness()
+        warmup = ImportWarmup(broken)
+        warmup.start()
+        assert warmup.wait(5.0)
+        h.screen.set_start_hold(warmup.holds_start)
+        h.screen.consent_checkbox.setChecked(True)
+        h.screen.on_start()
+        assert len(h.controller.started_with) == 1
+
     def test_a_refusal_goes_when_what_it_was_about_leaves_the_screen(
         self, harness: Any
     ) -> None:
@@ -2098,3 +2196,41 @@ class TestNothingLeaks:
         assert report is not None and report.patient_name is not None
         assert len(report.patient_name) <= 120
         assert "\n" not in report.patient_name and " " not in report.patient_name
+
+
+def test_a_held_start_writes_nothing_through_the_real_controller(
+    qapp: Any, tmp_path: Path
+) -> None:
+    """Installation plan round 36 MED-001: the warm-up's refusal comes
+    BEFORE ``SessionController.start`` — no audit ``begin``, no session
+    folder, the state still idle and the desktop consent tick kept."""
+    from scribe_desktop.audio_capture import MockCaptureBackend
+    from scribe_desktop.session import SessionController
+
+    class _Audit:
+        def __init__(self) -> None:
+            self.begun: list[str] = []
+
+        def begin(self, session_id: str, **kwargs: Any) -> None:
+            self.begun.append(session_id)
+
+        def record_start_failed(self, session_id: str) -> None:
+            pass
+
+    audit = _Audit()
+    root = tmp_path / "sessions"
+    controller = SessionController(MockCaptureBackend(), sessions_root=root, audit=audit)
+    screen = SessionScreen(
+        controller,
+        device_provider=lambda: 0,
+        transcriber_factory=lambda: (lambda _d, _c: _document()),
+    )
+    screen.set_start_hold(lambda: True)
+    screen.consent_checkbox.setChecked(True)
+    screen.on_start()
+    assert screen.message_label.text() == models.START_GETTING_READY_MESSAGE
+    assert audit.begun == []
+    assert not root.exists() or list(root.iterdir()) == []
+    assert controller.state is SessionState.IDLE
+    assert screen.consent_checkbox.isChecked()
+    screen.deleteLater()

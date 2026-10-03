@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `82%`
+**Overall Progress:** `85%`
 
 ## Lifecycle State
 - Active
@@ -1112,7 +1112,79 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
     - Slice 1, code: `desktop/tests/conftest.py`, `desktop/pyproject.toml`, `test_frozen_runtime.py`, `test_install_layout.py`, `test_language_model_runtime.py`, `test_speaker_embedding.py`, `test_speech.py`, `test_transcription.py`, `test_ui_models.py`, `test_ui_screens.py`, `test_hardware_check.py`.
     - Slice 2, docs: `docs/security/threat-model.md` (the sentinel sentence near L2871), `AGENTS.md` (the installation bullet), `docs/lessons.md` (the 2026-09-24 lesson), and this plan's C6 and H.6 lines.
   - **Open gates:** none.
-- Last plan sync: 2026-10-03T11:56:01+10:00
+- **EXECUTOR stage-5 leg i5-x1 (2026-10-03T16:34:59+10:00) — round 35 MED-001 (the first-recording failure on the installed 0.1.0) FIXED and reviewed. The `/review-loop` paused in round 36 at one MUST-PAUSE gate; 8 LOW were Applied. ruff clean; mypy clean (59 source files). ENDS must-pause:**
+  - **Diagnosis** (detail in round 35 MED-001):
+    - The failure arrived about 13 ms after the `recording` line, not 1 s later; the 1 s is `_fail_locked`'s in-lock live-stop bound. A full chunk cannot have been written by then, and the queue cannot have filled.
+    - Most likely cause: a PortAudio dropped-frames status (`CaptureOverflowError`). The capture callback (Python, needs the GIL) was starved while the live worker made the process's first import of numpy, onnxruntime and faster-whisper from a fresh, unscanned install. Supporting evidence: the worker could not stop 1 s later; a same-process retry re-imported nothing and passed.
+    - The log cannot tell this from device loss, or GIL from loader lock.
+  - **Changes:**
+    - The new `capture_failure` log line: the type name plus a fixed `detail_code` word, never the message.
+    - New module `ml_warmup.py`: the start-up import warm-up, which `app.main` starts after the guard.
+    - `MainWindow(live_ready=…)`: the live-worker factory returns None until the warm-up finishes. The controller accepts that and logs `live_transcriber state=not_attached`; the view shows a not-ready placeholder without the header.
+    - Never-drop rule kept, with reasons. A larger PortAudio input latency is recommended as a follow-up; it needs a hardware smoke.
+  - **Files:**
+    - src: `audio_capture.py`, `session.py`, `ml_warmup.py` (new), `app.py`, `enrolment.py`, `ui/main_window.py`, `ui/models.py`, `ui/transcript.py`.
+    - tests: `conftest.py`, `test_ml_warmup.py` (new), `test_audio_capture.py`, `test_live_session.py`, `test_ui_screens.py`, `test_exclusions.py`, `test_status_and_app.py`, `test_audit.py`, `test_hands_free.py`, `test_integration_no_sockets.py`.
+    - docs: `docs/security/threat-model.md` (surface 11, "THE WARM-UP"), `docs/security/data-flow-map.md` (flow 14), `docs/design-system.md` (live transcript), `AGENTS.md` (the live-transcription pointer), and this plan.
+    - The extension, packaging and the main checkout were not touched.
+  - **Composer to run:**
+    - The full desktop suite. Expected **5893 passed / 9 skipped** (5872 + 21 new):
+      - 8 in `test_audio_capture.py`;
+      - 5 in `test_live_session.py` (Windows-only, numpy);
+      - 6 in `test_ml_warmup.py`;
+      - 2 in `test_ui_screens.py`.
+    - `test_integration_no_sockets.py::test_scribe_app_process_has_no_sockets` now performs the REAL warm-up imports in its child, so expect a few seconds more.
+    - No `npm run qa` and no ISCC compile.
+  - **If a test fails:** resume me with the output. I could not run pytest; an independent read-only review traced every new assertion and predicted no failure.
+  - **Open gate (MUST-PAUSE), round 36 MED-001:** a Start made while the warm-up still runs withholds the live worker, but the warm-up's imports continue beside capture. The overlap is narrowed, not removed, and the window is unmeasured on a first launch after an install (now logged as `ml_warmup duration_ms`). Options:
+    - (a) accept as a residue (as built);
+    - (b) a bounded Start refusal while warming ("Clinic Scribe is still getting ready — start again in a moment", at most ~60 s after launch, then record without the live worker);
+    - (c) an asynchronous wait-then-start.
+
+    rec=(b) if the practitioner accepts a brief refusal after launch; otherwise (a), with the existing interim advice (a test recording after each install or update).
+  - **Codex slices** (each under 15 files):
+    - Slice 1, code: `audio_capture.py`, `session.py`, `ml_warmup.py`, `app.py`, `enrolment.py`, `ui/main_window.py`, `ui/models.py`, `ui/transcript.py`.
+    - Slice 2, tests: the ten test files above.
+    - Slice 3, docs: the four doc files plus this plan's rounds 35–36.
+- **EXECUTOR stage-5 leg i5-x2 (2026-10-03T16:48:56+10:00) — round 36 MED-001 BUILT as the practitioner's option (b), a bounded Start refusal while the start-up warm-up runs. `/review-loop` CONVERGED (round 37, loop round 2 of cap 3; 4 LOW Applied, 2 dropped); ruff clean; mypy clean (59 source files); history-check OK (37 + 37). ENDS composer-run:**
+  - **What changed:**
+    - `ml_warmup.ImportWarmup.holds_start` uses an injectable clock and `START_HOLD_SECONDS` = 60.0. That is the practitioner's minute, and about ten times the frozen spike's cold load (5.3 s for Whisper, 6.9 s for prose). It holds only while the warm-up runs AND it began less than 60 s ago, so a hung warm-up never blocks recording longer than 60 s and a failed one holds nothing.
+    - `SessionScreen.set_start_hold` / `start_held`. `on_start` refuses after the consent check, before clearing the tick (the tick is KEPT); `start_linked` refuses before clearing it. `ChromeBridge._start` refuses as `getting_ready`, right after the lock check. Every refusal comes before `SessionController.start`: no audit `begin`, no folder, no key.
+    - The line on both surfaces is `START_GETTING_READY_MESSAGE`: "Clinic Scribe is still getting ready - start again in a moment." (and `CHROME_REFUSALS["getting_ready"]`).
+    - Round 37 LOW-002: `MainWindow._enrolment_blocker` holds a voice enrolment too.
+    - Wiring: `MainWindow(start_hold=…)`; `app.main` passes `warmup.holds_start`.
+    - A Start admitted after the bound keeps the round-35 behaviour: no live worker.
+    - Stated residue: the side panel clears its own tick on every Start press (extension behaviour shared by every refusal; the extension is not touched).
+    - The PortAudio input-latency idea is recorded under Retained Follow-Up Items: not built, needs a real-hardware test.
+  - **Files changed in this leg:**
+    - src: `ml_warmup.py`, `ui/session_screen.py`, `ui/bridge.py`, `ui/models.py`, `ui/main_window.py`, `app.py`.
+    - tests: `test_ui_bridge.py`, `test_ml_warmup.py`, `test_ui_screens.py`, `test_exclusions.py`, `conftest.py`, `test_integration_no_sockets.py`.
+    - docs: `docs/security/threat-model.md`, `docs/security/data-flow-map.md`, `docs/design-system.md`, `AGENTS.md`, and this plan.
+  - **Composer to run:**
+    - The full desktop suite. Expected **5904 passed / 9 skipped**: 5893 plus 11 new tests (6 in `test_ui_bridge.py`, 4 in `test_ml_warmup.py`, 1 in `test_ui_screens.py`).
+    - `test_scribe_app_process_has_no_sockets` still performs the real warm-up imports, now waiting at most 30 s before READY.
+    - No `npm run qa` and no ISCC compile.
+  - **If a test fails:** resume me with the output.
+  - **If green:** close rounds 35–37 and commit as version 0.1.1. Before the P.3 build, run a 10-second test recording on the dev build: Start straight after launch should show the getting-ready line.
+  - **Codex slices** for the WHOLE round 35–37 diff (`git diff e5e7c9f` plus the two untracked files), each under 15 files:
+    - Slice 1, code (10): `desktop/src/scribe_desktop/audio_capture.py`, `session.py`, `ml_warmup.py` (new), `app.py`, `enrolment.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/models.py`, `ui/session_screen.py`, `ui/transcript.py`.
+    - Slice 2, tests (11): `desktop/tests/conftest.py`, `test_ml_warmup.py` (new), `test_audio_capture.py`, `test_live_session.py`, `test_ui_bridge.py`, `test_ui_screens.py`, `test_exclusions.py`, `test_status_and_app.py`, `test_audit.py`, `test_hands_free.py`, `test_integration_no_sockets.py`.
+    - Slice 3, docs (5): `docs/security/threat-model.md` (surface 11, "THE WARM-UP"), `docs/security/data-flow-map.md` (flow 14), `docs/design-system.md` (the live transcript and the Start-waits bullet), `AGENTS.md` (the live-transcription pointer), and this plan's rounds 35–37, Task P.1's FAULT note and Retained Follow-Up Items.
+  - **Open gates:** none.
+- **EXECUTOR stage-5 leg i5-x3 (2026-10-03T16:59:36+10:00) — codex round 38 verified and fixed: 4 LOW, all CONFIRMED and Applied (`#### LEG 1 verified tuples` in round 38); ruff clean; mypy clean (59 source files). Round 38 stays Open until the composer suite and codex confirmation round 39. ENDS composer-run:**
+  - **What changed:**
+    - A01: the not-ready live placeholder no longer promises the recording is unaffected ("Live transcription is off for this recording - Clinic Scribe was still getting ready; transcribing after the recording instead."). Its comment now says such a Start comes only after the 60 s hold.
+    - B01: the slow-load test proves all five chunks are in encrypted storage (`iter_chunks`, bounded `_wait`) while the load gate is still closed. The sleep is gone.
+    - B02: the no-sockets startup child reports `warmup:<wait result>` on its READY line, and the parent requires `warmup:True`.
+    - C01: the design system measures the 60 s hold from the warm-up's start.
+  - **Files changed in this leg** (the confirmation slice for round 39): `desktop/src/scribe_desktop/ui/models.py`, `desktop/tests/test_live_session.py`, `desktop/tests/test_integration_no_sockets.py`, `docs/design-system.md`, and this plan's round 38 block.
+  - **Composer to run:**
+    - The full desktop suite. Expected **5904 passed / 9 skipped**: no new tests, two stricter ones.
+    - No `npm run qa` and no ISCC compile.
+  - **If a test fails:** resume me with the output.
+  - **If green:** run codex round 39 over the five files above; close round 38 on its confirmation.
+  - **Open gates:** none.
+- Last plan sync: 2026-10-03T16:59:36+10:00
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 committed `9f43f8c` on `main`. **From Phase 1 on the run builds in the git WORKTREE `C:\scribe-build` (branch `installation-build`)** — practitioner decision 2026-10-02: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install) and stays on `main` until Phase P. The worktree has its own `.venv` copy (editable `.pth` → `C:\scribe-build\desktop\src`; `scribe-app.exe`/`scribe-host.exe` launchers regenerated for it; run mypy/pytest as `.venv/Scripts/python.exe -m …`). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges, which happens only when the practitioner switches to the installed build. Phase 1 committed `a7337a2` (rounds 9–12), Phase 2 committed `7cfed96` (rounds 13–17) on `installation-build`. Phase 3 built and peer-converged (rounds 18–21), committed on `installation-build` by the composer at its close; its tasks stay 🟨 on their named practitioner/network/remote steps. Phase 2's Task 2.6 stays 🟨 until the practitioner fills `%LOCALAPPDATA%\ClinikoScribe-dev\models` and the composer re-runs the 11 real-ML legs. `stash@{0}` (the pre-worktree Phase 1 copy) is now redundant. `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. Peer passes run as file-scoped codex slices (`.cursor/loops/inst-peer-run-wt.sh`). Phase H closed 2026-10-03 (rounds 22–30; H.1–H.5 🟩; H.6 hardened by a scoped /review-plan on 2026-10-03, ready for /execute), committed on `installation-build` by the composer. Next: the practitioner's open steps (Task 2.6 dev models, 3.3 manifest, 3.1 lock, 3.2/3.5 a real build, 3.6 pins/push/CI, the Inno licence), then Phase P (stage-5) with the practitioner.
 
@@ -1151,7 +1223,11 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-03 round 32: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=fix → all 3 Applied (a source scan pinning the opt-out set, two stale test comments, tripwire wording); round Closes on the composer-run full desktop suite (Task H.6, in-session /review-loop pass 1 over the H.6 diff, executor stage-4 leg i4-x13; 6 candidates, 3 dropped)
 - 2026-10-03 round 33: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 32's three fixes re-read and confirmed; /review-loop CONVERGED at loop round 2 of cap 3 (Task H.6, in-session /review-loop pass 2, executor stage-4 leg i4-x13; 2 candidates, 2 dropped)
 - 2026-10-03 round 34: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-4.p2 peer_round 1 of cap 5, one slice of 14 files over the Task H.6 diff (every diff read, plus a search of the tests for any other route to a models folder); 2 candidates, 2 dropped; peer pass CONVERGED
-- 2026-10-03 round 35: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=none; action=fix → Phase P.1 step 10 (practitioner smoke on the installed 0.1.0): the first recording after installing failed at the first one-second chunk; cause unconfirmed because the capture failure's type is not logged; Pending
+- 2026-10-03 round 35: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=none; action=fix → Phase P.1 step 10 (practitioner smoke on the installed 0.1.0): the first recording after installing failed at the first one-second chunk; cause unconfirmed because the capture failure's type is not logged; MED-001 Applied by executor stage-5 leg i5-x1 (diagnosis, the type-name log line, the start-up import warm-up and the live-worker gate), pending the composer-run suites
+- 2026-10-03 round 36: 0 CRIT / 0 HIGH / 1 MED / 8 LOW; skew=none; action=fix → 8 LOW Applied; MED-001 (a Start made while the warm-up still runs overlaps its imports) paused at a MUST-PAUSE gate, then Applied as the practitioner's option (b) — a bounded Start refusal — by leg i5-x2
+- 2026-10-03 round 37: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=fix → 4 LOW Applied (a redundant third hold check removed, the no-sockets child's warm-up wait 45 → 30 s, voice enrolment held too, a stale `on_start` docstring); /review-loop CONVERGED at loop round 2 of cap 3 (round 36 MED-001's option (b) delta, executor stage-5 leg i5-x2, in-session plus the same independent read-only subagent; 7 candidates, 2 dropped) (round 35 MED-001's fix diff, in-session /review-loop pass 1, executor stage-5 leg i5-x1, plus one independent read-only subagent review; 11 candidates, 2 dropped)
+- 2026-10-03 round 38: 0 CRIT / 0 HIGH / 0 MED / 4 LOW; skew=none; action=fix → all 4 confirmed and Applied by leg i5-x3, round Closed; codex gpt-6-astra medium, pass stage-5.p1 peer_round 1 of cap 5, three slices (code 10, tests 11, docs 4) over the rounds 35–37 diff
+- 2026-10-03 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-5.p1 peer_round 2 of cap 5, confirmation of round 38 (4 claims checked, 4 confirmed closed); peer pass CONVERGED
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -2959,13 +3035,123 @@ Fix-delta self-check: PASS — I re-read the 10 reworded comments and docstrings
 
 ### Round 35 - 2026-10-03 - Phase P.1 live smoke on the installed 0.1.0 (practitioner-observed)
 
-- Round status: Open (1 pending).
+- Round status: Closed on the composer-run suites (MED-001 Applied by executor stage-5 leg i5-x1; the remaining overlap is round 36 MED-001).
 - Source: practitioner smoke (Task P.1 step 10), composer-observed from the installed app's log
 - Reviewer: composer `claude-opus-5-5`; observation by the practitioner
 
 #### Findings
-- **MED-001** (MED, behavioral, `desktop/src/scribe_desktop/session.py` `_on_capture_failure` / `audio_capture.py` `CaptureWorker`): the first recording after installing failed one second after Start, and the cause cannot be read back because the capture failure's exception type is never logged. — Evidence: `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-app.log`: `15:52:30,562 … session_transition session_id=f12d6080… session_state=recording`, `15:52:31,575 … live_transcriber_stop_timeout … session_state=recording`, `15:52:31,575 … session_transition … session_state=failed`; `_on_capture_failure(self, _exc)` discards `_exc`; `CHUNK_BYTES` is one second of audio, so the failure is at the first chunk (`store.append_chunk` raising) or a PortAudio status flag (`CaptureOverflowError` "device reported dropped frames"). It did not recur in the same process or after a relaunch. Likely (unconfirmed): the live worker's first model load after install (first Defender scan of the new DLLs and model files) starving the capture path. Recommendation: Fix-now — (1) log the capture failure's type name (content-free, like the exception hooks) so the next occurrence is diagnosable; (2) find and remove the starvation path, e.g. load the live worker's models off the capture path or before Start, and check whether a dropped-frames status at stream start should fail a session at all; (3) a test that a slow live-worker load cannot fail capture. /fix decision: Pending
+- **MED-001** (MED, behavioral, `desktop/src/scribe_desktop/session.py` `_on_capture_failure` / `audio_capture.py` `CaptureWorker`): the first recording after installing failed one second after Start, and the cause cannot be read back because the capture failure's exception type is never logged. — Evidence: `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-app.log`: `15:52:30,562 … session_transition session_id=f12d6080… session_state=recording`, `15:52:31,575 … live_transcriber_stop_timeout … session_state=recording`, `15:52:31,575 … session_transition … session_state=failed`; `_on_capture_failure(self, _exc)` discards `_exc`; `CHUNK_BYTES` is one second of audio, so the failure is at the first chunk (`store.append_chunk` raising) or a PortAudio status flag (`CaptureOverflowError` "device reported dropped frames"). It did not recur in the same process or after a relaunch. Likely (unconfirmed): the live worker's first model load after install (first Defender scan of the new DLLs and model files) starving the capture path. Recommendation: Fix-now — (1) log the capture failure's type name (content-free, like the exception hooks) so the next occurrence is diagnosable; (2) find and remove the starvation path, e.g. load the live worker's models off the capture path or before Start, and check whether a dropped-frames status at stream start should fail a session at all; (3) a test that a slow live-worker load cannot fail capture. /fix decision: Applied (executor stage-5 leg i5-x1, 2026-10-03):
+  - **Diagnosis (from the code; the log cannot confirm it).** Every path from `recording` to `failed` runs `CaptureWorker._fail` → `on_failure` → `SessionController._on_capture_failure` → `_fail_locked`, which stops the live worker with the 1 s in-lock bound (`_LIVE_STOP_LOCKED_TIMEOUT_S`) and only then logs `failed`. So the stop-timeout at 31,575 puts the failure's arrival at ≈30,575 — about 13 ms after the `recording` line (the callback waits on the controller lock Start holds, so it may have fired during Start). "One second after Start" is the stop bound, not a chunk. The paths, ranked:
+    1. **PortAudio status flag → `CaptureOverflowError` (MOST LIKELY).** The callback delivers the block and then fails on any truthy status (input overflow = the device dropped frames). It is the only path that can fire within ~100 ms of `stream.start()`. Supporting evidence: (a) the live worker was busy 1 s later — `stop` timed out, so it was inside an uninterruptible call, and the only one possible before any window is ready is `_load_models` (VAD → `SileroVad` imports numpy + onnxruntime; Whisper → `WhisperSpeechProvider` imports faster-whisper, which brings ctranslate2, tokenizers and av); (b) it was this process's FIRST import of that stack, from a fresh install (new DLLs Defender had not scanned, modules from the PYZ); (c) a retry in the SAME process rebuilt every model but re-imported nothing, and passed; a relaunch passed on now-scanned files. Mechanism: the load runs on the worker's own thread (D3), never the capture worker thread. But sounddevice's callback is Python and needs the GIL, and an extension module's initialisation, or any C call that holds the GIL, starves it beyond the ~100–200 ms host buffer (blocksize 100 ms). The Windows loader lock during a Defender-scanned `LoadLibrary` is a variant the log cannot tell apart.
+    2. **`finished` callback → `DeviceLostError` ("stream ended").** Possible at any time. Nothing points to it: the retry on the same device recorded normally.
+    3. **The sink (`store.append_chunk` raising, `StoreWriteError`).** Needs a full 1 s chunk (`CHUNK_BYTES`), so it is excluded by timing unless the capture worker was itself starved for over 1 s, and a disk-full or key error would have recurred. Unlikely.
+    4. **`_on_block` `queue.Full`.** Needs 256 blocks (about 25 s). Excluded.
+    5. **The live worker's `start` or `feed`.** `start` only spawns a thread. `feed` never raises: the tee fails the worker instead, and the store's exception is the only one that crosses it. Neither can fail capture directly. Excluded except as the GIL starvation in (1).
+  - **What the log cannot distinguish:** (1) from (2); GIL hold from loader lock from plain CPU/disk contention; and which module or model was loading.
+  - **Diagnosable now:** `_on_capture_failure` logs `capture_failure detail_code=<word> error_code=<type name> session_id=… session_state=…` before the `failed` transition, never the message. `detail_code` comes from the fixed `audio_capture.CAPTURE_DETAIL_CODES`, built from the flag attributes and never from `str(status)`: `status_input_overflow`, `status_input_underflow`, `status_other`, `stream_ended`, `open_failed`, `queue_full`, `unspecified`, and `none` for a non-capture error such as `StoreWriteError`.
+  - **Fix (structural, the import phase):**
+    - New `ml_warmup.ImportWarmup`: `app.main` starts it once the guard is held. On a daemon thread it imports numpy, onnxruntime (telemetry off) and faster-whisper, after asserting the offline switches. Modules only: no model, audio, session or connection. It logs `ml_warmup state=done|failed duration_ms=… [error_code=<type>]`.
+    - Until it finishes, `MainWindow(live_ready=…)` makes the live-worker factory return None. `SessionController` accepts that: no worker is attached, it logs `live_transcriber state=not_attached`, Finish takes the batch path, and the empty live view shows `LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER` without the header. The 0.1.0 failure came 10 minutes after launch, so the warm-up would have long finished.
+    - Per-session model construction still runs on the worker's thread beside capture. The same-process retry is the evidence that this is harmless; nothing bounds it. The residue is named in the threat model.
+  - **The dropped-frames rule (decided: unchanged).** A status flag in a stream's first moments still fails the session. Reasons:
+    1. The never-silently-drop rule has no time exemption, and the opening seconds often hold the introduction and consent conversation.
+    2. The failure is visible and the audio is recoverable.
+    3. The cause is removed rather than tolerated.
+    4. Tolerating it would weaken the rule, which needs the practitioner (MUST-PAUSE).
+  - **Recommended follow-up, not built (needs a hardware smoke):** a larger PortAudio input latency (`RawInputStream(latency=…)`) would let a GIL stall of up to that length pass without dropped frames, whatever its cause.
+  - **Tests:**
+    - A blocked model load never fails capture.
+    - A factory that returns None records without a worker.
+    - The `capture_failure` line, three ways: type name and detail word only, logged before `failed`.
+    - The detail codes.
+    - `ml_warmup`.
+    - The window gate and the not-ready view.
+    - `app.main` ordering: the warm-up after the guard, and its readiness reaching the window.
+    - The startup no-sockets proof now runs the warm-up.
 - Verification counts: 1 claim checked, 1 confirmed (by the log), 0 dropped
+- Last reviewed: 2026-10-03
+
+### Round 36 - 2026-10-03 - round 35 MED-001's fix diff (in-session /review-loop pass 1)
+
+- Round status: Closed on the composer-run suites (MED-001 Applied as the practitioner's option (b), leg i5-x2); the 8 LOW Applied.
+- Source: in-session /review (the composed /review-loop) over the uncommitted diff, plus one independent read-only general-purpose subagent asked to find failing or flaky tests (the executor cannot run pytest: verify=composer)
+- Reviewer: executor `claude-opus-5-5` (high), stage-5 leg i5-x1
+- Post-fix regression check: ruff clean, mypy clean (59 source files). The subagent traced every exact log string (`log_event` sorts keys), the log-before-`failed` ordering, the 5 s live-queue arithmetic and the one-segment VAD outcome, and found no test that would fail.
+
+#### Findings
+- **MED-001** (MED, behavioral, `ml_warmup.py` / `ui/main_window.py` `_build_live_transcriber`): a Start made while the warm-up still runs withholds the live worker, but the warm-up's own imports carry on beside the capture stream — the round 35 overlap, narrowed to that window, not removed. Its length is unmeasured on a first launch after an install (now logged as `ml_warmup duration_ms`). Closing it needs Start to wait or refuse while warming, a clinician-facing change. Recommendation: practitioner decision — (b) below. /fix decision: Applied — **the practitioner chose (b) on 2026-10-03** (gate `r36-med001-early-start`, in chat). Built by executor stage-5 leg i5-x2:
+  - `ImportWarmup.holds_start` is True while the warm-up runs AND less than `START_HOLD_SECONDS` = 60 s have passed since it began. It is False before start, once the warm-up finishes or fails, and after the bound. The clock is injectable.
+  - Why 60 s: it is the practitioner's "about a minute", and about ten times the frozen spike's cold Whisper load (5.3 s, imports and model together) or prose load (6.9 s).
+  - `SessionScreen.set_start_hold` / `start_held`: `on_start` refuses after the consent check and BEFORE clearing the tick, so the tick is kept. `start_linked` refuses before clearing the desktop tick. `ChromeBridge._start` refuses as `getting_ready` right after the lock check. All of these refuse before `SessionController.start`, so there is no audit `begin`, no folder and no key.
+  - The line, on both the Session tab and the panel, is `START_GETTING_READY_MESSAGE`: "Clinic Scribe is still getting ready - start again in a moment."
+  - A Start admitted after the bound while the warm-up still runs keeps the round-35 behaviour: no live worker.
+  - Stated residue: the side panel clears its own tick when it sends Start. This is extension behaviour shared by every Chrome refusal; the extension is not touched here. Options: (a) accept as a residue (as built; named in the threat model, `ml_warmup` docstring and data-flow map); (b) refuse Start while the warm-up runs, bounded (e.g. at most 60 s after launch, then record without the live worker), with a Session-tab and side-panel line "Clinic Scribe is still getting ready — start again in a moment", through the existing start guard; (c) a wait-then-start Start (asynchronous; a larger change).
+- **LOW-001** (`ui/transcript.py` `begin_live_view`): the not-ready view showed the header "Live — updates while recording" although nothing would update. /fix decision: Applied — the header is hidden when not ready (tests updated).
+- **LOW-002** (`ml_warmup.py` docstring, threat model): the causal story read as confirmed. /fix decision: Applied — "most likely (the log could not name it)".
+- **LOW-003** (`enrolment.py:167`, the mock backend): pattern siblings without a detail word. /fix decision: Applied — `queue_full`, `open_failed`, `stream_ended`.
+- **LOW-004** (`tests/test_integration_no_sockets.py`, the startup child): the "mirrors app.main" proof did not run the new start-up imports. /fix decision: Applied — the child starts the real warm-up, passes `live_ready`, and waits for it (bounded 45 s) before READY.
+- **LOW-005** (`session.py` `_start_locked`): `live_transcriber state=not_attached` was logged before the capture worker started, so a failed Start left a line naming a removed session. /fix decision: Applied — logged only after Start succeeds.
+- **LOW-006** (`audio_capture.status_detail_code`): `is True` would misread a truthy non-bool flag. /fix decision: Applied — `bool(...)`.
+- **LOW-007** (`ui/transcript.py` `begin_live_view`): a not-ready Start adopted a poster token an earlier failed Start left pending. Harmless today, since that worker is stopped and drops its posts. /fix decision: Applied — a not-ready view adopts none (test added).
+- **LOW-008** (`test_audit.py` ×2, `test_hands_free.py`): three `app.main` tests started a real warm-up thread whose offline check depends on what earlier tests left in the environment. /fix decision: Applied — `conftest.InertWarmup`.
+- Dropped (2) [round 36]: (i) "`detail_code="none"` is not in `CAPTURE_DETAIL_CODES`" — deliberate: it marks a non-capture error, and the test pins it. (ii) "A daemon warm-up thread mid-import at interpreter exit" — the same as every other daemon worker here; nothing is written.
+- Verification counts: 11 claims checked, 9 confirmed, 2 dropped
+- Last reviewed: 2026-10-03
+
+### Round 37 - 2026-10-03 - round 36 MED-001's option (b) delta (in-session /review-loop pass 2)
+
+- Round status: Closed on the composer-run suites; 4 LOW Applied, converged (no CRIT/HIGH/MED).
+- Source: in-session /review over the leg i5-x2 delta (`ml_warmup.holds_start`, `SessionScreen.set_start_hold` / `start_held`, `ChromeBridge._start`'s `getting_ready`, the wiring, tests and docs), plus the same independent read-only subagent. It traced `Harness.command`'s per-call `state_rev`, that a real `SessionController` constructor touches nothing, that the refusal precedes `SessionController.start` (no audit `begin`), the `REASON_PATTERN` / message limits, and every fake-clock boundary. It predicted no failing test.
+- Reviewer: executor `claude-opus-5-5` (high), stage-5 leg i5-x2
+- Post-fix regression check: ruff clean, mypy clean (59 source files).
+
+#### Findings
+- **LOW-001** (`ui/session_screen.py` `_start`): a third hold check inside `_start`, redundant because both callers check before clearing the tick. /fix decision: Applied — removed; the test calls `start_linked`.
+- **LOW-002** (`ui/main_window.py` `_enrolment_blocker`): a voice enrolment opens a microphone stream beside the warm-up's imports, the same hazard. /fix decision: Applied — the blocker returns `START_GETTING_READY_MESSAGE` while the hold applies (tested), and the threat model and design system say so.
+- **LOW-003** (`tests/test_integration_no_sockets.py`): the child's `warmup.wait(45)`, after the start-up work, could overrun the parent's 60 s READY read on a cold, Defender-scanned machine. /fix decision: Applied — 30 s.
+- **LOW-004** (`ui/session_screen.py` `on_start` docstring): it still said the tick is cleared whatever the outcome. /fix decision: Applied.
+- **LOW-005** (the order of checks: the bridge checks the lock then the hold, `on_start` the hold then the lock, inside `_start`): when both apply, the two Starts name different reasons first. /fix decision: dropped as harmless. Both refuse. The overlap is a lock within a minute of launch. Aligning them would change the existing lock path's tick handling, which is outside this decision.
+- Dropped (2): (i) the LOW-005 order mismatch, above. (ii) "Start stays enabled and the getting-ready line stays after the hold lifts" — the intended (b) behaviour: the press is refused with a line and the clinician presses again, like every other refusal.
+- Verification counts: 7 claims checked, 5 confirmed, 2 dropped
+- Last reviewed: 2026-10-03
+
+### Round 38 - 2026-10-03 - cross-family peer pass stage-5.p1 over the rounds 35–37 fix (composer-seat codex)
+
+- Round status: Closed (0 pending). 4 Applied by leg i5-x3; composer suite 3: ruff clean, mypy clean (59 files), pytest 5904 passed / 9 skipped; codex round 39 confirmed all four fixes with no new finding.
+- Source: codex `gpt-6-astra` (medium), read-only sandbox, `.cursor/loops/stage-5-peer-r38{A,B,C}.log` in the main checkout; peer_round 1 of cap 5
+- Scope: slice A code (`audio_capture.py`, `session.py`, `ml_warmup.py`, `app.py`, `enrolment.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/models.py`, `ui/session_screen.py`, `ui/transcript.py`); slice B tests (11 files); slice C docs (threat model, data-flow map, design system, AGENTS.md)
+
+#### Findings
+- **PR-LOW-A01** (LOW, docs-only, `desktop/src/scribe_desktop/ui/models.py:212`): The deferred-transcription message guarantees recording is unaffected even when warm-up imports still overlap capture after the timeout. — Evidence: “The recording is not affected”; `ml_warmup.py:122` releases Start solely when elapsed time reaches the bound, and its lines 23–26 acknowledge “the one remaining overlap” and possible failure. Recommendation: Fix-now — Remove the unconditional reassurance; state only that live transcription is off and transcription will be attempted at Finish. /fix decision: Applied (leg i5-x3) — the line is now "Live transcription is off for this recording - Clinic Scribe was still getting ready; transcribing after the recording instead.", in the C8 fallback lines' words. The comment above it says such a Start exists only after the 60 s hold. The design system says it promises nothing about the recording.
+- **PR-LOW-B01** (LOW, test-harness, `desktop/tests/test_live_session.py:803`): The slow-load test does not prove capture progresses while model loading is blocked; queued audio could drain only after release and still pass. — Evidence: `_feed(...)`, `time.sleep(0.05)` and state assertions precede `gate.set()`, but transcription is checked only afterwards. Recommendation: Fix-now — assert all five chunks reach encrypted storage while the load gate remains closed, using bounded synchronization. /fix decision: Applied (leg i5-x3) — the test unwraps the session key and polls `iter_chunks(audio.enc)` (`_wait`, bounded at 5 s; `_write_record` flushes every record, and a partial tail ends the iteration cleanly) until all five chunks are stored. It then asserts the gate is still closed and that the stored chunks equal the fed PCM. The `time.sleep(0.05)` is gone.
+- **PR-LOW-B02** (LOW, test-harness, `desktop/tests/test_integration_no_sockets.py:455`): The child can announce READY with warm-up still running, allowing the test to pass without reaching the claimed post-warm-up state. — Evidence: `"warmup.wait(30)\n"` ignores its result before `"print('READY', os.getpid(), flush=True)\n"`; the parent then polls five times and kills the child. Recommendation: Fix-now — require successful completion of the bounded wait before emitting READY. /fix decision: Applied (leg i5-x3) — the child prints `READY <pid> warmup:<wait result>`, and the parent asserts `warmup:True` before the socket checks. A failed warm-up also counts as finished; without the ML stack it fails fast, so CI is unaffected. The pattern of `test_scribe_app_with_the_chrome_link_open_has_no_sockets` is followed.
+- **PR-LOW-C01** (LOW, docs-only, `docs/design-system.md:342`): The documented timeout starts at launch, conflicting with the warm-up-start boundary specified elsewhere. — Evidence: “bounded to a minute after launch”; `docs/security/threat-model.md:1021` says “from the warm-up’s start”, and `.cursor/plans/plan-installation.md:3068` specifies “60 s have passed since it began”. Recommendation: Fix-now — Say “60 seconds after the warm-up starts” so the documented clock boundary is consistent. /fix decision: Applied (leg i5-x3) — "bounded to 60 seconds after the loading starts (... measured from the warm-up's start, which is moments after launch)".
+- Verification counts: slice A 2/1/1, slice B 2/2/0, slice C 6/1/5 (checked/confirmed/dropped)
+
+#### LEG 1 verified tuples (executor stage-5 leg i5-x3, 2026-10-03T16:59:36+10:00)
+- **PR-LOW-A01 — CONFIRMED.** `ui/models.py` `LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER` said "The recording is not affected". Since round 36 that line appears only for a Start admitted after the 60 s hold while the warm-up still imports beside capture, which is the one overlap `ml_warmup`'s docstring names. A promise there is unbacked.
+  - Siblings: a search for "not affected" / "unaffected" / "never held back" / "transcript is made when you finish" across src, docs and AGENTS.md found no other copy in this diff; the other hits are unrelated, older lines.
+  - The comment above the constant ("just after Clinic Scribe opens") was stale after round 36: such a Start comes only after the hold. Fixed with it.
+  - `test_live_session.py`'s `test_a_factory_returning_none_records_without_a_worker` docstring ("returns None while the import warm-up runs") lacked the round-36 qualifier. Fixed.
+- **PR-LOW-B01 — CONFIRMED.** The test fed five chunks, slept 50 ms and checked only state; storage was first read after `gate.set()` and Finish. Capture was therefore never shown to progress while the load was blocked. No siblings: the round-35 tests that block a load (`test_a_start_failure_stops_a_loading_worker_with_the_short_bound`) prove a different property.
+- **PR-LOW-B02 — CONFIRMED.** `warmup.wait(30)`'s result was discarded before `print('READY', …)`. Siblings: the other READY children were checked.
+  - `_PIPE_APP_CHILD` breaks on a deadline but puts the outcome on its READY line, and the parent asserts it — the pattern copied here.
+  - `_APP_SERVER_CHILD` waits on nothing.
+  - Neither is in this diff, and neither ignores a wait result.
+- **PR-LOW-C01 — CONFIRMED.** The design system said "a minute after launch". The code (`holds_start`: `clock() - _started_at`, set in `start()`), the threat model ("from the warm-up's start") and the data-flow map ("from its start") measure from the warm-up's start.
+  - Siblings: the `ml_warmup.START_HOLD_SECONDS` comment ("from when it began (just after launch)") and the `app.py` comment are consistent.
+  - The plan's round-36 option (b) text ("at most 60 s after launch") is the historical option the practitioner chose. It is left as written; its as-built line under round 36 MED-001 says "since it began".
+- Verification counts: 4 checked, 4 confirmed, 0 dropped.
+- PEER-ROUND-38 RESULT: 4 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 4)
+- Last reviewed: 2026-10-03
+
+### Round 39 - 2026-10-03 - confirmation of round 38's fix, peer pass stage-5.p1 (composer-seat codex)
+
+- Round status: Closed (0 pending); no findings.
+- Source: codex `gpt-6-astra` (medium), read-only sandbox, `.cursor/loops/stage-5-peer-r39A.log` in the main checkout; peer_round 2 of cap 5
+- Scope: `ui/models.py`, `test_live_session.py`, `test_integration_no_sockets.py`, `docs/design-system.md` (round 38's fix), `ml_warmup.py` for reference, round 38's block and C1–C10
+- Verification counts: 4 claims checked, 4 confirmed (each round-38 finding closed as a class), 0 dropped
+- PEER-ROUND-39-A RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0). Peer pass stage-5.p1 converged; trajectory 4 → 0.
 - Last reviewed: 2026-10-03
 
 ## Tasks
@@ -3718,9 +3904,12 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
     13. `register-native-host.py` (dev): `com.scribe.cliniko_host_dev` → `%LOCALAPPDATA%\ClinikoScribe-dev\com.scribe.cliniko_host_dev.json`, per-user WER exclusions re-added, `verified : OK`.
     14. **Deferred by composer recommendation:** `%LOCALAPPDATA%\ClinikoScribe\models` stays until the first-recording fix below ships and the installed app has run a few clinic days; it is the everyday app's models and so the fastest fallback (step 2's undo command restores the old Chrome link).
   - **FAULT found at step 10 (round 35 MED-001, open):** the FIRST recording after installing failed at 1.0 s: log `session_transition … recording`, then 1.01 s later `live_transcriber_stop_timeout … recording` and `session_transition … failed`; the Session tab said "Recording failed (device lost or disk full)". The capture failure's exception type is not logged (`session._on_capture_failure` ignores it). A retry in the same process recorded normally, and so did the first recording after a relaunch (step 11). CHUNK_BYTES is one second, so the failure is at the first chunk write or a stream status flag. Likely cause (unconfirmed): the live worker's first-ever model load (Defender's first scan of the newly installed DLLs and the 1.5 GB model) starving the capture path, so PortAudio reports dropped frames (`CaptureOverflowError`). Interim advice to the practitioner: a 10-second test recording after each install or update, before the first patient.
+    - **Fix BUILT 2026-10-03 (executor stage-5 leg i5-x1, for 0.1.1; not yet suite-verified or committed):** the capture failure now logs its type name and a fixed detail word, and the transcription stack's imports are warmed once at app start, with the live worker withheld until they finish. The diagnosis and the decisions are in round 35 MED-001. Round 36 MED-001 (a Start made during the warm-up) was decided by the practitioner as option (b) and built by leg i5-x2: every Start, and a voice enrolment, is refused with "still getting ready" while the warm-up runs, for at most 60 s. The interim advice stands until 0.1.1 is installed.
 
   Done when: every step's on-screen wording is reported and recorded here.
-- [ ] 🟥 **P.2 Hardware check** on the installed app (Microphone tab): record whisper `medium`'s real-time factor and the prose seconds per section, against the margin verdict. This closes note-learning P.2's timing line and revisits the whisper `small` exclusion if `medium` falls behind.
+- [x] 🟩 **P.2 Hardware check** on the installed app (Microphone tab): record whisper `medium`'s real-time factor and the prose seconds per section, against the margin verdict. This closes note-learning P.2's timing line and revisits the whisper `small` exclusion if `medium` falls behind.
+  - **RUN 2026-10-03 (practitioner, installed 0.1.0, Microphone tab "Run hardware benchmark", on mains):** model report "Whisper model (medium): ready", "VAD model (silero): ready", "Speaker model (wespeaker-voxceleb-resnet34-LM): installed - verified when it loads", "Voice profile: enrolled 2026-09-18". Benchmark: "RTF thresholds: required < 1.00, margin <= 0.75"; `medium` RTF **0.627**, load 3.89 s, audio 53.2 s, peak 1812.8 MiB, 142 words, OK; "live window latency 18.8 s per 30 s window (1.59x real time) - live transcription keeps up on this machine"; "Prose stage (Narrative style): 3 of 3 sections, load 8.5 s; sections 18.1 s wall, 218.6 s CPU; 6.0 s wall and 72.9 s CPU per section WARNING"; "NOTE: the prose styles take 6.0 s per section (> 5 s) on this machine; a long note waits longer for them."; verdict "Hardware check: whisper medium RTF 0.63 OK; prose stage 6.0 s per section WARNING". P.1 step 10 adds a real note: "writing style 'narrative' prose shown for 5 sections (26.7s)".
+  - **Verdict:** whisper `medium` keeps up within the margin, so the whisper `small` exclusion stands (D5). The prose WARNING is a wait-time note, not a gate: a 5–8 section prose note waits about 30–50 s after Finish; Verbatim and Clean clinical are immediate. This closes note-learning P.2's timing line; a smaller prose model stays a later option if the wait proves a problem in practice.
 - [ ] 🟥 **P.3 Upgrade and rollback smoke** with the next CI build (version bumped):
   1. Install N+1 over N; the models are skipped as matching and the data is unchanged.
   2. Reinstall N over N+1; the app starts and reads every store.
@@ -3732,6 +3921,9 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
 
 ## Retained Follow-Up Items
 N/A until completion.
+- **Open follow-up, recorded 2026-10-03 (round 35 MED-001), NOT built — needs a real-hardware test:** a larger PortAudio input buffer. `SoundDeviceBackend.open_stream` would pass `RawInputStream(latency=…)` with seconds instead of sounddevice's default `'high'`, which with the 100 ms blocksize tolerates only about 0.1–0.2 s. The capture callback could then wait out a GIL or loader-lock stall of up to that length without a dropped-frames status, whatever caused the stall: a third-party model constructor, Defender, or CPU or disk contention.
+  - Unknown until measured on this computer's WASAPI device: whether PortAudio honours a large input latency in shared mode, whether the level meter's cadence changes, and what the extra delay before Finish's last block costs.
+  - Trigger: a logged `capture_failure … detail_code=status_input_overflow` on 0.1.1 or later.
 
 ## Follow-Up Continuation Notes
 **Next: write `plan-pilot.md` with `/review-plan`, using this section as its planning source.** The decisions below are the PRACTITIONER's from 2026-10-02; the code facts were verified by the critique lenses at `7849dc4`.

@@ -58,6 +58,7 @@ from scribe_desktop.audio_capture import (
     CHUNK_BYTES,
     SAMPLE_RATE,
     SAMPLE_WIDTH,
+    AudioCaptureError,
     CaptureBackend,
     CaptureWorker,
 )
@@ -79,7 +80,7 @@ from scribe_desktop.encounter import (
     read_encounter_record,
     write_encounter_record,
 )
-from scribe_desktop.logging_setup import log_event
+from scribe_desktop.logging_setup import exception_type_name, log_event
 from scribe_desktop.past_sessions import KeepLabel, PastSessionStore
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
@@ -550,7 +551,7 @@ class SessionController:
         *,
         sessions_root: Path | None = None,
         logger: logging.Logger | None = None,
-        live_transcriber_factory: Callable[[], LiveTranscriber] | None = None,
+        live_transcriber_factory: Callable[[], LiveTranscriber | None] | None = None,
         audit: AuditLog | None = None,
         past_sessions: PastSessionStore | None = None,
     ) -> None:
@@ -578,7 +579,9 @@ class SessionController:
         # window's (``set_clinic_user_resolver``); None records no user id.
         self._clinic_user_resolver: Callable[[str], str | None] | None = None
         # Note-learning plan D1/D2: builds the live worker at start(); None
-        # keeps today's batch-only behaviour. Settable after construction
+        # keeps today's batch-only behaviour, and so does a factory that
+        # returns None for one Start (installation plan round 35 MED-001: the
+        # ML imports are still warming up). Settable after construction
         # (``set_live_transcriber_factory``) because the live view it posts
         # to is built after the controller (``app.main`` → ``MainWindow``).
         self._live_transcriber_factory = live_transcriber_factory
@@ -884,9 +887,11 @@ class SessionController:
                 # D1: the live worker is fed by a tee AFTER the store's
                 # encrypting write; it holds no crypto and no store handle.
                 # Started BEFORE the capture worker so the first chunk
-                # finds it running (a feed before start fails it).
+                # finds it running (a feed before start fails it). None:
+                # this recording runs without one (batch at Finish).
                 live_worker = self._live_transcriber_factory()
-                live_worker.start()
+                if live_worker is not None:
+                    live_worker.start()
             worker = CaptureWorker(
                 self._backend,
                 device_id,
@@ -906,6 +911,16 @@ class SessionController:
                 store.close()
             discard_session(directory, crypto)
             raise
+        if live_worker is None and self._live_transcriber_factory is not None:
+            if self._logger is not None:
+                # Round 35 MED-001: the factory withheld the worker (logged
+                # only once the Start has succeeded).
+                log_event(
+                    self._logger,
+                    "live_transcriber",
+                    session_id=session.session_id,
+                    state="not_attached",
+                )
         installed = _LiveSession(session, directory, crypto, store, worker)
         installed.live_transcriber = live_worker
         installed.session_ref = _new_session_ref()
@@ -1015,10 +1030,11 @@ class SessionController:
             return worker
 
     def set_live_transcriber_factory(
-        self, factory: Callable[[], LiveTranscriber] | None
+        self, factory: Callable[[], LiveTranscriber | None] | None
     ) -> None:
         """Register (or clear) the live-worker factory ``start()`` uses. Takes
-        effect from the NEXT start; an active session keeps its worker."""
+        effect from the NEXT start; an active session keeps its worker. A
+        factory that returns None records that Start without a live worker."""
         with self._lock:
             self._live_transcriber_factory = factory
 
@@ -2121,11 +2137,16 @@ class SessionController:
         live.crypto.destroy()  # in-memory copy only; key.dpapi (if any) remains
         self._live = None
 
-    def _on_capture_failure(self, _exc: Exception) -> None:
+    def _on_capture_failure(self, exc: Exception) -> None:
         """Worker-thread callback for device loss / disk-full during capture.
         The session becomes failed (recoverable). At most one failure is
         reported per worker; a session already past recording/paused (e.g.
-        discarded concurrently) ignores it."""
+        discarded concurrently) ignores it.
+
+        Installation plan round 35 MED-001: the failure is logged first —
+        its exception TYPE name and, for a capture error, its fixed detail
+        word (``audio_capture.CAPTURE_DETAIL_CODES``); never its message,
+        which may carry PortAudio's or the store's text."""
         with self._lock:
             live = self._live
             if live is None or live.session.state not in (
@@ -2133,4 +2154,14 @@ class SessionController:
                 SessionState.PAUSED,
             ):
                 return
+            if self._logger is not None:
+                detail = exc.detail_code if isinstance(exc, AudioCaptureError) else "none"
+                log_event(
+                    self._logger,
+                    "capture_failure",
+                    session_id=live.session.session_id,
+                    session_state=live.session.state.value,
+                    error_code=exception_type_name(type(exc)),
+                    detail_code=detail,
+                )
             self._fail_locked(live)

@@ -305,6 +305,7 @@ class TestFailurePaths:
             gate.set()
             assert failures.seen.wait(timeout=5)
             assert isinstance(failures.exceptions[0], CaptureOverflowError)
+            assert failures.exceptions[0].detail_code == "queue_full"  # round 35 MED-001
         finally:
             gate.set()
             worker.stop(flush=False)
@@ -341,6 +342,7 @@ class TestSoundDeviceBackendCallback:
         blocks: list[bytes] = []
         errors: list[Exception] = []
         SoundDeviceBackend().open_stream(0, blocks.append, errors.append)
+        self.finished = created[0].kwargs["finished_callback"]
         return created[0].kwargs["callback"], blocks, errors
 
     def test_overflow_status_surfaces_failure_after_block(
@@ -359,6 +361,68 @@ class TestSoundDeviceBackendCallback:
         callback(b"\x03\x04", 1, None, None)  # falsy status: normal block
         assert blocks == [b"\x03\x04"]
         assert errors == []
+
+    @pytest.mark.parametrize(
+        ("flags", "code"),
+        [
+            ({"input_overflow": True}, "status_input_overflow"),
+            ({"input_underflow": True}, "status_input_underflow"),
+            ({"input_overflow": True, "input_underflow": True}, "status_input_overflow"),
+            ({"output_overflow": True}, "status_other"),
+        ],
+    )
+    def test_a_status_flag_names_its_detail_code(
+        self, monkeypatch: pytest.MonkeyPatch, flags: dict[str, bool], code: str
+    ) -> None:
+        """Installation plan round 35 MED-001: the failure carries a fixed
+        word for the flag (``sounddevice.CallbackFlags`` attributes), never
+        built from the status object's text."""
+        import types
+
+        callback, _blocks, errors = self._open_with_fake_sd(monkeypatch)
+        status = types.SimpleNamespace(**flags)  # a plain object: truthy
+        callback(b"\x01\x02", 1, None, status)
+        assert len(errors) == 1 and isinstance(errors[0], CaptureOverflowError)
+        assert errors[0].detail_code == code
+
+    def test_an_unnamed_status_reads_as_status_other(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        callback, _blocks, errors = self._open_with_fake_sd(monkeypatch)
+        callback(b"\x01\x02", 1, None, "input overflow")  # no flag attributes
+        assert errors[0].detail_code == "status_other"
+
+    def test_a_stream_ending_unasked_is_device_lost_stream_ended(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _callback, _blocks, errors = self._open_with_fake_sd(monkeypatch)
+        self.finished()
+        assert len(errors) == 1 and isinstance(errors[0], DeviceLostError)
+        assert errors[0].detail_code == "stream_ended"
+
+
+class TestDetailCodes:
+    def test_an_unknown_detail_code_reads_as_unspecified(self) -> None:
+        assert AudioCaptureError("x").detail_code == "unspecified"
+        assert DeviceLostError("x", detail_code="made up").detail_code == "unspecified"
+        assert DeviceLostError("x", detail_code="open_failed").detail_code == "open_failed"
+
+    def test_a_device_that_will_not_open_is_open_failed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import types
+
+        from scribe_desktop.audio_capture import SoundDeviceBackend
+
+        class _Refusing:
+            def __init__(self, **kwargs: Any) -> None:
+                raise RuntimeError("Device unavailable")
+
+        fake_sd = types.SimpleNamespace(RawInputStream=_Refusing, PortAudioError=RuntimeError)
+        monkeypatch.setitem(sys.modules, "sounddevice", fake_sd)
+        with pytest.raises(DeviceLostError, match="Device unavailable") as raised:
+            SoundDeviceBackend().open_stream(3, lambda b: None, lambda e: None)
+        assert raised.value.detail_code == "open_failed"
 
 
 class TestWorkerLifecycle:

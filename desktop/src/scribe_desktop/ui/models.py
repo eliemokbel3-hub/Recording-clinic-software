@@ -204,6 +204,22 @@ LIVE_TRANSCRIPT_HEADER: Final = "Live — updates while recording"
 LIVE_TRANSCRIPT_PLACEHOLDER: Final = (
     "Live transcription appears here as the consultation is recorded."
 )
+# Installation plan round 35 MED-001: a Start admitted while the transcription
+# software is still loading — since round 36 only once the 60 s start hold has
+# run out (``ml_warmup.START_HOLD_SECONDS``) — records WITHOUT the live worker,
+# whose model loads would add to that loading. Round 38 PR-LOW-A01: it states
+# only that, in the C8 fallback lines' words; it never promises the recording
+# is unaffected (the warm-up's imports still run beside it).
+LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER: Final = (
+    "Live transcription is off for this recording - Clinic Scribe was still getting "
+    "ready; transcribing after the recording instead."
+)
+# Installation plan round 36 MED-001 (the practitioner's option (b)): why a
+# Start is refused while that loading runs (bounded; the consent tick on the
+# Session tab is kept for the next press). Also ``CHROME_REFUSALS["getting_ready"]``.
+START_GETTING_READY_MESSAGE: Final = (
+    "Clinic Scribe is still getting ready - start again in a moment."
+)
 
 # Cliniko workflow safeguards plan Task 3.3 (Constraint 4, D1): the desktop
 # consent tick carries PLAN.md's wording verbatim; it is never pre-ticked and
@@ -958,6 +974,10 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
         "and sign in again (Windows key + L), then press it again."
     ),
     "failed": "It did not work - see the Session tab in Clinic Scribe.",
+    # Installation plan round 36 MED-001 (the practitioner's option (b)):
+    # every Start, Chrome's and the desktop's, waits out the start-up import
+    # warm-up — bounded (``ml_warmup.START_HOLD_SECONDS``).
+    "getting_ready": START_GETTING_READY_MESSAGE,
     # Task 5.5 (D6): the banner's "Open for review".
     "review_in_progress": (
         "Save or cancel the note review open on the Note tab first, then open this recording."
@@ -1179,7 +1199,7 @@ class SessionControllerLike(Protocol):
     def claim_live_transcriber(self) -> LiveTranscriber | None: ...
 
     def set_live_transcriber_factory(
-        self, factory: Callable[[], LiveTranscriber] | None
+        self, factory: Callable[[], LiveTranscriber | None] | None
     ) -> None: ...
 
     # Practitioner-profile plan D15: True while the voice-enrolment activity
@@ -4098,6 +4118,8 @@ __all__ = [
     "LIVE_FALLBACK_STATUS",
     "LIVE_TRANSCRIPT_HEADER",
     "LIVE_TRANSCRIPT_PLACEHOLDER",
+    "LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER",
+    "START_GETTING_READY_MESSAGE",
     "RECORDING_CONSENT_LABEL",
     "CONSENT_REQUIRED_MESSAGE",
     "NOT_LINKED_LABEL",

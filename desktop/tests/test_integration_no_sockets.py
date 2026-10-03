@@ -383,6 +383,14 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from scribe_desktop.exclusions import install_exception_hooks, startup_exclusions\n"
         "install_exception_hooks(logging.getLogger('no-sockets-child'))\n"
         "app = QApplication([])\n"
+        # Installation plan round 35 MED-001: as app.main, the transcription
+        # stack's import warm-up starts after the guard, under the socket
+        # guard too (the real importer: this child is outside the conftest
+        # pin). Without the ML stack it fails at its first import, as the app
+        # would — the proof then covers the rest.
+        "from scribe_desktop.ml_warmup import ImportWarmup\n"
+        "warmup = ImportWarmup(logger=logging.getLogger('no-sockets-child'))\n"
+        "warmup.start()\n"
         # Peer round 55 PR-LOW-041: every store root under the temp parent, so
         # the child never unwraps the developer's real profile or reads their
         # real config (the PR-REG-005 class). The clinic registry keeps its
@@ -429,7 +437,8 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "               profile_root=base / 'profile', config_root=base / 'config',\n"
         "               style_root=base / 'style', language_model_available=lambda: False,\n"
         "               clinic_registry=ClinicRegistry(base / 'clinics.json'), audit=audit,\n"
-        "               past_sessions=past, exclusion_warnings=warnings)\n"
+        "               past_sessions=past, exclusion_warnings=warnings,\n"
+        "               live_ready=warmup.is_finished, start_hold=warmup.holds_start)\n"
         "controller.set_clinic_user_resolver(w.clinic_user_id)\n"
         # As app.main: the reminder index rebuilt after the sweep (Cliniko
         # safeguards Task 5.5; nothing to decrypt under the empty root).
@@ -439,10 +448,16 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "w.past_sessions_screen.run_retention_sweep()\n"
         "w.past_sessions_screen.refresh()\n"
         "w.status_panel.on_self_test()\n"
+        # Round 35 MED-001: READY only once the warm-up has imported the stack
+        # (30 s, well inside the parent's 60 s READY wait with the start-up
+        # work above — round 37 LOW-001), so the socket checks that follow see
+        # a process that has done it. Round 38 PR-LOW-B02: the wait's RESULT
+        # rides on the READY line and the parent requires it.
+        "warmed = warmup.wait(30)\n"
         # Round 71 PR-LOW-390: report the interpreter's own pid, then stay up
         # until the parent releases the gate (stdin), not on a timer.
         "import os, sys\n"
-        "print('READY', os.getpid(), flush=True)\n"
+        "print('READY', os.getpid(), 'warmup:' + str(warmed), flush=True)\n"
         "sys.stdin.readline()\n"
     )
     app = subprocess.Popen(
@@ -455,7 +470,12 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
     )
     try:
         assert app.stdout
-        app_tree = _reported_tree(app, _read_line_within(app.stdout, 60), b"READY")
+        line = _read_line_within(app.stdout, 60)
+        # Round 38 PR-LOW-B02: the checks below run only on a process whose
+        # start-up warm-up has FINISHED (done, or failed fast without the ML
+        # stack) — never one still importing.
+        assert line.split()[2:] == [b"warmup:True"], line
+        app_tree = _reported_tree(app, line, b"READY")
         for _ in range(5):
             assert_no_connections(app_tree, "scribe-app")
             time.sleep(0.1)

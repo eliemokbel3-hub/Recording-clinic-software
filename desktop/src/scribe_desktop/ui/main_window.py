@@ -352,10 +352,18 @@ class MainWindow(QMainWindow):
         past_sessions_save_path: Callable[[], Path | None] | None = None,
         exclusion_warnings: Sequence[str] = (),
         windows_layer: WindowsLayer | None = None,
+        live_ready: Callable[[], bool] | None = None,
+        start_hold: Callable[[], bool] | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
         self._controller = controller
+        # Installation plan round 35 MED-001: whether the transcription
+        # stack's imports have finished warming (``ml_warmup.ImportWarmup``,
+        # started by ``app.main``). False: a Start runs without a live worker.
+        # None — every test that does not ask for it — is always ready.
+        self._live_ready = live_ready
+        self._live_deferred = False
         # Privacy-professional-controls Task 1.4: the audit record the draft
         # write reports into (best-effort, C2); the recovery list and the Past
         # sessions tab are handed it — and the archive — directly below. None —
@@ -418,6 +426,10 @@ class MainWindow(QMainWindow):
                 else self._live_aware_transcriber
             ),
         )
+        # Installation plan round 36 MED-001 (the practitioner's option (b)):
+        # every Start waits out the start-up import warm-up, bounded
+        # (``ml_warmup.ImportWarmup.holds_start``; None never holds).
+        self.session_screen.set_start_hold(start_hold)
         self.recovery_screen = RecoveryScreen(
             sessions_root,
             active_ids_provider=self._live_session_ids,
@@ -1149,11 +1161,17 @@ class MainWindow(QMainWindow):
             on_status=self.session_screen.report_live_status,
         )
 
-    def _build_live_transcriber(self) -> LiveTranscriber:
+    def _build_live_transcriber(self) -> LiveTranscriber | None:
         """The controller calls this on the GUI thread inside ``start()``:
         build the worker whose posts the Transcript screen renders. It only
         builds — the view opens on ``session_started`` (round 7 LOW-003),
-        which adopts this worker's token (round 57 SEC-022)."""
+        which adopts this worker's token (round 57 SEC-022). None while the
+        import warm-up runs (installation plan round 35 MED-001): the worker
+        would import the stack beside the microphone stream; the recording
+        runs without one and the empty view says so."""
+        self._live_deferred = self._live_ready is not None and not self._live_ready()
+        if self._live_deferred:
+            return None
         return models.build_live_transcriber(on_window=self.transcript_screen.live_poster())
 
     def _enrolment_blocker(self) -> str | None:
@@ -1161,10 +1179,14 @@ class MainWindow(QMainWindow):
         benchmark run saturates every core and owns no microphone, but its
         worker must not overlap the enrolment capture. And (round 57
         SEC-019) the session lock: a Record press queued behind the lock
-        message is refused like a Resume, until the unlock."""
+        message is refused like a Resume, until the unlock. And (installation
+        plan round 37 LOW-002) the start-up import warm-up's bounded hold:
+        an enrolment capture is a microphone stream like a recording's."""
         refusal = self._lock_refusal()
         if refusal is not None:
             return models.chrome_refusal_message(refusal)
+        if self.session_screen.start_held():
+            return models.START_GETTING_READY_MESSAGE
         return "a benchmark is running" if self.microphone_screen.is_busy else None
 
     def _live_session_clinic(self) -> str | None:
@@ -1373,7 +1395,7 @@ class MainWindow(QMainWindow):
         # from the Unreviewed section. (Start is refused while a review holds
         # the lease, so no unsaved review is ever dropped here.)
         self.note_screen.clear()
-        self.transcript_screen.begin_live_view()
+        self.transcript_screen.begin_live_view(ready=not self._live_deferred)
         # Phase 7: the phrase rules start afresh for the new recording.
         self._spoken_pause.reset()
         self._new_consultation.reset()

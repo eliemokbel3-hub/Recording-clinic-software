@@ -738,5 +738,11 @@ def test_main_refuses_second_instance(monkeypatch: pytest.MonkeyPatch) -> None:
         "SoundDeviceBackend",
         lambda: (_ for _ in ()).throw(AssertionError("refused instance touched the backend")),
     )
+    # Installation plan round 35 MED-001: nor starts the ML import warm-up.
+    monkeypatch.setattr(
+        app_module,
+        "ImportWarmup",
+        lambda **kwargs: (_ for _ in ()).throw(AssertionError("refused instance warmed up")),
+    )
     assert app_module.main() == 0
     assert warned == ["warned"]
