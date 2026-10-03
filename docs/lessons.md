@@ -131,3 +131,11 @@ Chrome starts `%LOCALAPPDATA%\ClinikoScribe\scribe-host.exe` (since the installa
 ## On Python 3.13+, `Path.is_symlink()` / `is_junction()` read False on a folder you cannot read (2026-10-01)
 Both swallow the `OSError` from an access-denied `lstat` and return False, so a "refuse to follow a link" guard built on them silently PASSES for an unreadable path — the guard is skipped exactly when it cannot inspect. Found in the privacy-controls H3 security review (round 35).
 - **Rule:** decide link-ness with `os.lstat` and treat any error other than `FileNotFoundError` as "cannot inspect — refuse" (`session_store.link_state` is the one implementation; reuse it before any delete or decrypt that walks a directory).
+
+## A background time limit does not stop the `claude -p` executor under it (2026-10-03)
+An executor leg run as a background Bash command hit its time limit while stuck in 401 retries. The wrapper shell was killed, but the `claude -p` child went on running. A re-spawned leg then edited the plan at the same time as the old one, and a third leg had to reconcile them (installation plan, Phase P, legs i5-x4 / i5-x5 / i5-x6).
+- **Rule:** before re-spawning a leg, list live executors (`Get-CimInstance Win32_Process` filtered on the CommandLine) and stop any survivor. Launch long legs detached (`Start-Process bash.exe -WindowStyle Hidden`, output to a file) and wait on their done marker, not on the tool's time limit.
+
+## A Windows path in a non-raw Python string can put a NUL byte in the plan (2026-10-03)
+A plan-record script wrote a path through an ordinary Python string, and a backslash followed by `0` became a NUL character in the plan file. It was caught only after a local commit, which had to be amended (installation plan, Phase P).
+- **Rule:** write paths in record scripts as raw strings (`r"…"`) or with forward slashes, and assert `"\x00" not in text` before every write of a plan or doc.
