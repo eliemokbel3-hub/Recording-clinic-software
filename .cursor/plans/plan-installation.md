@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `85%`
+**Overall Progress:** `88%`
 
 ## Lifecycle State
 - Active
@@ -1228,6 +1228,7 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-03 round 37: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=fix → 4 LOW Applied (a redundant third hold check removed, the no-sockets child's warm-up wait 45 → 30 s, voice enrolment held too, a stale `on_start` docstring); /review-loop CONVERGED at loop round 2 of cap 3 (round 36 MED-001's option (b) delta, executor stage-5 leg i5-x2, in-session plus the same independent read-only subagent; 7 candidates, 2 dropped) (round 35 MED-001's fix diff, in-session /review-loop pass 1, executor stage-5 leg i5-x1, plus one independent read-only subagent review; 11 candidates, 2 dropped)
 - 2026-10-03 round 38: 0 CRIT / 0 HIGH / 0 MED / 4 LOW; skew=none; action=fix → all 4 confirmed and Applied by leg i5-x3, round Closed; codex gpt-6-astra medium, pass stage-5.p1 peer_round 1 of cap 5, three slices (code 10, tests 11, docs 4) over the rounds 35–37 diff
 - 2026-10-03 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-5.p1 peer_round 2 of cap 5, confirmation of round 38 (4 claims checked, 4 confirmed closed); peer pass CONVERGED
+- 2026-10-03 round 40: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=fix → Task P.3 practitioner smoke on 0.1.0/0.1.1: the Finish page truncates its later paragraphs, and Discard during live transcription blocks and needs a second press; Pending
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -3154,6 +3155,18 @@ Fix-delta self-check: PASS — I re-read the 10 reworded comments and docstrings
 - PEER-ROUND-39-A RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0). Peer pass stage-5.p1 converged; trajectory 4 → 0.
 - Last reviewed: 2026-10-03
 
+### Round 40 - 2026-10-03 - Task P.3 live smoke on 0.1.0 and 0.1.1 (practitioner-observed)
+
+- Round status: Open (2 pending).
+- Source: practitioner smoke (Task P.3), composer-observed from the Finish-page screenshots and the installed app's log
+- Reviewer: composer `claude-opus-5-5`; observation by the practitioner
+
+#### Findings
+- **LOW-001** (LOW, behavioral, `packaging/scribe.iss` `CurPageChanged`): the Finish page shows only the first two paragraphs of the caption the script sets. — Evidence: every Finish page this run (0.1.0 install, 0.1.1 update, 0.1.1 reinstall) showed "Clinic Scribe is installed./updated." and the Chrome paragraph, but never the third paragraph "Open Clinic Scribe from the Start menu.", which `CurPageChanged` sets on all three. The likely cause: `WizardForm.FinishedLabel` keeps the height sized for the default text, and nothing re-sizes it after `Caption` changes (Inno's `WizardForm.AdjustLabelHeight`). Consequence: the appended warnings ("The clinic-only Chrome setting could not be removed…", the foreign-policy note) would be cut off too, and so would the second paragraph of "NOT completely installed" if it wraps past the label. Recommendation: Fix-now — resize the label after every caption change, and pin it in `test_installer_script.py`; confirm on the next build's Finish page. /fix decision: Pending
+- **LOW-002** (LOW, behavioral, `desktop/src/scribe_desktop/session.py` `discard` / the Session tab's Discard): a Discard pressed while the live worker is mid-window waits up to `LIVE_STOP_TIMEOUT_SECONDS` (10 s) to stop it, with no feedback, then (by the custody rule, correctly) routes the session to `failed` and needs a second Discard. — Evidence: log `19:10:27,039 live_transcriber_stop_timeout … session_state=recording`, `19:10:27,041 … session_state=failed`, `19:10:30,713 … session_state=discarded`; the practitioner pressed Discard twice, and the first press looked like nothing happened. Recommendation: Fix-now (UX only; the custody rule stays) — show that Discard is waiting for live transcription to stop, and either retry the discard once the worker has stopped or say plainly "press Discard again"; check whether the join blocks the GUI thread. /fix decision: Pending
+- Verification counts: 2 claims checked, 2 confirmed, 0 dropped
+- Last reviewed: 2026-10-03
+
 ## Tasks
 Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's verification is the plan's Validation section (composer-run suites) unless the task names its own. Phases are grouped for `/execute-loop`: foundational layout and identity (Phase 1) are isolated ahead of the frozen-runtime work (Phase 2) and the build (Phase 3).
 
@@ -3910,12 +3923,19 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
 - [x] 🟩 **P.2 Hardware check** on the installed app (Microphone tab): record whisper `medium`'s real-time factor and the prose seconds per section, against the margin verdict. This closes note-learning P.2's timing line and revisits the whisper `small` exclusion if `medium` falls behind.
   - **RUN 2026-10-03 (practitioner, installed 0.1.0, Microphone tab "Run hardware benchmark", on mains):** model report "Whisper model (medium): ready", "VAD model (silero): ready", "Speaker model (wespeaker-voxceleb-resnet34-LM): installed - verified when it loads", "Voice profile: enrolled 2026-09-18". Benchmark: "RTF thresholds: required < 1.00, margin <= 0.75"; `medium` RTF **0.627**, load 3.89 s, audio 53.2 s, peak 1812.8 MiB, 142 words, OK; "live window latency 18.8 s per 30 s window (1.59x real time) - live transcription keeps up on this machine"; "Prose stage (Narrative style): 3 of 3 sections, load 8.5 s; sections 18.1 s wall, 218.6 s CPU; 6.0 s wall and 72.9 s CPU per section WARNING"; "NOTE: the prose styles take 6.0 s per section (> 5 s) on this machine; a long note waits longer for them."; verdict "Hardware check: whisper medium RTF 0.63 OK; prose stage 6.0 s per section WARNING". P.1 step 10 adds a real note: "writing style 'narrative' prose shown for 5 sections (26.7s)".
   - **Verdict:** whisper `medium` keeps up within the margin, so the whisper `small` exclusion stands (D5). The prose WARNING is a wait-time note, not a gate: a 5–8 section prose note waits about 30–50 s after Finish; Verbatim and Clean clinical are immediate. This closes note-learning P.2's timing line; a smaller prose model stays a later option if the wait proves a problem in practice.
-- [ ] 🟥 **P.3 Upgrade and rollback smoke** with the next CI build (version bumped):
+- [x] 🟩 **P.3 Upgrade and rollback smoke** with the next CI build (version bumped):
   1. Install N+1 over N; the models are skipped as matching and the data is unchanged.
   2. Reinstall N over N+1; the app starts and reads every store.
   3. Uninstall, check that the data folder remains, then reinstall.
 
   - **Prepared 2026-10-03 (composer, local commit, not pushed):** version 0.1.1 in every pinned place (`desktop/pyproject.toml`, `__version__`, `extension/src/manifest.ts`, `package.json` and both `package-lock.json` copies; `test_the_version_is_the_same_everywhere` holds), together with the CI timing-test bound (AGENTS.md Known Issues). After P.1 passes: push, run Release, verify the attestation, record the row in `docs/release/pilot-builds.md`, then run steps 1–3.
+
+  - **RUN 2026-10-03 (practitioner at the computer; composer read the installed app's log):**
+    0. `gh attestation verify` on `ClinikoScribe-0.1.1-setup.exe` (Release run 37108950093, commit `f9f7642`): "Verification succeeded!" (signer and build workflow `release.yml@refs/heads/main`); `Get-FileHash` `4C5B7455861946C96A7E832F68F4DA8ADB1D9BBE84F497D40CD848F246B04D9D`, equal to `SHA256SUMS.txt` and the pilot-builds row.
+    1. **0.1.0 → 0.1.1 in place:** Finish page "Clinic Scribe is updated." / "In Chrome, reload the Clinic Scribe Companion extension, then fully restart Chrome." (models skipped as matching; no pack was needed). The extension reloaded as **0.1.1** with the same ID `mbmhglgadhdohpgbmpbjnaifjagfdfid`; badge **OK**. Log: `ml_warmup duration_ms=2406 state=done` 2.4 s after `app_start`; a Start 3.8 s later recorded normally (no "still getting ready", since the warm-up had finished). Status: "Registration: registered ✓ (this computer's Chrome link)", self-test 2/2. A Discard pressed during live transcription produced `live_transcriber_stop_timeout` then `failed` (by design: the key is kept while the worker may hold plaintext), and a second Discard completed (round 40 LOW-002).
+    2. **0.1.1 → 0.1.0 rollback:** Finish page "Clinic Scribe is updated."; the app started on 0.1.0 (log `app_start` 19:17:30 with no `ml_warmup` line, as 0.1.0 has none) and read its stores; no recording was made on 0.1.0.
+    3. **Uninstall and reinstall:** Settings → Apps uninstall showed "Clinic Scribe has been removed." / "Your sessions, Past sessions and audit record were left in your Windows profile, unchanged."; `Test-Path "$env:LOCALAPPDATA\ClinikoScribe\config"` → `True`, `Test-Path "C:\Program Files\ClinikoScribe"` → `False`. Reinstalled 0.1.1 with the pack beside it: Finish page "Clinic Scribe is installed." (no model warning); extension loaded unpacked; badge **OK**; Status ✓ and 2/2; data present. Log: `ml_warmup duration_ms=2586 state=done`, then a test recording `recording` → `processing` → `queued` (28 s), discarded.
+    - **Result:** every step passed. The practitioner is on **0.1.1** for clinic. Found in passing: round 40 LOW-001 (the Finish page cuts off its third and later paragraphs) and LOW-002 (Discard during live transcription can block for up to 10 s and needs a second press).
 
   Done when: each step's result is recorded.
 
