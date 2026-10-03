@@ -12,7 +12,7 @@ row names the manifest it was checked against.
 
 | Version | Commit | CI run | Installer SHA-256 | Model-pack manifest SHA-256 | Date | Notes |
 |---|---|---|---|---|---|---|
-| | | | | | | No build recorded yet. |
+| 0.1.0 | `e730cd552e937149104db6261dd083a7cc78767d` | [37081519723](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37081519723) | `e48a6602a08b6bfd43834937a713542896e607a290f7a511f5410677e880ac99` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-03 | First build of record. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-03); the hash matches `SHA256SUMS.txt`. Not yet installed (Phase P). |
 
 - **Version**: the `AppVersion` the installer shows; it comes from `desktop/pyproject.toml`.
 - **Commit**: the full commit the run built. The run's `BUILD-INFO.txt` names it too, and must say `tree=clean`; a build that says `DIRTY` or `unknown` is never recorded here.

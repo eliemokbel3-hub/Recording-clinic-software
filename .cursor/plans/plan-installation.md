@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `78%`
+**Overall Progress:** `80%`
 
 ## Lifecycle State
 - Active
@@ -3472,7 +3472,13 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
       3. `.venv\Scripts\python.exe scripts\build-release.py --model-pack --models build\models --out C:\scribe-release\out\installer`
       - Report the final `version` / `installer` / `sha256` / `models` / `defender` lines, or the `ERROR:` line.
       - Building from Program Files is not needed: the audit's self-check runs from the build folder.
-- [ ] 🟨 **3.6 `.github/workflows/release.yml`** (D7; needs Task 3.5). `workflow_dispatch` on `main` only, `windows-latest`, the pinned Python from D12, Inno from Task 0.3 (preinstalled or a pinned install), `build-release.py` without the model pack, `actions/attest-build-provenance` over `setup.exe` and `SHA256SUMS.txt`, then upload the artifact. Permissions are least-privilege.
+- [x] 🟩 **3.6 `.github/workflows/release.yml`** (D7; needs Task 3.5). `workflow_dispatch` on `main` only, `windows-latest`, the pinned Python from D12, Inno from Task 0.3 (preinstalled or a pinned install), `build-release.py` without the model pack, `actions/attest-build-provenance` over `setup.exe` and `SHA256SUMS.txt`, then upload the artifact. Permissions are least-privilege.
+  - **RUNS 2026-10-03 (practitioner-approved push of `installation-build` to `origin/main`):**
+    - Run 37079569271 on `932c07a`: FAILED installing PyInstaller from source (hatchling build backend not in the lock) — round 31, fixed by leg i3-x9, lock regenerated (59 pins).
+    - Run **37081519723** on `e730cd5`: **GREEN** — build (PyInstaller, bundle and extension audits, Defender scan, ISCC 6.7.3 compile) and attest both succeeded. Artifact `clinic-scribe-installer`: `ClinikoScribe-0.1.0-setup.exe` 104,995,817 bytes, SHA-256 `e48a6602a08b6bfd43834937a713542896e607a290f7a511f5410677e880ac99`, equal to its `SHA256SUMS.txt` line; `models-manifest.json` SHA-256 `10a83493…` (= the pack name `ClinikoScribe-models-10a83493`); `BUILD-INFO.txt` `version=0.1.0 commit=e730cd5… tree=clean`.
+    - `gh attestation verify` with `--signer-workflow …/release.yml --source-ref refs/heads/main` PASSED (exit 0) for both the installer and `SHA256SUMS.txt` (composer, read-only, 2026-10-03): signer `release.yml@refs/heads/main`, source commit `e730cd5`. Negative control: the same verify with `--source-ref refs/heads/some-other-branch` exits 1. The practitioner re-runs the check at P.1 step 3 on the copy they install.
+    - CI on `e730cd5`: desktop 3.14 failed once on the timing assertion `test_live_session.py::test_finish_seals_only_and_the_last_flushed_chunk_is_in_the_tail` (`assert 0.32 < 0.1` on the shared runner); untouched by this plan; the re-run of the failed job passed (3.12, 3.14, extension all green). Recorded in AGENTS.md Known Issues.
+    - Recorded in `docs/release/pilot-builds.md`.
   - Done when: one green run is attested and `gh attestation verify` passes (practitioner); the existing `ci.yml` is unchanged.
   - **Leg i3-x1 (workflow and text pins built; stays 🟨 — its pins need the network, and its run needs a push to `main`, the practitioner's call):**
     - **What it does:**
