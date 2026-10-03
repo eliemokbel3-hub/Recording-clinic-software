@@ -91,6 +91,7 @@ class TestPins:
             f"--hash=sha256:{lm.LANGUAGE_RUNTIME_WHEEL_SHA256}"
         ], "one hashed wheel, no second requirement that could arrive unpinned"
 
+    @pytest.mark.real_models_root  # the shipped location, through the resolver (Task H.6)
     def test_default_model_path_under_the_models_root(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -724,16 +725,16 @@ class TestAvailability:
         forbid_network_io(monkeypatch)
         assert lm.language_model_file_available(Path(r"\\server\share\m.gguf")) is False
 
-    def test_default_path_probe_follows_localappdata(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    def test_default_path_probe_follows_the_models_root(self) -> None:
+        # The conftest's empty models root (Task H.6); the LOCALAPPDATA
+        # mapping is the exempt tests' business.
         assert lm.language_model_file_available() is False
         pinned = lm.default_language_model_path()
         pinned.parent.mkdir(parents=True)
         pinned.write_bytes(b"not really a model")
         assert lm.language_model_file_available() is True
 
+    @pytest.mark.real_models_root  # the resolver's unset-LOCALAPPDATA contract (Task H.6)
     def test_localappdata_unset_reports_unavailable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

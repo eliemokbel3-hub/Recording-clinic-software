@@ -2869,7 +2869,11 @@ the installation plan also `packaging/scribe.iss`, its D6/D10).
   recording; each is logged by its code only. Every attribute, drive-type,
   environment, path-resolution and registry call goes through an injected
   `WindowsLayer`, and tests never reach the real one (a sentinel); the folder
-  walk itself uses `os.scandir` and the link checks directly.
+  walk itself uses `os.scandir` and the link checks directly. A second
+  conftest sentinel pins every test's models root (`install_layout.models_root`)
+  to an empty temporary folder, so no test stats this computer's models; only
+  the resolver's own tests opt out (`real_models_root`), and a real-ML leg
+  re-pins to the dev models root (installation plan Task H.6).
 - Exception hooks: `sys.excepthook`, `threading.excepthook` and
   `sys.unraisablehook` in BOTH processes log only `uncaught_exception
   error_code=<type name> detail_code=main|thread|unraisable` (a thread's

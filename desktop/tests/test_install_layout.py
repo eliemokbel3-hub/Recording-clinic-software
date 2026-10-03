@@ -5,7 +5,9 @@ scan), the remedy lines (Task 1.7) and the one version (Task 1.8).
 Host state is never read (C6): ``sys.frozen`` (through the conftest's
 ``is_frozen`` pin, a source run unless ``use_frozen`` says otherwise),
 ``sys.executable`` and ``LOCALAPPDATA`` are injected per test; nothing here
-touches a real data folder, model file or registry key."""
+touches a real data folder, model file or registry key. The resolver's own
+tests opt out of the conftest's models-root pin (``real_models_root``,
+Task H.6)."""
 
 from __future__ import annotations
 
@@ -238,6 +240,7 @@ class TestInstallRoot:
             install_layout.install_root(accepted=(str(root),))
 
 
+@pytest.mark.real_models_root  # the resolver itself, not the conftest pin (Task H.6)
 class TestModelsRoot:
     def test_frozen_the_models_are_in_the_install_folder(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -369,6 +372,7 @@ def _load_register_script() -> ModuleType:
     return module
 
 
+@pytest.mark.real_models_root  # its "models" builder is the resolver's (Task H.6)
 @pytest.mark.parametrize(
     ("which", "folder"), [("production", "ClinikoScribe"), ("dev", "ClinikoScribe-dev")]
 )
@@ -703,7 +707,8 @@ class TestRemedies:
         from scribe_desktop.ui import models
 
         use_frozen(monkeypatch, frozen)
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))  # no model is there
+        # C6 for any data root; the models root is the conftest's empty pin.
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
         if frozen:
             root = _real(tmp_path) / "Install"
             monkeypatch.setattr(install_layout, "executable", lambda: str(root / "a.exe"))

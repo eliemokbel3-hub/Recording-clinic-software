@@ -756,6 +756,41 @@ class TestMicrophoneScreen:
         assert len(reads) == 5
         screen.deleteLater()
 
+    def test_model_status_poll_reads_only_the_pinned_models_root(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        pinned_models_root: Path | None,
+    ) -> None:
+        """Installation plan Task H.6 (round 27 PR-MED-022, C6): with NO
+        presence stub, every path the poll stats is under the conftest's
+        empty models root or the test's own folder — never this computer's
+        models folder. One site stands for the class: the `_main_window`
+        helper and the Learn-style poll reach the models only through the same
+        two calls (`speaker_embedder_available`, `model_file_report_lines`),
+        and every model path starts at the one resolver the conftest pins."""
+        from conftest import record_path_io
+        from scribe_desktop.ui.microphone import MicrophoneScreen
+
+        assert pinned_models_root is not None
+        screen = MicrophoneScreen(
+            FakeController(), FakeBackend(), benchmark_runner=list, profile_root=tmp_path
+        )
+        with monkeypatch.context() as spy:
+            probed = record_path_io(spy)
+            screen.refresh_model_status()
+        assert probed, "the poll stats the model files"
+        outside = [
+            path
+            for path in probed
+            if not (path.is_relative_to(pinned_models_root) or path.is_relative_to(tmp_path))
+        ]
+        assert outside == []
+        lines = screen.model_status_label.text().split("\n")
+        assert all("MISSING" in line for line in lines[:3])  # the pinned root is empty
+        screen.deleteLater()
+
     def test_benchmark_failure_threshold_shows_warning(
         self, qapp: Any, tmp_path: Path
     ) -> None:

@@ -145,3 +145,8 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    # Installation plan Task H.6: the conftest pins every test's models root
+    # to an empty temporary folder; only the resolver's own tests opt out.
+    "real_models_root: a test of install_layout.models_root itself - the conftest pin is not applied",
+]

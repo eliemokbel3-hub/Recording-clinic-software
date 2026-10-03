@@ -26,7 +26,14 @@ from pathlib import Path
 
 import pytest
 
-from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason, start_unlinked
+from conftest import (
+    forbid_network_io,
+    on_real_ml_root,
+    real_ml_skip_reason,
+    start_unlinked,
+    use_models_root,
+)
+from scribe_desktop import install_layout
 from scribe_desktop.audio_capture import MockCaptureBackend
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
@@ -991,9 +998,10 @@ class TestWhisperProviderGuards:
 # ---------------------------------------------------------------------------
 
 
-def _fake_snapshot(local_app_data: Path, name: str) -> Path:
-    """Minimally complete CT2 snapshot under a fake LOCALAPPDATA."""
-    target = local_app_data / "ClinikoScribe" / "models" / "whisper" / name
+def _fake_snapshot(name: str) -> Path:
+    """Minimally complete CT2 snapshot under the test's models root (the
+    conftest's empty folder, installation plan Task H.6)."""
+    target = install_layout.models_root() / "whisper" / name
     target.mkdir(parents=True, exist_ok=True)
     for filename in ("model.bin", "config.json", "vocabulary.txt"):
         (target / filename).write_bytes(b"x")
@@ -1008,42 +1016,27 @@ class TestModelPolicy:
         assert DEFAULT_WHISPER_MODEL == "medium"
         assert FALLBACK_WHISPER_MODEL == "small"
 
-    def test_resolves_default_when_present(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        _fake_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
+    def test_resolves_default_when_present(self) -> None:
+        _fake_snapshot(DEFAULT_WHISPER_MODEL)
         assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
 
-    def test_resolves_fallback_when_default_absent(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+    def test_resolves_fallback_when_default_absent(self) -> None:
+        _fake_snapshot(FALLBACK_WHISPER_MODEL)
         assert resolve_whisper_model() == FALLBACK_WHISPER_MODEL
 
-    def test_prefers_default_when_both_present(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        _fake_snapshot(tmp_path, DEFAULT_WHISPER_MODEL)
-        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+    def test_prefers_default_when_both_present(self) -> None:
+        _fake_snapshot(DEFAULT_WHISPER_MODEL)
+        _fake_snapshot(FALLBACK_WHISPER_MODEL)
         assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
 
-    def test_returns_preferred_name_when_nothing_present(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_returns_preferred_name_when_nothing_present(self) -> None:
         # No usable model: return the PREFERRED name unchanged so the
         # provider's error message names it and its setup-models remedy.
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
         assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
 
-    def test_explicit_request_honoured_before_fallback(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-        _fake_snapshot(tmp_path, "distil-small.en")
-        _fake_snapshot(tmp_path, FALLBACK_WHISPER_MODEL)
+    def test_explicit_request_honoured_before_fallback(self) -> None:
+        _fake_snapshot("distil-small.en")
+        _fake_snapshot(FALLBACK_WHISPER_MODEL)
         assert resolve_whisper_model("distil-small.en") == "distil-small.en"
         # ... but an absent explicit request still degrades to the fallback.
         assert resolve_whisper_model("distil-medium.en") == FALLBACK_WHISPER_MODEL
@@ -1059,7 +1052,9 @@ class TestModelPolicy:
         # Installation plan round 29 PR-LOW-033: a regressed guard fails here
         # at its first listed `Path` call on the network path.
         forbid_network_io(monkeypatch)
-        monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
+        # Installation plan Task H.6: a network root for the default path, as
+        # a UNC-redirected LOCALAPPDATA would make it.
+        use_models_root(monkeypatch, Path(r"\\evil-host\share\models"))
         assert not whisper_model_available()
         assert not whisper_model_available(FALLBACK_WHISPER_MODEL)
         assert resolve_whisper_model() == DEFAULT_WHISPER_MODEL
@@ -1162,7 +1157,6 @@ class TestProviderPromptWiring:
 
     def _provider(
         self,
-        tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         **provider_kwargs: object,
     ) -> WhisperSpeechProvider:
@@ -1170,17 +1164,15 @@ class TestProviderPromptWiring:
         apply_offline_env()
         import types
 
-        snapshot = _fake_snapshot(tmp_path, "fake-model")
+        snapshot = _fake_snapshot("fake-model")
         fake = types.ModuleType("faster_whisper")
         fake.WhisperModel = _RecordingWhisperModel  # type: ignore[attr-defined]
         monkeypatch.setitem(sys.modules, "faster_whisper", fake)
         _RecordingWhisperModel.calls = []
         return WhisperSpeechProvider(model_dir=snapshot, **provider_kwargs)  # type: ignore[arg-type]
 
-    def test_default_passes_clinical_prompt(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        provider = self._provider(tmp_path, monkeypatch)
+    def test_default_passes_clinical_prompt(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = self._provider(monkeypatch)
         assert provider.transcribe_segment(b"\x00\x00" * 160, 16_000) == []
         (call,) = _RecordingWhisperModel.calls
         assert call["initial_prompt"] == CLINICAL_INITIAL_PROMPT
@@ -1189,20 +1181,14 @@ class TestProviderPromptWiring:
         assert call["word_timestamps"] is True
         assert call["condition_on_previous_text"] is False
 
-    def test_none_disables_priming(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        provider = self._provider(tmp_path, monkeypatch, initial_prompt=None)
+    def test_none_disables_priming(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = self._provider(monkeypatch, initial_prompt=None)
         provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
         (call,) = _RecordingWhisperModel.calls
         assert call["initial_prompt"] is None
 
-    def test_custom_prompt_overrides(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        provider = self._provider(
-            tmp_path, monkeypatch, initial_prompt="physiotherapy assessment"
-        )
+    def test_custom_prompt_overrides(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        provider = self._provider(monkeypatch, initial_prompt="physiotherapy assessment")
         provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
         (call,) = _RecordingWhisperModel.calls
         assert call["initial_prompt"] == "physiotherapy assessment"

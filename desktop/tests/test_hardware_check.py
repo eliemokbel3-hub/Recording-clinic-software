@@ -307,7 +307,9 @@ def _screen(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> A
     from scribe_desktop.ui.microphone import MicrophoneScreen
     from test_ui_screens import FakeBackend, FakeController
 
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))  # the model report's stats (C6)
+    # C6 for any data root; the model report's stats land in the conftest's
+    # empty models root (installation plan Task H.6).
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     return MicrophoneScreen(FakeController(), FakeBackend(), profile_root=tmp_path, **kwargs)
 
 

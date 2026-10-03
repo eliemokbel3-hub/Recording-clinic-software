@@ -1,10 +1,12 @@
 """Shared test-side helpers: the wire helpers (LOW-002) — the single place
 tests build and read native-messaging frames and protocol dicts — the
-consent-bearing Start (Cliniko workflow safeguards plan Task 3.3), and the
+consent-bearing Start (Cliniko workflow safeguards plan Task 3.3), the
 privacy-professional-controls C6 sentinel for the Windows layer and the
-exception hooks (Task 4.1)."""
+exception hooks (Task 4.1), and the installation plan's models-root pin
+(Task H.6)."""
 
 import io
+import itertools
 import json
 import struct
 from collections.abc import Callable, Iterator
@@ -76,13 +78,21 @@ def use_frozen(monkeypatch: pytest.MonkeyPatch, frozen: bool) -> None:
     monkeypatch.setattr(install_layout, "is_frozen", lambda: frozen)
 
 
+def use_models_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+    """Pin ``install_layout.models_root()`` to ``root`` for this test, in
+    place of the conftest's empty folder (``pinned_models_root``) — a network
+    root, for a test that a default model path refuses one."""
+    monkeypatch.setattr(install_layout, "models_root", lambda of=None: root)
+
+
 def real_ml_models_root() -> Path | None:
     """Installation plan Task 2.6: the ONE models root every real-ML test leg
     — its skip gate, its body and the child processes it starts — loads
     from: a source run's DEV root (``install_layout.models_root("dev")``,
     ``%LOCALAPPDATA%\\ClinikoScribe-dev\\models``), never the production data
     folder (C8), whatever the channel pin. ``None`` when ``LOCALAPPDATA`` is
-    unset. Every other test stays on the production pin."""
+    unset. Every other test resolves under its own empty folder
+    (``pinned_models_root``, Task H.6)."""
     try:
         return REAL_MODELS_ROOT("dev")
     except RuntimeError:
@@ -121,6 +131,49 @@ def real_ml_models(monkeypatch: pytest.MonkeyPatch) -> Path:
     if root is None:
         pytest.skip("LOCALAPPDATA is not set; no dev models root")
     monkeypatch.setattr(install_layout, "models_root", lambda of=None: root)
+    return root
+
+
+@pytest.fixture(scope="session")
+def models_root_factory(tmp_path_factory: pytest.TempPathFactory) -> Callable[[], Path]:
+    """One numbered ``models`` folder per session under pytest's base
+    temporary folder, and a new empty child of it per call (a ``mktemp`` per
+    test would rescan the whole base folder every time)."""
+    parent = tmp_path_factory.mktemp("models")
+    numbers = itertools.count()
+
+    def fresh() -> Path:
+        root = parent / str(next(numbers))
+        root.mkdir()
+        return root
+
+    return fresh
+
+
+@pytest.fixture(autouse=True)
+def pinned_models_root(
+    request: pytest.FixtureRequest,
+    monkeypatch: pytest.MonkeyPatch,
+    models_root_factory: Callable[[], Path],
+) -> Path | None:
+    """Installation plan Task H.6 (round 27 PR-MED-022, C6), for EVERY test:
+    ``install_layout.models_root()`` — the one resolver behind every model
+    path (``benchmark.default_models_root`` and the VAD, whisper, language
+    and speaker model paths read it at call time) — is pinned to a fresh,
+    EMPTY folder of the test's own, outside its ``tmp_path``, so no test
+    stats the host's models folder (full on the development computer, empty
+    on CI). A model is
+    absent unless the test writes one under ``install_layout.models_root()``.
+    A real-ML leg's ``real_ml_models`` pin lands after this one and wins
+    (``on_real_ml_root`` restores this pin after its probe). Only the
+    resolver's own tests opt out, by class or function, with
+    ``@pytest.mark.real_models_root``: they drive ``LOCALAPPDATA`` or the
+    install folder and need the real function. Returns the pinned root, or
+    ``None`` for a marked test."""
+    if request.node.get_closest_marker("real_models_root") is not None:
+        return None
+    root = models_root_factory()
+    use_models_root(monkeypatch, root)
     return root
 
 
@@ -186,6 +239,24 @@ def forbid_network_io(monkeypatch: pytest.MonkeyPatch) -> None:
             return _real(self, *args, **kwargs)
 
         monkeypatch.setattr(pathlib.Path, method, guarded)
+
+
+def record_path_io(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    """Installation plan Task H.6: every path a ``pathlib.Path`` method in
+    ``NETWORK_IO_METHODS`` is called on, in order; each call then goes
+    through unchanged. Same coverage limits as ``forbid_network_io``."""
+    import pathlib
+
+    seen: list[Path] = []
+    for method in NETWORK_IO_METHODS:
+        real = getattr(pathlib.Path, method)
+
+        def recording(self: pathlib.Path, *args: Any, _real: Any = real, **kwargs: Any) -> Any:
+            seen.append(self)
+            return _real(self, *args, **kwargs)
+
+        monkeypatch.setattr(pathlib.Path, method, recording)
+    return seen
 
 
 def bounded_read_spy(monkeypatch: pytest.MonkeyPatch, name: str) -> list[int]:

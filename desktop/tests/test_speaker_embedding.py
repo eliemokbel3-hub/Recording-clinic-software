@@ -24,7 +24,7 @@ from typing import Any
 
 import pytest
 
-from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason
+from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason, use_models_root
 from scribe_desktop import speaker_embedding as se
 from scribe_desktop.benchmark import OFFLINE_ENV, OfflineEnvError, apply_offline_env
 from scribe_desktop.speaker_embedding import (
@@ -95,6 +95,7 @@ class TestDecisionConstants:
         assert len(SPEAKER_MODEL_SHA256) == 64 and int(SPEAKER_MODEL_SHA256, 16)
         assert se.SPEAKER_MODEL_SIZE_BYTES == 26_530_309
 
+    @pytest.mark.real_models_root  # the shipped location, through the resolver (Task H.6)
     def test_default_model_path_under_the_models_root(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -562,7 +563,9 @@ class TestAvailabilityAndFactory:
         # not only `is_file`.
         forbid_network_io(monkeypatch)
         assert speaker_model_available(Path(r"\\evil-host\share\model.onnx")) is False
-        monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
+        # Installation plan Task H.6: a network root for the default path, as
+        # a UNC-redirected LOCALAPPDATA would make it.
+        use_models_root(monkeypatch, Path(r"\\evil-host\share\models"))
         assert speaker_model_available() is False
 
     def test_factory_builds_the_onnx_embedder_and_never_substitutes(

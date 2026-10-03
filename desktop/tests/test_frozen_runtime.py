@@ -8,7 +8,9 @@
   the others, the frozen per-user override warning, the host's log lines,
   and the real layer's order over a FAKE ``winreg``;
 - Task 2.6: the real-ML legs' models root is the source run's DEV root;
-- Task 2.7: a packaged build outside its install folder never starts.
+- Task 2.7: a packaged build outside its install folder never starts;
+- Task H.6: every other test's models root is the conftest's empty folder,
+  and the resolver's own tests opt out (``real_models_root``).
 
 Host state is never read (C6): ``sys.frozen`` (``install_layout.is_frozen``),
 the packaged executable's path (``install_layout.executable``),
@@ -1078,6 +1080,7 @@ class TestRealLayerOverAFakeWinreg:
 # --- Task 2.6: the real-ML legs' models root -------------------------------------------
 
 
+@pytest.mark.real_models_root  # asserts the real resolver's answers (Task H.6)
 class TestRealMlModelsRoot:
     @pytest.mark.parametrize("which", ["production", "dev"])
     def test_it_is_the_dev_root_whatever_the_pin(
@@ -1137,6 +1140,208 @@ class TestRealMlModelsRoot:
         _frozen_at(monkeypatch, root / "scribe-app.exe")
         monkeypatch.setattr(install_layout, "INSTALL_ROOTS", (str(root),))
         assert REAL_MODELS_ROOT("dev") == root / "models"
+
+
+# --- Task H.6: every other test's models root is the conftest's empty folder ------------
+
+
+class TestModelsRootPin:
+    """Round 27 PR-MED-022 (C6): the conftest's ``pinned_models_root``."""
+
+    @pytest.mark.parametrize("run", ["first", "second"])
+    def test_an_unmarked_test_resolves_every_model_under_its_own_empty_folder(
+        self,
+        run: str,
+        pinned_models_root: Path | None,
+        tmp_path: Path,
+        tmp_path_factory: pytest.TempPathFactory,
+    ) -> None:
+        from scribe_desktop.language_model import default_language_model_path
+        from scribe_desktop.speaker_embedding import default_speaker_model_path
+        from scribe_desktop.speech import default_vad_model_path
+        from scribe_desktop.transcription import default_whisper_model_dir
+
+        root = pinned_models_root
+        assert root is not None
+        assert install_layout.models_root() == root
+        assert install_layout.models_root("dev") == root
+        assert benchmark.default_models_root() == root
+        assert root.is_relative_to(tmp_path_factory.getbasetemp())
+        assert not root.is_relative_to(tmp_path)
+        # Empty and the test's own: each run finds it empty, then writes to
+        # it, so a folder shared between tests fails whichever run is second.
+        assert list(root.iterdir()) == []
+        (root / run).write_bytes(b"")
+        # Every model path the app builds (`test_every_models_root_caller_is_known`).
+        for path in (
+            default_vad_model_path(),
+            default_whisper_model_dir(),
+            default_language_model_path(),
+            default_speaker_model_path(),
+        ):
+            assert path.is_relative_to(root), path
+
+    def test_a_real_ml_body_pin_lands_after_and_wins(
+        self, real_ml_models: Path, pinned_models_root: Path | None
+    ) -> None:
+        # The conftest pin was applied, and the body's pin replaced it.
+        assert pinned_models_root is not None
+        assert install_layout.models_root() == real_ml_models_root() == real_ml_models
+
+
+@pytest.mark.real_models_root
+class TestTheMarkerOptsOut:
+    def test_a_marked_class_keeps_the_real_resolver(
+        self, pinned_models_root: Path | None
+    ) -> None:
+        assert pinned_models_root is None
+        assert install_layout.models_root is REAL_MODELS_ROOT
+
+
+@pytest.mark.real_models_root
+def test_a_marked_function_keeps_the_real_resolver(pinned_models_root: Path | None) -> None:
+    assert pinned_models_root is None
+    assert install_layout.models_root is REAL_MODELS_ROOT
+
+
+# Every function that starts a model path at the resolver, by module (from
+# the code: ``MODELS_DIRNAME`` is read only in ``install_layout.models_root``).
+# The four path builders are the ones the pin test above resolves; the rest
+# hand the root itself on, which ``benchmark.default_models_root`` covers.
+_MODELS_ROOT_CALLERS = frozenset(
+    {
+        ("install_layout.py", "models_root"),
+        ("benchmark.py", "default_models_root"),
+        ("benchmark.py", "main"),
+        ("language_model.py", "default_language_model_path"),
+        ("speaker_embedding.py", "default_speaker_model_path"),
+        ("speech.py", "default_vad_model_path"),
+        ("transcription.py", "default_whisper_model_dir"),
+        ("ui/microphone.py", "_default_benchmark_runner"),
+        ("scripts/setup-models.py", "models_root"),
+        ("scripts/setup-models.py", "main"),
+    }
+)
+_RESOLVER_NAMES = frozenset({"models_root", "default_models_root"})
+
+
+def _models_root_callers(source: str, module: str) -> set[tuple[str, str]]:
+    """``(module, enclosing function)`` for each call of a resolver name and
+    each read of ``MODELS_DIRNAME`` in ``source``."""
+    found: set[tuple[str, str]] = set()
+
+    def visit(node: ast.AST, owner: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            owner = node.name
+        called = isinstance(node, ast.Call) and _called_name(node) in _RESOLVER_NAMES
+        read = (
+            isinstance(node, (ast.Name, ast.Attribute))
+            and isinstance(node.ctx, ast.Load)
+            and (node.id if isinstance(node, ast.Name) else node.attr) == "MODELS_DIRNAME"
+        )
+        if called or read:
+            found.add((module, owner))
+        for child in ast.iter_child_nodes(node):
+            visit(child, owner)
+
+    visit(ast.parse(source), "<module>")
+    return found
+
+
+def test_every_models_root_caller_is_known() -> None:
+    """Task H.6, a source scan of the app and the scripts: the pin test's
+    four model paths are every path built from the resolver (a scan, not a
+    proof: a resolver reached through another name is unseen)."""
+    src = TESTS.parent / "src" / "scribe_desktop"
+    scripts = TESTS.parents[1] / "scripts"
+    files = [(p.relative_to(src).as_posix(), p) for p in sorted(src.rglob("*.py"))]
+    files += [(f"scripts/{p.name}", p) for p in sorted(scripts.glob("*.py"))]
+    assert len(files) > 40, "the scan found too few files to mean anything"
+    found: set[tuple[str, str]] = set()
+    for module, path in files:
+        found |= _models_root_callers(path.read_text(encoding="utf-8"), module)
+    assert found == _MODELS_ROOT_CALLERS
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f():\n    return install_layout.models_root() / 'x'\n",
+        "def f():\n    return default_models_root()\n",
+        "def f(base):\n    return base / MODELS_DIRNAME\n",
+        "def f(base):\n    return base / install_layout.MODELS_DIRNAME\n",
+    ],
+)
+def test_the_models_root_scan_sees_each_form(source: str) -> None:
+    assert _models_root_callers(source, "x.py") == {("x.py", "f")}
+
+
+# Task H.6 step 2: the ONLY tests that opt out of the pin — the resolver's own,
+# by class or function (a module-level opt-out was rejected) — plus the two
+# marker tripwires above.
+_REAL_MODELS_ROOT_MARKED = frozenset(
+    {
+        ("test_install_layout.py", "TestModelsRoot"),
+        ("test_install_layout.py", "test_every_store_is_under_the_channels_folder"),
+        ("test_frozen_runtime.py", "TestRealMlModelsRoot"),
+        ("test_frozen_runtime.py", "TestTheMarkerOptsOut"),
+        ("test_frozen_runtime.py", "test_a_marked_function_keeps_the_real_resolver"),
+        ("test_language_model_runtime.py", "test_default_model_path_under_the_models_root"),
+        ("test_language_model_runtime.py", "test_localappdata_unset_reports_unavailable"),
+        ("test_speaker_embedding.py", "test_default_model_path_under_the_models_root"),
+    }
+)
+
+
+def _marked_opt_outs(source: str, module: str) -> set[tuple[str, str]]:
+    """``(module, class or function)`` for each one whose decorators name the
+    ``real_models_root`` marker, and ``(module, "<elsewhere>")`` for any other
+    mention of it (a module ``pytestmark``, for one)."""
+    tree = ast.parse(source)
+    found: set[tuple[str, str]] = set()
+    in_decorators: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            for decorator in node.decorator_list:
+                marks = {
+                    id(part)
+                    for part in ast.walk(decorator)
+                    if isinstance(part, ast.Attribute) and part.attr == "real_models_root"
+                }
+                if marks:
+                    found.add((module, node.name))
+                    in_decorators |= marks
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "real_models_root"
+            and id(node) not in in_decorators
+        ):
+            found.add((module, "<elsewhere>"))
+    return found
+
+
+def test_only_the_resolvers_own_tests_opt_out() -> None:
+    """Task H.6, a source scan of every test module: the opt-out never widens
+    past step 2's set (a scan, not a proof: a marker applied at run time, by
+    ``request.applymarker`` or a string, is unseen)."""
+    found: set[tuple[str, str]] = set()
+    for path in sorted(TESTS.glob("test_*.py")):
+        found |= _marked_opt_outs(path.read_text(encoding="utf-8"), path.name)
+    assert found == _REAL_MODELS_ROOT_MARKED
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("@pytest.mark.real_models_root\nclass TestX:\n    pass\n", "TestX"),
+        ("@pytest.mark.real_models_root\ndef test_x():\n    pass\n", "test_x"),
+        ("pytestmark = pytest.mark.real_models_root\n", "<elsewhere>"),
+        ("pytestmark = [pytest.mark.slow, pytest.mark.real_models_root]\n", "<elsewhere>"),
+    ],
+)
+def test_the_opt_out_scan_sees_each_form(source: str, expected: str) -> None:
+    assert _marked_opt_outs(source, "x.py") == {("x.py", expected)}
 
 
 _REAL_MODEL_CONSTRUCTORS = (

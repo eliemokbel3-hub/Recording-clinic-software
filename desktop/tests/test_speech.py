@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason
+from conftest import forbid_network_io, on_real_ml_root, real_ml_skip_reason, use_models_root
 from sapi_fixture import synthesize_speech_pcm
 from scribe_desktop.benchmark import OFFLINE_ENV, apply_offline_env
 from scribe_desktop.secure_storage import SessionCrypto
@@ -343,7 +343,10 @@ class TestSileroVadOffline:
         # not only `is_file`.
         forbid_network_io(monkeypatch)
         assert vad_model_available(Path(r"\\evil-host\share\model.onnx")) is False
-        monkeypatch.setenv("LOCALAPPDATA", r"\\evil-host\share")
+        # Installation plan Task H.6: a network root for the default path, as
+        # a UNC-redirected LOCALAPPDATA would make it (the conftest pin would
+        # otherwise answer with an empty local folder).
+        use_models_root(monkeypatch, Path(r"\\evil-host\share\models"))
         assert vad_model_available() is False
 
     def test_corrupt_model_raises_vad_model_error(self, tmp_path: Path) -> None:
