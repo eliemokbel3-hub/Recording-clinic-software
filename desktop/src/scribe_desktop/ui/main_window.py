@@ -1020,6 +1020,13 @@ class MainWindow(QMainWindow):
             recovery.show_message(models.REVIEW_OPEN_BUSY_LINE)
             self.tabs.setCurrentWidget(recovery)
             return False
+        if self.session_screen.is_discarding:
+            # Installation plan round 40 LOW-002: the Session tab's Discard runs
+            # off the GUI thread while live transcription stops; an adoption
+            # must never change which session that discard acts on.
+            recovery.show_message(models.REVIEW_OPEN_DISCARDING_LINE)
+            self.tabs.setCurrentWidget(recovery)
+            return False
         if recovery.is_busy:
             # The Recovery screen's own button is disabled for this; the Chrome
             # route checks it here — the resume would land on the adopted
@@ -1260,6 +1267,14 @@ class MainWindow(QMainWindow):
         destroying a running QThread aborts the process. A force-kill is
         still safe — crash recovery (Flow 3) covers it — but a normal close
         must not tear down a live transcription/benchmark thread."""
+        if self.session_screen.is_discarding:
+            # Installation plan round 40 LOW-002: named before the recording
+            # line below, which would ask for the Discard already under way.
+            self.statusBar().showMessage(
+                "A recording is being discarded - wait for it to finish before closing."
+            )
+            event.ignore()
+            return
         if self._controller.state in CAPTURING_STATES:
             # Round 42 MED-002 (guard-only, pending user ratification;
             # sibling of the PR-round-18 PR6 thread guard below): closing
@@ -1376,9 +1391,12 @@ class MainWindow(QMainWindow):
         controller retired that session at Start. `_destroy_recovered_crypto`'s
         two refusal branches stay unreachable here (round 45 LOW-004): Start
         itself is refused under a generation lease (`_refuse_while_generating`),
-        and a discard reservation is held synchronously on the GUI thread by
-        the Session screen's own Discard handler, so no Start click can
-        interleave with it (the controller deliberately admits a concurrent
+        and no Start can interleave with the Session screen's own Discard: a
+        Discard with no live worker runs synchronously on the GUI thread, and
+        one that waits for live transcription (installation plan round 40
+        LOW-002) runs on a worker thread while the Session screen refuses every
+        Start (`on_start` / `start_linked`) and Chrome's Start is refused
+        through `is_busy` (the controller deliberately admits a concurrent
         `start()` mid-discard — round 30 — but the GUI never issues one)."""
         self._destroy_recovered_crypto()
         entry = self._released_checkout_entry()

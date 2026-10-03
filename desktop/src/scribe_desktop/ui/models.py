@@ -131,6 +131,7 @@ from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import (
     EnrolmentLease,
     GenerationLease,
+    LiveStopPendingError,
     RecordingSession,
     SessionControllerError,
     SessionState,
@@ -951,7 +952,9 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
     "session_active": "A recording is already in progress - finish it first.",
     "review_open": "Save or cancel the open note review on the Note tab to start.",
     "no_microphone": "Select an input device on the Microphone tab first.",
-    "busy": "The app is still transcribing - wait for it to finish.",
+    # Round 41: transcribing, a draft write, or (round 40 LOW-002) a Discard
+    # waiting for live transcription to stop — never only "transcribing".
+    "busy": "The app is busy with a recording - wait for it to finish.",
     "session_changed": (
         "That recording has already ended or changed - the side panel shows the current one."
     ),
@@ -990,6 +993,20 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
 # Task 5.2 (D1, D5): the Session screen's Discard asks once more.
 DISCARD_CONFIRM_MESSAGE: Final = (
     "Discard this recording? This cannot be undone. Press Confirm discard to delete it."
+)
+# Installation plan round 40 LOW-002: a confirmed Discard with live
+# transcription attached waits for it to stop (up to
+# ``transcription.LIVE_STOP_TIMEOUT_SECONDS``) OFF the GUI thread, under this
+# line; one that it outlasts deletes nothing (the custody rule) and says so.
+DISCARD_STOPPING_LIVE_LINE: Final = "Discarding - stopping live transcription first..."
+DISCARD_KEPT_LIVE_STOPPING_MESSAGE: Final = (
+    "Recording stopped, but live transcription did not stop in time, so nothing was "
+    "deleted - the recording is kept. Press Discard again in a moment to delete it."
+)
+# Round 40 LOW-002: why "Open for review" waits while the Session tab discards.
+REVIEW_OPEN_DISCARDING_LINE: Final = (
+    "A recording is being discarded - wait for it to finish before opening another "
+    "recording."
 )
 # Task 5.3 (D6): why Start waits while a note review is open.
 REVIEW_OPEN_START_HINT: Final = (
@@ -1295,6 +1312,16 @@ def custody_refusal_text(exc: BaseException) -> str:
     if isinstance(exc, SessionControllerError | AudioCaptureError):
         return f"{type(exc).__name__}: {exc}"
     return CUSTODY_UNEXPECTED_REASON
+
+
+def discard_refusal_line(exc: BaseException) -> str:
+    """The Session screen's line for a refused Discard: the plain
+    kept-and-press-again line when live transcription had not stopped
+    (``LiveStopPendingError``, round 40 LOW-002), else "Discard failed:"
+    and ``custody_refusal_text`` as before."""
+    if isinstance(exc, LiveStopPendingError):
+        return DISCARD_KEPT_LIVE_STOPPING_MESSAGE
+    return f"Discard failed: {custody_refusal_text(exc)}"
 
 
 # ---------------------------------------------------------------------------
@@ -4143,6 +4170,9 @@ __all__ = [
     "ChromeView",
     "chrome_view_text",
     "DISCARD_CONFIRM_MESSAGE",
+    "DISCARD_STOPPING_LIVE_LINE",
+    "DISCARD_KEPT_LIVE_STOPPING_MESSAGE",
+    "REVIEW_OPEN_DISCARDING_LINE",
     "REVIEW_OPEN_START_HINT",
     "PAUSE_CUES",
     "PAUSE_CUE_LINKED_TAIL",
@@ -4168,6 +4198,7 @@ __all__ = [
     "WRITE_LABEL_CHARS",
     "CUSTODY_UNEXPECTED_REASON",
     "custody_refusal_text",
+    "discard_refusal_line",
     "not_taken_cause",
     "note_check_line",
     "write_label",

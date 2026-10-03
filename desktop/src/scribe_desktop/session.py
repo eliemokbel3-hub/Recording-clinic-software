@@ -364,6 +364,14 @@ class SessionActivityError(SessionControllerError):
     there is no session in the state the operation requires."""
 
 
+class LiveStopPendingError(SessionActivityError):
+    """Peer round 9 PR-MED-017's refusal, by type (installation plan round 40
+    LOW-002): a destructive custody step refused because the live worker
+    has not stopped and may still hold plaintext. Nothing was destroyed and
+    the session is kept; the same action succeeds once the worker has
+    stopped. A type so the screens can say that plainly."""
+
+
 class ConsentRequiredError(SessionControllerError):
     """``start()`` was called without a ``ConsentAttestation``, or with one
     that does not name the context's note (Constraint 4)."""
@@ -2105,7 +2113,7 @@ class SessionController:
         (its stop flag is set) and clears itself when its blocked provider
         call returns; the caller keeps the key and the handle so the same
         action can be retried and then succeeds."""
-        raise SessionActivityError(
+        raise LiveStopPendingError(
             f"{operation} refused: the live transcriber has not stopped yet; "
             "the session is kept - try again in a moment"
         )

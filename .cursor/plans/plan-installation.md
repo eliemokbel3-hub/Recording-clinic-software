@@ -1184,7 +1184,60 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
   - **If a test fails:** resume me with the output.
   - **If green:** run codex round 39 over the five files above; close round 38 on its confirmation.
   - **Open gates:** none.
-- Last plan sync: 2026-10-03T16:59:36+10:00
+- **[SUPERSEDED by leg i5-x6 below — kept only for the concurrent-writer record; its file list, counts and next steps are restated there] EXECUTOR stage-5 leg i5-x5 (2026-10-03T20:27:07+10:00; it finishes leg i5-x4, which a CLI 401 cut off before anything was recorded): round 40's two LOW are CONFIRMED and Applied; /review-loop CONVERGED (rounds 41–42, 6 + 1 LOW Applied); ruff clean; mypy clean (59 source files). Round 40 stays Open. ENDS must-pause (gate `i5-x5-concurrent-writer`):**
+  - **GATE (2026-10-03T20:27:07+10:00 onwards): a second process is editing this worktree while this leg runs**, most likely leg i5-x4's `claude -p`, which a 401 cut off but which was apparently not stopped.
+    - After this leg's reads, `ui/session_screen.py`'s round-41 backstop changed from a `task.finished` handler to `except BaseException` inside the job (`return unexpected`).
+    - The backstop test was renamed and rewritten (`test_a_discard_ended_by_a_non_exception_still_releases_the_hold`).
+    - The threat model's sentence now reads "any `BaseException` sends the fixed reason".
+    - `test_ui_screens.py` kept growing during the leg (153 → 184 added lines).
+    - Round 41 LOW-003 below still describes the `finished` design, so the record and the code disagree until reconciled.
+    - Either design satisfies the finding. Swallowing a `BaseException` in a worker thread is acceptable: nothing could propagate it from a `QThread` anyway.
+    - rec=stop every other `claude -p` running the stage-5 executor prompt on `C:/scribe-build` (check the process list and the probe log). Then resume this executor once to reconcile round 41 LOW-003 and the handoff with the final code, and to re-run ruff, mypy and the history check. Do not run the suite before that.
+  - **What changed:**
+    - LOW-001: `packaging/scribe.iss` `CurPageChanged` ends with `WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);`. No wording changed.
+    - LOW-002 (UX only; the custody rule is unchanged): a confirmed Discard with live transcription attached runs on a `TaskThread` under "Discarding - stopping live transcription first...". Everything is held meanwhile: the Session controls, Chrome commands, "Open for review" and the close. An outlasted stop says "Recording stopped, but live transcription did not stop in time, so nothing was deleted - the recording is kept. Press Discard again in a moment to delete it." There is no automatic retry.
+    - `LiveStopPendingError` (a `SessionActivityError`) names the refusal.
+    - The Chrome `busy` text is now "The app is busy with a recording - wait for it to finish."
+  - **Files changed** (the codex slice, 14 files plus this plan):
+    - src: `desktop/src/scribe_desktop/session.py`, `ui/session_screen.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/models.py`.
+    - installer: `packaging/scribe.iss`.
+    - tests: `desktop/tests/test_installer_script.py`, `test_ui_screens.py`, `test_ui_bridge.py`, `test_unreviewed_review.py`.
+    - docs: `docs/design-system.md`, `docs/security/threat-model.md` (surface 11 CUSTODY), `docs/security/data-flow-map.md` (flow 14), `AGENTS.md` (the live-transcription pointer).
+    - plan: rounds 40–42.
+  - **Composer to run:**
+    - The full desktop suite. Expected **5912 passed / 9 skipped**: 5904 plus 8 new tests (counted from the diff; this leg could not run pytest).
+      - `test_installer_script.py`: 1.
+      - `test_ui_screens.py`: 5 — the off-thread wait, the outlasted case, the backstop, the refusal line, and the close refusal.
+      - `test_ui_bridge.py`: 1.
+      - `test_unreviewed_review.py`: 1.
+    - **An ISCC 6.7.3 compile check of `packaging/scribe.iss` IS needed** (the new `AdjustLabelHeight` call).
+    - No `npm run qa`: the extension was not touched.
+  - **If green:** run a codex confirmation over the 14 files, and close round 40. The next build's Finish page should show "Open Clinic Scribe from the Start menu.". A Discard during live transcription should show the waiting line and stay responsive.
+  - **Open gates:** none.
+- **EXECUTOR stage-5 leg i5-x6 (2026-10-03T20:33:10+10:00; a FRESH executor after the composer stopped both i5-x4 and i5-x5): the final uncommitted diff (15 files) re-reviewed from scratch, no defect found, so no round 43; rounds 40–42 reconciled to the final code; ruff clean; history-check OK (42 + 42); mypy NOT run by this leg (every invocation needed a permission approval this headless session could not get), so the composer runs it. Round 40 stays Open. ENDS composer-run:**
+  - **What happened before this leg:** legs i5-x4 (resumed after a transient CLI 401) and i5-x5 edited this worktree at the same time, 20:25–20:29. Leg i5-x4's last edit, at 20:27, replaced round 41 LOW-003's `task.finished` backstop with an `except BaseException` inside the discard job, renamed its test and reworded the threat-model sentence. The plan text partly described the superseded version.
+  - **Review of the final code (fresh, every hunk read):**
+    - The backstop: `_begin_discard`'s job returns `discard_refusal_line(exc)` for an `Exception` and the fixed `CUSTODY_UNEXPECTED_REASON` line for any other `BaseException`, so `TaskThread.succeeded` always fires and `_on_discard_done` always clears `_discarding`. `failed` cannot double-fire with it (one of the two per run). Nothing hides a real exit: a `KeyboardInterrupt` only reaches the main thread, and a `SystemExit` on a worker thread never ends the process.
+    - The GUI thread never waits on the discard: `on_discard` returns True at once. Its only join is `TaskThread.finish()`'s bounded 2 s join, AFTER the thread has emitted its result.
+    - The custody rule is the controller's, unchanged: `discard()`'s body is untouched except that `_refuse_uncleared_live` now raises `LiveStopPendingError`, a `SessionActivityError`.
+    - The hold is consistent everywhere: every Session slot returns False while discarding (Start before the consent tick is spent); the bridge refuses every Chrome command `busy` (Start `session_active`) through `is_busy`; the bridge's Discard returns True while under way and reports `failed` exactly once, through `on_refused`; the main window refuses "Open for review" and the close with their own lines. A FAILED seen mid-discard is not called a device failure, and `_on_discard_done`'s `refresh()` sets `_last_state`, so a later poll cannot show that line either.
+    - No leftovers: there is no `finished` handler, no duplicate backstop test, and the threat model's sentence ("any `BaseException` sends the fixed reason") matches the code. `ui/models.py`'s strings, `docs/design-system.md` and `AGENTS.md` agree with the code.
+  - **Plan reconciled** (marked `[reconciled 2026-10-03 leg i5-x6]`): round 40 LOW-002's Tests line (it names the backstop test), round 41 LOW-003 (the in-job design and its test), round 42's re-read line, and the round 41 Review History line. Leg i5-x5's bullet above is marked superseded.
+  - **Files changed** (the codex slice, 14 files plus this plan; this leg changed only the plan):
+    - src: `desktop/src/scribe_desktop/session.py`, `ui/session_screen.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/models.py`.
+    - installer: `packaging/scribe.iss`.
+    - tests: `desktop/tests/test_installer_script.py`, `test_ui_screens.py`, `test_ui_bridge.py`, `test_unreviewed_review.py`.
+    - docs: `docs/design-system.md`, `docs/security/threat-model.md` (surface 11 CUSTODY), `docs/security/data-flow-map.md` (flow 14), `AGENTS.md` (the live-transcription pointer).
+    - plan: rounds 40–42, Review History round 41, and these handoff bullets.
+  - **Composer to run:**
+    - The full desktop suite. Expected **5912 passed / 9 skipped**: 5904 plus 8 new tests, counted from the final diff (no test was removed or renamed away): `test_installer_script.py` 1; `test_ui_screens.py` 5 (the off-thread wait, the outlasted case, the backstop, the refusal line, the close refusal; `_gated_discard` is a helper); `test_ui_bridge.py` 1; `test_unreviewed_review.py` 1. Leg i5-x4's 5913 counted the superseded version.
+    - An ISCC 6.7.3 compile check of `packaging/scribe.iss` (the new `AdjustLabelHeight` call).
+    - mypy (`cd desktop && ../.venv/Scripts/python.exe -m mypy`): leg i5-x5 reported it clean (59 source files), possibly before leg i5-x4's last edit to `ui/session_screen.py`; this leg could not run it.
+    - No `npm run qa`: the extension was not touched.
+  - **If a test fails:** resume me with the output.
+  - **If green:** run a codex confirmation over the 14 files, and close round 40. The practitioner then checks the next build's Finish page ("Open Clinic Scribe from the Start menu." visible) and a Discard during live transcription (the waiting line, a responsive window).
+  - **Open gates:** none.
+- Last plan sync: 2026-10-03T20:33:10+10:00
 - Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
 - COMPOSER RUN-STATE: /execute-loop run iso `installation-20261002-113527-26e920`, started 2026-10-02T11:36+10:00; runkeys stage-0..stage-5 (stage-0 = Phase 0; stage-1..3 = Phases 1-3; stage-4 = Phase H; stage-5 = Phase P); probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`. Phase 0 committed `9f43f8c` on `main`. **From Phase 1 on the run builds in the git WORKTREE `C:\scribe-build` (branch `installation-build`)** — practitioner decision 2026-10-02: the main checkout's `.venv` is the practitioner's EVERYDAY app (editable install) and stays on `main` until Phase P. The worktree has its own `.venv` copy (editable `.pth` → `C:\scribe-build\desktop\src`; `scribe-app.exe`/`scribe-host.exe` launchers regenerated for it; run mypy/pytest as `.venv/Scripts/python.exe -m …`). THIS worktree plan is authoritative; the main checkout's copy is stale until the branch merges, which happens only when the practitioner switches to the installed build. Phase 1 committed `a7337a2` (rounds 9–12), Phase 2 committed `7cfed96` (rounds 13–17) on `installation-build`. Phase 3 built and peer-converged (rounds 18–21), committed on `installation-build` by the composer at its close; its tasks stay 🟨 on their named practitioner/network/remote steps. Phase 2's Task 2.6 stays 🟨 until the practitioner fills `%LOCALAPPDATA%\ClinikoScribe-dev\models` and the composer re-runs the 11 real-ML legs. `stash@{0}` (the pre-worktree Phase 1 copy) is now redundant. `extension/key-dev.pem` is gitignored in the worktree; the main checkout holds an untracked copy — never commit it. Peer passes run as file-scoped codex slices (`.cursor/loops/inst-peer-run-wt.sh`). Phase H closed 2026-10-03 (rounds 22–30; H.1–H.5 🟩; H.6 hardened by a scoped /review-plan on 2026-10-03, ready for /execute), committed on `installation-build` by the composer. Next: the practitioner's open steps (Task 2.6 dev models, 3.3 manifest, 3.1 lock, 3.2/3.5 a real build, 3.6 pins/push/CI, the Inno licence), then Phase P (stage-5) with the practitioner.
 
@@ -1228,7 +1281,10 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-03 round 37: 0 CRIT / 0 HIGH / 0 MED / 5 LOW; skew=none; action=fix → 4 LOW Applied (a redundant third hold check removed, the no-sockets child's warm-up wait 45 → 30 s, voice enrolment held too, a stale `on_start` docstring); /review-loop CONVERGED at loop round 2 of cap 3 (round 36 MED-001's option (b) delta, executor stage-5 leg i5-x2, in-session plus the same independent read-only subagent; 7 candidates, 2 dropped) (round 35 MED-001's fix diff, in-session /review-loop pass 1, executor stage-5 leg i5-x1, plus one independent read-only subagent review; 11 candidates, 2 dropped)
 - 2026-10-03 round 38: 0 CRIT / 0 HIGH / 0 MED / 4 LOW; skew=none; action=fix → all 4 confirmed and Applied by leg i5-x3, round Closed; codex gpt-6-astra medium, pass stage-5.p1 peer_round 1 of cap 5, three slices (code 10, tests 11, docs 4) over the rounds 35–37 diff
 - 2026-10-03 round 39: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-5.p1 peer_round 2 of cap 5, confirmation of round 38 (4 claims checked, 4 confirmed closed); peer pass CONVERGED
-- 2026-10-03 round 40: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=fix → Task P.3 practitioner smoke on 0.1.0/0.1.1: the Finish page truncates its later paragraphs, and Discard during live transcription blocks and needs a second press; Pending
+- 2026-10-03 round 40: 0 CRIT / 0 HIGH / 0 MED / 2 LOW; skew=none; action=fix → Task P.3 practitioner smoke on 0.1.0/0.1.1: the Finish page truncates its later paragraphs, and Discard during live transcription blocks and needs a second press; both CONFIRMED and Applied by legs i5-x4/i5-x5 (the Finish label re-sized after its last change; Discard with live transcription waits off the GUI thread with a line, everything held, and an outlasted stop says plainly that nothing was deleted — custody rule unchanged, no automatic retry); closes on the composer suite, the ISCC compile and codex confirmation
+- 2026-10-03 round 41: 0 CRIT / 0 HIGH / 0 MED / 6 LOW; skew=fix-induced; action=fix → all 6 Applied (the close names the discard; a refused Start keeps the tick; the in-job `BaseException` backstop (reconciled by leg i5-x6: it superseded a `finished` handler); a stale docstring; the Chrome `busy` text; two doc corrections) (round 40's fix diff, in-session /review-loop pass 1, executor stage-5 legs i5-x4/i5-x5 plus one independent read-only subagent review; 14 candidates, 8 dropped)
+- 2026-10-03 round 42: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=fix-induced; action=triage-and-ship → 1 Applied (a mid-sentence line break in the new design-system bullet); round 41's six fixes re-read and confirmed; /review-loop CONVERGED at loop round 2 of cap 3 (in-session pass 2, executor stage-5 leg i5-x5)
+- 2026-10-03 round 43: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-5.p2 peer_round 1 of cap 5, two slices (code, installer and tests 10; docs 4) over the round 40 fixes; every changed file read in full; peer pass CONVERGED
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -3157,14 +3213,95 @@ Fix-delta self-check: PASS — I re-read the 10 reworded comments and docstrings
 
 ### Round 40 - 2026-10-03 - Task P.3 live smoke on 0.1.0 and 0.1.1 (practitioner-observed)
 
-- Round status: Open (2 pending).
+- Round status: Closed (0 pending). 2 Applied by legs i5-x4/i5-x5 (reconciled by leg i5-x6). Closed 2026-10-03 by the composer: suite 4 — ruff clean, mypy clean (59 files), pytest 5912 passed / 9 skipped; an ISCC 6.7.3 compile of `packaging/scribe.iss` against a placeholder bundle, exit 0, "Successful compile"; codex round 43, 0 findings.
 - Source: practitioner smoke (Task P.3), composer-observed from the Finish-page screenshots and the installed app's log
 - Reviewer: composer `claude-opus-5-5`; observation by the practitioner
 
 #### Findings
-- **LOW-001** (LOW, behavioral, `packaging/scribe.iss` `CurPageChanged`): the Finish page shows only the first two paragraphs of the caption the script sets. — Evidence: every Finish page this run (0.1.0 install, 0.1.1 update, 0.1.1 reinstall) showed "Clinic Scribe is installed./updated." and the Chrome paragraph, but never the third paragraph "Open Clinic Scribe from the Start menu.", which `CurPageChanged` sets on all three. The likely cause: `WizardForm.FinishedLabel` keeps the height sized for the default text, and nothing re-sizes it after `Caption` changes (Inno's `WizardForm.AdjustLabelHeight`). Consequence: the appended warnings ("The clinic-only Chrome setting could not be removed…", the foreign-policy note) would be cut off too, and so would the second paragraph of "NOT completely installed" if it wraps past the label. Recommendation: Fix-now — resize the label after every caption change, and pin it in `test_installer_script.py`; confirm on the next build's Finish page. /fix decision: Pending
-- **LOW-002** (LOW, behavioral, `desktop/src/scribe_desktop/session.py` `discard` / the Session tab's Discard): a Discard pressed while the live worker is mid-window waits up to `LIVE_STOP_TIMEOUT_SECONDS` (10 s) to stop it, with no feedback, then (by the custody rule, correctly) routes the session to `failed` and needs a second Discard. — Evidence: log `19:10:27,039 live_transcriber_stop_timeout … session_state=recording`, `19:10:27,041 … session_state=failed`, `19:10:30,713 … session_state=discarded`; the practitioner pressed Discard twice, and the first press looked like nothing happened. Recommendation: Fix-now (UX only; the custody rule stays) — show that Discard is waiting for live transcription to stop, and either retry the discard once the worker has stopped or say plainly "press Discard again"; check whether the join blocks the GUI thread. /fix decision: Pending
+- **LOW-001** (LOW, behavioral, `packaging/scribe.iss` `CurPageChanged`): the Finish page shows only the first two paragraphs of the caption the script sets. — Evidence: every Finish page this run (0.1.0 install, 0.1.1 update, 0.1.1 reinstall) showed "Clinic Scribe is installed./updated." and the Chrome paragraph, but never the third paragraph "Open Clinic Scribe from the Start menu.", which `CurPageChanged` sets on all three. The likely cause: `WizardForm.FinishedLabel` keeps the height sized for the default text, and nothing re-sizes it after `Caption` changes (Inno's `WizardForm.AdjustLabelHeight`). Consequence: the appended warnings ("The clinic-only Chrome setting could not be removed…", the foreign-policy note) would be cut off too, and so would the second paragraph of "NOT completely installed" if it wraps past the label. Recommendation: Fix-now — resize the label after every caption change, and pin it in `test_installer_script.py`; confirm on the next build's Finish page. /fix decision: Applied (legs i5-x4/i5-x5): `CurPageChanged` ends with `WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);`, once and after the last caption change, so every branch is covered — the warnings and "NOT completely installed" included. No wording changed. Pinned by `test_installer_script.py::test_the_finish_label_is_resized_after_its_last_change`: exactly one call, after the last `Caption :=`, with nothing after it. Two checks remain open: the ISCC 6.7.3 compile check (the composer's), and the next build's Finish page (the practitioner's). The longest case — a fresh install plus a policy warning — could still exceed the page height, so check it at the practitioner's display scaling.
+- **LOW-002** (LOW, behavioral, `desktop/src/scribe_desktop/session.py` `discard` / the Session tab's Discard): a Discard pressed while the live worker is mid-window waits up to `LIVE_STOP_TIMEOUT_SECONDS` (10 s) to stop it, with no feedback, then (by the custody rule, correctly) routes the session to `failed` and needs a second Discard. — Evidence: log `19:10:27,039 live_transcriber_stop_timeout … session_state=recording`, `19:10:27,041 … session_state=failed`, `19:10:30,713 … session_state=discarded`; the practitioner pressed Discard twice, and the first press looked like nothing happened. Recommendation: Fix-now (UX only; the custody rule stays) — show that Discard is waiting for live transcription to stop, and either retry the discard once the worker has stopped or say plainly "press Discard again"; check whether the join blocks the GUI thread. /fix decision: Applied (legs i5-x4/i5-x5). The custody rule is unchanged: the controller's `discard()` body is untouched except for the exception's type.
+  - `session.LiveStopPendingError(SessionActivityError)` is now raised by `_refuse_uncleared_live`, so the PR-MED-017 refusal can be named.
+  - With `live_transcription_attached`, `SessionScreen.on_discard` runs `controller.discard()` on a `TaskThread`, under `DISCARD_STOPPING_LIVE_LINE` ("Discarding - stopping live transcription first..."). Only the line string crosses threads, never the exception.
+  - Without a live worker, Discard runs synchronously exactly as before.
+  - While the wait runs:
+    - every Session control is held (`on_pause` / `on_resume` / `on_finish` / `on_discard` / `on_start` / `start_linked`, the latter two before the consent tick is spent);
+    - `is_busy` holds every Chrome command;
+    - the main window refuses "Open for review" (`REVIEW_OPEN_DISCARDING_LINE`) and the close;
+    - the state poll does not call the routed FAILED a device failure.
+  - An outlasted stop shows `DISCARD_KEPT_LIVE_STOPPING_MESSAGE` ("Recording stopped, but live transcription did not stop in time, so nothing was deleted - the recording is kept. Press Discard again in a moment to delete it."). The Chrome bridge keeps its `failed` refusal through `on_refused`.
+  - Chosen over an automatic retry: after the timeout the session is FAILED and kept, and the controller's `discard()` takes no session id. A retry would be a destructive step without a fresh confirmation, and would need session pinning the controller does not have.
+  - Docs: `docs/design-system.md` (a new bullet), threat-model surface 11 CUSTODY, data-flow map flow 14, and the `AGENTS.md` pointer.
+  - Tests:
+    - `test_ui_screens.py`: the off-thread wait and the hold, the outlasted case and the second Discard, the backstop (`test_a_discard_ended_by_a_non_exception_still_releases_the_hold`), the refusal line, and the close refusal `[reconciled 2026-10-03 leg i5-x6: the backstop test is the in-job version's]`;
+    - `test_ui_bridge.py`: the Chrome Discard is busy-held and reported `failed`;
+    - `test_unreviewed_review.py`: "Open for review" is refused while discarding.
 - Verification counts: 2 claims checked, 2 confirmed, 0 dropped
+
+#### LEG 1 verified tuples (executor stage-5 legs i5-x4/i5-x5, 2026-10-03T20:27:07+10:00)
+- **LOW-001 — CONFIRMED.** `CurPageChanged` assigned `WizardForm.FinishedLabel.Caption` up to three times and never re-sized the label. Inno sizes the label for its own text before `CurPageChanged(wpFinished)` runs, so text past that height was clipped.
+  - `TWizardForm.AdjustLabelHeight(ALabel: TNewStaticText): Integer` is public to `[Code]`. The independent review confirmed this; the ISCC compile is the proof.
+  - Nothing is laid out below the label (no `[Run]`, no restart choice), so no other control needs moving.
+  - Siblings:
+    - `FinishedLabel` is the only caption set at run time.
+    - Every `MsgBox` is sized by Windows.
+    - `PrepareToInstall`'s returned text is laid out by Inno on its Preparing page, not a caption the script sets.
+    - The `[Tasks]` description is static.
+    - None is this class.
+- **LOW-002 — CONFIRMED.** `SessionScreen.on_discard` called `controller.discard()` on the GUI thread. That call stops and joins the live worker outside the controller lock for up to `transcription.LIVE_STOP_TIMEOUT_SECONDS` (10.0 s), so the window froze. An outlasted join raised the PR-MED-017 refusal, shown as "Discard failed: SessionActivityError: discard refused: …", and the next Discard needed two clicks again.
+  - The log matches: `live_transcriber_stop_timeout` at RECORDING, then FAILED 2 ms later, then DISCARDED 3.7 s after.
+  - Siblings that join the live worker:
+    - Finish: seals only; its capture join is short.
+    - The three Complete paths and Start's retirement: `_stop_live_locked`, a 1 s in-lock bound. At QUEUED the worker was already claimed, so no wait in practice.
+    - The Transcript tab's Discard: QUEUED, worker claimed.
+    - The Recovery tab's Discard: a folder, no live worker.
+    - App close: refused while capturing; now also while discarding.
+    - The Chrome Discard: the same slot, fixed with it.
+  - Residue recorded, not fixed: "Open for review" of an outlasted, FAILED session retires it, which waits at most 1 s in the lock and is then refused with the existing "start refused: the live transcriber has not stopped yet…". This predates the fix and is bounded; the only issue is the word "start" (`_retire_locked`'s fixed operation name).
+- Verification counts: 2 checked, 2 confirmed, 0 dropped.
+
+### Round 41 - 2026-10-03 - round 40's fix diff (in-session /review-loop pass 1)
+
+- Round status: Closed (0 pending). 6 LOW Applied; closes with the round 40 fix on the composer-run full desktop suite and the ISCC compile check.
+- Source: executor stage-5 legs i5-x4/i5-x5 (in-session), plus one independent read-only subagent review (general-purpose), over the whole `git diff` against `33ed7cc` (14 files).
+- Loop: /review-loop pass 1 of cap 3.
+
+#### Findings
+- **LOW-001** (LOW, behavioral, `ui/main_window.py` `closeEvent`): while a discard waits at RECORDING, a close said "Recording in progress - Finish or Discard the session before closing", asking for the Discard already under way. /fix decision: Applied. A check runs first and names the discard: "A recording is being discarded - wait for it to finish before closing." (`test_close_refused_while_a_discard_waits_and_says_so`).
+- **LOW-002** (LOW, behavioral, `ui/session_screen.py` `on_start` / `start_linked`): a Start refused mid-discard (by the `_start` guard) had already cleared the desktop consent tick, unlike the round-36 rule. /fix decision: Applied. The guard moved ahead of the tick-clear in both; the `_start` guard was removed; the tick is pinned kept in the off-thread test.
+- **LOW-003** (LOW, robustness, `ui/session_screen.py` `_begin_discard`): `TaskThread.run` catches only `Exception`. A non-`Exception` escaping it would emit neither signal and hold every control, every Chrome command and the close for good. /fix decision: Applied. The job itself catches any other `BaseException` after `except Exception` and returns the fixed line "Discard failed: <`CUSTODY_UNEXPECTED_REASON`>", so `succeeded` always fires and the hold always ends; `failed` stays connected to the same line as defence in depth. Swallowing it hides no real exit: a `KeyboardInterrupt` is only delivered to the main thread, and a `SystemExit` raised on a worker thread never ends the process. The bridge still hears the refusal through `on_refused` (`test_a_discard_ended_by_a_non_exception_still_releases_the_hold`). `[reconciled 2026-10-03 leg i5-x6]` This entry first described a `task.finished` backstop (test `test_a_discard_thread_that_ends_with_no_result_releases_the_hold`); leg i5-x4 replaced it at 20:27 with the in-job `except BaseException` above, and that is the final code.
+- **LOW-004** (LOW, docs-only, `ui/main_window.py` `_on_session_started` docstring): it said the discard reservation is held synchronously on the GUI thread. /fix decision: Applied. It now says why no Start interleaves on both paths.
+- **LOW-005** (LOW, wording, `ui/models.py` `CHROME_REFUSALS["busy"]`): "The app is still transcribing - wait for it to finish." was shown for a discard wait, and already for a draft write. /fix decision: Applied. It is now "The app is busy with a recording - wait for it to finish." (no test pinned the old text). The design system also names Start's `session_active` refusal.
+- **LOW-006** (LOW, docs-only, `docs/design-system.md`, `docs/security/threat-model.md`): the line sits ABOVE the progress bar, not under it; and the threat model's long parenthetical broke the CUSTODY list. /fix decision: Applied. "Above"; the round-40 text is its own sentences after the list, and names the close and the backstop.
+- Dropped (the independent review's checks):
+  - a lambda slot running on the worker thread: PySide queues it, as `note.py` already relies on;
+  - the TaskThread's parent: the same as the transcription task's;
+  - the 2 s `finish()` join: the thread has already emitted its result;
+  - a pause dropped mid-discard: capture stops at the start of `discard()`;
+  - existing `pytest.raises(SessionActivityError, match=…)`: a subclass matches;
+  - logs and audit records: no `exception_type_name` call is on this path;
+  - a Chrome Discard that succeeded off the thread: the bridge's 500 ms tick publishes it;
+  - two concurrent `on_discard`: guarded.
+- Verification counts: 6 confirmed (2 in-session, 4 from the independent review), 0 downgraded; 8 candidates dropped.
+- Last reviewed: 2026-10-03
+
+### Round 42 - 2026-10-03 - round 41's fixes (in-session /review-loop pass 2)
+
+- Round status: Closed (0 pending). 1 LOW Applied (fix-induced, docs-only); /review-loop CONVERGED at loop round 2 of cap 3 (no CRIT, HIGH or MED; triage-and-ship).
+- Source: executor stage-5 leg i5-x5. The whole diff was re-read after the interrupted leg i5-x4, without trusting memory of it.
+
+#### Findings
+- **LOW-001** (LOW, docs-only, fix-induced, `docs/design-system.md`): round 41's rewrap left a line break mid-sentence in the new bullet. /fix decision: Applied (re-flowed).
+- The six round-41 fixes were re-read in the code and confirmed: the close check is first; the tick is kept on both Start paths; the backstop always sends a result (the job catches any `BaseException` and returns the fixed line); the docstring; the `busy` text; the threat-model sentences. `[reconciled 2026-10-03 leg i5-x6]` This line first said "the backstop acts only when neither signal came", which described the superseded `task.finished` handler; leg i5-x6 re-read the final diff fresh and confirmed the in-job version.
+- Verification counts: 1 confirmed, 0 dropped.
+- Last reviewed: 2026-10-03
+
+### Round 43 - 2026-10-03 - cross-family peer pass stage-5.p2 over the round 40 fixes (composer-seat codex)
+
+- Round status: Closed (0 pending); no findings.
+- Source: codex `gpt-6-astra` (medium), read-only sandbox, `.cursor/loops/stage-5-peer-r43{A,B}.log` in the main checkout; peer_round 1 of cap 5
+- Scope: slice A — `session.py`, `ui/session_screen.py`, `ui/bridge.py`, `ui/main_window.py`, `ui/models.py`, `packaging/scribe.iss`, `test_installer_script.py`, `test_ui_screens.py`, `test_ui_bridge.py`, `test_unreviewed_review.py`; slice B — `docs/design-system.md`, the threat model, the data-flow map, `AGENTS.md`; plus rounds 40–42 and C1–C10. Slice A read each diff and every changed file in full, with searches across them.
+- Verification counts: slice A 2/2/0; slice B 6/0/6 (docs internally consistent) — checked/confirmed/dropped
+- PEER-ROUND-43 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0). Peer pass stage-5.p2 converged at its first round.
 - Last reviewed: 2026-10-03
 
 ## Tasks

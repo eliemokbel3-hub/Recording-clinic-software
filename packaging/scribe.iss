@@ -370,6 +370,10 @@ begin
     WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10#13#10 +
       'The clinic-only Chrome setting was already set on this computer by something else, ' +
       'so Setup left it exactly as it is. Ask whoever manages this computer what it is set to.';
+  // Round 40 LOW-001: Inno sized the label for its own text before this page
+  // showed; without re-sizing it after the last change, every paragraph past
+  // the old height (the Start-menu line, the warnings above) was cut off.
+  WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);
 end;
 
 // Round 27 PR-MED-019: a run that left a damaged model, or could not remove

@@ -941,6 +941,25 @@ class TestReconstruction:
         window.recovery_screen._busy = False
         _close(window)
 
+    def test_refused_while_the_session_tab_discards(self, qapp: Any, tmp_path: Path) -> None:
+        """Installation plan round 40 LOW-002: the Session tab's Discard runs
+        off the GUI thread while live transcription stops. An adoption
+        meanwhile could change which session that discard acts on, so it is
+        refused by name and nothing is opened."""
+        directory = _unreviewed(tmp_path, linked=True)
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        window.reconstruct_reminders()
+        window.session_screen._discarding = True  # a discard waiting off the GUI thread
+        assert window.open_unreviewed(directory.name) == "cannot_open"
+        assert controller.session is None
+        assert window.recovery_screen.message_label.text() == models.REVIEW_OPEN_DISCARDING_LINE
+        window.session_screen._discarding = False
+        assert window.open_unreviewed(directory.name) is None
+        assert controller.session is not None
+        assert controller.session.session_id == directory.name
+        _close(window)
+
     def test_restart_banner_then_open_review_opens_the_right_session(
         self, qapp: Any, tmp_path: Path
     ) -> None:

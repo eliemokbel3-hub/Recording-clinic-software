@@ -2308,6 +2308,165 @@ class TestSessionScreen:
         assert ("discard",) in controller.calls
         screen.deleteLater()
 
+    @staticmethod
+    def _gated_discard(
+        controller: FakeController, outcome: Callable[[], Any]
+    ) -> tuple[threading.Event, threading.Event]:
+        """Round 40 LOW-002: a controller ``discard`` that blocks (like the
+        real one's live-worker join) until the test opens the gate, then
+        ends with ``outcome()``. Returns (entered, gate)."""
+        entered, gate = threading.Event(), threading.Event()
+
+        def discard() -> Any:
+            controller.calls.append(("discard",))
+            entered.set()
+            assert gate.wait(5)
+            return outcome()
+
+        controller.discard = discard  # type: ignore[method-assign]
+        return entered, gate
+
+    def test_a_discard_with_live_transcription_waits_off_the_gui_thread(
+        self, qapp: Any
+    ) -> None:
+        """Installation plan round 40 LOW-002: with live transcription
+        attached, the confirmed Discard returns at once and the wait is
+        shown, not a frozen window. Every control is held meanwhile (the
+        pause rule's and the hotkey's slots too) and reaches nothing. The
+        Discard completes as before once the wait ends."""
+        controller = FakeController()
+        screen = _session_screen(controller)
+        emitted: list[int] = []
+        screen.session_discarded.connect(lambda: emitted.append(1))
+        screen.on_start()
+        controller.live_transcription_attached = True
+
+        def discarded() -> Any:
+            controller.state_value = SessionState.DISCARDED
+            return controller._session()
+
+        entered, gate = self._gated_discard(controller, discarded)
+        assert screen.on_discard() is True  # under way: the GUI thread is free
+        assert entered.wait(5) and not gate.is_set()
+        assert screen.is_busy and screen.is_discarding
+        assert screen.progress_label.text() == models.DISCARD_STOPPING_LIVE_LINE
+        assert screen.progress_label.isVisibleTo(screen)
+        assert screen.progress_bar.isVisibleTo(screen)
+        for button in (
+            screen.start_button,
+            screen.pause_button,
+            screen.resume_button,
+            screen.finish_button,
+            screen.discard_button,
+        ):
+            assert not button.isEnabled()
+        calls = list(controller.calls)
+        context = _linked_context()
+        assert screen.on_pause() is False and screen.on_resume() is False
+        assert screen.on_finish() is False and screen.on_discard() is False
+        screen.consent_checkbox.setChecked(True)
+        assert screen.start_linked(linked_consent(context), context) is False
+        screen.on_start()
+        assert screen.consent_checkbox.isChecked()  # refused before the tick is spent
+        assert controller.calls == calls and emitted == []
+        screen.consent_checkbox.setChecked(False)
+        gate.set()
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert emitted == [1]
+        assert "cryptographically deleted" in screen.message_label.text()
+        assert not screen.progress_bar.isVisibleTo(screen)
+        assert screen._discard_task is None
+        screen.deleteLater()
+
+    def test_a_discard_live_transcription_outlasts_keeps_the_session_and_says_so(
+        self, qapp: Any
+    ) -> None:
+        """Round 40 LOW-002, the custody rule unchanged: the controller
+        refuses to destroy the key while the live worker may hold plaintext,
+        and routes the session to FAILED. The screen never calls that a
+        device failure; it says plainly that nothing was deleted and that
+        Discard can be pressed again, and the second Discard deletes it."""
+        from scribe_desktop.session import LiveStopPendingError
+
+        controller = FakeController()
+        screen = _session_screen(controller)
+        emitted: list[int] = []
+        refused: list[int] = []
+        screen.session_discarded.connect(lambda: emitted.append(1))
+        screen.on_start()
+        controller.live_transcription_attached = True
+
+        def outlasted() -> Any:
+            raise LiveStopPendingError(
+                "discard refused: the live transcriber has not stopped yet; "
+                "the session is kept - try again in a moment"
+            )
+
+        entered, gate = self._gated_discard(controller, outlasted)
+        assert screen.on_discard(on_refused=lambda: refused.append(1)) is True
+        assert entered.wait(5)
+        controller.state_value = SessionState.FAILED  # as the controller routes it
+        screen._watch_state()  # the poll sees FAILED mid-discard
+        assert "Recording failed" not in screen.message_label.text()
+        gate.set()
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert screen.message_label.text() == models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE
+        assert refused == [1] and emitted == []
+        assert screen.discard_button.isEnabled()  # FAILED: Discard again
+        screen._watch_state()
+        assert screen.message_label.text() == models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE
+        # The worker has stopped since: the next Discard runs at once.
+        controller.live_transcription_attached = False
+        del controller.discard  # back to the fake's own discard
+        screen.on_discard_clicked()
+        screen.on_discard_clicked()
+        assert emitted == [1] and refused == [1]
+        assert "cryptographically deleted" in screen.message_label.text()
+        screen.deleteLater()
+
+    def test_a_discard_ended_by_a_non_exception_still_releases_the_hold(
+        self, qapp: Any
+    ) -> None:
+        """Round 41: ``TaskThread`` catches ``Exception`` only, so a
+        ``BaseException`` escaping the discard would end the thread with no
+        result and hold every control for good. The job sends the fixed
+        reason instead, and the Chrome bridge's hook still hears the
+        refusal."""
+
+        class _Escape(BaseException):
+            pass
+
+        controller = FakeController()
+        screen = _session_screen(controller)
+        screen.on_start()
+        controller.live_transcription_attached = True
+
+        def escapes() -> Any:
+            controller.calls.append(("discard",))
+            raise _Escape
+
+        controller.discard = escapes  # type: ignore[method-assign]
+        refused: list[int] = []
+        assert screen.on_discard(on_refused=lambda: refused.append(1)) is True
+        assert _process_until(qapp, lambda: not screen.is_busy)
+        assert screen.message_label.text() == (
+            f"Discard failed: {models.CUSTODY_UNEXPECTED_REASON}"
+        )
+        assert refused == [1] and screen._discard_task is None
+        screen.deleteLater()
+
+    def test_a_refused_discard_names_a_live_worker_still_stopping(self) -> None:
+        """Round 40 LOW-002: the one refusal line, for both paths."""
+        from scribe_desktop.session import LiveStopPendingError, SessionActivityError
+
+        pending = LiveStopPendingError("discard refused: the live transcriber has not stopped yet")
+        assert models.discard_refusal_line(pending) == models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE
+        assert isinstance(pending, SessionActivityError)  # every existing catch still holds
+        other = SessionActivityError("transcription in progress")
+        assert models.discard_refusal_line(other) == (
+            "Discard failed: SessionActivityError: transcription in progress"
+        )
+
 
 def _linked_context(
     verification: Verification = Verification.VERIFIED,
@@ -3336,6 +3495,31 @@ class TestMainWindow:
             event = QCloseEvent()
             window.closeEvent(event)
             assert not event.isAccepted(), blocked_state
+        controller.state_value = SessionState.IDLE
+        event2 = QCloseEvent()
+        window.closeEvent(event2)
+        assert event2.isAccepted()
+
+    def test_close_refused_while_a_discard_waits_and_says_so(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Installation plan round 40 LOW-002: a Discard waiting off the GUI
+        thread for live transcription refuses the close with its own line —
+        never the recording line, which would ask for the Discard already
+        under way."""
+        from PySide6.QtGui import QCloseEvent
+
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        controller.state_value = SessionState.RECORDING
+        window.session_screen._discarding = True
+        event = QCloseEvent()
+        window.closeEvent(event)
+        assert not event.isAccepted()
+        assert window.statusBar().currentMessage() == (
+            "A recording is being discarded - wait for it to finish before closing."
+        )
+        window.session_screen._discarding = False
         controller.state_value = SessionState.IDLE
         event2 = QCloseEvent()
         window.closeEvent(event2)

@@ -974,11 +974,22 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `_clear_buffers`; `False` on a join timeout — and every path that
     destroys or drops custody consults that verdict: `discard()` (the
     unlocked 10 s stop under the custody reservation; an uncleared worker
-    REFUSES `discard_session` with `SessionActivityError`, routes the
-    recording to FAILED with key + chunks intact, and the next Discard
-    retries), the three Complete paths and `_retire_locked` on a new Start
-    (`_stop_live_locked`, the 1 s in-lock bound); the one caller allowed to
-    ignore the verdict is `_fail_locked`, which destroys nothing. Finish seals
+    REFUSES `discard_session` with `LiveStopPendingError` (a
+    `SessionActivityError`), routes the recording to FAILED with key + chunks
+    intact, and the next Discard retries), the three Complete paths and
+    `_retire_locked` on a new Start (`_stop_live_locked`, the 1 s in-lock
+    bound); the one caller allowed to ignore the verdict is `_fail_locked`,
+    which destroys nothing. Since installation plan round 40 LOW-002 the Session
+    screen runs a Discard with a worker attached on a `TaskThread`, so the
+    window is not frozen through its wait. The screen shows "Discarding -
+    stopping live transcription first...". Until the wait ends, every control
+    is held, and so is every Chrome command (through `is_busy`). So are the
+    main window's "Open for review", whose adoption could otherwise change
+    which session the discard acts on, and closing the window. The thread
+    always sends a result, so the hold always ends: any `BaseException` sends
+    the fixed reason. An outlasted Discard says plainly that nothing was deleted and that
+    Discard can be pressed again. It is never retried automatically: a later
+    destructive step waits for the practitioner's fresh confirmation. Finish seals
     only (`finish()` enqueues the sentinel); the TAIL DRAIN runs on the
     processing `TaskThread` inside the transcriber callable
     (`ui/models._live_transcript`, handed the worker by

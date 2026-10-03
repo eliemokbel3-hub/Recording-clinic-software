@@ -83,6 +83,12 @@ class SessionScreen(QWidget):
         self._transcriber_factory = transcriber_factory
         self._task: TaskThread | None = None
         self._transcribing = False
+        # Installation plan round 40 LOW-002: a confirmed Discard waiting off
+        # the GUI thread for live transcription to stop, and the Chrome
+        # bridge's hook for a refusal it ends in.
+        self._discard_task: TaskThread | None = None
+        self._discarding = False
+        self._discard_on_refused: Callable[[], None] | None = None
         self._last_state = controller.state
         self._last_generating = controller.generating
         self._last_writing = controller.writing_session_id() is not None
@@ -178,8 +184,15 @@ class SessionScreen(QWidget):
 
     @property
     def is_busy(self) -> bool:
-        """True while a transcription run is in flight (close must wait)."""
-        return self._transcribing
+        """True while a transcription run or a discard (round 40 LOW-002) is
+        in flight (close must wait)."""
+        return self._transcribing or self._discarding
+
+    @property
+    def is_discarding(self) -> bool:
+        """Round 40 LOW-002: a confirmed Discard is waiting for live
+        transcription to stop (the main window's "Open for review" waits)."""
+        return self._discarding
 
     def _watch_state(self) -> None:
         armed = self._discard_armed
@@ -199,9 +212,12 @@ class SessionScreen(QWidget):
         if state == self._last_state:
             return
         previous = self._last_state
-        if state == SessionState.FAILED and previous in (
-            SessionState.RECORDING,
-            SessionState.PAUSED,
+        if (
+            state == SessionState.FAILED
+            and previous in (SessionState.RECORDING, SessionState.PAUSED)
+            # Round 40 LOW-002: a discard that live transcription outlasted
+            # routes the session to FAILED itself; its own line says why.
+            and not self._discarding
         ):
             self._show_message(
                 "Recording failed (device lost or disk full). The audio "
@@ -216,7 +232,7 @@ class SessionScreen(QWidget):
         self.state_label.setText(f"Session state: {state.value}")
         self.link_label.setText(models.session_link_line(self._controller.session))
         controls = models.controls_for_state(state)
-        busy = self._transcribing
+        busy = self.is_busy
         # D6: Start for the next patient at QUEUED, unless the note review
         # holds the generation lease or a draft write holds the session
         # (draft-write D9, H1 round 45 LOW-002) — the controller refuses both
@@ -306,6 +322,8 @@ class SessionScreen(QWidget):
             return
         if self._refuse_while_held():
             return  # round 36 MED-001: the tick is KEPT for the next press
+        if self._discarding:
+            return  # round 40 LOW-002: its own line is up; the tick is kept
         self.consent_checkbox.setChecked(False)
         self._start(unlinked_consent(), None)
 
@@ -316,8 +334,8 @@ class SessionScreen(QWidget):
         consent that does not name the context's note. True when it started.
         The desktop tick is cleared too (every Start clears it) — but not by
         a Start the warm-up's hold refuses (round 36 MED-001)."""
-        if self._refuse_while_held():
-            return False
+        if self._refuse_while_held() or self._discarding:
+            return False  # the hold, or a discard under way (round 40 LOW-002)
         self.consent_checkbox.setChecked(False)
         return self._start(consent, context)
 
@@ -372,8 +390,12 @@ class SessionScreen(QWidget):
 
     # Each control below returns True when it did what it says (the Chrome
     # bridge, Task 4.5, reports a False as a refusal); a button ignores it.
+    # Round 40 LOW-002: while a discard waits off the GUI thread, every one
+    # of them (the pause rule's and the hotkey's included) does nothing.
 
     def on_pause(self) -> bool:
+        if self._discarding:
+            return False
         try:
             self._controller.pause()
             self._show_message("Paused.")
@@ -385,6 +407,8 @@ class SessionScreen(QWidget):
         return True
 
     def on_resume(self) -> bool:
+        if self._discarding:
+            return False
         guard = self._resume_guard
         refusal = guard() if guard is not None else None
         if refusal is not None:
@@ -405,6 +429,8 @@ class SessionScreen(QWidget):
         return True
 
     def on_finish(self) -> bool:
+        if self._discarding:
+            return False
         try:
             session = self._controller.finish()
         except Exception as exc:  # noqa: BLE001
@@ -448,18 +474,88 @@ class SessionScreen(QWidget):
         self._discard_armed = None
         self.discard_button.setText("Discard")
 
-    def on_discard(self) -> bool:
+    def on_discard(self, *, on_refused: Callable[[], None] | None = None) -> bool:
+        """The confirmed Discard. With no live transcription attached it runs
+        here, at once. With one attached (installation plan round 40
+        LOW-002) the controller's ``discard`` waits — up to
+        ``LIVE_STOP_TIMEOUT_SECONDS`` — for it to stop before the key goes, so
+        it runs OFF the GUI thread under ``DISCARD_STOPPING_LIVE_LINE``, with
+        every control (and every Chrome command, through ``is_busy``) held
+        until it ends; True then means it is under way, and ``on_refused``
+        (the Chrome bridge's) runs if it ends refused. The custody rule is the
+        controller's, unchanged: a discard live transcription outlasts
+        deletes nothing and keeps the session, and the line says so."""
         self._disarm_discard()
+        if self._discarding:
+            return False
+        if self._controller.live_transcription_attached:
+            self._begin_discard(on_refused)
+            return True
         try:
             self._controller.discard()
-            self.session_discarded.emit()
-            self._show_message("Session discarded (audio cryptographically deleted).")
         except Exception as exc:  # noqa: BLE001
-            self._show_message(f"Discard failed: {models.custody_refusal_text(exc)}")
+            self._show_message(models.discard_refusal_line(exc))
             self.refresh()
             return False
-        self.refresh()
+        self._discarded()
         return True
+
+    def _discarded(self) -> None:
+        self.session_discarded.emit()
+        self._show_message("Session discarded (audio cryptographically deleted).")
+        self.refresh()
+
+    def _begin_discard(self, on_refused: Callable[[], None] | None) -> None:
+        self._discarding = True
+        self._discard_on_refused = on_refused
+        self.progress_label.setText(models.DISCARD_STOPPING_LIVE_LINE)
+        self.progress_label.show()
+        self.progress_bar.show()
+        self._show_message("")
+        controller = self._controller
+        unexpected = f"Discard failed: {models.CUSTODY_UNEXPECTED_REASON}"
+
+        def job() -> str | None:
+            # The outcome crosses to the GUI thread as its LINE only — never
+            # the exception, whose traceback would keep the controller's
+            # frames (the session's crypto among them) alive.
+            try:
+                controller.discard()
+            except Exception as exc:  # noqa: BLE001 - shown as its line, never raised
+                return models.discard_refusal_line(exc)
+            except BaseException:  # noqa: BLE001
+                # Round 41: whatever ends this thread, a result is sent —
+                # otherwise every control (and every Chrome command) would
+                # stay held for good. ``TaskThread`` catches ``Exception``
+                # only. The line is the fixed reason; custody stays the
+                # controller's, unchanged.
+                return unexpected
+            return None
+
+        task = TaskThread(job, self)
+        task.succeeded.connect(self._on_discard_done)
+        task.failed.connect(lambda _message: self._on_discard_done(unexpected))
+        self._discard_task = task
+        self.refresh()
+        task.start()
+
+    def _on_discard_done(self, outcome: object) -> None:
+        """GUI thread: the off-thread discard ended — ``None`` when it
+        discarded, else the line to show."""
+        self._discarding = False
+        on_refused, self._discard_on_refused = self._discard_on_refused, None
+        if self._discard_task is not None:
+            self._discard_task.finish()
+            self._discard_task = None
+        self.progress_bar.hide()
+        self.progress_label.hide()
+        if outcome is None:
+            self._discarded()
+            return
+        self._show_message(str(outcome))
+        self.refresh()
+        if on_refused is not None:
+            on_refused()
 
     # --- transcription (Finish -> processing -> queued) -------------------------
 

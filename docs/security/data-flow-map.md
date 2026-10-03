@@ -524,7 +524,10 @@ rendering the language model does (flow 17).
     joins the worker and requires its buffers CONFIRMED cleared
     (`buffers_cleared`) BEFORE the session key is destroyed — an uncleared
     stop refuses the key deletion, routes the recording to FAILED with key +
-    chunks intact and is retried by the next Discard; the same verdict gates
+    chunks intact and is retried by the next Discard. Since installation plan
+    round 40 LOW-002 that wait runs on a `TaskThread`, with the Session
+    screen's controls, Chrome's commands and "Open for review" held until it
+    ends; it is never retried automatically. The same verdict gates
     the three Complete paths and retirement on a new Start (threat-model
     surface 11). A load failure, `fell_behind`, a worker error or a drain error
     falls back to the batch stage (flow 7) with its reason on the Session

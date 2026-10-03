@@ -213,6 +213,19 @@ class TestNeverLaunchesTheApp:
         assert "reload the Clinic Scribe Companion extension, then fully restart Chrome" in code
         assert code.count("Open Clinic Scribe from the Start menu.") == 2
 
+    def test_the_finish_label_is_resized_after_its_last_change(self) -> None:
+        """Round 40 LOW-001: the Finish page showed only the first two
+        paragraphs — the label kept the height Inno gave its own text. It is
+        re-sized once, after EVERY caption change (the appended warnings
+        included), so nothing the script says is cut off."""
+        finish = _body("procedure CurPageChanged")
+        resize = "WizardForm.AdjustLabelHeight(WizardForm.FinishedLabel);"
+        assert finish.count(resize) == 1
+        last_change = finish.rindex("WizardForm.FinishedLabel.Caption :=")
+        assert finish.index(resize) > last_change
+        # Nothing after it changes the text again (only the routine's end).
+        assert finish.split(resize, 1)[1].strip() == ""
+
     def test_a_start_menu_shortcut_opens_the_app(self) -> None:
         [icon] = [_entry(line) for line in _section("Icons")]
         assert icon["Filename"] == r"{app}\scribe-app.exe"

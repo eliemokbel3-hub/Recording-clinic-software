@@ -346,6 +346,21 @@ view patterns · tokens · microcopy.
   recording (`LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER`, worded like the other live
   fallback lines; installation plan rounds 35–38 MED-001, the practitioner's option
   (b)).
+- **A Discard that must wait says so.** With live transcription running, a confirmed
+  Discard first waits for it to stop (up to 10 seconds) so nothing is deleted while it
+  still holds audio. The window stays responsive, and the Session tab shows
+  "Discarding - stopping live transcription first..." above its progress bar
+  (`DISCARD_STOPPING_LIVE_LINE`). Every Session control, every Chrome command (refused
+  `busy`, "The app is busy with a recording - wait for it to finish."; a Start
+  `session_active`), "Open for review" (`REVIEW_OPEN_DISCARDING_LINE`) and closing the
+  window wait until it ends. If live transcription outlasts the wait, nothing is
+  deleted. The recording has stopped and is kept, and the line says what to do:
+  "Recording stopped, but live transcription did not stop in time, so nothing was
+  deleted - the recording is kept. Press Discard again in a moment to delete it."
+  (`DISCARD_KEPT_LIVE_STOPPING_MESSAGE`).
+  It is never called a device failure. The next Discard takes the usual two clicks and
+  is never retried automatically: a destructive step waits for a fresh confirmation
+  (`ui/session_screen.py`; installation plan round 40 LOW-002).
 
 ## Chrome side (Cliniko workflow safeguards plan D1, D13; Phase 6)
 The extension REPORTS and the app DECIDES: every button becomes a command the app may

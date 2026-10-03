@@ -1160,6 +1160,44 @@ class TestSessionCommands:
         h.command("discard", session_ref=ref, confirmed=True)
         assert ("discard",) in h.controller.calls and self._refusal(h) is None
 
+    def test_a_discard_waiting_for_live_transcription_is_reported_when_it_ends(
+        self, harness: Any
+    ) -> None:
+        """Installation plan round 40 LOW-002: with live transcription
+        attached, a Chrome Discard runs off the GUI thread. Every Chrome
+        command meanwhile is refused ``busy`` and reaches nothing. One that
+        live transcription outlasts is refused ``failed`` once it ends (as a
+        refused Discard always was), the session kept."""
+        from scribe_desktop.session import LiveStopPendingError
+
+        h = self._recording(harness)
+        ref = h.controller.session_ref
+        h.controller.live_transcription_attached = True
+        entered, gate = threading.Event(), threading.Event()
+
+        def outlasted() -> RecordingSession:
+            h.controller.calls.append(("discard",))
+            h.controller.state_value = SessionState.FAILED  # capture stopped, key kept
+            entered.set()
+            assert gate.wait(5)
+            raise LiveStopPendingError("discard refused: the live transcriber has not stopped yet")
+
+        h.controller.discard = outlasted  # type: ignore[method-assign]
+        h.command("discard", session_ref=ref, confirmed=True)
+        assert entered.wait(5)
+        assert self._refusal(h) is None and h.screen.is_busy
+        calls = list(h.controller.calls)
+        h.command("pause")
+        assert self._refusal(h) == ("pause", "busy")
+        h.command("discard", session_ref=ref, confirmed=True)
+        assert self._refusal(h) == ("discard", "busy")
+        assert h.controller.calls == calls
+        gate.set()
+        assert _process_until(h.qapp, lambda: not h.screen.is_busy)
+        assert self._refusal(h) == ("discard", "failed")
+        assert h.screen.message_label.text() == models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE
+        assert h.controller.session_ref == ref  # kept: Discard can be pressed again
+
     def test_open_review_without_an_index_is_not_available(self, harness: Any) -> None:
         """A bridge built without the main window's reminder index and opener
         (Task 5.5) refuses ``open_review`` by name and runs nothing."""

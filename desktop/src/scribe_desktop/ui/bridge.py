@@ -933,14 +933,26 @@ class ChromeBridge(QObject):
             if refusal is not None:
                 self._refuse(action, refusal)
                 return
-        done = {
-            "pause": self._screen.on_pause,
-            "resume": self._screen.on_resume,
-            "finish": self._screen.on_finish,
-            "discard": self._screen.on_discard,
-        }[action]()
+        if action == "discard":
+            # Installation plan round 40 LOW-002: a Discard waiting off the
+            # GUI thread for live transcription reports a refusal when it ends.
+            done = self._screen.on_discard(on_refused=self._discard_refused)
+        else:
+            done = {
+                "pause": self._screen.on_pause,
+                "resume": self._screen.on_resume,
+                "finish": self._screen.on_finish,
+            }[action]()
         if not done:
             self._refuse(action, "failed")
+
+    def _discard_refused(self) -> None:
+        """Round 40 LOW-002: a Chrome Discard that ran off the GUI thread
+        ended refused — the same ``failed`` refusal a refused Discard has
+        always had, sent once it is known."""
+        self._refuse("discard", "failed")
+        self.publish()
+        self._refresh_view()
 
     def _writing(self) -> bool:
         """A Cliniko draft write holds the live session (draft-write D9):
