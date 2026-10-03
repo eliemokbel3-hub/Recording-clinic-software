@@ -3672,7 +3672,7 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
     - **Expected suite:** 5856 + 16 = **5872 passed / 9 skipped**.
 
 ### Phase P — Install on this computer (PRACTITIONER, normal terminal or Explorer)
-- [ ] 🟥 **P.1 Install and verify.**
+- [ ] 🟨 **P.1 Install and verify.**
   1. Close Chrome (no `chrome.exe` left) and Clinic Scribe.
   2. Run `register-native-host.py --unregister` from the venv.
   3. Run `gh attestation verify` and `Get-FileHash` against `SHA256SUMS.txt`.
@@ -3687,6 +3687,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
   12. Start with the network unplugged: expect `unverified_offline`.
   13. Re-register the DEV host with the new script, and move the dev models to `ClinikoScribe-dev\models` (the exact commands are given at hand-off).
   14. Delete `ClinikoScribe\models` only after step 7 passes.
+
+  - **Prep done 2026-10-03 (practitioner, normal terminal over remote desktop):** `build-release.py --model-pack` printed "model pack: C:\scribe-release\0.1.0\ClinikoScribe-models-10a83493 (verified against models-manifest.json)". Step 3: `gh attestation verify` on `ClinikoScribe-0.1.0-setup.exe` printed "Verification succeeded!" (digest `e48a6602…e880ac99`; signer and build workflow `.github/workflows/release.yml@refs/heads/main`; source ref `refs/heads/main`), and `Get-FileHash` printed `E48A6602A08B6BFD43834937A713542896E607A290F7A511F5410677E880AC99`, equal to `SHA256SUMS.txt` and the pilot-builds row. Steps 1–2 and 4–14 remain (in person).
 
   Done when: every step's on-screen wording is reported and recorded here.
 - [ ] 🟥 **P.2 Hardware check** on the installed app (Microphone tab): record whisper `medium`'s real-time factor and the prose seconds per section, against the margin verdict. This closes note-learning P.2's timing line and revisits the whisper `small` exclusion if `medium` falls behind.
