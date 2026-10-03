@@ -1151,6 +1151,7 @@ The pilot-half scope and its already-verified code facts are in Follow-Up Contin
 - 2026-10-03 round 32: 0 CRIT / 0 HIGH / 0 MED / 3 LOW; skew=none; action=fix → all 3 Applied (a source scan pinning the opt-out set, two stale test comments, tripwire wording); round Closes on the composer-run full desktop suite (Task H.6, in-session /review-loop pass 1 over the H.6 diff, executor stage-4 leg i4-x13; 6 candidates, 3 dropped)
 - 2026-10-03 round 33: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — round 32's three fixes re-read and confirmed; /review-loop CONVERGED at loop round 2 of cap 3 (Task H.6, in-session /review-loop pass 2, executor stage-4 leg i4-x13; 2 candidates, 2 dropped)
 - 2026-10-03 round 34: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none → codex gpt-6-astra medium, pass stage-4.p2 peer_round 1 of cap 5, one slice of 14 files over the Task H.6 diff (every diff read, plus a search of the tests for any other route to a models folder); 2 candidates, 2 dropped; peer pass CONVERGED
+- 2026-10-03 round 35: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=none; action=fix → Phase P.1 step 10 (practitioner smoke on the installed 0.1.0): the first recording after installing failed at the first one-second chunk; cause unconfirmed because the capture failure's type is not logged; Pending
 
 ## Review Findings Log
 ### Round 1 - 2026-10-02 - installation plan, independent cross-family codex plan peer-review (round 1)
@@ -2956,6 +2957,17 @@ Fix-delta self-check: PASS — I re-read the 10 reworded comments and docstrings
 - PEER-ROUND-34-A RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0). The peer pass converged at its first round; no confirmation round is owed.
 - Last reviewed: 2026-10-03
 
+### Round 35 - 2026-10-03 - Phase P.1 live smoke on the installed 0.1.0 (practitioner-observed)
+
+- Round status: Open (1 pending).
+- Source: practitioner smoke (Task P.1 step 10), composer-observed from the installed app's log
+- Reviewer: composer `claude-opus-5-5`; observation by the practitioner
+
+#### Findings
+- **MED-001** (MED, behavioral, `desktop/src/scribe_desktop/session.py` `_on_capture_failure` / `audio_capture.py` `CaptureWorker`): the first recording after installing failed one second after Start, and the cause cannot be read back because the capture failure's exception type is never logged. — Evidence: `%LOCALAPPDATA%\ClinikoScribe\logs\scribe-app.log`: `15:52:30,562 … session_transition session_id=f12d6080… session_state=recording`, `15:52:31,575 … live_transcriber_stop_timeout … session_state=recording`, `15:52:31,575 … session_transition … session_state=failed`; `_on_capture_failure(self, _exc)` discards `_exc`; `CHUNK_BYTES` is one second of audio, so the failure is at the first chunk (`store.append_chunk` raising) or a PortAudio status flag (`CaptureOverflowError` "device reported dropped frames"). It did not recur in the same process or after a relaunch. Likely (unconfirmed): the live worker's first model load after install (first Defender scan of the new DLLs and model files) starving the capture path. Recommendation: Fix-now — (1) log the capture failure's type name (content-free, like the exception hooks) so the next occurrence is diagnosable; (2) find and remove the starvation path, e.g. load the live worker's models off the capture path or before Start, and check whether a dropped-frames status at stream start should fail a session at all; (3) a test that a slow live-worker load cannot fail capture. /fix decision: Pending
+- Verification counts: 1 claim checked, 1 confirmed (by the log), 0 dropped
+- Last reviewed: 2026-10-03
+
 ## Tasks
 Paths are under `desktop/src/scribe_desktop/` unless stated. Every code task's verification is the plan's Validation section (composer-run suites) unless the task names its own. Phases are grouped for `/execute-loop`: foundational layout and identity (Phase 1) are isolated ahead of the frozen-runtime work (Phase 2) and the build (Phase 3).
 
@@ -3689,6 +3701,23 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
   14. Delete `ClinikoScribe\models` only after step 7 passes.
 
   - **Prep done 2026-10-03 (practitioner, normal terminal over remote desktop):** `build-release.py --model-pack` printed "model pack: C:\scribe-release\0.1.0\ClinikoScribe-models-10a83493 (verified against models-manifest.json)". Step 3: `gh attestation verify` on `ClinikoScribe-0.1.0-setup.exe` printed "Verification succeeded!" (digest `e48a6602…e880ac99`; signer and build workflow `.github/workflows/release.yml@refs/heads/main`; source ref `refs/heads/main`), and `Get-FileHash` printed `E48A6602A08B6BFD43834937A713542896E607A290F7A511F5410677E880AC99`, equal to `SHA256SUMS.txt` and the pilot-builds row. Steps 1–2 and 4–14 remain (in person).
+
+  - **RUN 2026-10-03 (practitioner at the computer, normal non-elevated PowerShell — `IsInRole(Administrator)` printed `False`; composer recording):**
+    1. `Get-Process chrome, scribe-app, scribe-host, pythonw` printed nothing.
+    2. `register-native-host.py --unregister` printed `removed  : HKCU\Software\Google\Chrome\NativeMessagingHosts\com.scribe.cliniko_host; WER exclusion pythonw.exe; WER exclusion scribe-app.exe; WER exclusion scribe-host.exe; …\ClinikoScribe\com.scribe.cliniko_host.json; …\ClinikoScribe\scribe-host.exe`.
+    3. Done at prep (above).
+    4. Setup 0.1.0, clinic-only policy unticked. Finish page: "Clinic Scribe is installed." then "In Chrome, remove any older Clinic Scribe Companion, choose Load unpacked and select C:\Program Files\ClinikoScribe\extension, then fully restart Chrome." No model warning.
+    5. Old unpacked extension removed; `C:\Program Files\ClinikoScribe\extension` loaded; Chrome fully restarted.
+    6. Started from the Start menu; Task Manager Elevated = **No**; the pinned icon shows green **OK**. The app's log shows `pipe_peer path=C:\Program Files\ClinikoScribe\scribe-host.exe`.
+    7. Status tab: "Native host: com.scribe.cliniko_host", "Registration: registered ✓ (this computer's Chrome link)" (HKLM winner, no other link, no per-user override line); self-test `credential_store: PASS`, `session_crypto: PASS`. No exclusion warning lines; the log line at the installed app's start reads `exclusions count=0 state=checked` (location, not-indexed, WER and backup checks all passed).
+    8. Carried over: Past sessions empty (none existed before); audit CSV export works; Practitioner tab shows the voice profile enrolled; Clinics tab lists the one clinic (as before). **Authorised host recorded (PLAN.md L164 by procedure): `tuneup-osteopathy.au2.cliniko.com` (TuneUp Osteopathy, checked 2026-09-29).** Clinic 2 still awaits its API-key permission.
+    9. `reg query HKLM\…\com.scribe.cliniko_host` → `(Default) REG_SZ C:\Program Files\ClinikoScribe\com.scribe.cliniko_host.json`; the HKCU query → "unable to find the specified registry key or value"; `icacls "C:\Program Files\ClinikoScribe"` → inherited TrustedInstaller/SYSTEM/Administrators `(F)`, `BUILTIN\Users:(I)(RX)`, CREATOR OWNER `(F)` (inherit-only, the Program Files default), the two application-package groups `(RX)`.
+    10. `check-installed-sockets.py --seconds 240` during a test recording's Finish, transcription and a **Narrative** render: `RESULT: no connection seen`. The Note tab: "writing style 'narrative' prose shown for 5 sections (26.7s)" (also P.2's prose timing).
+    11. A test recording ended mid-way with Task Manager's End task; on relaunch the Recovery tab listed "Session 5d1306b4… (2026-10-03 06:02 UTC) - Cliniko link checked when opened - did not finish cleanly". A recording started straight after this relaunch ran normally.
+    12. With a Cliniko treatment note open, Wi-Fi off, app restarted: the Chrome side panel showed "Patient not checked with Cliniko", "Appointment not checked", "Cliniko could not be reached — you can record, but this note cannot be written back until Cliniko verifies it." (the `unverified_offline` path).
+    13. `register-native-host.py` (dev): `com.scribe.cliniko_host_dev` → `%LOCALAPPDATA%\ClinikoScribe-dev\com.scribe.cliniko_host_dev.json`, per-user WER exclusions re-added, `verified : OK`.
+    14. **Deferred by composer recommendation:** `%LOCALAPPDATA%\ClinikoScribe\models` stays until the first-recording fix below ships and the installed app has run a few clinic days; it is the everyday app's models and so the fastest fallback (step 2's undo command restores the old Chrome link).
+  - **FAULT found at step 10 (round 35 MED-001, open):** the FIRST recording after installing failed at 1.0 s: log `session_transition … recording`, then 1.01 s later `live_transcriber_stop_timeout … recording` and `session_transition … failed`; the Session tab said "Recording failed (device lost or disk full)". The capture failure's exception type is not logged (`session._on_capture_failure` ignores it). A retry in the same process recorded normally, and so did the first recording after a relaunch (step 11). CHUNK_BYTES is one second, so the failure is at the first chunk write or a stream status flag. Likely cause (unconfirmed): the live worker's first-ever model load (Defender's first scan of the newly installed DLLs and the 1.5 GB model) starving the capture path, so PortAudio reports dropped frames (`CaptureOverflowError`). Interim advice to the practitioner: a 10-second test recording after each install or update, before the first patient.
 
   Done when: every step's on-screen wording is reported and recorded here.
 - [ ] 🟥 **P.2 Hardware check** on the installed app (Microphone tab): record whisper `medium`'s real-time factor and the prose seconds per section, against the margin verdict. This closes note-learning P.2's timing line and revisits the whisper `small` exclusion if `medium` falls behind.
