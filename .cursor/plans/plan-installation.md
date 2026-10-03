@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** installation
-**Overall Progress:** `88%`
+**Overall Progress:** `98%`
 
 ## Lifecycle State
 - Active
@@ -3568,7 +3568,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
     - **Interpretation call (D1 over the task's wording):** PyInstaller itself is NOT in the lock. D1 needs the bootloader built from source, and Task 0.1 proved that route (6a: the source at tag v6.22.3, commit `ecd7993…`, `waf`, `pip install` of the tree). So `build-release.py` pins PyInstaller by that COMMIT and checks it, and the lock carries its hooks package and its dependencies. A PyPI PyInstaller wheel would ship the prebuilt bootloader that D1 and Task 0.5's Defender result excluded.
     - **Tests:** `test_build_lock.py`, covering the generator on a fixture freeze and a fake `pip download`, each refusal, and the task's check on a fixture lock. The committed-lock test **SKIPS BY NAME** ("desktop/requirements-build.txt is not generated yet …") until the lock exists; it then checks the runtime coverage, a hash on every entry, no `NEVER_LOCKED` name, and the tool pins.
     - **PRACTITIONER STEP (normal PowerShell at `C:\scribe-build`; network):** `.venv\Scripts\python.exe -m pip freeze --all | Out-File -Encoding utf8 "$env:TEMP\proven-freeze.txt"` then `.venv\Scripts\python.exe scripts\lock-build-requirements.py --constraints "$env:TEMP\proven-freeze.txt"`. Report the "wrote N pinned wheels" line, or the refusal. Then the composer commits `desktop/requirements-build.txt` and re-runs the suite: the skipped test must then RUN and pass.
-- [ ] 🟨 **3.2 `packaging/scribe.spec`** (D1). Two windowed EXEs in one COLLECT. Collect `scribe_desktop` package data, apply Task 0.1's hidden imports and hooks, exclude the network Qt modules, no UPX, and add a version resource from D12.
+- [x] 🟩 **3.2 `packaging/scribe.spec`** (D1). Two windowed EXEs in one COLLECT. Collect `scribe_desktop` package data, apply Task 0.1's hidden imports and hooks, exclude the network Qt modules, no UPX, and add a version resource from D12.
+  - **DONE 2026-10-03 (composer):** the spec built both EXEs in CI (Release runs 37081519723 for 0.1.0 and 37108950093 for 0.1.1, each auditing the bundle); the installed app passed P.1 and P.3 on this computer.
   - Done when: `pyinstaller packaging/scribe.spec` builds on the composer's machine. The bundle audit runs on that output once Task 3.5 lands; this task is not blocked on it.
   - **From Phase 2 review round 13 (MED-003):** both EXEs set `disable_windowed_traceback=True`. The Phase 0 spike spec left it `False`. With it `False`, an exception escaping `app.main` or the host's `main` — the benchmark worker's included, whose own boundary is now `benchmark.run_worker` — shows PyInstaller's windowed "Unhandled exception" box with the full traceback, against C3's type-name-only rule.
   - **Leg i3-x1 (spec, entries and pins built; stays 🟨 until a real PyInstaller build passes `build-release.py --audit` — the practitioner's or composer's step):**
@@ -3618,7 +3619,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
         - then `.venv\Scripts\python.exe scripts\build-release.py --write-manifest --models build\models`.
       - **Alternative (no network, read only):** `--models "$env:LOCALAPPDATA\ClinikoScribe\models"`, the everyday models, which hold the same pinned files.
       - Report the "wrote … (N files)" and "pack name: ClinikoScribe-models-xxxxxxxx" lines. The composer then commits the manifest and re-runs the suite: the skipped test must then RUN and pass.
-- [ ] 🟨 **3.4 `packaging/scribe.iss`** (D1, D5, D6, D8, D-I1). It covers:
+- [x] 🟩 **3.4 `packaging/scribe.iss`** (D1, D5, D6, D8, D-I1). It covers:
+  - **DONE 2026-10-03 (composer):** ISCC 6.7.3 compiled both builds of record in CI; install, in-place upgrade, rollback, uninstall (data kept) and reinstall all passed on this computer (P.1, P.3). Round 40 LOW-001 (Finish-page text cut off) is open as a fix, not a blocker.
   - `PrivilegesRequired=admin`, a fixed AppId and `SetupLogging=no`;
   - a running-process check (`scribe-app.exe`, `scribe-host.exe`, `chrome.exe`) with the "Close Clinic Scribe and Chrome completely" message;
   - the install folder with D-I1's ACL (D-I1 chosen 2026-10-02: `C:\Program Files\ClinikoScribe`, whose inherited ACL Task 0.3 showed is Users RX, so no custom ACL);
@@ -3698,7 +3700,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
       - **ISCC re-check (composer, 2026-10-03 ~04:12):** Inno Setup 6.7.3 "Successful compile (2.235 sec)", exit 0.
     - **Round 22 LOW-009/010 (leg i4-x1):** the Finish page says when a clinic-policy value set by something else was left exactly as it is; the `PolicyForeign` comment corrected.
       - **ISCC re-check (composer, 2026-10-03 ~04:57, the same placeholder command):** Inno Setup 6.7.3 "Successful compile (2.937 sec)", exit 0.
-- [ ] 🟨 **3.5 `scripts/build-release.py`** (needs Tasks 3.1–3.4).
+- [x] 🟩 **3.5 `scripts/build-release.py`** (needs Tasks 3.1–3.4).
+  - **DONE 2026-10-03 (composer):** `build-release.py` produced both builds of record in CI (preflight, audit, Defender scan, ISCC, `BUILD-INFO.txt` with `tree=clean`); the practitioner's `--model-pack` run built the pack `ClinikoScribe-models-10a83493` and verified it against the manifest.
   - Steps: clean build venv, `pip install --require-hashes -r desktop/requirements-build.txt` plus the prose wheel, PyInstaller with Task 3.2's spec, then `--audit`:
     - the expected files are present;
     - no `Qt6Network`/`QtWebSockets`;
@@ -3796,7 +3799,8 @@ equirements-build.txt". Composer check: every one of the 54 carries `--hash=sha2
       - `test_register_native_host.py` +5: the dev identities under the production pin, the stray link and only its two files, the in-use line for register and unregister, and another error not mistaken. `_install_under` now also redirects `STRAY_PRODUCTION_FILES`, so no test can reach the real folder (C6).
       - `test_install_layout.py`: the script's folder is the dev one in either pin, `data_root(of)`, and `model_pack_name`.
       - `test_display_name.py`: the literal is now `data_root("dev")`.
-- [ ] 🟨 **3.8 `scripts/check-installed-sockets.py`.** Run from a normal terminal while the installed app transcribes and renders prose. It walks the `scribe-app.exe` and `scribe-host.exe` process trees with psutil (lessons: walk the tree) and reports any inet connection, text-free.
+- [x] 🟩 **3.8 `scripts/check-installed-sockets.py`.** Run from a normal terminal while the installed app transcribes and renders prose. It walks the `scribe-app.exe` and `scribe-host.exe` process trees with psutil (lessons: walk the tree) and reports any inet connection, text-free.
+  - **DONE 2026-10-03 (composer):** the practitioner's P.1 step 10 run (`--seconds 240`, during a transcription and a Narrative render on the installed app) printed `RESULT: no connection seen`.
   - Done when: it is tested against a fake process table, and the practitioner runs it in P.1.
   - **Leg i3-x1 (built and tested; stays 🟨 until the practitioner's P.1 step 10 run):**
     - **What it does:** each second for `--seconds` (default 60), it lists every process named `scribe-app.exe` or `scribe-host.exe` (any case), adds all their descendants (`children(recursive=True)`), and reads `net_connections(kind="inet")`.
