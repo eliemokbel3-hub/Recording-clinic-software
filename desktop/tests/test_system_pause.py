@@ -790,11 +790,13 @@ class TestSuspendDuringStart:
         window = _main_window(tmp_path, controller)
         real_start = controller.start
 
-        def start_with_a_suspend(device_id: int, *, consent: Any, context: Any = None) -> Any:
+        def start_with_a_suspend(
+            device_id: int, *, consent: Any, context: Any = None, **kwargs: Any
+        ) -> Any:
             # Delivered before the new recording exists: the state read inside
             # is the OLD one, as under the real controller's RLock.
             _send(window, WM_POWERBROADCAST, PBT_APMSUSPEND)
-            return real_start(device_id, consent=consent, context=context)
+            return real_start(device_id, consent=consent, context=context, **kwargs)
 
         monkeypatch.setattr(controller, "start", start_with_a_suspend)
         screen = window.session_screen

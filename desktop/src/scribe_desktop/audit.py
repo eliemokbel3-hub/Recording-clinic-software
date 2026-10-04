@@ -78,6 +78,7 @@ from scribe_desktop.encounter import ConsentAttestation, EncounterContext
 from scribe_desktop.logging_setup import log_event
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionControllerError
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import (
     FACT_NONE,
     FACT_TOKEN_PATTERN,
@@ -101,7 +102,9 @@ from scribe_desktop.session_store import (
 AUDIT_DIRNAME: Final = "audit"
 # D7: the store key's DPAPI description — distinct from every other store's.
 AUDIT_KEY_DESCRIPTION: Final = "ClinikoScribe audit key"
-AUDIT_SCHEMA_VERSION: Final = 1
+# Pilot plan Task 1.3: v2 adds ``mode`` and ``app_version``; a v1 row is
+# upgraded on read (``_decode``, D6).
+AUDIT_SCHEMA_VERSION: Final = 2
 RETENTION_YEARS: Final = 7
 MAX_EVENTS: Final = 32
 ROW_SUFFIX: Final = ".enc"
@@ -127,6 +130,10 @@ _Token = Annotated[str, StringConstraints(pattern=FACT_TOKEN_PATTERN)]
 _Code = Annotated[str, StringConstraints(pattern=_CODE_PATTERN)]
 _ClinikoId = Annotated[str, StringConstraints(pattern=_CLINIKO_ID_PATTERN)]
 _ClinicId = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{16}$")]
+# Pilot plan D7: the app version, digits only (``__version__``'s shape).
+_APP_VERSION_PATTERN: Final = r"^[0-9]{1,4}\.[0-9]{1,4}\.[0-9]{1,6}$"
+_AppVersion = Annotated[str, StringConstraints(pattern=_APP_VERSION_PATTERN)]
+_APP_VERSION_RE: Final = re.compile(_APP_VERSION_PATTERN)
 
 DeletionState = Literal[
     "pending",
@@ -270,9 +277,17 @@ class AuditEvent(_Frozen):
 
 class AuditRow(_Frozen):
     """One session's audit row (D8). ``schema_version`` is read FIRST (the
-    before-validator), so a newer row is never half-parsed into this one."""
+    before-validator), so a newer row is never half-parsed into this one.
 
-    schema_version: Literal[1] = AUDIT_SCHEMA_VERSION
+    Pilot plan Task 1.3 (v2, D7): ``mode`` — the recording's
+    ``SessionMode`` at Start, an enum; None on a ``pre_audit`` row, whose
+    mode nothing recorded — and ``app_version``, pattern-constrained
+    (digits.digits.digits) and None on a row upgraded from v1. Both are
+    flat tokens a log line could carry anyway, so neither needs a
+    ``logging_setup._PAYLOAD_SIGNATURES`` entry: a rendering of a whole row
+    is still dropped by the row's existing distinctive names."""
+
+    schema_version: Literal[2] = AUDIT_SCHEMA_VERSION
     session_id: str = Field(pattern=SESSION_ID_PATTERN)
     # The practitioner's LOCAL calendar date (round 6 MED-002); it names the
     # row's month folder. Every timestamp field is an aware UTC time.
@@ -292,6 +307,8 @@ class AuditRow(_Frozen):
     deletion: AuditDeletion = AuditDeletion()
     past_session: AuditPastSession = AuditPastSession()
     note_provenance: Literal["known", "unknown"] | None = None
+    mode: SessionMode | None = None
+    app_version: _AppVersion | None = None
     events: tuple[AuditEvent, ...] = Field(default=(), max_length=MAX_EVENTS)
 
     @model_validator(mode="before")
@@ -325,8 +342,19 @@ def _row_aad(session_id: str) -> bytes:
     return b"audit:" + validate_session_id(session_id).encode("ascii")
 
 
+def _upgrade_v1(data: dict[str, Any]) -> dict[str, Any]:
+    """Pilot plan D6: a v1 row (written before 0.2.0) as v2 — mode
+    ``normal`` (every recording before shadow mode existed was one), no app
+    version. A v1 row that already names either field is not a row this app
+    wrote: left as it is, so validation refuses it."""
+    if "mode" in data or "app_version" in data:
+        return data
+    return {**data, "schema_version": AUDIT_SCHEMA_VERSION, "mode": SessionMode.NORMAL.value}
+
+
 def _decode(plaintext: bytes) -> AuditRow | _Newer:
-    """A row, ``_NEWER`` for a newer schema, else ``ValueError`` (terse)."""
+    """A row, ``_NEWER`` for a newer schema, else ``ValueError`` (terse). A
+    v1 row is upgraded BEFORE validation (``_upgrade_v1``)."""
     try:
         data = json.loads(plaintext)
     except ValueError:
@@ -337,6 +365,8 @@ def _decode(plaintext: bytes) -> AuditRow | _Newer:
             AUDIT_SCHEMA_VERSION
         ):
             return _NEWER
+        if type(version) is int and version == 1:
+            data = _upgrade_v1(data)
         try:
             return AuditRow.model_validate(data)
         except ValidationError:
@@ -547,14 +577,22 @@ class AuditLog:
         context: EncounterContext | None,
         user_id: str | None,
         started_at: datetime,
+        mode: SessionMode,
+        app_version: str,
     ) -> None:
         """Write the new session's row BEFORE anything of the session exists
         (Flow 1). ``AuditWriteError`` when it cannot be written — the key
         unreadable or missing, the folder unwritable, a row for the id
-        already present — and nothing of the row is left behind."""
+        already present — and nothing of the row is left behind. ``mode``
+        and ``app_version`` (pilot plan Task 1.3) are the recording's mode
+        and this build's version; a version outside the row's pattern is
+        left out rather than refusing Start."""
         now = self._clock()
         if user_id is not None and not _CLINIKO_ID_RE.fullmatch(user_id):
             user_id = None  # an id the registry could not vouch for is left out
+        version: str | None = app_version
+        if not isinstance(app_version, str) or not _APP_VERSION_RE.fullmatch(app_version):
+            version = None  # a version the row cannot hold never refuses Start
         try:
             row = AuditRow(
                 session_id=session_id,
@@ -571,6 +609,8 @@ class AuditLog:
                 user_id=user_id if context is not None else None,
                 booking_id=context.booking_id if context is not None else None,
                 treatment_note_id=context.treatment_note_id if context is not None else None,
+                mode=mode,
+                app_version=version,
                 events=(AuditEvent(at=now, code="started"),),
             )
         except (ValidationError, ValueError, OverflowError, OSError):
@@ -1032,6 +1072,10 @@ CSV_COLUMNS: Final[tuple[str, ...]] = (
     "past_session.state",
     "past_session.at",
     "note_provenance",
+    # Pilot plan Task 1.3 (v2): empty for a pre_audit row's mode and an
+    # upgraded v1 row's version.
+    "mode",
+    "app_version",
 )
 
 # Characters a spreadsheet may read as the start of a formula.
@@ -1081,6 +1125,8 @@ def _csv_values(row: AuditRow) -> list[object]:
         row.past_session.state,
         row.past_session.at,
         row.note_provenance,
+        row.mode.value if row.mode is not None else None,
+        row.app_version,
     ]
 
 

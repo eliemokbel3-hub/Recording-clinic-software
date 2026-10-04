@@ -127,6 +127,13 @@ Clinical-content discipline (Critical Constraints, design-system):
   Every copy of note text — the button and a copy of the panel's selection —
   goes through ``_place_note_text``, which adds the formats that keep the
   note out of Windows clipboard history and cloud sync (Task 8.2).
+- A SHADOW recording (pilot plan D5, D13; the mode the main window passes to
+  ``begin_review`` / ``show_saved_note``) is refused by a reason SEPARATE from
+  ``_copy_ready`` (``_copy_allowed``): the Copy button disabled with its
+  reason, the note panel display-only, both panel copy routes and the inline
+  line editor's Copy, Cut and drag refused, ``_place_note_text`` refusing as
+  the last line, Write refused by name, and a Save that writes no learned
+  phrase, rule or wording (safety-direction demotions still apply).
 - "Write draft to Cliniko" (cliniko-draft-write Task 5.2, D2) sits beside
   Copy and follows Copy's readiness plus the binding (the live session, and
   whether it is linked), the mock-note gate (D10) and the session's write
@@ -148,10 +155,10 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
-from PySide6.QtGui import QContextMenuEvent, QKeyEvent, QKeySequence
+from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -202,6 +209,7 @@ from scribe_desktop.note_config import (
     record_rule_outcomes,
     replace_learned_rule_wording,
 )
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models, note_review
 from scribe_desktop.ui.tasks import TaskThread
@@ -230,29 +238,81 @@ def _clear_layout(layout: QLayout) -> None:
             widget.deleteLater()
 
 
+# The standard context-menu actions of a ``QLineEdit`` that put its text on
+# the clipboard (Qt's object names, with the English menu texts as the
+# fallback match — the app ships no translation).
+_CLIPBOARD_ACTION_NAMES: Final = frozenset({"edit-copy", "edit-cut"})
+_CLIPBOARD_ACTION_TEXTS: Final = frozenset({"Copy", "Cut"})
+
+
+def _is_clipboard_action(action: QAction) -> bool:
+    text = action.text().split("\t", 1)[0].replace("&", "")
+    return action.objectName() in _CLIPBOARD_ACTION_NAMES or text in _CLIPBOARD_ACTION_TEXTS
+
+
 class _LineEditor(QLineEdit):
     """The inline single-line editor a row shows while the clinician types
     over that line (note-learning plan Task 2.1). Enter applies it (the
     inherited ``returnPressed``); Escape cancels — the one key the base class
-    does not already report, so it is the only reason this subclass exists."""
+    does not already report.
+
+    Pilot plan D5 (peer round 1, PR-HIGH-001): it opens holding the line's
+    text, and Qt's own Copy and Cut never pass through ``_place_note_text``.
+    For a SHADOW recording (``shadow``) its Copy and Cut shortcuts do
+    nothing, its context menu has no Copy or Cut entry, and dragging the
+    selection is off; typing, Paste, Undo and Escape are unchanged."""
 
     escape_pressed = Signal()
+
+    def __init__(self, *, shadow: bool = False) -> None:
+        super().__init__()
+        self._shadow = shadow
+        if shadow:
+            self.setDragEnabled(False)
+
+    @property
+    def shadow(self) -> bool:
+        return self._shadow
 
     def keyPressEvent(self, event: QKeyEvent, /) -> None:
         if event.key() == Qt.Key.Key_Escape:
             self.escape_pressed.emit()
             return
+        if self._shadow and (
+            event.matches(QKeySequence.StandardKey.Copy)
+            or event.matches(QKeySequence.StandardKey.Cut)
+        ):
+            event.accept()  # pilot plan D5: nothing reaches the clipboard
+            return
         super().keyPressEvent(event)
 
+    def build_context_menu(self) -> QMenu:
+        """Qt's standard menu — less Copy and Cut for a shadow recording."""
+        menu = self.createStandardContextMenu()
+        if self._shadow:
+            for action in menu.actions():
+                if _is_clipboard_action(action):
+                    menu.removeAction(action)
+        return menu
 
-def _place_note_text(text: str) -> bool:
+    def contextMenuEvent(self, event: QContextMenuEvent, /) -> None:
+        menu = self.build_context_menu()
+        menu.exec(event.globalPos())
+        menu.deleteLater()
+
+
+def _place_note_text(text: str, *, shadow: bool) -> bool:
     """Put note text on the clipboard (Task 8.2): ``text`` as plain text —
     what ``QClipboard.setText`` would place — plus the three registered
     Windows formats that keep it out of Windows clipboard history and cloud
     clipboard sync (``models.clipboard_mime_formats``). The ONE placement of
     note text, shared by the Copy button and a copy of the note panel's
     selection; callers gate it on ratification first. False when there is no
-    clipboard."""
+    clipboard — and, the last line of pilot plan D5, for a SHADOW
+    recording's note (``shadow``: anything but an explicit False refuses),
+    whatever the caller checked before."""
+    if shadow is not False:
+        return False
     clipboard = QApplication.clipboard()
     if clipboard is None:
         return False
@@ -275,19 +335,26 @@ class _NotePanel(QPlainTextEdit):
     nothing reaches the clipboard before ratification. Qt's own context menu
     is replaced (its Copy would bypass the formats); Cut and Paste do nothing
     on a read-only panel. A drag of the selection is Qt's own and does not
-    touch the clipboard (the named residue in the threat model)."""
+    touch the clipboard (the named residue in the threat model).
 
-    def __init__(self, copy_ready: Callable[[], bool]) -> None:
+    Pilot plan D5: ``copy_ready`` is the screen's ``_copy_allowed`` (its
+    ``_copy_ready`` AND not a shadow recording), so for a shadow recording
+    the panel stays display-only — nothing to select, so nothing to drag —
+    and both copy routes refuse; ``shadow`` reaches the placement too."""
+
+    def __init__(self, copy_ready: Callable[[], bool], shadow: Callable[[], bool]) -> None:
         super().__init__()
         self._copy_ready = copy_ready
+        self._shadow = shadow
 
     def copy_selection(self) -> bool:
         """Copy the selection with the formats; False (nothing placed) unless
-        the note is ratified and something is selected."""
+        the note is ratified, not a shadow recording's, and something is
+        selected."""
         cursor = self.textCursor()
         if not self._copy_ready() or not cursor.hasSelection():
             return False
-        return _place_note_text(cursor.selection().toPlainText())
+        return _place_note_text(cursor.selection().toPlainText(), shadow=self._shadow())
 
     def keyPressEvent(self, event: QKeyEvent, /) -> None:
         if event.matches(QKeySequence.StandardKey.Copy):
@@ -368,6 +435,10 @@ class NoteScreen(QWidget):
         self._document: TranscriptDocument | None = None
         self._config: NoteConfig | None = None
         self._copy_enabled: bool = False
+        # Pilot plan D5/D13: the review's note is a SHADOW recording's (set
+        # by `begin_review` / `show_saved_note` from the mode the main window
+        # resolved; `clear()` leaves no note to copy).
+        self._shadow: bool = False
         self._on_save: Callable[[GeneratedNote], None] | None = None
         self._on_abandon: Callable[[], None] | None = None
         self._on_cancel: Callable[[], None] | None = None
@@ -535,7 +606,7 @@ class NoteScreen(QWidget):
         self.acknowledge_all_button.clicked.connect(self._acknowledge_all)
         self.acknowledge_all_button.hide()
 
-        self.note_body = _NotePanel(self._copy_ready)
+        self.note_body = _NotePanel(self._copy_allowed, lambda: self._shadow)
         self.note_body.setReadOnly(True)
         self.note_body.setPlaceholderText("No note generated.")
         # The style line (Task 4.4, C8): rendering in flight, what landed,
@@ -581,6 +652,12 @@ class NoteScreen(QWidget):
         self.write_label = QLabel()
         self.write_label.setTextFormat(Qt.TextFormat.PlainText)
         self.write_label.setWordWrap(True)
+        # Pilot plan D5/D13: the standing shadow-recording line (fixed text),
+        # shown while a shadow recording's note is on the tab.
+        self.shadow_label = QLabel(models.SHADOW_NOTE_LINE)
+        self.shadow_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.shadow_label.setWordWrap(True)
+        self.shadow_label.hide()
 
         self.message_label = QLabel()
         # Round 48 PR-LOW-002: PLAIN TEXT, always. This label renders
@@ -623,6 +700,7 @@ class NoteScreen(QWidget):
         buttons.addWidget(self.write_button)
         buttons.addStretch(1)
         note_layout.addLayout(buttons)
+        note_layout.addWidget(self.shadow_label)
         note_layout.addWidget(self.write_label)
         note_layout.addWidget(self.message_label)
 
@@ -650,15 +728,19 @@ class NoteScreen(QWidget):
         on_state_changed: Callable[[models.NoteReviewState], None] | None = None,
         template_profile_id: str | None = None,
         write_binding: models.WriteBinding | None = None,
+        mode: SessionMode,
     ) -> None:
         """Load a fresh draft for review. ``result`` carries the draft, the
         config it was composed under, and the on-disk transcript — all three
         used so finalisation stays digest-consistent (``models`` docstring).
         ``write_binding`` (draft-write D2) names the live session the note is
-        for; None hides "Write draft to Cliniko".
+        for; None hides "Write draft to Cliniko". ``mode`` (pilot plan D5,
+        D13) is the session's, resolved by the main window: anything but
+        ``normal`` makes the note display-only and its Save teach nothing.
         """
         self.clear()
         self._write_binding = write_binding
+        self._shadow = mode is not SessionMode.NORMAL
         self._draft = result.draft
         self._document = result.document
         self._config = result.config
@@ -721,6 +803,7 @@ class NoteScreen(QWidget):
         self._on_cancel = None
         self._on_state_changed = None
         self._write_binding = None
+        self._shadow = False
         self._write_in_flight = False
         self._write_line = None
         self._write_status_cache = None
@@ -778,6 +861,7 @@ class NoteScreen(QWidget):
         copy_enabled: bool = models.COPY_TO_CLINIKO_ENABLED,
         on_abandon: Callable[[], None] | None = None,
         write_binding: models.WriteBinding | None = None,
+        mode: SessionMode,
     ) -> None:
         """Cliniko workflow safeguards plan Task 5.4 (D6): show a SAVED note
         reopened from the Unreviewed section, as it was saved — its edits,
@@ -789,9 +873,11 @@ class NoteScreen(QWidget):
         ``on_abandon`` is "Delete note and complete without one";
         ``write_binding`` offers "Write draft to Cliniko" for the adopted
         session (draft-write D2 — an adopted session writes through the same
-        path as a live one)."""
+        path as a live one). ``mode`` (pilot plan D5): the session's, as it
+        was started — a shadow recording's saved note stays display-only."""
         self.clear()
         self._write_binding = write_binding
+        self._shadow = mode is not SessionMode.NORMAL
         self._saved = note
         self._copy_enabled = copy_enabled
         self._on_abandon = on_abandon
@@ -804,7 +890,20 @@ class NoteScreen(QWidget):
     def showing_saved_note(self) -> bool:
         return self._saved is not None
 
+    @property
+    def shadow(self) -> bool:
+        """Pilot plan D5: the note shown is a shadow recording's."""
+        return self._shadow
+
     def _read_learning_status(self) -> models.LearningStatus:
+        """The learning gate. Pilot plan D13 (Task 1.9): a SHADOW review's
+        gate is closed whatever the profile says (the provider is not even
+        read), so every queue line says "Not learned: shadow recording" and
+        the Save writes no learned phrase, rule or wording — the learning-off
+        branch of ``_write_learned_rules`` still records a removal's
+        demotion (the safe direction)."""
+        if self._shadow:
+            return models.LearningStatus(False, models.SHADOW_NOT_LEARNED)
         provider = self._learning_status_provider
         if provider is None:
             return models.LearningStatus(False, models.LEARNING_NO_PROFILE_HINT)
@@ -1727,7 +1826,8 @@ class NoteScreen(QWidget):
         row's label and buttons: the field, Apply and Cancel. Every widget
         joins ``_line_widgets``, so Save freezes them with the rest."""
         target_id, current_text = request
-        editor = _LineEditor()
+        # Pilot plan D5: a shadow recording's editor refuses Copy, Cut and drag.
+        editor = _LineEditor(shadow=self._shadow)
         editor.setText(current_text)
         editor.setToolTip("Type this line's wording. Enter applies it, Escape cancels.")
         editor.returnPressed.connect(self.commit_editor)
@@ -2191,12 +2291,23 @@ class NoteScreen(QWidget):
         out of Windows clipboard history and cloud clipboard sync
         (``models.clipboard_mime_formats`` — what they do not do is stated
         there). A selection copied from the note body goes through the same
-        placement (``_NotePanel``)."""
+        placement (``_NotePanel``). A shadow recording's note is refused by
+        name (pilot plan D5)."""
         note = self._note if self._note is not None else self._saved
-        if not self._copy_ready() or note is None:  # click-time re-check (fail closed)
+        if self._shadow and note is not None:
+            self.message_label.setText(models.SHADOW_COPY_REFUSED)
             return
-        if _place_note_text(models.format_note_body(note)):
+        if not self._copy_allowed() or note is None:  # click-time re-check (fail closed)
+            return
+        if _place_note_text(models.format_note_body(note), shadow=self._shadow):
             self.message_label.setText("Note copied.")
+
+    def _copy_allowed(self) -> bool:
+        """Pilot plan D5: what a COPY of note text needs — ``_copy_ready``
+        and not a shadow recording. A separate predicate on purpose: Write
+        derives "saved" from ``_copy_ready`` (``_write_control``), so the
+        shadow refusal never goes through it."""
+        return self._copy_ready() and not self._shadow
 
     def _copy_ready(self) -> bool:
         """The single predicate copy enablement derives from (round 35
@@ -2227,8 +2338,13 @@ class NoteScreen(QWidget):
         recorded copy flag, but both the button's ENABLED state and the note
         panel's selectability derive from ``_copy_ready()`` — so selectable
         text (which carries native copy shortcuts) and the button share one
-        predicate. The transcript panel is display-only always."""
-        ready = self._copy_ready()
+        predicate. The transcript panel is display-only always.
+
+        Pilot plan D5: that predicate is ``_copy_allowed`` — for a shadow
+        recording the button is disabled with its reason (tooltip) and the
+        standing shadow line shows, and the panel stays display-only at
+        every review state."""
+        ready = self._copy_allowed()
         if ready:
             self.note_body.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
@@ -2238,6 +2354,9 @@ class NoteScreen(QWidget):
             self.note_body.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         self.copy_button.setVisible(self._copy_enabled)
         self.copy_button.setEnabled(ready)
+        shown = self._shadow and (self._note is not None or self._saved is not None)
+        self.copy_button.setToolTip(models.SHADOW_COPY_REFUSED if shown else "")
+        self.shadow_label.setVisible(shown)
 
     # --- the Cliniko draft write (draft-write Task 5.2, D2) -----------------
 
@@ -2298,6 +2417,7 @@ class NoteScreen(QWidget):
             # Installation plan D4: read only in the dev channel (a production
             # build never reads config\dev.json).
             allow_dev_writes=dev_writes_allowed(self._config_root),
+            shadow=self._shadow,  # pilot plan D4
         )
 
     def refresh_write_control(self) -> None:

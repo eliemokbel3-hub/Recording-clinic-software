@@ -67,7 +67,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 from pydantic import (
     AwareDatetime,
@@ -77,6 +77,7 @@ from pydantic import (
     ValidationError,
     ValidationInfo,
     field_validator,
+    model_validator,
 )
 
 from scribe_desktop import install_layout
@@ -112,6 +113,9 @@ PAST_SESSIONS_DIRNAME: Final = "past_sessions"
 # D1: the entry key's DPAPI description — distinct from every other store's.
 PAST_SESSION_KEY_DESCRIPTION: Final = "ClinikoScribe past-session key"
 LABEL_FILENAME: Final = "label.enc"
+# Pilot plan Task 1.6: v2 adds the shadow flag; a v1 label reads as not
+# shadow (D6).
+LABEL_SCHEMA_VERSION: Final = 2
 PENDING_FILENAME: Final = "pending"
 STAGING_DIRNAME: Final = ".staging"
 SETTINGS_FILENAME: Final = "past_sessions.json"
@@ -196,25 +200,34 @@ class KeepLabel:
     patient's name as Cliniko showed it (None when not available), whether
     the recording was linked to a Cliniko note, a desktop recording, or
     cannot be told, and its clinic id. Built through ``keep_label`` — the
-    one normaliser. repr-hidden: the name is patient data."""
+    one normaliser. repr-hidden: the name is patient data. ``shadow``
+    (pilot plan Task 1.6): the recording was a shadow recording, so its kept
+    saved note is never copied (``ui/past_sessions``)."""
 
     patient_name: str | None = field(repr=False)
     recording: RecordingKind
     clinic_id: str | None
+    shadow: bool
 
 
-UNKNOWN_LABEL: Final = KeepLabel(None, "unknown", None)
+# Pilot plan D3: a label nothing resolved is treated as a shadow recording's.
+UNKNOWN_LABEL: Final = KeepLabel(None, "unknown", None, shadow=True)
 
 
 def keep_label(
-    patient_name: str | None, recording: RecordingKind, clinic_id: str | None
+    patient_name: str | None,
+    recording: RecordingKind,
+    clinic_id: str | None,
+    *,
+    shadow: bool,
 ) -> KeepLabel:
     """``KeepLabel`` normalised so the stored label always validates — a
     Complete must never fail on a display string: control characters are
     dropped, whitespace collapsed, the name capped at
     ``MAX_PATIENT_NAME_CHARS`` (an empty one is None); a clinic id that is
     not the registry's shape is left out; a desktop recording has no
-    name."""
+    name. ``shadow`` is the recording's mode (pilot plan Task 1.6) — the
+    caller's to resolve, fail closed (``MainWindow.keep_label_for``)."""
     name: str | None = None
     if patient_name is not None and recording != "desktop":
         cleaned = "".join(
@@ -222,18 +235,25 @@ def keep_label(
         )
         name = " ".join(cleaned.split())[:MAX_PATIENT_NAME_CHARS].strip() or None
     clinic = clinic_id if clinic_id is not None and _CLINIC_ID_RE.fullmatch(clinic_id) else None
-    return KeepLabel(name, recording, clinic)
+    return KeepLabel(name, recording, clinic, shadow=shadow is not False)
 
 
 class PastSessionLabel(BaseModel):
     """``label.enc``'s document: dates (UTC), the recording kind, the clinic
     id, the patient's name (None: not available, or a desktop recording)
     and what the entry holds. ``patient_name`` is a tripwire signature in
-    ``logging_setup``, so a rendering of a label is never logged."""
+    ``logging_setup``, so a rendering of a label is never logged.
+
+    Pilot plan Task 1.6 (v2): ``shadow`` — the entry is a shadow
+    recording's, so its saved note is never copied. A v1 label (before
+    0.2.0) has none and reads as not shadow (D6); a v1 label carrying one,
+    or a v2 label without one, is not a label this app wrote and is
+    refused (the entry lists as unreadable, and Copy fails closed). A newer
+    version is refused the same way."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = LABEL_SCHEMA_VERSION
     session_id: str = Field(pattern=SESSION_ID_PATTERN)
     completed_at: AwareDatetime
     started_at: AwareDatetime | None = None
@@ -246,6 +266,18 @@ class PastSessionLabel(BaseModel):
     )
     has_generated: bool
     has_saved: bool
+    shadow: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _shadow_by_version(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            version = data.get("schema_version", LABEL_SCHEMA_VERSION)
+            if version == 1 and "shadow" in data:
+                raise ValueError("a v1 label carries no shadow flag")
+            if version == 2 and "shadow" not in data and "schema_version" in data:
+                raise ValueError("a v2 label names its shadow flag")
+        return data
 
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
@@ -447,6 +479,7 @@ class PastSessionStore:
             patient_name=label.patient_name,
             has_generated=source.generated_plain is not None,
             has_saved=source.note_plain is not None,
+            shadow=label.shadow,
         )
 
     def _stage(

@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** pilot
-**Overall Progress:** `0%` (0 of 34 tasks)
+**Overall Progress:** `26%` (9 of 34 tasks)
 
 ## Lifecycle State
 - Active
@@ -239,9 +239,25 @@ Owned by other plans and NOT re-deferred here (their own entries carry the risk 
 True non-goals for this plan: any automatic comparison with the practitioner's own note; any export of a real consultation; shadow state in the Chrome panel (Excluded, above).
 
 ## Current State / Handoff Note
-- Last completed step: Planning complete (hardened by `/review-plan` 2026-10-04; code facts re-probed at `1be6fd8`)
-- Current in-progress step: None
-- Immediate next action: Task 1.1 via `/execute` or `/execute-loop` (Phase 1). The cross-family plan peer loop ran 2026-10-04 (5 rounds, 8 findings, all applied; cap reached — see Review History). Task 2.3's metric contract drew a new finding in each of rounds 2–5, so give it a focused review when Phase 2 is built and before decision 3.5 is ratified.
+- Loop config: executor=claude-p model="claude-opus-5-5" effort=high profile=default; peer=codex model="gpt-6-astra" effort=medium; architect=off; cadence=every-phase; caps=review:3,peer:5; gates=executor; cap-raise=executor; high-auto=on; peer-max=12; notify=action-only; scope=all; autocommit=on; isolation=none; merge=off; perms=scoped; liveness=10; monitor-delivery=auto; verify=composer
+- COMPOSER RUN-STATE: /execute-loop run iso `pilot-20261004-104335-7c2e` (isolation=none, builds on `main` in this checkout), started 2026-10-04T10:45+11:00; runkeys stage-1 = Phase 1, stage-2 = Phase 2, stage-3 = Phase 3, stage-4 = Hardening stage, stage-5 = Phase P; probe logs `C:/Recording clinic software/.cursor/loops/stage-N-probe.log`; spawn helper `.cursor/loops/pilot-spawn.sh`, peer runner `.cursor/loops/pilot-peer-run.sh`; policy log `.cursor/loops/pilot-20261004-104335-7c2e-policy.log` (high-auto=on and gates=executor attested). Preflight PASS 2026-10-04 (harness probe: scoped grants run in-executor; pytest composer-run). Current: Phase 1 BUILT and converged (review-loop rounds 6–8; codex peer rounds 9–10, pass stage-1.p1 converged at peer round 2); full suites green (desktop 6017 passed / 9 skipped before round 9, the round-9 re-run 675 passed; extension 313); live-user smoke PASS on the developer build (practitioner, 2026-10-04T20:55); /document run; next the composer's Phase 1 commit, then Phase 2 (stage-2) with a fresh executor. Phase 1 executor session 47b50144-bffe-49a4-bff2-ef7853edb8f0 (discarded at the phase boundary).
+- Last completed step: Phase 1 COMPLETE in the executor (stage-1, 2026-10-04T11:44:46+11:00). Tasks 1.1–1.9 are 🟩, uncommitted, with no commit made by the executor.
+  - Suites: the full desktop run passed 6007 before the review-loop's fixes; the targeted re-runs after each fix passed (`test_ui_screens.py` 429, `test_unreviewed_review.py` 90, then 170 across `test_unreviewed_review.py`, `test_pilot_settings.py` and `test_ui_encounter.py`); extension qa passed 313. ruff "All checks passed!"; mypy "no issues found in 60 source files".
+  - In-session `/review-loop`, rounds 6–8, reached its cap of 3 and converged on CRIT/HIGH/MED. Round 6: 1 MED, 1 LOW. Round 7: 1 MED (the Transcript-tab shadow line for a recovered recording, Task 1.7), 1 LOW. Round 8: 1 doc-only LOW. All applied.
+  - Brief: `.cursor/loops/stage-1-handoff.md`.
+- Current in-progress step: Phase 1 close-out at the composer seat. Done since the hand-back: full suites (desktop 6017 passed / 9 skipped, extension 313, ruff and mypy clean); the codex peer pass (round 9: 2 MED + 2 LOW verified, all fixed; round 10: confirmation, 0 findings); the practitioner's live smoke on the developer build (PASS, 2026-10-04); `/document`. Remaining: the Phase 1 commit.
+- Operator brief (Phase 1):
+  - What exists: a "Shadow mode (pilot)" checkbox on the Status tab, plus the version line.
+  - A recording keeps the mode it had at Start, through Finish, an Unreviewed reopen and a crash-recovered checkout. Anything it cannot read counts as shadow.
+  - In shadow mode, Write is refused by name with an audit record, before anything is reserved or sent.
+  - Copy is refused at the button, keyboard, menu, line editor and Past sessions, and `_place_note_text` refuses as its last line.
+  - A shadow Save writes no phrase, rule or wording; demoting a learned rule still applies.
+  - The Session, Transcript, Note and Past-sessions tabs say so.
+  - The audit row, the encounter record and the Past-sessions label are v2 and read v1 files as normal. The version is 0.2.0.
+  - Watch in the peer pass: `_live_mode()` makes any review with no live session a shadow review, which fails closed. Generation is live-path only today; a future recovered-view generation must pass the checkout's mode.
+  - Watch also the D13 demotion on a shadow Save, which is permitted and pinned by test.
+  - Phase P.1 checks the installed wording.
+- Immediate next action: the composer's Phase 1 commit. After that, Phase 2 (stage-2, Task 2.1). The cross-family plan peer loop ran 2026-10-04 (5 rounds, 8 findings, all applied; cap reached — see Review History). Task 2.3's metric contract drew a new finding in each of rounds 2–5, so give it a focused review when Phase 2 is built and before decision 3.5 is ratified.
 - Open blockers / open questions: clinic 2's Cliniko API-key permission (blocks only Task P.7); a second person for the role-plays (Task P.2); an outside reviewer for `docs/practice/` (Task P.6).
 - Last plan sync: 2026-10-04
 
@@ -251,6 +267,11 @@ True non-goals for this plan: any automatic comparison with the practitioner's o
 - 2026-10-04 round 3: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=fix-induced; action=amend-plan (plan peer-review; applied — the metric contract moved from per-segment to word-level alignment)
 - 2026-10-04 round 4: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=fix-induced; action=amend-plan (plan peer-review; applied — `warned` now needs the fact's own word to be uncovered high-risk evidence)
 - 2026-10-04 round 5: 0 CRIT / 0 HIGH / 1 MED / 0 LOW; skew=fix-induced; action=amend-plan (plan peer-review; applied — checker warnings on the finalised note now count in the pass rule). Cap reached (5 of 5); loop stopped unconverged-by-rule: rounds 3–5 each found one new MED on the harness metric contract (Task 2.3, D8) and nothing elsewhere.
+- 2026-10-04 round 6: 0 CRIT / 0 HIGH / 1 MED / 1 LOW; skew=none; action=none
+- 2026-10-04 round 7: 0 CRIT / 0 HIGH / 1 MED / 1 LOW; skew=none; action=none
+- 2026-10-04 round 8: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none (cap reached, 3 of 3; converged on CRIT/HIGH/MED — the one LOW is a doc-only fix)
+- 2026-10-04 round 9: 0 CRIT / 0 HIGH / 2 MED / 2 LOW (verified; peer labels 0 / 2 / 1 / 1); skew=none; action=fix (codex peer, pass stage-1.p1 peer round 1 of 5, composer seat; all four Fix-now applied by the executor fix leg; re-run 675 passed)
+- 2026-10-04 round 10: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none (codex confirmation, pass stage-1.p1 peer round 2 of 5; all four round-9 fixes confirmed; the peer pass converged)
 
 ## Review Findings Log
 
@@ -671,29 +692,231 @@ PEER-PLAN-ROUND-4 RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 0; build-aff
 
 PEER-PLAN-ROUND-5 RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 0; build-affecting 1 / record-only 0 / invalid 0).
 
+### Round 6 - 2026-10-04 - pilot plan Phase 1, /review (round 1 of the Phase 1 code review-loop)
+
+- Round status: Closed (2 applied; tests pending the composer's pytest run)
+- Source: Claude Code (stage-1 executor session, `claude-opus-5-5`; in-session `/review-loop`, cap 3)
+- Primary review baseline: `1500e2f` (HEAD; Phase 1 is uncommitted working-tree change). Changed files: the 13 source files, `session_mode.py` (new), 16 test modules plus 3 new (`test_pilot_settings.py`, `test_schema_versions.py`, `test_shadow_exits.py`), `docs/design-system.md`, `CHANGELOG.md`, the four version files. Skipped with reason: `extension/package-lock.json` (generated; only its two version strings moved, pinned by `test_install_layout.py`).
+- Passes run: correctness/security; executor judgment; structural quality (none); post-fix regression (the two composer-run test fixes: test-only, no caller change); missed-issue.
+- Missed-issue pass: re-read `ui/main_window.py` (`keep_label_for`, `session_mode_for`, `_live_mode`, `_open_adopted`, `_open_checkout_encounter`, `_on_write_requested`), `ui/note.py` (`_LineEditor`, `_place_note_text`, `_NotePanel`, `_copy_note`, `_apply_copy_binding`, `_write_control`, `_read_learning_status`, `_write_learned_rules`), `ui/transcript.py` `_keep_label`, `session.py` (`start`, `adopt_queued`, every `label=` Complete), `past_sessions.py` (`keeper`, `UNKNOWN_LABEL`), `audit.py` `_decode`, and the design-system bullet against the code; result: LOW-001.
+- Finding verification: 5 candidates; 3 dropped (an absent `schema_version` reading as v2 normal: `encounter.enc` and `label.enc` are AEAD-sealed under keys only this app holds, so no other writer exists; the shadow refusal reading the write record: content-free and needed for Write's other lines; per-refresh reads of `pilot.json`: refresh runs on state change only, not on the 500 ms poll); 0 downgraded.
+- Not findings (checked): every Complete without a resolved label falls to `UNKNOWN_LABEL` (shadow); the one `keeper` path; `generated.enc` stays display-only in Past sessions; the security documents are Task 3.4's.
+
+#### Findings
+
+**MED-001 — Task 1.2's Done-when has no test for "shadow after recovery" or "after an Unreviewed open"**
+
+- Classification: n/a (round 1 of this code loop)
+- Triage: Fix-now; Fix route: fix-on-fast (test additions)
+- Why it matters: the mode must survive every rebuild (D1), and an unreadable record must read as shadow (D3). The recovered checkout's mode decides the Past-sessions label (copy refused or not), and the Unreviewed open decides whether the reopened saved note is display-only and Write refused. Neither path had a test, so a regression there would pass the suite.
+- Current behaviour: `test_schema_versions.py` covered Start, Finish and `adopt_queued`; nothing drove `MainWindow._open_checkout_encounter` → `session_mode_for` / `keep_label_for` or the window's Unreviewed open with a shadow record.
+- Desired behaviour: tests for both paths, both modes, plus v1, missing and newer records on the recovery path.
+- Evidence: `desktop/src/scribe_desktop/ui/main_window.py:1570-1581` (`_open_checkout_encounter`), `:1846-1861` (`session_mode_for`), `:1178-1201` (`_open_adopted`); no test referenced `session_mode_for` or opened a shadow Unreviewed row.
+- Pattern siblings: searched `session_mode_for`, `_open_checkout_encounter`, `open_unreviewed`, `_open_row` in `desktop/tests` — none with a mode; the Chrome route (`open_unreviewed`) shares `_open_adopted`, so the row test covers it.
+- Regression risk: tests only.
+- /fix decision: Applied
+- /fix notes: `test_unreviewed_review.py` gains `TestShadowAfterRecoveryAndReopen`. Its recovery-checkout test runs on the real `_open_checkout_encounter` with SessionCrypto, no DPAPI, over five stored records: shadow, normal, the committed v1 bytes, missing and newer. In each case it asserts `session_mode_for`, the keep-label's shadow flag, and SHADOW once the checkout ends. It also adds Unreviewed-open tests in both modes (windows_only), checking the saved note's shadow state, Copy, the shadow line, Write's `shadow_session` line and the label. `_write_session` / `_unreviewed` take `mode=`. ruff and mypy are clean; pytest is pending (composer).
+- /fix date: 2026-10-04
+- /fix applied by: Claude Code (stage-1 executor)
+
+##### LOW
+
+- **[LOW]** LOW-001: `docs/design-system.md` (shadow-mode bullet) — it claimed the Status tab "heads with" the version line, and that a keyboard or menu Copy "says" the refusal line. The version sits under the intended-use line and warnings, and a keyboard or menu Copy on the non-selectable panel places nothing and shows nothing; the line is the disabled button's tooltip (Constraint 11: claim only what the code does). — Triage: Fix-now; Decision: Applied (wording corrected to match `StatusPanel`'s layout and `_apply_copy_binding` / `_NotePanel.copy_selection`)
+
+ROUND-6 RESULT: 2 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 1); both applied.
+
+### Round 7 - 2026-10-04 - pilot plan Phase 1, /review (round 2 of the Phase 1 code review-loop)
+
+- Round status: Closed (2 applied; tests pending the composer's pytest run)
+- Source: Claude Code (stage-1 executor session, `claude-opus-5-5`; in-session `/review-loop`, cap 3)
+- Primary review baseline: `1500e2f` (HEAD; Phase 1 is uncommitted working-tree change), the same scope as round 6 plus round 6's fixes (`test_unreviewed_review.py`, `docs/design-system.md`).
+- Passes run: correctness/security; executor judgment; structural quality (none); post-fix regression (round 6's test additions: test-only; the composer re-ran `test_unreviewed_review.py`, 90 passed); missed-issue.
+- Missed-issue pass: re-read each Phase 1 task's text against the code it names — Task 1.7's "the same state shown for a live or recovered shadow recording" against every screen a recovered session lands on (`_open_checkout_encounter` → `_begin_checkout` → `_show_checkout_line`, the Transcript screen), and Task 1.2's "for both `on_start` and `start_linked`" against the tests; also `ui/bridge.py` (no copy path), the conftest pins, every Complete's label and the one `keeper`. Result: MED-002 and LOW-002.
+- Finding verification: 4 candidates; 2 dropped (the bridge carries no note text, so it needs no shadow gate; an adopted session's Transcript screen is reached through `_begin_checkout` too, so it shares the MED-002 fix rather than being a separate finding); 0 downgraded.
+- Round classification: MED-002 🆕 pre-existing since the Phase 1 build, missed by round 6 (not fix-induced); LOW-002 🆕 pre-existing test gap. Skew: none.
+
+#### Findings
+
+**MED-002 — a recovered shadow recording's Transcript screen did not say it was a shadow recording (Task 1.7)**
+
+- Classification: 🆕 pre-existing (missed by round 6)
+- Triage: Fix-now; Fix route: fix-on-fast
+- Why it matters: Task 1.7 requires the shadow state to be "shown for a live or recovered shadow recording". A recovered session lands on the Transcript screen. There the only line was the link line, so the practitioner learned it was shadow only on reaching the Note tab. An unreadable record (shadow by D3) gave no cue at all until then.
+- Current behaviour: `MainWindow._show_checkout_line` set only `models.checkout_link_line(...)`; the Session tab's line follows only the TRACKED session, which a recovered checkout is not.
+- Desired behaviour: the Transcript screen shows `SHADOW_RECORDING_LINE` for a checked-out (recovered or adopted) session whose mode is not NORMAL, and hides it when the checkout ends.
+- Evidence: `desktop/src/scribe_desktop/ui/main_window.py` `_show_checkout_line` / `_end_checkout_encounter`; `ui/transcript.py` had no shadow widget; `ui/session_screen.py:287` labels only the tracked session.
+- Pattern siblings: the Note tab already shows its line (`NoteScreen.shadow_label`); Past sessions marks the entry; the Session tab covers live and queued recordings.
+- Regression risk: low. The link line keeps its exact text, so the twelve pins in `test_ui_encounter.py` are unaffected. The shadow line is a separate label, shown or hidden only by `_show_checkout_line` and `_end_checkout_encounter`.
+- /fix decision: Applied
+- /fix notes: `TranscriptScreen.shadow_label` (fixed text `SHADOW_RECORDING_LINE`, hidden by default) and `set_shadow_line(shown)`; `_show_checkout_line` shows it when `session_mode_for(checkout.session_id) is not SessionMode.NORMAL`, and both clear paths hide it. Tests: `TestShadowAfterRecoveryAndReopen`'s five-way recovery test asserts the label visible exactly for shadow, missing and newer records, and hidden after the checkout ends. The two Unreviewed-open tests assert it shown in shadow and hidden in normal. The design-system bullet names the Transcript tab. ruff and mypy are clean; pytest is pending (composer).
+- /fix date: 2026-10-04
+- /fix applied by: Claude Code (stage-1 executor)
+
+##### LOW
+
+- **[LOW]** LOW-002: `desktop/tests/test_pilot_settings.py` — Task 1.2 names both Start entry points (`on_start` and `start_linked`), but only the desktop Start was tested. The code is shared (`SessionScreen._start`), so this is a test gap, not a defect. — Classification: 🆕 pre-existing; Triage: Fix-now; Decision: Applied. `test_a_chrome_start_takes_the_setting_too` is parametrized on and off and drives `start_linked` with a linked consent and context. The tracking fake now carries the context, so `bind_consent` accepts the linked consent.
+
+ROUND-7 RESULT: 2 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 1); both applied.
+
+### Round 8 - 2026-10-04 - pilot plan Phase 1, /review (round 3 of the Phase 1 code review-loop; the cap)
+
+- Round status: Closed (1 applied, documentation only)
+- Source: Claude Code (stage-1 executor session, `claude-opus-5-5`; in-session `/review-loop`, cap 3)
+- Primary review baseline: `1500e2f` (HEAD; Phase 1 is uncommitted working-tree change), the round 6 scope plus round 7's fixes (`ui/transcript.py`, `ui/main_window.py` `_show_checkout_line` / `_end_checkout_encounter`, `test_unreviewed_review.py`, `test_pilot_settings.py`, `docs/design-system.md`).
+- Passes run: correctness/security; executor judgment; structural quality (none); post-fix regression (round 7's: the composer re-ran `test_unreviewed_review.py`, `test_pilot_settings.py` and `test_ui_encounter.py` — 170 passed, the link-line pins unchanged); missed-issue.
+- Missed-issue pass: `MainWindow._on_draft_ready`'s `_live_mode()` against a recovered checkout; `_on_write_requested`'s shadow branch and its audit call; `audit._decode` / `_upgrade_v1` / `begin` and the CSV columns; `ui/bridge.py` for any write or copy path; `ui/past_sessions.py`'s display panels; `SessionScreen._refresh_shadow_line`; every claim in the `CHANGELOG.md` 0.2.0 entry and the design-system bullet against the code. Result: LOW-003.
+- Finding verification: 3 candidates; 2 dropped. (1) A recovered NORMAL checkout's review would be marked shadow through `_live_mode()`. Dropped: generation runs only for the live session, and the recovered view offers Complete or Discard only (`ui/transcript.py` module docstring), so no review exists there. (2) "Saving it teaches the app nothing" against the permitted D13 demotion. Dropped: a demotion lowers a learned shorthand's confirmations rather than teaching anything, and the Note tab's status line names it ("… will propose again (removed or declined)."). 0 downgraded.
+- Round classification: LOW-003 🆕 fix-adjacent. Round 7 added the Transcript-tab cue, which showed that the Session-tab sentence's "recovered" had always over-claimed. Skew: none.
+- Not findings (checked): the bridge has no Write or Copy path; Past sessions' panels are `NoTextInteraction`; a v1 `pre_audit` row upgrades to mode `normal`, which is right because it predates 0.2.0; `begin` leaves out a malformed version rather than refusing Start.
+
+#### Findings
+
+##### LOW
+
+- **[LOW]** LOW-003: `docs/design-system.md` (the shadow-mode bullet) said the Session tab shows `SHADOW_RECORDING_LINE` "for a live, queued or recovered shadow recording". `SessionScreen._refresh_shadow_line` follows only the controller's TRACKED session. That covers a live recording and a queued one, including one reopened from Unreviewed, but not a crash-recovered checkout; that one is now cued on the Transcript tab (round 7 MED-002). Constraint 11: claim only what the code does. — Classification: 🆕 fix-adjacent; Triage: Fix-now; Decision: Applied. The bullet now says "for a live or queued shadow recording (one reopened from Unreviewed included)", and the `CHANGELOG.md` 0.2.0 entry names the Transcript tab beside the others. Documentation only; no test reads either sentence.
+
+ROUND-8 RESULT: 1 finding (CRIT 0 / HIGH 0 / MED 0 / LOW 1); applied. The loop is at its cap (rounds 6–8) and converged on CRIT/HIGH/MED: round 8 found none, and its only finding is a doc-only LOW.
+
+### Round 9 - 2026-10-04 - pilot plan Phase 1, independent cross-family codex peer-review (pass stage-1.p1, peer round 1 of cap 5)
+
+- Round status: Closed (4 applied by the LEG-2 /fix, 2026-10-04T12:04:04+11:00; tests pending the composer's pytest run)
+- Source: Codex peer (`gpt-6-astra`, reasoning medium, read-only sandbox; composer seat, three file-scoped slices A/B/C run in one activation, leg p1-r9)
+- Recorded by: the composer, verbatim from each slice's final answer (`.cursor/loops/stage-1-peer-r9{A,B,C}.log`, transcribed from the last answer block)
+- Primary review baseline: `1500e2f` (HEAD); Phase 1 uncommitted in the working tree after review-loop rounds 6–8; full suites green before the round (desktop 6017 passed / 9 skipped, extension 313, ruff and mypy clean).
+- Slices: A = the shadow boundary (note text exits, Write, Past sessions); B = the mode on the session (settings, encounter record, audit v2, window wiring); C = UI-screen tests, remaining test edits, version pins, documents.
+
+#### Peer findings (verbatim)
+
+- **PR-MED-A01** (MED, test-harness, `desktop/tests/test_shadow_exits.py:102`): The exit enumeration silently permits additional widgets and send callers at already-listed locations, weakening Constraint 3’s future-change guard. Another default-selectable `QPlainTextEdit()` in `NoteScreen.__init__` produces the existing set entry; another `write_draft_note` call anywhere in `draft_write.py` also passes. — Evidence: `built.add((_relative(path), scope, str(name)))`; line 140: `callers.add(_relative(path))`. Recommendation: Fix-now — Track individual construction/send sites and their counts, and verify with in-memory mutation cases that an additional ungated widget or send fails the checks. /fix decision: Applied
+  - /fix notes:
+    - `desktop/tests/test_shadow_exits.py` now COUNTS sites: `Counter`s `_PLACEMENT_CALLERS`, `_BUILT_WIDGETS` and `_SEND_CALLERS`.
+    - The send is pinned to its function, `draft_write.send_write`, which takes only a `PreparedWrite`, and only `prepare_write` makes one. It is no longer pinned only to its file.
+    - New in-memory mutation tests use `_with_extra`, which appends a statement to a named function in a re-parsed copy of the source:
+      - a second `_place_note_text` in `NoteScreen._copy_note`;
+      - a second `QPlainTextEdit()` in `NoteScreen.__init__`, the peer's exact case;
+      - a second `write_draft_note` in `send_write` and in `prepare_write`.
+      Each must change the count.
+    - The current counts (each 1) were checked by grep against `ui/note.py:528,609,1830`, `ui/past_sessions.py:105`, `ui/note.py:357,2302`, `ui/past_sessions.py:498` and `draft_write.py:1348`.
+    - Docstring updated. Pattern siblings: none (the selectable-flag test already lists exact scopes, and a flag needs no count). ruff clean; pytest pending (composer).
+  - /fix date: 2026-10-04
+  - /fix applied by: Claude Code (stage-1 executor, LEG 2)
+- Verification counts (slice A): 2 claims checked, 1 confirmed, 1 dropped as unverifiable.
+- **PR-HIGH-B01** (HIGH, behavioral, `desktop/src/scribe_desktop/encounter.py:217`): Persisted encounter bytes missing both `schema_version` and `mode` are accepted as NORMAL, violating D3’s unknown-mode fallback. With otherwise valid consent/context, adoption carries that inferred mode into review, bypassing shadow restrictions. — Evidence: the rejection requires `"schema_version" in data`; line 208 defaults to `mode: SessionMode = SessionMode.NORMAL`; `from_bytes` directly calls `cls.model_validate_json(blob)` at line 234; `session.py:1556` adopts `mode=record.mode`. Recommendation: Fix-now — Require an explicit supported version when parsing persisted bytes and require mode for v2; retain constructor defaults separately and add missing-field recovery/adoption tests. /fix decision: Applied
+  - /fix notes:
+    - `desktop/src/scribe_desktop/encounter.py` `EncounterRecord.from_bytes` now pre-parses the bytes. A blob that is not a JSON object naming `schema_version` raises `EncounterUnavailable`, which every rebuild reads as shadow (D3).
+    - A v2 blob without `mode` was already refused by `_mode_by_version`.
+    - The constructor defaults are kept, since `EncounterRecord(consent=…)` builds new records with them.
+    - `RecursionError` was added to the caught set for the new `json.loads`.
+    - Callers checked: `read_encounter_record`, which `session.py:1543` and `ui/main_window.py:1578` call. Every writer uses `to_bytes()`, which names the version, and the committed v1 fixtures name it too.
+    - Tests:
+      - `test_schema_versions.py`: `_unversioned()`; `test_bytes_naming_no_version_are_refused` (no mode, `normal`, `shadow`; both fixtures); `test_a_new_record_still_takes_its_defaults`; `test_an_unversioned_record_refuses_the_open` (adoption: `consent_unavailable`, Start unaffected).
+      - `test_unreviewed_review.py`: the recovery checkout's parametrize gains `unversioned`, which carries mode `normal` and must still read as SHADOW and show the Transcript shadow line.
+    - ruff and mypy clean; pytest pending (composer).
+  - /fix date: 2026-10-04
+  - /fix applied by: Claude Code (stage-1 executor, LEG 2)
+- **PR-HIGH-B02** (HIGH, behavioral, `desktop/src/scribe_desktop/note_config.py:1127`): A present pilot file containing `{}` or `{"schema_version":1}` silently turns shadow mode OFF despite containing no readable setting. Subsequent recordings become normal, allowing export and learning instead of applying D3’s fail-closed behavior. — Evidence: `shadow_mode: bool = Field(default=False, strict=True)`; line 1165 parses through `PilotSettings.model_validate_json(blob)`; line 1168 returns `unreadable=False`; `ui/session_screen.py:402` maps the resulting false value to `SessionMode.NORMAL`. Recommendation: Fix-now — Require `shadow_mode` in persisted settings, return ON/unreadable when absent, and test both incomplete objects through the reader and Start funnel. /fix decision: Applied
+  - /fix notes:
+    - `desktop/src/scribe_desktop/note_config.py` `PilotSettings.shadow_mode` is now `Field(strict=True)` with no default. `{}` and `{"schema_version": 1}` fail validation in `read_pilot_settings` and read as shadow ON, unreadable (D3).
+    - Docstring updated.
+    - Callers checked: every `PilotSettings(` passes `shadow_mode` (`ui/main_window.py:361` and `tests/test_pilot_settings.py`).
+    - Tests in `test_pilot_settings.py`: both blobs join the unreadable parametrize (the reader and `shadow_mode_on`), and `test_an_unreadable_setting_starts_a_shadow_recording` is parametrized over `{garbled`, `{}` and `{"schema_version": 1}` through the real Start funnel.
+    - ruff and mypy clean; pytest pending (composer).
+  - /fix date: 2026-10-04
+  - /fix applied by: Claude Code (stage-1 executor, LEG 2)
+- Verification counts (slice B): 2 claims checked, 2 confirmed, 0 dropped as unverifiable.
+- **PR-LOW-C01** (LOW, test-harness, `desktop/tests/test_ui_screens.py:8510`): The clipboard test’s “saved” checkpoint can pass when shadow Save fails, leaving post-save protection untested — Evidence: `note_screen.save()` is followed only by `assert note_screen.current_note() is not None`, which the helper already asserts before Save at line 8042. `ui/note.py:2126–2130` catches save failures and returns without marking the note saved. Recommendation: Fix-now — Assert `_note_saved` or the successful saved review state before exercising the post-save copy routes. /fix decision: Applied
+  - /fix notes: `desktop/tests/test_ui_screens.py`:
+    - asserts `not _note_saved` before Save;
+    - after Save, asserts `_note_saved` and that `message_label` starts with "Note saved.";
+    - then runs the post-save copy routes. Only `NoteScreen.save` (success, :2132) and `clear` write that label on this path, and the existing `current_note() is not None` check rules out a clear.
+    - Pattern siblings: none. ruff clean; pytest pending (composer).
+  - /fix date: 2026-10-04
+  - /fix applied by: Claude Code (stage-1 executor, LEG 2)
+- Verification counts (slice C): 2 claims checked, 1 confirmed, 0 dropped as unverifiable.
+
+PEER-ROUND-9-A RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 1 / LOW 0).
+PEER-ROUND-9-B RESULT: 2 findings (CRIT 0 / HIGH 2 / MED 0 / LOW 0).
+PEER-ROUND-9-C RESULT: 1 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 1).
+
+ROUND-9 RESULT: 4 findings (CRIT 0 / HIGH 2 / MED 1 / LOW 1) — peer labels; verified classification pending LEG 1.
+
+- Journal ID map (composer; the slice IDs are not journal-key grammar): PR-HIGH-B02 = PR-HIGH-052; PR-HIGH-B01 = PR-HIGH-053; PR-MED-A01 = PR-MED-054; PR-LOW-C01 = PR-LOW-055.
+
+#### LEG 1 verified tuples
+
+Verified 2026-10-04T11:59:04+11:00 by the stage-1 executor (`claude-opus-5-5`), by reading the current working tree. No file other than this block was edited.
+
+- PR-HIGH-B02: peer=HIGH/behavioral → materiality=behavioral severity=med surface=production rec=Fix-now — `desktop/src/scribe_desktop/note_config.py:1127` `shadow_mode: bool = Field(default=False, strict=True)` lets `{}` or `{"schema_version":1}` validate at :1165 and return `PilotSettingsRead(shadow_mode=False, unreadable=False)` at :1168. That is a present file with no readable setting reading as OFF, against D3 and the reader's own docstring at :1150–1153.
+  - Downgraded from HIGH: the app always writes the full model (`to_bytes` dumps both fields through the atomic `_write_config_file`), so only an outside edit produces such a file. The result is also visible: the Status checkbox shows unticked, and the Session tab shows no setting line.
+  - In Phase 1 scope (Task 1.1). Not production-impacting: no dependency, env var, migration or deploy-config. Make the field required: every `PilotSettings(` constructor (`ui/main_window.py:361` and the tests) already passes `shadow_mode`.
+- PR-HIGH-B01: peer=HIGH/behavioral → materiality=behavioral severity=low surface=production rec=Fix-now — `desktop/src/scribe_desktop/encounter.py:217` exempts `"schema_version" not in data`; with the :214 default and `mode` defaulting NORMAL at :208, bytes with neither key parse as v2 NORMAL through `from_bytes` at :234.
+  - Not reachable in practice: `encounter.enc` is sealed under the session key with its own associated data. Every record this app ever wrote carries `schema_version`, because v1's and v2's `model_dump_json` include defaults, and the committed v1 bytes in `tests/test_schema_versions.py:67–79` do too. Round 6 dropped the same scenario on these grounds.
+  - It is still a fail-open gap against D3 and against the class docstring at :198–200 ("a v2 record without one … is refused").
+  - The fix is cheap, in `from_bytes` only: require an explicit `schema_version`, and `mode` at v2. The constructor's defaults are kept, since `EncounterRecord(consent=…)` relies on them.
+  - In Phase 1 scope (Task 1.2). Not production-impacting.
+- PR-MED-A01: peer=MED/test-harness → materiality=behavioral severity=med surface=test-harness rec=Fix-now — `desktop/tests/test_shadow_exits.py:85,102` collects `built` as a set of (file, scope, class), so a second `QPlainTextEdit()` in `NoteScreen.__init__` adds nothing. It is selectable by Qt default, and :119–132 only catches EXPLICIT selectable flags.
+  - Likewise `:136,140` collects callers as a set of files, so a second `write_draft_note` call anywhere in `draft_write.py` passes, including one outside the `prepare_write` refusal path.
+  - The guard is weaker than Task 1.5's Done-when ("so a new one fails until gated") and the module docstring at :1–2.
+  - Materiality is "behavioral" for the guard only: no production code is wrong today. The current widgets and the one send were checked by hand in rounds 6–8.
+  - In Phase 1 scope (Task 1.5). Not production-impacting.
+- PR-LOW-C01: peer=LOW/test-harness → materiality=behavioral severity=low surface=test-harness rec=Fix-now — `desktop/tests/test_ui_screens.py:8510–8512`: after `note_screen.save()` the only checkpoint is `current_note() is not None`, which already held before Save.
+  - `ui/note.py:2124–2130` returns on a failed `on_save` without setting `_note_saved` (:2131), so "saved: a normal note would copy here" is not proven reached.
+  - The production refusal itself is correct in every state. The gap is that the test does not prove its own precondition.
+  - In Phase 1 scope (Task 1.5). Not production-impacting.
+
+LEG 2 /fix decisions (2026-10-04T12:04:04+11:00; tuple-block copy owner per `/fix` Step 2.9):
+- PR-HIGH-B02 (journal PR-HIGH-052): /fix decision: Applied — `note_config.PilotSettings.shadow_mode` is required; `{}` and `{"schema_version":1}` read as shadow ON, unreadable.
+- PR-HIGH-B01 (journal PR-HIGH-053): /fix decision: Applied — `EncounterRecord.from_bytes` refuses bytes that do not name `schema_version`; the constructor defaults are kept.
+- PR-MED-A01 (journal PR-MED-054): /fix decision: Applied — `test_shadow_exits.py` counts every site; in-memory mutation tests prove each count catches an added site.
+- PR-LOW-C01 (journal PR-LOW-055): /fix decision: Applied — the copy test asserts that Save succeeded before the post-save checks.
+
+Fix-delta self-check: PASS — re-read the 9 applied hunks across 6 files. Findings: 2 production read paths changed (`note_config.py`, `encounter.py`), and every constructor and writer was checked against them. 4 test modules changed; each new case fails on the pre-fix code. No drive-by edits.
+
+Cap verdict: accept — production-behavioral — B02 (med) and B01 (low) change production read paths (`note_config.read_pilot_settings`, `EncounterRecord.from_bytes`). They warrant one confirmation round after the fixes, and pass stage-1.p1 is at peer round 1 of cap 5, so no raise is needed. A01 and C01 are test-guard tightenings.
+
+### Round 10 - 2026-10-04 - pilot plan Phase 1, independent cross-family codex peer-review, confirmation (pass stage-1.p1, peer round 2 of cap 5)
+
+- Round status: Closed (0 findings; the pass converged)
+- Source: Codex peer (`gpt-6-astra`, reasoning medium, read-only sandbox; composer seat, one slice X over the round-9 fix surface, leg p1-r10)
+- Recorded by: the composer, verbatim from the slice's final answer (`.cursor/loops/stage-1-peer-r10X.log`)
+- Baseline: `1500e2f` (HEAD) plus the uncommitted Phase 1 tree after the round-9 fix leg; the composer's re-run of the six touched modules was 675 passed.
+
+#### Peer findings (verbatim)
+
+- No findings.
+- Verification counts (slice X): 4 claims checked, 4 confirmed, 0 dropped as unverifiable.
+- Confirmation: PR-HIGH-B02 closed — `desktop/src/scribe_desktop/note_config.py:1129` requires `shadow_mode: bool = Field(strict=True)`; validation failures return shadow ON/unreadable at line 1169. `desktop/tests/test_pilot_settings.py:59` covers valid on/off; lines 403–420 cover incomplete files through Start.
+- Confirmation: PR-HIGH-B01 closed — `desktop/src/scribe_desktop/encounter.py:243` requires `"schema_version" in data`, otherwise raising `EncounterUnavailable` at line 247. This parsing change adds no reader caller. `desktop/tests/test_schema_versions.py:127` covers v1 compatibility; lines 169–183 cover missing versions and constructor defaults; line 303 covers refused adoption.
+- Confirmation: PR-MED-A01 closed — `desktop/tests/test_shadow_exits.py:116` increments each widget site; lines 165, 198 and 229 compare counts against nonempty expected inventories. Mutation cases at lines 170, 201 and 232 detect repeated placements, widgets and sends; empty inventories cannot pass.
+- Confirmation: PR-LOW-C01 closed — `desktop/tests/test_ui_screens.py:8510` asserts `not note_screen._note_saved` before Save; lines 8515–8516 assert `_note_saved` and `"Note saved."` before the post-save copy checks. The test uses `_fake_clipboard` at line 8493.
+
+PEER-ROUND-10-X RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0).
+
+ROUND-10 RESULT: 0 findings (CRIT 0 / HIGH 0 / MED 0 / LOW 0); all four round-9 findings confirmed closed. Pass stage-1.p1 converged at peer round 2 of 5.
+
 ## Tasks
 Phases are grouped for `/execute-loop`: Phase 1 is the schema and safety-boundary phase and stands alone; Phase 2 is developer-only tooling; Phase 3 is documents and two decisions. Each task defers to `Validation / Verification` for the suite run unless it says otherwise. Paths are under `desktop/src/scribe_desktop/` unless they start with another folder; line numbers are in `Key Findings`.
 
 ### Phase 1 — Shadow mode and audit v2 (build 0.2.0)
 
-- [ ] 🟥 **1.1 Pilot settings and the Status tab.** Add a pilot-settings model and accessor in `note_config.py` beside `DevSettings` (`config\pilot.json`, one field `shadow_mode`, written through `_write_config_file`); absent = off, present but unreadable = ON (D3). In `ui/main_window.py` `StatusPanel`, add a "Shadow mode (pilot)" checkbox built like the developer-writes checkbox, a line naming an unreadable file, and a line showing the app version (`__version__`). Wording follows `docs/design-system.md`.
+- [x] 🟩 **1.1 Pilot settings and the Status tab.** Add a pilot-settings model and accessor in `note_config.py` beside `DevSettings` (`config\pilot.json`, one field `shadow_mode`, written through `_write_config_file`); absent = off, present but unreadable = ON (D3). In `ui/main_window.py` `StatusPanel`, add a "Shadow mode (pilot)" checkbox built like the developer-writes checkbox, a line naming an unreadable file, and a line showing the app version (`__version__`). Wording follows `docs/design-system.md`.
   - Done when: tests cover absent, valid on, valid off and unreadable, each through an injected config root; the checkbox round-trips; the version line is pinned against `__version__`.
-- [ ] 🟥 **1.2 The mode on the session and the encounter record.** Define `SessionMode` (`normal` / `shadow`). Add it to `RecordingSession` and `EncounterRecord` (v2; v1 reads as `normal`). `SessionController.start` takes the mode from the Start funnel (`ui/session_screen._start`, for both `on_start` and `start_linked`), which reads the pilot setting at the click. Carry it through `adopt_queued`, the recovery checkout and `_open_adopted`'s construction; a session whose record cannot be read is treated as shadow (D3). Constraint 1.
+- [x] 🟩 **1.2 The mode on the session and the encounter record.** Define `SessionMode` (`normal` / `shadow`). Add it to `RecordingSession` and `EncounterRecord` (v2; v1 reads as `normal`). `SessionController.start` takes the mode from the Start funnel (`ui/session_screen._start`, for both `on_start` and `start_linked`), which reads the pilot setting at the click. Carry it through `adopt_queued`, the recovery checkout and `_open_adopted`'s construction; a session whose record cannot be read is treated as shadow (D3). Constraint 1.
   - Done when: a session started with the setting on is shadow after Start, after recovery, after `adopt_queued` and after an Unreviewed open; changing the setting mid-recording changes nothing; the `read_encounter_record` call-count spies still pass unchanged; v1 fixture bytes read as `normal`.
-- [ ] 🟥 **1.3 Audit row v2.** In `audit.py` add `mode` (enum) and `app_version` (pattern, optional) to `AuditRow`; `AuditLog.begin` receives both from `SessionController.start`; upgrade v1 rows in `_decode` before validation (D6, D7); add both to `CSV_COLUMNS` and `_csv_values` together. Move the tests' "newer version" fixtures from 2 to 3. State in a comment that flat tokens need no new `_PAYLOAD_SIGNATURES` entry.
+- [x] 🟩 **1.3 Audit row v2.** In `audit.py` add `mode` (enum) and `app_version` (pattern, optional) to `AuditRow`; `AuditLog.begin` receives both from `SessionController.start`; upgrade v1 rows in `_decode` before validation (D6, D7); add both to `CSV_COLUMNS` and `_csv_values` together. Move the tests' "newer version" fixtures from 2 to 3. State in a comment that flat tokens need no new `_PAYLOAD_SIGNATURES` entry.
   - Done when: `test_audit.py`'s constraint, forbidden-name, tripwire and CSV-header tests pass with the new fields; a stored v1 row exports with mode `normal` and an empty version; a v3 row reads as `_NEWER` without refusing Start.
-- [ ] 🟥 **1.4 Write refused by name.** Add `shadow_session` to `draft_write.WriteRefusalName`; refuse in `refuse_before_read` and `ui/models.write_control` beside `dev_build_writes_off` (D4); add its `WRITE_LINES` entry (no "copy" in the text) and place it deliberately in or out of `WRITE_UNCERTAIN_PREFIXED`; `MainWindow._on_write_requested` passes the session's mode.
+- [x] 🟩 **1.4 Write refused by name.** Add `shadow_session` to `draft_write.WriteRefusalName`; refuse in `refuse_before_read` and `ui/models.write_control` beside `dev_build_writes_off` (D4); add its `WRITE_LINES` entry (no "copy" in the text) and place it deliberately in or out of `WRITE_UNCERTAIN_PREFIXED`; `MainWindow._on_write_requested` passes the session's mode.
   - Done when: for a shadow session no request is made (the transport spy sees zero calls), the Write control shows the shadow line, the audit row records the refusal name, and the pinned `WRITE_LINES` / prefix-set tests are updated in the same change.
-- [ ] 🟥 **1.5 Copy refused by name; the note body display-only.** In `ui/note.py` add a shadow reason separate from `_copy_ready` (D5): it disables the Copy button with its reason, makes `copy_selection` (keyboard and context menu) a refusal, keeps the note body non-selectable, and `_place_note_text` refuses as the last line. `begin_review` and `show_saved_note` receive the mode from `MainWindow`. Write's "saved" derivation is untouched.
+- [x] 🟩 **1.5 Copy refused by name; the note body display-only.** In `ui/note.py` add a shadow reason separate from `_copy_ready` (D5): it disables the Copy button with its reason, makes `copy_selection` (keyboard and context menu) a refusal, keeps the note body non-selectable, and `_place_note_text` refuses as the last line. `begin_review` and `show_saved_note` receive the mode from `MainWindow`. Write's "saved" derivation is untouched.
   - The inline line editor (`_LineEditor`, a `QLineEdit` created at `ui/note.py:1730` holding the line's existing text) keeps editing in shadow but its native Copy and Cut — shortcuts and its context-menu actions — are refused and drag is off; Paste, typing, Undo and Escape are unchanged (peer round 1, PR-HIGH-001).
   - Done when: with the fake clipboard, every caller of `_place_note_text` places nothing for a shadow session and behaves exactly as before for a normal one; the body's interaction flags are display-only in shadow at every review state; the line editor's Copy, Cut, context menu and drag place nothing in shadow and work as before in normal mode; a test enumerates `_place_note_text`'s callers AND every widget class in `ui/note.py` and `ui/past_sessions.py` that can hold note text, so a new one fails until gated (Constraint 3).
-- [ ] 🟥 **1.6 Past sessions.** Carry the shadow flag through `KeepLabel` / `keep_label` and `MainWindow.keep_label_for` into `PastSessionLabel` v2 (v1 = not shadow); `UNKNOWN_LABEL` is shadow. `ui/past_sessions._copy_reason` / `on_copy` refuse a shadow entry with a named reason; the list marks the entry as a shadow recording.
+- [x] 🟩 **1.6 Past sessions.** Carry the shadow flag through `KeepLabel` / `keep_label` and `MainWindow.keep_label_for` into `PastSessionLabel` v2 (v1 = not shadow); `UNKNOWN_LABEL` is shadow. `ui/past_sessions._copy_reason` / `on_copy` refuse a shadow entry with a named reason; the list marks the entry as a shadow recording.
   - Done when: a completed shadow session's entry is marked and its Copy refused; a v1 label still opens and copies; an unknown label refuses; the entry is still written and verified before the session key goes (existing custody tests unchanged).
-- [ ] 🟥 **1.9 No learning from a shadow Save** (peer round 2, PR-HIGH-021; practitioner decision 2026-10-04; numbered 1.9, built here). In `ui/note.py`, a Save of a shadow session writes no learned phrase (`_write_learned_phrases`, :1477), no learned rule (`_write_learned_rules`, :2047 → `append_learned_rules`) and replaces no learned wording (`replace_learned_rule_wording`, :2139); the queue lines in `ui/note_review.py` say "not learned: shadow recording" instead of "will learn … when you save". Safety-direction demotions of a rule the practitioner corrected still apply. D13.
+- [x] 🟩 **1.9 No learning from a shadow Save** (peer round 2, PR-HIGH-021; practitioner decision 2026-10-04; numbered 1.9, built here). In `ui/note.py`, a Save of a shadow session writes no learned phrase (`_write_learned_phrases`, :1477), no learned rule (`_write_learned_rules`, :2047 → `append_learned_rules`) and replaces no learned wording (`replace_learned_rule_wording`, :2139); the queue lines in `ui/note_review.py` say "not learned: shadow recording" instead of "will learn … when you save". Safety-direction demotions of a rule the practitioner corrected still apply. D13.
   - Done when: after a shadow Save with an eligible typed line, an edited learned rule and a queued phrase, the cue file and the learned-rules store are byte-identical to before (except a demotion count), the Practitioner tab shows nothing new, and a following normal recording offers no proposal carrying that wording; the same three actions in a normal session learn exactly as today.
-- [ ] 🟥 **1.7 The Session tab says so.** `ui/session_screen.py`: a line above Start while the setting is on ("new recordings are shadow recordings: their notes cannot be copied or written to Cliniko"), and the same state shown for a live or recovered shadow recording. Add the cue to `docs/design-system.md`.
+- [x] 🟩 **1.7 The Session tab says so.** `ui/session_screen.py`: a line above Start while the setting is on ("new recordings are shadow recordings: their notes cannot be copied or written to Cliniko"), and the same state shown for a live or recovered shadow recording. Add the cue to `docs/design-system.md`.
   - Done when: the line appears and disappears with the setting, and a live shadow recording stays labelled after the setting is turned off.
-- [ ] 🟥 **1.8 Version 0.2.0 and the two-way schema tests.** Bump every pinned version location. Add a test module that, for each of the three v2 schemas, reads committed v1 fixture bytes with the new code, and asserts the "newer than current" behaviour the older build relies on (audit `_NEWER`, label unreadable and Copy closed, encounter `EncounterUnavailable` with Start unaffected).
+- [x] 🟩 **1.8 Version 0.2.0 and the two-way schema tests.** Bump every pinned version location. Add a test module that, for each of the three v2 schemas, reads committed v1 fixture bytes with the new code, and asserts the "newer than current" behaviour the older build relies on (audit `_NEWER`, label unreadable and Copy closed, encounter `EncounterUnavailable` with Start unaffected).
   - Done when: `test_install_layout.py`'s version test passes at 0.2.0 and the new module passes; `CHANGELOG.md` has the 0.2.0 entry.
 
 ### Phase 2 — Validation harness (developer build only)

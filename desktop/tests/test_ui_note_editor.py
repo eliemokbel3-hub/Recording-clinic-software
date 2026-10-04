@@ -35,6 +35,7 @@ from scribe_desktop.note_config import (  # noqa: E402
     TemplateProfile,
     TemplateTarget,
 )
+from scribe_desktop.session_mode import SessionMode  # noqa: E402
 from scribe_desktop.transcription import (  # noqa: E402
     SPEAKER_1,
     SPEAKER_2,
@@ -160,7 +161,10 @@ def _edit_result(config: NoteConfig | None = None) -> models.NoteGenerationResul
 
 
 def _screen(
-    tmp_path: Path, result: models.NoteGenerationResult | None = None
+    tmp_path: Path,
+    result: models.NoteGenerationResult | None = None,
+    *,
+    mode: SessionMode = SessionMode.NORMAL,
 ) -> tuple[Any, dict[str, list[Any]]]:
     from scribe_desktop.ui.note import NoteScreen
 
@@ -172,6 +176,7 @@ def _screen(
         on_abandon=lambda: record["abandoned"].append(True),
         on_cancel=lambda: record["cancelled"].append(True),
         template_profile_id="clinic-a",
+        mode=mode,
     )
     return screen, record
 
@@ -285,6 +290,74 @@ def test_edit_on_a_routed_row_opens_the_editor_and_apply_types_over_the_line(
     assert _line_state(screen, routed.assertion_id) == "routed"
     assert full_text in screen.note_body.toPlainText()
     assert _TYPED_TEXT not in screen.note_body.toPlainText()
+    screen.deleteLater()
+
+
+# --- pilot plan Task 1.5 (D5): the editor of a shadow recording -------------
+
+
+def _key(key: Any, modifiers: Any = None) -> Any:
+    from PySide6.QtCore import QEvent, Qt
+    from PySide6.QtGui import QKeyEvent
+
+    return QKeyEvent(
+        QEvent.Type.KeyPress,
+        key,
+        modifiers if modifiers is not None else Qt.KeyboardModifier.NoModifier,
+    )
+
+
+def _menu_words(menu: Any) -> set[str]:
+    return {
+        action.text().split("\t", 1)[0].replace("&", "")
+        for action in menu.actions()
+        if not action.isSeparator()
+    }
+
+
+@pytest.mark.parametrize("mode", list(SessionMode))
+def test_the_line_editor_keeps_note_text_off_the_clipboard_in_shadow(
+    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: SessionMode
+) -> None:
+    """Peer round 1 PR-HIGH-001: the editor opens holding the line's text,
+    and Qt's own Copy and Cut never pass through ``_place_note_text``. In
+    shadow its Copy and Cut keys stop before Qt, its menu has no Copy or Cut
+    and drag is off; typing, Paste, Undo and Escape are unchanged. In normal
+    mode every key reaches Qt as before. Qt's native key handling is replaced
+    by a recorder, so no test reaches any clipboard."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLineEdit
+
+    reached: list[int] = []
+
+    def record(_widget: Any, event: Any) -> None:
+        reached.append(event.key())
+
+    monkeypatch.setattr(QLineEdit, "keyPressEvent", record)
+    screen, _record = _screen(tmp_path, mode=mode)
+    routed = _first_routed(screen)
+    screen.open_editor(routed.assertion_id, _working_text(screen, routed.assertion_id))
+    assert screen._editor is not None
+    field = screen._editor[1]
+    shadow = mode is SessionMode.SHADOW
+    assert field.shadow is shadow
+    control = Qt.KeyboardModifier.ControlModifier
+    for clip_key in (Qt.Key.Key_C, Qt.Key.Key_X):  # Copy, Cut
+        field.keyPressEvent(_key(clip_key, control))
+    assert reached == ([] if shadow else [Qt.Key.Key_C, Qt.Key.Key_X])
+    reached.clear()
+    for passing in (Qt.Key.Key_A, Qt.Key.Key_V, Qt.Key.Key_Z):
+        field.keyPressEvent(_key(passing, None if passing == Qt.Key.Key_A else control))
+    assert reached == [Qt.Key.Key_A, Qt.Key.Key_V, Qt.Key.Key_Z]  # typing, Paste, Undo
+    menu = field.build_context_menu()
+    words = _menu_words(menu)
+    assert ("Copy" in words, "Cut" in words) == (not shadow, not shadow)
+    assert "Paste" in words and "Undo" in words
+    menu.deleteLater()
+    if shadow:
+        assert field.dragEnabled() is False
+    _escape(qapp, field)
+    assert screen._editor is None
     screen.deleteLater()
 
 

@@ -2546,7 +2546,7 @@ class TestPastSessionsThroughTheController:
     def _label(self) -> Any:
         from scribe_desktop.past_sessions import keep_label
 
-        return keep_label("Jane Citizen", "linked", "0123456789abcdef")
+        return keep_label("Jane Citizen", "linked", "0123456789abcdef", shadow=False)
 
     def test_complete_keeps_the_entry_with_its_label(self, tmp_path: Path) -> None:
         controller, store, directory, sid = self._queued(tmp_path)

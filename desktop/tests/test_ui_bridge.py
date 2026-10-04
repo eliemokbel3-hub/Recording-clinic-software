@@ -50,6 +50,7 @@ from scribe_desktop.protocol import (  # noqa: E402
     typed_payload,
 )
 from scribe_desktop.session import RecordingSession, SessionState  # noqa: E402
+from scribe_desktop.session_mode import SessionMode  # noqa: E402
 from scribe_desktop.transcription import LiveFailure, LiveFailureKind  # noqa: E402
 from scribe_desktop.ui import models  # noqa: E402
 from scribe_desktop.ui.bridge import (  # noqa: E402
@@ -132,10 +133,11 @@ class BridgeController(FakeController):
         *,
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> RecordingSession:
-        super().start(device_id, consent=consent, context=context)
+        super().start(device_id, consent=consent, context=context, mode=mode)
         self.session_value = RecordingSession(
-            consent=consent, encounter_context=context
+            consent=consent, encounter_context=context, mode=mode
         ).with_state(SessionState.RECORDING)
         self.session_ref = secrets.token_urlsafe(18)
         return self.session_value

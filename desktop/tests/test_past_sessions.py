@@ -66,7 +66,7 @@ NOW = datetime(2026, 10, 1, 9, 0, tzinfo=UTC)
 SEVEN = MIN_RETENTION_DAYS
 WINDOW = timedelta(days=SEVEN)
 _FAKE = b"FAKE-ENTRY-KEY:"
-LINKED = KeepLabel("Jane Citizen", "linked", "0123456789abcdef")
+LINKED = KeepLabel("Jane Citizen", "linked", "0123456789abcdef", shadow=False)
 
 
 def _sid() -> str:
@@ -182,23 +182,37 @@ def _session(
 
 class TestKeepLabel:
     def test_the_name_is_normalised(self) -> None:
-        label = keep_label("  Jane\x00\tCitizen​\n ", "linked", "0123456789abcdef")
+        label = keep_label(
+            "  Jane\x00\tCitizen​\n ", "linked", "0123456789abcdef", shadow=False
+        )
         assert label.patient_name is not None
         assert label.patient_name.split() == ["Jane", "Citizen"]
         assert "\x00" not in label.patient_name and "\n" not in label.patient_name
-        assert keep_label("x" * 500, "linked", None).patient_name == "x" * MAX_PATIENT_NAME_CHARS
+        assert keep_label("x" * 500, "linked", None, shadow=False).patient_name == (
+            "x" * MAX_PATIENT_NAME_CHARS
+        )
 
     def test_an_empty_name_is_not_available(self) -> None:
-        assert keep_label(" \t\x07 ", "linked", None).patient_name is None
-        assert keep_label(None, "unknown", None) == UNKNOWN_LABEL
+        assert keep_label(" \t\x07 ", "linked", None, shadow=False).patient_name is None
+        assert keep_label(None, "unknown", None, shadow=True) == UNKNOWN_LABEL
 
     def test_a_desktop_recording_carries_no_name(self) -> None:
-        assert keep_label("Jane Citizen", "desktop", None).patient_name is None
+        assert keep_label("Jane Citizen", "desktop", None, shadow=False).patient_name is None
 
     def test_a_clinic_id_not_of_the_registry_shape_is_left_out(self) -> None:
-        assert keep_label(None, "linked", "../../etc").clinic_id is None
-        assert keep_label(None, "linked", "0123456789ABCDEF").clinic_id is None
-        assert keep_label(None, "linked", "0123456789abcdef").clinic_id == "0123456789abcdef"
+        assert keep_label(None, "linked", "../../etc", shadow=False).clinic_id is None
+        assert keep_label(None, "linked", "0123456789ABCDEF", shadow=False).clinic_id is None
+        assert keep_label(None, "linked", "0123456789abcdef", shadow=False).clinic_id == (
+            "0123456789abcdef"
+        )
+
+    def test_the_shadow_flag_fails_closed(self) -> None:
+        """Pilot plan D3: the unresolved label is a shadow recording's, and
+        only an explicit False makes a label not shadow."""
+        assert UNKNOWN_LABEL.shadow is True
+        assert keep_label(None, "linked", None, shadow=True).shadow is True
+        assert keep_label(None, "linked", None, shadow=False).shadow is False
+        assert keep_label(None, "linked", None, shadow=None).shadow is True  # type: ignore[arg-type]
 
     def test_the_name_never_reaches_a_repr(self) -> None:
         assert "Jane" not in repr(LINKED)

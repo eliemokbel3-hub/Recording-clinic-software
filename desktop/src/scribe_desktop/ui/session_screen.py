@@ -29,8 +29,10 @@ from PySide6.QtWidgets import (
 )
 
 from scribe_desktop.encounter import ConsentAttestation, EncounterContext, unlinked_consent
+from scribe_desktop.note_config import shadow_mode_on
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
@@ -75,12 +77,20 @@ class SessionScreen(QWidget):
         transcriber_factory: Callable[
             [], Callable[[Path, SessionCrypto], TranscriptDocument]
         ] = models.build_transcriber,
+        shadow_mode: Callable[[], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
         self._device_provider = device_provider
         self._transcriber_factory = transcriber_factory
+        # Pilot plan Task 1.2 (D1): the pilot setting, read at EVERY Start
+        # click (both ``on_start`` and ``start_linked``) and fixed for that
+        # recording. None reads the default root (``shadow_mode_on``; the
+        # test suite pins it to an empty folder).
+        self._shadow_mode: Callable[[], bool] = (
+            shadow_mode if shadow_mode is not None else (lambda: shadow_mode_on())
+        )
         self._task: TaskThread | None = None
         self._transcribing = False
         # Installation plan round 40 LOW-002: a confirmed Discard waiting off
@@ -111,6 +121,12 @@ class SessionScreen(QWidget):
         self.link_label = QLabel()
         self.link_label.setTextFormat(Qt.TextFormat.PlainText)
         self.link_label.setWordWrap(True)
+        # Pilot plan Task 1.7: the shadow lines (fixed text) — the tracked
+        # recording's mode, and the setting new recordings will take.
+        self.shadow_label = QLabel()
+        self.shadow_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.shadow_label.setWordWrap(True)
+        self.shadow_label.hide()
         # Constraint 4: the consent tick sits directly above Start, carries
         # PLAN.md's wording verbatim, is NEVER pre-ticked, and is cleared
         # after every Start; Start is disabled until it is ticked.
@@ -163,6 +179,7 @@ class SessionScreen(QWidget):
         layout.addWidget(self.state_label)
         layout.addWidget(self.link_label)
         layout.addWidget(self.chrome_label)
+        layout.addWidget(self.shadow_label)
         layout.addWidget(self.consent_checkbox)
         layout.addLayout(buttons)
         layout.addWidget(self.progress_label)
@@ -231,6 +248,7 @@ class SessionScreen(QWidget):
         self._last_state = state
         self.state_label.setText(f"Session state: {state.value}")
         self.link_label.setText(models.session_link_line(self._controller.session))
+        self._refresh_shadow_line()
         controls = models.controls_for_state(state)
         busy = self.is_busy
         # D6: Start for the next patient at QUEUED, unless the note review
@@ -255,6 +273,22 @@ class SessionScreen(QWidget):
         self.discard_button.setEnabled(controls.discard and not busy)
         if not self.discard_button.isEnabled():
             self._disarm_discard()
+
+    def _refresh_shadow_line(self) -> None:
+        """Pilot plan Task 1.7: the tracked recording's own mode while it is
+        not finished (fixed at Start — a later change of the setting leaves
+        it shadow), then the setting, re-read now (D3: an unreadable setting
+        reads as on)."""
+        lines: list[str] = []
+        session = self._controller.session
+        if session is not None and not session.is_terminal and session.mode is not (
+            SessionMode.NORMAL
+        ):
+            lines.append(models.SHADOW_RECORDING_LINE)
+        if self._shadow_mode():
+            lines.append(models.SHADOW_SETTING_LINE)
+        self.shadow_label.setText("\n".join(lines))
+        self.shadow_label.setVisible(bool(lines))
 
     def _show_message(self, text: str) -> None:
         self.message_label.setText(text)
@@ -363,8 +397,13 @@ class SessionScreen(QWidget):
         # D6: a Start retires the previous tracked session (QUEUED, FAILED or
         # finished) — read it BEFORE, while it is still the tracked one.
         previous = self._controller.session
+        # Pilot plan D1: the mode is the setting at THIS click (D3: an
+        # unreadable setting reads as shadow).
+        mode = SessionMode.SHADOW if self._shadow_mode() else SessionMode.NORMAL
         try:
-            session = self._controller.start(device_id, consent=consent, context=context)
+            session = self._controller.start(
+                device_id, consent=consent, context=context, mode=mode
+            )
             started = True
             if (
                 previous is not None

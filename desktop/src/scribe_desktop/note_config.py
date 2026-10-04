@@ -1106,6 +1106,85 @@ def dev_writes_allowed(config_root: Path | None = None) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# The pilot setting (pilot plan Task 1.1; D1, D2, D3).
+# ---------------------------------------------------------------------------
+
+PILOT_SETTINGS_FILENAME: Final = "pilot.json"
+# The file holds one flag; anything larger is not this file.
+MAX_PILOT_SETTINGS_BYTES: Final = 4096
+
+
+class PilotSettings(BaseModel):
+    """On-disk shape of ``config\\pilot.json``, in both channels:
+    ``{"schema_version": 1, "shadow_mode": bool}``. A USER setting, not an
+    enforced control (D2): the file is as writable as ``dev.json``. Read at
+    each Start (the recording's mode is fixed then, D1) and by the Status
+    tab — never by anything else. ``shadow_mode`` has no default (peer round
+    9 PR-HIGH-B02): a file that does not name it holds no readable setting,
+    so it reads as unreadable — shadow ON (D3) — never as off."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    shadow_mode: bool = Field(strict=True)
+
+    def to_bytes(self) -> bytes:
+        return (self.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+
+class PilotSettingsRead(NamedTuple):
+    """What ``read_pilot_settings`` found: whether new recordings are shadow
+    recordings, and whether that is because the file could not be read."""
+
+    shadow_mode: bool
+    unreadable: bool
+
+
+def pilot_settings_root() -> Path:
+    """Where ``pilot.json`` lives when no root is passed: the config root.
+    A separate resolver so the test suite pins it to an empty folder for
+    every test (``conftest.pinned_pilot_root``) — no test reads the host's
+    own pilot setting (Constraint 9)."""
+    return default_config_root()
+
+
+def read_pilot_settings(config_root: Path | None = None) -> PilotSettingsRead:
+    """The pilot setting, failing CLOSED (D3): an ABSENT file is shadow off;
+    a file that is present but cannot be read, is over its bound or is not
+    valid is shadow ON, reported as unreadable (the Status tab names it).
+    Never raises."""
+    root = config_root if config_root is not None else pilot_settings_root()
+    try:
+        with (root / PILOT_SETTINGS_FILENAME).open("rb") as stream:
+            blob = stream.read(MAX_PILOT_SETTINGS_BYTES + 1)
+    except FileNotFoundError:
+        return PilotSettingsRead(shadow_mode=False, unreadable=False)
+    except (OSError, ValueError):  # ValueError: a NUL in the path
+        return PilotSettingsRead(shadow_mode=True, unreadable=True)
+    if len(blob) > MAX_PILOT_SETTINGS_BYTES:
+        return PilotSettingsRead(shadow_mode=True, unreadable=True)
+    try:
+        settings = PilotSettings.model_validate_json(blob)
+    except ValidationError:
+        return PilotSettingsRead(shadow_mode=True, unreadable=True)
+    return PilotSettingsRead(shadow_mode=settings.shadow_mode, unreadable=False)
+
+
+def save_pilot_settings(settings: PilotSettings, *, config_root: Path | None = None) -> Path:
+    """Replace the pilot settings file atomically through the config
+    directory's one write path; ``NoteConfigWriteError`` on any failure,
+    the file never partial."""
+    root = config_root if config_root is not None else pilot_settings_root()
+    _write_config_file(root, PILOT_SETTINGS_FILENAME, settings.to_bytes())
+    return root / PILOT_SETTINGS_FILENAME
+
+
+def shadow_mode_on(config_root: Path | None = None) -> bool:
+    """Whether a recording started NOW is a shadow recording (D1, D3)."""
+    return read_pilot_settings(config_root).shadow_mode
+
+
+# ---------------------------------------------------------------------------
 # The learned style (note-learning-and-styles plan Phase 0 Task 0.3; D9, D10).
 #
 # The MODEL lives here beside the other clinician-config shapes because it

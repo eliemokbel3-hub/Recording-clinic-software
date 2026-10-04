@@ -576,6 +576,32 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   `DEV_WRITES_CHECKBOX_TEXT` / `DEV_WRITES_SAVE_FAILED`). The developer build's
   extension is named "Clinic Scribe Companion (dev)" and is loaded in a separate
   Chrome profile.
+- Shadow mode (pilot plan D1–D3, D13; both channels). The Status tab shows "Clinic
+  Scribe version X.Y.Z" under its intended-use line and warnings, and has the
+  checkbox "Shadow mode (pilot)", off by default; an unreadable setting reads as ON and says "The shadow-mode setting could
+  not be read, so shadow mode is on. Untick the box to turn it off."; a failed save
+  says "The shadow-mode setting could not be saved; the box shows the setting in use."
+  and re-reads the box (`ui/main_window.py` `SHADOW_MODE_*`). A recording takes the
+  setting at Start and keeps it. The Session tab says, above Start while the setting
+  is on, "Shadow mode is on: new recordings are shadow recordings - their notes cannot
+  be copied or written to Cliniko.", and for a live or queued shadow recording (one
+  reopened from Unreviewed included) "This is a shadow recording: its note cannot be copied or written to
+  Cliniko." — the second line stays after the setting is turned off (`ui/models.py`
+  `SHADOW_SETTING_LINE` / `SHADOW_RECORDING_LINE`); the Transcript tab shows that
+  same second line, under the link line, for a recovered or reopened shadow recording
+  (an unreadable record counts as one). The Note tab shows "This is a
+  shadow recording for the pilot: its note cannot be copied or written to Cliniko, and
+  saving it teaches the app nothing." under its buttons; Copy is disabled with the
+  tooltip "This is a shadow recording for the pilot, so its note cannot be copied.",
+  the note cannot be selected (so a keyboard or menu Copy has nothing to copy and
+  places nothing), the line editor offers no Copy or Cut and no drag, Write says "This is a
+  shadow recording for the pilot, so its note is not written to Cliniko. Write your
+  own note in Cliniko as usual." (`shadow_session`, never `write_uncertain`-prefixed),
+  and the learning line is "Not learned: shadow recording. Saving a shadow recording's
+  note teaches the app nothing." — it names the recording's mode as the control,
+  never a promise about Save. The Past sessions list marks the entry "(shadow
+  recording)" and its Copy says "This was a shadow recording for the pilot, so its
+  note cannot be copied. Read it as shown."
 - The Microphone tab's hardware check reports whisper, then the prose stage
   (installation plan D11): "Prose stage (Narrative style): R of S sections, load L s
   (or model already loaded); sections W s wall, C s CPU; … per section OK|WARNING|

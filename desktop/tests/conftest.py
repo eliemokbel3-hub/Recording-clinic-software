@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions, install_layout, ml_warmup
+from scribe_desktop import exclusions, install_layout, ml_warmup, note_config
 from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.install_layout import Channel
 from scribe_desktop.protocol import PROTOCOL_VERSION
@@ -27,6 +27,8 @@ NONCE = "f" * 32
 REAL_CHANNEL = install_layout.channel
 REAL_IS_FROZEN = install_layout.is_frozen
 REAL_MODELS_ROOT = install_layout.models_root
+# Pilot plan Task 1.1: the real pilot-settings resolver, for its own test.
+REAL_PILOT_SETTINGS_ROOT = note_config.pilot_settings_root
 
 
 def _production() -> Channel:
@@ -174,6 +176,21 @@ def pinned_models_root(
         return None
     root = models_root_factory()
     use_models_root(monkeypatch, root)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def pinned_pilot_root(
+    monkeypatch: pytest.MonkeyPatch, models_root_factory: Callable[[], Path]
+) -> Path:
+    """Pilot plan Task 1.1 (Constraint 9), for EVERY test: the default root of
+    ``config\\pilot.json`` (``note_config.pilot_settings_root``) is a fresh,
+    EMPTY folder of the test's own, so every window a test builds reads shadow
+    mode OFF unless the test writes the file there (or passes its own config
+    root) — no test reads or writes the host's own pilot setting. Returns the
+    pinned root."""
+    root = models_root_factory()
+    monkeypatch.setattr(note_config, "pilot_settings_root", lambda: root)
     return root
 
 

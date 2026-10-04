@@ -140,6 +140,7 @@ from scribe_desktop.session import (
     load_write_record,
     store_write_record,
 )
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     ENCOUNTER_FILENAME,
@@ -412,6 +413,13 @@ WRITE_LINES: Final[Mapping[str, str]] = {
     "write_forbidden": (
         "Cliniko refused the write although the note is still a draft - this clinic's key "
         "may not be allowed to edit notes. Copy the note instead."
+    ),
+    # Pilot plan D4: a shadow recording. It names no Copy (Copy is refused in
+    # shadow mode too), so it is deliberately NOT in WRITE_UNCERTAIN_PREFIXED
+    # — and a shadow recording never wrote, so no attempt can be open.
+    "shadow_session": (
+        "This is a shadow recording for the pilot, so its note is not written to Cliniko. "
+        "Write your own note in Cliniko as usual."
     ),
 }
 
@@ -702,9 +710,13 @@ def write_control(
     status: WriteRecordStatus | None,
     channel: install_layout.Channel,
     allow_dev_writes: bool,
+    shadow: bool,
 ) -> WriteControl:
     """D2's ``_write_ready`` outside the in-flight and rendering checks, in
-    this order: a note not yet saved (and ratified) → ``not_saved``; an
+    this order: a note not yet saved (and ratified) → ``not_saved``; a
+    shadow recording → ``shadow_session`` with Write disabled (pilot plan
+    D4 — before ``unlinked``, whose line invites a Copy shadow mode
+    refuses; ``draft_write.refuse_before_read`` refuses it first too); an
     unlinked session → ``unlinked``; a mock note → ``mock_note`` (D10);
     then the session's write record (D5; ``status`` None: it could not be
     read — fail closed, ``record_unreadable``): unreadable →
@@ -718,6 +730,8 @@ def write_control(
     ``unknown``; otherwise ready."""
     if not saved:
         return WriteControl(False, write_line("not_saved"))
+    if shadow is not False:
+        return WriteControl(False, write_line("shadow_session"))
     if not binding.linked:
         return WriteControl(False, write_line("unlinked"))
     if mock:
@@ -1170,13 +1184,15 @@ class SessionControllerLike(Protocol):
     ) -> tuple[RecordingSession, T]: ...
 
     # Cliniko workflow safeguards plan Task 3.3: consent is required on every
-    # Start (Constraint 4); ``context`` None is an unlinked recording.
+    # Start (Constraint 4); ``context`` None is an unlinked recording. Pilot
+    # plan D1: ``mode`` is fixed for the recording at Start.
     def start(
         self,
         device_id: int,
         *,
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> RecordingSession: ...
 
     def pause(self) -> RecordingSession: ...
@@ -1779,6 +1795,35 @@ def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> 
 # at click time. The transcript stays display-only ALWAYS, regardless of this
 # flag (Critical Constraint).
 COPY_TO_CLINIKO_ENABLED: Final[bool] = True
+
+# Pilot plan D5/D13 (Tasks 1.5, 1.9): a SHADOW recording's note on the Note
+# tab — display-only, never copied or written, and its Save teaches nothing.
+# The refusal is a separate reason beside ``_copy_ready`` (never through it:
+# Write derives "saved" from that predicate).
+SHADOW_NOTE_LINE: Final = (
+    "This is a shadow recording for the pilot: its note cannot be copied or written "
+    "to Cliniko, and saving it teaches the app nothing."
+)
+SHADOW_COPY_REFUSED: Final = (
+    "This is a shadow recording for the pilot, so its note cannot be copied."
+)
+# Pilot plan Task 1.7: the Session tab's lines — above Start while the
+# setting is on, and for the tracked recording when it is a shadow one (it
+# stays so whatever the setting says later, D1).
+SHADOW_SETTING_LINE: Final = (
+    "Shadow mode is on: new recordings are shadow recordings - their notes cannot be "
+    "copied or written to Cliniko."
+)
+SHADOW_RECORDING_LINE: Final = (
+    "This is a shadow recording: its note cannot be copied or written to Cliniko."
+)
+# Pilot plan D13 (Task 1.9): the learning line and every queue line of a
+# shadow review — it names the control that decides (the recording's mode),
+# never a promise that Save will learn.
+SHADOW_NOT_LEARNED: Final = (
+    "Not learned: shadow recording. Saving a shadow recording's note teaches the app "
+    "nothing."
+)
 
 # Task 8.2 (Cliniko workflow safeguards plan; practitioner decision
 # 2026-09-27, option (a) "keep it out of history and sync"): every copy of

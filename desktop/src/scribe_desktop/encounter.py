@@ -42,6 +42,7 @@ or answer text: a refusal is a reason code.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 import unicodedata
@@ -77,6 +78,7 @@ from scribe_desktop.cliniko_client import (
     check_id,
 )
 from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import SessionStoreError, read_encounter, write_encounter
 
 RECORDING_CONSENT_TEXT_VERSION: Final = "recording-consent-v1"
@@ -85,7 +87,9 @@ RECORDING_CONSENT_TEXT_VERSION: Final = "recording-consent-v1"
 RECORDING_CONSENT_TEXT: Final = (
     "I confirm the patient has consented to AI-assisted recording and documentation"
 )
-ENCOUNTER_SCHEMA_VERSION: Final = 1
+# Pilot plan Task 1.2: v2 adds the recording's mode; a v1 record reads as
+# ``normal`` (D6).
+ENCOUNTER_SCHEMA_VERSION: Final = 2
 _ID_PATTERN: Final = r"^[1-9][0-9]{0,18}$"
 _CLINIC_ID_PATTERN: Final = r"^[0-9a-f]{16}$"
 # Display strings are bounded and single-line before they leave this module.
@@ -188,13 +192,32 @@ def linked_consent(context: EncounterContext, now: datetime | None = None) -> Co
 class EncounterRecord(BaseModel):
     """What ``encounter.enc`` holds (D11): the consent, and the context when
     the session is linked. Serialised by this module, encrypted by
-    ``session_store`` under the session key with its own associated data."""
+    ``session_store`` under the session key with its own associated data.
+
+    Pilot plan Task 1.2: v2 adds the recording's ``mode``, fixed at Start
+    (D1). A v1 record — written before 0.2.0 — has none and reads as
+    ``normal`` (D6); a v1 record carrying one, or a v2 record without one,
+    is not a record this app wrote and is refused (``EncounterUnavailable``
+    through ``from_bytes``, which every rebuild treats as shadow, D3). A
+    NEWER version is refused the same way."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1] = ENCOUNTER_SCHEMA_VERSION
+    schema_version: Literal[1, 2] = ENCOUNTER_SCHEMA_VERSION
     consent: ConsentAttestation
     context: EncounterContext | None = None
+    mode: SessionMode = SessionMode.NORMAL
+
+    @model_validator(mode="before")
+    @classmethod
+    def _mode_by_version(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            version = data.get("schema_version", ENCOUNTER_SCHEMA_VERSION)
+            if version == 1 and "mode" in data:
+                raise ValueError("a v1 encounter record carries no mode")
+            if version == 2 and "mode" not in data and "schema_version" in data:
+                raise ValueError("a v2 encounter record names its mode")
+        return data
 
     @model_validator(mode="after")
     def _bound(self) -> EncounterRecord:
@@ -207,10 +230,19 @@ class EncounterRecord(BaseModel):
     @classmethod
     def from_bytes(cls, blob: bytes) -> EncounterRecord:
         """``EncounterUnavailable`` for anything that is not this schema
-        (terse on purpose: pydantic's detail would echo ids)."""
+        (terse on purpose: pydantic's detail would echo ids).
+
+        Peer round 9 PR-HIGH-B01: persisted bytes must NAME their
+        ``schema_version`` — the field defaults are for building a new
+        record, so bytes naming neither version nor mode are not a record
+        this app wrote (every one it wrote names its version) and are
+        refused, which every rebuild reads as shadow (D3), never as a v2
+        ``normal`` record."""
         try:
-            return cls.model_validate_json(blob)
-        except (ValidationError, ValueError):
+            data = json.loads(blob)
+            if isinstance(data, dict) and "schema_version" in data:
+                return cls.model_validate_json(blob)
+        except (ValidationError, ValueError, RecursionError):
             pass
         raise EncounterUnavailable()  # outside the except: no chained detail
 

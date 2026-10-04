@@ -53,6 +53,7 @@ from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from scribe_desktop import __version__
 from scribe_desktop.audio_capture import (
     CHANNELS,
     CHUNK_BYTES,
@@ -83,6 +84,7 @@ from scribe_desktop.encounter import (
 from scribe_desktop.logging_setup import exception_type_name, log_event
 from scribe_desktop.past_sessions import KeepLabel, PastSessionStore
 from scribe_desktop.secure_storage import SessionCrypto
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
     SESSION_ID_PATTERN,
@@ -283,6 +285,9 @@ class RecordingSession(BaseModel):
     # as <sessions root>/<validated session_id>/key.dpapi, so a malformed
     # session can never point deletion outside its own directory.
     key_reference: str | None = Field(default=None, pattern=r"^key\.dpapi$")
+    # Pilot plan Task 1.2 (D1): fixed at Start from the pilot setting and
+    # frozen with the session; a rebuild takes it from ``encounter.enc``.
+    mode: SessionMode = SessionMode.NORMAL
     state: SessionState = SessionState.IDLE
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
@@ -562,10 +567,14 @@ class SessionController:
         live_transcriber_factory: Callable[[], LiveTranscriber | None] | None = None,
         audit: AuditLog | None = None,
         past_sessions: PastSessionStore | None = None,
+        app_version: str | None = None,
     ) -> None:
         self._backend = backend
         self._root = sessions_root if sessions_root is not None else default_sessions_root()
         self._logger = logger
+        # Pilot plan Task 1.3 (D7): the version each Start's audit row names —
+        # a seam (None: this build's ``__version__``).
+        self._app_version = app_version if app_version is not None else __version__
         # Privacy-professional-controls plan Task 1.3 (C2): the audit record.
         # None records nothing (every test construction site that does not
         # ask for it). ``begin`` at Start is the one audit write that refuses;
@@ -788,6 +797,7 @@ class SessionController:
         *,
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> RecordingSession:
         """Start a new recording session.
 
@@ -795,7 +805,9 @@ class SessionController:
         without a ``ConsentAttestation``, or with one that does not name
         ``context``'s note (Constraint 4). ``context`` None is an UNLINKED
         recording (the desktop Start); a linked Start passes the context its
-        verification produced.
+        verification produced. ``mode`` (pilot plan D1) is the Start
+        funnel's read of the pilot setting at the click — fixed for this
+        recording, written to ``encounter.enc`` and the audit row.
 
         Ordering (binding key-custody decision): the audit row (privacy-
         professional-controls Flow 1 — BEFORE the previous session is
@@ -811,6 +823,8 @@ class SessionController:
             raise ConsentRequiredError("start refused: no recording consent was given")
         if context is not None and not isinstance(context, EncounterContext):
             raise SessionControllerError("start refused: the encounter context is malformed")
+        if not isinstance(mode, SessionMode):
+            raise SessionControllerError("start refused: the recording mode is malformed")
         try:
             bind_consent(consent, context)
         except ValueError:
@@ -836,7 +850,7 @@ class SessionController:
             # HERE (AuditWriteError, C2), with the previous QUEUED session
             # still installed and nothing of the new session on disk.
             session = RecordingSession(  # state defaults to idle
-                key_reference="key.dpapi", consent=consent, encounter_context=context
+                key_reference="key.dpapi", consent=consent, encounter_context=context, mode=mode
             )
             if self._audit is not None:
                 self._audit.begin(
@@ -845,6 +859,8 @@ class SessionController:
                     context=context,
                     user_id=self._audit_user_id(context),
                     started_at=session.created_at,
+                    mode=mode,
+                    app_version=self._app_version,
                 )
             try:
                 return self._start_locked(live, session, device_id)
@@ -885,7 +901,11 @@ class SessionController:
                 directory,
                 crypto,
                 session.session_id,
-                EncounterRecord(consent=session.consent, context=session.encounter_context),
+                EncounterRecord(
+                    consent=session.consent,
+                    context=session.encounter_context,
+                    mode=session.mode,
+                ),
             )
             store = SessionChunkStore.create(
                 directory / AUDIO_FILENAME, crypto, session.session_id
@@ -1532,6 +1552,8 @@ class SessionController:
                     encounter_context=record.context,
                     consent=record.consent,
                     key_reference="key.dpapi",
+                    # Pilot plan D1: the mode it was started in (v1: normal).
+                    mode=record.mode,
                     state=SessionState.QUEUED,
                 )
                 if live is not None:

@@ -1064,6 +1064,8 @@ WriteRefusalName = Literal[
     "note_unreadable",
     "answer_unreadable",
     "dev_build_writes_off",
+    # Pilot plan D4: a shadow recording's note is never written.
+    "shadow_session",
 ]
 
 
@@ -1132,8 +1134,12 @@ def refuse_before_read(
     *,
     channel: Channel,
     allow_dev_writes: bool,
+    shadow: bool,
 ) -> WriteRefusal | None:
-    """The refusals that need no Cliniko read (D5, D10): a mock note
+    """The refusals that need no Cliniko read (D5, D10): a shadow
+    recording, before everything else (``shadow_session``, pilot plan D4 —
+    ``shadow`` is the session's mode, fixed at Start; it never wrote, so no
+    record's line can precede it); a mock note
     (``mock_note``); an unreadable record (``record_unreadable``); a record
     already ``written`` — for THIS saved note ``already_written`` (the
     seen-mode line), for another ``write_uncertain`` (never completed); a dev
@@ -1147,6 +1153,8 @@ def refuse_before_read(
     what keeps those cases free of any request. ``prepare_write`` runs it
     again first, so a direct caller gets the same answer; by then hop 1's
     reads have already been made."""
+    if shadow is not False:
+        return WriteRefusal("shadow_session")
     if is_mock_note(note):
         return WriteRefusal("mock_note")
     if isinstance(record, RecordUnreadable):
@@ -1173,10 +1181,12 @@ def prepare_write(
     profile: TemplateProfile | None,
     channel: Channel,
     allow_dev_writes: bool,
+    shadow: bool,
 ) -> PreparedWrite | AlreadyWritten | WriteRefusal:
     """GUI thread, between the hops: the whole decision, in D15's order,
     after ``refuse_before_read`` (which the click must already have run
-    before hop 1 — see there):
+    before hop 1 — see there; ``shadow`` is the session's mode, pilot plan
+    D4):
 
     1. ``writeback_context`` over hop 1's OWN result (never a stored one);
     2. the match on the note's own content (``match_template``);
@@ -1200,7 +1210,12 @@ def prepare_write(
 
     Never raises for Cliniko's answers."""
     early = refuse_before_read(
-        note, record, note_identity, channel=channel, allow_dev_writes=allow_dev_writes
+        note,
+        record,
+        note_identity,
+        channel=channel,
+        allow_dev_writes=allow_dev_writes,
+        shadow=shadow,
     )
     if early is not None:
         return early

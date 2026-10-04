@@ -142,6 +142,7 @@ class TestTheWriteButton:
             "status": WriteRecordStatus("none"),
             "channel": "dev",
             "allow_dev_writes": False,
+            "shadow": False,
         }
         fields.update(overrides)
         return models.write_control(**fields)  # type: ignore[arg-type]

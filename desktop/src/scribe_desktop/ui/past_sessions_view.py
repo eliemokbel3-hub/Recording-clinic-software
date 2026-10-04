@@ -111,6 +111,13 @@ COPY_UNRESOLVED: Final = (
     "The saved note has an unresolved error, so it cannot be copied. Read it as shown."
 )
 COPY_TURNED_OFF: Final = "Copying notes is turned off in this version of Clinic Scribe."
+# Pilot plan Task 1.6 (D5): a shadow recording's kept note is never copied,
+# and its list row says what it was.
+COPY_SHADOW: Final = (
+    "This was a shadow recording for the pilot, so its note cannot be copied. Read it "
+    "as shown."
+)
+SHADOW_MARK: Final = "shadow recording"
 COPY_NOTHING_OPEN: Final = "Select a past session with a saved note first."
 SELECT_FIRST: Final = "Select a past session first."
 STORE_UNAVAILABLE: Final = "Past sessions are not set up in this window."
@@ -317,11 +324,13 @@ def entry_line(
     listing: PastSessionListing, *, hide_names: bool, zone: tzinfo | None = None
 ) -> str:
     """One list row: date + name (Flow 5), or the unreadable line — such an
-    entry is still listed so it can be deleted."""
+    entry is still listed so it can be deleted. A shadow recording's row
+    ends "(shadow recording)" (pilot plan Task 1.6)."""
     label = listing.label
     if label is None:
         return ENTRY_UNREADABLE_ROW
-    return f"{_local_text(_moment(label), zone)} - {who_line(label, hide_names=hide_names)}"
+    line = f"{_local_text(_moment(label), zone)} - {who_line(label, hide_names=hide_names)}"
+    return f"{line} ({SHADOW_MARK})" if label.shadow else line
 
 
 def sorted_listings(listings: Sequence[PastSessionListing]) -> list[PastSessionListing]:
@@ -456,14 +465,17 @@ def open_failed_line(exc: BaseException) -> str:
 
 
 def copy_unavailable_reason(
-    *, opened: bool, has_saved: bool, unresolved: bool, copy_enabled: bool
+    *, opened: bool, has_saved: bool, unresolved: bool, copy_enabled: bool, shadow: bool
 ) -> str | None:
     """Why Copy is unavailable — one reason per cause (round 16 LOW-002) —
-    or None when it is available."""
+    or None when it is available. A shadow recording's entry (pilot plan
+    Task 1.6) is refused before anything about its note."""
     if not copy_enabled:
         return COPY_TURNED_OFF
     if not opened:
         return COPY_NOTHING_OPEN
+    if shadow:
+        return COPY_SHADOW
     if not has_saved:
         return COPY_NO_SAVED_NOTE
     if unresolved:

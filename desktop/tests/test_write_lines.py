@@ -131,6 +131,11 @@ _EXPECTED = {
         "Cliniko refused the write although the note is still a draft - this clinic's key "
         "may not be allowed to edit notes. Copy the note instead."
     ),
+    # Pilot plan D4: no Copy in it (Copy is refused in shadow mode too).
+    "shadow_session": (
+        "This is a shadow recording for the pilot, so its note is not written to Cliniko. "
+        "Write your own note in Cliniko as usual."
+    ),
 }
 
 _DETAIL: dict[str, dict[str, object]] = {
@@ -276,6 +281,9 @@ class TestUncertainPrefix:
             "record_unreadable",
             "unknown",
             "write_in_flight",
+            # Pilot plan D4: invites no Copy, and a shadow recording never
+            # wrote, so no earlier attempt can be open.
+            "shadow_session",
         }
         for key in unprefixed:
             assert models.write_line(key, uncertain=True) == models.write_line(key)
@@ -379,6 +387,7 @@ class TestWriteControl:
             "status": WriteRecordStatus("none"),
             "channel": "production",
             "allow_dev_writes": False,
+            "shadow": False,
         }
         fields.update(overrides)
         return models.write_control(**fields)  # type: ignore[arg-type]
@@ -388,8 +397,12 @@ class TestWriteControl:
 
     def test_the_reasons_come_in_order(self) -> None:
         unlinked = models.WriteBinding("s", False)
-        assert self._control(saved=False, binding=unlinked, mock=True, status=None) == (
-            models.WriteControl(False, models.write_line("not_saved"))
+        assert self._control(
+            saved=False, shadow=True, binding=unlinked, mock=True, status=None
+        ) == (models.WriteControl(False, models.write_line("not_saved")))
+        # Pilot plan D4: shadow before unlinked (whose line invites Copy).
+        assert self._control(shadow=True, binding=unlinked, mock=True, status=None) == (
+            models.WriteControl(False, models.write_line("shadow_session"))
         )
         assert self._control(binding=unlinked, mock=True, status=None) == (
             models.WriteControl(False, models.write_line("unlinked"))
@@ -400,6 +413,29 @@ class TestWriteControl:
         assert self._control(status=None) == (
             models.WriteControl(False, models.write_line("record_unreadable"))
         )
+
+    def test_a_shadow_recording_is_refused_whatever_else_holds(self) -> None:
+        """Pilot plan D4: Write disabled with the shadow line — never ready,
+        in either channel, whatever the record says."""
+        from scribe_desktop.draft_write import WriteRecordStatus
+
+        shadow = models.WriteControl(False, models.write_line("shadow_session"))
+        for status in (
+            None,
+            WriteRecordStatus("none"),
+            WriteRecordStatus("written", note_matches=True),
+            WriteRecordStatus("attempting"),
+        ):
+            for channel, allow in (("production", False), ("dev", True), ("dev", False)):
+                for mock in (False, True):
+                    assert self._control(
+                        shadow=True,
+                        status=status,
+                        channel=channel,
+                        allow_dev_writes=allow,
+                        mock=mock,
+                    ) == shadow
+        assert "copy" not in models.write_line("shadow_session").lower()
 
     @pytest.mark.parametrize(
         ("outcome", "matches", "expected"),

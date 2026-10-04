@@ -44,6 +44,7 @@ from scribe_desktop.session import (  # noqa: E402
     SessionController,
     SessionState,
 )
+from scribe_desktop.session_mode import SessionMode  # noqa: E402
 from scribe_desktop.session_store import (  # noqa: E402
     AUDIO_FILENAME,
     ENCOUNTER_FILENAME,
@@ -53,6 +54,7 @@ from scribe_desktop.session_store import (  # noqa: E402
     SessionChunkStore,
     session_expires_at,
     wrap_key_to_file,
+    write_encounter,
     write_note,
 )
 from scribe_desktop.transcription import SPEAKER_2, write_transcript  # noqa: E402
@@ -88,13 +90,17 @@ def _write_session(
     linked: bool = False,
     note: bool = False,
     encounter: bool = True,
+    mode: SessionMode = SessionMode.NORMAL,
 ) -> None:
     session_id = directory.name
     if encounter:
         context = _linked_context() if linked else None
         consent = linked_consent(context) if context is not None else unlinked_consent()
         write_encounter_record(
-            directory, crypto, session_id, EncounterRecord(consent=consent, context=context)
+            directory,
+            crypto,
+            session_id,
+            EncounterRecord(consent=consent, context=context, mode=mode),
         )
     write_transcript(directory, crypto, _pipeline_document(session_id))
     if note:
@@ -777,6 +783,91 @@ class TestOpenForReview:
         assert directory.name in window.reminders
         assert window.note_screen.current_note() is None
         controller.discard()
+        _close(window)
+
+
+class TestShadowAfterRecoveryAndReopen:
+    """Pilot plan Task 1.2 (D1, D3): a recording keeps the mode it was
+    started in when it comes back — through a recovered CHECKOUT (its one
+    decrypt of ``encounter.enc``) and through an Unreviewed open — and a
+    record that cannot be read is a shadow recording's."""
+
+    @pytest.mark.parametrize(
+        "stored", ["shadow", "normal", "v1", "missing", "newer", "unversioned"]
+    )
+    def test_a_recovered_checkout_takes_its_mode_from_its_record(
+        self, qapp: Any, tmp_path: Path, stored: str
+    ) -> None:
+        from test_schema_versions import ENCOUNTER_V1_UNLINKED, _newer, _unversioned
+
+        directory = tmp_path / uuid.uuid4().hex
+        directory.mkdir()
+        crypto = SessionCrypto()
+        sid = directory.name
+        if stored in ("shadow", "normal"):
+            record = EncounterRecord(consent=unlinked_consent(), mode=SessionMode(stored))
+            write_encounter_record(directory, crypto, sid, record)
+        elif stored == "v1":
+            write_encounter(directory, crypto, sid, ENCOUNTER_V1_UNLINKED)
+        elif stored == "newer":
+            write_encounter(directory, crypto, sid, _newer(ENCOUNTER_V1_UNLINKED))
+        elif stored == "unversioned":  # peer round 9 PR-HIGH-B01
+            write_encounter(directory, crypto, sid, _unversioned(ENCOUNTER_V1_UNLINKED, "normal"))
+        window = _main_window(tmp_path, _controller(tmp_path))
+        try:
+            window._open_checkout_encounter(directory, crypto)
+            expected = (
+                SessionMode.NORMAL if stored in ("normal", "v1") else SessionMode.SHADOW
+            )
+            assert window.session_mode_for(sid) is expected
+            assert window.keep_label_for(sid).shadow is (expected is SessionMode.SHADOW)
+            # Task 1.7 (round 7 MED-002): the Transcript screen, where a
+            # recovered session lands, says so — and only for a shadow one.
+            shadow_label = window.transcript_screen.shadow_label
+            assert shadow_label.isHidden() is (expected is SessionMode.NORMAL)
+            assert shadow_label.text() == models.SHADOW_RECORDING_LINE
+            # Once the checkout is over, the id is unknown: fail closed.
+            window._end_checkout_encounter()
+            assert window.session_mode_for(sid) is SessionMode.SHADOW
+            assert shadow_label.isHidden()
+        finally:
+            crypto.destroy()
+            _close(window)
+
+    @windows_only
+    def test_an_unreviewed_shadow_recording_reopens_as_shadow(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        directory = _unreviewed(tmp_path, note=True, mode=SessionMode.SHADOW)
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        _open_row(window, directory.name)
+        session = controller.session
+        assert session is not None and session.mode is SessionMode.SHADOW
+        note_screen = window.note_screen
+        assert note_screen.showing_saved_note and note_screen.shadow
+        assert not note_screen.copy_button.isEnabled()
+        assert not note_screen.shadow_label.isHidden()
+        assert note_screen.write_label.text() == models.write_line("shadow_session")
+        assert window.keep_label_for(directory.name).shadow is True
+        assert not window.transcript_screen.shadow_label.isHidden()
+        window.transcript_screen.on_discard()
+        assert controller.session is None
+        _close(window)
+
+    @windows_only
+    def test_an_unreviewed_normal_recording_reopens_as_normal(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        directory = _unreviewed(tmp_path, note=True)
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        _open_row(window, directory.name)
+        assert not window.note_screen.shadow
+        assert window.note_screen.shadow_label.isHidden()
+        assert window.keep_label_for(directory.name).shadow is False
+        assert window.transcript_screen.shadow_label.isHidden()
+        window.transcript_screen.on_discard()
         _close(window)
 
 

@@ -487,6 +487,7 @@ def _prepare(
     context: Any = _UNSET,
     channel: Channel = "production",
     allow_dev_writes: bool = False,
+    shadow: bool = False,
 ) -> draft_write.PreparedWrite | draft_write.AlreadyWritten | draft_write.WriteRefusal:
     ctx = enc_context() if context is _UNSET else context
     return draft_write.prepare_write(
@@ -500,6 +501,7 @@ def _prepare(
         profile=_profile() if profile is _UNSET else profile,
         channel=channel,
         allow_dev_writes=allow_dev_writes,
+        shadow=shadow,
     )
 
 
@@ -1250,7 +1252,10 @@ class TestPrepareWrite:
         of ANOTHER saved note is ``write_uncertain``, never the seen-mode
         line (D5)."""
         check = functools.partial(
-            draft_write.refuse_before_read, channel="production", allow_dev_writes=False
+            draft_write.refuse_before_read,
+            channel="production",
+            allow_dev_writes=False,
+            shadow=False,
         )
         note = _write_note()
         mock = _write_note(provider_name="mock-extractive")
@@ -1668,9 +1673,11 @@ class TestPrepareWrite:
     def test_the_uncertain_prefix_reaches_every_refusal_that_invites_copy(self) -> None:
         """PR-MED-017 (tested since round 25): with an earlier attempt open, every refusal
         line but the three that already speak of the write's outcome starts
-        with the ``write_uncertain`` warning (PR-MED-017)."""
+        with the ``write_uncertain`` warning (PR-MED-017) — and but the shadow
+        refusal (pilot plan D4), which invites no Copy and can never follow
+        an attempt (a shadow recording never wrote)."""
         warning = models.WRITE_LINES["write_uncertain"]
-        unprefixed = {"already_written", "record_unreadable", "write_uncertain"}
+        unprefixed = {"already_written", "record_unreadable", "write_uncertain", "shadow_session"}
         for name in get_args(draft_write.WriteRefusalName):
             refusal = draft_write.WriteRefusal(
                 name,
@@ -2209,14 +2216,19 @@ class TestTheDevBuildWriteGuard:
         for record in (None, _record("attempting"), _record("unknown")):
             assert (
                 draft_write.refuse_before_read(
-                    note, record, _IDENTITY, channel="production", allow_dev_writes=allow
+                    note,
+                    record,
+                    _IDENTITY,
+                    channel="production",
+                    allow_dev_writes=allow,
+                    shadow=False,
                 )
                 is None
             )
 
     def test_in_dev_it_refuses_until_allowed(self) -> None:
         note = _write_note()
-        check = draft_write.refuse_before_read
+        check = functools.partial(draft_write.refuse_before_read, shadow=False)
         assert check(note, None, _IDENTITY, channel="dev", allow_dev_writes=False) == (
             draft_write.WriteRefusal("dev_build_writes_off")
         )
@@ -2245,6 +2257,39 @@ class TestTheDevBuildWriteGuard:
             assert check(
                 note, record, _IDENTITY, channel="dev", allow_dev_writes=False
             ) == draft_write.WriteRefusal("dev_build_writes_off", earlier_attempt_open=open_attempt)
+
+    def test_a_shadow_recording_is_refused_before_everything(self) -> None:
+        """Pilot plan D4: ``shadow_session`` comes first — before the mock
+        note, the record's own lines and the dev guard — in both channels;
+        and anything but an explicit False refuses (fail closed)."""
+        note = _write_note()
+        mock = _write_note(provider_name="mock-extractive")
+        shadow = draft_write.WriteRefusal("shadow_session")
+        for candidate in (note, mock):
+            for record in (
+                None,
+                draft_write.RECORD_UNREADABLE,
+                _record("written"),
+                _record("attempting"),
+            ):
+                for channel, allow in (("production", False), ("dev", False), ("dev", True)):
+                    assert draft_write.refuse_before_read(
+                        candidate,
+                        record,
+                        _IDENTITY,
+                        channel=channel,  # type: ignore[arg-type]
+                        allow_dev_writes=allow,
+                        shadow=True,
+                    ) == shadow
+        assert draft_write.refuse_before_read(
+            note, None, _IDENTITY, channel="production", allow_dev_writes=False,
+            shadow=None,  # type: ignore[arg-type]
+        ) == shadow
+
+    def test_prepare_write_refuses_a_shadow_recording(self, tmp_path: Path) -> None:
+        registry, _ = _registry(tmp_path)
+        assert _prepare(registry, shadow=True) == draft_write.WriteRefusal("shadow_session")
+        assert isinstance(_prepare(registry, shadow=False), draft_write.PreparedWrite)
 
     def test_prepare_write_refuses_it_too(self, tmp_path: Path) -> None:
         registry, _ = _registry(tmp_path)

@@ -474,7 +474,8 @@ class PastSessionsScreen(QWidget):
         recorded copy flag is on and the note carries no unresolved error (a
         saved note met the full ratification bar when it was saved —
         ``ui/note.py`` ``_copy_ready``'s reopened-note rule, re-checked here
-        all the same)."""
+        all the same). Pilot plan Task 1.6: a shadow recording's entry is
+        refused by name."""
         entry = self._open_entry
         saved = entry.saved_note if entry is not None else None
         return view.copy_unavailable_reason(
@@ -482,17 +483,21 @@ class PastSessionsScreen(QWidget):
             has_saved=saved is not None,
             unresolved=saved is not None and bool(saved.blocking_warnings()),
             copy_enabled=models.COPY_TO_CLINIKO_ENABLED,
+            shadow=entry is not None and entry.label.shadow,
         )
 
     def on_copy(self) -> None:
         """Copy the SAVED note only, through the one placement (Task 8.2's
-        formats). Re-checked at click time (fail closed)."""
+        formats). Re-checked at click time (fail closed); the placement
+        itself refuses a shadow recording's note too (pilot plan D5)."""
         entry = self._open_entry
         reason = self._copy_reason()
         if reason is not None or entry is None or entry.saved_note is None:
             self._show_message(reason or view.COPY_NOTHING_OPEN)
             return
-        if _place_note_text(models.format_note_body(entry.saved_note)):
+        if _place_note_text(
+            models.format_note_body(entry.saved_note), shadow=entry.label.shadow
+        ):
             self._show_message(view.COPY_DONE)
 
     # --- Delete now (two clicks) ------------------------------------------

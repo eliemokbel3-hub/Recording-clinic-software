@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scribe_desktop import identity, install_layout
+from scribe_desktop import __version__, identity, install_layout
 from scribe_desktop.audio_capture import CaptureBackend
 from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import BenchmarkResult
@@ -85,11 +85,15 @@ from scribe_desktop.note_config import (
     DevSettings,
     NoteConfig,
     NoteConfigError,
+    PilotSettings,
     TemplateProfile,
     dev_writes_allowed,
     load_dev_settings,
     load_note_config,
+    read_pilot_settings,
     save_dev_settings,
+    save_pilot_settings,
+    shadow_mode_on,
 )
 from scribe_desktop.past_sessions import KeepLabel, PastSessionStore, keep_label
 from scribe_desktop.secure_storage import SessionCrypto
@@ -104,6 +108,7 @@ from scribe_desktop.session import (
     WriteInFlightError,
     WriteReservation,
 )
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import KEY_FILENAME, audit_created_at, session_expires_at
 from scribe_desktop.status import read_registration_status, registration_lines, run_self_test
 from scribe_desktop.system_events import NOT_SET_UP as SYSTEM_PAUSE_NOT_SET_UP
@@ -218,6 +223,20 @@ DEV_WRITES_SAVE_FAILED: Final = (
     "The developer build's write setting could not be saved; the box shows the setting "
     "in use."
 )
+# Pilot plan Task 1.1 (D1-D3): the shadow-mode checkbox, in both channels.
+SHADOW_MODE_CHECKBOX_TEXT: Final = "Shadow mode (pilot)"
+SHADOW_MODE_UNREADABLE: Final = (
+    "The shadow-mode setting could not be read, so shadow mode is on. Untick the box "
+    "to turn it off."
+)
+SHADOW_MODE_SAVE_FAILED: Final = (
+    "The shadow-mode setting could not be saved; the box shows the setting in use."
+)
+
+
+def version_line(version: str) -> str:
+    """The Status tab's app-version line (pilot plan Task 1.1)."""
+    return f"Clinic Scribe version {version}"
 
 
 class StatusPanel(QWidget):
@@ -231,9 +250,18 @@ class StatusPanel(QWidget):
     from and saved to ``config\\dev.json`` under ``config_root``; a failed
     save says so and shows the setting re-read from the file. A production
     build has no checkbox and never reads the file. ``dev_writes_changed``
-    fires after every save attempt, failed or not."""
+    fires after every save attempt, failed or not.
+
+    Pilot plan Task 1.1 (D1-D3): in BOTH channels, the "Shadow mode (pilot)"
+    checkbox, read from and saved to ``config\\pilot.json`` under
+    ``config_root`` (None: ``note_config.pilot_settings_root``); a file that
+    cannot be read shows the box ticked (shadow on, D3) with a line naming
+    it; a failed save says so and re-reads the box. ``shadow_mode_changed``
+    fires after every save attempt. And the app version (``app_version``,
+    the seam; ``__version__`` when None)."""
 
     dev_writes_changed = Signal()
+    shadow_mode_changed = Signal()
 
     def __init__(
         self,
@@ -242,10 +270,21 @@ class StatusPanel(QWidget):
         exclusion_warnings: Sequence[str] = (),
         config_root: Path | None = None,
         windows_layer: WindowsLayer | None = None,
+        app_version: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._config_root = config_root
         self._windows_layer = windows_layer
+        self.version_label = QLabel(
+            version_line(app_version if app_version is not None else __version__)
+        )
+        self.version_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.shadow_checkbox = QCheckBox(SHADOW_MODE_CHECKBOX_TEXT)
+        self.shadow_label = QLabel()
+        self.shadow_label.setWordWrap(True)
+        self.shadow_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._show_shadow_setting()
+        self.shadow_checkbox.toggled.connect(self._on_shadow_toggled)
         self.intended_use_label = QLabel(models.INTENDED_USE_LINE)
         self.intended_use_label.setWordWrap(True)
         self.intended_use_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -267,8 +306,11 @@ class StatusPanel(QWidget):
         layout = QVBoxLayout()
         layout.addWidget(self.intended_use_label)
         layout.addWidget(self.exclusions_label)
+        layout.addWidget(self.version_label)
         layout.addWidget(QLabel(f"Native host: {identity.host_name()}"))
         layout.addWidget(self.registration_label)
+        layout.addWidget(self.shadow_checkbox)
+        layout.addWidget(self.shadow_label)
         if install_layout.channel() == "dev":
             checkbox = QCheckBox(DEV_WRITES_CHECKBOX_TEXT)
             checkbox.setChecked(load_dev_settings(config_root).allow_cliniko_writes)
@@ -302,6 +344,31 @@ class StatusPanel(QWidget):
             return
         self.dev_writes_label.hide()
         self.dev_writes_changed.emit()
+
+    def _show_shadow_setting(self) -> bool:
+        """Show the setting as it is ON DISK (D3: unreadable reads as on,
+        named); True when the file could not be read."""
+        setting = read_pilot_settings(self._config_root)
+        self.shadow_checkbox.blockSignals(True)
+        self.shadow_checkbox.setChecked(setting.shadow_mode)
+        self.shadow_checkbox.blockSignals(False)
+        self.shadow_label.setText(SHADOW_MODE_UNREADABLE if setting.unreadable else "")
+        self.shadow_label.setVisible(setting.unreadable)
+        return setting.unreadable
+
+    def _on_shadow_toggled(self, checked: bool) -> None:
+        try:
+            save_pilot_settings(PilotSettings(shadow_mode=checked), config_root=self._config_root)
+        except NoteConfigError:
+            # The box shows what is ON DISK, re-read (a failure after the
+            # replace landed still saved the tick); every Start re-reads it.
+            if not self._show_shadow_setting():
+                self.shadow_label.setText(SHADOW_MODE_SAVE_FAILED)
+                self.shadow_label.show()
+            self.shadow_mode_changed.emit()
+            return
+        self._show_shadow_setting()
+        self.shadow_mode_changed.emit()
 
     def refresh_registration(self) -> None:
         # Installation plan Task 2.3 (D9): read in Chrome's order through the
@@ -425,6 +492,9 @@ class MainWindow(QMainWindow):
                 if transcriber_factory is not None
                 else self._live_aware_transcriber
             ),
+            # Pilot plan D1: the pilot setting under this window's config root
+            # (None: ``note_config.pilot_settings_root``), read at each Start.
+            shadow_mode=lambda: shadow_mode_on(config_root),
         )
         # Installation plan round 36 MED-001 (the practitioner's option (b)):
         # every Start waits out the start-up import warm-up, bounded
@@ -564,6 +634,9 @@ class MainWindow(QMainWindow):
         # Installation plan D4: the dev write setting changed — the Note tab's
         # Write button re-reads it now (a click always re-reads it anyway).
         self.status_panel.dev_writes_changed.connect(self.note_screen.refresh_write_control)
+        # Pilot plan Task 1.7: the Session tab's line follows the setting at
+        # once (a recording's own mode stays fixed at Start, D1).
+        self.status_panel.shadow_mode_changed.connect(self.session_screen.refresh)
         # Privacy-professional-controls Task 3.1: what the archive kept, its
         # retention setting and the audit record's export. Construction reads
         # only the settings file under `config_root`; the archive is listed
@@ -1104,7 +1177,11 @@ class MainWindow(QMainWindow):
         self._transcript_source = "live"
         self._begin_checkout(
             session.session_id,
-            EncounterRecord(consent=session.consent, context=session.encounter_context),
+            EncounterRecord(
+                consent=session.consent,
+                context=session.encounter_context,
+                mode=session.mode,
+            ),
             adopted=True,
         )
         self.recovery_screen.refresh()
@@ -1121,6 +1198,7 @@ class MainWindow(QMainWindow):
             on_abandon=self._on_note_abandon,
             # D2: an adopted session writes through the same path as a live one.
             write_binding=self._live_write_binding(),
+            mode=session.mode,  # pilot plan D5: as it was started (v1: normal)
         )
         self.tabs.setCurrentWidget(self.note_screen)
 
@@ -1630,14 +1708,21 @@ class MainWindow(QMainWindow):
         is replaced. A re-verification still running answers nobody."""
         self._checkout = _CheckoutEncounter()
         self.transcript_screen.set_link_line("")
+        self.transcript_screen.set_shadow_line(False)
 
     def _show_checkout_line(self) -> None:
         """On the Transcript screen — where opening a recovered session
-        lands (round 20 LOW-014)."""
+        lands (round 20 LOW-014). Pilot plan Task 1.7: with the shadow line
+        when the checked-out session is a shadow recording's (an unreadable
+        record is one, D3)."""
         checkout = self._checkout
         if checkout.session_id is None:
             self.transcript_screen.set_link_line("")
+            self.transcript_screen.set_shadow_line(False)
             return
+        self.transcript_screen.set_shadow_line(
+            self.session_mode_for(checkout.session_id) is not SessionMode.NORMAL
+        )
         record = checkout.record
         context = record.context if record is not None else None
         result = checkout.result
@@ -1734,7 +1819,9 @@ class MainWindow(QMainWindow):
         recording, "Desktop recording (no Cliniko note)" for a desktop one —
         the kind comes from the live session's encounter context or the
         checkout's decrypted record. The name is never persisted at Start
-        (``EncounterRecord`` stays ids-only); it lives in this label only."""
+        (``EncounterRecord`` stays ids-only); it lives in this label only.
+        Pilot plan Task 1.6: the label is a shadow recording's whenever
+        ``session_mode_for`` says so (fail closed, D3)."""
         name: str | None = None
         recording: Literal["linked", "desktop", "unknown"] = "unknown"
         clinic_id: str | None = None
@@ -1760,7 +1847,33 @@ class MainWindow(QMainWindow):
             result = checkout.result
             if name is None and result is not None and isinstance(result.outcome, Verified):
                 name = result.outcome.display.patient_display_name
-        return keep_label(name, recording, clinic_id)
+        shadow = self.session_mode_for(session_id) is not SessionMode.NORMAL
+        return keep_label(name, recording, clinic_id, shadow=shadow)
+
+    def session_mode_for(self, session_id: str | None) -> SessionMode:
+        """Pilot plan D1/D3: the mode of ``session_id`` — the live (or
+        adopted) session's own, fixed at Start; a recovered checkout's from
+        its decrypted record, SHADOW when that record could not be read; and
+        SHADOW for anything else (fail closed). Ids only, no decrypt: the
+        three authorised ``read_encounter_record`` callers already read it."""
+        if session_id is None:
+            return SessionMode.SHADOW
+        session = self._controller.session
+        if session is not None and session.session_id == session_id:
+            return session.mode
+        checkout = self._checkout
+        if checkout.session_id == session_id:
+            record = checkout.record
+            return record.mode if record is not None else SessionMode.SHADOW
+        return SessionMode.SHADOW
+
+    def _live_mode(self) -> SessionMode:
+        """The live session's mode (the Note tab's review and reopened saved
+        note belong to it); SHADOW with no non-terminal live session."""
+        session = self._controller.session
+        if session is None or session.is_terminal:
+            return SessionMode.SHADOW
+        return session.mode
 
     def _complete_live(self) -> RecordingSession:
         """The live (or adopted) session's Complete, labelled at the click."""
@@ -1792,6 +1905,9 @@ class MainWindow(QMainWindow):
             on_state_changed=self.transcript_screen.set_note_review_state,
             template_profile_id=self.transcript_screen.selected_profile_id(),
             write_binding=self._live_write_binding(),
+            # Pilot plan D5/D13: a shadow recording's note is display-only and
+            # its Save teaches nothing.
+            mode=self._live_mode(),
         )
         self.tabs.setCurrentWidget(self.note_screen)
 
@@ -1900,8 +2016,11 @@ class MainWindow(QMainWindow):
         is reserved or sent:
 
         - a write already in flight; a click for a session that is no longer
-          the live one (stale); an unlinked session (Constraint 10 — it never
-          wrote, so it holds no record);
+          the live one (stale); a SHADOW recording (``shadow_session``, pilot
+          plan D4 — before the unlinked line, which invites a Copy shadow
+          mode refuses; recorded in the audit row like any pre-send refusal);
+          an unlinked session (Constraint 10 — it never wrote, so it holds no
+          record);
         - the write record, content-free (D5; ``models.write_record_block``,
           the Note tab's own mapping): unreadable → ``record_unreadable``,
           ``written`` → ``written_seen`` (seen mode: no network call — only
@@ -1928,6 +2047,13 @@ class MainWindow(QMainWindow):
         session = self._controller.session
         if session is None or session.is_terminal or session.session_id != session_id:
             self._show_write_line(models.write_line("not_sent"))
+            return
+        if session.mode is not SessionMode.NORMAL:
+            # Pilot plan D4: nothing reserved, read or sent. A 0.2.0 session
+            # always has its row (Start wrote it), so no date is needed.
+            if self._audit is not None:
+                self._audit.record_write_refusal(session_id, "shadow_session")
+            self._show_write_line(models.write_line("shadow_session"))
             return
         context = session.encounter_context
         if context is None:
@@ -1990,6 +2116,7 @@ class MainWindow(QMainWindow):
                 inputs.note_identity,
                 channel=install_layout.channel(),
                 allow_dev_writes=dev_writes_allowed(self._config_root),
+                shadow=session.mode is not SessionMode.NORMAL,
             )
             if early is not None:
                 if self._audit is not None:
@@ -2110,6 +2237,7 @@ class MainWindow(QMainWindow):
             profile=self._write_profile(inputs.note),
             channel=install_layout.channel(),
             allow_dev_writes=dev_writes_allowed(self._config_root),
+            shadow=session.mode is not SessionMode.NORMAL,
         )
         if isinstance(prepared, WriteRefusal):
             # Task 1.4 (round 1 PR-MED-005): the refusal's FIXED code, never

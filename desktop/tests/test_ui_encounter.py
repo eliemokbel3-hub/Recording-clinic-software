@@ -52,6 +52,7 @@ from scribe_desktop.encounter import (  # noqa: E402
 )
 from scribe_desktop.secure_storage import SessionCrypto  # noqa: E402
 from scribe_desktop.session import RecordingSession, SessionState  # noqa: E402
+from scribe_desktop.session_mode import SessionMode  # noqa: E402
 from scribe_desktop.session_store import (  # noqa: E402
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -622,14 +623,19 @@ class _WriteController(FakeController):
     store's."""
 
     def __init__(
-        self, store: _MemoryWriteStore, *, linked: bool = True, template_id: str | None = TEMPLATE
+        self,
+        store: _MemoryWriteStore,
+        *,
+        linked: bool = True,
+        template_id: str | None = TEMPLATE,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> None:
         super().__init__()
         self.store = store
         ctx = context(template_id=template_id) if linked else None
         consent = consent_for(ctx) if ctx is not None else unlinked_consent()
         self.session_value = RecordingSession(
-            consent=consent, encounter_context=ctx
+            consent=consent, encounter_context=ctx, mode=mode
         ).with_state(SessionState.QUEUED)
 
     def write_record_status(self, session_id: str) -> Any:
@@ -762,12 +768,13 @@ class TestDraftWrite:
         linked: bool = True,
         profile: Any = None,
         template_id: str | None = TEMPLATE,
+        mode: SessionMode = SessionMode.NORMAL,
         **overrides: Any,
     ) -> tuple[Any, _WriteController, Any, _MemoryWriteStore]:
         cliniko = cliniko if cliniko is not None else Cliniko()
         store = store if store is not None else _MemoryWriteStore()
         store.requests = lambda: len(cliniko.calls)
-        controller = _WriteController(store, linked=linked, template_id=template_id)
+        controller = _WriteController(store, linked=linked, template_id=template_id, mode=mode)
         registry = _registry(tmp_path, transport=cliniko)
         window = _window(
             tmp_path,
@@ -785,6 +792,7 @@ class TestDraftWrite:
             info="",
             copy_enabled=True,
             write_binding=models.WriteBinding(session.session_id, linked),
+            mode=session.mode,
         )
         return window, controller, cliniko, store
 
@@ -1296,6 +1304,43 @@ class TestDraftWrite:
         assert controller.write_releases == 1
         window.close()
 
+    @pytest.mark.parametrize("linked", [True, False])
+    def test_a_shadow_session_is_refused_by_name_and_never_sends(
+        self, qapp: Any, tmp_path: Path, linked: bool
+    ) -> None:
+        """Pilot plan Task 1.4 (D4): a shadow recording's Write is disabled
+        with its own line — before the unlinked one, which invites a Copy —
+        and the slot reached directly reserves, reads and sends nothing and
+        records ``shadow_session`` as the session's refusal."""
+        audit = _AuditRecorder()
+        window, controller, cliniko, store = self._window(
+            tmp_path, audit=audit, linked=linked, mode=SessionMode.SHADOW
+        )
+        session_id = controller.session_value.session_id
+        line = models.write_line("shadow_session")
+        screen = window.note_screen
+        assert screen.shadow
+        assert not screen.write_button.isEnabled()
+        assert screen.write_label.text() == line
+        window._on_write_requested(session_id)
+        assert not window.is_writing
+        assert cliniko.calls == []
+        assert _count(controller.calls, "reserve_write") == 0
+        assert store.stored == []
+        assert audit.calls == [("refusal", session_id, "shadow_session")]
+        assert self._line(window) == line
+        window.close()
+
+    def test_a_normal_session_beside_the_shadow_test_still_writes(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        window, controller, cliniko, store = self._window(tmp_path, mode=SessionMode.NORMAL)
+        assert not window.note_screen.shadow
+        self._click(qapp, window, controller)
+        assert self._line(window) == models.write_line("written_seen")
+        assert _count(cliniko.calls, "PATCH") == 1
+        window.close()
+
     def test_a_dev_build_refuses_until_its_status_setting_allows_writes(
         self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1356,6 +1401,8 @@ class TestDraftWrite:
             context=session.encounter_context,
             user_id=None,
             started_at=session.created_at,
+            mode=session.mode,
+            app_version="0.2.0",
         )
         self._click(qapp, window, controller)
         (row,) = audit.rows().rows

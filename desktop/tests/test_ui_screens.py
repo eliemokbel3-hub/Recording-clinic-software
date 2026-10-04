@@ -84,6 +84,7 @@ from scribe_desktop.session import (  # noqa: E402
     SessionActivityError,
     SessionState,
 )
+from scribe_desktop.session_mode import SessionMode  # noqa: E402
 from scribe_desktop.session_store import (  # noqa: E402
     AUDIO_FILENAME,
     KEY_FILENAME,
@@ -204,6 +205,7 @@ class FakeController:
         self.end_enrolment_hook: Callable[[], None] | None = None
         # Cliniko safeguards Task 3.3: the consent and context of every Start.
         self.started_with: list[tuple[ConsentAttestation, EncounterContext | None]] = []
+        self.started_modes: list[SessionMode] = []
         # Task 4.5: what the Chrome bridge reads (SessionControllerLike).
         self.session_ref: str | None = None
         self.recorded_seconds = 0
@@ -249,12 +251,16 @@ class FakeController:
         *,
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> RecordingSession:
         # Mirrors the real controller's Constraint-4 refusal.
         if not isinstance(consent, ConsentAttestation):
             raise ConsentRequiredError("start refused: no recording consent was given")
         self.calls.append(("start", device_id))
         self.started_with.append((consent, context))
+        # Pilot plan Task 1.2: the mode each Start was given, apart from
+        # `started_with` (whose exact tuples tests pin).
+        self.started_modes.append(mode)
         self.state_value = SessionState.RECORDING
         return self._session()
 
@@ -4323,7 +4329,11 @@ class TestNoteViewModels:
 
 class TestNoteScreen:
     def _screen(
-        self, *, copy_enabled: bool = False, result: models.NoteGenerationResult | None = None
+        self,
+        *,
+        copy_enabled: bool = False,
+        result: models.NoteGenerationResult | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> tuple[Any, dict[str, list[Any]]]:
         from scribe_desktop.ui.note import NoteScreen
 
@@ -4342,6 +4352,7 @@ class TestNoteScreen:
             on_cancel=lambda: record["cancelled"].append(True),
             on_state_changed=lambda state: record["states"].append(state),
             template_profile_id="clinic-a",
+            mode=mode,
         )
         return screen, record
 
@@ -4371,6 +4382,7 @@ class TestNoteScreen:
                 on_save=lambda note: None,
                 on_abandon=lambda: None,
                 template_profile_id="clinic-a",
+                mode=SessionMode.NORMAL,
             )
             return screen
 
@@ -4607,6 +4619,7 @@ class TestNoteScreen:
             on_save=lambda note: None,
             on_abandon=refused,
             template_profile_id="clinic-a",
+            mode=SessionMode.NORMAL,
         )
         screen.abandon()
         assert screen.message_label.text() == (
@@ -4684,6 +4697,7 @@ class TestNoteScreen:
             _note_result(),
             on_save=lambda note: None,
             on_abandon=lambda: None,
+            mode=SessionMode.NORMAL,
         )
         assert not screen.copy_button.isHidden()
         assert not screen.copy_button.isEnabled()
@@ -4886,6 +4900,7 @@ class TestNoteWriteButton:
         linked: bool = True,
         bind: bool = True,
         result: models.NoteGenerationResult | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> tuple[Any, list[str], list[str]]:
         from scribe_desktop.draft_write import WriteRecordStatus
         from scribe_desktop.ui.note import NoteScreen
@@ -4910,6 +4925,7 @@ class TestNoteWriteButton:
             on_abandon=lambda: None,
             template_profile_id="clinic-a",
             write_binding=models.WriteBinding(self._SESSION, linked) if bind else None,
+            mode=mode,
         )
         screen._status = current  # the test's handle on the provider's answer
         return screen, emitted, reads
@@ -5037,6 +5053,7 @@ class TestNoteWriteButton:
             info="",
             copy_enabled=True,
             write_binding=models.WriteBinding(self._SESSION, True),
+            mode=SessionMode.NORMAL,
         )
         assert screen.write_label.text() == models.write_line("written_seen")
         assert not screen.write_button.isEnabled()
@@ -5172,6 +5189,7 @@ class TestNoteWriteButton:
             info="",
             copy_enabled=True,
             write_binding=models.WriteBinding(self._SESSION, True),
+            mode=SessionMode.NORMAL,
         )
         assert screen.write_button.isEnabled()
         screen.write_button.click()
@@ -5195,6 +5213,7 @@ class TestNoteWriteButton:
             on_save=refused,
             on_abandon=lambda: None,
             template_profile_id="clinic-a",
+            mode=SessionMode.NORMAL,
         )
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
@@ -5220,6 +5239,7 @@ class TestNoteScreenEdits:
         config_root: Path,
         result: models.NoteGenerationResult | None = None,
         learning_status_provider: Callable[[], models.LearningStatus] | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> tuple[Any, dict[str, list[Any]]]:
         from scribe_desktop.ui.note import NoteScreen
 
@@ -5239,6 +5259,7 @@ class TestNoteScreenEdits:
             on_cancel=lambda: record["cancelled"].append(True),
             on_state_changed=lambda state: record["states"].append(state),
             template_profile_id="clinic-a",
+            mode=mode,
         )
         return screen, record
 
@@ -6094,6 +6115,7 @@ class TestNoteScreenTypedEdits:
         config_root: Path,
         result: models.NoteGenerationResult | None = None,
         learning_status_provider: Callable[[], models.LearningStatus] | None = None,
+        mode: SessionMode = SessionMode.NORMAL,
     ) -> tuple[Any, dict[str, list[Any]]]:
         from scribe_desktop.ui.note import NoteScreen
 
@@ -6107,6 +6129,7 @@ class TestNoteScreenTypedEdits:
             on_abandon=lambda: record["abandoned"].append(True),
             on_cancel=lambda: record["cancelled"].append(True),
             template_profile_id="clinic-a",
+            mode=mode,
         )
         return screen, record
 
@@ -6664,6 +6687,128 @@ class TestNoteScreenTypedEdits:
         entry = load_learned_rule_entries(config_root)[rule_id]
         assert (entry.confirmations, entry.auto_confirmed) == (2, False)
         on_the_edge.deleteLater()
+
+    # --- Pilot plan Task 1.9 (D13): a shadow Save teaches nothing ---------------
+
+    def _three_learning_actions(self, screen: Any, rule_id: str) -> None:
+        """A queued phrase (an added clinician line), a typed edit over the
+        practitioner's line (a new shorthand rule) and an edit of a learned
+        rule's line (an in-place wording replacement)."""
+        key = _eligible(screen)[_LEARNABLE_INDEX].allowed_sections[0]
+        assert screen.add_line(_LEARNABLE_INDEX, key) is True
+        line = _routed_line(screen, _DIAGNOSIS_INDEX)
+        assert screen.edit_line(line.assertion_id, _TYPED) is True
+        [proposal] = [p for p in screen._draft.note_proposals if p.rule_id == rule_id]
+        assert screen.edit_line(proposal.proposal_id, "Ice applied") is True
+
+    def test_a_shadow_save_teaches_nothing_and_a_normal_save_still_learns(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(config_root, confirmations=2)
+
+        def snapshot() -> dict[str, bytes]:
+            return {
+                path.relative_to(config_root).as_posix(): path.read_bytes()
+                for path in sorted(config_root.rglob("*"))
+                if path.is_file()
+            }
+
+        before = snapshot()
+        shadow, record = self._screen(
+            config_root=config_root,
+            result=result,
+            learning_status_provider=_learning_on,  # the gate is closed regardless
+            mode=SessionMode.SHADOW,
+        )
+        assert shadow.learning_label.text() == models.SHADOW_NOT_LEARNED
+        self._three_learning_actions(shadow, rule_id)
+        assert shadow.queued_learning_count() == 0
+        assert shadow.rule_queue() == () and shadow.rule_replacement_queue() == ()
+        assert models.SHADOW_NOT_LEARNED in shadow.edit_status_label.text()
+        assert "Will learn" not in shadow.edit_status_label.text()
+        refreshed: list[int] = []
+        shadow.learned_phrases_changed.connect(lambda: refreshed.append(1))
+        self._ratify(shadow)
+        shadow.save()
+        assert len(record["saved"]) == 1
+        # No phrase, no rule, no wording: every file is byte-identical except
+        # D13's one permitted change — typing over the learned rule's line is
+        # a correction (``learned_rule_outcomes``: "removed"), so the rule is
+        # DEMOTED (the safety direction): its count resets, nothing else moves.
+        after = snapshot()
+        rules_sidecar = note_config_module.LEARNED_RULES_SIDECAR_FILENAME
+        assert set(after) == set(before)
+        assert {name for name in before if after[name] != before[name]} == {rules_sidecar}
+        old_doc, new_doc = json.loads(before[rules_sidecar]), json.loads(after[rules_sidecar])
+        assert set(new_doc["entries"]) == set(old_doc["entries"]) == {rule_id}
+        old_entry, new_entry = old_doc["entries"][rule_id], new_doc["entries"][rule_id]
+        assert (old_entry["confirmations"], new_entry["confirmations"]) == (2, 0)
+        assert new_entry["auto_confirmed"] is False
+        assert new_entry["history"] == old_entry["history"] == []  # no wording replaced
+        ignored = {"confirmations", "auto_confirmed"}
+        assert {k: v for k, v in new_entry.items() if k not in ignored} == {
+            k: v for k, v in old_entry.items() if k not in ignored
+        }
+        [rule] = [r for r in load_note_config(config_root).autofill_rules if r.rule_id == rule_id]
+        assert rule.expansion_texts() == ("Ice pack use explained.",)
+        # The persisted demotion changed the tab's "(confirmed N of 3)" text, so
+        # it is told ONCE to re-read (a writer that persists more than it
+        # reports leaves the UI stale) — and the Save says why; nothing new is
+        # learned, so nothing new is listed.
+        assert refreshed == [1]
+        status = shadow.edit_status_label.text()
+        assert "1 learned shorthand will propose again (removed or declined)." in status
+        assert "Learned" not in status
+        assert "Updated a learned shorthand" not in status
+        assert shadow.learning_label.text() == models.SHADOW_NOT_LEARNED
+        shadow.deleteLater()
+        # The next (normal) recording proposes nothing carrying that wording...
+        result, _ = _rooted_learned_result(config_root, confirmations=0)
+        excerpts = [p.note_excerpt for p in result.draft.note_proposals]
+        assert excerpts and not any(
+            "Ice applied" in text or _TYPED in text for text in excerpts
+        )
+        assert [r.rule_id for r in load_learned_rules(config_root).recent] == [rule_id]
+        # ...and the same three actions there learn exactly as before.
+        normal, record = self._screen(
+            config_root=config_root, result=result, learning_status_provider=_learning_on
+        )
+        self._three_learning_actions(normal, rule_id)
+        assert normal.queued_learning_count() == 1
+        assert len(normal.rule_queue()) == 1 and len(normal.rule_replacement_queue()) == 1
+        self._ratify(normal)
+        normal.save()
+        assert len(record["saved"]) == 1
+        status = normal.edit_status_label.text()
+        assert "Learned 1:" in status and "Learned 1 shorthand" in status
+        assert "Updated a learned shorthand rule's wording" in status
+        assert snapshot() != before
+        normal.deleteLater()
+
+    def test_a_shadow_removal_still_demotes(self, qapp: Any, tmp_path: Path) -> None:
+        """D13: the safe direction holds in shadow too — a Remove of a
+        pre-filled learned line resets its rule, and nothing else changes."""
+        config_root = tmp_path / "config"
+        result, rule_id = _rooted_learned_result(
+            config_root, confirmations=LEARNED_RULE_AUTO_CONFIRM_AFTER
+        )
+        screen, record = self._screen(
+            config_root=config_root,
+            result=result,
+            learning_status_provider=_learning_on,
+            mode=SessionMode.SHADOW,
+        )
+        [learned_row] = screen.prefilled_lines()
+        assert screen.remove_line(learned_row.proposal_id) is True
+        self._ratify(screen)
+        screen.save()
+        assert len(record["saved"]) == 1
+        entry = load_learned_rule_entries(config_root)[rule_id]
+        assert (entry.confirmations, entry.auto_confirmed) == (0, False)
+        [rule] = [r for r in load_note_config(config_root).autofill_rules if r.rule_id == rule_id]
+        assert rule.expansion_texts() == ("Ice pack use explained.",)
+        screen.deleteLater()
 
     def test_a_correction_never_inherits_the_old_wordings_confirmation(
         self, qapp: Any, tmp_path: Path
@@ -7548,7 +7693,7 @@ class TestTranscriptPastSessions:
     def test_the_pre_save_exit_passes_the_label(self, qapp: Any, tmp_path: Path) -> None:
         from scribe_desktop.past_sessions import keep_label
 
-        label = keep_label("Jan Citizen", "linked", None)
+        label = keep_label("Jan Citizen", "linked", None, shadow=False)
         controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
         assert controller.session_value is not None
         session_id = controller.session_value.session_id
@@ -7567,7 +7712,7 @@ class TestTranscriptPastSessions:
     def test_the_seen_complete_passes_the_label(self, qapp: Any) -> None:
         from scribe_desktop.past_sessions import keep_label
 
-        label = keep_label(None, "desktop", None)
+        label = keep_label(None, "desktop", None, shadow=False)
         controller = TestTranscriptGeneration()._live(
             WriteRecordStatus("written", note_matches=True)
         )
@@ -7761,6 +7906,9 @@ class TestNoteWiring:
         self, qapp: Any, tmp_path: Path
     ) -> None:
         controller = FakeController()
+        controller.session_value = RecordingSession(consent=unlinked_consent()).with_state(
+            SessionState.QUEUED
+        )  # a NORMAL recording's review (pilot plan D3: none reads as shadow)
         window = self._rooted_window(tmp_path, controller)
         window._on_draft_ready(_note_result())  # reads the learning status
         assert window.note_screen.current_note() is not None
@@ -7768,6 +7916,37 @@ class TestNoteWiring:
         assert not (tmp_path / "config").exists()  # nothing written by a review
         window.note_screen.clear()
         window.close()
+
+    def test_a_review_with_no_live_session_is_a_shadow_one(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Pilot plan D3: a review the window cannot tie to a live NORMAL
+        recording fails closed — display-only, no Copy, nothing learned."""
+        controller = FakeController()
+        window = self._rooted_window(tmp_path, controller)
+        window._on_draft_ready(_note_result())
+        note_screen = window.note_screen
+        assert note_screen.shadow
+        assert note_screen.learning_label.text() == models.SHADOW_NOT_LEARNED
+        assert not note_screen.shadow_label.isHidden()
+        assert note_screen.shadow_label.text() == models.SHADOW_NOTE_LINE
+        note_screen.clear()
+        assert not note_screen.shadow
+        window.close()
+
+    def test_a_shadow_live_session_makes_a_shadow_review(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        controller = FakeController()
+        for mode in SessionMode:
+            controller.session_value = RecordingSession(
+                consent=unlinked_consent(), mode=mode
+            ).with_state(SessionState.QUEUED)
+            window = self._rooted_window(tmp_path, controller)
+            window._on_draft_ready(_note_result())
+            assert window.note_screen.shadow is (mode is SessionMode.SHADOW)
+            window.note_screen.clear()
+            window.close()
 
     def test_new_live_transcript_clears_stale_note(self, qapp: Any, tmp_path: Path) -> None:
         controller = FakeController()
@@ -7825,7 +8004,7 @@ class TestNoteWiring:
     # --- Task 9.1a: the recorded copy decision, driven through the window ---
 
     def _generate_through_window(
-        self, qapp: Any, tmp_path: Path
+        self, qapp: Any, tmp_path: Path, *, mode: SessionMode = SessionMode.NORMAL
     ) -> tuple[Any, FakeController]:
         """Reach a draft under review the way the app does: a live transcript
         arrives, the clinician confirms role and profile, Generate composes on
@@ -7842,6 +8021,12 @@ class TestNoteWiring:
         ``TestTranscriptGeneration._screen`` passes at construction."""
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
+        # Pilot plan D3: the review belongs to the live session, and a review
+        # with none is a shadow one (fail closed) — so the app's own route has
+        # a queued recording, of `mode`, behind it.
+        controller.session_value = RecordingSession(
+            consent=unlinked_consent(), mode=mode
+        ).with_state(SessionState.QUEUED)
         window = self._window(tmp_path, controller)
         result = _note_result()
         window.transcript_screen._config_loader = _note_config
@@ -7866,6 +8051,9 @@ class TestNoteWiring:
         window and the added line's choice."""
         controller = FakeController()
         controller.state_value = SessionState.QUEUED
+        controller.session_value = RecordingSession(consent=unlinked_consent()).with_state(
+            SessionState.QUEUED
+        )  # a NORMAL recording's review (see `_generate_through_window`)
         window = self._rooted_window(tmp_path, controller)
         result = _note_result()
         window.transcript_screen._config_loader = _note_config
@@ -8284,6 +8472,104 @@ class TestNoteWiring:
         body.keyPressEvent(cls._copy_key_event())
         cls._menu_copy_action(body).trigger()
         body.copy_selection()
+
+    # --- Pilot plan Task 1.5 (D5): a shadow recording's note is never copied ---
+
+    def test_a_shadow_review_never_reaches_the_clipboard(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Every route — the button, a direct ``_copy_note``, the panel's
+        keyboard, context-menu and direct Copy — places nothing at ANY review
+        state, full ratification and Save included, with the copy flag ON;
+        the body stays display-only throughout and the reason is named."""
+        from PySide6.QtCore import Qt
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(
+            qapp, tmp_path, mode=SessionMode.SHADOW
+        )
+        note_screen = window.note_screen
+        no_interaction = Qt.TextInteractionFlag.NoTextInteraction
+        payloads = self._fake_clipboard(monkeypatch)
+
+        def refused_everywhere() -> None:
+            assert not note_screen.copy_button.isEnabled()
+            assert note_screen.note_body.textInteractionFlags() == no_interaction
+            assert not note_screen.shadow_label.isHidden()
+            self._attempt_copy(note_screen)
+            assert payloads == []
+
+        assert note_screen.shadow
+        refused_everywhere()  # proposals pending
+        self._fake_write_note(monkeypatch)
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        refused_everywhere()  # review warnings unacknowledged
+        note_screen._acknowledge_all()
+        refused_everywhere()  # ratified, not yet saved
+        assert not note_screen._note_saved
+        note_screen.save()
+        # Peer round 9 PR-LOW-C01: the Save really succeeded (a failed one
+        # returns before marking the note saved), so the checks below run
+        # on the saved state.
+        assert note_screen._note_saved
+        assert note_screen.message_label.text().startswith("Note saved.")
+        assert note_screen.current_note() is not None
+        refused_everywhere()  # saved: a normal note would copy here
+        assert note_screen.copy_button.toolTip() == models.SHADOW_COPY_REFUSED
+        note_screen._copy_note()
+        assert note_screen.message_label.text() == models.SHADOW_COPY_REFUSED
+        assert payloads == []
+        window.close()
+
+    def test_the_placement_itself_refuses_a_shadow_note(
+        self, qapp: Any, monkeypatch: Any
+    ) -> None:
+        """D5: ``_place_note_text`` refuses as its LAST line, whatever its
+        caller checked; for a normal note it places exactly as before."""
+        from scribe_desktop.ui.note import _place_note_text
+
+        payloads = self._fake_clipboard(monkeypatch)
+        assert _place_note_text("Subjective: sore knee.", shadow=True) is False
+        assert payloads == []
+        assert _place_note_text("Subjective: sore knee.", shadow=False) is True
+        assert payloads == ["Subjective: sore knee."]
+
+    def test_a_shadow_saved_note_reopened_is_display_only(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """``show_saved_note`` (an Unreviewed reopen) takes the mode too."""
+        from PySide6.QtCore import Qt
+
+        from scribe_desktop.ui.note import NoteScreen
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        window, _controller = self._generate_through_window(qapp, tmp_path)
+        self._fake_write_note(monkeypatch)
+        note_screen = window.note_screen
+        for proposal in note_screen._draft.note_proposals:
+            note_screen.confirm_proposal(proposal.proposal_id)
+        note_screen._acknowledge_all()
+        note_screen.save()
+        note = note_screen.current_note()
+        assert note is not None
+        window.close()
+        payloads = self._fake_clipboard(monkeypatch)
+        for mode in SessionMode:
+            screen = NoteScreen()
+            screen.show_saved_note(
+                note, _note_document(), info="", copy_enabled=True, mode=mode
+            )
+            shadow = mode is SessionMode.SHADOW
+            assert screen.shadow is shadow
+            assert screen.copy_button.isEnabled() is not shadow
+            flags = screen.note_body.textInteractionFlags()
+            assert (flags == Qt.TextInteractionFlag.NoTextInteraction) is shadow
+            assert screen.shadow_label.isHidden() is not shadow
+            screen.copy_button.click()
+            assert len(payloads) == (0 if shadow else 1)
+            payloads.clear()
+            screen.deleteLater()
 
     def test_copy_never_reaches_the_clipboard_under_a_recorded_fail(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
@@ -8940,10 +9226,11 @@ def _ps_entry(
     started: datetime | None = None,
     note: bool = True,
     generated: bool = True,
+    shadow: bool = False,
 ) -> tuple[str, GeneratedNote | None]:
     """One committed Past-sessions entry: a transcript, a saved note and a
     generated note (each optional but the transcript), written through the
-    store's own verified path."""
+    store's own verified path — a shadow recording's with ``shadow``."""
     from scribe_desktop.note import digest_bytes
     from scribe_desktop.past_sessions import keep_label
     from scribe_desktop.session_store import ArchiveSource, GeneratedRecord
@@ -8988,7 +9275,7 @@ def _ps_entry(
             note_plain=saved.to_bytes() if saved is not None else None,
             generated_plain=kept.to_bytes() if kept is not None else None,
         ),
-        keep_label(name, recording, None),  # type: ignore[arg-type]
+        keep_label(name, recording, None, shadow=shadow),  # type: ignore[arg-type]
     )
     assert store.commit(sid)
     return sid, saved
@@ -9390,6 +9677,36 @@ class TestPastSessionsTab:
         [mime] = mimes
         for name in models.clipboard_mime_formats():
             assert mime.hasFormat(models.windows_clipboard_mime_type(name))
+        screen.deleteLater()
+
+    def test_a_shadow_entry_is_marked_and_its_copy_refused_by_name(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Pilot plan Task 1.6 (D5): the list marks a shadow recording's
+        entry; it opens and reads as usual, but Copy is disabled with its
+        reason and a click places nothing. A normal entry beside it copies."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        payloads = TestNoteWiring()._fake_clipboard(monkeypatch)
+        store = _ps_store(tmp_path / "past_sessions")
+        shadow_id, shadow_saved = _ps_entry(store, shadow=True)
+        normal_id, normal_saved = _ps_entry(store, started=_PS_NOW - timedelta(hours=2))
+        assert shadow_saved is not None and normal_saved is not None
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        rows = self._rows(screen)
+        assert sum(row.endswith(f"({view.SHADOW_MARK})") for row in rows) == 1
+        self._select(screen, shadow_id)
+        assert screen.saved_view.toPlainText() != ""  # still readable as shown
+        assert not screen.copy_button.isEnabled()
+        assert screen.copy_reason_label.text() == view.COPY_SHADOW
+        screen.on_copy()
+        assert screen.message_label.text() == view.COPY_SHADOW
+        assert payloads == []
+        self._select(screen, normal_id)
+        assert screen.copy_button.isEnabled()
+        screen.on_copy()
+        assert payloads == [models.format_note_body(normal_saved)]
         screen.deleteLater()
 
     # --- Delete now -------------------------------------------------------------
@@ -9887,7 +10204,7 @@ class TestPastSessionsTab:
         assert screen.message_label.text() == view.COPY_UNRESOLVED
         assert payloads == [] and mimes == []
         assert view.copy_unavailable_reason(
-            opened=False, has_saved=False, unresolved=False, copy_enabled=True
+            opened=False, has_saved=False, unresolved=False, copy_enabled=True, shadow=False
         ) == view.COPY_NOTHING_OPEN
         screen.deleteLater()
 

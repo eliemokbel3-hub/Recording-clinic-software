@@ -42,6 +42,7 @@ from scribe_desktop.encounter import Verification, unlinked_consent
 from scribe_desktop.logging_setup import _PAYLOAD_SIGNATURES, ALLOWED_KEYS, PayloadTripwireFilter
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionControllerError
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import (
     KEY_FILENAME,
     SESSION_KEY_DESCRIPTION,
@@ -77,16 +78,41 @@ def _log(tmp_path: Path, clock: _Clock | None = None, **kwargs: Any) -> AuditLog
     return AuditLog(tmp_path / "audit", clock=clock or _Clock(), **kwargs)
 
 
-def _begin_linked(log: AuditLog, session_id: str | None = None) -> str:
+VERSION = "0.2.0"
+# Pilot plan Task 1.3: the two v2 arguments every Start passes.
+V2: dict[str, Any] = {"mode": SessionMode.NORMAL, "app_version": VERSION}
+
+
+def _begin_linked(
+    log: AuditLog, session_id: str | None = None, *, mode: SessionMode = SessionMode.NORMAL
+) -> str:
     sid = session_id or _sid()
     ctx = context()
-    log.begin(sid, consent=consent_for(ctx), context=ctx, user_id=USER, started_at=T0)
+    log.begin(
+        sid,
+        consent=consent_for(ctx),
+        context=ctx,
+        user_id=USER,
+        started_at=T0,
+        mode=mode,
+        app_version=VERSION,
+    )
     return sid
 
 
-def _begin_unlinked(log: AuditLog, *, started_at: datetime = T0) -> str:
+def _begin_unlinked(
+    log: AuditLog, *, started_at: datetime = T0, mode: SessionMode = SessionMode.NORMAL
+) -> str:
     sid = _sid()
-    log.begin(sid, consent=unlinked_consent(T0), context=None, user_id=None, started_at=started_at)
+    log.begin(
+        sid,
+        consent=unlinked_consent(T0),
+        context=None,
+        user_id=None,
+        started_at=started_at,
+        mode=mode,
+        app_version=VERSION,
+    )
     return sid
 
 
@@ -296,7 +322,7 @@ class TestRowStore:
         log = _log(tmp_path)
         ctx = context(Verification.UNVERIFIED_OFFLINE)
         sid = _sid()
-        log.begin(sid, consent=consent_for(ctx), context=ctx, user_id=None, started_at=T0)
+        log.begin(sid, consent=consent_for(ctx), context=ctx, user_id=None, started_at=T0, **V2)
         assert _only_row(log, sid).verification == "unverified_offline"
 
     def test_a_date_the_platform_cannot_convert_is_the_authored_refusal(
@@ -323,7 +349,9 @@ class TestRowStore:
         log = _log(tmp_path)
         ctx = context()
         sid = _sid()
-        log.begin(sid, consent=consent_for(ctx), context=ctx, user_id="Jane", started_at=T0)
+        log.begin(
+            sid, consent=consent_for(ctx), context=ctx, user_id="Jane", started_at=T0, **V2
+        )
         assert _only_row(log, sid).user_id is None
 
     def test_a_row_moved_onto_another_id_is_unreadable(self, tmp_path: Path) -> None:
@@ -418,7 +446,12 @@ class TestRowStore:
         sid = _sid()
         with pytest.raises(AuditWriteError) as raised:
             log.begin(
-                sid, consent=unlinked_consent(T0), context=None, user_id=None, started_at=T0
+                sid,
+                consent=unlinked_consent(T0),
+                context=None,
+                user_id=None,
+                started_at=T0,
+                **V2,
             )
         assert raised.value.reason == "write_failed"
         assert "disk full" not in str(raised.value)  # authored words, never OS text
@@ -428,7 +461,7 @@ class TestRowStore:
         log = _log(tmp_path)
         _begin_unlinked(log)
         sid = _sid()
-        path = _seal(log, sid, {"schema_version": 2, "session_id": sid, "anything": [1, 2]})
+        path = _seal(log, sid, {"schema_version": 3, "session_id": sid, "anything": [1, 2]})
         before = path.read_bytes()
         assert log.record_deletion(sid, "expired") is False
         assert log.record_start_failed(sid) is False
@@ -703,12 +736,12 @@ class TestRowStore:
         assert log.row_for(_sid()) is None  # no row for that session
         # A newer-format row is never shown (D8).
         newer = _sid()
-        _seal(log, newer, {"schema_version": 2, "session_id": newer})
+        _seal(log, newer, {"schema_version": 3, "session_id": newer})
         assert log.row_for(newer) is None
         # Round 16 LOW-006: one id in two month folders is never "no record".
         twice = _sid()
-        _seal(log, twice, {"schema_version": 2, "session_id": twice}, month="2026-09")
-        _seal(log, twice, {"schema_version": 2, "session_id": twice}, month="2026-10")
+        _seal(log, twice, {"schema_version": 3, "session_id": twice}, month="2026-09")
+        _seal(log, twice, {"schema_version": 3, "session_id": twice}, month="2026-10")
         with pytest.raises(AuditUnavailable) as twice_info:
             log.row_for(twice)
         assert twice_info.value.reason == "unavailable"
@@ -756,6 +789,145 @@ class TestPreAuditRows:
         sid = _sid()
         assert log.record_deletion(sid, "orphan_gc", created_at=created)
         assert _only_row(log, sid).session_date == T0.date()
+
+    def test_a_pre_audit_row_names_no_mode_or_version(self, tmp_path: Path) -> None:
+        """Pilot plan Task 1.3: nothing recorded the mode of a session with
+        no row, so the row does not claim one."""
+        log = _log(tmp_path)
+        sid = _sid()
+        assert log.record_deletion(sid, "expired")
+        row = _only_row(log, sid)
+        assert (row.mode, row.app_version) == (None, None)
+
+
+def _v1_document(row: AuditRow) -> dict[str, Any]:
+    """``row`` as the v1 schema (before 0.2.0) stored it: no mode, no
+    version, ``schema_version`` 1."""
+    document = json.loads(row.model_dump_json())
+    del document["mode"], document["app_version"]
+    document["schema_version"] = 1
+    return document
+
+
+@windows_only
+class TestAuditRowV2:
+    """Pilot plan Task 1.3 (D6, D7): ``mode`` and ``app_version`` on every
+    Start's row, a v1 row upgraded in ``_decode`` BEFORE validation, and a
+    v3 row read as newer (Start unaffected)."""
+
+    def test_begin_records_the_mode_and_the_version(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        shadow = _begin_linked(log, mode=SessionMode.SHADOW)
+        normal = _begin_unlinked(log)
+        assert _only_row(log, shadow).mode is SessionMode.SHADOW
+        assert _only_row(log, normal).mode is SessionMode.NORMAL
+        for sid in (shadow, normal):
+            row = _only_row(log, sid)
+            assert (row.schema_version, row.app_version) == (2, VERSION)
+
+    @pytest.mark.parametrize("bad", ["0.2", "0.2.0-dev", "v0.2.0", "0.2.0\n", "", "0. 2.0"])
+    def test_a_version_the_row_cannot_hold_is_left_out_not_refused(
+        self, tmp_path: Path, bad: str
+    ) -> None:
+        log = _log(tmp_path)
+        sid = _sid()
+        log.begin(
+            sid,
+            consent=unlinked_consent(T0),
+            context=None,
+            user_id=None,
+            started_at=T0,
+            mode=SessionMode.NORMAL,
+            app_version=bad,
+        )
+        assert _only_row(log, sid).app_version is None
+
+    def test_the_version_field_refuses_free_text(self) -> None:
+        with pytest.raises(ValueError):
+            AuditRow(
+                session_id=_sid(),
+                session_date=date(2026, 10, 1),
+                origin="recorded",
+                app_version="Jane Citizen",
+            )
+        with pytest.raises(ValueError):
+            AuditRow(
+                session_id=_sid(),
+                session_date=date(2026, 10, 1),
+                origin="recorded",
+                mode="practice",  # type: ignore[arg-type]
+            )
+
+    def test_a_v1_row_reads_as_normal_with_no_version(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        _seal(log, sid, _v1_document(_only_row(log, sid)))
+        row = _only_row(log, sid)
+        assert (row.schema_version, row.mode, row.app_version) == (2, SessionMode.NORMAL, None)
+        assert row.treatment_note_id == NOTE  # the rest of the row as stored
+
+    def test_a_v1_row_is_upgraded_before_validation(self) -> None:
+        """Constraint 2: ``_decode`` upgrades; ``AuditRow`` itself takes v2
+        only (a v1 document handed to the model directly is refused)."""
+        row = AuditRow(session_id=_sid(), session_date=date(2026, 10, 1), origin="recorded")
+        document = _v1_document(row)
+        with pytest.raises(ValueError):
+            AuditRow.model_validate(document)
+        decoded = audit_mod._decode(json.dumps(document).encode())  # noqa: SLF001
+        assert isinstance(decoded, AuditRow) and decoded.mode is SessionMode.NORMAL
+
+    @pytest.mark.parametrize("field", ["mode", "app_version"])
+    def test_a_v1_row_naming_a_v2_field_is_unreadable(self, tmp_path: Path, field: str) -> None:
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        document = _v1_document(_only_row(log, sid))
+        document[field] = "normal" if field == "mode" else VERSION
+        path = _seal(log, sid, document)
+        before = path.read_bytes()
+        assert log.rows().unreadable == 1
+        assert log.record_deletion(sid, "discarded") is False
+        assert path.read_bytes() == before
+
+    def test_an_updated_v1_row_is_written_back_as_v2(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        sid = _begin_unlinked(log)
+        _seal(log, sid, _v1_document(_only_row(log, sid)))
+        assert log.record_deletion(sid, "discarded")
+        crypto = unwrap_key_from_file(log.root, description=AUDIT_KEY_DESCRIPTION)
+        try:
+            stored = json.loads(
+                crypto.decrypt(_row_path(log, sid).read_bytes(), b"audit:" + sid.encode())
+            )
+        finally:
+            crypto.destroy()
+        assert (stored["schema_version"], stored["mode"], stored["app_version"]) == (
+            2,
+            "normal",
+            None,
+        )
+        assert _only_row(log, sid).deletion.state == "discarded"
+
+    def test_a_v1_row_exports_as_normal_with_an_empty_version(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        _seal(log, sid, _v1_document(_only_row(log, sid)))
+        target = tmp_path / "export.csv"
+        assert log.export_csv(target) == 1
+        rows = list(csv.reader(io.StringIO(target.read_text(encoding="utf-8-sig"))))
+        exported = dict(zip(CSV_COLUMNS, rows[1], strict=True))
+        assert (exported["mode"], exported["app_version"]) == ("normal", "")
+
+    def test_a_v3_row_is_newer_and_start_is_unaffected(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        _begin_unlinked(log)
+        sid = _sid()
+        path = _seal(log, sid, {"schema_version": 3, "session_id": sid, "mode": "pilot"})
+        before = path.read_bytes()
+        assert log.record_deletion(sid, "discarded") is False
+        assert path.read_bytes() == before
+        assert log.rows().newer == 1
+        _begin_unlinked(log)  # a newer row never refuses another Start
+        assert len(log.rows().rows) == 2
 
 
 @windows_only
@@ -884,6 +1056,19 @@ class TestCsv:
             "pending",
             "none",
         )
+
+    def test_export_names_the_mode_and_the_version(self, tmp_path: Path) -> None:
+        """Pilot plan Task 1.3: the two v2 columns, last, filled per row."""
+        assert CSV_COLUMNS[-2:] == ("mode", "app_version")
+        log = _log(tmp_path)
+        shadow = _begin_linked(log, mode=SessionMode.SHADOW)
+        normal = _begin_unlinked(log)
+        target = tmp_path / "export.csv"
+        assert log.export_csv(target) == 2
+        rows = list(csv.reader(io.StringIO(target.read_text(encoding="utf-8-sig"))))
+        by_id = {row[0]: dict(zip(CSV_COLUMNS, row, strict=True)) for row in rows[1:]}
+        assert (by_id[shadow]["mode"], by_id[shadow]["app_version"]) == ("shadow", VERSION)
+        assert (by_id[normal]["mode"], by_id[normal]["app_version"]) == ("normal", VERSION)
 
     def test_export_of_an_empty_store_is_the_header(self, tmp_path: Path) -> None:
         log = _log(tmp_path)

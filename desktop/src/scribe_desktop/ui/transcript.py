@@ -228,6 +228,13 @@ class TranscriptScreen(QWidget):
         self.link_label = QLabel()
         self.link_label.setTextFormat(Qt.TextFormat.PlainText)
         self.link_label.setWordWrap(True)
+        # Pilot plan Task 1.7: a recovered (or reopened) shadow recording says
+        # so where it lands — fixed text, shown by the main window with the
+        # checkout (``set_shadow_line``).
+        self.shadow_label = QLabel(models.SHADOW_RECORDING_LINE)
+        self.shadow_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.shadow_label.setWordWrap(True)
+        self.shadow_label.hide()
 
         # --- Task 7.5: pre-generation role + template controls -------------
         self.generate_box = QGroupBox("Generate note")
@@ -313,6 +320,7 @@ class TranscriptScreen(QWidget):
         layout.addWidget(self.legend_label)
         layout.addWidget(self.attribution_status_label)
         layout.addWidget(self.link_label)
+        layout.addWidget(self.shadow_label)
         layout.addWidget(self.generate_box)
         layout.addLayout(buttons)
         layout.addWidget(self.message_label)
@@ -406,6 +414,11 @@ class TranscriptScreen(QWidget):
         """The checked-out recovered session's Cliniko link line ("" clears
         it). Ids and names never appear in it (`models.checkout_link_line`)."""
         self.link_label.setText(text)
+
+    def set_shadow_line(self, shown: bool) -> None:
+        """Pilot plan Task 1.7: whether the checked-out session is a shadow
+        recording (``models.SHADOW_RECORDING_LINE``)."""
+        self.shadow_label.setVisible(shown)
 
     # --- loading -----------------------------------------------------------
 

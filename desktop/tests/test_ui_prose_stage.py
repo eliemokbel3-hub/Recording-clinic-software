@@ -34,6 +34,7 @@ import pytest
 
 from scribe_desktop.language_model import LanguageModelError, MockLanguageModel
 from scribe_desktop.note import GeneratedNote, bound_rendering, render_note, usable_rendering
+from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.ui import models
 
 
@@ -111,6 +112,7 @@ def _screen(
         on_abandon=lambda: record["abandoned"].append(True),
         on_cancel=lambda: record["cancelled"].append(True),
         template_profile_id="clinic-a",
+        mode=SessionMode.NORMAL,
     )
     return screen, record
 
