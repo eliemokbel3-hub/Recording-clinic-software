@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-40",
+  "appointment_type": "discharge",
+  "axes": ["scribe_instruction", "rate", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Final review. Any pain in the hip now?"},
+    {"role": "patient", "text": "No pain at all now."},
+    {"role": "clinician", "text": "Scribe, pause the note for a moment."},
+    {"role": "patient", "text": "Can I pay by card today?"},
+    {"role": "clinician", "text": "On examination there is no tenderness and full range of motion in the hip. Discharged from care."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "pain", "at", "all"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["scribe", "pause", "the", "note"], "line": 2, "material": false},
+    {"kind": "absent", "tokens": ["pay", "by", "card"], "line": 3, "material": false},
+    {"kind": "negation", "tokens": ["no", "tenderness"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "rate": -4}
+}

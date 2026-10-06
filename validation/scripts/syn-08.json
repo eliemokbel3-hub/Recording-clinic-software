@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-08",
+  "appointment_type": "follow_up",
+  "axes": ["contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How is the back since the last visit?"},
+    {"role": "patient", "text": "A bit better. I take paracetamol 500 milligrams daily for the pain in my back."},
+    {"role": "clinician", "text": "We will keep you on the usual pain relief for now."},
+    {"role": "clinician", "text": "Today we did soft tissue work to the lower back."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["paracetamol", "500", "milligrams", "daily"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["pain", "in", "my", "back"], "line": 1, "material": true}
+  ],
+  "expected_warnings": ["dose_mismatch", "contradiction", "contradiction_low_confidence"],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

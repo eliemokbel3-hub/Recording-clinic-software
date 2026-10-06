@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-09",
+  "appointment_type": "acute",
+  "axes": ["contradictory", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "What happened to the ankle?"},
+    {"role": "patient", "text": "I rolled it stepping off a kerb two days ago."},
+    {"role": "clinician", "text": "Does it hurt to walk?"},
+    {"role": "patient", "text": "It hurts and there is swelling around the outside of the ankle."},
+    {"role": "clinician", "text": "Any numbness in the foot?"},
+    {"role": "patient", "text": "No numbness."},
+    {"role": "clinician", "text": "I'll give you the standard advice sheet before you go."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["there", "is", "swelling"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "numbness"], "line": 5, "material": true}
+  ],
+  "expected_warnings": ["contradiction", "contradiction_low_confidence"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

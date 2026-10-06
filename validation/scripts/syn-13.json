@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-13",
+  "appointment_type": "acute",
+  "axes": ["overlap", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Which wrist did you land on?"},
+    {"role": "patient", "text": "The right wrist. It hurts when I grip things."},
+    {"role": "clinician", "text": "Any numbness in the fingers?"},
+    {"role": "patient", "text": "No numbness at all."},
+    {"role": "clinician", "text": "On examination the right wrist is tender to touch over the scaphoid. I will refer you for an x ray."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "wrist"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "numbness"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["right", "wrist"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["refer", "you", "for", "an", "x", "ray"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 0, "patient": 1},
+    "overlap_seconds": 0.6,
+    "overlap_lines": [3]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-36",
+  "appointment_type": "follow_up",
+  "axes": ["overlap", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How many times a day are you doing the exercises?"},
+    {"role": "patient", "text": "Twice a day, 10 repetitions each."},
+    {"role": "clinician", "text": "And the pain out of ten since last time?"},
+    {"role": "patient", "text": "About 3 out of 10."},
+    {"role": "clinician", "text": "Good progress. Increase to 15 repetitions. Review you in two weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["10", "repetitions"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["3", "out", "of", "10"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["15", "repetitions"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 1, "patient": 0},
+    "overlap_seconds": 0.7,
+    "overlap_lines": [3]
+  }
+}

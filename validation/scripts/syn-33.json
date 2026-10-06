@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-33",
+  "appointment_type": "post_operative",
+  "axes": ["numbers", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the right shoulder after the repair?"},
+    {"role": "patient", "text": "Sore at night. I'm taking celecoxib 200 milligrams once a day."},
+    {"role": "clinician", "text": "On examination the right shoulder elevates to 120 degrees."},
+    {"role": "clinician", "text": "Avoid lifting more than 2 kilos with the right arm for six weeks."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["celecoxib", "200", "milligrams", "once", "a", "day"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "shoulder"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["120", "degrees"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["right", "arm"], "line": 3, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

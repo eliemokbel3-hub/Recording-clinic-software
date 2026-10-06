@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-21",
+  "appointment_type": "post_operative",
+  "axes": ["end_and_new_patient", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Two weeks after the ankle surgery. Any calf pain or swelling?"},
+    {"role": "patient", "text": "No calf pain and no swelling."},
+    {"role": "clinician", "text": "Good. The plan is to start weight bearing exercises. Goodbye for now."},
+    {"role": "patient", "text": "Bye."},
+    {"role": "clinician", "text": "Hello, take a seat. What brings you in?"},
+    {"role": "patient", "text": "I'm here about headaches, I take aspirin 300 milligrams most days."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "calf", "pain"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["aspirin", "300", "milligrams"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

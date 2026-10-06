@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-26",
+  "appointment_type": "chronic",
+  "axes": ["contradictory", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Any night pain since last time?"},
+    {"role": "patient", "text": "No night pain. Well, actually, there was night pain on Tuesday after gardening."},
+    {"role": "clinician", "text": "Any pins and needles in the hands?"},
+    {"role": "patient", "text": "No pins and needles."},
+    {"role": "clinician", "text": "On examination the thoracic spine is stiff. Is that okay with you if I mobilise it?"},
+    {"role": "patient", "text": "Yes, I give my consent."},
+    {"role": "clinician", "text": "Today we did mobilisation."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["there", "was", "night", "pain"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "pins", "and", "needles"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["i", "give", "my", "consent"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

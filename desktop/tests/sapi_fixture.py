@@ -27,30 +27,25 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-TARGET_SAMPLE_RATE = 16_000
+# Pilot plan Task 2.5 moved the resampler into ``src`` (the validation-set
+# builder needs it); the fixture re-imports it so the correction still lives
+# in exactly one place.
+from scribe_desktop.validation_set import (
+    SAPI_16K_MONO,
+    SAPI_CREATE_FOR_WRITE,
+    TARGET_SAMPLE_RATE,
+    resample_wav_to_pcm16,
+)
+
 BYTES_PER_SAMPLE = 2  # PCM16
 
-
-def resample_wav_to_pcm16(
-    wav_path: str | Path, sample_rate: int = TARGET_SAMPLE_RATE
-) -> bytes:
-    """Decode a WAV at ANY rate/layout to mono PCM16 at ``sample_rate``.
-
-    Reads the rate from the container rather than trusting what the writer was
-    asked for — the whole point of this module.
-    """
-    import av
-    from av.audio.resampler import AudioResampler
-
-    resampler = AudioResampler(format="s16", layout="mono", rate=sample_rate)
-    pcm = bytearray()
-    with av.open(str(wav_path)) as container:
-        for frame in container.decode(container.streams.audio[0]):
-            for resampled in resampler.resample(frame):
-                pcm += resampled.to_ndarray().tobytes()
-    for resampled in resampler.resample(None):  # flush the resampler's tail
-        pcm += resampled.to_ndarray().tobytes()
-    return bytes(pcm)
+__all__ = [
+    "BYTES_PER_SAMPLE",
+    "TARGET_SAMPLE_RATE",
+    "resample_wav_to_pcm16",
+    "synthesize_speech_pcm",
+    "synthesize_speech_wav",
+]
 
 
 def synthesize_speech_wav(text: str, target: str | Path) -> None:
@@ -64,8 +59,8 @@ def synthesize_speech_wav(text: str, target: str | Path) -> None:
     stream = win32com.client.Dispatch("SAPI.SpFileStream")
     # Requested, not honoured here (see module docstring) — kept because it
     # costs nothing and voices that DO honour it then need no resampling.
-    stream.Format.Type = 22  # SAFT16kHz16BitMono
-    stream.Open(str(target), 3)  # 3 = SSFMCreateForWrite
+    stream.Format.Type = SAPI_16K_MONO
+    stream.Open(str(target), SAPI_CREATE_FOR_WRITE)
     voice = win32com.client.Dispatch("SAPI.SpVoice")
     voice.AudioOutputStream = stream
     voice.Speak(text)

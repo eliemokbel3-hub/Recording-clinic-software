@@ -62,6 +62,19 @@ set up and build it, and make releases; the installed app needs none of them.
   temporary encrypted store torn down key-first (any teardown failure or residue
   is reported by path). Run by the practitioner from a normal terminal; prints a
   Markdown table for Task 2.3, never transcript text.
+- `build-validation-set.py <scripts-dir> <set-folder> [--only <id> ...]` and
+  `run-validation.py <set-folder> --config <folder> --rule <file>` (pilot plan
+  Phase 2) — thin launchers for `scribe_desktop.validation_set` and
+  `scribe_desktop.validation`. The first speaks each synthetic script with the
+  installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
+  `<id>.json`, with an `<id>.built` ownership mark (needs two voices and PyAV
+  from the `[ml]` extra; the set folder must be outside the repository, and a
+  role-play in it — its `<id>.json`, or its WAV or label track without the
+  mark — is never overwritten); the
+  second runs every encounter through the shipped pipeline in a temporary
+  encrypted store torn down key-first and prints a text-free report, pass or
+  fail against the rule. Developer build only, from a normal terminal; see
+  `docs/testing/validation-harness.md`.
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is

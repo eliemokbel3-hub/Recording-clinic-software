@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-38",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How is the plantar fascia since last time?"},
+    {"role": "patient", "text": "Better since last session, about 3 out of 10 in the morning."},
+    {"role": "clinician", "text": "Keep the calf stretch going. See you in four weeks. Bye."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "Hi, come in. You're here about your wrist?"},
+    {"role": "patient", "text": "Yes, I'm on prednisolone 25 milligrams and my wrist is sore."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["3", "out", "of", "10", "in", "the", "morning"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["prednisolone", "25", "milligrams"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

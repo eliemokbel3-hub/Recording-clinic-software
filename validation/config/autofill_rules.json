@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "autofill_rules": [
+    {
+      "rule_id": "val-side",
+      "section_key": "treatment_performed",
+      "trigger_phrase": "standard strapping",
+      "expansion": ["Right knee strapped."]
+    },
+    {
+      "rule_id": "val-dose",
+      "section_key": "management_plan",
+      "trigger_phrase": "usual pain relief",
+      "expansion": ["Paracetamol 1000 mg daily."]
+    },
+    {
+      "rule_id": "val-negation",
+      "section_key": "objective_examination",
+      "trigger_phrase": "standard advice sheet",
+      "expansion": ["No swelling."]
+    }
+  ]
+}

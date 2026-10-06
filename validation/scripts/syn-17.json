@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-17",
+  "appointment_type": "initial",
+  "axes": ["rate", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Tell me about the elbow."},
+    {"role": "patient", "text": "The pain in my left elbow started when I began playing tennis again."},
+    {"role": "clinician", "text": "Does it hurt on the outside or the inside?"},
+    {"role": "patient", "text": "On the outside, when I lift the kettle."},
+    {"role": "clinician", "text": "On examination the left lateral epicondyle is tender to touch. This presents as tennis elbow."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "elbow"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "lateral", "epicondyle"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tender", "to", "touch"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "rate": -3}
+}

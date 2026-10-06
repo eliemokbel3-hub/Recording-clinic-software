@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-37",
+  "appointment_type": "acute",
+  "axes": ["rate", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Lovely weather today. Did you ride your bike in?"},
+    {"role": "patient", "text": "I did, the new bike lane is great."},
+    {"role": "clinician", "text": "So what happened to the back?"},
+    {"role": "patient", "text": "I bent over to tie my shoelace yesterday and my lower back hurts on the right side."},
+    {"role": "clinician", "text": "On examination there is spasm on the right side of the lumbar spine. Today we did soft tissue work."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["new", "bike", "lane"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["right", "side"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["right", "side", "of", "the", "lumbar", "spine"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 4}
+}

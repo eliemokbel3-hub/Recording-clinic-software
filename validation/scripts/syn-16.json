@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-16",
+  "appointment_type": "discharge",
+  "axes": ["rate", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Final check today. What is the pain score now?"},
+    {"role": "patient", "text": "About 1 out of 10, only after long runs."},
+    {"role": "clinician", "text": "Keep the calf stretch going twice a day. You no longer need regular sessions."},
+    {"role": "patient", "text": "Great. I stopped the ibuprofen 200 milligrams last week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["1", "out", "of", "10"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["calf", "stretch"], "line": 2, "material": true},
+    {"kind": "dose", "tokens": ["ibuprofen", "200", "milligrams"], "line": 3, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 3}
+}

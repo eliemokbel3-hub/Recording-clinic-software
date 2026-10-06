@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-04",
+  "appointment_type": "chronic",
+  "axes": ["numbers", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Are you still taking anything for the hip pain?"},
+    {"role": "patient", "text": "I think I take naproxen 250 milligrams, maybe twice a day, I'm not completely sure."},
+    {"role": "clinician", "text": "Can you check the box and let me know at the next appointment?"},
+    {"role": "patient", "text": "Yes. The pain in my left hip has been there for about two years."},
+    {"role": "clinician", "text": "Range of motion in the left hip is reduced in rotation. Today we did gentle mobilisation."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["naproxen", "250", "milligrams"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "hip"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["left", "hip"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

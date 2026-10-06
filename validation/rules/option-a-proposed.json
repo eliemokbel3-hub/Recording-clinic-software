@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "rule_name": "option-a-proposed",
+  "max_material_wrong": 0,
+  "max_silent_omissions": 0,
+  "require_uncertainty_surfaced": true,
+  "max_word_error_rate": null
+}

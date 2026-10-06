@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-10",
+  "appointment_type": "chronic",
+  "axes": ["noise", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How has the neck been since I saw you?"},
+    {"role": "patient", "text": "Worse since the weekend. The pain in my right side of the neck goes into the shoulder blade."},
+    {"role": "clinician", "text": "Any tingling in the hands?"},
+    {"role": "patient", "text": "Only in the right hand, sometimes at night."},
+    {"role": "clinician", "text": "On examination there is tenderness over the right upper trapezius. I explained the risks of needling."},
+    {"role": "patient", "text": "I understand, and I'm happy to proceed."},
+    {"role": "clinician", "text": "Thank you. Today we did dry needling."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "side", "of", "the", "neck"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "hand"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["right", "upper", "trapezius"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["happy", "to", "proceed"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "snr_db": 20}
+}

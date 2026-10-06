@@ -1207,7 +1207,9 @@ def test_a_marked_function_keeps_the_real_resolver(pinned_models_root: Path | No
 # Every function that starts a model path at the resolver, by module (from
 # the code: ``MODELS_DIRNAME`` is read only in ``install_layout.models_root``).
 # The four path builders are the ones the pin test above resolves; the rest
-# hand the root itself on, which ``benchmark.default_models_root`` covers.
+# hand the root itself on, which ``benchmark.default_models_root`` covers
+# (``validation.main`` only names it in its model refusals — pilot plan
+# Task 2.4).
 _MODELS_ROOT_CALLERS = frozenset(
     {
         ("install_layout.py", "models_root"),
@@ -1218,6 +1220,7 @@ _MODELS_ROOT_CALLERS = frozenset(
         ("speech.py", "default_vad_model_path"),
         ("transcription.py", "default_whisper_model_dir"),
         ("ui/microphone.py", "_default_benchmark_runner"),
+        ("validation.py", "main"),
         ("scripts/setup-models.py", "models_root"),
         ("scripts/setup-models.py", "main"),
     }

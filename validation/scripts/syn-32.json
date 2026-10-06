@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-32",
+  "appointment_type": "chronic",
+  "axes": ["numbers", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Score your neck pain out of ten for me."},
+    {"role": "patient", "text": "It's 7 out of 10 on bad days and 3 out of 10 on good days."},
+    {"role": "clinician", "text": "Any dizziness or blurred vision?"},
+    {"role": "patient", "text": "No dizziness, no blurred vision."},
+    {"role": "clinician", "text": "Today we did soft tissue work to the neck and upper back."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["7", "out", "of", "10", "on", "bad", "days"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["3", "out", "of", "10", "on", "good", "days"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "dizziness"], "line": 3, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

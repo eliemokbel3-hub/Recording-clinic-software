@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-14",
+  "appointment_type": "chronic",
+  "axes": ["overlap", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "How was the trip to see your grandchildren?"},
+    {"role": "patient", "text": "Lovely, they have grown so much. The flight was long though."},
+    {"role": "clinician", "text": "I bet. And the lower back since last time?"},
+    {"role": "patient", "text": "The pain in my lower back is the same, worse after sitting for an hour."},
+    {"role": "clinician", "text": "Today we did soft tissue work and the plan is fortnightly sessions."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["grandchildren"], "line": 0, "material": false},
+    {"kind": "absent", "tokens": ["flight", "was", "long"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["worse", "after", "sitting"], "line": 3, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 1, "patient": 0},
+    "overlap_seconds": 0.8,
+    "overlap_lines": [2]
+  }
+}

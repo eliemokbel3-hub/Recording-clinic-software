@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-06",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Your back has done really well. The plan is to stop regular sessions now."},
+    {"role": "patient", "text": "Thanks so much. The pain in my back is gone and I can garden again."},
+    {"role": "clinician", "text": "Enjoy the holiday up north. Goodbye."},
+    {"role": "patient", "text": "Bye, see you."},
+    {"role": "clinician", "text": "Hello, come on through. You must be my eleven o'clock."},
+    {"role": "patient", "text": "Yes, I'm here about pain in my left ankle after a fall on Sunday."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["pain", "in", "my", "back", "is", "gone"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["holiday", "up", "north"], "line": 2, "material": false},
+    {"kind": "absent", "tokens": ["pain", "in", "my", "left", "ankle"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-11",
+  "appointment_type": "initial",
+  "axes": ["noise", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Are you on any regular medication?"},
+    {"role": "patient", "text": "I take pregabalin 75 milligrams at night and paracetamol when I need it."},
+    {"role": "clinician", "text": "And how long has the sciatica been there?"},
+    {"role": "patient", "text": "It started eight weeks ago and the pain is about 6 out of 10."},
+    {"role": "clinician", "text": "Straight leg raise is positive at 40 degrees on the left."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["pregabalin", "75", "milligrams", "at", "night"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["6", "out", "of", "10"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["40", "degrees", "on", "the", "left"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "snr_db": 10}
+}

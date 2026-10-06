@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-02",
+  "appointment_type": "follow_up",
+  "axes": ["numbers", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How has the lower back been since last time?"},
+    {"role": "patient", "text": "Better since the last visit. I'm taking ibuprofen 400 milligrams twice a day."},
+    {"role": "clinician", "text": "And the pain score out of ten?"},
+    {"role": "patient", "text": "About 4 out of 10 now."},
+    {"role": "clinician", "text": "On examination there is tightness on the left side of the lower back."},
+    {"role": "clinician", "text": "The plan is two more sessions over the next few weeks."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["4", "out", "of", "10"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["left", "side"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

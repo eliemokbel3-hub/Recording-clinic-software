@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-12",
+  "appointment_type": "follow_up",
+  "axes": ["noise", "negation", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Since last session, any night pain?"},
+    {"role": "patient", "text": "No night pain this week, I think, but mornings are still stiff."},
+    {"role": "clinician", "text": "Any pins and needles in the feet?"},
+    {"role": "patient", "text": "Maybe a little, with some pain in my left foot, I'm not sure."},
+    {"role": "clinician", "text": "On examination the lumbar range of motion is improved. Book in for two weeks."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "night", "pain"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "foot"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["range", "of", "motion", "is", "improved"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "snr_db": 3}
+}

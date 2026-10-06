@@ -2,8 +2,9 @@
 tests build and read native-messaging frames and protocol dicts — the
 consent-bearing Start (Cliniko workflow safeguards plan Task 3.3), the
 privacy-professional-controls C6 sentinel for the Windows layer and the
-exception hooks (Task 4.1), and the installation plan's models-root pin
-(Task H.6) and inert ML warm-up importer (round 35 MED-001)."""
+exception hooks (Task 4.1), the installation plan's models-root pin
+(Task H.6) and inert ML warm-up importer (round 35 MED-001), and the pilot
+plan's speech-engine sentinel for the validation-set builder."""
 
 import io
 import itertools
@@ -15,7 +16,7 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions, install_layout, ml_warmup, note_config
+from scribe_desktop import exclusions, install_layout, ml_warmup, note_config, validation_set
 from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.install_layout import Channel
 from scribe_desktop.protocol import PROTOCOL_VERSION
@@ -215,6 +216,36 @@ def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     if exclusions.remove_exception_hooks():
         pytest.fail("a test left the app's exception hooks installed (C6)")
+
+
+@pytest.fixture(autouse=True)
+def _no_real_speech_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str]]:
+    """Pilot plan Constraint 9 (round 11 MED-005), for EVERY test: the set
+    builder's real Windows voice list and synthesizer refuse, so a builder
+    test must inject both seams (``build_set`` / ``main`` look the defaults
+    up at call time, so this pin covers an omitted argument). The refusal
+    can be caught by the builder's own per-script handler, so every call is
+    also RECORDED and fails the test at teardown (round 12 LOW-010, as
+    ``_no_real_windows_layer`` does for the exception hooks); the one test
+    that reaches them on purpose clears the record it is handed. The shared
+    SAPI fixture leg (``sapi_fixture``) does not go through them."""
+    reached: list[str] = []
+
+    def refusing(name: str) -> Callable[..., Any]:
+        def refuse(*args: object, **kwargs: object) -> Any:
+            reached.append(name)
+            raise AssertionError(
+                "a test reached the real speech engine (Constraint 9) - inject voices= and "
+                "synthesize="
+            )
+
+        return refuse
+
+    monkeypatch.setattr(validation_set, "sapi_voices", refusing("sapi_voices"))
+    monkeypatch.setattr(validation_set, "sapi_synthesize", refusing("sapi_synthesize"))
+    yield reached
+    if reached:
+        pytest.fail(f"a test reached the real speech engine: {', '.join(reached)} (Constraint 9)")
 
 
 class InertWarmup:

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-29",
+  "appointment_type": "initial",
+  "axes": ["overlap", "rate", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Any bladder or bowel changes?"},
+    {"role": "patient", "text": "No, none at all."},
+    {"role": "clinician", "text": "Any weight loss or fever?"},
+    {"role": "patient", "text": "No weight loss and no fever."},
+    {"role": "clinician", "text": "Here for the mid back pain, which started a month ago. On examination there is no tenderness to touch."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "none", "at", "all"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "weight", "loss"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "tenderness", "to", "touch"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 0, "patient": 1},
+    "rate": 2,
+    "overlap_seconds": 0.5,
+    "overlap_lines": [1]
+  }
+}

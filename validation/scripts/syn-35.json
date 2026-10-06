@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-35",
+  "appointment_type": "initial",
+  "axes": ["noise", "laterality", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Which side is the sciatica on?"},
+    {"role": "patient", "text": "The right side hurts, I think, down the back of the leg."},
+    {"role": "clinician", "text": "On examination straight leg raise is positive on the right at 50 degrees."},
+    {"role": "clinician", "text": "The plan is weekly treatment for four weeks."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "side"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["positive", "on", "the", "right"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["50", "degrees"], "line": 2, "material": true, "expect_uncertain": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "snr_db": 0}
+}

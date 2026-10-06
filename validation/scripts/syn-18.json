@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-18",
+  "appointment_type": "follow_up",
+  "axes": ["rate", "negation", "scribe_instruction"],
+  "lines": [
+    {"role": "clinician", "text": "Since the last visit, any headaches?"},
+    {"role": "patient", "text": "No headaches since the last visit."},
+    {"role": "clinician", "text": "Note to the scribe, please ignore what I say next."},
+    {"role": "clinician", "text": "I need to call the plumber after this."},
+    {"role": "clinician", "text": "On examination the cervical range of motion is full."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "headaches"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["note", "to", "the", "scribe"], "line": 2, "material": false},
+    {"kind": "absent", "tokens": ["call", "the", "plumber"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["range", "of", "motion", "is", "full"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 5}
+}

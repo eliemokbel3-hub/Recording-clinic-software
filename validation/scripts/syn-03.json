@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-03",
+  "appointment_type": "acute",
+  "axes": ["negation", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Come in. Did you get caught in the rain on the way here?"},
+    {"role": "patient", "text": "Only a little. The traffic on the bridge was terrible this morning."},
+    {"role": "clinician", "text": "So what happened with the neck?"},
+    {"role": "patient", "text": "I woke up two days ago and my neck hurts when I turn to look over my shoulder."},
+    {"role": "clinician", "text": "Any fever or headaches?"},
+    {"role": "patient", "text": "No fever and no headaches."},
+    {"role": "clinician", "text": "On examination the range of motion is reduced when turning. Today we did soft tissue work."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["traffic", "on", "the", "bridge"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["neck", "hurts"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "fever"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

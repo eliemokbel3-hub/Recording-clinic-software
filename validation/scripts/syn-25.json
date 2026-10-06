@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-25",
+  "appointment_type": "acute",
+  "axes": ["contradictory", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Which ankle did you roll?"},
+    {"role": "patient", "text": "The left one. Sorry, no, the right ankle, I always mix them up."},
+    {"role": "clinician", "text": "So the right ankle. Does it hurt to walk?"},
+    {"role": "patient", "text": "It hurts a lot when I walk downhill."},
+    {"role": "clinician", "text": "On examination the right ankle is swollen over the outside. Today we did taping."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "ankle"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "ankle"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["right", "ankle"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

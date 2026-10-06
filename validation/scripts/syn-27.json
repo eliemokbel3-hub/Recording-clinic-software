@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-27",
+  "appointment_type": "post_operative",
+  "axes": ["noise", "overlap", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Six weeks since the left hip replacement. How is walking?"},
+    {"role": "patient", "text": "Much better, I only use the stick outside now."},
+    {"role": "clinician", "text": "That's great. Any pain in the left groin?"},
+    {"role": "patient", "text": "A little pain in the left groin after long walks."},
+    {"role": "clinician", "text": "On examination the left hip flexes to 95 degrees. Home exercise is bridges and side lying leg lifts."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "hip", "replacement"], "line": 0, "material": true},
+    {"kind": "laterality", "tokens": ["left", "groin"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["95", "degrees"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 1, "patient": 0},
+    "snr_db": 6,
+    "overlap_seconds": 0.4,
+    "overlap_lines": [2]
+  }
+}

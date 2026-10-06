@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-15",
+  "appointment_type": "post_operative",
+  "axes": ["overlap", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "It's been four weeks since the shoulder surgery. Any fever or redness around the wound?"},
+    {"role": "patient", "text": "No fever and no redness."},
+    {"role": "clinician", "text": "Good. Any clicking when you lift the arm?"},
+    {"role": "patient", "text": "There is some clicking but it is not painful."},
+    {"role": "clinician", "text": "On examination the range of motion is 90 degrees of elevation."},
+    {"role": "clinician", "text": "Avoid lifting above shoulder height for two more weeks."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "fever"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["not", "painful"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["90", "degrees", "of", "elevation"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 0, "patient": 1},
+    "overlap_seconds": 0.5,
+    "overlap_lines": [4]
+  }
+}

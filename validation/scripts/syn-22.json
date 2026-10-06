@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-22",
+  "appointment_type": "discharge",
+  "axes": ["small_talk", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Did your team win on Saturday?"},
+    {"role": "patient", "text": "No, we lost by twelve points, it was a shocker."},
+    {"role": "clinician", "text": "Bad luck. How is the shoulder pain out of ten?"},
+    {"role": "patient", "text": "Zero most days, maybe 2 out of 10 after training."},
+    {"role": "clinician", "text": "Then this is your last visit. Keep the band exercises three times a week."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["lost", "by", "twelve", "points"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["2", "out", "of", "10"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["band", "exercises", "three", "times", "a", "week"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-24",
+  "appointment_type": "follow_up",
+  "axes": ["uncertain", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "Any numbness in the arm since last session?"},
+    {"role": "patient", "text": "I don't think so. Not that I noticed."},
+    {"role": "clinician", "text": "And the pain in the neck?"},
+    {"role": "patient", "text": "Maybe a bit less, it's hard to say."},
+    {"role": "clinician", "text": "On examination there is no tenderness over the cervical spine."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["not", "that", "i", "noticed"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["a", "bit", "less"], "line": 3, "material": false},
+    {"kind": "negation", "tokens": ["no", "tenderness"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

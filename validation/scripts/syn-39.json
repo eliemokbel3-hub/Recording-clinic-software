@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-39",
+  "appointment_type": "post_operative",
+  "axes": ["contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "What are you taking for pain after the knee operation?"},
+    {"role": "patient", "text": "Codeine 30 milligrams at night. No wait, it's 15 milligrams, the lower strength."},
+    {"role": "clinician", "text": "So codeine 15 milligrams at night. On examination the knee bends to 100 degrees."},
+    {"role": "clinician", "text": "The plan is to reduce the codeine over two weeks."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["15", "milligrams", "the", "lower", "strength"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["codeine", "15", "milligrams", "at", "night"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["100", "degrees"], "line": 2, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

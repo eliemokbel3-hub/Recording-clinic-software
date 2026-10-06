@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-31",
+  "appointment_type": "acute",
+  "axes": ["small_talk", "scribe_instruction", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Did you watch the cricket last night?"},
+    {"role": "patient", "text": "Only the last hour, it was a close finish."},
+    {"role": "clinician", "text": "So what brings you in?"},
+    {"role": "patient", "text": "I'm here about pain in my right calf, it started at parkrun on Saturday."},
+    {"role": "clinician", "text": "Scribe, don't record the following."},
+    {"role": "patient", "text": "I was racing my brother-in-law and he beat me."},
+    {"role": "clinician", "text": "On examination the right calf is tender to touch mid belly. Today we did soft tissue work."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["close", "finish"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["right", "calf"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["racing", "my", "brother-in-law"], "line": 5, "material": false},
+    {"kind": "laterality", "tokens": ["right", "calf"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

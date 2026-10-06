@@ -2797,12 +2797,18 @@ def learning_status(*, profile_root: Path | None = None) -> LearningStatus:
     return LearningStatus(True, None)
 
 
-def _extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
+def extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
     """The shipping provider built FROM the loaded config (practitioner-profile
     plan Task 4.3): the cues that route utterances are the config's own —
     the fourth clinician config file, digest-bound (D7) — never the module
-    defaults, so a practitioner's ``section_cues.json`` is what routes."""
+    defaults, so a practitioner's ``section_cues.json`` is what routes.
+    Public since the pilot plan's Task 2.4 (the validation harness builds the
+    same provider); ``_extractive_provider_from_config`` is the same object."""
     return ExtractiveNoteProvider(cues=config.normalised_cues())
+
+
+# The pre-Task-2.4 private name, kept as an alias of the SAME object.
+_extractive_provider_from_config = extractive_provider_from_config
 
 
 def build_note_generator(
@@ -2812,7 +2818,7 @@ def build_note_generator(
     prefill_id: str | None = None,
     config_root: Path | None = None,
     provider_factory: Callable[[NoteConfig], NoteModelProvider] = (
-        _extractive_provider_from_config
+        extractive_provider_from_config
     ),
 ) -> Callable[[Path, SessionCrypto], NoteGenerationResult]:
     """A generation worker for ``SessionController.with_generation_custody``.
@@ -4161,6 +4167,7 @@ __all__ = [
     "bind_stage_result",
     "build_prose_stage",
     "carry_renderings",
+    "extractive_provider_from_config",
     "rendering_in_flight_line",
     "reset_language_model_cache",
     "sections_to_render",

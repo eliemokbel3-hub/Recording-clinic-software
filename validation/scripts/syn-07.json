@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-07",
+  "appointment_type": "initial",
+  "axes": ["contradictory", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "What brings you in today?"},
+    {"role": "patient", "text": "My left knee is sore after netball on the weekend."},
+    {"role": "clinician", "text": "Any locking or giving way?"},
+    {"role": "patient", "text": "No locking, but it feels weak on the stairs."},
+    {"role": "clinician", "text": "On examination the left knee is tender to touch on the inside."},
+    {"role": "clinician", "text": "Today we did the standard strapping on your knee."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "locking"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 4, "material": true}
+  ],
+  "expected_warnings": ["laterality_mismatch"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-19",
+  "appointment_type": "acute",
+  "axes": ["scribe_instruction", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "When did the back go?"},
+    {"role": "patient", "text": "Three days ago, lifting a box of books."},
+    {"role": "clinician", "text": "Are you taking anything?"},
+    {"role": "patient", "text": "Ibuprofen 400 milligrams three times a day with food."},
+    {"role": "clinician", "text": "Scribe, leave the next part out of the note."},
+    {"role": "patient", "text": "My boss doesn't know I hurt it at home."},
+    {"role": "clinician", "text": "I've explained the risks of a spinal adjustment, and you are happy to proceed."},
+    {"role": "patient", "text": "Yes, go ahead."},
+    {"role": "clinician", "text": "Today we did soft tissue work and gentle manipulation. Book in for Friday."}
+  ],
+  "facts": [
+    {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["leave", "the", "next", "part", "out"], "line": 4, "material": false},
+    {"kind": "absent", "tokens": ["boss", "doesn't", "know"], "line": 5, "material": false},
+    {"kind": "present", "tokens": ["you", "are", "happy", "to", "proceed"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

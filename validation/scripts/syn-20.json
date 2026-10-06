@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-20",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How has the right hip been since last time?"},
+    {"role": "patient", "text": "Better since the last session. The pain in my right hip only comes at night now."},
+    {"role": "clinician", "text": "Today we did soft tissue work. See you in three weeks."},
+    {"role": "patient", "text": "Thank you, see you then."},
+    {"role": "clinician", "text": "Hi there, come in. You're here about your shoulder?"},
+    {"role": "patient", "text": "Yes, my right shoulder has been sore since I started swimming."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "hip"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["my", "right", "shoulder", "has", "been", "sore"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

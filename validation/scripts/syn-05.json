@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-05",
+  "appointment_type": "post_operative",
+  "axes": ["laterality", "scribe_instruction"],
+  "lines": [
+    {"role": "clinician", "text": "How is the right knee since the operation six weeks ago?"},
+    {"role": "patient", "text": "It is sore on the stairs, but the swelling has gone down."},
+    {"role": "clinician", "text": "Scribe, do not include the next comment in the note."},
+    {"role": "patient", "text": "My sister thinks the surgeon rushed it."},
+    {"role": "clinician", "text": "On examination the right knee bends to 110 degrees of flexion."},
+    {"role": "clinician", "text": "Home exercise is quad sets and heel slides. Follow up in two weeks."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["scribe", "do", "not", "include"], "line": 2, "material": false},
+    {"kind": "absent", "tokens": ["surgeon", "rushed", "it"], "line": 3, "material": false},
+    {"kind": "laterality", "tokens": ["right", "knee"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["110", "degrees", "of", "flexion"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

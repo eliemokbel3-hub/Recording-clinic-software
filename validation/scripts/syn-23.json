@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-23",
+  "appointment_type": "initial",
+  "axes": ["uncertain", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Where exactly is the pain?"},
+    {"role": "patient", "text": "I think it's the left side of my lower back, but sometimes it seems to move to the middle."},
+    {"role": "clinician", "text": "Does it go down either leg?"},
+    {"role": "patient", "text": "Possibly the left leg, down to the knee, I can't really tell."},
+    {"role": "clinician", "text": "On examination there is tenderness on the left side at L5. Working diagnosis is a lumbar facet strain."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "side", "of", "my", "lower", "back"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "leg"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["left", "side"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

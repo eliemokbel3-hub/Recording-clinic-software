@@ -21,7 +21,7 @@ What this module enforces, and what it does not:
   by design. The one residue is the file stem itself, which the report
   echoes: the practitioner names the files.
 - **The temporary store is torn down key-first on every path, and
-  whatever survives is reported by path.** ``_destroy_temporary_store``
+  whatever survives is reported by path.** ``destroy_temporary_store``
   runs after success and inside the failure handler alike, and the guard
   begins the moment the in-memory key exists. Every leg is attempted
   whatever the earlier legs did — unlink ``key.dpapi``, destroy the
@@ -976,10 +976,16 @@ def _raise_if_residue(
     raise SpeakerEvalError("; ".join(parts))
 
 
-def _destroy_temporary_store(
+def destroy_temporary_store(
     temp_root: Path | None, session_dir: Path | None, crypto: SessionCrypto
 ) -> None:
-    """Tear the temporary store down key-first. Every leg is attempted
+    """Public since the pilot plan's Task 2.1 (the validation harness reuses
+    it IN PLACE: this module's tests inject failures by replacing
+    ``SessionCrypto``, ``_probe``, ``delete_session_key``, ``shutil`` and
+    ``tempfile`` on THIS module, so the helper must keep living here);
+    ``_destroy_temporary_store`` is the same object.
+
+    Tear the temporary store down key-first. Every leg is attempted
     whatever the earlier legs did — unlink ``key.dpapi``, destroy the
     in-memory key, remove the session directory, remove the temporary root,
     each reached through a ``finally`` — and destruction of the in-memory
@@ -1013,6 +1019,10 @@ def _destroy_temporary_store(
         _raise_if_residue(temp_root, session_dir, crypto, failures)
 
 
+# The pre-Task-2.1 private name, kept as an alias of the SAME object.
+_destroy_temporary_store = destroy_temporary_store
+
+
 class _ReplayProvider:
     """The real provider for the plain pass, a memory for the enrolled pass:
     every window the inner provider transcribes is remembered by the SHA-256
@@ -1042,17 +1052,27 @@ class _ReplayProvider:
         return list(words)
 
 
-def _transcribe_in_temporary_store(
+def transcribe_in_temporary_store(
     pcm: bytes,
     provider: SpeechProvider,
     frame_probability: FrameProbabilityFn,
     *,
     enrolment: EnrolmentInputs | None = None,
 ) -> tuple[TranscriptDocument, TranscriptDocument | None]:
-    """``pcm`` -> fresh store under a real DPAPI-wrapped key -> the shipped
+    """Public since the pilot plan's Task 2.1, for the validation harness
+    (``_transcribe_in_temporary_store`` is the same object). The contract a
+    caller relies on: ``pcm`` must be 16 kHz mono PCM16 (``read_wav_pcm``'s
+    output); the return value is the transcript document(s) and nothing
+    else; when it returns normally the temporary store is positively gone
+    and its key destroyed; when the store cannot be shown gone it raises
+    ``SpeakerEvalError`` naming the path (custody, never a measurement), and
+    any other exception from the pipeline propagates only after the same
+    teardown. The caller's ``pcm`` is the only plaintext audio it holds.
+
+    ``pcm`` -> fresh store under a real DPAPI-wrapped key -> the shipped
     ``transcribe_session`` (twice when ``enrolment`` is given: the plain
     pass, then the same store with the embedder and profile through a
-    ``_ReplayProvider``) -> ``_destroy_temporary_store`` on every path.
+    ``_ReplayProvider``) -> ``destroy_temporary_store`` on every path.
     Returns ``(plain document, enrolled document or None)``.
     The guard begins the moment the in-memory key exists: a failure
     anywhere after it — ``mkdtemp`` included — still reaches the teardown,
@@ -1099,10 +1119,14 @@ def _transcribe_in_temporary_store(
                 traceback.clear_frames(exc.__traceback__)
             raise
     except BaseException:
-        _destroy_temporary_store(temp_root, session_dir, crypto)
+        destroy_temporary_store(temp_root, session_dir, crypto)
         raise
-    _destroy_temporary_store(temp_root, session_dir, crypto)
+    destroy_temporary_store(temp_root, session_dir, crypto)
     return document, enrolled_document
+
+
+# The pre-Task-2.1 private name, kept as an alias of the SAME object.
+_transcribe_in_temporary_store = transcribe_in_temporary_store
 
 
 def evaluate_recording(
@@ -1122,7 +1146,7 @@ def evaluate_recording(
     pass segmented the store differently from the plain pass."""
     track = parse_audacity_labels(labels_path.read_text(encoding="utf-8-sig"))
     pcm = read_wav_pcm(wav_path)
-    document, enrolled_document = _transcribe_in_temporary_store(
+    document, enrolled_document = transcribe_in_temporary_store(
         pcm, provider, frame_probability, enrolment=enrolment
     )
 
@@ -1305,17 +1329,22 @@ def find_recording_pairs(directory: Path) -> tuple[list[tuple[Path, Path]], list
     return pairs, unpaired
 
 
-def _configure_output() -> None:
+def configure_output() -> None:
     """Reconfigure stdout and stderr to UTF-8 with ``backslashreplace`` so
     no dynamic field (a Unicode file stem, role label or model name) can
     abort a run with ``UnicodeEncodeError`` on a redirected, code-page-
     encoded stream; a redirected table is then a UTF-8 Markdown file. A
     stream without ``reconfigure`` (a replaced ``StringIO``) is left as it
-    is — this helper can only configure a ``TextIOWrapper``."""
+    is — this helper can only configure a ``TextIOWrapper``. Public for the
+    validation harness and set builder (pilot plan Phase 2), which print
+    the same way."""
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
             reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
+_configure_output = configure_output
 
 
 def _leave_one_out_pool(
@@ -1520,6 +1549,8 @@ __all__ = [
     "auto_confirm_outcome",
     "clinician_pcm",
     "cluster_metrics",
+    "configure_output",
+    "destroy_temporary_store",
     "enrolment_inputs",
     "evaluate_recording",
     "find_recording_pairs",
@@ -1529,6 +1560,7 @@ __all__ = [
     "render_report",
     "role_outcome",
     "score_document",
+    "transcribe_in_temporary_store",
 ]
 
 

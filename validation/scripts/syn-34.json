@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-34",
+  "appointment_type": "discharge",
+  "axes": ["negation", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Last check on the left knee. Any swelling or giving way?"},
+    {"role": "patient", "text": "No swelling and no giving way."},
+    {"role": "clinician", "text": "On examination the left knee has full range of motion and no tenderness."},
+    {"role": "clinician", "text": "No further sessions are needed. Keep up the home exercise."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "swelling"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 2, "material": true},
+    {"kind": "negation", "tokens": ["no", "tenderness"], "line": 2, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-28",
+  "appointment_type": "discharge",
+  "axes": ["noise", "rate", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Last session today. What is the pain score now?"},
+    {"role": "patient", "text": "About 2 out of 10 and I've stopped the naproxen 500 milligrams."},
+    {"role": "clinician", "text": "Good. Keep up the stretch every morning for six weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["2", "out", "of", "10"], "line": 1, "material": true},
+    {"kind": "dose", "tokens": ["naproxen", "500", "milligrams"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["six", "weeks"], "line": 2, "material": false}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": -2, "snr_db": 15}
+}

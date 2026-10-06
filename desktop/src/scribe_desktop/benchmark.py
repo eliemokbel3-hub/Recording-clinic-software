@@ -436,7 +436,7 @@ def generate_speech_sample(target: Path) -> float:
     because the WAV goes to faster-whisper by PATH and it resamples on decode,
     and because the duration below comes from the real rate. Anything that
     consumes the raw frames as 16 kHz PCM must resample first — see
-    ``tests/sapi_fixture.py``.
+    ``validation_set.resample_wav_to_pcm16``.
 
     Windows-only (uses SAPI COM). No network, no clinical content: a network
     (UNC) target is refused before SAPI opens it (round 28 PR-LOW-029).
