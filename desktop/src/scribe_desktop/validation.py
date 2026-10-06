@@ -64,6 +64,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 from array import array
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -110,6 +111,7 @@ from scribe_desktop.note_config import (
 from scribe_desktop.note_fill import detect_prefill_candidates
 from scribe_desktop.speaker_eval import (
     CLINICIAN_LABEL,
+    TEMP_DIR_PREFIX,
     LabelTrack,
     LabelTrackError,
     RecordingRefusedError,
@@ -159,6 +161,9 @@ _ENCOUNTER_ID_RE: Final = re.compile(ENCOUNTER_ID_PATTERN)
 _ERROR_TYPE_RE: Final = re.compile(_ERROR_TYPE_PATTERN)
 MAX_SCRIPT_BYTES: Final = 256 * 1024
 MAX_LINE_CHARS: Final = 2_000
+# Round 26: the other two files a run reads whole are capped too.
+MAX_RULE_BYTES: Final = 64 * 1024
+MAX_LABEL_TRACK_BYTES: Final = 4 * 1024 * 1024
 
 # The axes of PLAN.md's AI-quality list (L188-201). ``noise``, ``overlap``
 # and ``rate`` are applied by the synthetic conditions; accents cannot be
@@ -1065,14 +1070,19 @@ class PassRule(BaseModel):
 
 
 def load_pass_rule(path: Path) -> PassRule:
+    # Peer round 27 (PR-HIGH-068): "the rule file", never its name — the
+    # round-22 rule that a name not an encounter id is never printed.
     try:
-        blob = path.read_bytes()
+        with path.open("rb") as handle:
+            blob = handle.read(MAX_RULE_BYTES + 1)
     except OSError as exc:
-        raise RuleError(f"{path.name}: unreadable ({type(exc).__name__})") from None
+        raise RuleError(f"the rule file: unreadable ({type(exc).__name__})") from None
+    if len(blob) > MAX_RULE_BYTES:
+        raise RuleError(f"the rule file: larger than {MAX_RULE_BYTES} bytes")
     try:
         return PassRule.model_validate_json(blob)
     except ValidationError as exc:
-        raise RuleError(f"{path.name}: {_validation_error_text(exc)}") from None
+        raise RuleError(f"the rule file: {_validation_error_text(exc)}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -1270,18 +1280,24 @@ def evaluate_encounter(
     ``SpeakerEvalError`` when the temporary store cannot be shown gone
     (custody: the caller stops the run) and any input or pipeline error as
     itself; the label track and WAV are validated BEFORE any store exists."""
-    track = parse_audacity_labels(labels.read_text(encoding="utf-8-sig"))
+    with labels.open("rb") as handle:
+        track_bytes = handle.read(MAX_LABEL_TRACK_BYTES + 1)
+    if len(track_bytes) > MAX_LABEL_TRACK_BYTES:
+        raise LabelTrackError(f"larger than {MAX_LABEL_TRACK_BYTES} bytes")  # round 26
+    track = parse_audacity_labels(track_bytes.decode("utf-8-sig"))
     pcm = read_wav_pcm(wav)
     document, _enrolled = transcribe_in_temporary_store(
         pcm, inputs.provider, inputs.frame_probability
     )
     del pcm
-    words = word_errors(document, script)
     segment_count = len(document.transcript_segments)
     clinician = clinician_speaker(document, track)
     if clinician is None:
         return EncounterOutcome(
-            encounter_id, "role_unresolved", segment_count=segment_count, words=words
+            encounter_id,
+            "role_unresolved",
+            segment_count=segment_count,
+            words=word_errors(document, script),
         )
     config = inputs.config
     now = inputs.now()
@@ -1304,14 +1320,26 @@ def evaluate_encounter(
         prose = ProseCounts(
             result.passed, result.failed, result.errored, unavailable=result.reason is not None
         )
+    # One alignment per encounter (review round 25): the metrics carry the
+    # word errors ``word_errors`` would compute from the same inputs.
+    metrics = encounter_metrics(document, note, script)
     return EncounterOutcome(
         encounter_id,
         "measured",
         segment_count=segment_count,
-        words=words,
-        metrics=encounter_metrics(document, note, script),
+        words=metrics.words,
+        metrics=metrics,
         prose=prose,
     )
+
+
+def _error_type(exc: BaseException) -> str:
+    """``exc``'s type name as an outcome can hold it, else ``Exception``
+    (review round 22): built inside an ``except``, an outcome refusing an
+    over-long name would raise there, and the traceback would chain the
+    original exception's message — which may quote note text."""
+    name = type(exc).__name__
+    return name if _ERROR_TYPE_RE.fullmatch(name) else "Exception"
 
 
 def run_encounters(
@@ -1325,15 +1353,23 @@ def run_encounters(
     run continues; a custody fault (``SpeakerEvalError``: a temporary store
     that cannot be shown gone) propagates and stops the run, naming the
     path."""
+    # Round 26: every error line is written AFTER its ``except`` block ends —
+    # a failed write inside one (a closed output pipe) would chain the
+    # pipeline's exception, whose message may quote note text.
     outcomes: list[EncounterOutcome] = []
     for files in encounters:
         progress(f"[run ] {files.encounter_id}")
+        script_refusal: str | None = None
         try:
             script = load_script(files.script)
         except ScriptError as exc:
-            progress(f"[error] {exc}")
+            script_refusal = str(exc)  # the loader's own text-free refusal
+        if script_refusal is not None:
+            progress(f"[error] {script_refusal}")
             outcomes.append(EncounterOutcome(files.encounter_id, "error", "ScriptError"))
             continue
+        failure: str | None = None
+        detail: str | None = None
         try:
             outcomes.append(
                 evaluate_encounter(files.encounter_id, script, files.wav, files.labels, inputs)
@@ -1343,19 +1379,21 @@ def run_encounters(
             # refusal's text is speaker_eval's own (formats and the remedy);
             # a label-track refusal can quote the labels typed in the file,
             # so only its type is printed (round 11 LOW-007).
+            failure = _error_type(exc)
             detail = (
                 "the label track was refused - check it against "
                 "docs/testing/speaker-measurement.md"
                 if isinstance(exc, LabelTrackError)
                 else str(exc)
             )
-            progress(f"[error] {files.encounter_id}: {type(exc).__name__}: {detail}")
-            outcomes.append(EncounterOutcome(files.encounter_id, "error", type(exc).__name__))
         except SpeakerEvalError:
             raise  # custody: a temporary store not shown gone stops the run
         except Exception as exc:  # noqa: BLE001 - reported by TYPE only, run continues
-            progress(f"[error] {files.encounter_id}: {type(exc).__name__}")
-            outcomes.append(EncounterOutcome(files.encounter_id, "error", type(exc).__name__))
+            failure = _error_type(exc)
+        if failure is not None:
+            line = f"[error] {files.encounter_id}: {failure}"
+            progress(line if detail is None else f"{line}: {detail}")
+            outcomes.append(EncounterOutcome(files.encounter_id, "error", failure))
     return outcomes
 
 
@@ -1627,12 +1665,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
     """Exit status 0 only when the run passed; 2 for a refusal before any
-    model is built; 1 otherwise. Refusals, in order: a packaged build
+    encounter runs; 1 otherwise. Refusals, in order: a packaged build
     (``install_layout.channel``, read at call time — the tests' seam), a
     missing set or config folder, the app's own config folder, an unusable
     rule or config, a config carrying the app's learned content, a template
     profile that cannot be bound, then the models (by name, before any is
-    constructed) and an unreadable set folder."""
+    constructed), an unreadable set folder, and models that cannot be
+    loaded (by exception type — round 26)."""
     configure_output()
     args = _parser().parse_args(argv)
     if install_layout.channel() != "dev":
@@ -1655,20 +1694,30 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
             "the app's own: it carries learned phrases and rules)"
         )
         return 2
+    # Peer round 27 (PR-HIGH-066): every refusal below is printed AFTER its
+    # ``except`` block ends, as in ``run_encounters`` — a failed write inside
+    # one would chain the handled exception (a config error's text reproduces
+    # the rejected input; a custody fault carries the pipeline's exception).
+    rule_refusal: str | None = None
     try:
         rule = load_pass_rule(args.rule)
     except RuleError as exc:
-        print(f"[refused] {exc}")
+        rule_refusal = str(exc)
+    if rule_refusal is not None:
+        print(f"[refused] {rule_refusal}")
         return 2
+    config_failure: str | None = None
     try:
         config = load_note_config(config_dir)
     except NoteConfigError as exc:
         # The loader's detail reproduces the rejected file text (not
         # log-safe, note_config's own warning): the type only (round 11
         # LOW-001).
+        config_failure = type(exc).__name__
+    if config_failure is not None:
         print(
             f"[refused] --config {config_dir}: a config file is unreadable or malformed "
-            f"({type(exc).__name__}) - check each JSON file against the shipped defaults"
+            f"({config_failure}) - check each JSON file against the shipped defaults"
         )
         return 2
     if _carries_learned_content(config_dir, config):
@@ -1677,6 +1726,7 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
             "copy of the app's own config); use validation\\config or a folder you wrote"
         )
         return 2
+    bind_failure: str | None = None
     try:
         # The profile ``compose_draft`` will bind, resolved now so a bad
         # ``--template-profile`` (or several profiles and none chosen) is a
@@ -1684,17 +1734,22 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         # encounter after a full transcription (round 12 LOW-009).
         bind_template_profile(config, args.template_profile)
     except NoteConfigError as exc:
+        bind_failure = type(exc).__name__
+    if bind_failure is not None:
         print(
             f"[refused] --config {config_dir}: no template profile can be bound "
-            f"({type(exc).__name__}) - pass --template-profile with one of the config's "
+            f"({bind_failure}) - pass --template-profile with one of the config's "
             "profile ids"
         )
         return 2
 
+    models_failure: str | None = None
     try:
         models = install_layout.models_root()
     except (OSError, RuntimeError) as exc:
-        print(f"[refused] the models folder cannot be located ({type(exc).__name__})")
+        models_failure = type(exc).__name__
+    if models_failure is not None:
+        print(f"[refused] the models folder cannot be located ({models_failure})")
         return 2
     whisper = resolve_whisper_model()
     if not whisper_model_available(whisper):
@@ -1724,10 +1779,13 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         )
         return 2
 
+    listing_failure: str | None = None
     try:
         encounters, incomplete = find_encounters(set_dir)
     except OSError as exc:
-        print(f"[refused] {set_dir} cannot be listed ({type(exc).__name__})")
+        listing_failure = type(exc).__name__
+    if listing_failure is not None:
+        print(f"[refused] {set_dir} cannot be listed ({listing_failure})")
         return 2
     errors = 0
     for name, problem in incomplete:
@@ -1737,18 +1795,51 @@ def main(argv: list[str] | None = None, *, repo_root: Path = REPO_ROOT) -> int:
         print(f"[error] no complete encounters in {set_dir}")
         return 1
 
-    vad = SileroVad()
+    load_failure: str | None = None
+    load_interrupted = False
+    try:
+        vad = SileroVad()
+        provider = WhisperSpeechProvider(model_name=whisper)
+        prose_stage = build_prose_stage("narrative") if args.prose else None
+    except KeyboardInterrupt:
+        load_interrupted = True
+    except Exception as exc:  # noqa: BLE001 - reported by TYPE (round 26)
+        # A model error's text names its path and the library's message:
+        # refused by type, like every other refusal before a model runs.
+        load_failure = _error_type(exc)
+    if load_interrupted:
+        print("[stopped] the run was interrupted while the models loaded; nothing was run")
+        return 1
+    if load_failure is not None:
+        print(f"[refused] the models could not be loaded ({load_failure})")
+        return 2
     inputs = HarnessInputs(
-        provider=WhisperSpeechProvider(model_name=whisper),
+        provider=provider,
         frame_probability=vad.frame_probability,
         config=config,
         template_profile_id=args.template_profile,
-        prose_stage=build_prose_stage("narrative") if args.prose else None,
+        prose_stage=prose_stage,
     )
+    custody: str | None = None
+    interrupted = False
     try:
         outcomes = run_encounters(encounters, inputs)
     except SpeakerEvalError as exc:
-        print(f"[custody] the run stopped: {exc}")
+        custody = str(exc)  # module-own text naming the path
+    except KeyboardInterrupt:
+        interrupted = True
+    if custody is not None:
+        print(f"[custody] the run stopped: {custody}")
+        return 1
+    if interrupted:
+        # Review round 22: no traceback — it would chain whatever the
+        # pipeline was raising, whose message may quote note text. Round 26:
+        # the folder named is the one the stores are made in.
+        print(
+            "[stopped] the run was interrupted, so there is no report - look in "
+            f"{tempfile.gettempdir()} for a {TEMP_DIR_PREFIX}* folder an interrupted "
+            "teardown may have left (it may still hold its key), and delete it"
+        )
         return 1
     info = RunInfo(
         whisper_model=whisper,

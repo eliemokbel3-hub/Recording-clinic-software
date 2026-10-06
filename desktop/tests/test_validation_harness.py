@@ -633,6 +633,64 @@ class TestRunner:
         assert (outcome.status, outcome.error_type) == ("error", "ScriptError")
         assert lines[-1].startswith("[error] syn-001.json:")
 
+    def test_an_error_type_no_outcome_can_hold_is_reported_as_exception(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 22: an over-long type name is reported as
+        ``Exception`` — never a second raise inside the handler, whose
+        traceback would chain the first one's message."""
+        unreportable = type("Unreportable" + "X" * 64, (Exception,), {})
+
+        def raising(*args: object, **kwargs: object) -> None:
+            raise unreportable("the note said something")
+
+        monkeypatch.setattr(validation, "evaluate_encounter", raising)
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set"))
+        lines: list[str] = []
+        (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lines.append)
+        assert (outcome.status, outcome.error_type) == ("error", "Exception")
+        assert lines[-1] == "[error] syn-001: Exception"
+
+
+class TestRound26Bounds:
+    """Review round 26 (H3): the two other whole-file reads are capped, and
+    an error line that cannot be written chains nothing."""
+
+    def test_an_oversized_label_track_is_refused_before_any_store(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(validation, "MAX_LABEL_TRACK_BYTES", 8)
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set"))
+        before = _temp_stores()
+        lines: list[str] = []
+        (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lines.append)
+        assert _temp_stores() == before
+        assert (outcome.status, outcome.error_type) == ("error", "LabelTrackError")
+        assert lines[-1].startswith("[error] syn-001: LabelTrackError: the label track was refused")
+
+    def test_an_oversized_rule_file_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(validation, "MAX_RULE_BYTES", 8)
+        with pytest.raises(validation.RuleError, match="^the rule file: larger than 8 bytes$"):
+            validation.load_pass_rule(_rule_file(tmp_path))
+
+    def test_an_error_line_that_cannot_be_written_chains_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def raising(*args: object, **kwargs: object) -> None:
+            raise ValueError("the note said something")
+
+        def progress(line: str) -> None:
+            if line.startswith("[error]"):
+                raise BrokenPipeError
+
+        monkeypatch.setattr(validation, "evaluate_encounter", raising)
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set"))
+        with pytest.raises(BrokenPipeError) as info:
+            run_encounters(encounters, _inputs(tmp_path), progress=progress)
+        assert info.value.__context__ is None  # the pipeline's message is not chained
+
 
 class TestClinicianSpeaker:
     def test_the_majority_clinician_cluster(self) -> None:
@@ -846,7 +904,127 @@ class TestRunValidationMain:
         argv = _argv(tmp_path)
         _rule_file(tmp_path).write_text("{}", encoding="utf-8")
         assert validation.main(argv) == 2
-        assert "[refused] rule.json" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "[refused] the rule file: " in out
+        assert "rule.json" not in out  # peer round 27 (PR-HIGH-068): never its name
+
+    def test_an_interrupted_run_prints_no_traceback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Review round 22: Ctrl+C mid-run is one fixed line and exit 1 — no
+        traceback chaining what the pipeline was raising."""
+
+        class _Model:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def frame_probability(self, frame: bytes) -> float:
+                return 0.0
+
+        def interrupted(*args: object, **kwargs: object) -> None:
+            raise KeyboardInterrupt
+
+        monkeypatch.setattr(validation, "resolve_whisper_model", lambda: "medium")
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        monkeypatch.setattr(validation, "SileroVad", _Model)
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", _Model)
+        monkeypatch.setattr(validation, "run_encounters", interrupted)
+        argv = _argv(tmp_path)
+        _set_folder(tmp_path / "set")
+        assert validation.main(argv, repo_root=tmp_path) == 1
+        out = capsys.readouterr().out
+        assert "[stopped] the run was interrupted" in out
+        assert f"{TEMP_DIR_PREFIX}*" in out
+        assert tempfile.gettempdir() in out  # round 26: the folder the stores are made in
+
+    @pytest.mark.parametrize("raised", ["error", "interrupt"])
+    def test_models_that_cannot_be_loaded_are_refused_by_type(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        raised: str,
+    ) -> None:
+        """Round 26: a model error's text (its path, the library's message)
+        is never printed, and an interrupt while loading prints one line."""
+        model_error = type("VadModelError", (Exception,), {})
+
+        def failing(*args: object, **kwargs: object) -> None:
+            if raised == "interrupt":
+                raise KeyboardInterrupt
+            raise model_error("C:/models/silero.onnx: the library said something")
+
+        monkeypatch.setattr(validation, "resolve_whisper_model", lambda: "medium")
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        monkeypatch.setattr(validation, "SileroVad", failing)
+        argv = _argv(tmp_path)
+        _set_folder(tmp_path / "set")
+        code = validation.main(argv, repo_root=tmp_path)
+        out = capsys.readouterr().out
+        assert "silero.onnx" not in out and "library said" not in out
+        if raised == "interrupt":
+            assert code == 1
+            assert "[stopped] the run was interrupted while the models loaded" in out
+        else:
+            assert code == 2
+            assert "[refused] the models could not be loaded (VadModelError)" in out
+
+    @pytest.mark.parametrize("site", ["rule", "config", "profile", "models", "listing", "custody"])
+    def test_a_refusal_that_cannot_be_written_chains_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str
+    ) -> None:
+        """Peer round 27 (PR-HIGH-066): each of ``main``'s refusals is printed
+        after its handler ends, so a closed output pipe chains no handled
+        exception — a config error's text reproduces the rejected input, and
+        a custody fault carries the pipeline's exception as its context."""
+
+        class _Model:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def frame_probability(self, frame: bytes) -> float:
+                return 0.0
+
+        def custody_fault(*args: object, **kwargs: object) -> None:
+            try:
+                raise ValueError("the note said something")
+            except ValueError:
+                raise SpeakerEvalError("a temporary store was not shown gone") from None
+
+        def unlistable(*args: object, **kwargs: object) -> None:
+            raise OSError("the note said something")
+
+        def broken_print(*args: object, **kwargs: object) -> None:
+            if args and str(args[0]).startswith(("[refused]", "[custody]")):
+                raise BrokenPipeError
+
+        monkeypatch.setattr(validation, "resolve_whisper_model", lambda: "medium")
+        monkeypatch.setattr(validation, "whisper_model_available", lambda name: True)
+        monkeypatch.setattr(validation, "vad_model_available", lambda: True)
+        monkeypatch.setattr(validation, "SileroVad", _Model)
+        monkeypatch.setattr(validation, "WhisperSpeechProvider", _Model)
+        monkeypatch.setattr(validation, "run_encounters", custody_fault)
+        argv = _argv(tmp_path)
+        _set_folder(tmp_path / "set")
+        if site == "rule":
+            _rule_file(tmp_path).write_text("{}", encoding="utf-8")
+        elif site == "config":
+            (tmp_path / "config" / "autofill_rules.json").write_text(
+                '{"schema_version": 1, "autofill_rules": [{"rule_id": "x", "Margaret": 1}]}',
+                encoding="utf-8",
+            )
+        elif site == "profile":
+            argv = [*argv, "--template-profile", "no-such-profile"]
+        elif site == "models":
+            monkeypatch.setattr(install_layout, "models_root", unlistable)
+        elif site == "listing":
+            monkeypatch.setattr(validation, "find_encounters", unlistable)
+        monkeypatch.setattr(validation, "print", broken_print, raising=False)
+        with pytest.raises(BrokenPipeError) as info:
+            validation.main(argv, repo_root=tmp_path)
+        assert info.value.__context__ is None
 
     @windows_only
     def test_a_full_run_with_fake_models(

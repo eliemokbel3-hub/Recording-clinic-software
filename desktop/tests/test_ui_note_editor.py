@@ -165,6 +165,7 @@ def _screen(
     result: models.NoteGenerationResult | None = None,
     *,
     mode: SessionMode = SessionMode.NORMAL,
+    copy_enabled: bool = models.COPY_TO_CLINIKO_ENABLED,
 ) -> tuple[Any, dict[str, list[Any]]]:
     from scribe_desktop.ui.note import NoteScreen
 
@@ -177,6 +178,7 @@ def _screen(
         on_cancel=lambda: record["cancelled"].append(True),
         template_profile_id="clinic-a",
         mode=mode,
+        copy_enabled=copy_enabled,
     )
     return screen, record
 
@@ -307,25 +309,75 @@ def _key(key: Any, modifiers: Any = None) -> Any:
     )
 
 
-def _menu_words(menu: Any) -> set[str]:
-    return {
-        action.text().split("\t", 1)[0].replace("&", "")
-        for action in menu.actions()
-        if not action.isSeparator()
+def _fake_note_clipboard(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Stand in for ``QApplication.clipboard()`` inside ``ui.note`` (as
+    ``test_ui_screens.TestNoteWiring._fake_clipboard`` does): every
+    ``QMimeData`` placed is returned in the list, and the real Windows
+    clipboard is never reached (the platform is offscreen, whose clipboard is
+    Qt's in-process one)."""
+    from PySide6.QtGui import QGuiApplication
+
+    from scribe_desktop.ui import note as note_module
+
+    assert QGuiApplication.platformName() == "offscreen", (
+        "the copy tests run only on the offscreen platform; unset QT_QPA_PLATFORM"
+    )
+    placed: list[Any] = []
+
+    class _Clipboard:
+        def setText(self, text: str) -> None:  # noqa: N802 - Qt spelling
+            raise AssertionError("a plain setText carries none of the formats")
+
+        def setMimeData(self, mime: Any) -> None:  # noqa: N802 - Qt spelling
+            placed.append(mime)
+
+    clipboard = _Clipboard()
+
+    class _StubApplication:
+        @staticmethod
+        def clipboard() -> _Clipboard:
+            return clipboard
+
+    monkeypatch.setattr(note_module, "QApplication", _StubApplication)
+    return placed
+
+
+def _assert_note_mime(mime: Any, text: str) -> None:
+    """Task 8.2: exactly the text plus the three formats, with their payloads."""
+    formats = models.clipboard_mime_formats()
+    assert mime.text() == text
+    assert set(mime.formats()) == {
+        "text/plain",
+        *(models.windows_clipboard_mime_type(name) for name in formats),
     }
+    for name, payload in formats.items():
+        assert bytes(mime.data(models.windows_clipboard_mime_type(name)).data()) == payload
 
 
-@pytest.mark.parametrize("mode", list(SessionMode))
-def test_the_line_editor_keeps_note_text_off_the_clipboard_in_shadow(
-    qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: SessionMode
+@pytest.mark.parametrize(
+    ("mode", "copy_enabled"),
+    [(SessionMode.NORMAL, True), (SessionMode.SHADOW, True), (SessionMode.NORMAL, False)],
+)
+def test_the_line_editors_copy_and_cut_go_through_the_placement_or_are_refused(
+    qapp: Any,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mode: SessionMode,
+    copy_enabled: bool,
 ) -> None:
-    """Peer round 1 PR-HIGH-001: the editor opens holding the line's text,
-    and Qt's own Copy and Cut never pass through ``_place_note_text``. In
-    shadow its Copy and Cut keys stop before Qt, its menu has no Copy or Cut
-    and drag is off; typing, Paste, Undo and Escape are unchanged. In normal
-    mode every key reaches Qt as before. Qt's native key handling is replaced
-    by a recorder, so no test reaches any clipboard."""
+    """Peer round 1 PR-HIGH-001 and review round 22 MED-001 (the
+    practitioner's decision of 2026-10-07): the editor opens holding the
+    line's text, and Qt's own Copy and Cut never run. In a NORMAL recording
+    with the copy flag on, each Copy and Cut shortcut and each menu action
+    places the selection through ``_place_note_text`` — with the three
+    formats, no ratification check — and Cut then removes it. In SHADOW, or
+    with the copy flag off (round 23), they place nothing, the menu has no
+    Copy or Cut. Drag stays off in every case. Typing, Paste, Undo and Escape
+    reach Qt unchanged. Qt's native key handling is replaced by a recorder
+    and the note module's clipboard by a fake; Qt's own (offscreen,
+    in-process) clipboard holds a sentinel that must survive the menu."""
     from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication
     from PySide6.QtWidgets import QLineEdit
 
     reached: list[int] = []
@@ -334,28 +386,78 @@ def test_the_line_editor_keeps_note_text_off_the_clipboard_in_shadow(
         reached.append(event.key())
 
     monkeypatch.setattr(QLineEdit, "keyPressEvent", record)
-    screen, _record = _screen(tmp_path, mode=mode)
+    placed = _fake_note_clipboard(monkeypatch)
+    qt_clipboard = QGuiApplication.clipboard()
+    sentinel = "clipboard sentinel"
+    qt_clipboard.setText(sentinel)
+    screen, _record = _screen(tmp_path, mode=mode, copy_enabled=copy_enabled)
     routed = _first_routed(screen)
-    screen.open_editor(routed.assertion_id, _working_text(screen, routed.assertion_id))
+    original = _working_text(screen, routed.assertion_id)
+    screen.open_editor(routed.assertion_id, original)
     assert screen._editor is not None
     field = screen._editor[1]
-    shadow = mode is SessionMode.SHADOW
-    assert field.shadow is shadow
+    assert field.shadow is (mode is SessionMode.SHADOW)
+    refused = mode is SessionMode.SHADOW or not copy_enabled
+    assert len(original) > 4
+    selected, rest = original[:4], original[4:]
+
+    def select() -> None:
+        field.setText(original)
+        field.setSelection(0, 4)
+        assert field.selectedText() == selected
+
     control = Qt.KeyboardModifier.ControlModifier
-    for clip_key in (Qt.Key.Key_C, Qt.Key.Key_X):  # Copy, Cut
-        field.keyPressEvent(_key(clip_key, control))
-    assert reached == ([] if shadow else [Qt.Key.Key_C, Qt.Key.Key_X])
-    reached.clear()
+    shift = Qt.KeyboardModifier.ShiftModifier
+    # Copy and Cut, each by both of its Windows shortcuts (Ctrl+Insert and
+    # Shift+Delete are Copy and Cut too).
+    clip_keys = (
+        (Qt.Key.Key_C, control, False),
+        (Qt.Key.Key_Insert, control, False),
+        (Qt.Key.Key_X, control, True),
+        (Qt.Key.Key_Delete, shift, True),
+    )
+    for clip_key, modifier, is_cut in clip_keys:
+        select()
+        placed.clear()
+        field.keyPressEvent(_key(clip_key, modifier))
+        assert reached == []  # never Qt's own copy or cut
+        if refused:
+            assert placed == []
+            assert field.text() == original
+        else:
+            (mime,) = placed
+            _assert_note_mime(mime, selected)
+            assert field.text() == (rest if is_cut else original)
+    # Nothing selected: nothing placed, nothing removed.
+    field.setText(original)
+    field.deselect()
+    placed.clear()
+    field.keyPressEvent(_key(Qt.Key.Key_X, control))
+    assert (placed, field.text()) == ([], original)
     for passing in (Qt.Key.Key_A, Qt.Key.Key_V, Qt.Key.Key_Z):
         field.keyPressEvent(_key(passing, None if passing == Qt.Key.Key_A else control))
     assert reached == [Qt.Key.Key_A, Qt.Key.Key_V, Qt.Key.Key_Z]  # typing, Paste, Undo
-    menu = field.build_context_menu()
-    words = _menu_words(menu)
-    assert ("Copy" in words, "Cut" in words) == (not shadow, not shadow)
-    assert "Paste" in words and "Undo" in words
-    menu.deleteLater()
-    if shadow:
-        assert field.dragEnabled() is False
+    # The context menu: Copy and Cut routed through the placement, or gone.
+    for word, is_cut in (("Copy", False), ("Cut", True)):
+        select()
+        placed.clear()
+        menu = field.build_context_menu()
+        actions = {
+            action.text().split("\t", 1)[0].replace("&", ""): action
+            for action in menu.actions()
+            if not action.isSeparator()
+        }
+        assert "Paste" in actions and "Undo" in actions
+        if refused:
+            assert word not in actions
+        else:
+            actions[word].trigger()
+            (mime,) = placed
+            _assert_note_mime(mime, selected)
+            assert field.text() == (rest if is_cut else original)
+        assert qt_clipboard.text() == sentinel  # Qt's own copy() / cut() never ran
+        menu.deleteLater()
+    assert field.dragEnabled() is False
     _escape(qapp, field)
     assert screen._editor is None
     screen.deleteLater()

@@ -32,6 +32,12 @@ key.pem
 # not match it
 extension/key-dev.pem
 
+# Pilot plan Constraint 8 / decision 3.6 (review round 22): no recording or
+# validation-set build output ever enters the repository, wherever a set
+# folder is made (the builder refuses one inside it; the runner only reads)
+*.wav
+*.built
+
 # Machine-generated native-host registration artifacts (pre-gate locations;
 # registration now installs into the channel's data folder under %LOCALAPPDATA% —
 # ClinikoScribe, or ClinikoScribe-dev from a source checkout — outside the repo)

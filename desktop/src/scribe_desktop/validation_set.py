@@ -45,6 +45,7 @@ import io
 import math
 import os
 import random
+import re
 import sys
 import tempfile
 import wave
@@ -58,7 +59,9 @@ from scribe_desktop import install_layout
 from scribe_desktop.speaker_eval import configure_output
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE
 from scribe_desktop.validation import (
+    ENCOUNTER_ID_PATTERN,
     REPO_ROOT,
+    UNNAMED_ENCOUNTER,
     EncounterScript,
     ScriptError,
     load_script,
@@ -74,6 +77,7 @@ TAIL_SECONDS: Final = 0.5
 # The mix is scaled down when its peak would pass this (no clipping).
 PEAK_LIMIT: Final = 0.95 * 32767
 MIN_VOICES: Final = 2
+_ENCOUNTER_ID_RE: Final = re.compile(ENCOUNTER_ID_PATTERN)
 # SAPI's ``SVSFIsNotXML``: a line is spoken as text, never parsed as markup.
 SAPI_IS_NOT_XML: Final = 16
 # ``SAFT16kHz16BitMono`` — requested, not honoured by the OneCore voices
@@ -154,12 +158,16 @@ def sapi_synthesize(text: str, voice_index: int, rate: int) -> bytes:  # pragma:
         stream = win32com.client.Dispatch("SAPI.SpFileStream")
         stream.Format.Type = SAPI_16K_MONO
         stream.Open(str(target), SAPI_CREATE_FOR_WRITE)
-        voice = win32com.client.Dispatch("SAPI.SpVoice")
-        voice.Voice = voice.GetVoices().Item(voice_index)
-        voice.Rate = rate
-        voice.AudioOutputStream = stream
-        voice.Speak(text, SAPI_IS_NOT_XML)
-        stream.Close()
+        try:
+            voice = win32com.client.Dispatch("SAPI.SpVoice")
+            voice.Voice = voice.GetVoices().Item(voice_index)
+            voice.Rate = rate
+            voice.AudioOutputStream = stream
+            voice.Speak(text, SAPI_IS_NOT_XML)
+        finally:
+            # Review round 22: an open stream would keep turn.wav locked and
+            # the folder's removal would then fail under the speech error.
+            stream.Close()
         return resample_wav_to_pcm16(target)
 
 
@@ -511,6 +519,19 @@ def _inside(path: Path, folder: Path) -> bool:
     return path.resolve().is_relative_to(folder.resolve())
 
 
+def _app_data_folders() -> list[Path]:
+    """Both channels' data folders (each read now; one that cannot be
+    resolved is skipped, as the runner's own-config refusal does)."""
+    folders: list[Path] = []
+    channels: tuple[install_layout.Channel, ...] = ("production", "dev")
+    for channel in channels:
+        try:
+            folders.append(install_layout.data_root(channel))
+        except (OSError, RuntimeError):
+            continue
+    return folders
+
+
 def build_set(
     scripts_dir: Path,
     out_dir: Path,
@@ -525,18 +546,25 @@ def build_set(
     into ``out_dir``: ``(built, errors)``. ``voices`` / ``synthesize``
     default to the real speech engine, looked up at call time. Refuses
     outright — before any voice speaks — an output folder that IS the
-    scripts folder or lies inside ``repo_root``, voices that cannot be
+    scripts folder or lies inside ``repo_root`` or either channel's data
+    folder (round 26), voices that cannot be
     listed, fewer than ``MIN_VOICES`` installed voices
     (``TooFewVoicesError``), a set folder that cannot be created, and a
     scripts folder that cannot be listed, in that order. A role-play script
     is skipped and said so; any other failing script is reported (its
     refusal text, or an exception TYPE) and counted, and its earlier
-    synthetic build in ``out_dir`` is removed. A name in ``only`` that
+    synthetic build in ``out_dir`` is removed — except a script file not
+    named as an encounter id, which is counted and reported without its name
+    (``UNNAMED_ENCOUNTER``) and touches nothing. A name in ``only`` that
     matches no script exactly is an error."""
     if out_dir.resolve() == scripts_dir.resolve():
         raise BuildError("the output folder must not be the scripts folder")
     if repo_root is not None and _inside(out_dir, repo_root):
         raise BuildError("the set folder must be outside the repository")
+    if any(_inside(out_dir, folder) for folder in _app_data_folders()):
+        # Round 26: plaintext WAVs and scripts never land in either app
+        # data folder (installation plan C8 for the production one).
+        raise BuildError("the set folder must be outside the app's data folders")
     try:
         installed = tuple((voices or sapi_voices)())
     except Exception as exc:  # noqa: BLE001 - a COM failure: refused by TYPE (round 12 LOW-007)
@@ -562,22 +590,40 @@ def build_set(
     for script_path in scripts:
         if wanted and script_path.stem not in wanted:
             continue
+        if not _ENCOUNTER_ID_RE.fullmatch(script_path.stem):
+            # Review round 22 (the runner's round 11 MED-006 rule): a file
+            # name that is not an encounter id may be a person's name, so it
+            # is never printed, and nothing in the set folder is touched.
+            errors += 1
+            progress(f"[error] {UNNAMED_ENCOUNTER}: not built (name it <encounter id>.json)")
+            continue
+        # Peer round 27 (PR-HIGH-066): each line is written AFTER its
+        # ``except`` block ends — a failed write inside one would chain the
+        # build's exception (the speech engine's text can carry a line).
+        skipped: str | None = None
+        failed: str | None = None
         try:
             built.append(build_encounter(script_path, out_dir, installed, speak))
         except RolePlayScriptError as exc:
-            progress(f"[skip] {exc}")
-            continue
+            skipped = str(exc)
         except Exception as exc:  # noqa: BLE001 - our refusal text, else the TYPE only
-            errors += 1
-            text = str(exc) if isinstance(exc, ScriptError | BuildError) else (
+            failed = str(exc) if isinstance(exc, ScriptError | BuildError) else (
                 f"{script_path.name}: {type(exc).__name__}"
             )
-            progress(f"[error] {text}" + _remove_earlier_build(out_dir, script_path.stem))
+        if skipped is not None:
+            progress(f"[skip] {skipped}")
+            continue
+        if failed is not None:
+            errors += 1
+            progress(f"[error] {failed}" + _remove_earlier_build(out_dir, script_path.stem))
             continue
         progress(f"[built] {built[-1].encounter_id} ({built[-1].seconds:.1f} s)")
     for name in sorted(wanted - {path.stem for path in scripts}):
+        # Peer round 27 (PR-HIGH-067): the round-22 rule for an unmatched
+        # --only value too — a name that is not an encounter id is not printed.
         errors += 1
-        progress(f"[error] {name}: no script has this exact name")
+        shown = name if _ENCOUNTER_ID_RE.fullmatch(name) else UNNAMED_ENCOUNTER
+        progress(f"[error] {shown}: no script has this exact name")
     return built, errors
 
 
@@ -623,6 +669,7 @@ def main(
             "resamples every spoken turn with it - install the [ml] extra (AGENTS.md step 2)"
         )
         return 2
+    refusal: str | None = None
     try:
         built, errors = build_set(
             scripts_dir,
@@ -633,7 +680,9 @@ def main(
             repo_root=REPO_ROOT,
         )
     except BuildError as exc:
-        print(f"[refused] {exc}")
+        refusal = str(exc)  # printed after the handler (peer round 27, PR-HIGH-066)
+    if refusal is not None:
+        print(f"[refused] {refusal}")
         return 2
     print(f"built {len(built)} encounter(s); {errors} error(s)")
     return 0 if built and not errors else 1

@@ -44,7 +44,6 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -76,6 +75,7 @@ from scribe_desktop.transcription import (
     segment_has_text,
 )
 from scribe_desktop.ui import models
+from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
 
 
@@ -271,13 +271,13 @@ class TranscriptScreen(QWidget):
         generate_layout.addLayout(self._role_box)
         profile_row = QHBoxLayout()
         profile_row.addWidget(QLabel("Template profile:"))
-        self.profile_combo = QComboBox()
+        self.profile_combo = NoCopyComboBox()
         self.profile_combo.currentIndexChanged.connect(lambda *_: self._update_controls())
         profile_row.addWidget(self.profile_combo, 1)
         generate_layout.addLayout(profile_row)
         prefill_row = QHBoxLayout()
         prefill_row.addWidget(QLabel("Prefill region:"))
-        self.prefill_combo = QComboBox()
+        self.prefill_combo = NoCopyComboBox()
         prefill_row.addWidget(self.prefill_combo, 1)
         generate_layout.addLayout(prefill_row)
         self.generate_button = QPushButton(models.GENERATE_NOTE_LABEL)

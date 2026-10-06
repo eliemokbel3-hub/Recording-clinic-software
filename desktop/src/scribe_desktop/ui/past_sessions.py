@@ -56,12 +56,10 @@ from pathlib import Path
 from PySide6.QtCore import QStandardPaths, Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
@@ -84,6 +82,7 @@ from scribe_desktop.past_sessions import (
 )
 from scribe_desktop.ui import models
 from scribe_desktop.ui import past_sessions_view as view
+from scribe_desktop.ui.lists import NoCopyComboBox, NoCopyListWidget
 from scribe_desktop.ui.note import _place_note_text
 
 # How often the tab re-checks what changes without a click: the Delete now
@@ -182,7 +181,7 @@ class PastSessionsScreen(QWidget):
         self.message_label = _plain_label()
 
         # Left: the list, Delete now, the settings and the export.
-        self.entry_list = QListWidget()
+        self.entry_list = NoCopyListWidget()
         self.entry_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.delete_button = QPushButton(view.DELETE_LABEL)
         self.delete_button.clicked.connect(self.on_delete_clicked)
@@ -194,7 +193,7 @@ class PastSessionsScreen(QWidget):
         list_layout.addWidget(self.delete_help_label)
         list_box.setLayout(list_layout)
 
-        self.retention_combo = QComboBox()
+        self.retention_combo = NoCopyComboBox()
         for label, _days in view.RETENTION_OPTIONS:
             self.retention_combo.addItem(label)
         self.retention_combo.activated.connect(self.on_retention_chosen)

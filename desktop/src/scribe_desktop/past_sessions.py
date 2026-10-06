@@ -57,6 +57,7 @@ calls under its lock, the sweep timer), like the stores it sits beside
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -249,7 +250,9 @@ class PastSessionLabel(BaseModel):
     0.2.0) has none and reads as not shadow (D6); a v1 label carrying one,
     or a v2 label without one, is not a label this app wrote and is
     refused (the entry lists as unreadable, and Copy fails closed). A newer
-    version is refused the same way."""
+    version is refused the same way, and so are stored bytes naming no
+    version (``_decode_label``, review round 22: the defaults here are for
+    building a label)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -272,10 +275,14 @@ class PastSessionLabel(BaseModel):
     @classmethod
     def _shadow_by_version(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            version = data.get("schema_version", LABEL_SCHEMA_VERSION)
+            version = data.get("schema_version")  # absent: a label being built
+            if "schema_version" in data and type(version) is not int:
+                # Round 26: JSON ``true`` or ``1.0`` compares equal to 1 —
+                # only an integer is a version this app wrote (as audit).
+                raise ValueError("a label's version is an integer")
             if version == 1 and "shadow" in data:
                 raise ValueError("a v1 label carries no shadow flag")
-            if version == 2 and "shadow" not in data and "schema_version" in data:
+            if version == 2 and "shadow" not in data:
                 raise ValueError("a v2 label names its shadow flag")
         return data
 
@@ -532,7 +539,7 @@ class PastSessionStore:
                 _read_capped(staging / LABEL_FILENAME, MAX_LABEL_FILE_BYTES),
                 _label_aad(session_id),
             )
-            if PastSessionLabel.model_validate_json(label_plain) != document:
+            if _parse_label(label_plain) != document:
                 raise PastSessionError("verify_failed")
             transcript = crypto.decrypt((staging / TRANSCRIPT_FILENAME).read_bytes())
             _require_same(transcript, source.transcript_plain)
@@ -850,10 +857,23 @@ class PastSessionStore:
                 _read_capped(entry / LABEL_FILENAME, MAX_LABEL_FILE_BYTES),
                 _label_aad(entry.name),
             )
-            label = PastSessionLabel.model_validate_json(plaintext)
+            label = _parse_label(plaintext)
         except Exception:  # noqa: BLE001 - unreadable, never a raise
             return None
         return label if label.session_id == entry.name else None
+
+
+def _parse_label(plaintext: bytes) -> PastSessionLabel:
+    """A stored label, else ``ValueError`` — the ONE reading rule, used by
+    the listing and by the write-time verify (round 24), so a label that
+    verifies is one the listing will read. Pilot review round 22 (the
+    encounter record's peer round 9 rule): every label this app wrote names
+    its version, and the model's defaults are for building one — stored
+    bytes naming none would read as v2 not shadow, so they are refused."""
+    named = json.loads(plaintext)
+    if not isinstance(named, dict) or "schema_version" not in named:
+        raise ValueError("not a label")
+    return PastSessionLabel.model_validate_json(plaintext)
 
 
 def sweep_past_sessions(

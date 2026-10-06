@@ -49,7 +49,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
-    QListWidget,
     QListWidgetItem,
     QPushButton,
     QVBoxLayout,
@@ -59,6 +58,7 @@ from PySide6.QtWidgets import (
 from scribe_desktop.note_config import MAX_STYLE_EXEMPLARS, RefusalClass, StyleExemplar
 from scribe_desktop.sample_notes import StyleProfileDraft
 from scribe_desktop.ui import models
+from scribe_desktop.ui.lists import NoCopyListWidget
 
 # The order the refusal classes are named in, so the summary reads the same
 # way every time.
@@ -158,7 +158,7 @@ class StyleReviewDialog(QDialog):
         self.summary_label = _plain_label(review_summary(draft), wrap=True)
 
         self.headings_header_label = _plain_label(HEADINGS_HEADER)
-        self.headings_list = QListWidget()
+        self.headings_list = NoCopyListWidget()
         for key in draft.section_order:
             title = models.section_title(key)
             label = draft.heading_labels.get(key)
@@ -166,12 +166,12 @@ class StyleReviewDialog(QDialog):
             self.headings_list.addItem(_fixed_row(text))
 
         self.recognised_header_label = _plain_label(RECOGNISED_HEADER)
-        self.recognised_list = QListWidget()
+        self.recognised_list = NoCopyListWidget()
         for token in draft.recognised_shorthand:
             self.recognised_list.addItem(_fixed_row(token))
 
         self.unrecognised_header_label = _plain_label(UNRECOGNISED_HEADER, wrap=True)
-        self.unrecognised_list = QListWidget()
+        self.unrecognised_list = NoCopyListWidget()
         for token in draft.unrecognised_shorthand:
             item = QListWidgetItem(token)
             item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
@@ -181,7 +181,7 @@ class StyleReviewDialog(QDialog):
             self.unrecognised_list.addItem(item)
 
         self.exemplars_header_label = _plain_label(EXEMPLARS_HEADER, wrap=True)
-        self.exemplars_list = QListWidget()
+        self.exemplars_list = NoCopyListWidget()
         for index, exemplar in enumerate(draft.exemplars):
             item = QListWidgetItem(
                 f"{models.section_title(exemplar.section_key)}: {exemplar.exemplar_text}"
@@ -299,7 +299,7 @@ class DeleteOriginalsDialog(QDialog):
 
         self.intro_label = _plain_label(DELETE_INTRO_LINE, wrap=True)
 
-        self.paths_list = QListWidget()
+        self.paths_list = NoCopyListWidget()
         for path in paths:
             self.paths_list.addItem(_fixed_row(str(path)))
 

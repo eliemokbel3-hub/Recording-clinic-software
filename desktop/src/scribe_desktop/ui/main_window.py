@@ -2049,8 +2049,11 @@ class MainWindow(QMainWindow):
             self._show_write_line(models.write_line("not_sent"))
             return
         if session.mode is not SessionMode.NORMAL:
-            # Pilot plan D4: nothing reserved, read or sent. A 0.2.0 session
-            # always has its row (Start wrote it), so no date is needed.
+            # Pilot plan D4: nothing reserved, read or sent — so no session
+            # date is read either. Start wrote this session's row; only after
+            # "Start a new audit record" (D9) does the update make a pre_audit
+            # row, then dated by the audit clock and naming no mode (review
+            # round 22).
             if self._audit is not None:
                 self._audit.record_write_refusal(session_id, "shadow_session")
             self._show_write_line(models.write_line("shadow_session"))

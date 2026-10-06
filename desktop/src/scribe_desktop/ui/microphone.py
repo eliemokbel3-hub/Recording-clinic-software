@@ -9,7 +9,6 @@ from typing import NamedTuple
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -31,6 +30,7 @@ from scribe_desktop.benchmark import (
 from scribe_desktop.session import ACTIVE_STATES, CAPTURING_STATES, SessionState
 from scribe_desktop.ui import models
 from scribe_desktop.ui.hardware_check import run_prose_benchmark
+from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
 
 _LEVEL_POLL_MS = 100
@@ -110,7 +110,7 @@ class MicrophoneScreen(QWidget):
         )
         self._benchmark_task: TaskThread | None = None
 
-        self.device_combo = QComboBox()
+        self.device_combo = NoCopyComboBox()
         self.device_combo.currentIndexChanged.connect(self._on_device_selected)
         self.refresh_button = QPushButton("Refresh devices")
         self.refresh_button.clicked.connect(self.refresh_devices)

@@ -22,7 +22,7 @@ import pytest
 from conftest import use_channel
 from scribe_desktop import validation_set
 from scribe_desktop.speaker_eval import parse_audacity_labels, read_wav_pcm
-from scribe_desktop.validation import load_script
+from scribe_desktop.validation import UNNAMED_ENCOUNTER, load_script
 from scribe_desktop.validation_set import (
     BUILT_MARKER_SUFFIX,
     GAP_SECONDS,
@@ -434,6 +434,25 @@ class TestBuildSet:
         assert any(line.startswith("[error] syn-bad.json") for line in lines)
         assert not (tmp_path / "set" / "rp-recorded.wav").exists()
 
+    def test_a_script_not_named_as_an_encounter_id_is_reported_without_its_name(
+        self, tmp_path: Path
+    ) -> None:
+        """Review round 22 (the runner's round 11 MED-006 rule): the file
+        name may be a person's, so it is never printed, and the set folder is
+        not touched for it."""
+        scripts = tmp_path / "scripts"
+        source = _write(scripts, _script("syn-test"))
+        source.rename(scripts / "Margaret Example.json")
+        out = tmp_path / "set"
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, out, voices=_voices(2), synthesize=_FakeVoices(), progress=lines.append
+        )
+        assert (built, errors) == ([], 1)
+        assert lines == [f"[error] {UNNAMED_ENCOUNTER}: not built (name it <encounter id>.json)"]
+        assert "Margaret" not in "\n".join(lines)
+        assert list(out.iterdir()) == []
+
     def test_an_unexpected_failure_is_reported_by_type_only(self, tmp_path: Path) -> None:
         scripts = tmp_path / "scripts"
         _write(scripts, _script())
@@ -473,7 +492,54 @@ class TestBuildSet:
             only=["SYN-A"], progress=lines.append,
         )
         assert (built, errors) == ([], 1)
-        assert lines == ["[error] SYN-A: no script has this exact name"]
+        # Not an encounter id (upper case), so not printed (peer round 27).
+        assert lines == [f"[error] {UNNAMED_ENCOUNTER}: no script has this exact name"]
+
+    def test_an_unmatched_name_not_an_encounter_id_is_not_printed(self, tmp_path: Path) -> None:
+        """Peer round 27 (PR-HIGH-067): the round-22 rule for an ``--only``
+        value too — a typed name that is not an encounter id may be a
+        person's, so the error line names the placeholder instead."""
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script("syn-a"))
+        lines: list[str] = []
+        built, errors = build_set(
+            scripts, tmp_path / "set", voices=_voices(2), synthesize=_FakeVoices(),
+            only=["Margaret Example.json", "syn-zz"], progress=lines.append,
+        )
+        assert (built, errors) == ([], 2)
+        assert sorted(lines) == sorted(
+            [
+                f"[error] {UNNAMED_ENCOUNTER}: no script has this exact name",
+                "[error] syn-zz: no script has this exact name",
+            ]
+        )
+        assert "Margaret" not in "\n".join(lines)
+
+    @pytest.mark.parametrize("failure", ["role-play", "unexpected"])
+    def test_a_line_that_cannot_be_written_chains_nothing(
+        self, tmp_path: Path, failure: str
+    ) -> None:
+        """Peer round 27 (PR-HIGH-066): the skip and error lines are written
+        after their handler ends, so a closed output pipe chains no build
+        exception (the speech engine's text can carry a script line)."""
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script("rp-recorded", conditions=None) if failure == "role-play" else (
+            _script()
+        ))
+
+        def explode(text: str, voice: int, rate: int) -> bytes:
+            raise RuntimeError(text)
+
+        def progress(line: str) -> None:
+            if line.startswith(("[skip]", "[error]")):
+                raise BrokenPipeError
+
+        with pytest.raises(BrokenPipeError) as info:
+            build_set(
+                scripts, tmp_path / "set", voices=_voices(2), synthesize=explode,
+                progress=progress,
+            )
+        assert info.value.__context__ is None
 
     def test_the_output_folder_may_not_be_the_scripts_folder(self, tmp_path: Path) -> None:
         scripts = tmp_path / "scripts"
@@ -501,6 +567,30 @@ class TestBuildSet:
         built, errors = build_set(
             scripts, tmp_path / "set", voices=_voices(2), synthesize=synth, repo_root=repo
         )
+        assert (len(built), errors) == (1, 0)
+
+    @pytest.mark.parametrize("channel", ["production", "dev"])
+    def test_a_set_folder_inside_an_app_data_folder_is_refused_before_any_voice_speaks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, channel: str
+    ) -> None:
+        """Round 26 (SEC-005): plaintext audio and scripts never land in
+        either channel's data folder."""
+        from scribe_desktop import install_layout
+
+        scripts = tmp_path / "scripts"
+        _write(scripts, _script())
+        folders = {"production": tmp_path / "ClinikoScribe", "dev": tmp_path / "ClinikoScribe-dev"}
+        monkeypatch.setattr(
+            install_layout, "data_root", lambda of=None: folders[of or "dev"]
+        )
+        synth = _FakeVoices()
+        target = folders[channel] / "config" / "set"
+        with pytest.raises(BuildError, match="outside the app's data folders"):
+            build_set(scripts, target, voices=_voices(2), synthesize=synth)
+        assert synth.calls == []
+        assert not target.exists()
+        # The other direction: a folder beside them is accepted.
+        built, errors = build_set(scripts, tmp_path / "set", voices=_voices(2), synthesize=synth)
         assert (len(built), errors) == (1, 0)
 
     def test_a_set_folder_that_cannot_be_created_is_refused_by_type(
@@ -942,6 +1032,26 @@ class TestMain:
         )
         assert code == 2
         assert "[refused] 1 Windows voice(s) installed" in capsys.readouterr().out
+
+    def test_a_refusal_that_cannot_be_written_chains_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Peer round 27 (PR-HIGH-066): the refusal is printed after its
+        handler ends, so a closed output pipe chains no ``BuildError``."""
+
+        def broken_print(*args: object, **kwargs: object) -> None:
+            if args and str(args[0]).startswith("[refused]"):
+                raise BrokenPipeError
+
+        _write(tmp_path / "scripts", _script())
+        monkeypatch.setattr(validation_set, "print", broken_print, raising=False)
+        with pytest.raises(BrokenPipeError) as info:
+            validation_set.main(
+                [str(tmp_path / "scripts"), str(tmp_path / "set")],
+                voices=_voices(1),
+                synthesize=_FakeVoices(),
+            )
+        assert info.value.__context__ is None
 
     def test_the_real_synthesizer_without_pyav_is_refused(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

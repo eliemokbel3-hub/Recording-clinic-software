@@ -16,10 +16,11 @@ set up and build it, and make releases; the installed app needs none of them.
   Windows Error Reporting exclusions. `--unregister` reverses it and also
   removes what earlier versions wrote under the PRODUCTION name (the per-user
   `com.scribe.cliniko_host` key and its two files in
-  `%LOCALAPPDATA%\ClinikoScribe\` — nothing else there). Until the app is
-  installed that is the everyday app's live Chrome link, so run
-  `--unregister` only as the installation's step (Phase P step 2). The
-  installed app's Chrome link is its installer's, never this script's.
+  `%LOCALAPPDATA%\ClinikoScribe\` — nothing else there). On a computer whose
+  everyday app is still that source-run registration it is the live Chrome
+  link, so run `--unregister` only as the installation's step (Phase P step
+  2; done on this computer 2026-10-03). The installed app's Chrome link is
+  its installer's, never this script's.
 - `setup-models.py [--only NAME] [--root DIR]` — downloads the pinned models
   (setup-time network) into the developer build's
   `%LOCALAPPDATA%\ClinikoScribe-dev\models\`, or with `--root DIR` into a

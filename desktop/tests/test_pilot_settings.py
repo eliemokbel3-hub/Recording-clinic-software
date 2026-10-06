@@ -78,6 +78,7 @@ class TestTheSettingsFile:
             '{"schema_version": 1, "shadow_mode": 0}',
             '{"schema_version": 1, "shadow_mode": "false"}',
             "[false]",
+            "null",  # review round 22
             b"\xff\xfe\x00",
             # Peer round 9 PR-HIGH-B02: present but naming no setting.
             "{}",

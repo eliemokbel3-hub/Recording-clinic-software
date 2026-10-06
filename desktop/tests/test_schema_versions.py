@@ -161,6 +161,18 @@ class TestEncounterRecordVersions:
         with pytest.raises(EncounterUnavailable):
             EncounterRecord.from_bytes(json.dumps(data).encode())
 
+    @pytest.mark.parametrize("version", [True, 1.0, 2.0, "1", "2"])
+    def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
+        """Round 26 (SEC-001): ``true == 1`` in Python — a version only
+        equal to 1 or 2 is not one this app wrote, with or without a mode."""
+        for mode in (None, "normal"):
+            data = json.loads(ENCOUNTER_V1_UNLINKED)
+            data["schema_version"] = version
+            if mode is not None:
+                data["mode"] = mode
+            with pytest.raises(EncounterUnavailable):
+                EncounterRecord.from_bytes(json.dumps(data).encode())
+
     def test_a_newer_record_is_unavailable(self) -> None:
         for document in (ENCOUNTER_V1_LINKED, ENCOUNTER_V1_UNLINKED):
             with pytest.raises(EncounterUnavailable):
@@ -367,6 +379,30 @@ class TestAuditRowVersions:
     def test_newer_bytes_are_newer(self) -> None:
         assert audit_mod._decode(_newer(AUDIT_V1)) is audit_mod._NEWER  # noqa: SLF001
 
+    def test_bytes_naming_no_version_or_a_v2_row_naming_no_mode_are_refused(self) -> None:
+        """Review round 22 (the encounter record's peer round 9 rule): the
+        model alone would read either as a v2 row with no mode."""
+        written = audit_mod._decode(AUDIT_V1)  # noqa: SLF001
+        assert isinstance(written, AuditRow)
+        stored = json.loads(written.to_bytes())
+        assert audit_mod._decode(json.dumps(stored).encode()) == written  # noqa: SLF001
+        for key in ("schema_version", "mode"):
+            missing = {name: value for name, value in stored.items() if name != key}
+            with pytest.raises(ValueError):
+                audit_mod._decode(json.dumps(missing).encode())  # noqa: SLF001
+
+    @pytest.mark.parametrize("version", [True, 1.0, 2.0, "1", "2"])
+    def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
+        """Peer round 27 (PR-LOW-065, round 26 SEC-001's rule): ``2.0 == 2``
+        and ``true == 1`` — a version only equal to one is not one this app
+        wrote, on a v1 row or on a v2 row naming its mode."""
+        written = audit_mod._decode(AUDIT_V1)  # noqa: SLF001
+        assert isinstance(written, AuditRow)
+        for data in (json.loads(AUDIT_V1), json.loads(written.to_bytes())):
+            data["schema_version"] = version
+            with pytest.raises(ValueError):
+                audit_mod._decode(json.dumps(data).encode())  # noqa: SLF001
+
     @windows_only
     def test_v1_bytes_on_disk_list_export_and_update(self, tmp_path: Path) -> None:
         log = _audit_log(tmp_path)
@@ -380,16 +416,19 @@ class TestAuditRowVersions:
         with exported.open(encoding="utf-8-sig", newline="") as handle:
             by_id = {row["session_id"]: row for row in csv.DictReader(handle)}
         assert (by_id[FIXTURE_SID]["mode"], by_id[FIXTURE_SID]["app_version"]) == ("normal", "")
-        # An update re-writes the row as v2, the rest unchanged.
-        assert log.record_deletion(FIXTURE_SID, "completed")
-        assert path.read_bytes() != b""
+        # An update re-writes the row as v2, the rest unchanged (review round
+        # 23: the sealed bytes change and the update is in them).
+        before = path.read_bytes()
+        assert log.record_deletion(FIXTURE_SID, "discarded")
+        assert path.read_bytes() != before
         rows = {row.session_id: row for row in log.rows().rows}
         updated = rows[FIXTURE_SID]
-        assert (updated.schema_version, updated.mode, updated.treatment_note_id) == (
-            2,
-            SessionMode.NORMAL,
-            "2001",
-        )
+        assert (
+            updated.schema_version,
+            updated.mode,
+            updated.treatment_note_id,
+            updated.deletion.state,
+        ) == (2, SessionMode.NORMAL, "2001", "discarded")
 
     @windows_only
     def test_newer_bytes_on_disk_are_kept_and_start_is_unaffected(self, tmp_path: Path) -> None:
@@ -500,6 +539,16 @@ class TestPastSessionLabelVersions:
         with pytest.raises(ValueError):
             PastSessionLabel.model_validate_json(_newer(LABEL_V1))
 
+    @pytest.mark.parametrize("version", [True, 1.0, 2.0, "1", "2"])
+    def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
+        """Round 26 (SEC-001): with or without a shadow flag."""
+        data = json.loads(LABEL_V1)
+        for extra in ({}, {"shadow": False}, {"shadow": True}):
+            with pytest.raises(ValueError):
+                PastSessionLabel.model_validate_json(
+                    json.dumps({**data, **extra, "schema_version": version})
+                )
+
     def test_a_v1_entry_lists_opens_and_copies(self, tmp_path: Path) -> None:
         store = _published_fixture_entry(tmp_path, LABEL_V1)
         (listing,) = store.list_entries()
@@ -525,3 +574,42 @@ class TestPastSessionLabelVersions:
         (listing,) = store.list_entries()
         assert view.entry_line(listing, hide_names=True).endswith(f"({view.SHADOW_MARK})")
         assert _copy_reason(store) == view.COPY_SHADOW
+
+    @pytest.mark.parametrize("shadow", [None, False, True])
+    def test_label_bytes_naming_no_version_are_unreadable(
+        self, tmp_path: Path, shadow: bool | None
+    ) -> None:
+        """Review round 22 (the encounter record's peer round 9 rule): every
+        label this app wrote names its ``schema_version``, so stored bytes
+        naming none — which the model alone would read as v2 not shadow —
+        are unreadable, and Copy stays closed."""
+        data = json.loads(LABEL_V1)
+        del data["schema_version"]
+        if shadow is not None:
+            data["shadow"] = shadow
+        store = _published_fixture_entry(tmp_path, json.dumps(data).encode())
+        (listing,) = store.list_entries()
+        assert listing.label is None
+        with pytest.raises(PastSessionError) as unreadable:
+            store.read_entry(FIXTURE_SID)
+        assert unreadable.value.reason == "unreadable"
+        assert _copy_reason(store) == view.COPY_NOTHING_OPEN
+
+
+class TestTheKeptLabelFollowsTheSession:
+    """Review round 22: a live session's own mode forces the kept label's
+    shadow flag on (``session.keep_label_for_mode``), whatever the UI
+    resolved."""
+
+    def test_a_shadow_session_keeps_a_shadow_label(self) -> None:
+        resolved = KeepLabel("Jane Citizen", "linked", "0123456789abcdef", shadow=False)
+        kept = session_module.keep_label_for_mode(resolved, SessionMode.SHADOW)
+        assert kept == KeepLabel("Jane Citizen", "linked", "0123456789abcdef", shadow=True)
+
+    def test_anything_else_is_kept_as_given(self) -> None:
+        normal = KeepLabel(None, "desktop", None, shadow=False)
+        shadow = KeepLabel(None, "desktop", None, shadow=True)
+        assert session_module.keep_label_for_mode(normal, SessionMode.NORMAL) is normal
+        assert session_module.keep_label_for_mode(normal, None) is normal  # a recovered one
+        assert session_module.keep_label_for_mode(shadow, SessionMode.NORMAL) is shadow
+        assert session_module.keep_label_for_mode(None, SessionMode.SHADOW) is None

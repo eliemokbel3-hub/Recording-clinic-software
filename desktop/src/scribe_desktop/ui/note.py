@@ -126,7 +126,10 @@ Clinical-content discipline (Critical Constraints, design-system):
   panel display-only until the note is fully ratified (``_copy_ready``).
   Every copy of note text — the button and a copy of the panel's selection —
   goes through ``_place_note_text``, which adds the formats that keep the
-  note out of Windows clipboard history and cloud sync (Task 8.2).
+  note out of Windows clipboard history and cloud sync (Task 8.2). So does
+  the inline line editor's Copy and Cut of its selection in a NORMAL
+  recording (pilot review round 22) — with the formats and the copy flag,
+  but with no ratification check, since the line is mid-edit.
 - A SHADOW recording (pilot plan D5, D13; the mode the main window passes to
   ``begin_review`` / ``show_saved_note``) is refused by a reason SEPARATE from
   ``_copy_ready`` (``_copy_allowed``): the Copy button disabled with its
@@ -161,7 +164,6 @@ from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
 from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
-    QComboBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -212,6 +214,7 @@ from scribe_desktop.note_config import (
 from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models, note_review
+from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
 
 
@@ -239,15 +242,29 @@ def _clear_layout(layout: QLayout) -> None:
 
 
 # The standard context-menu actions of a ``QLineEdit`` that put its text on
-# the clipboard (Qt's object names, with the English menu texts as the
-# fallback match — the app ships no translation).
-_CLIPBOARD_ACTION_NAMES: Final = frozenset({"edit-copy", "edit-cut"})
-_CLIPBOARD_ACTION_TEXTS: Final = frozenset({"Copy", "Cut"})
+# the clipboard, by Qt's object name with the English menu text as the
+# fallback match (the app ships no translation).
+_CLIPBOARD_ACTION_NAMES: Final[dict[str, Literal["copy", "cut"]]] = {
+    "edit-copy": "copy",
+    "edit-cut": "cut",
+}
+_CLIPBOARD_ACTION_TEXTS: Final[dict[str, Literal["copy", "cut"]]] = {
+    "Copy": "copy",
+    "Cut": "cut",
+}
 
 
-def _is_clipboard_action(action: QAction) -> bool:
+def _clipboard_action_kind(action: QAction) -> Literal["copy", "cut"] | None:
+    """``cut``, ``copy`` or None for one standard menu action (round 25:
+    one matcher, Cut checked first as before)."""
     text = action.text().split("\t", 1)[0].replace("&", "")
-    return action.objectName() in _CLIPBOARD_ACTION_NAMES or text in _CLIPBOARD_ACTION_TEXTS
+    kinds = {
+        _CLIPBOARD_ACTION_NAMES.get(action.objectName()),
+        _CLIPBOARD_ACTION_TEXTS.get(text),
+    }
+    if "cut" in kinds:
+        return "cut"
+    return "copy" if "copy" in kinds else None
 
 
 class _LineEditor(QLineEdit):
@@ -257,42 +274,80 @@ class _LineEditor(QLineEdit):
     does not already report.
 
     Pilot plan D5 (peer round 1, PR-HIGH-001): it opens holding the line's
-    text, and Qt's own Copy and Cut never pass through ``_place_note_text``.
-    For a SHADOW recording (``shadow``) its Copy and Cut shortcuts do
-    nothing, its context menu has no Copy or Cut entry, and dragging the
-    selection is off; typing, Paste, Undo and Escape are unchanged."""
+    text, and Qt's own Copy and Cut would never pass through
+    ``_place_note_text``. So Qt's own never run: its Copy and Cut shortcuts
+    (Ctrl+C, Ctrl+Insert; Ctrl+X, Shift+Delete) and its context menu's Copy
+    and Cut are this class's own. For a NORMAL recording they place the
+    selected text through ``_place_note_text`` — with the three formats that
+    keep it out of Windows clipboard history and cloud sync, and with no
+    ratification check, since the line is mid-edit — and Cut then removes
+    the selection (undoable), only once it was placed (pilot review round
+    22, MED-001, the practitioner's decision of 2026-10-07). For a SHADOW
+    recording (``shadow``), or with the recorded copy flag off
+    (``copy_enabled``, the Note tab's ``_copy_enabled`` — round 23), they do
+    nothing, the menu has no Copy or Cut entry, and dragging the selection
+    is set off (it is also Qt's default for a line edit, so no editor
+    starts a drag). Typing, Paste, Undo and Escape are unchanged in every
+    case."""
 
     escape_pressed = Signal()
 
-    def __init__(self, *, shadow: bool = False) -> None:
+    def __init__(self, *, shadow: bool = False, copy_enabled: bool = True) -> None:
         super().__init__()
         self._shadow = shadow
-        if shadow:
+        self._refused = shadow or not copy_enabled
+        if self._refused:
             self.setDragEnabled(False)
 
     @property
     def shadow(self) -> bool:
         return self._shadow
 
+    def copy_selection(self) -> bool:
+        """Place the selection (normal recording only); True when placed."""
+        return self._place_selection(cut=False)
+
+    def cut_selection(self) -> bool:
+        """Place the selection, then remove it (normal recording only)."""
+        return self._place_selection(cut=True)
+
+    def _place_selection(self, *, cut: bool) -> bool:
+        if self._refused or not self.hasSelectedText():
+            return False
+        if not _place_note_text(self.selectedText(), shadow=self._shadow):
+            return False
+        if cut and not self.isReadOnly():
+            self.del_()  # removes the selection, on the undo stack
+        return True
+
     def keyPressEvent(self, event: QKeyEvent, /) -> None:
         if event.key() == Qt.Key.Key_Escape:
             self.escape_pressed.emit()
             return
-        if self._shadow and (
-            event.matches(QKeySequence.StandardKey.Copy)
-            or event.matches(QKeySequence.StandardKey.Cut)
-        ):
-            event.accept()  # pilot plan D5: nothing reaches the clipboard
+        cut = event.matches(QKeySequence.StandardKey.Cut)
+        if cut or event.matches(QKeySequence.StandardKey.Copy):
+            event.accept()  # Qt's own copy never runs (pilot plan D5)
+            self._place_selection(cut=cut)
             return
         super().keyPressEvent(event)
 
     def build_context_menu(self) -> QMenu:
-        """Qt's standard menu — less Copy and Cut for a shadow recording."""
+        """Qt's standard menu, its Copy and Cut routed through the placement
+        — or, when refused (shadow, or the copy flag off), removed."""
         menu = self.createStandardContextMenu()
-        if self._shadow:
-            for action in menu.actions():
-                if _is_clipboard_action(action):
-                    menu.removeAction(action)
+        for action in menu.actions():
+            kind = _clipboard_action_kind(action)
+            if kind is None:
+                continue
+            if not self._refused:
+                # Round 24: Qt's own action (wired to its copy() / cut() in
+                # C++) is replaced by one of ours in its place, never rewired.
+                own = QAction(action.text(), menu)
+                own.setObjectName(action.objectName())
+                own.setEnabled(action.isEnabled())
+                own.triggered.connect(self.cut_selection if kind == "cut" else self.copy_selection)
+                menu.insertAction(action, own)
+            menu.removeAction(action)
         return menu
 
     def contextMenuEvent(self, event: QContextMenuEvent, /) -> None:
@@ -306,8 +361,10 @@ def _place_note_text(text: str, *, shadow: bool) -> bool:
     what ``QClipboard.setText`` would place — plus the three registered
     Windows formats that keep it out of Windows clipboard history and cloud
     clipboard sync (``models.clipboard_mime_formats``). The ONE placement of
-    note text, shared by the Copy button and a copy of the note panel's
-    selection; callers gate it on ratification first. False when there is no
+    note text, shared by the Copy button, a copy of the note panel's
+    selection, the Past sessions tab's "Copy saved note" — each gated on
+    ratification first — and the inline line editor's Copy and Cut of its
+    mid-edit selection (no ratification check). False when there is no
     clipboard — and, the last line of pilot plan D5, for a SHADOW
     recording's note (``shadow``: anything but an explicit False refuses),
     whatever the caller checked before."""
@@ -331,8 +388,8 @@ class _NotePanel(QPlainTextEdit):
     goes through ``_place_note_text``, so it carries the same formats as the
     Copy button. The text is the selection as Qt's own copy renders it
     (``QTextCursor.selection().toPlainText()``). Both routes re-check
-    ``copy_ready`` (the screen's ``_copy_ready``) at the moment of copying, so
-    nothing reaches the clipboard before ratification. Qt's own context menu
+    ``copy_ready`` (the screen's ``_copy_allowed``, below) at the moment of
+    copying, so nothing reaches the clipboard before ratification. Qt's own context menu
     is replaced (its Copy would bypass the formats); Cut and Paste do nothing
     on a read-only panel. A drag of the selection is Qt's own and does not
     touch the clipboard (the named residue in the threat model).
@@ -537,9 +594,9 @@ class NoteScreen(QWidget):
         transcript_layout.addWidget(self.transcript_view)
 
         # --- the "Edit the note" control group (Tasks 5.1 / 5.1b) ----------
-        self.utterance_combo = QComboBox()
+        self.utterance_combo = NoCopyComboBox()
         self.utterance_combo.currentIndexChanged.connect(lambda *_: self._refresh_section_combo())
-        self.section_combo = QComboBox()
+        self.section_combo = NoCopyComboBox()
         self.add_line_button = QPushButton("Add line to section")
         self.add_line_button.setToolTip(
             "Add the chosen transcript line, word for word, to the chosen section. "
@@ -1682,7 +1739,7 @@ class NoteScreen(QWidget):
                 row_layout.addWidget(remove)
                 self._line_widgets.append(remove)
                 if line.allowed_sections:
-                    target = QComboBox()
+                    target = NoCopyComboBox()
                     for key in line.allowed_sections:
                         target.addItem(models.section_title(key), key)
                     move = QPushButton("Move")
@@ -1826,8 +1883,9 @@ class NoteScreen(QWidget):
         row's label and buttons: the field, Apply and Cancel. Every widget
         joins ``_line_widgets``, so Save freezes them with the rest."""
         target_id, current_text = request
-        # Pilot plan D5: a shadow recording's editor refuses Copy, Cut and drag.
-        editor = _LineEditor(shadow=self._shadow)
+        # Pilot plan D5: a shadow recording's editor refuses Copy, Cut and
+        # drag; so does any editor while the copy flag is off (round 23).
+        editor = _LineEditor(shadow=self._shadow, copy_enabled=self._copy_enabled)
         editor.setText(current_text)
         editor.setToolTip("Type this line's wording. Enter applies it, Escape cancels.")
         editor.returnPressed.connect(self.commit_editor)

@@ -48,7 +48,8 @@ source checkout is the developer build, a separate channel with its own data
 and models folder `%LOCALAPPDATA%\ClinikoScribe-dev` (flow 24): every
 `%LOCALAPPDATA%\ClinikoScribe` path below is the installed (production) app's,
 and a source checkout uses the same layout under `ClinikoScribe-dev`. The
-installed app is built but NOT YET INSTALLED (the plan's Phase P). The note pipeline (flows 10–11) is in-process
+installed app has been in clinical use on this computer since its Phase P
+install, 2026-10-03 (0.1.2 since 2026-10-04; `docs/release/pilot-builds.md`). The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
 rendering the language model does (flow 17). Since the pilot plan (PLAN.md
 Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
@@ -170,7 +171,8 @@ outside the app's own stores (flow 26).
    booking, template and practitioner ids, and how it was verified; no name
    or other display text; since the pilot plan (schema v2, flow 25) also the
    recording's mode, `normal` or `shadow` (a v1 record reads as `normal`; an
-   unreadable one makes the rebuilt session shadow). AES-256-GCM under the session key, AAD
+   unreadable one makes a recovered checkout shadow, and an Unreviewed
+   adoption refuses it). AES-256-GCM under the session key, AAD
    `encounter:<session_id>`; a failed write refuses the start. It is
    decrypted ONLY when a recovered session is opened for checkout, or an
    Unreviewed session is opened for review (Task 5.4: the controller's
@@ -388,16 +390,25 @@ outside the app's own stores (flow 26).
     copy of note text — the Copy button, and the keyboard's Copy or the
     context menu's Copy over the ratified note panel's selection, and (since
     the privacy-professional-controls plan) the Past sessions tab's "Copy saved
-    note" — carries three registered Windows formats
+    note", and (since pilot review round 22) the inline line editor's Copy and
+    Cut of the selected text of a line being typed over, which needs the copy
+    flag but is not gated on ratification — carries three registered Windows
+    formats
     (`ExcludeClipboardContentFromMonitorProcessing`,
     `CanIncludeInClipboardHistory` = 0, `CanUploadToCloudClipboard` = 0) that
     Windows clipboard history and cloud clipboard sync honour, so the copy is
     not kept in history or uploaded. They do NOT stop any same-user process
     reading the current clipboard, a third-party clipboard manager may ignore
     the first of them, the note stays on the clipboard until something
-    replaces it and nothing is cleared; a drag of the selected text is Qt's own
-    (no formats, no clipboard — the text lands where it is dropped) — see the
-    threat model, Phase 3A surface 4, and the retention schedule. THE SHADOW
+    replaces it and nothing is cleared; a drag of the selected text out of the
+    ratified note panel is Qt's own (no formats, no clipboard — the text lands
+    where it is dropped), while the line editor starts no drag. No list or
+    combo box in the app copies its rows (rounds 23–24: every list's and
+    combo-box popup's Copy shortcut does nothing, so a patient's name in Past
+    sessions, Recover or Unreviewed, or a transcript line's first words in the
+    Note tab's "Line:" choice, never reaches the clipboard that way) — see the
+    threat model, Phase 3A surface 4, and the
+    retention schedule. THE SHADOW
     BRANCH (pilot plan, flow 25): for a shadow recording neither exception
     exists — every Copy route, the inline line editor's Copy, Cut and drag,
     and the placement itself refuse, the note panel is display-only (nothing
@@ -1050,8 +1061,8 @@ outside the app's own stores (flow 26).
       the folder walk itself uses `os.scandir` and the link checks directly.
 
 23. **Installer → install folder and HKLM (installation plan D1, D5, D6, D8,
-    C3, C4; `packaging/scribe.iss`; BUILT, compiled with Inno Setup 6.7.3,
-    NOT YET RUN on a real install).** No clinical data and no network
+    C3, C4; `packaging/scribe.iss`; BUILT, compiled with Inno Setup 6.7.3;
+    run on this computer at Phase P, 2026-10-03 → 2026-10-04).** No clinical data and no network
     connection. Run elevated by the practitioner (one administrator
     approval), after checking the download (`gh attestation verify`,
     `Get-FileHash` against `SHA256SUMS.txt` — `docs/release/pilot-builds.md`).
@@ -1079,7 +1090,8 @@ outside the app's own stores (flow 26).
     UNINSTALL removes the program, `{app}\models` and those HKLM values (a
     policy value only if this installer set it) and never
     `%LOCALAPPDATA%\ClinikoScribe`, which it says stays. The installed app
-    then reads the same data folder as before — no persisted schema changed.
+    then reads the same data folder as before — the installation changed no
+    persisted schema (the pilot's 0.2.0 schema v2 is flow 25's).
 
 24. **The developer build (installation plan D2–D4, C8; BUILT).** Any source
     checkout (not frozen) is the DEV channel; nothing selects it but
@@ -1114,19 +1126,21 @@ outside the app's own stores (flow 26).
     fixed for the recording and goes into the in-memory session,
     `encounter.enc` (flow 6) and the audit row (flow 22). Every rebuild takes
     it from the record one of the three authorised readers already decrypts
-    (recovery checkout, Unreviewed adoption); an unresolved mode is shadow.
+    (a recovery checkout or an Unreviewed adoption; the third reader, the
+    reminder rebuild, needs no mode); an unresolved mode is shadow.
     For a shadow recording: no note text reaches the clipboard (every Copy
     route, the line editor's Copy and Cut, and the one placement refuse;
     the note panel is display-only — flow 10's shadow branch); nothing is sent
     to Cliniko (flow 18 — the click is refused before any reservation, read or
     request); a Save writes no learned phrase or rule and replaces no learned
     wording (flows 13 and 15 do not run; a demotion still does); and at
-    Complete its Past-sessions entry's label records `shadow`, so "Copy saved
-    note" is refused for it (flow 22). Audio, transcript, notes, the entry and
+    Complete its Past-sessions entry's label records `shadow` — forced from the
+    live session's mode, whatever label the caller built (review round 22) —
+    so "Copy saved note" is refused for it (flow 22). Audio, transcript, notes, the entry and
     the audit row otherwise follow the normal flows. Chrome is not told the
     mode (no protocol change).
 
-26. **The validation harness (pilot plan Phase 2, D8–D10; BUILT 2026-10-04;
+26. **The validation harness (pilot plan Phase 2, D8–D10; BUILT 2026-10-04 → 2026-10-07;
     developer build only, zero network).** Two practitioner-run tools,
     started from a normal terminal in a source checkout (both refuse a
     packaged build):
@@ -1139,6 +1153,9 @@ outside the app's own stores (flow 26).
       timed label track), a byte-exact `<id>.json` and the ownership mark
       `<id>.built` into the set folder — which it refuses inside the
       repository; each file is written to `<name>.tmp` and moved into place.
+      A script file not named as an encounter id writes nothing and is
+      reported without its name; a set folder inside either app data folder
+      is refused (round 26).
       Role-play recordings (mock consultations, Task P.2) are added to the
       same folder by hand with their own scripts and label tracks — for the
       run of record the synthetic set is built into the role-plays' one
@@ -1160,7 +1177,10 @@ outside the app's own stores (flow 26).
       prints a text-free Markdown report (ids, numbers, flags, closed
       vocabularies) to standard output, which the practitioner may redirect
       to a file. It reads no voice profile, and writes no audit row, no
-      Past-sessions entry and nothing into either data folder.
+      Past-sessions entry and nothing into either data folder. A run stopped
+      with Ctrl+C prints no report and no traceback — one fixed line naming
+      the temporary folder and the `scribe-speaker-eval-*` prefix for a
+      left-over store (which may still hold its key) to delete.
 
 ## Explicit non-flows
 
@@ -1275,8 +1295,7 @@ outside the app's own stores (flow 26).
   backup and snapshot tools to leave out the installed app's live sessions
   and logs — a best-effort request that not every tool honours, covering
   nothing else in the data folder (flow 23; threat model residue (g)); a
-  source checkout's folder is never covered, and until the app is installed
-  nothing is.
+  source checkout's folder is never covered.
 - No uploaded sample note on disk (note-learning-and-styles plan, D9; BUILT,
   Phase 3): the 1–5 notes the practitioner chooses are read into memory by
   `sample_notes.read_sample_note`, never copied and never moved — pinned by a

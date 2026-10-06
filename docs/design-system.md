@@ -460,7 +460,8 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   AND the note is fully ratified (no pending proposal, no blocking error, saved, no
   unacknowledged review warning). Until both hold, the note panel is `NoTextInteraction`
   and Copy is disabled; the guard lives in one predicate applied to both the button and
-  the text-selection flags and re-checked at click time — `ui/note.py` `_copy_ready()`
+  the text-selection flags and re-checked at click time — `ui/note.py` `_copy_allowed()`
+  (`_copy_ready()` and not a shadow recording; Write reads `_copy_ready()` alone)
   (`COPY_TO_CLINIKO_ENABLED` in `ui/models.py` is the recorded flag, `True` since the
   practitioner's 2026-09-27 decision; the Task-9.1 run is now a quality measurement, not an
   enablement gate — `docs/testing/shipping-gate.md`). The transcript panel is
@@ -468,10 +469,17 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   insufficient because selectable text keeps native copy shortcuts. Every copy of note
   text — the Copy button, Ctrl+C / Ctrl+Insert or the panel's own right-click Copy
   over the ratified note's selection (`ui/note.py` `_NotePanel`, whose menu replaces
-  Qt's), and the Past sessions tab's "Copy saved note" — also carries the registered Windows formats that keep it out of Windows
+  Qt's), the Past sessions tab's "Copy saved note", and the inline line editor's Copy
+  and Cut of its selection (needing the copy flag but not ratification — the line is
+  mid-edit; pilot review rounds 22–23) — also carries the registered Windows formats that keep it out of Windows
   clipboard history and cloud clipboard sync (`ui/models.py` `clipboard_mime_formats`,
   Task 8.2); they do not stop another program of the same user reading the clipboard,
   and the note stays there until something replaces it.
+- No list or combo box copies its rows: every list in the app is `ui/lists.py`
+  `NoCopyListWidget` and every combo box `NoCopyComboBox`, whose Copy shortcut does nothing
+  (Qt's own would copy a row — a patient's name in Past sessions, Recover or Unreviewed, or a
+  transcript line's first words in the Note tab's "Line:" popup — with a plain clipboard
+  write). A new list or combo box uses them.
 - Provenance is visibly distinguished in the note — transcript-derived vs
   clinician-authored vs autofill/prefill — so the clinician can see the source of every
   line at a glance (`ui/note.py` / `ui/models.py` rendering).
@@ -581,7 +589,8 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   checkbox "Shadow mode (pilot)", off by default; an unreadable setting reads as ON and says "The shadow-mode setting could
   not be read, so shadow mode is on. Untick the box to turn it off."; a failed save
   says "The shadow-mode setting could not be saved; the box shows the setting in use."
-  and re-reads the box (`ui/main_window.py` `SHADOW_MODE_*`). A recording takes the
+  and re-reads the box — or, when the file then cannot be read, shows the unreadable
+  line instead (`ui/main_window.py` `SHADOW_MODE_*`). A recording takes the
   setting at Start and keeps it. The Session tab says, above Start while the setting
   is on, "Shadow mode is on: new recordings are shadow recordings - their notes cannot
   be copied or written to Cliniko.", and for a live or queued shadow recording (one

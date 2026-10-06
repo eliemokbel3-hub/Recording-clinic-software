@@ -1118,8 +1118,9 @@ class PilotSettings(BaseModel):
     """On-disk shape of ``config\\pilot.json``, in both channels:
     ``{"schema_version": 1, "shadow_mode": bool}``. A USER setting, not an
     enforced control (D2): the file is as writable as ``dev.json``. Read at
-    each Start (the recording's mode is fixed then, D1) and by the Status
-    tab — never by anything else. ``shadow_mode`` has no default (peer round
+    each Start (the recording's mode is fixed then, D1), by the Status tab
+    and by the Session tab's line above Start — never by anything else, and
+    never to decide an existing recording's mode. ``shadow_mode`` has no default (peer round
     9 PR-HIGH-B02): a file that does not name it holds no readable setting,
     so it reads as unreadable — shadow ON (D3) — never as off."""
 

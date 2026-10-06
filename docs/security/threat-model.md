@@ -22,8 +22,9 @@ under "Cliniko API client" below); plus the privacy and professional controls
 the durable audit record, the Past-sessions archive and its tab, the CSV
 export, the exclusions and the exception hooks ("Privacy and professional
 controls" below); plus the installation (PLAN.md Phase 7, the installation
-plan, built 2026-10-02 → 2026-10-03 and NOT YET INSTALLED — no real build has
-run and Phase P is the practitioner's): the packaged build and its
+plan, built 2026-10-02 → 2026-10-03; installed on this computer at its Phase
+P, 2026-10-03, and in clinical use since — builds of record 0.1.0–0.1.2 in
+`docs/release/pilot-builds.md`, 0.1.2 installed 2026-10-04): the packaged build and its
 per-machine installer, the separately shipped model pack, the build of record,
 and the developer build as a separate channel ("Installation" below); plus the
 pilot (PLAN.md Phase 7's pilot half, the pilot plan, built 2026-10-04): shadow
@@ -503,12 +504,15 @@ note inherit exactly that posture.
    `COPY_TO_CLINIKO_ENABLED`), which ships ENABLED since the practitioner's
    2026-09-27 decision (Cliniko workflow safeguards plan D12; the Task 9.1 run
    is now a quality measurement, not an enablement gate). The flag is
-   necessary, never sufficient: copy additionally requires a fully ratified
-   note (no pending proposal, no blocking error, saved, no unacknowledged
-   review warning), enforced by one predicate (`ui/note.py` `_copy_ready`)
+   necessary, never sufficient: a copy of the note (the button, the panel's
+   selection, Past sessions) additionally requires a fully ratified note (no
+   pending proposal, no blocking error, saved, no unacknowledged review
+   warning), enforced by one predicate (`ui/note.py` `_copy_ready`, wrapped
+   since pilot D5 by `_copy_allowed`, which also refuses a shadow recording)
    applied to BOTH the copy button and the note panel's text-selection flags
    and re-checked at click time — disabling the button alone is insufficient
-   because selectable text keeps native copy shortcuts. The transcript panel
+   because selectable text keeps native copy shortcuts. The inline line
+   editor's mid-edit Copy and Cut are the stated exception (below). The transcript panel
    is never copyable regardless of the flag. **Kept out of history and sync
    (Task 8.2, practitioner decision 2026-09-27):** every copy of note text
    goes through ONE placement (`ui/note.py` `_place_note_text`): one
@@ -520,20 +524,45 @@ note inherit exactly that posture.
    button (`_copy_note`: `format_note_body`) and a copy of the ratified note
    panel's selection (`_NotePanel`: the keyboard's Copy — Ctrl+C,
    Ctrl+Insert — and the panel's own context menu, which replaces Qt's; the
-   selection as Qt renders it), and each re-checks `_copy_ready` at the moment
-   of copying, so nothing is placed before ratification — plus, since the
+   selection as Qt renders it), and each re-checks `_copy_allowed` at the
+   moment of copying, so nothing those routes copy is placed before
+   ratification (the line editor's mid-edit Copy and Cut, below, are the one
+   exception) — plus, since the
    privacy-professional-controls plan, the Past sessions tab's "Copy saved
    note" (`ui/past_sessions.py`: `format_note_body` of a kept SAVED note,
    which was ratified before it could be saved; refused with its reason when
    the copy flag is off, no saved note was kept or the note has an unresolved
    error; its panels are `NoTextInteraction`, so no keyboard copy); pinned by
-   `test_ui_screens.py` and `test_ui_models.py`. Since the pilot plan (D5)
-   every one of these routes, the inline line editor's own Copy and Cut, and
+   `test_ui_screens.py` and `test_ui_models.py` — and, since pilot review
+   round 22 (practitioner decision 2026-10-07), the inline line editor's
+   Copy and Cut of its selection while a line is typed over (`_LineEditor`:
+   its Copy and Cut shortcuts — Ctrl+C, Ctrl+Insert; Ctrl+X, Shift+Delete —
+   and its context menu's Copy and Cut — matched by Qt's object names, with
+   the English texts as the fallback — are its own, so Qt's do not run),
+   which carry the formats and need the copy flag (round 23: with the flag
+   off they do nothing and the menu has no Copy or Cut) but are NOT gated on
+   ratification (the line is mid-edit; the clinician selected the text), Cut
+   removing the selection only once it is placed; pinned by
+   `test_ui_note_editor.py`. **No list or combo box copies (rounds 23–24):**
+   Qt's item views copy the current row's text on Ctrl+C or Ctrl+Insert with
+   a plain clipboard write, and the app's lists show patients' names (Past
+   sessions, Recover, Unreviewed), learned phrases and rules and sample-note
+   sentences; a combo box's popup is such a view, and the Note tab's "Line:"
+   choice shows each transcript line's number, speaker and first words — so
+   every list is `ui/lists.py` `NoCopyListWidget`, whose Copy shortcut does
+   nothing, and every combo box `NoCopyComboBox`, whose popup view has an
+   event filter that drops the Copy shortcut; pinned by
+   `test_shadow_exits.py` (no other Qt list, item view or combo box is
+   constructed or subclassed and no popup view replaced; the shortcut leaves
+   Qt's clipboard untouched, and a plain list's or combo box's does not).
+   Since the pilot plan (D5)
+   every one of these routes, the inline line editor's Copy and Cut, and
    the placement itself as its last line, REFUSE a shadow recording's note,
    by a reason separate from `_copy_ready` ("The pilot" below). Windows clipboard history and
    cloud clipboard sync honour the formats, so a copied note is not kept in
    history or uploaded. **Residue once copied (named 2026-09-27, Task 1.4;
-   narrowed by Task 8.2):** a copy puts the ratified note's plaintext on the
+   narrowed by Task 8.2):** a copy puts the ratified note's plaintext (or,
+   from the line editor, the selected text of a line being typed over) on the
    Windows clipboard by the clinician's own action, and from there it is
    outside the app's custody — it stays until something replaces it (nothing
    is cleared, on a timer or otherwise), any same-user process can read the
@@ -546,7 +575,9 @@ note inherit exactly that posture.
    does not detect the history or sync settings, so keeping cloud clipboard
    sync off on the clinic machine stays advised
    (`docs/security/intended-use.md`, current scope note), no longer as the
-   only mitigation.
+   only mitigation. A DRAG out of the inline line editor does not start:
+   drag is Qt's default-off for a line edit, set off explicitly when the
+   editor refuses Copy, and no widget turns it on (`test_shadow_exits.py`).
    **The draft write shares the gate (cliniko-draft-write D2, D7).** The Note
    tab's "Write draft to Cliniko" sits beside Copy and is enabled only when
    `_copy_ready` holds AND the recording is linked AND the note is not from
@@ -2985,7 +3016,8 @@ Restore does not; `FilesNotToSnapshot` is best-effort and not applied to
 `vssadmin` snapshots or Previous Versions; third-party backup tools need
 honour neither. Everything else in the data folder is deliberately
 NOT covered (D6), and a source checkout's `ClinikoScribe-dev` folder is never
-covered. Until the app is installed (Phase P) none of this is set.
+covered. The installer sets these marks (on this computer since its first
+install, Phase P, 2026-10-03); a source checkout alone sets none.
 (h) THE PAGEFILE AND HIBERNATION FILE may hold anything the process held in
 memory, including an opened entry's text and names (BitLocker is the
 mitigation, as for NTFS residue).
@@ -3085,7 +3117,7 @@ the voice-profile and style stores and the configuration files under
 an oversized file to exhaust memory — a denial of service inside boundary 2,
 not a disclosure.
 
-## Installation (installation plan, PLAN.md Phase 7; BUILT 2026-10-02 → 2026-10-03 on branch `installation-build`, NOT YET INSTALLED)
+## Installation (installation plan, PLAN.md Phase 7; BUILT 2026-10-02 → 2026-10-03; INSTALLED on this computer 2026-10-03 at Phase P, 0.1.2 since 2026-10-04)
 
 What exists: a packaged (PyInstaller one-folder) build of `scribe-app.exe` and
 `scribe-host.exe`, a per-machine Inno Setup installer (`packaging/scribe.iss`),
@@ -3093,11 +3125,13 @@ a release build script with a fail-closed bundle audit
 (`scripts/build-release.py`), a CI release workflow with a build-provenance
 attestation (`.github/workflows/release.yml`), a separately shipped model pack
 checked against a committed manifest, and the developer build split off as
-its own channel (`install_layout.py`, `identity.py`). What has NOT run yet,
-so nothing below is proven on a real install: the hashed build lock, the
-models manifest, a real build, the workflow's pins and first run, and the
-installation on this computer (the plan's Phase P, practitioner-run from a
-normal terminal). Everything here is the plan's D1–D12 and C1–C10;
+its own channel (`install_layout.py`, `identity.py`). What has since run
+(the plan's Phase P, practitioner-run from a normal terminal, 2026-10-03 →
+2026-10-04): the workflow, with the hashed build lock, the models manifest
+and its pins, making the builds of record 0.1.0–0.1.2
+(`docs/release/pilot-builds.md`); and on this computer the install, the
+offline check, the update 0.1.0 → 0.1.1, the rollback, the uninstall and the
+reinstall, all PASS. Everything here is the plan's D1–D12 and C1–C10;
 data-flow-map flows 23–24 and the retention schedule's "Installation" rows
 describe the same surfaces.
 
@@ -3199,9 +3233,10 @@ stat'ed by the app or the host (H.4: no SMB I/O from their own start-up; the
 host logs `host_manifest state=network_path` and the Status tab reads it as
 not registered); Chrome itself would still open it when it launches the
 host — part of the planted-entry residue below. RESIDUE — THE DUAL-USE COMPUTER: on a computer that is also a
-development machine, a per-user production-name entry (today's source-run
-registration, until Phase P step 2 removes it with `register-native-host.py
---unregister`, or one planted by a same-user process) silently wins over the
+development machine, a per-user production-name entry (the old source-run
+registration — on this computer removed at Phase P step 2, 2026-10-03, with
+`register-native-host.py --unregister` — or one planted by a same-user
+process) silently wins over the
 installed link. The warning names it but gives no remedy; nothing refuses
 it; a reinstall does NOT remove it (the installer writes HKLM only, C3) — the
 per-user entry is removed with `register-native-host.py --unregister` from a
@@ -3234,9 +3269,10 @@ install (`docs/release/pilot-builds.md`) — a skipped check proves nothing;
 (`build-release.py --model-pack`), so its integrity rests on the committed
 manifest the installer checks, not on the attestation; (3) a local build is
 for spikes and the model pack, never the build of record, and is marked
-`tree=DIRTY` when built from uncommitted work; (4) until the action pins,
-the Inno Setup installer's SHA-256, the build lock and the models manifest
-land, the workflow fails closed at the first step that needs them; (5)
+`tree=DIRTY` when built from uncommitted work; (4) a missing action pin,
+Inno Setup installer SHA-256, build lock or models manifest makes the
+workflow fail closed at the first step that needs it (all four have landed:
+the builds of record ran); (5)
 GitHub attests only a PUBLIC repository, or a private one on GitHub
 Enterprise Cloud. This repository was checked PUBLIC on 2026-10-03 (plan
 Task 3.6 step 0, round 23), so attestation is available; it stays so only
@@ -3284,7 +3320,8 @@ practitioner removes them; an upgrade or a rollback never touches them.
 THE OFFLINE CONTRACT (C1) is unchanged: the installer makes no network
 connection and the installed app downloads nothing. `scripts/check-installed-
 sockets.py` watches the installed app's process tree for connections during a
-transcription and a prose render (Phase P step 10, practitioner-run).
+transcription and a prose render (Phase P step 10, practitioner-run: "no
+connection seen", 2026-10-03).
 
 PACKAGED-BUILD ERRORS. A missing or damaged installed file names "reinstall
 Clinic Scribe" instead of a developer script (Task 1.7,
@@ -3295,7 +3332,7 @@ boundary (one type-name line, exit 1). RESIDUE: a source run's worker
 (`python -m scribe_desktop.benchmark`) still prints a Python traceback to its
 stderr on an exception — developer build only.
 
-## The pilot: shadow mode, audit v2 and the validation harness (pilot plan, PLAN.md Phase 7 pilot half; Phases 1–2 BUILT 2026-10-04, live smokes PASS 2026-10-04 and 2026-10-07 on the developer build; version 0.2.0, NOT YET a build of record)
+## The pilot: shadow mode, audit v2 and the validation harness (pilot plan, PLAN.md Phase 7 pilot half; Phase 1 BUILT 2026-10-04, Phase 2 2026-10-04 → 2026-10-07, live smokes PASS 2026-10-04 and 2026-10-07 on the developer build; version 0.2.0, NOT YET a build of record)
 
 What exists: a per-recording SHADOW mode in which the app drafts its note as
 usual but never lets it be copied or written to Cliniko, so the practitioner's
@@ -3340,8 +3377,12 @@ rebuild needs no mode. Anything the main window cannot resolve is SHADOW
 (`MainWindow.session_mode_for`), and a review with no non-terminal live
 session is reviewed as shadow (`_live_mode`) — fail closed. A v1 record (before
 0.2.0) reads as `normal`; a v1 record carrying a mode, a v2 record without one,
-bytes that name no `schema_version` (peer round 9) and a NEWER version are not
-records this app wrote and are refused, which every rebuild reads as shadow.
+bytes that name no `schema_version` (peer round 9), a version that is not an
+integer (JSON `true` or `1.0`, which Python compares equal to 1 — round 26)
+and a NEWER version are not
+records this app wrote and are refused: a recovered checkout then treats the
+session as SHADOW (and unlinked), and an Unreviewed adoption refuses it
+(`consent_unavailable`).
 
 THE WRITE IS REFUSED BY NAME (D4). `shadow_session` is a `WriteRefusalName`.
 `ui/models.write_control` shows it with Write disabled, before the `unlinked`
@@ -3369,9 +3410,18 @@ whose label says shadow ("This was a shadow recording for the pilot, so its
 note cannot be copied. Read it as shown."), and an unreadable label refuses
 too (D3; a label nothing resolved is a shadow one). LAST LINE: the one
 placement, `_place_note_text(text, shadow=)`, refuses anything but an explicit
-`shadow=False`, whatever its caller checked. A test enumerates the placement's
-callers and every widget class in `ui/note.py` and `ui/past_sessions.py` that
-can hold note text, so a new exit path fails until it is gated.
+`shadow=False`, whatever its caller checked. A test COUNTS the placement's
+callers, every widget class in `ui/note.py` and `ui/past_sessions.py` that can
+hold note text, and — across the whole package — every clipboard or drag call
+and every flag that makes text selectable, so a new placement, clipboard
+write, drag or selectable text anywhere, or a new text widget in those two
+tabs, fails until it is gated; a text widget added in another module that
+showed note text would not (review round 22). It also pins that every list
+and combo box in the package is the one whose Copy shortcut does nothing (no
+other Qt item view is built) and that no widget turns drag on, and counts every construction of a recording's mode —
+the Start call, the session and encounter-record constructions, the line
+editor and the five Complete calls — pinning that each names it but the
+recovered Complete (review round 23).
 
 NOTHING IS LEARNED (D13). A shadow review's learning gate is closed whatever
 the profile says: its Save writes no learned phrase, no learned rule and
@@ -3383,7 +3433,13 @@ corrected still applies — it only makes the app more cautious.
 WHAT A SHADOW RECORDING STILL KEEPS. Everything else is unchanged: the audio
 is destroyed at Complete or Discard, the transcript and notes are kept in its
 Past-sessions entry (marked "(shadow recording)" in the list) for the
-retention setting, and its audit row records `mode` `shadow`.
+retention setting, and its audit row records `mode` `shadow`. The kept label's
+shadow flag follows the live session at Complete: each of the four live
+Complete paths passes the session's mode, and `session.keep_label_for_mode`
+sets the flag for any mode but `normal`, whatever label the caller built
+(review round 22). A recovered Complete has no live session; its label's flag
+comes from `MainWindow.session_mode_for` (the checkout's decrypted record),
+where anything unresolved is shadow.
 
 AUDIT V2 (D6, D7, Constraint 4). `AuditRow` v2 adds `mode` (the `SessionMode`
 enum; empty on a `pre_audit` row made from 0.2.0 on, whose mode nothing
@@ -3394,11 +3450,14 @@ not fit). Both are flat tokens, so neither needs a log-tripwire signature: a
 rendering of a whole row is still dropped by the row's existing distinctive
 names. A v1 row — a v1 `pre_audit` row included — is upgraded in `_decode` BEFORE
 validation (mode `normal`, no version) and exports that way; a v1 row that already names either field is not
-one this app wrote and is refused. The CSV gains the two columns. THE
+one this app wrote and is refused, and so are stored bytes naming no
+`schema_version` and a v2 row without `mode` (review round 22). The CSV gains
+the two columns. THE
 PAST-SESSIONS LABEL v2 adds `shadow` (strict bool; v1 reads as not shadow; a
-label naming v1 with a shadow flag, or v2 without one, is refused — a label
-naming no version at all reads as v2 not shadow, which only a writer holding
-the entry key could produce: residue (6)).
+label naming v1 with a shadow flag, or v2 without one, is refused, and so is
+a stored label naming no version at all — review round 22, the encounter
+record's rule — or a version that is not an integer (round 26), so each lists
+as unreadable and its Copy fails closed).
 
 OLDER BUILDS (D6). A build before 0.2.0 reads 0.2.0's data as follows: an
 audit row as NEWER (kept untouched, its updates fail quietly and are counted;
@@ -3418,11 +3477,14 @@ app's Session, Transcript, Note and Past-sessions tabs show it, and the
 refusals name it. (4) WHAT THE APP CANNOT STOP: the note is on screen, so a
 screenshot, a photo or retyping it by hand carries it out; a drag is closed only
 because the panel is display-only and the line editor's drag is off. (5) THE
-LINE EDITOR'S MENU is filtered by Qt's action names with the English menu texts
-as the fallback match; the app ships no translation, so a translated Qt menu
-is the case that match would miss. (6) A LABEL'S SHADOW FLAG is the label's
-only record of the mode once the session's key is gone: a same-user process
-that rewrote a label under the entry key (boundary 2) could clear it.
+LINE EDITOR'S MENU is matched by Qt's action names with the English menu texts
+as the fallback, in both modes; the app ships no translation, so a translated
+Qt menu is the case that match would miss — a shadow editor's menu would then
+keep a Copy or Cut, and a normal one's would run Qt's own copy, without the
+formats. (6) A LABEL'S SHADOW FLAG is the only record of the mode the Past
+sessions tab reads once the session's key is gone (the audit row records the
+mode too, but nothing there consults it): a same-user process that rewrote a
+label under the entry key (boundary 2) could clear it.
 
 THE VALIDATION HARNESS (D8, D9; Constraints 5–8). A developer-build tool:
 both entry points refuse a packaged build once their arguments are parsed.
@@ -3446,14 +3508,30 @@ calls the Cliniko client or any network interface, and the offline
 environment is applied and asserted before any model loads (network-capable
 modules are still imported indirectly, as in the app). Its report holds ids,
 numbers, flags and closed vocabularies only — never a transcript, note or
-script line; an unexpected failure is reported by its exception type name; a
-file name not shaped like an encounter id is counted, never printed. The SET
+script line; an unexpected failure is reported by its exception type name
+(`Exception` when the name is not a plain identifier of bounded length); a
+file name not shaped like an encounter id is counted, never printed; an
+interrupted run (Ctrl+C) prints one fixed line — no report, no traceback —
+naming the temporary folder in which a left-over `scribe-speaker-eval-*`
+folder (which may still hold its key) is to be deleted (review rounds 22 and
+26); every error, refusal and custody line of the harness and of the set
+builder is written after its `except` block ends, so a failed write (a closed
+output pipe) chains no handled exception (round 26 for the encounter loop,
+peer round 27 for the rest), and models that cannot be loaded are refused by
+error type (round 26). A refusal names the rule file only as "the rule file"
+(peer round 27); folder paths given on the command line are echoed as typed.
+The rule file (64 KiB), the label track (4 MiB)
+and the script (256 KiB) are read capped. The SET
 BUILDER (`build-validation-set.py`) speaks the repository's invented scripts
 with the installed Windows (SAPI) voices into a temporary folder
 (`scribe-validation-set-*`, removed after each turn), resamples, mixes and
 writes `<id>.wav` / `<id>.txt` / `<id>.json` (and its ownership mark
-`<id>.built`) into a set folder that must lie outside the repository; it never
-overwrites a role-play whose script is in the folder, a recording without its
+`<id>.built`) into a set folder that must lie outside the repository and
+outside both app data folders (round 26: no plaintext audio in either, C8 for
+the production one); a script
+file not named as an encounter id is not built and is reported without its
+name (review round 22), and so is an unmatched `--only` name that is not an
+encounter id (peer round 27); it never overwrites a role-play whose script is in the folder, a recording without its
 script, or a script it cannot load — except a WAV or label track lying beside
 a leftover `<id>.built` from an interrupted build, which it takes as its own
 (delete any leftover mark before a recording uses that id;
@@ -3499,12 +3577,11 @@ installation (the pilot plan).
 
 Re-review this model when: the practitioner revises Task 4.3's decision (b)
 (the Chrome link, covered above, was built on it); the transcript becomes input to the local ML note model
-(Phase 3B — 3A's non-ML template/autofill pipeline is covered above); real
-Cliniko keys are first stored (the Clinics tab of the Cliniko workflow
-safeguards plan's Phase 2 is built; the practitioner's first Validate is the
-event); a note report from Chrome first reaches note verification on a real
-install (the practitioner's first live smoke of Phase 4 — the relay and the
-bridge are built and described above); the extension gains a permission, a
+(Phase 3B — 3A's non-ML template/autofill pipeline is covered above); clinic
+2's Cliniko key is first stored, or its first note report reaches note
+verification (clinic 1's first Validate and first verified note report were
+the Cliniko workflow safeguards plan's live smoke, passed on clinic 1 by
+2026-09-28); the extension gains a permission, a
 host pattern, a web-accessible resource or any browser storage, or the page
 script reads anything but `location.href`; a second Chrome profile, a second
 clinic machine or another practitioner is to be supported; the first write
@@ -3516,9 +3593,9 @@ DRAFT WRITE residue (a) could then close); clinic 2's first draft write;
 or the software is installed on the
 second clinic machine — the installed build on it, which may be a clinic-only
 computer where the optional policy and a different HKCU picture apply. For
-the installation: the first real install on this computer (Phase P — the
-installed app's Status lines, the `reg query` and `icacls` results and the
-socket check are its evidence), signing the build, a change of the install
+the installation: an install on any further computer (as at this computer's
+Phase P, 2026-10-03, the installed app's Status lines, the `reg query` and
+`icacls` results and the socket check are its evidence), signing the build, a change of the install
 folder or its ACL, a new installer write (any key, value or folder), the
 installer gaining a network step or a launch of the app, a change to what the
 model pack contains, or the developer build sharing anything more with the

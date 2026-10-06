@@ -40,6 +40,7 @@ from scribe_desktop.session_store import (
 )
 from scribe_desktop.transcription import RecoveryOutcome
 from scribe_desktop.ui import models
+from scribe_desktop.ui.lists import NoCopyListWidget
 from scribe_desktop.ui.tasks import TaskThread
 
 
@@ -122,7 +123,7 @@ class RecoveryScreen(QWidget):
         self._protected: set[str] = set()
         self._resuming_id: str | None = None
 
-        self.session_list = QListWidget()
+        self.session_list = NoCopyListWidget()
         self.session_list.currentItemChanged.connect(lambda *_: self._update_controls())
         self.warning_label = QLabel()
         self.warning_label.setStyleSheet("color: #b00020; font-weight: bold;")
@@ -148,7 +149,7 @@ class RecoveryScreen(QWidget):
         self.progress_bar.hide()
 
         # --- Task 5.4 (D6): the Unreviewed section -----------------------------
-        self.unreviewed_list = QListWidget()
+        self.unreviewed_list = NoCopyListWidget()
         self.unreviewed_list.currentItemChanged.connect(lambda *_: self._update_controls())
         self.open_button = QPushButton(models.OPEN_FOR_REVIEW_LABEL)
         self.open_button.setToolTip(

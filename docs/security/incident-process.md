@@ -17,7 +17,8 @@ When in doubt, stop using the software and investigate before resuming.
   through the machine-wide (HKLM) link; the Status tab's "Warning: a
   per-user Chrome link overrides the installed one." means a per-user entry
   now wins — investigate it unless you know you made it (installation plan:
-  until Phase P step 2 removes it, the old source-run registration is one)
+  the old source-run registration was one; on this computer it was removed
+  at Phase P step 2, 2026-10-03, so a per-user entry here is unexpected)
 - (Installation) a downloaded installer that fails `gh attestation verify` or
   whose SHA-256 does not match `SHA256SUMS.txt` and `docs/release/pilot-builds.md`
   (do not run it); a Defender detection in a build; the box "Clinic Scribe is

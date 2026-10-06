@@ -148,8 +148,9 @@ A note can still be moved into Cliniko by hand: since 2026-09-27
 (practitioner decision) a fully ratified note can be copied from the Note tab
 and pasted into the Cliniko treatment note. The copy goes through the Windows
 clipboard, which is outside the app. Since 2026-09-28 every copy of the note
-(the Copy button, or Ctrl+C / right-click Copy on the selected note) is
-marked so that Windows clipboard history and cloud clipboard sync leave it
+(the Copy button, or Ctrl+C / right-click Copy on the selected note — and,
+since the pilot's review round 22, the line editor's Copy and Cut while a
+line is typed over) is marked so that Windows clipboard history and cloud clipboard sync leave it
 out. The marks do not stop other programs reading the clipboard, and a
 third-party clipboard manager may ignore them; the copy stays on the
 clipboard until something else replaces it (the app never clears it); and

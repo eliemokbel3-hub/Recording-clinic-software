@@ -32,7 +32,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListWidget,
     QListWidgetItem,
     QProgressBar,
     QPushButton,
@@ -47,6 +46,7 @@ from scribe_desktop.clinics import (
     ValidationRequest,
 )
 from scribe_desktop.ui import models
+from scribe_desktop.ui.lists import NoCopyListWidget
 from scribe_desktop.ui.tasks import TaskThread
 
 
@@ -87,7 +87,7 @@ class ClinicsScreen(QWidget):
         self._pending_operation: models.ClinicOperation = "add"
         self._remove_armed: str | None = None
 
-        self.clinic_list = QListWidget()
+        self.clinic_list = NoCopyListWidget()
         self.clinic_list.currentItemChanged.connect(lambda *_: self._on_selection_changed())
         self.load_problem_label = _plain_label()
         self.load_problem_label.setStyleSheet("color: #b00020; font-weight: bold;")

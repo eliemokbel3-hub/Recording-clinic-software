@@ -198,8 +198,9 @@ class EncounterRecord(BaseModel):
     (D1). A v1 record — written before 0.2.0 — has none and reads as
     ``normal`` (D6); a v1 record carrying one, or a v2 record without one,
     is not a record this app wrote and is refused (``EncounterUnavailable``
-    through ``from_bytes``, which every rebuild treats as shadow, D3). A
-    NEWER version is refused the same way."""
+    through ``from_bytes``: a recovered checkout then treats the session as
+    shadow, D3, and an Unreviewed adoption refuses it). A NEWER version is
+    refused the same way."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -212,10 +213,14 @@ class EncounterRecord(BaseModel):
     @classmethod
     def _mode_by_version(cls, data: Any) -> Any:
         if isinstance(data, dict):
-            version = data.get("schema_version", ENCOUNTER_SCHEMA_VERSION)
+            version = data.get("schema_version")  # absent: a record being built
+            if "schema_version" in data and type(version) is not int:
+                # Round 26: JSON ``true`` or ``1.0`` compares equal to 1 —
+                # only an integer is a version this app wrote (as audit).
+                raise ValueError("an encounter record's version is an integer")
             if version == 1 and "mode" in data:
                 raise ValueError("a v1 encounter record carries no mode")
-            if version == 2 and "mode" not in data and "schema_version" in data:
+            if version == 2 and "mode" not in data:
                 raise ValueError("a v2 encounter record names its mode")
         return data
 
@@ -236,8 +241,8 @@ class EncounterRecord(BaseModel):
         ``schema_version`` — the field defaults are for building a new
         record, so bytes naming neither version nor mode are not a record
         this app wrote (every one it wrote names its version) and are
-        refused, which every rebuild reads as shadow (D3), never as a v2
-        ``normal`` record."""
+        refused — a recovered checkout reads that as shadow (D3), an
+        Unreviewed adoption refuses it — never as a v2 ``normal`` record."""
         try:
             data = json.loads(blob)
             if isinstance(data, dict) and "schema_version" in data:

@@ -14,7 +14,7 @@ row names the manifest it was checked against.
 |---|---|---|---|---|---|---|
 | 0.1.0 | `e730cd552e937149104db6261dd083a7cc78767d` | [37081519723](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37081519723) | `e48a6602a08b6bfd43834937a713542896e607a290f7a511f5410677e880ac99` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-03 | First build of record. `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-03); the hash matches `SHA256SUMS.txt`. Installed on this computer 2026-10-03 (Phase P.1). |
 | 0.1.1 | `f9f7642903524d9475a6652d0388fe97ff5d3dab` | [37108950093](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37108950093) | `4c5b7455861946c96a7e832f68f4da8adb1d9bbe84f497d40cd848f246b04d9d` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-03 | The first-recording fix (plan rounds 35–39). `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-03); the hash matches `SHA256SUMS.txt`; models manifest unchanged from 0.1.0. Task P.3 passed on it (upgrade, rollback, uninstall, reinstall), 2026-10-03. |
-| 0.1.2 | `a6a66db1332d7f5757f94af94a159a95810b839f` | [37117373944](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37117373944) | `c24af1e6aa75781b2799f8850710d7204de9ff9eefb3acdc69a19531243a2dda` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-03 | The Finish-page and Discard fixes (plan rounds 40–43). `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-03); the hash matches `SHA256SUMS.txt`; models manifest unchanged. |
+| 0.1.2 | `a6a66db1332d7f5757f94af94a159a95810b839f` | [37117373944](https://github.com/eliemokbel3-hub/Recording-clinic-software/actions/runs/37117373944) | `c24af1e6aa75781b2799f8850710d7204de9ff9eefb3acdc69a19531243a2dda` | `10a834937fe8c783d3e387dcdb4c2b74c3c290db97c626e38be4deba3fa9930a` | 2026-10-03 | The Finish-page and Discard fixes (plan rounds 40–43). `BUILD-INFO.txt` says `tree=clean`; `gh attestation verify` passed for the installer and `SHA256SUMS.txt` (composer, 2026-10-03); the hash matches `SHA256SUMS.txt`; models manifest unchanged. Installed on this computer 2026-10-04. |
 
 - **Version**: the `AppVersion` the installer shows; it comes from `desktop/pyproject.toml`.
 - **Commit**: the full commit the run built. The run's `BUILD-INFO.txt` names it too, and must say `tree=clean`; a build that says `DIRTY` or `unknown` is never recorded here.
@@ -53,7 +53,8 @@ GitHub can attest a build only for a public repository, or a private one on
 GitHub Enterprise Cloud. This repository was checked public on 2026-10-03, so
 attestation is available; it stays so only while the repository stays public
 (or moves to Enterprise Cloud). The installation plan's Task 3.6 step 0
-re-checks it before the first run. If no attestation can be made, the first
+checked it before the first run; check it again before a release run whenever
+the repository's visibility may have changed. If no attestation can be made, the first
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 

@@ -126,7 +126,6 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
-    QComboBox,
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
@@ -195,6 +194,7 @@ from scribe_desktop.speaker_embedding import (
 )
 from scribe_desktop.speech import vad_model_available
 from scribe_desktop.ui import models
+from scribe_desktop.ui.lists import NoCopyComboBox, NoCopyListWidget
 from scribe_desktop.ui.style_review import (
     StyleReviewChoice,
     run_delete_originals,
@@ -444,7 +444,7 @@ class PractitionerScreen(QWidget):
         consent_box.setLayout(consent_layout)
 
         # --- the read-aloud --------------------------------------------------
-        self.device_combo = QComboBox()
+        self.device_combo = NoCopyComboBox()
         self.refresh_devices_button = QPushButton("Refresh devices")
         self.refresh_devices_button.clicked.connect(self.refresh_devices)
         device_row = QHBoxLayout()
@@ -532,12 +532,12 @@ class PractitionerScreen(QWidget):
         # --- learned phrases (Task 5.3) -------------------------------------
         # Both lists render the practitioner's OWN learned phrases (config
         # plaintext), each item's data holding the stored phrase for Delete.
-        self.recently_learned_list = QListWidget()
+        self.recently_learned_list = NoCopyListWidget()
         self.delete_recent_button = QPushButton("Delete selected")
         self.delete_recent_button.clicked.connect(
             lambda *_: self._delete_selected(self.recently_learned_list)
         )
-        self.learned_phrases_list = QListWidget()
+        self.learned_phrases_list = NoCopyListWidget()
         self.delete_learned_button = QPushButton("Delete selected")
         self.delete_learned_button.clicked.connect(
             lambda *_: self._delete_selected(self.learned_phrases_list)
@@ -562,12 +562,12 @@ class PractitionerScreen(QWidget):
         # --- learned shorthand (note-learning plan Task 2.5) -----------------
         # Both lists render the practitioner's OWN learned rules (config
         # plaintext), each item's data holding the rule id for Delete.
-        self.recently_learned_rules_list = QListWidget()
+        self.recently_learned_rules_list = NoCopyListWidget()
         self.delete_recent_rule_button = QPushButton("Delete selected")
         self.delete_recent_rule_button.clicked.connect(
             lambda *_: self._delete_selected_rule(self.recently_learned_rules_list)
         )
-        self.learned_rules_list = QListWidget()
+        self.learned_rules_list = NoCopyListWidget()
         self.delete_learned_rule_button = QPushButton("Delete selected")
         self.delete_learned_rule_button.clicked.connect(
             lambda *_: self._delete_selected_rule(self.learned_rules_list)
@@ -597,7 +597,7 @@ class PractitionerScreen(QWidget):
         self.learn_intro_label.setWordWrap(True)
         self.choose_files_button = QPushButton(f"Choose notes (up to {MAX_SAMPLE_NOTES})")
         self.choose_files_button.clicked.connect(self.on_choose_files)
-        self.sample_files_list = QListWidget()
+        self.sample_files_list = NoCopyListWidget()
         self.remove_file_button = QPushButton("Remove selected")
         self.remove_file_button.clicked.connect(self._remove_selected_file)
         self.paste_box = QPlainTextEdit()
@@ -631,10 +631,10 @@ class PractitionerScreen(QWidget):
         self.style_line_label = QLabel(models.STYLE_NOT_LEARNED_LINE)
         self.style_line_label.setTextFormat(Qt.TextFormat.PlainText)
         self.style_line_label.setWordWrap(True)
-        self.learned_exemplars_list = QListWidget()
+        self.learned_exemplars_list = NoCopyListWidget()
         self.remove_exemplar_button = QPushButton("Remove selected sentence")
         self.remove_exemplar_button.clicked.connect(self._remove_selected_exemplar)
-        self.learned_shorthand_list = QListWidget()
+        self.learned_shorthand_list = NoCopyListWidget()
         self.remove_shorthand_button = QPushButton("Remove selected shorthand")
         self.remove_shorthand_button.clicked.connect(self._remove_selected_shorthand)
         self.delete_style_button = QPushButton("Delete learned style")

@@ -280,8 +280,10 @@ class AuditRow(_Frozen):
     before-validator), so a newer row is never half-parsed into this one.
 
     Pilot plan Task 1.3 (v2, D7): ``mode`` — the recording's
-    ``SessionMode`` at Start, an enum; None on a ``pre_audit`` row, whose
-    mode nothing recorded — and ``app_version``, pattern-constrained
+    ``SessionMode`` at Start, an enum; None on a ``pre_audit`` row made from
+    0.2.0 on, whose mode nothing recorded (a v1 row, a v1 ``pre_audit`` row
+    included, is upgraded as ``normal`` — every recording before 0.2.0 was
+    one) — and ``app_version``, pattern-constrained
     (digits.digits.digits) and None on a row upgraded from v1. Both are
     flat tokens a log line could carry anyway, so neither needs a
     ``logging_setup._PAYLOAD_SIGNATURES`` entry: a rendering of a whole row
@@ -354,7 +356,8 @@ def _upgrade_v1(data: dict[str, Any]) -> dict[str, Any]:
 
 def _decode(plaintext: bytes) -> AuditRow | _Newer:
     """A row, ``_NEWER`` for a newer schema, else ``ValueError`` (terse). A
-    v1 row is upgraded BEFORE validation (``_upgrade_v1``)."""
+    v1 row is upgraded BEFORE validation (``_upgrade_v1``); stored bytes
+    naming no version, or a v2 row naming no mode, are refused."""
     try:
         data = json.loads(plaintext)
     except ValueError:
@@ -365,8 +368,19 @@ def _decode(plaintext: bytes) -> AuditRow | _Newer:
             AUDIT_SCHEMA_VERSION
         ):
             return _NEWER
+        if "schema_version" in data and type(version) is not int:
+            # Peer round 27 PR-LOW-065 (round 26 SEC-001's rule for the record
+            # and the label): a JSON integer only — `true`, `2.0` or `"2"`
+            # would otherwise compare equal to a version.
+            raise ValueError("not an audit row")
         if type(version) is int and version == 1:
             data = _upgrade_v1(data)
+        elif "schema_version" not in data or "mode" not in data:
+            # Pilot review round 22 (the encounter record's peer round 9
+            # rule): every row this app wrote names its version and, from v2
+            # on, its mode (null on a pre_audit row). The defaults are for
+            # building a row, so stored bytes missing either are not one.
+            raise ValueError("not an audit row")
         try:
             return AuditRow.model_validate(data)
         except ValidationError:
@@ -938,7 +952,12 @@ class AuditLog:
                 current.session_date,
             ):
                 raise ValueError("a change may not move a row")
-            changed = AuditRow.model_validate_json(changed.to_bytes())  # re-validated
+            # Re-validated through the reader's own rule (round 24): a row
+            # written here is one ``_read`` will accept.
+            decoded = _decode(changed.to_bytes())
+            if not isinstance(decoded, AuditRow):
+                raise ValueError("not an audit row")
+            changed = decoded
             path.parent.mkdir(parents=True, exist_ok=True)
             if link_state(path.parent) is not False:
                 raise AuditUnavailable("unavailable")  # SEC-003, as ``begin``
@@ -1072,8 +1091,9 @@ CSV_COLUMNS: Final[tuple[str, ...]] = (
     "past_session.state",
     "past_session.at",
     "note_provenance",
-    # Pilot plan Task 1.3 (v2): empty for a pre_audit row's mode and an
-    # upgraded v1 row's version.
+    # Pilot plan Task 1.3 (v2): empty for the mode of a pre_audit row made
+    # from 0.2.0 on (an upgraded v1 row's is `normal`) and for an upgraded
+    # v1 row's version.
     "mode",
     "app_version",
 )

@@ -46,7 +46,7 @@ import secrets
 import threading
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
@@ -214,6 +214,19 @@ def _tee_sink(
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def keep_label_for_mode(label: KeepLabel | None, mode: SessionMode | None) -> KeepLabel | None:
+    """The label a Complete keeps, with its shadow flag forced on when the
+    LIVE session is not a ``normal`` recording (pilot review round 22): the
+    UI resolves the label, but the controller holds the mode fixed at Start,
+    so a label resolved wrongly can never make a shadow recording's entry
+    copyable. ``mode`` None (a recovered session, whose checkout record only
+    the UI read) and a None label (``UNKNOWN_LABEL``, already shadow) leave
+    it as given."""
+    if label is None or mode is None or mode is SessionMode.NORMAL or label.shadow:
+        return label
+    return replace(label, shadow=True)
 
 
 def load_write_record(
@@ -1127,6 +1140,7 @@ class SessionController:
         *,
         delete_note: bool = False,
         label: KeepLabel | None = None,
+        mode: SessionMode | None = None,
     ) -> tuple[CompletionFacts, float | None]:
         """Call under ``self._lock``, after every refusal: THE one call of
         ``complete_session`` for all five Complete paths, with the archive's
@@ -1134,8 +1148,10 @@ class SessionController:
         pre-audit date read BEFORE the directory went. An archive failure
         before the key boundary raises ``PastSessionWriteError`` (key,
         state, lease and reservation all kept — the caller's own raise
-        semantics); every other failure propagates exactly as before."""
+        semantics); every other failure propagates exactly as before.
+        ``mode`` is a live session's own (``keep_label_for_mode``)."""
         created_at = self._audit_created_at(directory)
+        label = keep_label_for_mode(label, mode)
         keeper = self._past_sessions.keeper(label) if self._past_sessions is not None else None
         try:
             facts = complete_session(directory, crypto, delete_note=delete_note, keep=keeper)
@@ -1279,7 +1295,7 @@ class SessionController:
             if not self._stop_live_locked(live):
                 self._refuse_uncleared_live("complete")
             facts, created_at = self._complete_locked(  # raises -> stays queued
-                live.directory, live.crypto, label=label
+                live.directory, live.crypto, label=label, mode=live.session.mode
             )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -1323,7 +1339,7 @@ class SessionController:
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete-without-note")  # lease kept
             facts, created_at = self._complete_locked(  # raises -> lease kept
-                live.directory, live.crypto, delete_note=True, label=label
+                live.directory, live.crypto, delete_note=True, label=label, mode=live.session.mode
             )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -1360,7 +1376,7 @@ class SessionController:
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete")
             facts, created_at = self._complete_locked(
-                live.directory, live.crypto, delete_note=True, label=label
+                live.directory, live.crypto, delete_note=True, label=label, mode=live.session.mode
             )
             self._transition_locked(live, SessionState.WRITTEN)
             session = live.session
@@ -1984,7 +2000,9 @@ class SessionController:
                 )
             if not self._stop_live_locked(live):  # round 7 MED-001 / round 9 PR-MED-017
                 self._refuse_uncleared_live("complete")
-            facts, created_at = self._complete_locked(live.directory, live.crypto, label=label)
+            facts, created_at = self._complete_locked(
+                live.directory, live.crypto, label=label, mode=live.session.mode
+            )
             self._transition_locked(live, SessionState.WRITTEN)  # forgets its refs
             self._release_write_locked()
             session = live.session
