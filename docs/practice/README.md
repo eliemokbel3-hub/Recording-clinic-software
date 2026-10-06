@@ -7,24 +7,33 @@
 > TGA-scope review.
 
 Plain-English documents for running Clinic Scribe in a practice. They describe what the
-app does as built on 2026-10-01; where a document and the app disagree, the app's
-behaviour is what happens, and the document must be corrected.
+app does as built on 2026-10-01, updated on 2026-10-07 for the pilot build (version
+0.2.0: shadow mode for comparison appointments); where a document and the app disagree,
+the app's behaviour is what happens, and the document must be corrected.
 
 | Document | For | Version |
 |---|---|---|
-| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v1` |
+| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v2` |
 | [Privacy information](privacy-information.md) | The practice's privacy policy and collection notice | draft 1 |
 | [Downtime procedure](downtime-procedure.md) | The practitioner, when something stops working | draft 1 |
 | [Clinician review guide](clinician-review-guide.md) | The practitioner, before saving and finalising a note | draft 1 |
 
-The patient information document carries its own version, `patient-info-v1`. The tick
-the practitioner gives in the app before every recording ("I confirm the patient has
+The patient information document carries its own version, now `patient-info-v2`. The
+tick the practitioner gives in the app before every recording ("I confirm the patient has
 consented to AI-assisted recording and documentation") is a separate wording with its own
-version in the app; changing one does not change the other. If the patient information
-changes, give it a new version (`patient-info-v2`, …) and record in Cliniko which version
-a patient was given. None of these drafts has been given to a patient yet, so changes made
-before the independent review (such as the 7-year retention of 2026-10-02) stay within
-`patient-info-v1`.
+version in the app; changing one does not change the other — `patient-info-v2` leaves the
+tick's wording and version unchanged. If the patient information changes, give it a new
+version (`patient-info-v3`, …) and record in Cliniko which version a patient was given.
+Earlier changes (such as the 7-year retention of 2026-10-02, made before `patient-info-v1`
+had been given to a patient) stayed within `patient-info-v1`. `patient-info-v2`
+(2026-10-07) adds the pilot's comparison appointments ("Checking the program" in Part A,
+the matching lines in Part B and a bullet in Part C's form) and the program's version in
+the record of a recording; for a comparison appointment the practitioner also writes the
+note the usual way and the app refuses to copy its draft or write it to Cliniko. The
+practitioner approved its wording on 2026-10-07, and the matching lines in the privacy
+information, the downtime procedure and the clinician review guide the same day; the
+independent review below
+still applies to them.
 
 ## Keeping these documents
 
@@ -37,7 +46,7 @@ before the independent review (such as the 7-year retention of 2026-10-02) stay 
   own screen word for word, so it can be matched.
 - No promise the app cannot keep — for example, the app never ticks or fills Cliniko's
   consent field, and nothing it keeps has a backup.
-- The patient information's version (`patient-info-v1`) and the app's consent tick are
+- The patient information's version (`patient-info-v2`) and the app's consent tick are
   versioned separately (above).
 
 ## What the drafts rely on

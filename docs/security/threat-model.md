@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -25,7 +25,10 @@ controls" below); plus the installation (PLAN.md Phase 7, the installation
 plan, built 2026-10-02 → 2026-10-03 and NOT YET INSTALLED — no real build has
 run and Phase P is the practitioner's): the packaged build and its
 per-machine installer, the separately shipped model pack, the build of record,
-and the developer build as a separate channel ("Installation" below). Every
+and the developer build as a separate channel ("Installation" below); plus the
+pilot (PLAN.md Phase 7's pilot half, the pilot plan, built 2026-10-04): shadow
+mode, schema v2 of the audit row, the encounter record and the Past-sessions
+label, and the developer-build validation harness ("The pilot" below). Every
 `%LOCALAPPDATA%\ClinikoScribe` path in this document is the installed
 (production) app's data folder; a source checkout — the developer build —
 keeps the same layout under `%LOCALAPPDATA%\ClinikoScribe-dev`, plus its own
@@ -524,7 +527,10 @@ note inherit exactly that posture.
    which was ratified before it could be saved; refused with its reason when
    the copy flag is off, no saved note was kept or the note has an unresolved
    error; its panels are `NoTextInteraction`, so no keyboard copy); pinned by
-   `test_ui_screens.py` and `test_ui_models.py`. Windows clipboard history and
+   `test_ui_screens.py` and `test_ui_models.py`. Since the pilot plan (D5)
+   every one of these routes, the inline line editor's own Copy and Cut, and
+   the placement itself as its last line, REFUSE a shadow recording's note,
+   by a reason separate from `_copy_ready` ("The pilot" below). Windows clipboard history and
    cloud clipboard sync honour the formats, so a copied note is not kept in
    history or uploaded. **Residue once copied (named 2026-09-27, Task 1.4;
    narrowed by Task 8.2):** a copy puts the ratified note's plaintext on the
@@ -1817,7 +1823,8 @@ optional, D3), the context's practitioner — `linked_consent`, the only
 production constructor of a linked consent, always names it. The same rule
 runs in `RecordingSession` and `EncounterRecord`, so no construction path
 skips it.
-Start writes `encounter.enc` (consent plus context, ids only) under the
+Start writes `encounter.enc` (consent plus context, ids only — and, since the
+pilot plan's schema v2, the recording's mode, normal or shadow) under the
 session key with AAD `encounter:<session_id>`, after `key.dpapi` and before
 any audio, for EVERY session, linked or not; a failed write refuses the
 start. It is decrypted on checkout only (Critical Constraint 7) — a
@@ -1827,7 +1834,9 @@ per Unreviewed session at app start to rebuild the reminder index (ids only
 kept; the one start-up exception); the recovery listing learns only whether
 the file exists, and the sweep and the periodic refresh never read it. A
 missing or unreadable record reads as "consent unavailable": that session is
-treated as unlinked and has no write target. The record is the
+treated as unlinked and has no write target — and, since the pilot plan, as a
+SHADOW recording, so its note cannot be copied either ("The pilot" below). The
+record is the
 session's and goes with its key — at Complete (every Complete also removes
 the session directory), Discard or expiry — and is never copied into a
 Past-sessions entry. Since the privacy-professional-controls plan the
@@ -2793,7 +2802,8 @@ and every name from every panel. An opened entry shows its generated and
 saved notes side by side, the write outcome read from the audit row, "Copy
 saved note" — the SAVED note only, through the one clipboard placement and
 its three Windows formats (Phase 3A surface 4), gated on the copy flag and no
-unresolved error — and "Show transcript"; every panel is
+unresolved error, and since the pilot plan refused for a shadow recording's
+entry (marked "(shadow recording)" in the list) — and "Show transcript"; every panel is
 `NoTextInteraction`. Hide names masks the LABEL with "Patient hidden".
 Delete now is two clicks within 10 s on the same entry, key first, recorded
 `deleted_early`; it is worded for a recording made in error only (the wrong
@@ -2833,7 +2843,9 @@ THE AUDIT RECORD (`audit.py`; D7, D8, D9; C2, C3).
   (SEC-005).
 - Content-free BY CONSTRUCTION (C3): `AuditRow` is `extra="forbid"` and every
   string is pattern-constrained — Cliniko and clinic ids, the session id,
-  `Literal` outcome codes, refusal CODES and model TOKENS with no space. There
+  `Literal` outcome codes, refusal CODES and model TOKENS with no space, and
+  since the pilot plan's v2 the `mode` enum and the digits-only `app_version`
+  ("The pilot" below). There
   is no field for a patient name, patient id or any text. The distinctive
   field names (`past_session`, `note_provenance`, `consent_confirmed_at`, and
   `generated.enc`'s `generated_text`) are log-tripwire markers.
@@ -3283,6 +3295,190 @@ boundary (one type-name line, exit 1). RESIDUE: a source run's worker
 (`python -m scribe_desktop.benchmark`) still prints a Python traceback to its
 stderr on an exception — developer build only.
 
+## The pilot: shadow mode, audit v2 and the validation harness (pilot plan, PLAN.md Phase 7 pilot half; Phases 1–2 BUILT 2026-10-04, live smokes PASS 2026-10-04 and 2026-10-07 on the developer build; version 0.2.0, NOT YET a build of record)
+
+What exists: a per-recording SHADOW mode in which the app drafts its note as
+usual but never lets it be copied or written to Cliniko, so the practitioner's
+own note can be compared with it (`session_mode.py`, the pilot setting in
+`note_config.py`, the refusals in `draft_write.py`, `ui/models.py`,
+`ui/note.py` and `ui/past_sessions.py`); schema v2 of the audit row, the
+encounter record and the Past-sessions label, each carrying the mode; the app
+version on the Status tab and in the audit row; and an offline VALIDATION
+HARNESS for the developer build (`validation.py`, `validation_set.py`,
+`scripts/run-validation.py`, `scripts/build-validation-set.py`;
+`docs/testing/validation-harness.md`). Everything here is the plan's D1–D13
+and Constraints 1–12; data-flow-map flows 25–26 and the retention schedule's
+"Pilot" rows describe the same surfaces. The pilot's own records are in
+`docs/pilot/`.
+
+THE SETTING (D2, D3). "Shadow mode (pilot)" on the Status tab, in both
+channels, saved as `config\pilot.json` (`{"schema_version": 1,
+"shadow_mode": bool}`, at most 4 KiB) through the config folder's one atomic
+write path. FAIL CLOSED (D3): an ABSENT file is shadow off; a file that is
+present but cannot be read, is over its bound, is not valid or does not name
+`shadow_mode` (no default — peer round 9) reads as shadow ON, and the Status
+tab says "The shadow-mode setting could not be read, so shadow mode is on."
+It is read only at each Start click and by the Status and Session tabs.
+RESIDUE: it is a USER setting, not an enforced control (D2) — the file is as
+writable as `config\dev.json`, so any process of this Windows user (boundary
+2), or the practitioner, can turn it off between recordings; it decides only
+what NEW recordings are.
+
+FIXED AT START (D1). `ui/session_screen._start` reads the setting at the click
+for BOTH a desktop Start and a linked Start from Chrome, and passes the mode
+to `SessionController.start`, which writes it into the frozen
+`RecordingSession`, `encounter.enc` (v2) and the audit row before any audio.
+Changing the setting afterwards changes nothing for that recording: the Session
+tab keeps saying "This is a shadow recording" for it. EVERY REBUILD carries the
+recorded mode, through the three authorised `read_encounter_record` callers
+only (Constraint 1 — no fourth reader): an Unreviewed adoption
+(`adopt_queued`) takes it from the record it already decrypts (an unreadable
+record is refused there, `consent_unavailable`); a recovered checkout takes it
+from its decrypted record, and a record that cannot be read makes that session
+SHADOW (D3) — as well as unlinked (THE ENCOUNTER RECORD above); the reminder
+rebuild needs no mode. Anything the main window cannot resolve is SHADOW
+(`MainWindow.session_mode_for`), and a review with no non-terminal live
+session is reviewed as shadow (`_live_mode`) — fail closed. A v1 record (before
+0.2.0) reads as `normal`; a v1 record carrying a mode, a v2 record without one,
+bytes that name no `schema_version` (peer round 9) and a NEWER version are not
+records this app wrote and are refused, which every rebuild reads as shadow.
+
+THE WRITE IS REFUSED BY NAME (D4). `shadow_session` is a `WriteRefusalName`.
+`ui/models.write_control` shows it with Write disabled, before the `unlinked`
+line (which would invite a Copy); the Write slot
+(`MainWindow._on_write_requested`) refuses it right after the in-flight and
+stale checks, before anything is reserved, read or sent, and records it in the
+audit row like any pre-send refusal; and `draft_write.refuse_before_read`
+returns it before every other refusal it makes (a shadow recording never
+wrote, so no record can precede it), so a direct caller gets the same answer.
+The line names no Copy: "This is a shadow recording for the pilot, so its note
+is not written to Cliniko. Write your own note in Cliniko as usual."
+
+EVERY COPY IS REFUSED (D5, Constraint 3), by a reason SEPARATE from
+`_copy_ready` (`ui/note.py` `_copy_allowed`: Write derives "saved" from
+`_copy_ready`, so the shadow refusal never goes through it). For a shadow
+recording's note: the Copy button is disabled with its reason ("This is a
+shadow recording for the pilot, so its note cannot be copied.") and the
+standing line shows; the note panel is `NoTextInteraction` at every review
+state (nothing to select, so nothing to copy by keyboard or drag); the panel's
+keyboard and context-menu Copy refuse; the inline line editor (a `QLineEdit`
+opened holding the line's text) keeps typing, Paste, Undo and Escape but its
+Copy and Cut shortcuts do nothing, its context menu loses Copy and Cut, and its
+drag is off; the Past sessions tab's "Copy saved note" is refused for an entry
+whose label says shadow ("This was a shadow recording for the pilot, so its
+note cannot be copied. Read it as shown."), and an unreadable label refuses
+too (D3; a label nothing resolved is a shadow one). LAST LINE: the one
+placement, `_place_note_text(text, shadow=)`, refuses anything but an explicit
+`shadow=False`, whatever its caller checked. A test enumerates the placement's
+callers and every widget class in `ui/note.py` and `ui/past_sessions.py` that
+can hold note text, so a new exit path fails until it is gated.
+
+NOTHING IS LEARNED (D13). A shadow review's learning gate is closed whatever
+the profile says: its Save writes no learned phrase, no learned rule and
+replaces no learned wording (learned wording is global and would reappear in a
+later normal note that can be written), and every queue line says "Not
+learned: shadow recording". A demotion of a learned rule the practitioner
+corrected still applies — it only makes the app more cautious.
+
+WHAT A SHADOW RECORDING STILL KEEPS. Everything else is unchanged: the audio
+is destroyed at Complete or Discard, the transcript and notes are kept in its
+Past-sessions entry (marked "(shadow recording)" in the list) for the
+retention setting, and its audit row records `mode` `shadow`.
+
+AUDIT V2 (D6, D7, Constraint 4). `AuditRow` v2 adds `mode` (the `SessionMode`
+enum; empty on a `pre_audit` row made from 0.2.0 on, whose mode nothing
+recorded) and
+`app_version` (pattern `digits.digits.digits`; empty on a row upgraded from
+v1, and left out rather than refusing Start when this build's version would
+not fit). Both are flat tokens, so neither needs a log-tripwire signature: a
+rendering of a whole row is still dropped by the row's existing distinctive
+names. A v1 row — a v1 `pre_audit` row included — is upgraded in `_decode` BEFORE
+validation (mode `normal`, no version) and exports that way; a v1 row that already names either field is not
+one this app wrote and is refused. The CSV gains the two columns. THE
+PAST-SESSIONS LABEL v2 adds `shadow` (strict bool; v1 reads as not shadow; a
+label naming v1 with a shadow flag, or v2 without one, is refused — a label
+naming no version at all reads as v2 not shadow, which only a writer holding
+the entry key could produce: residue (6)).
+
+OLDER BUILDS (D6). A build before 0.2.0 reads 0.2.0's data as follows: an
+audit row as NEWER (kept untouched, its updates fail quietly and are counted;
+Start is unaffected); a label as unreadable (the entry lists as unreadable and
+its Copy fails closed); an encounter record as unavailable — recovery treats
+the session as UNLINKED, so its Write is refused but its COPY IS ALLOWED, and
+an Unreviewed adoption refuses it. RESIDUE — THE ROLLBACK RULE: rolling back
+below 0.2.0 with an unfinished shadow recording would make its note copyable;
+the rule (`docs/release/pilot-builds.md`) is to finish or discard every
+recording first. Nothing enforces it (an installer downgrade guard was
+declined, 2026-10-04).
+
+NAMED RESIDUES (shadow mode). (1) THE USER SETTING (above). (2) THE ROLLBACK
+RULE (above). (3) NO CHROME INDICATOR: Chrome's side panel does not show the
+mode (it would need a protocol change — the plan's Excluded item); the desktop
+app's Session, Transcript, Note and Past-sessions tabs show it, and the
+refusals name it. (4) WHAT THE APP CANNOT STOP: the note is on screen, so a
+screenshot, a photo or retyping it by hand carries it out; a drag is closed only
+because the panel is display-only and the line editor's drag is off. (5) THE
+LINE EDITOR'S MENU is filtered by Qt's action names with the English menu texts
+as the fallback match; the app ships no translation, so a translated Qt menu
+is the case that match would miss. (6) A LABEL'S SHADOW FLAG is the label's
+only record of the mode once the session's key is gone: a same-user process
+that rewrote a label under the entry key (boundary 2) could clear it.
+
+THE VALIDATION HARNESS (D8, D9; Constraints 5–8). A developer-build tool:
+both entry points refuse a packaged build once their arguments are parsed.
+The harness modules are in the release bundle, as every app module is
+(`packaging/scribe.spec` collects them all), but nothing there calls them;
+the launchers and the validation set live in the repository's `scripts\` and
+`validation\` folders, which the bundle does not include. `run-validation.py` applies and
+ASSERTS the offline environment before any model loads, refuses the app's own
+config folder (either channel) and any config folder showing a sign of a
+copy — a learned-phrase or learned-rule sidecar, or a `learned-` rule (residue
+(6) below: phrases already merged into a copied cue file carry no such sign) —
+and requires an explicit `--config`. Each
+encounter is transcribed in a temporary encrypted session store under a fresh
+DPAPI-wrapped key — the same helpers `measure-speakers.py` uses
+(`speaker_eval.transcribe_in_temporary_store` / `destroy_temporary_store`,
+under `%TEMP%\scribe-speaker-eval-*`) — torn down key-first with the
+fail-closed probe on every path; a store that cannot be shown gone STOPS the
+run and names its path. It reads no voice profile, writes no audit row and no
+Past-sessions entry and reads none, and opens no connection: nothing it runs
+calls the Cliniko client or any network interface, and the offline
+environment is applied and asserted before any model loads (network-capable
+modules are still imported indirectly, as in the app). Its report holds ids,
+numbers, flags and closed vocabularies only — never a transcript, note or
+script line; an unexpected failure is reported by its exception type name; a
+file name not shaped like an encounter id is counted, never printed. The SET
+BUILDER (`build-validation-set.py`) speaks the repository's invented scripts
+with the installed Windows (SAPI) voices into a temporary folder
+(`scribe-validation-set-*`, removed after each turn), resamples, mixes and
+writes `<id>.wav` / `<id>.txt` / `<id>.json` (and its ownership mark
+`<id>.built`) into a set folder that must lie outside the repository; it never
+overwrites a role-play whose script is in the folder, a recording without its
+script, or a script it cannot load — except a WAV or label track lying beside
+a leftover `<id>.built` from an interrupted build, which it takes as its own
+(delete any leftover mark before a recording uses that id;
+`docs/testing/validation-harness.md`). RESIDUES: (1)
+CONSTRAINT 8 IS AN OPERATING RULE: the harness cannot tell a mock recording
+from a real one, so "a real consultation is never exported to a WAV or fed to
+the harness" is the practitioner's to keep — the app itself never writes audio
+outside its encrypted store; (2) the set folder, the role-play WAVs and the
+redirected report are outside the app's custody (plaintext audio of invented
+or mock content; the retention schedule's Pilot rows — the role-plays kept in
+one local folder under decision 3.6, with a review date); (3) a leftover temporary store the OS refuses to delete or
+inspect is named for removal by hand, never hidden; (4) the own-config refusal
+compares paths as strings (a link, an 8.3 short name, a `subst` drive or a
+`\\?\` form of the same folder is not recognised —
+`docs/testing/validation-harness.md`, Known limits); (5) the report names the
+HEAD commit and cannot tell whether the working tree differs, so the run of
+record is made from a clean, committed checkout; (6) LEARNED PHRASES IN A
+COPIED CUE FILE ARE NOT DETECTED: phrases the app learned are merged into its
+`section_cues.json` with no mark, so a copy of that file placed in the config
+folder without its sidecar passes the copy check. Writing the cue file fresh,
+never copying it (rule v1, call 1, `docs/testing/validation-harness.md`), is
+the practitioner's operating rule, not an enforced control — and the file is
+committed to the public repository, so a copied one would publish the
+practitioner's learned phrases.
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -3336,4 +3532,11 @@ file kept in an entry, a backup or restore of Past sessions (deferred), the
 practice relying on Past sessions as part of the health record, a change of
 the retention default, a second Windows user or machine reading the stores,
 or the backup and snapshot exclusions widening beyond live sessions and logs
-(they are built into the installer, residue (g)).
+(they are built into the installer, residue (g)). For the pilot: a new way
+for note text to leave the app (a widget that can hold it, a clipboard or drag
+route, a send — it must be gated for shadow recordings, Constraint 3), a new
+reader of the audit row, the encounter record or the Past-sessions label, a
+rollback below 0.2.0, the shadow setting becoming anything other than a user
+setting, the mode reaching Chrome (a protocol change), or the validation
+harness gaining a store, a network module or an input other than a set
+folder of invented or mock encounters.

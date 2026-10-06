@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -50,7 +50,12 @@ and models folder `%LOCALAPPDATA%\ClinikoScribe-dev` (flow 24): every
 and a source checkout uses the same layout under `ClinikoScribe-dev`. The
 installed app is built but NOT YET INSTALLED (the plan's Phase P). The note pipeline (flows 10–11) is in-process
 and adds no network surface and no new logging channel, and so is the prose
-rendering the language model does (flow 17).
+rendering the language model does (flow 17). Since the pilot plan (PLAN.md
+Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
+ticked is a SHADOW recording, whose note never leaves the app by Copy or by
+the draft write (flow 25), and the developer build carries an offline
+validation harness that runs the pipeline over invented or mock recordings
+outside the app's own stores (flow 26).
 
 ## Components
 
@@ -163,7 +168,9 @@ rendering the language model does (flow 17).
    note and practitioner it names, if any) and, for a linked recording, the
    encounter context — clinic id and web host, patient, treatment note,
    booking, template and practitioner ids, and how it was verified; no name
-   or other display text. AES-256-GCM under the session key, AAD
+   or other display text; since the pilot plan (schema v2, flow 25) also the
+   recording's mode, `normal` or `shadow` (a v1 record reads as `normal`; an
+   unreadable one makes the rebuilt session shadow). AES-256-GCM under the session key, AAD
    `encounter:<session_id>`; a failed write refuses the start. It is
    decrypted ONLY when a recovered session is opened for checkout, or an
    Unreviewed session is opened for review (Task 5.4: the controller's
@@ -390,7 +397,13 @@ rendering the language model does (flow 17).
     the first of them, the note stays on the clipboard until something
     replaces it and nothing is cleared; a drag of the selected text is Qt's own
     (no formats, no clipboard — the text lands where it is dropped) — see the
-    threat model, Phase 3A surface 4, and the retention schedule.
+    threat model, Phase 3A surface 4, and the retention schedule. THE SHADOW
+    BRANCH (pilot plan, flow 25): for a shadow recording neither exception
+    exists — every Copy route, the inline line editor's Copy, Cut and drag,
+    and the placement itself refuse, the note panel is display-only (nothing
+    to select or drag), and "Write draft to Cliniko" is refused before
+    anything is reserved or sent; its note leaves the session only into its
+    Past-sessions entry.
 
 11. **Config load (Phase 3A, read-only, plaintext, intended non-patient boilerplate — unenforced).**
     `note_config.load_note_config` reads clinician-authored config from
@@ -765,7 +778,10 @@ rendering the language model does (flow 17).
     saved, ratified note of a LINKED recording (live, or an Unreviewed one
     opened for review) — never at startup, idle, on a timer, a reconnect or a
     clinic change; a desktop-started (unlinked) recording and a note from the
-    test provider never write. Per click, two client calls on worker
+    test provider never write, and neither does a SHADOW recording (pilot
+    plan, flow 25: the click is refused as `shadow_session` right after the
+    in-flight and stale checks, before any reservation, read or request, and
+    recorded in the audit row like any pre-send refusal). Per click, two client calls on worker
     threads, each reading the clinic's key from Credential Manager once:
     hop 1 — ONE request, `GET /treatment_notes/<id>` (the click's own
     verification of the note; since D15 no template is read); hop 2 — the
@@ -941,8 +957,9 @@ rendering the language model does (flow 17).
       key`), AAD `audit:<id>`. Content: the session id and local date, origin,
       the consent time and text version, `linked`, the verification state, the
       app's clinic id and the Cliniko practitioner, user (from the clinic
-      registry), booking and treatment-note ids — never the patient id, a name
-      or any text. A failed write refuses Start. Later, best-effort and never
+      registry), booking and treatment-note ids, and since the pilot plan's v2
+      the recording's `mode` and the app's `app_version` (flow 25) — never the
+      patient id, a name or any text. A failed write refuses Start. Later, best-effort and never
       blocking: the draft write's transitions (`MainWindow._store_write_record`)
       and pre-send refusal codes (`AuditLog.record_write_refusal`, from
       `_on_write_requested` / `_prepare_attempt`), Complete's model and provider tokens
@@ -971,8 +988,9 @@ rendering the language model does (flow 17).
       present and readable and `note.enc` when present and not deleted by the path, byte
       for byte, under a FRESH per-entry key into `past_sessions\.staging\<id>\`,
       with `label.enc` (AAD `past-label:<id>`: dates, linked / desktop /
-      unknown, the clinic id, the patient's display name or none, and which
-      notes are held). The name comes from memory at the Complete click,
+      unknown, the clinic id, the patient's display name or none, which
+      notes are held and, since the pilot plan's v2, whether it was a shadow
+      recording). The name comes from memory at the Complete click,
       matched by session id (the Chrome bridge's verified Start display, the
       name a Verified live re-verification of that session found, or a
       recovered or adopted checkout's Verified result); it was
@@ -1000,7 +1018,8 @@ rendering the language model does (flow 17).
       notes shown at once, the transcript only behind "Show transcript"), in
       `NoTextInteraction` panels; leaving the tab drops all of it. "Copy saved note" places the kept SAVED note on the Windows clipboard
       through the one placement with the three history- and sync-excluding
-      formats (flow 10). Delete now (two clicks; worded for a recording made
+      formats (flow 10) — never for an entry marked "(shadow recording)" or
+      one whose label cannot be read (flow 25). Delete now (two clicks; worded for a recording made
       in error only) and the retention sweep (start-up, then at most hourly
       while the app runs; nothing under "Until I delete them"; 7 years
       minimum — a shorter window is refused before any read) delete the
@@ -1084,6 +1103,64 @@ rendering the language model does (flow 17).
     random per data folder; the self-test's `test` entry is common) and the
     DPAPI key descriptions — the same Windows user either way (threat model,
     "Installation").
+
+25. **Shadow mode (pilot plan D1–D5, D13; BUILT 2026-10-04; in-process, zero
+    network).** The Status tab's "Shadow mode (pilot)" box writes
+    `config\pilot.json` (`{"schema_version": 1, "shadow_mode": bool}`, at most
+    4 KiB, no patient data) in the channel's data folder through the config
+    folder's atomic write path. It is READ only at each Start click (desktop
+    or linked) and by the Status and Session tabs; absent = off, present but
+    unreadable or invalid = ON (named on the Status tab). At Start the mode is
+    fixed for the recording and goes into the in-memory session,
+    `encounter.enc` (flow 6) and the audit row (flow 22). Every rebuild takes
+    it from the record one of the three authorised readers already decrypts
+    (recovery checkout, Unreviewed adoption); an unresolved mode is shadow.
+    For a shadow recording: no note text reaches the clipboard (every Copy
+    route, the line editor's Copy and Cut, and the one placement refuse;
+    the note panel is display-only — flow 10's shadow branch); nothing is sent
+    to Cliniko (flow 18 — the click is refused before any reservation, read or
+    request); a Save writes no learned phrase or rule and replaces no learned
+    wording (flows 13 and 15 do not run; a demotion still does); and at
+    Complete its Past-sessions entry's label records `shadow`, so "Copy saved
+    note" is refused for it (flow 22). Audio, transcript, notes, the entry and
+    the audit row otherwise follow the normal flows. Chrome is not told the
+    mode (no protocol change).
+
+26. **The validation harness (pilot plan Phase 2, D8–D10; BUILT 2026-10-04;
+    developer build only, zero network).** Two practitioner-run tools,
+    started from a normal terminal in a source checkout (both refuse a
+    packaged build):
+    - BUILD. `scripts/build-validation-set.py <scripts> <set-folder>` reads
+      the repository's invented encounter scripts (`validation/scripts/`),
+      lists the installed Windows (SAPI) voices, speaks each line into a
+      temporary WAV under `%TEMP%\scribe-validation-set-*` (removed after each
+      turn), resamples it with PyAV, mixes the turns with seeded noise and
+      overlap, and writes `<id>.wav` (16 kHz mono PCM16), `<id>.txt` (the
+      timed label track), a byte-exact `<id>.json` and the ownership mark
+      `<id>.built` into the set folder — which it refuses inside the
+      repository; each file is written to `<name>.tmp` and moved into place.
+      Role-play recordings (mock consultations, Task P.2) are added to the
+      same folder by hand with their own scripts and label tracks — for the
+      run of record the synthetic set is built into the role-plays' one
+      folder (decision 3.6), or any copy of them made for a run is deleted
+      after it; the enrolment WAV stays in a subfolder (only the top level is
+      read), and the synthetic files are deleted from the folder after the
+      run.
+    - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
+      <file>` applies and asserts the offline environment, reads the rule
+      file, the explicit config folder (never the app's own) and the models,
+      and for each encounter reads its WAV, label track and script, then
+      transcribes it in a temporary encrypted session store
+      (`%TEMP%\scribe-speaker-eval-*\<id>\`: `key.dpapi`, `audio.enc`,
+      `transcript.enc`, under a fresh DPAPI-wrapped key — the
+      speaker-measurement store, retention schedule) torn down key-first on
+      every path; the transcript document, the composed and finalised note
+      and the metrics live in memory for that encounter only. It reads the
+      commit from `.git` and hashes `packaging/models-manifest.json`, and
+      prints a text-free Markdown report (ids, numbers, flags, closed
+      vocabularies) to standard output, which the practitioner may redirect
+      to a file. It reads no voice profile, and writes no audit row, no
+      Past-sessions entry and nothing into either data folder.
 
 ## Explicit non-flows
 
@@ -1232,6 +1309,14 @@ rendering the language model does (flow 17).
   RUNTIME — the real library's load and one generation under continuous polls
   — and skips BY NAME until the wheel and the file exist, so that evidence is
   conditional.
+- No real consultation in the validation harness (pilot plan Constraint 8;
+  flow 26). The app never writes a consultation's audio outside its encrypted
+  session store, and the harness reads only the set folder it is given. That a
+  set folder holds only invented scripts' speech and mock role-plays is an
+  OPERATING RULE the practitioner keeps — the harness cannot tell a mock
+  recording from a real one (threat model, "The pilot", harness residue (1)).
+  The filled pilot log stays off the repository and the findings register in
+  the repository holds no clinical content (`docs/pilot/`).
 
 ## The Chrome side at a glance
 

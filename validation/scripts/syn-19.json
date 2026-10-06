@@ -17,7 +17,7 @@
   "facts": [
     {"kind": "dose", "tokens": ["ibuprofen", "400", "milligrams", "three", "times", "a", "day"], "line": 3, "material": true},
     {"kind": "absent", "tokens": ["leave", "the", "next", "part", "out"], "line": 4, "material": false},
-    {"kind": "absent", "tokens": ["boss", "doesn't", "know"], "line": 5, "material": false},
+    {"kind": "absent", "tokens": ["boss", "doesn't", "know"], "line": 5, "material": true},
     {"kind": "present", "tokens": ["you", "are", "happy", "to", "proceed"], "line": 6, "material": true}
   ],
   "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}

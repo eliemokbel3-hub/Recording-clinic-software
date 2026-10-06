@@ -15,7 +15,7 @@
   "facts": [
     {"kind": "absent", "tokens": ["close", "finish"], "line": 1, "material": false},
     {"kind": "laterality", "tokens": ["right", "calf"], "line": 3, "material": true},
-    {"kind": "absent", "tokens": ["racing", "my", "brother-in-law"], "line": 5, "material": false},
+    {"kind": "absent", "tokens": ["racing", "my", "brother-in-law"], "line": 5, "material": true},
     {"kind": "laterality", "tokens": ["right", "calf"], "line": 6, "material": true}
   ],
   "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}

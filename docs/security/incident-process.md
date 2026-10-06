@@ -69,6 +69,26 @@ When in doubt, stop using the software and investigate before resuming.
   verified when its report arrives, and a linked recording's own note is
   re-checked whenever the Chrome link reconnects); or any write to Cliniko
   (a `PATCH`) that no "Write draft to Cliniko" click started
+- (Pilot) a clinical-safety incident: a wrong-side, wrong-dose or
+  negation-flipped item, or patient speculation in a clinician-owned section,
+  that survived review into a draft or a finalised Cliniko note; or a shadow
+  recording's note found on the clipboard or in a Cliniko note (shadow mode
+  refuses Copy and Write for it — threat model, "The pilot"). Each is ALSO a
+  `high` finding in the pilot's findings register (below)
+
+## Clinical-safety incidents and the pilot findings register
+
+While the pilot runs (`docs/pilot/`), every incident above that touches what
+a note says, or which patient or note it reached, is entered in the findings
+register, `docs/pilot/findings-register.md`, as a `high` finding — category
+`wrong-side`, `wrong-dose`, `negation-flipped`, `patient-speculation`,
+`cross-patient`, `privacy` or `custody` — and keeps its id (`F-…`) in your own
+incident notes, so the two records point at each other. The register is in the
+public repository: its row holds no name, nothing said or written, no Cliniko
+id and no session id (the register's own rule); the evidence below stays
+where this process keeps it. Act first — correct the note in Cliniko and
+follow the steps below — then enter the finding. The clinic's exit gate
+(`docs/pilot/exit-gate.md`) stays closed while any `high` finding is `open`.
 
 ## Immediate steps
 

@@ -5,7 +5,9 @@
 > (in Victoria); see the [practice documents README](README.md) for the sources, which
 > cover every state and territory the research looked at.
 
-Draft 1 (2026-10-01). For the practitioner. The rule behind every step: **Clinic Scribe
+Draft 1 (2026-10-01; the patient-information version and the shadow-recording line
+updated 2026-10-07 for the pilot build, approved by the practitioner the same day). For
+the practitioner. The rule behind every step: **Clinic Scribe
 is a writing aid, and Cliniko is the record.** If the app is not working, write the note
 in Cliniko yourself, the usual way; nothing about the patient's care waits for the app.
 
@@ -28,7 +30,7 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 - Open the app and check the Chrome icon shows a green **OK**.
 - Look at the Status tab: it should show no warning lines under the intended-use line.
 - Have a way to write notes without the app (Cliniko open as usual). The patient
-  information sheet (`patient-info-v1`) should be at hand.
+  information sheet (its current version, `patient-info-v2`) should be at hand.
 
 ## When the app is not available
 
@@ -45,7 +47,8 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 - A recording started from the app's Session tab (not from a Cliniko note) is never
   linked to a Cliniko note and can never be written back. Use **Copy** on the Note tab and
   paste the reviewed note into the right Cliniko note yourself once Cliniko is back —
-  check the patient and the appointment first.
+  check the patient and the appointment first. (A shadow recording's note — a pilot
+  comparison appointment — cannot be copied either: write your own note.)
 - If the app says Cliniko is rate-limiting the clinic, wait the time it shows before
   writing again, or copy the note by hand.
 

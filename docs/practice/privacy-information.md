@@ -5,10 +5,11 @@
 > (in Victoria); the state notes cover every state and territory the research looked at.
 > See the [practice documents README](README.md) for the sources and the open questions.
 
-Draft 1 (2026-10-01). Text for the practice's privacy policy and collection notice,
-describing what Clinic Scribe does with patients' information. Fill in the bracketed
-parts; keep it in step with the [patient information](patient-information-and-consent.md)
-(`patient-info-v1`).
+Draft 1 (2026-10-01; the record of a recording and "How we use it" updated 2026-10-07 for
+the pilot build, approved by the practitioner the same day).
+Text for the practice's privacy policy and collection notice, describing what Clinic
+Scribe does with patients' information. Fill in the bracketed parts; keep it in step with
+the [patient information](patient-information-and-consent.md) (`patient-info-v2`).
 
 ---
 
@@ -25,13 +26,17 @@ computer, to help write the notes of your appointment. It collects:
   show your practitioner which appointment it is working on and label what it keeps;
 - **a record that a recording happened**: when consent was confirmed, which Cliniko
   appointment and note it belonged to (by Cliniko's reference numbers), which versions of
-  the program's speech and note software were used, whether the note was placed in
-  Cliniko, and what was later deleted. This record holds **no name and nothing that was
-  said**.
+  the program and of its speech and note software were used, whether it was a comparison
+  appointment (one where your practitioner also wrote the note the usual way and the
+  program's draft was not used), whether the note was placed in Cliniko, and what was
+  later deleted. This record holds **no name and nothing that was said**.
 
 ## How we use it
 
-Only to write the clinical notes of your appointment. The program does not diagnose,
+Only to write the clinical notes of your appointment. For a limited number of
+appointments while the program is being checked, your practitioner also compares the
+program's draft with the note they wrote themselves, to check the quality of its drafts;
+the scores they keep hold no name and nothing that was said. The program does not diagnose,
 suggest treatment or make decisions about your care, and your practitioner reviews and
 finalises every note. No AI model is trained on your information. If your practitioner
 turns it on, the program learns short phrases from lines **your practitioner** adds or

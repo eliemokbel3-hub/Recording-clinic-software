@@ -5,7 +5,8 @@
 > (in Victoria); see the [practice documents README](README.md) for the sources, which
 > cover every state and territory the research looked at.
 
-Draft 1 (2026-10-01). For the practitioner, before saving a note and before finalising it
+Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
+approved by the practitioner the same day). For the practitioner, before saving a note and before finalising it
 in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -90,6 +91,11 @@ where each line came from: the transcript, something you typed, or your own pre-
 - If you **copy** the note instead, paste it into the right patient's note and check the
   patient before pasting. The copy is kept out of Windows clipboard history, but stays on
   the clipboard until something replaces it.
+- **A shadow recording** (a pilot comparison appointment, started while "Shadow mode
+  (pilot)" was ticked on the Status tab): Write and Copy are refused with the reason
+  shown, the note's text cannot be selected (a line you open to edit can be changed, but
+  not copied or cut), and saving it teaches the app nothing. Review
+  and score it as the pilot asks, then write your own note in Cliniko the usual way.
 
 ## If something looks wrong
 
@@ -115,7 +121,9 @@ note** (what you saved), with the transcript behind
 - Use it to see how much you changed the app's draft — a check on how far to trust it.
 - **Hide names** masks the patient's name in the list. It does not hide a name spoken in
   the transcript or written in a note.
-- **Copy saved note** copies the note you saved; the transcript cannot be copied.
+- **Copy saved note** copies the note you saved; the transcript cannot be copied. An
+  entry marked "(shadow recording)" — a pilot comparison appointment — cannot be copied
+  at all: read it as shown.
 - A kept transcript is part of your health record. It can be reached by an access request
   or a subpoena, and the app keeps it on this computer only, with no backup of its own
   (your own backup or sync software may still copy the encrypted files — see the start-up

@@ -13,7 +13,7 @@
   "facts": [
     {"kind": "negation", "tokens": ["no", "headaches"], "line": 1, "material": true},
     {"kind": "absent", "tokens": ["note", "to", "the", "scribe"], "line": 2, "material": false},
-    {"kind": "absent", "tokens": ["call", "the", "plumber"], "line": 3, "material": false},
+    {"kind": "absent", "tokens": ["call", "the", "plumber"], "line": 3, "material": true},
     {"kind": "present", "tokens": ["range", "of", "motion", "is", "full"], "line": 4, "material": true}
   ],
   "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 5}

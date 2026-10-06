@@ -6,8 +6,11 @@
 > looked at. See the [practice documents README](README.md) for the sources and the open
 > questions.
 
-**Document version: `patient-info-v1`** (2026-10-01). Record this version in the
-patient's Cliniko record when you give it.
+**Document version: `patient-info-v2`** (2026-10-07, approved by the practitioner the same
+day; it adds "Checking the program" to Part A, the matching lines to Part B, a bullet
+to Part C and the program's version to the record of a recording — `patient-info-v1`
+was 2026-10-01). Record this version in the patient's
+Cliniko record when you give it.
 
 This document has three parts: an information sheet to give or read to the patient
 (Part A), what the practitioner says and records (Part B), and an optional written
@@ -26,6 +29,17 @@ practitioner's own computer, turns the speech into text, and drafts a note from 
 **Your practitioner checks, corrects and finalises every note.** The program does not
 diagnose, suggest treatment or make any decision about your care. It only helps with the
 writing.
+
+### Checking the program
+
+For a limited number of appointments while the program is being checked, your
+practitioner also writes your notes the usual way and compares them with the program's
+draft, to check the quality of its drafts. For those appointments the program's draft is
+not placed in your record: the program will not copy it or put it into Cliniko, and the
+notes in your Cliniko record are the ones your practitioner wrote. The recording, the
+transcript and the draft are otherwise handled and kept exactly as described below. The
+scores your practitioner keeps from the comparison hold no name and nothing that was
+said.
 
 ### Where does the recording go?
 
@@ -50,7 +64,7 @@ writing.
 | The audio recording | **No** | Only while the note is being prepared. It is destroyed when your practitioner finishes or discards the recording. If something interrupts that (for example the computer restarts), the encrypted recording is kept for up to 24 hours so the note can still be finished, and is deleted the next time the program runs after that. |
 | The transcript and the notes (the draft the program made, and the note your practitioner saved) | Yes, encrypted, on your practitioner's computer | At least 7 years, like other health records (in Victoria, NSW and the ACT the law requires at least 7 years, or until you turn 25 if you were a child; elsewhere in Australia the Australian Privacy Principles apply). Your practitioner chooses in the program either 7 years or "until I delete them" (the program's default, and the choice for a patient who was a child). **[Practice: state your setting here.]** They become part of the health information the practice holds about you. |
 | Your clinical record in Cliniko | Yes | As the practice keeps all clinical records. In Victoria, NSW and the ACT that is at least 7 years after your last visit, or until you turn 25 if you were a child. Elsewhere in Australia, the Australian Privacy Principles apply. |
-| A record that a recording happened | Yes, encrypted, on your practitioner's computer | 7 years. It holds the date, that consent was confirmed, and the Cliniko reference numbers of the appointment and note — **not** your name and **nothing that was said**. |
+| A record that a recording happened | Yes, encrypted, on your practitioner's computer | 7 years. It holds the date, that consent was confirmed, the Cliniko reference numbers of the appointment and note, the program's version, and whether it was one of the comparison appointments — **not** your name and **nothing that was said**. |
 
 The program keeps the transcript on that one computer only and makes no backup of it. If the computer fails,
 the kept transcript is lost; your clinical record in Cliniko is not affected.
@@ -91,6 +105,11 @@ approach for children and for people who cannot consent for themselves.]**
 > every note myself. You can say no, and it won't change your care at all. Is that okay
 > with you?"
 
+For a comparison appointment ("Checking the program" in Part A), add:
+
+> "While I'm checking how well the program works, I'll also write today's notes myself
+> the usual way and compare the two. Its draft won't go into your record today."
+
 Offer Part A to read or take home.
 
 ### What to record, and where
@@ -101,12 +120,21 @@ Offer Part A to read or take home.
   time you pressed Start with it ticked in its own record. It does **not** record anything in Cliniko about
   consent, and it **never ticks or fills any consent box or field in Cliniko** — that is
   yours to do.
+- **For a comparison appointment, in Clinic Scribe:** tick "Shadow mode (pilot)" on the
+  Status tab BEFORE you press Start — each recording keeps the setting it had when it
+  started, and the Session tab says "Shadow mode is on: new recordings are shadow
+  recordings". For such a recording the program refuses to copy the note or write it to
+  Cliniko, and saving it teaches the program nothing. Write your own note in Cliniko the
+  usual way. Untick the box when the comparison appointments are done.
 - **In Cliniko** (Ahpra's guidance is to note the patient's response in the health
   record), for example:
 
-  > "Informed about AI-assisted note-taking (patient-info-v1). Consented verbally."
+  > "Informed about AI-assisted note-taking (patient-info-v2). Consented verbally."
   >
   > or "… Declined; notes written without it."
+
+  For a comparison appointment you may add: "Comparison appointment — the program's
+  draft was not used."
 
 ### If the patient says no, or changes their mind
 
@@ -129,7 +157,7 @@ Offer Part A to read or take home.
 
 ## Part C — Written consent form (optional)
 
-**AI-assisted note-taking — consent** (`patient-info-v1`)
+**AI-assisted note-taking — consent** (`patient-info-v2`)
 
 I have read, or had read to me, the information about Clinic Scribe. I understand that:
 
@@ -138,7 +166,10 @@ I have read, or had read to me, the information about Clinic Scribe. I understan
 - a transcript and the notes will be kept, encrypted, on that computer for the time the
   practice has set, and will form part of my health information held by the practice;
 - my practitioner checks and finalises every note;
-- I can say no, or ask to stop at any time, and my care will not change.
+- I can say no, or ask to stop at any time, and my care will not change;
+- for a limited number of appointments while the program is being checked, my
+  practitioner may also write my notes the usual way and compare them with the
+  program's draft, which is then not placed in my record.
 
 I agree to AI-assisted note-taking for (tick one):
 

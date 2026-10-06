@@ -13,7 +13,7 @@
   ],
   "facts": [
     {"kind": "absent", "tokens": ["scribe", "do", "not", "include"], "line": 2, "material": false},
-    {"kind": "absent", "tokens": ["surgeon", "rushed", "it"], "line": 3, "material": false},
+    {"kind": "absent", "tokens": ["surgeon", "rushed", "it"], "line": 3, "material": true},
     {"kind": "laterality", "tokens": ["right", "knee"], "line": 4, "material": true},
     {"kind": "present", "tokens": ["110", "degrees", "of", "flexion"], "line": 4, "material": true}
   ],

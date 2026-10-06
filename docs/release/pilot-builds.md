@@ -56,3 +56,19 @@ attestation is available; it stays so only while the repository stays public
 re-checks it before the first run. If no attestation can be made, the first
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
+
+## Rolling back below 0.2.0
+
+From 0.2.0 (the pilot build) the app records each recording's mode — normal or
+shadow — in its encounter record, its audit row and its Past-sessions label, as
+schema v2. A build older than 0.2.0 cannot read those v2 files as they are
+meant: it treats an unfinished recording's encounter record as unavailable, so
+a SHADOW recording awaiting recovery opens as an unlinked recording whose note
+CAN be copied, and it cannot open an Unreviewed recording made on 0.2.0; it
+lists a 0.2.0 Past-sessions entry as unreadable, and keeps 0.2.0 audit rows
+untouched without updating them.
+
+**The rule: before installing any build older than 0.2.0, finish (Complete) or
+Discard every recording** — nothing on the Recovery tab and nothing in the
+Unreviewed list. Nothing enforces this (pilot plan Accepted Assumptions; threat
+model, "The pilot"). Installing 0.2.0 or later again reads everything as before.
