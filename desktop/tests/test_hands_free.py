@@ -426,6 +426,17 @@ class _InertAudit:
         """Task 3.2: a reconciled commit's ``archived`` (none here)."""
         return True
 
+    # Development-recordings Task 1.4 (review round 8 LOW-004): the kept
+    # recording's facts (the start-up repair calls the first, Task 2.2).
+    def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
+    def record_recording_exported(self, *args: Any, **kwargs: Any) -> bool:
+        return True
+
 
 class _InertPastSessions:
     """``app.main``'s Past-sessions archive in a start-up test

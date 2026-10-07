@@ -710,6 +710,18 @@ class _AuditRecorder:
     def export_csv(self, path: Path) -> int:
         pytest.fail("a draft-write test exported the audit record")
 
+    # Development-recordings plan Task 1.4: never reached here either (the
+    # tab is never opened by these tests).
+    def record_recording_deleted(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        pytest.fail("a draft-write test deleted a kept recording")
+
+    def record_recording_exported(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        pytest.fail("a draft-write test exported a kept recording")
+
 
 def test_the_audit_recorder_implements_the_past_sessions_surface() -> None:
     """The window hands this recorder to the Past sessions tab: it must
@@ -1403,6 +1415,7 @@ class TestDraftWrite:
             started_at=session.created_at,
             mode=session.mode,
             app_version="0.2.0",
+            development_consent_version=None,
         )
         self._click(qapp, window, controller)
         (row,) = audit.rows().rows

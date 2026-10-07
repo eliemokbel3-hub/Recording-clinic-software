@@ -290,12 +290,16 @@ def _tracking_controller() -> Any:
 
     class _Tracking(FakeController):
         def start(self, device_id: int, **kwargs: Any) -> Any:
+            # Development-recordings Task 1.5 (review round 8 LOW-007): did
+            # the funnel NAME the keyword, not merely leave the default?
+            self.named_development.append("development_consent" in kwargs)
             super().start(device_id, **kwargs)
             mode = kwargs.get("mode", SessionMode.NORMAL)
             self.session_value = RecordingSession(
                 consent=kwargs["consent"],
                 encounter_context=kwargs.get("context"),
                 mode=mode,
+                development_consent=kwargs.get("development_consent"),
             ).with_state(SessionState.RECORDING)
             return self.session_value
 
@@ -305,7 +309,9 @@ def _tracking_controller() -> Any:
             self.session_value = self.session_value.with_state(SessionState.PROCESSING)
             return self.session_value
 
-    return _Tracking()
+    tracking = _Tracking()
+    tracking.named_development = []  # type: ignore[attr-defined]
+    return tracking
 
 
 def _session_screen(controller: Any, setting: dict[str, bool]) -> Any:
@@ -399,6 +405,27 @@ class TestTheSessionTab:
         assert controller.session.mode is expected
         assert controller.session.encounter_context == context
         assert screen.shadow_label.isHidden() is (not on)
+        screen.deleteLater()
+
+    def test_both_starts_name_no_development_consent_yet(self, qapp: Any) -> None:
+        """Development-recordings Task 1.5: the funnel passes the keyword
+        explicitly, as None (not kept, C3), until Task 2.3 resolves it."""
+        from scribe_desktop.encounter import linked_consent
+        from test_ui_screens import _linked_context
+
+        controller = _tracking_controller()
+        screen = _session_screen(controller, {"on": False})
+        _start(screen)
+        assert controller.started_development == [None]
+        assert controller.named_development == [True]
+        assert controller.session.development_consent is None
+        screen.deleteLater()
+        controller = _tracking_controller()
+        screen = _session_screen(controller, {"on": False})
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is True
+        assert controller.started_development == [None]
+        assert controller.named_development == [True]
         screen.deleteLater()
 
     @pytest.mark.parametrize("blob", ["{garbled", "{}", '{"schema_version": 1}'])

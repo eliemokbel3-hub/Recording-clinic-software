@@ -1068,7 +1068,11 @@ class CompletionFacts:
       key — the entry appears after the next reconciliation (Flow 3 step 4).
       A status-line fact only, never an audit field: the row's
       ``past_session`` is ``archived`` either way, and the deferral is a
-      transient no row update would follow."""
+      transient no row update would follow.
+    - ``recording_kept`` (development-recordings plan Task 1.4; populated by
+      Task 2.1): the recording's audio was staged and verified into the
+      Past-sessions entry — the ACTUAL outcome, never the consent; the audit
+      row records it as ``recording.kept_at`` in the same completion write."""
 
     transcription_model: str = FACT_UNKNOWN
     speaker_model: str = FACT_UNKNOWN
@@ -1085,6 +1089,7 @@ class CompletionFacts:
     note_provenance: Literal["known", "unknown"] | None = None
     past_session: Literal["none", "archived", "not_kept_mock"] = "none"
     commit_deferred: bool = False
+    recording_kept: bool = False
 
 
 class _UnreadableNote:

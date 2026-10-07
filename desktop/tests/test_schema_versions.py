@@ -33,9 +33,13 @@ from scribe_desktop import audit as audit_mod
 from scribe_desktop import session as session_module
 from scribe_desktop.audit import AUDIT_KEY_DESCRIPTION, AuditLog, AuditRow
 from scribe_desktop.encounter import (
+    DEVELOPMENT_CONSENT_TEXT,
+    DEVELOPMENT_CONSENT_TEXT_VERSION,
+    DevelopmentConsent,
     EncounterRecord,
     EncounterUnavailable,
     Verification,
+    development_consent,
     read_encounter_record,
     unlinked_consent,
 )
@@ -98,12 +102,109 @@ LABEL_V1: Final = (
     b'"patient_name":"Jane Citizen","has_generated":true,"has_saved":true}'
 )
 
+# --- the committed v2 bytes (as 0.2.0's ``model_dump_json`` wrote them) ------
+#
+# Development-recordings plan Task 1.2, captured BEFORE the v3 models: a
+# byte-exact round trip through 0.2.0's own models proved each literal is
+# that build's serialisation, not a reconstruction.
+
+ENCOUNTER_V2_LINKED_NORMAL: Final = (
+    b'{"schema_version":2,"consent":{"confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"text_version":"recording-consent-v1","practitioner_id":"7654321",'
+    b'"treatment_note_id":"2001"},"context":{"clinic_id":"0123456789abcdef",'
+    b'"clinic_host":"northside.au2.cliniko.com","patient_id":"1001",'
+    b'"treatment_note_id":"2001","booking_id":"3001","practitioner_id":"7654321",'
+    b'"template_id":"4001","verification":"verified",'
+    b'"verified_at":"2026-10-05T07:30:00Z"},"mode":"normal"}'
+)
+ENCOUNTER_V2_LINKED_SHADOW: Final = (
+    b'{"schema_version":2,"consent":{"confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"text_version":"recording-consent-v1","practitioner_id":"7654321",'
+    b'"treatment_note_id":"2001"},"context":{"clinic_id":"0123456789abcdef",'
+    b'"clinic_host":"northside.au2.cliniko.com","patient_id":"1001",'
+    b'"treatment_note_id":"2001","booking_id":null,"practitioner_id":"7654321",'
+    b'"template_id":null,"verification":"unverified_offline",'
+    b'"verified_at":null},"mode":"shadow"}'
+)
+ENCOUNTER_V2_UNLINKED_NORMAL: Final = (
+    b'{"schema_version":2,"consent":{"confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"text_version":"recording-consent-v1","practitioner_id":null,'
+    b'"treatment_note_id":null},"context":null,"mode":"normal"}'
+)
+ENCOUNTER_V2_UNLINKED_SHADOW: Final = (
+    b'{"schema_version":2,"consent":{"confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"text_version":"recording-consent-v1","practitioner_id":null,'
+    b'"treatment_note_id":null},"context":null,"mode":"shadow"}'
+)
+ENCOUNTERS_V2: Final = {
+    ENCOUNTER_V2_LINKED_NORMAL: SessionMode.NORMAL,
+    ENCOUNTER_V2_LINKED_SHADOW: SessionMode.SHADOW,
+    ENCOUNTER_V2_UNLINKED_NORMAL: SessionMode.NORMAL,
+    ENCOUNTER_V2_UNLINKED_SHADOW: SessionMode.SHADOW,
+}
+AUDIT_V2: Final = (
+    b'{"schema_version":2,"session_id":"0f1e2d3c4b5a69788796a5b4c3d2e1f0",'
+    b'"session_date":"2026-10-05","origin":"recorded",'
+    b'"consent_confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"consent_text_version":"recording-consent-v1","linked":true,'
+    b'"verification":"verified","clinic_id":"0123456789abcdef",'
+    b'"practitioner_id":"7654321","user_id":"4242","booking_id":"3001",'
+    b'"treatment_note_id":"2001","models":{"transcription_model":"small",'
+    b'"speaker_model":"wespeaker-resnet34-lm","note_provider":"extractive",'
+    b'"note_schema_version":"1","template_profile":"default","note_style":"clean",'
+    b'"language_model_id":"none","prompt_version":"none",'
+    b'"generated_provider":"extractive","generated_style":"clean",'
+    b'"generated_language_model_id":"none","generated_prompt_version":"none"},'
+    b'"write":{"attempts":1,"last_outcome":"written","last_refusal":null,'
+    b'"written_at":"2026-10-05T08:10:00Z"},'
+    b'"deletion":{"state":"completed","at":"2026-10-05T08:20:00Z"},'
+    b'"past_session":{"state":"archived","at":"2026-10-05T08:20:00Z"},'
+    b'"note_provenance":"known","mode":"normal","app_version":"0.2.0",'
+    b'"events":[{"at":"2026-10-05T07:30:00Z","code":"started"},'
+    b'{"at":"2026-10-05T08:10:00Z","code":"write_written"},'
+    b'{"at":"2026-10-05T08:20:00Z","code":"completed"}]}'
+)
+AUDIT_V2_SHADOW_STARTED: Final = (
+    b'{"schema_version":2,"session_id":"0f1e2d3c4b5a69788796a5b4c3d2e1f0",'
+    b'"session_date":"2026-10-05","origin":"recorded",'
+    b'"consent_confirmed_at":"2026-10-05T07:30:00Z",'
+    b'"consent_text_version":"recording-consent-v1","linked":false,'
+    b'"verification":"unlinked","clinic_id":null,"practitioner_id":null,'
+    b'"user_id":null,"booking_id":null,"treatment_note_id":null,"models":null,'
+    b'"write":{"attempts":0,"last_outcome":null,"last_refusal":null,'
+    b'"written_at":null},"deletion":{"state":"pending","at":null},'
+    b'"past_session":{"state":"none","at":null},"note_provenance":null,'
+    b'"mode":"shadow","app_version":"0.2.0",'
+    b'"events":[{"at":"2026-10-05T07:30:00Z","code":"started"}]}'
+)
+LABEL_V2: Final = (
+    b'{"schema_version":2,"session_id":"0f1e2d3c4b5a69788796a5b4c3d2e1f0",'
+    b'"completed_at":"2026-10-05T08:20:00Z","started_at":"2026-10-05T07:30:00Z",'
+    b'"recording":"linked","clinic_id":"0123456789abcdef",'
+    b'"patient_name":"Jane Citizen","has_generated":true,"has_saved":true,'
+    b'"shadow":true}'
+)
+
+
+class TestTheV2LiteralsAre020Output:
+    """Task 1.2: each v2 literal round-tripped BYTE FOR BYTE through 0.2.0's
+    models (run at ``d7b7d9f`` + Task 1.1, composer run 2026-10-07) — so it
+    is exactly what 0.2.0 wrote, never a hand reconstruction. The encounter
+    record's leg was retired by Task 1.3 (its v3 model re-serialises a v2
+    document with the new field) and the audit row's by Task 1.4 (a v2 row
+    is upgraded to v3 on read); the label is unchanged by the plan (D4), so
+    its pin stays."""
+
+    def test_the_label(self) -> None:
+        assert PastSessionLabel.model_validate_json(LABEL_V2).to_bytes() == LABEL_V2
+
 
 def _newer(document: bytes) -> bytes:
-    """``document`` as a build newer than this one would write it: version 3,
-    with a field this build has never heard of."""
+    """``document`` as a build newer than this one would write it: version 4
+    (3 until development-recordings Task 1.3), with a field this build has
+    never heard of."""
     data = json.loads(document)
-    data["schema_version"] = 3
+    data["schema_version"] = 4
     data["something_new"] = "x"
     return json.dumps(data).encode("utf-8")
 
@@ -133,12 +234,101 @@ class TestEncounterRecordVersions:
         unlinked = EncounterRecord.from_bytes(ENCOUNTER_V1_UNLINKED)
         assert (unlinked.mode, unlinked.context) == (SessionMode.NORMAL, None)
 
-    def test_a_new_record_is_v2_and_names_its_mode(self) -> None:
+    def test_v2_bytes_read_as_their_mode(self) -> None:
+        """Development-recordings Task 1.2: what 0.2.0 wrote reads back as
+        the recording it was."""
+        for document, mode in ENCOUNTERS_V2.items():
+            record = EncounterRecord.from_bytes(document)
+            assert (record.schema_version, record.mode) == (2, mode)
+            # Development-recordings Task 1.3 (C3): an older record is NOT kept.
+            assert record.development_consent is None
+        linked = EncounterRecord.from_bytes(ENCOUNTER_V2_LINKED_NORMAL)
+        assert linked.context is not None and linked.consent.treatment_note_id == "2001"
+        assert EncounterRecord.from_bytes(ENCOUNTER_V2_UNLINKED_SHADOW).context is None
+        for document in (ENCOUNTER_V1_LINKED, ENCOUNTER_V1_UNLINKED):
+            assert EncounterRecord.from_bytes(document).development_consent is None
+
+    def test_a_new_record_is_v3_and_names_its_mode_and_development_consent(self) -> None:
         for mode in SessionMode:
-            record = EncounterRecord(consent=unlinked_consent(), mode=mode)
-            data = json.loads(record.to_bytes())
-            assert (data["schema_version"], data["mode"]) == (2, mode.value)
-            assert EncounterRecord.from_bytes(record.to_bytes()).mode is mode
+            for kept in (None, development_consent(datetime(2026, 10, 7, 9, 0, tzinfo=UTC))):
+                record = EncounterRecord(
+                    consent=unlinked_consent(), mode=mode, development_consent=kept
+                )
+                data = json.loads(record.to_bytes())
+                assert (data["schema_version"], data["mode"]) == (3, mode.value)
+                assert "development_consent" in data
+                back = EncounterRecord.from_bytes(record.to_bytes())
+                assert (back.mode, back.development_consent) == (mode, kept)
+
+    def test_v3_bytes_read_kept_and_not_kept(self) -> None:
+        kept = json.loads(ENCOUNTER_V2_LINKED_NORMAL)
+        kept.update(
+            schema_version=3,
+            development_consent={
+                "confirmed_at": "2026-10-07T09:00:00Z",
+                "text_version": "development-consent-v1",
+            },
+        )
+        record = EncounterRecord.from_bytes(json.dumps(kept).encode())
+        assert record.development_consent == DevelopmentConsent(
+            confirmed_at=datetime(2026, 10, 7, 9, 0, tzinfo=UTC)
+        )
+        assert record.development_consent.text_version == DEVELOPMENT_CONSENT_TEXT_VERSION
+        not_kept = json.loads(ENCOUNTER_V2_UNLINKED_SHADOW)
+        not_kept.update(schema_version=3, development_consent=None)
+        record = EncounterRecord.from_bytes(json.dumps(not_kept).encode())
+        assert (record.mode, record.development_consent) == (SessionMode.SHADOW, None)
+
+    def test_a_v4_record_is_refused(self) -> None:
+        data = json.loads(ENCOUNTER_V2_UNLINKED_NORMAL)
+        data.update(schema_version=4, development_consent=None)
+        with pytest.raises(EncounterUnavailable):
+            EncounterRecord.from_bytes(json.dumps(data).encode())
+
+    @pytest.mark.parametrize("value", [None, {"confirmed_at": "2026-10-07T09:00:00Z"}])
+    def test_a_v1_or_v2_record_naming_a_development_consent_is_refused(
+        self, value: Any
+    ) -> None:
+        for document in (ENCOUNTER_V1_UNLINKED, ENCOUNTER_V2_UNLINKED_NORMAL):
+            data = json.loads(document)
+            data["development_consent"] = value
+            with pytest.raises(EncounterUnavailable):
+                EncounterRecord.from_bytes(json.dumps(data).encode())
+
+    def test_a_v3_record_omitting_its_development_consent_is_refused(self) -> None:
+        data = json.loads(ENCOUNTER_V2_UNLINKED_NORMAL)
+        data["schema_version"] = 3
+        with pytest.raises(EncounterUnavailable):
+            EncounterRecord.from_bytes(json.dumps(data).encode())
+
+    def test_a_v3_record_omitting_its_mode_is_refused(self) -> None:
+        """Round 2 PR-MED-021: the must-name-``mode`` rule covers every
+        version from 2 on — a v3 record without one is refused (a recovered
+        checkout then treats it as SHADOW), never defaulted to ``normal``."""
+        data = json.loads(ENCOUNTER_V2_UNLINKED_NORMAL)
+        data.update(schema_version=3, development_consent=None)
+        del data["mode"]
+        with pytest.raises(EncounterUnavailable):
+            EncounterRecord.from_bytes(json.dumps(data).encode())
+
+    @pytest.mark.parametrize("version", ["development-consent-v2", "recording-consent-v1", ""])
+    def test_another_development_wording_is_refused(self, version: str) -> None:
+        data = json.loads(ENCOUNTER_V2_UNLINKED_NORMAL)
+        data.update(
+            schema_version=3,
+            development_consent={"confirmed_at": "2026-10-07T09:00:00Z", "text_version": version},
+        )
+        with pytest.raises(EncounterUnavailable):
+            EncounterRecord.from_bytes(json.dumps(data).encode())
+
+    def test_the_development_consent_wording(self) -> None:
+        """C7: the tick's wording ships verbatim under its version."""
+        assert DEVELOPMENT_CONSENT_TEXT == (
+            "I confirm the patient has consented in writing to this recording being kept "
+            "for developing the program"
+        )
+        assert DEVELOPMENT_CONSENT_TEXT_VERSION == "development-consent-v1"
+        assert development_consent().text_version == DEVELOPMENT_CONSENT_TEXT_VERSION
 
     def test_a_v1_record_naming_a_mode_is_refused(self) -> None:
         """Not a record this app wrote — refused, never read as either mode."""
@@ -161,15 +351,17 @@ class TestEncounterRecordVersions:
         with pytest.raises(EncounterUnavailable):
             EncounterRecord.from_bytes(json.dumps(data).encode())
 
-    @pytest.mark.parametrize("version", [True, 1.0, 2.0, "1", "2"])
+    @pytest.mark.parametrize("version", [True, 1.0, 2.0, 3.0, "1", "2", "3"])
     def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
         """Round 26 (SEC-001): ``true == 1`` in Python — a version only
-        equal to 1 or 2 is not one this app wrote, with or without a mode."""
+        equal to 1, 2 or 3 is not one this app wrote, with or without a mode
+        (and, for 3, its development consent)."""
         for mode in (None, "normal"):
             data = json.loads(ENCOUNTER_V1_UNLINKED)
             data["schema_version"] = version
             if mode is not None:
                 data["mode"] = mode
+                data["development_consent"] = None
             with pytest.raises(EncounterUnavailable):
                 EncounterRecord.from_bytes(json.dumps(data).encode())
 
@@ -191,7 +383,11 @@ class TestEncounterRecordVersions:
         """The defaults stay for BUILDING a record (PR-HIGH-B01 moved the
         version requirement to the bytes only)."""
         record = EncounterRecord(consent=unlinked_consent())
-        assert (record.schema_version, record.mode) == (2, SessionMode.NORMAL)
+        assert (record.schema_version, record.mode, record.development_consent) == (
+            3,
+            SessionMode.NORMAL,
+            None,
+        )
         assert EncounterRecord.from_bytes(record.to_bytes()) == record
 
     def test_v1_bytes_on_disk_read_through_the_authorised_reader(self, tmp_path: Path) -> None:
@@ -274,7 +470,8 @@ class TestModeTravelsWithTheRecording:
             record = read_encounter_record(directory, crypto, session.session_id)
         finally:
             crypto.destroy()
-        assert (record.schema_version, record.mode) == (2, SessionMode.SHADOW)
+        assert (record.schema_version, record.mode) == (3, SessionMode.SHADOW)
+        assert record.development_consent is None
         controller.discard()
 
     def test_an_unknown_value_is_refused_at_start(self, tmp_path: Path) -> None:
@@ -348,6 +545,7 @@ def _audit_log(tmp_path: Path) -> AuditLog:
         started_at=datetime(2026, 10, 1, 7, 30, tzinfo=UTC),
         mode=SessionMode.NORMAL,
         app_version="0.2.0",
+        development_consent_version=None,
     )
     return log
 
@@ -367,9 +565,36 @@ class TestAuditRowVersions:
     def test_v1_bytes_decode_as_a_normal_row_with_no_version(self) -> None:
         row = audit_mod._decode(AUDIT_V1)  # noqa: SLF001
         assert isinstance(row, AuditRow)
-        assert (row.schema_version, row.mode, row.app_version) == (2, SessionMode.NORMAL, None)
+        assert (row.schema_version, row.mode, row.app_version) == (3, SessionMode.NORMAL, None)
+        assert (row.development_consent_version, row.recording.kept_at) == (None, None)
         assert (row.treatment_note_id, row.write.last_outcome) == ("2001", "written")
         assert [event.code for event in row.events] == ["started"]
+
+    def test_v2_bytes_decode_as_written(self) -> None:
+        """Development-recordings Task 1.2: 0.2.0's rows read back."""
+        row = audit_mod._decode(AUDIT_V2)  # noqa: SLF001
+        assert isinstance(row, AuditRow)
+        assert (row.mode, row.app_version, row.past_session.state) == (
+            SessionMode.NORMAL,
+            "0.2.0",
+            "archived",
+        )
+        shadow = audit_mod._decode(AUDIT_V2_SHADOW_STARTED)  # noqa: SLF001
+        assert isinstance(shadow, AuditRow)
+        assert (shadow.mode, shadow.deletion.state) == (SessionMode.SHADOW, "pending")
+        # Task 1.4 (C3): upgraded to v3 as a recording that was NOT kept.
+        for upgraded in (row, shadow):
+            assert upgraded.schema_version == 3
+            assert upgraded.development_consent_version is None
+            assert upgraded.recording == audit_mod.RecordingRecord()
+        assert [event.code for event in row.events] == ["started", "write_written", "completed"]
+
+    def test_v2_bytes_naming_a_v3_field_are_refused(self) -> None:
+        for field, value in (("development_consent_version", None), ("recording", {})):
+            data = json.loads(AUDIT_V2)
+            data[field] = value
+            with pytest.raises(ValueError):
+                audit_mod._decode(json.dumps(data).encode())  # noqa: SLF001
 
     def test_v1_bytes_are_refused_by_the_model_itself(self) -> None:
         """Constraint 2: the upgrade lives in ``_decode``, before validation."""
@@ -386,12 +611,14 @@ class TestAuditRowVersions:
         assert isinstance(written, AuditRow)
         stored = json.loads(written.to_bytes())
         assert audit_mod._decode(json.dumps(stored).encode()) == written  # noqa: SLF001
-        for key in ("schema_version", "mode"):
+        # Development-recordings Task 1.4: a v3 row names its development
+        # consent version too (null allowed).
+        for key in ("schema_version", "mode", "development_consent_version"):
             missing = {name: value for name, value in stored.items() if name != key}
             with pytest.raises(ValueError):
                 audit_mod._decode(json.dumps(missing).encode())  # noqa: SLF001
 
-    @pytest.mark.parametrize("version", [True, 1.0, 2.0, "1", "2"])
+    @pytest.mark.parametrize("version", [True, 1.0, 2.0, 3.0, "1", "2", "3"])
     def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
         """Peer round 27 (PR-LOW-065, round 26 SEC-001's rule): ``2.0 == 2``
         and ``true == 1`` — a version only equal to one is not one this app
@@ -416,7 +643,7 @@ class TestAuditRowVersions:
         with exported.open(encoding="utf-8-sig", newline="") as handle:
             by_id = {row["session_id"]: row for row in csv.DictReader(handle)}
         assert (by_id[FIXTURE_SID]["mode"], by_id[FIXTURE_SID]["app_version"]) == ("normal", "")
-        # An update re-writes the row as v2, the rest unchanged (review round
+        # An update re-writes the row as v3, the rest unchanged (review round
         # 23: the sealed bytes change and the update is in them).
         before = path.read_bytes()
         assert log.record_deletion(FIXTURE_SID, "discarded")
@@ -428,7 +655,7 @@ class TestAuditRowVersions:
             updated.mode,
             updated.treatment_note_id,
             updated.deletion.state,
-        ) == (2, SessionMode.NORMAL, "2001", "discarded")
+        ) == (3, SessionMode.NORMAL, "2001", "discarded")
 
     @windows_only
     def test_newer_bytes_on_disk_are_kept_and_start_is_unaffected(self, tmp_path: Path) -> None:
@@ -446,6 +673,7 @@ class TestAuditRowVersions:
             started_at=datetime(2026, 10, 1, 8, 0, tzinfo=UTC),
             mode=SessionMode.SHADOW,
             app_version="0.2.0",
+            development_consent_version=None,
         )
         assert {row.session_id for row in log.rows().rows} == {"a" * 32, "b" * 32}
 
@@ -524,6 +752,15 @@ class TestPastSessionLabelVersions:
             False,
             "Jane Citizen",
         )
+
+    def test_v2_bytes_read_and_the_entry_lists(self, tmp_path: Path) -> None:
+        """Development-recordings Task 1.2 (D4: the label is unchanged)."""
+        label = PastSessionLabel.model_validate_json(LABEL_V2)
+        assert (label.schema_version, label.shadow) == (2, True)
+        store = _published_fixture_entry(tmp_path, LABEL_V2)
+        (listing,) = store.list_entries()
+        assert listing.label == label
+        assert store.read_entry(FIXTURE_SID).label == label
 
     def test_a_v1_label_naming_shadow_and_a_v2_label_without_it_are_refused(self) -> None:
         data = json.loads(LABEL_V1)

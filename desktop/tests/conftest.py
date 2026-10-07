@@ -30,6 +30,9 @@ REAL_IS_FROZEN = install_layout.is_frozen
 REAL_MODELS_ROOT = install_layout.models_root
 # Pilot plan Task 1.1: the real pilot-settings resolver, for its own test.
 REAL_PILOT_SETTINGS_ROOT = note_config.pilot_settings_root
+# Development-recordings plan Task 1.1: the real development-settings
+# resolver, for its own test.
+REAL_DEVELOPMENT_SETTINGS_ROOT = note_config.development_settings_root
 
 
 def _production() -> Channel:
@@ -192,6 +195,22 @@ def pinned_pilot_root(
     pinned root."""
     root = models_root_factory()
     monkeypatch.setattr(note_config, "pilot_settings_root", lambda: root)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def pinned_development_root(
+    monkeypatch: pytest.MonkeyPatch, models_root_factory: Callable[[], Path]
+) -> Path:
+    """Development-recordings plan Task 1.1 (C9), for EVERY test: the default
+    root of ``config\\development.json``
+    (``note_config.development_settings_root``) is a fresh, EMPTY folder of
+    the test's own, exactly as ``pinned_pilot_root`` pins ``pilot.json`` — so
+    every window a test builds reads "keep recordings" OFF unless the test
+    writes the file there (or passes its own config root), and no test reads
+    or writes the host's own setting. Returns the pinned root."""
+    root = models_root_factory()
+    monkeypatch.setattr(note_config, "development_settings_root", lambda: root)
     return root
 
 

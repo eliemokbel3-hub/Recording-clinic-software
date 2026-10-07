@@ -233,6 +233,30 @@ class TestEncounterRecord:
         assert PATIENT.encode() not in blob and b"consent" not in blob  # encrypted
         assert read_encounter_record(directory, crypto, session_id) == record
 
+    @pytest.mark.parametrize("linked", [True, False], ids=["linked", "unlinked"])
+    def test_a_kept_record_round_trips_under_the_session_key(
+        self, tmp_path: Path, linked: bool
+    ) -> None:
+        """Development-recordings Task 1.3: the development consent travels
+        in the encrypted record, read back through the authorised reader."""
+        from scribe_desktop.encounter import DEVELOPMENT_CONSENT_TEXT_VERSION, development_consent
+
+        directory, session_id = self._dir(tmp_path)
+        crypto = SessionCrypto()
+        ctx = context() if linked else None
+        record = EncounterRecord(
+            consent=consent_for(ctx) if ctx is not None else unlinked_consent(NOW),
+            context=ctx,
+            development_consent=development_consent(NOW),
+        )
+        write_encounter_record(directory, crypto, session_id, record)
+        blob = (directory / ENCOUNTER_FILENAME).read_bytes()
+        assert DEVELOPMENT_CONSENT_TEXT_VERSION.encode() not in blob  # encrypted
+        back = read_encounter_record(directory, crypto, session_id)
+        assert back == record
+        assert back.development_consent is not None
+        assert back.development_consent.confirmed_at == NOW
+
     def test_the_record_refuses_an_unbound_consent(self) -> None:
         with pytest.raises(ValidationError):
             EncounterRecord(consent=unlinked_consent(NOW), context=context())

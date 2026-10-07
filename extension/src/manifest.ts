@@ -26,7 +26,7 @@ export function manifestFor(channel: BuildChannel) {
     manifest_version: 3,
     key: identity.key,
     name: NAME + identity.nameSuffix,
-    version: "0.2.0",
+    version: "0.3.0",
     description: "Privacy-first clinical scribe companion for Cliniko: consent, controls and recording safeguards",
     permissions: ["nativeMessaging", "alarms", "sidePanel", "scripting"],
     host_permissions: [CLINIKO_MATCH],

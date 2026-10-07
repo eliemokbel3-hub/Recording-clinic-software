@@ -68,6 +68,18 @@ class PastSessionsAudit(Protocol):
 
     def export_csv(self, path: Path) -> int: ...
 
+    # Development-recordings plan Task 1.4 (D15): the kept recording's facts.
+    # Declared AHEAD of their callers — Delete recording and Export recording
+    # (that plan's Tasks 3.2 / 3.3) — so every pinned double carries them
+    # from the commit that adds them to ``AuditLog`` (review round 8 LOW-013).
+    def record_recording_deleted(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool: ...
+
+    def record_recording_exported(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool: ...
+
 
 # --- the list and the opened entry (Flow 5, D5, D13) ------------------------
 

@@ -87,9 +87,18 @@ RECORDING_CONSENT_TEXT_VERSION: Final = "recording-consent-v1"
 RECORDING_CONSENT_TEXT: Final = (
     "I confirm the patient has consented to AI-assisted recording and documentation"
 )
+# Development-recordings plan Task 1.3 (D3, C7): the SECOND attestation —
+# the patient's written consent to the recording being kept for developing
+# the program. Its own wording and version; a changed wording is a new one.
+DEVELOPMENT_CONSENT_TEXT_VERSION: Final = "development-consent-v1"
+DEVELOPMENT_CONSENT_TEXT: Final = (
+    "I confirm the patient has consented in writing to this recording being kept "
+    "for developing the program"
+)
 # Pilot plan Task 1.2: v2 adds the recording's mode; a v1 record reads as
-# ``normal`` (D6).
-ENCOUNTER_SCHEMA_VERSION: Final = 2
+# ``normal`` (D6). Development-recordings plan Task 1.3: v3 adds the
+# development consent; a v1 or v2 record reads as not kept.
+ENCOUNTER_SCHEMA_VERSION: Final = 3
 _ID_PATTERN: Final = r"^[1-9][0-9]{0,18}$"
 _CLINIC_ID_PATTERN: Final = r"^[0-9a-f]{16}$"
 # Display strings are bounded and single-line before they leave this module.
@@ -161,6 +170,25 @@ class ConsentAttestation(BaseModel):
     treatment_note_id: _ClinikoId | None = None
 
 
+class DevelopmentConsent(BaseModel):
+    """The development consent for ONE recording (development-recordings
+    D3): when the practitioner attested the patient's WRITTEN consent to the
+    recording being kept for developing the program, and under which
+    wording. A second attestation beside ``ConsentAttestation``, never a
+    flag on it — the two consents are versioned separately."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    confirmed_at: AwareDatetime
+    text_version: Literal["development-consent-v1"] = DEVELOPMENT_CONSENT_TEXT_VERSION
+
+
+def development_consent(now: datetime | None = None) -> DevelopmentConsent:
+    """The development consent a Start records when the setting is on and
+    the tick above Start is given (D2)."""
+    return DevelopmentConsent(confirmed_at=now if now is not None else datetime.now(UTC))
+
+
 def bind_consent(consent: ConsentAttestation, context: EncounterContext | None) -> None:
     """THE consent-to-context rule (``ValueError`` when it fails): an
     unlinked consent names no note; a linked one names the context's note
@@ -200,14 +228,22 @@ class EncounterRecord(BaseModel):
     is not a record this app wrote and is refused (``EncounterUnavailable``
     through ``from_bytes``: a recovered checkout then treats the session as
     shadow, D3, and an Unreviewed adoption refuses it). A NEWER version is
-    refused the same way."""
+    refused the same way.
+
+    Development-recordings plan Task 1.3 (v3, D3): ``development_consent``
+    — the patient's written consent to the recording being kept, or None.
+    A v3 record NAMES it (null allowed); a v1 or v2 record carrying it is
+    not a record this app wrote and is refused; a v1 or v2 record reads as
+    not kept (C3). Every record from v2 on names its ``mode`` — a v3 record
+    without one is refused, never read as ``normal`` (round 2 PR-MED-021)."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    schema_version: Literal[1, 2] = ENCOUNTER_SCHEMA_VERSION
+    schema_version: Literal[1, 2, 3] = ENCOUNTER_SCHEMA_VERSION
     consent: ConsentAttestation
     context: EncounterContext | None = None
     mode: SessionMode = SessionMode.NORMAL
+    development_consent: DevelopmentConsent | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -220,8 +256,12 @@ class EncounterRecord(BaseModel):
                 raise ValueError("an encounter record's version is an integer")
             if version == 1 and "mode" in data:
                 raise ValueError("a v1 encounter record carries no mode")
-            if version == 2 and "mode" not in data:
-                raise ValueError("a v2 encounter record names its mode")
+            if type(version) is int and version >= 2 and "mode" not in data:
+                raise ValueError("an encounter record from v2 on names its mode")
+            if version in (1, 2) and "development_consent" in data:
+                raise ValueError("a v1 or v2 encounter record carries no development consent")
+            if version == 3 and "development_consent" not in data:
+                raise ValueError("a v3 encounter record names its development consent")
         return data
 
     @model_validator(mode="after")

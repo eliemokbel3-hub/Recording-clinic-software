@@ -26,6 +26,7 @@ from scribe_desktop.benchmark import BenchmarkResult  # noqa: E402
 from scribe_desktop.draft_write import WriteRecordStatus  # noqa: E402
 from scribe_desktop.encounter import (  # noqa: E402
     ConsentAttestation,
+    DevelopmentConsent,
     EncounterContext,
     Verification,
     linked_consent,
@@ -206,6 +207,7 @@ class FakeController:
         # Cliniko safeguards Task 3.3: the consent and context of every Start.
         self.started_with: list[tuple[ConsentAttestation, EncounterContext | None]] = []
         self.started_modes: list[SessionMode] = []
+        self.started_development: list[DevelopmentConsent | None] = []
         # Task 4.5: what the Chrome bridge reads (SessionControllerLike).
         self.session_ref: str | None = None
         self.recorded_seconds = 0
@@ -252,6 +254,7 @@ class FakeController:
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
         mode: SessionMode = SessionMode.NORMAL,
+        development_consent: DevelopmentConsent | None = None,
     ) -> RecordingSession:
         # Mirrors the real controller's Constraint-4 refusal.
         if not isinstance(consent, ConsentAttestation):
@@ -261,6 +264,9 @@ class FakeController:
         # Pilot plan Task 1.2: the mode each Start was given, apart from
         # `started_with` (whose exact tuples tests pin).
         self.started_modes.append(mode)
+        # Development-recordings Task 1.5: the development consent each
+        # Start was given (None: not kept).
+        self.started_development.append(development_consent)
         self.state_value = SessionState.RECORDING
         return self._session()
 
@@ -9203,6 +9209,20 @@ class _FakePastAudit:
         if self.export_error is not None:
             raise self.export_error
         return self.export_result
+
+    # Development-recordings plan Task 1.4: Delete recording and Export
+    # recording's audit facts (the tab calls them from Phase 3).
+    def record_recording_deleted(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        self.calls.append(("recording_deleted", session_id, created_at))
+        return True
+
+    def record_recording_exported(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        self.calls.append(("recording_exported", session_id, created_at))
+        return True
 
 
 def _ps_store(

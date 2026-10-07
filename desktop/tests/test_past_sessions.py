@@ -1391,6 +1391,16 @@ class TestSweepWithArchive:
             def record_deletion(self, *args: Any, **kwargs: Any) -> bool:
                 return True
 
+            # Development-recordings Task 1.4 (review round 8 LOW-004).
+            def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
+            def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
+            def record_recording_exported(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
         audit: Any = Recorder()
         sweep_with_archive(sessions, store, frozenset({live.session_id}), audit=audit)
         assert recorded == [(finished.session_id, "archived")]

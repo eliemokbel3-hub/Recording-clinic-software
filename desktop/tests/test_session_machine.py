@@ -2165,6 +2165,74 @@ def _refuse_row_writes(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @windows_only
+class TestTheDevelopmentConsentTravels:
+    """Development-recordings plan Task 1.5 (D2, D3, C3): a Start carrying
+    the development consent holds it on the session, writes it into
+    ``encounter.enc`` and its wording version into the audit row, and an
+    Unreviewed reopen takes it back from the record; a Start without one
+    keeps nothing."""
+
+    def test_a_kept_start_round_trips_through_the_record_and_the_row(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.encounter import DEVELOPMENT_CONSENT_TEXT_VERSION, development_consent
+
+        controller, audit, root = _audited(tmp_path)
+        given = development_consent(NOW)
+        session = controller.start(0, consent=unlinked_consent(), development_consent=given)
+        assert session.development_consent == given
+        record = _read_record(root / session.session_id)
+        assert (record.schema_version, record.development_consent) == (3, given)
+        row = _audit_row(audit, session.session_id)
+        assert row.development_consent_version == DEVELOPMENT_CONSENT_TEXT_VERSION
+        controller.discard()
+
+    def test_a_start_without_one_records_none(self, tmp_path: Path) -> None:
+        controller, audit, root = _audited(tmp_path)
+        session = start_unlinked(controller)
+        assert session.development_consent is None
+        assert _read_record(root / session.session_id).development_consent is None
+        assert _audit_row(audit, session.session_id).development_consent_version is None
+        controller.discard()
+
+    @pytest.mark.parametrize("kept", [True, False])
+    def test_adopt_queued_takes_it_from_the_record(self, tmp_path: Path, kept: bool) -> None:
+        from scribe_desktop.encounter import development_consent
+        from scribe_desktop.transcription import write_transcript
+        from test_note_pipeline import _document as _pipeline_document
+
+        controller, _audit, root = _audited(tmp_path)
+        given = development_consent(NOW) if kept else None
+        first = controller.start(0, consent=unlinked_consent(), development_consent=given)
+        directory = root / first.session_id
+        controller.finish()
+        controller.mark_queued()
+        crypto = unwrap_key_from_file(directory)
+        try:
+            write_transcript(directory, crypto, _pipeline_document(first.session_id))
+        finally:
+            crypto.destroy()
+        start_unlinked(controller)  # retires the queued one
+        controller.discard()
+        session, _ = controller.adopt_queued(directory, lambda d, _c: d.name)
+        assert session.development_consent == given
+        controller.discard()
+
+    def test_a_malformed_development_consent_is_refused_before_anything(
+        self, tmp_path: Path
+    ) -> None:
+        controller, audit, root = _audited(tmp_path)
+        with pytest.raises(SessionControllerError):
+            controller.start(
+                0,
+                consent=unlinked_consent(),
+                development_consent="development-consent-v1",  # type: ignore[arg-type]
+            )
+        assert not root.exists() or list(root.iterdir()) == []
+        assert audit.rows().rows == ()
+
+
+@windows_only
 class TestAuditRecord:
     def test_a_linked_start_writes_its_row(self, tmp_path: Path) -> None:
         controller, audit, _root = _audited(tmp_path)

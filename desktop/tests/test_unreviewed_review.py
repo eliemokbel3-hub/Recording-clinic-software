@@ -9,6 +9,7 @@ key is unwrapped; no pipe, no socket, no model."""
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -91,6 +92,7 @@ def _write_session(
     note: bool = False,
     encounter: bool = True,
     mode: SessionMode = SessionMode.NORMAL,
+    development_consent: Any = None,
 ) -> None:
     session_id = directory.name
     if encounter:
@@ -100,7 +102,12 @@ def _write_session(
             directory,
             crypto,
             session_id,
-            EncounterRecord(consent=consent, context=context, mode=mode),
+            EncounterRecord(
+                consent=consent,
+                context=context,
+                mode=mode,
+                development_consent=development_consent,
+            ),
         )
     write_transcript(directory, crypto, _pipeline_document(session_id))
     if note:
@@ -793,22 +800,52 @@ class TestShadowAfterRecoveryAndReopen:
     record that cannot be read is a shadow recording's."""
 
     @pytest.mark.parametrize(
-        "stored", ["shadow", "normal", "v1", "missing", "newer", "unversioned"]
+        "stored",
+        [
+            "shadow",
+            "normal",
+            "v1",
+            "v2",
+            "v2_shadow",
+            "missing",
+            "newer",
+            "unversioned",
+            "v3_without_mode",
+        ],
     )
     def test_a_recovered_checkout_takes_its_mode_from_its_record(
         self, qapp: Any, tmp_path: Path, stored: str
     ) -> None:
-        from test_schema_versions import ENCOUNTER_V1_UNLINKED, _newer, _unversioned
+        from test_schema_versions import (
+            ENCOUNTER_V1_UNLINKED,
+            ENCOUNTER_V2_UNLINKED_NORMAL,
+            ENCOUNTER_V2_UNLINKED_SHADOW,
+            _newer,
+            _unversioned,
+        )
 
         directory = tmp_path / uuid.uuid4().hex
         directory.mkdir()
         crypto = SessionCrypto()
         sid = directory.name
         if stored in ("shadow", "normal"):
-            record = EncounterRecord(consent=unlinked_consent(), mode=SessionMode(stored))
+            record = EncounterRecord(
+                consent=unlinked_consent(), mode=SessionMode(stored), development_consent=None
+            )
             write_encounter_record(directory, crypto, sid, record)
         elif stored == "v1":
             write_encounter(directory, crypto, sid, ENCOUNTER_V1_UNLINKED)
+        elif stored == "v2":  # development-recordings Task 1.2: what 0.2.0 wrote
+            write_encounter(directory, crypto, sid, ENCOUNTER_V2_UNLINKED_NORMAL)
+        elif stored == "v2_shadow":
+            write_encounter(directory, crypto, sid, ENCOUNTER_V2_UNLINKED_SHADOW)
+        elif stored == "v3_without_mode":
+            # Development-recordings Task 1.3 (round 2 PR-MED-021): a v3
+            # record naming no mode is refused — SHADOW, never normal.
+            data = json.loads(ENCOUNTER_V2_UNLINKED_NORMAL)
+            data.update(schema_version=3, development_consent=None)
+            del data["mode"]
+            write_encounter(directory, crypto, sid, json.dumps(data).encode())
         elif stored == "newer":
             write_encounter(directory, crypto, sid, _newer(ENCOUNTER_V1_UNLINKED))
         elif stored == "unversioned":  # peer round 9 PR-HIGH-B01
@@ -817,7 +854,7 @@ class TestShadowAfterRecoveryAndReopen:
         try:
             window._open_checkout_encounter(directory, crypto)
             expected = (
-                SessionMode.NORMAL if stored in ("normal", "v1") else SessionMode.SHADOW
+                SessionMode.NORMAL if stored in ("normal", "v1", "v2") else SessionMode.SHADOW
             )
             assert window.session_mode_for(sid) is expected
             assert window.keep_label_for(sid).shadow is (expected is SessionMode.SHADOW)
@@ -832,6 +869,33 @@ class TestShadowAfterRecoveryAndReopen:
             assert shadow_label.isHidden()
         finally:
             crypto.destroy()
+            _close(window)
+
+    @windows_only
+    @pytest.mark.parametrize("kept", [True, False])
+    def test_an_adopted_checkout_record_carries_the_development_consent(
+        self, qapp: Any, tmp_path: Path, kept: bool
+    ) -> None:
+        """Development-recordings Task 1.5 (review round 8 LOW-005): the
+        checkout record ``_open_adopted`` builds mirrors the adopted
+        session's development consent, as it mirrors its mode — the keyword
+        pin alone would pass a literal None."""
+        from datetime import UTC, datetime
+
+        from scribe_desktop.encounter import development_consent
+
+        given = development_consent(datetime(2026, 10, 7, 9, 0, tzinfo=UTC)) if kept else None
+        directory = _unreviewed(tmp_path, development_consent=given)
+        controller = _controller(tmp_path)
+        window = _main_window(tmp_path, controller)
+        try:
+            _open_row(window, directory.name)
+            session = controller.session
+            assert session is not None and session.development_consent == given
+            record = window._checkout.record
+            assert record is not None and record.development_consent == given
+            window.transcript_screen.on_discard()
+        finally:
             _close(window)
 
     @windows_only

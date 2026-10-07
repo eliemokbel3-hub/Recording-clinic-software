@@ -1181,6 +1181,9 @@ class MainWindow(QMainWindow):
                 consent=session.consent,
                 context=session.encounter_context,
                 mode=session.mode,
+                # Development-recordings D2: the adopted session's own copy
+                # (taken from its record by ``adopt_queued``), as ``mode`` is.
+                development_consent=session.development_consent,
             ),
             adopted=True,
         )

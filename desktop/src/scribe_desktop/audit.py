@@ -24,7 +24,11 @@ There is no field for a patient name, a patient id, transcript or note
 text. Named residue: a single token-shaped word passes the token pattern,
 so what callers put in a token field is theirs to keep content-free — the
 only producers are ``session_store.fact_token`` over persisted model and
-provider names, and ``draft_write.WriteRefusal.name``.
+provider names, ``draft_write.WriteRefusal.name``, and the two consents'
+fixed wording versions (``ConsentAttestation.text_version`` and, since the
+development-recordings plan's v3 row, ``DevelopmentConsent.text_version``).
+A kept recording's facts (``RecordingRecord``) are two timestamps and a
+count.
 
 Custody rules (C2): ``begin`` — the row Start writes — RAISES
 ``AuditWriteError`` (a ``SessionControllerError``: the Start refusal) when
@@ -103,8 +107,10 @@ AUDIT_DIRNAME: Final = "audit"
 # D7: the store key's DPAPI description — distinct from every other store's.
 AUDIT_KEY_DESCRIPTION: Final = "ClinikoScribe audit key"
 # Pilot plan Task 1.3: v2 adds ``mode`` and ``app_version``; a v1 row is
-# upgraded on read (``_decode``, D6).
-AUDIT_SCHEMA_VERSION: Final = 2
+# upgraded on read (``_decode``, D6). Development-recordings plan Task 1.4:
+# v3 adds ``development_consent_version`` and the ``recording`` record; v1 and
+# v2 rows are upgraded on read (v1 → v2 → v3).
+AUDIT_SCHEMA_VERSION: Final = 3
 RETENTION_YEARS: Final = 7
 MAX_EVENTS: Final = 32
 ROW_SUFFIX: Final = ".enc"
@@ -275,6 +281,21 @@ class AuditEvent(_Frozen):
     code: _Code
 
 
+class RecordingRecord(_Frozen):
+    """The audit facts of a recording KEPT for development
+    (development-recordings plan D15): when its audio was kept, when it was
+    deleted, and how many times it was exported. Two timestamps and a count —
+    FIELDS, not events: ``MAX_EVENTS`` keeps only the newest events and the
+    CSV has no events column, so an event could be evicted and never seen.
+    ``kept_at`` is a distinctive name registered with the log tripwire
+    (``logging_setup._PAYLOAD_SIGNATURES``), so a rendering of this record on
+    its own is dropped like a rendering of the whole row."""
+
+    kept_at: AwareDatetime | None = None
+    deleted_at: AwareDatetime | None = None
+    exports: int = Field(default=0, ge=0)
+
+
 class AuditRow(_Frozen):
     """One session's audit row (D8). ``schema_version`` is read FIRST (the
     before-validator), so a newer row is never half-parsed into this one.
@@ -287,9 +308,17 @@ class AuditRow(_Frozen):
     (digits.digits.digits) and None on a row upgraded from v1. Both are
     flat tokens a log line could carry anyway, so neither needs a
     ``logging_setup._PAYLOAD_SIGNATURES`` entry: a rendering of a whole row
-    is still dropped by the row's existing distinctive names."""
+    is still dropped by the row's existing distinctive names.
 
-    schema_version: Literal[2] = AUDIT_SCHEMA_VERSION
+    Development-recordings plan Task 1.4 (v3, D3, D15):
+    ``development_consent_version`` — the wording version of the patient's
+    written development consent given at Start (a token; None when none was
+    given, and on a row upgraded from v1 or v2) — and ``recording``, the
+    content-free facts of a kept recording (``RecordingRecord``). A v3 row
+    NAMES ``development_consent_version`` (null allowed), as a v2 row names
+    its mode."""
+
+    schema_version: Literal[3] = AUDIT_SCHEMA_VERSION
     session_id: str = Field(pattern=SESSION_ID_PATTERN)
     # The practitioner's LOCAL calendar date (round 6 MED-002); it names the
     # row's month folder. Every timestamp field is an aware UTC time.
@@ -311,6 +340,8 @@ class AuditRow(_Frozen):
     note_provenance: Literal["known", "unknown"] | None = None
     mode: SessionMode | None = None
     app_version: _AppVersion | None = None
+    development_consent_version: _Token | None = None
+    recording: RecordingRecord = RecordingRecord()
     events: tuple[AuditEvent, ...] = Field(default=(), max_length=MAX_EVENTS)
 
     @model_validator(mode="before")
@@ -325,12 +356,19 @@ class AuditRow(_Frozen):
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
 
+    def with_update(self, **update: Any) -> AuditRow:
+        """This row with ``update`` applied, RE-VALIDATED — ``model_copy``
+        alone skips validation. No event is appended (development-recordings
+        D15: a kept recording's facts are fields, so repeated exports never
+        evict the session's events)."""
+        return AuditRow.model_validate({**self.model_dump(), **update})
+
     def with_event(self, code: str, at: datetime, **update: Any) -> AuditRow:
         """This row with ``update`` applied and ``code`` appended to the
-        events (the newest ``MAX_EVENTS`` kept), RE-VALIDATED — ``model_copy``
-        alone skips validation."""
+        events (the newest ``MAX_EVENTS`` kept), RE-VALIDATED
+        (``with_update``)."""
         events = (*self.events, AuditEvent(at=at, code=code))[-MAX_EVENTS:]
-        return AuditRow.model_validate({**self.model_dump(), **update, "events": events})
+        return self.with_update(**update, events=events)
 
 
 class _Newer:
@@ -348,38 +386,66 @@ def _upgrade_v1(data: dict[str, Any]) -> dict[str, Any]:
     """Pilot plan D6: a v1 row (written before 0.2.0) as v2 — mode
     ``normal`` (every recording before shadow mode existed was one), no app
     version. A v1 row that already names either field is not a row this app
-    wrote: left as it is, so validation refuses it."""
+    wrote: left as it is, so validation refuses it. ``_decode`` then chains
+    the v2 row through ``_upgrade_v2``."""
     if "mode" in data or "app_version" in data:
         return data
-    return {**data, "schema_version": AUDIT_SCHEMA_VERSION, "mode": SessionMode.NORMAL.value}
+    return {**data, "schema_version": 2, "mode": SessionMode.NORMAL.value}
+
+
+def _upgrade_v2(data: dict[str, Any]) -> dict[str, Any]:
+    """Development-recordings plan Task 1.4: a v2 row (written by 0.2.0, or
+    upgraded from v1) as v3 — no development consent (nothing before 0.3.0
+    kept a recording) and an empty ``recording`` record. A v2 row that
+    already names either field is not a row this app wrote: left as it is,
+    so validation refuses it."""
+    if "development_consent_version" in data or "recording" in data:
+        return data
+    return {
+        **data,
+        "schema_version": AUDIT_SCHEMA_VERSION,
+        "development_consent_version": None,
+        "recording": RecordingRecord().model_dump(),
+    }
 
 
 def _decode(plaintext: bytes) -> AuditRow | _Newer:
     """A row, ``_NEWER`` for a newer schema, else ``ValueError`` (terse). A
-    v1 row is upgraded BEFORE validation (``_upgrade_v1``); stored bytes
-    naming no version, or a v2 row naming no mode, are refused."""
+    v1 or v2 row is upgraded BEFORE validation (``_upgrade_v1`` then
+    ``_upgrade_v2``); stored bytes naming no version, a v2 or v3 row naming
+    no mode, or a v3 row naming no development consent version, are
+    refused."""
     try:
         data = json.loads(plaintext)
     except ValueError:
         data = None
     if isinstance(data, dict):
         version = data.get("schema_version")
-        if isinstance(version, int) and not isinstance(version, bool) and version > (
-            AUDIT_SCHEMA_VERSION
-        ):
-            return _NEWER
-        if "schema_version" in data and type(version) is not int:
-            # Peer round 27 PR-LOW-065 (round 26 SEC-001's rule for the record
-            # and the label): a JSON integer only — `true`, `2.0` or `"2"`
-            # would otherwise compare equal to a version.
-            raise ValueError("not an audit row")
-        if type(version) is int and version == 1:
-            data = _upgrade_v1(data)
-        elif "schema_version" not in data or "mode" not in data:
+        if type(version) is not int:
             # Pilot review round 22 (the encounter record's peer round 9
-            # rule): every row this app wrote names its version and, from v2
-            # on, its mode (null on a pre_audit row). The defaults are for
-            # building a row, so stored bytes missing either are not one.
+            # rule): every row this app wrote NAMES its version — the
+            # defaults are for building a row — and peer round 27
+            # PR-LOW-065 (round 26 SEC-001's rule): as a JSON integer only;
+            # `true`, `2.0` or `"2"` would otherwise compare equal to one.
+            # A missing version reads as None, so one test covers both.
+            raise ValueError("not an audit row")
+        if version > AUDIT_SCHEMA_VERSION:
+            return _NEWER
+        if version == 1:
+            data = _upgrade_v1(data)
+        elif "mode" not in data:
+            # From v2 on every row names its mode (null on a pre_audit row).
+            raise ValueError("not an audit row")
+        # Read AFTER the v1 upgrade on purpose: an upgraded v1 row is v2 now
+        # (a v1 row naming a later field stays v1 and validation refuses it).
+        if data.get("schema_version") == 2:
+            data = _upgrade_v2(data)
+        elif version == AUDIT_SCHEMA_VERSION and not (
+            "development_consent_version" in data and "recording" in data
+        ):
+            # Development-recordings Task 1.4 (and review round 8 LOW-006): a
+            # v3 row names its development consent version (null allowed)
+            # and its recording record, as a v2 row names its mode.
             raise ValueError("not an audit row")
         try:
             return AuditRow.model_validate(data)
@@ -470,6 +536,12 @@ def _completed(facts: CompletionFacts, state: DeletionState) -> Change:
         models = AuditModels(
             **{name: getattr(facts, name) for name in AuditModels.model_fields}
         )
+        # Development-recordings D15: a kept recording's ``kept_at`` is set in
+        # THIS write (one row write, no second ``update``); an earlier one
+        # (the start-up repair) is never moved.
+        recording = row.recording
+        if facts.recording_kept and recording.kept_at is None:
+            recording = recording.model_copy(update={"kept_at": now})
         return row.with_event(
             state,
             now,
@@ -477,6 +549,7 @@ def _completed(facts: CompletionFacts, state: DeletionState) -> Change:
             deletion=AuditDeletion(state=state, at=now),
             past_session=AuditPastSession(state=facts.past_session, at=now),
             note_provenance=facts.note_provenance,
+            recording=recording,
         )
 
     return change
@@ -500,11 +573,74 @@ def _past_session_recorded(state: PastSessionEvent) -> Change:
     def change(row: AuditRow, now: datetime) -> AuditRow:
         if row.past_session.state not in _PAST_SESSION_FROM[state]:
             return row
-        return row.with_event(
-            f"past_session_{state}", now, past_session=AuditPastSession(state=state, at=now)
-        )
+        update: dict[str, Any] = {"past_session": AuditPastSession(state=state, at=now)}
+        recording = row.recording
+        if (
+            state in ("deleted_early", "expired")
+            and recording.kept_at is not None
+            and recording.deleted_at is None
+        ):
+            # Development-recordings D15 (round 3 PR-MED-032): Delete now and
+            # the retention sweep destroy a kept recording with the entry
+            # key, so the audit fact follows in the same change; an earlier
+            # audio-only deletion's time is kept. ``kept_at`` is the
+            # precondition HERE (unlike ``_recording_deleted``) because these
+            # two outcomes end EVERY entry, kept or not; their callers
+            # record the kept fact first when the entry holds a recording
+            # (review round 8 LOW-003, Tasks 2.2 and 3.2).
+            update["recording"] = recording.model_copy(update={"deleted_at": now})
+        return row.with_event(f"past_session_{state}", now, **update)
 
     return change
+
+
+def _timestamp_or_none(moment: object) -> float | None:
+    """``moment``'s epoch seconds, or None for anything that has none (a
+    ``pre_audit`` row is then dated now, D8) — never a raise outside
+    ``update``'s guard."""
+    try:
+        return moment.timestamp() if isinstance(moment, datetime) else None
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def _with_recording(row: AuditRow, **update: Any) -> AuditRow:
+    """``row`` with its ``recording`` record updated and NO event appended
+    (``AuditRow.with_update``, D15): repeated exports must never evict the
+    session's ``started`` and ``completed`` events from the newest
+    ``MAX_EVENTS``."""
+    # Dumped, so the nested record is validated too (``model_copy`` is not,
+    # and pydantic does not re-validate a model instance it is handed).
+    return row.with_update(recording=row.recording.model_copy(update=update).model_dump())
+
+
+def _recording_kept(at: datetime) -> Change:
+    """The start-up repair (development-recordings Task 2.2's caller): a
+    committed entry holding a recording whose row never learned it. Sets
+    ``kept_at`` only when it is None — idempotent."""
+
+    def change(row: AuditRow, now: datetime) -> AuditRow:
+        if row.recording.kept_at is not None:
+            return row
+        return _with_recording(row, kept_at=at)
+
+    return change
+
+
+def _recording_deleted(row: AuditRow, now: datetime) -> AuditRow:
+    """Delete recording (D8): the audio alone. An earlier deletion's time is
+    kept. No ``kept_at`` precondition: the tab offers Delete recording ONLY
+    for an entry whose files show a kept recording, so the deletion is a
+    fact whatever an earlier (failed, counted) completion write left in the
+    row (review round 8 LOW-003)."""
+    if row.recording.deleted_at is not None:
+        return row
+    return _with_recording(row, deleted_at=now)
+
+
+def _recording_exported(row: AuditRow, now: datetime) -> AuditRow:
+    """One Export recording that reached its final file (D10)."""
+    return _with_recording(row, exports=row.recording.exports + 1)
 
 
 def _write_recorded(
@@ -593,6 +729,7 @@ class AuditLog:
         started_at: datetime,
         mode: SessionMode,
         app_version: str,
+        development_consent_version: str | None,
     ) -> None:
         """Write the new session's row BEFORE anything of the session exists
         (Flow 1). ``AuditWriteError`` when it cannot be written — the key
@@ -600,7 +737,10 @@ class AuditLog:
         already present — and nothing of the row is left behind. ``mode``
         and ``app_version`` (pilot plan Task 1.3) are the recording's mode
         and this build's version; a version outside the row's pattern is
-        left out rather than refusing Start."""
+        left out rather than refusing Start. ``development_consent_version``
+        (development-recordings plan Task 1.4, no default — every Start
+        names it) is the wording version of the patient's written
+        development consent, None when none was given."""
         now = self._clock()
         if user_id is not None and not _CLINIKO_ID_RE.fullmatch(user_id):
             user_id = None  # an id the registry could not vouch for is left out
@@ -625,6 +765,7 @@ class AuditLog:
                 treatment_note_id=context.treatment_note_id if context is not None else None,
                 mode=mode,
                 app_version=version,
+                development_consent_version=development_consent_version,
                 events=(AuditEvent(at=now, code="started"),),
             )
         except (ValidationError, ValueError, OverflowError, OSError):
@@ -729,6 +870,42 @@ class AuditLog:
             _past_session_recorded(state),
             stage=f"past_session_{state}",
             created_at=created_at,
+        )
+
+    def record_recording_kept(
+        self, session_id: str, at: datetime, *, created_at: float | None = None
+    ) -> bool:
+        """The start-up repair (development-recordings Task 2.2): a
+        committed Past-sessions entry holds a recording, so its row's
+        ``recording.kept_at`` is ``at`` (the entry's completion time) — set
+        only when it is None, so a second run changes nothing.
+        ``created_at`` dates a ``pre_audit`` row (D8; review round 8
+        LOW-002 — a row reset away is re-made in its session's month, not
+        today's): None dates it by ``at``."""
+        if created_at is None:
+            created_at = _timestamp_or_none(at)
+        return self.update(
+            session_id, _recording_kept(at), stage="recording_kept", created_at=created_at
+        )
+
+    def record_recording_deleted(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        """Delete recording (D8): ``recording.deleted_at``, kept when one is
+        already set. ``created_at`` dates a ``pre_audit`` row (D8). Never
+        raises (``update``)."""
+        return self.update(
+            session_id, _recording_deleted, stage="recording_deleted", created_at=created_at
+        )
+
+    def record_recording_exported(
+        self, session_id: str, *, created_at: float | None = None
+    ) -> bool:
+        """An Export recording that reached its final file (D10): the
+        ``recording.exports`` count rises by one. ``created_at`` dates a
+        ``pre_audit`` row (D8). Never raises (``update``)."""
+        return self.update(
+            session_id, _recording_exported, stage="recording_exported", created_at=created_at
         )
 
     def record_write(
@@ -1096,6 +1273,12 @@ CSV_COLUMNS: Final[tuple[str, ...]] = (
     # v1 row's version.
     "mode",
     "app_version",
+    # Development-recordings plan Task 1.4 (v3, D15), LAST: empty for a row
+    # with no development consent; a kept recording's facts.
+    "development_consent_version",
+    "recording.kept_at",
+    "recording.deleted_at",
+    "recording.exports",
 )
 
 # Characters a spreadsheet may read as the start of a formula.
@@ -1147,6 +1330,10 @@ def _csv_values(row: AuditRow) -> list[object]:
         row.note_provenance,
         row.mode.value if row.mode is not None else None,
         row.app_version,
+        row.development_consent_version,
+        row.recording.kept_at,
+        row.recording.deleted_at,
+        row.recording.exports,
     ]
 
 

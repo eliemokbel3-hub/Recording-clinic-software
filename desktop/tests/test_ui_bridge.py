@@ -134,10 +134,20 @@ class BridgeController(FakeController):
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
         mode: SessionMode = SessionMode.NORMAL,
+        development_consent: Any = None,
     ) -> RecordingSession:
-        super().start(device_id, consent=consent, context=context, mode=mode)
+        super().start(
+            device_id,
+            consent=consent,
+            context=context,
+            mode=mode,
+            development_consent=development_consent,
+        )
         self.session_value = RecordingSession(
-            consent=consent, encounter_context=context, mode=mode
+            consent=consent,
+            encounter_context=context,
+            mode=mode,
+            development_consent=development_consent,
         ).with_state(SessionState.RECORDING)
         self.session_ref = secrets.token_urlsafe(18)
         return self.session_value

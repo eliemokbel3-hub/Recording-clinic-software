@@ -74,6 +74,7 @@ from scribe_desktop.draft_write import (
 )
 from scribe_desktop.encounter import (
     ConsentAttestation,
+    DevelopmentConsent,
     EncounterContext,
     EncounterRecord,
     EncounterUnavailable,
@@ -301,6 +302,11 @@ class RecordingSession(BaseModel):
     # Pilot plan Task 1.2 (D1): fixed at Start from the pilot setting and
     # frozen with the session; a rebuild takes it from ``encounter.enc``.
     mode: SessionMode = SessionMode.NORMAL
+    # Development-recordings plan Task 1.5 (D2, D3): the patient's written
+    # consent to the recording being kept for development, decided at Start
+    # and frozen with the session; None = not kept (C3). A rebuild takes it
+    # from ``encounter.enc``.
+    development_consent: DevelopmentConsent | None = None
     state: SessionState = SessionState.IDLE
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
@@ -811,6 +817,7 @@ class SessionController:
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
         mode: SessionMode = SessionMode.NORMAL,
+        development_consent: DevelopmentConsent | None = None,
     ) -> RecordingSession:
         """Start a new recording session.
 
@@ -821,6 +828,11 @@ class SessionController:
         verification produced. ``mode`` (pilot plan D1) is the Start
         funnel's read of the pilot setting at the click — fixed for this
         recording, written to ``encounter.enc`` and the audit row.
+        ``development_consent`` (development-recordings plan D2) is the
+        funnel's resolution of the development setting and the second tick
+        at the click — None (not kept, C3) unless both were given; held on
+        the session and written to ``encounter.enc`` and (its wording
+        version) the audit row.
 
         Ordering (binding key-custody decision): the audit row (privacy-
         professional-controls Flow 1 — BEFORE the previous session is
@@ -838,6 +850,12 @@ class SessionController:
             raise SessionControllerError("start refused: the encounter context is malformed")
         if not isinstance(mode, SessionMode):
             raise SessionControllerError("start refused: the recording mode is malformed")
+        if development_consent is not None and not isinstance(
+            development_consent, DevelopmentConsent
+        ):
+            raise SessionControllerError(
+                "start refused: the development consent is malformed"
+            )
         try:
             bind_consent(consent, context)
         except ValueError:
@@ -863,7 +881,11 @@ class SessionController:
             # HERE (AuditWriteError, C2), with the previous QUEUED session
             # still installed and nothing of the new session on disk.
             session = RecordingSession(  # state defaults to idle
-                key_reference="key.dpapi", consent=consent, encounter_context=context, mode=mode
+                key_reference="key.dpapi",
+                consent=consent,
+                encounter_context=context,
+                mode=mode,
+                development_consent=development_consent,
             )
             if self._audit is not None:
                 self._audit.begin(
@@ -874,6 +896,11 @@ class SessionController:
                     started_at=session.created_at,
                     mode=mode,
                     app_version=self._app_version,
+                    development_consent_version=(
+                        development_consent.text_version
+                        if development_consent is not None
+                        else None
+                    ),
                 )
             try:
                 return self._start_locked(live, session, device_id)
@@ -918,6 +945,7 @@ class SessionController:
                     consent=session.consent,
                     context=session.encounter_context,
                     mode=session.mode,
+                    development_consent=session.development_consent,
                 ),
             )
             store = SessionChunkStore.create(
@@ -1570,6 +1598,9 @@ class SessionController:
                     key_reference="key.dpapi",
                     # Pilot plan D1: the mode it was started in (v1: normal).
                     mode=record.mode,
+                    # Development-recordings D2: as it was decided at Start
+                    # (a v1 or v2 record: None, not kept).
+                    development_consent=record.development_consent,
                     state=SessionState.QUEUED,
                 )
                 if live is not None:

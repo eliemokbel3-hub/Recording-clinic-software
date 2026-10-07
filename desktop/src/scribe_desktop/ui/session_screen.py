@@ -402,7 +402,14 @@ class SessionScreen(QWidget):
         mode = SessionMode.SHADOW if self._shadow_mode() else SessionMode.NORMAL
         try:
             session = self._controller.start(
-                device_id, consent=consent, context=context, mode=mode
+                device_id,
+                consent=consent,
+                context=context,
+                mode=mode,
+                # Development-recordings Task 1.5: named explicitly and None
+                # (not kept, C3) until Task 2.3 resolves the setting and the
+                # second tick at the click.
+                development_consent=None,
             )
             started = True
             if (

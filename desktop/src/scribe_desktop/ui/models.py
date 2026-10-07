@@ -43,6 +43,7 @@ from scribe_desktop.draft_write import (
 from scribe_desktop.encounter import (
     RECORDING_CONSENT_TEXT,
     ConsentAttestation,
+    DevelopmentConsent,
     EncounterContext,
     EncounterRecord,
     NoteRefusal,
@@ -1193,6 +1194,7 @@ class SessionControllerLike(Protocol):
         consent: ConsentAttestation,
         context: EncounterContext | None = None,
         mode: SessionMode = SessionMode.NORMAL,
+        development_consent: DevelopmentConsent | None = None,
     ) -> RecordingSession: ...
 
     def pause(self) -> RecordingSession: ...

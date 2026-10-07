@@ -1022,6 +1022,16 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
         def record_past_session(self, *args: Any, **kwargs: Any) -> bool:
             return True
 
+        # Development-recordings Task 1.4 (review round 8 LOW-004).
+        def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
+            return True
+
+        def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
+            return True
+
+        def record_recording_exported(self, *args: Any, **kwargs: Any) -> bool:
+            return True
+
     class FakePastSessions:
         def __init__(self, **kwargs: Any) -> None:
             pass

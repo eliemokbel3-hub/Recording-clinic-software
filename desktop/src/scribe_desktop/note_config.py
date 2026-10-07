@@ -119,11 +119,11 @@ import json
 import re
 import secrets
 import unicodedata
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from datetime import UTC, datetime
 from importlib import resources
 from pathlib import Path
-from typing import Annotated, Final, Literal, NamedTuple, Self, final
+from typing import Annotated, Any, Final, Literal, NamedTuple, Self, final
 
 from pydantic import (
     AfterValidator,
@@ -1149,26 +1149,47 @@ def pilot_settings_root() -> Path:
     return default_config_root()
 
 
+_FlagFileState = Literal["absent", "unreadable"]
+
+
+def _read_flag_file[M: BaseModel](
+    path: Path, parse: Callable[[bytes], M], max_bytes: int
+) -> M | _FlagFileState:
+    """A one-flag settings file (``pilot.json``, ``development.json``) read
+    bounded: ``parse``'s model, ``"absent"`` when there is no file, or
+    ``"unreadable"`` when it cannot be opened (a NUL in the path included),
+    is over ``max_bytes`` or does not parse (``parse`` raises ``ValueError``
+    — a ``ValidationError`` is one). Never raises — each caller maps the two
+    states to its OWN fail-closed answer (development-recordings review
+    round 8 LOW-010: the two readers' polarities are opposite)."""
+    try:
+        with path.open("rb") as stream:
+            blob = stream.read(max_bytes + 1)
+    except FileNotFoundError:
+        return "absent"
+    except (OSError, ValueError):  # ValueError: a NUL in the path
+        return "unreadable"
+    if len(blob) > max_bytes:
+        return "unreadable"
+    try:
+        return parse(blob)
+    except (ValueError, RecursionError):
+        return "unreadable"
+
+
 def read_pilot_settings(config_root: Path | None = None) -> PilotSettingsRead:
     """The pilot setting, failing CLOSED (D3): an ABSENT file is shadow off;
     a file that is present but cannot be read, is over its bound or is not
     valid is shadow ON, reported as unreadable (the Status tab names it).
     Never raises."""
     root = config_root if config_root is not None else pilot_settings_root()
-    try:
-        with (root / PILOT_SETTINGS_FILENAME).open("rb") as stream:
-            blob = stream.read(MAX_PILOT_SETTINGS_BYTES + 1)
-    except FileNotFoundError:
-        return PilotSettingsRead(shadow_mode=False, unreadable=False)
-    except (OSError, ValueError):  # ValueError: a NUL in the path
-        return PilotSettingsRead(shadow_mode=True, unreadable=True)
-    if len(blob) > MAX_PILOT_SETTINGS_BYTES:
-        return PilotSettingsRead(shadow_mode=True, unreadable=True)
-    try:
-        settings = PilotSettings.model_validate_json(blob)
-    except ValidationError:
-        return PilotSettingsRead(shadow_mode=True, unreadable=True)
-    return PilotSettingsRead(shadow_mode=settings.shadow_mode, unreadable=False)
+    found = _read_flag_file(
+        root / PILOT_SETTINGS_FILENAME, PilotSettings.model_validate_json, MAX_PILOT_SETTINGS_BYTES
+    )
+    if isinstance(found, str):
+        absent = found == "absent"
+        return PilotSettingsRead(shadow_mode=not absent, unreadable=not absent)
+    return PilotSettingsRead(shadow_mode=found.shadow_mode, unreadable=False)
 
 
 def save_pilot_settings(settings: PilotSettings, *, config_root: Path | None = None) -> Path:
@@ -1183,6 +1204,109 @@ def save_pilot_settings(settings: PilotSettings, *, config_root: Path | None = N
 def shadow_mode_on(config_root: Path | None = None) -> bool:
     """Whether a recording started NOW is a shadow recording (D1, D3)."""
     return read_pilot_settings(config_root).shadow_mode
+
+
+# ---------------------------------------------------------------------------
+# The development setting (development-recordings plan Task 1.1; D1, C3).
+# ---------------------------------------------------------------------------
+
+DEVELOPMENT_SETTINGS_FILENAME: Final = "development.json"
+# The file holds one flag; anything larger is not this file.
+MAX_DEVELOPMENT_SETTINGS_BYTES: Final = MAX_PILOT_SETTINGS_BYTES
+
+
+class DevelopmentSettings(BaseModel):
+    """On-disk shape of ``config\\development.json``, in both channels:
+    ``{"schema_version": 1, "keep_recordings": bool}``. Its own file, not a
+    field of ``pilot.json`` (D1): that file is closed and its unreadable state
+    means shadow ON, so a second field there would punish a rollback to 0.2.0.
+    ``keep_recordings`` has no default: a file that does not name it holds no
+    readable setting and reads as unreadable — which, unlike the pilot
+    setting, is OFF (C3)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    keep_recordings: bool = Field(strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _integer_version(cls, data: Any) -> Any:
+        # Round 26's rule (as the encounter record and the label): JSON
+        # ``true`` or ``1.0`` compares equal to 1 — only an integer is a
+        # version this app wrote.
+        if isinstance(data, dict) and "schema_version" in data:
+            if type(data["schema_version"]) is not int:
+                raise ValueError("the development setting's version is an integer")
+        return data
+
+    def to_bytes(self) -> bytes:
+        return (self.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+    @classmethod
+    def from_bytes(cls, blob: bytes) -> DevelopmentSettings:
+        """The stored file, which must NAME its ``schema_version`` (review
+        round 8 LOW-001; the encounter record's peer round 9 rule): the
+        default is for building one, so bytes naming only
+        ``keep_recordings`` are not a file this app wrote — unreadable, so
+        OFF, never ON. ``ValueError`` for anything else that is not this
+        file."""
+        data = json.loads(blob)
+        if not isinstance(data, dict) or "schema_version" not in data:
+            raise ValueError("not a development settings file")
+        return cls.model_validate(data)
+
+
+class DevelopmentSettingsRead(NamedTuple):
+    """What ``read_development_settings`` found: whether consented recordings
+    may be kept, and whether the answer is OFF because the file could not be
+    read."""
+
+    keep_recordings: bool
+    unreadable: bool
+
+
+def development_settings_root() -> Path:
+    """Where ``development.json`` lives when no root is passed: the config
+    root. A separate resolver so the test suite pins it to an empty folder
+    for every test (``conftest.pinned_development_root``) — no test reads the
+    host's own development setting (C9)."""
+    return default_config_root()
+
+
+def read_development_settings(config_root: Path | None = None) -> DevelopmentSettingsRead:
+    """The development setting, failing CLOSED to OFF on EVERY path (D1, C3)
+    — the same bounded read as ``read_pilot_settings`` (``_read_flag_file``)
+    with the OPPOSITE polarity: an absent file is off; a file that is present
+    but cannot be read, is over its bound, names no version or is not valid
+    is off too, reported as unreadable (the Status tab names it). Never
+    raises."""
+    root = config_root if config_root is not None else development_settings_root()
+    found = _read_flag_file(
+        root / DEVELOPMENT_SETTINGS_FILENAME,
+        DevelopmentSettings.from_bytes,
+        MAX_DEVELOPMENT_SETTINGS_BYTES,
+    )
+    if isinstance(found, str):
+        return DevelopmentSettingsRead(keep_recordings=False, unreadable=found == "unreadable")
+    return DevelopmentSettingsRead(keep_recordings=found.keep_recordings, unreadable=False)
+
+
+def save_development_settings(
+    settings: DevelopmentSettings, *, config_root: Path | None = None
+) -> Path:
+    """Replace the development settings file atomically through the config
+    directory's one write path; ``NoteConfigWriteError`` on any failure,
+    the file never partial."""
+    root = config_root if config_root is not None else development_settings_root()
+    _write_config_file(root, DEVELOPMENT_SETTINGS_FILENAME, settings.to_bytes())
+    return root / DEVELOPMENT_SETTINGS_FILENAME
+
+
+def keep_recordings_on(config_root: Path | None = None) -> bool:
+    """Whether a recording started NOW may be kept for development, given the
+    patient's written consent and the tick above Start (D1, D2)."""
+    return read_development_settings(config_root).keep_recordings
 
 
 # ---------------------------------------------------------------------------

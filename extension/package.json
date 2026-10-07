@@ -1,7 +1,7 @@
 {
   "name": "scribe-extension",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Chrome MV3 companion for the Cliniko clinical scribe (Phase 1: security foundation)",
   "type": "module",
   "scripts": {

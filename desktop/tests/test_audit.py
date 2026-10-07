@@ -35,6 +35,7 @@ from scribe_desktop.audit import (
     AuditRow,
     AuditUnavailable,
     AuditWriteError,
+    RecordingRecord,
     csv_cell,
     month_prune_at,
 )
@@ -79,12 +80,22 @@ def _log(tmp_path: Path, clock: _Clock | None = None, **kwargs: Any) -> AuditLog
 
 
 VERSION = "0.2.0"
-# Pilot plan Task 1.3: the two v2 arguments every Start passes.
-V2: dict[str, Any] = {"mode": SessionMode.NORMAL, "app_version": VERSION}
+DEVELOPMENT = "development-consent-v1"
+# Pilot plan Task 1.3 and development-recordings Task 1.4: the v2 and v3
+# arguments every Start passes.
+V2: dict[str, Any] = {
+    "mode": SessionMode.NORMAL,
+    "app_version": VERSION,
+    "development_consent_version": None,
+}
 
 
 def _begin_linked(
-    log: AuditLog, session_id: str | None = None, *, mode: SessionMode = SessionMode.NORMAL
+    log: AuditLog,
+    session_id: str | None = None,
+    *,
+    mode: SessionMode = SessionMode.NORMAL,
+    development: str | None = None,
 ) -> str:
     sid = session_id or _sid()
     ctx = context()
@@ -96,12 +107,17 @@ def _begin_linked(
         started_at=T0,
         mode=mode,
         app_version=VERSION,
+        development_consent_version=development,
     )
     return sid
 
 
 def _begin_unlinked(
-    log: AuditLog, *, started_at: datetime = T0, mode: SessionMode = SessionMode.NORMAL
+    log: AuditLog,
+    *,
+    started_at: datetime = T0,
+    mode: SessionMode = SessionMode.NORMAL,
+    development: str | None = None,
 ) -> str:
     sid = _sid()
     log.begin(
@@ -112,6 +128,7 @@ def _begin_unlinked(
         started_at=started_at,
         mode=mode,
         app_version=VERSION,
+        development_consent_version=development,
     )
     return sid
 
@@ -247,17 +264,21 @@ class TestNoContentByConstruction:
         ``archived`` either way (the entry was published, verified, before
         the key went), and a deferred marker is a transient the next
         reconciliation clears, which no row update would follow. It feeds
-        only Flow 3 step 4's status line."""
+        only Flow 3 step 4's status line. ``recording_kept``
+        (development-recordings Task 1.4) is recorded as the row's
+        ``recording.kept_at``, set in the same completion write."""
         facts = {field.name for field in dataclasses.fields(CompletionFacts)}
         assert set(AuditModels.model_fields) <= facts
         assert facts - set(AuditModels.model_fields) == {
             "note_provenance",
             "past_session",
             "commit_deferred",
+            "recording_kept",
         }
         row_fields = set(AuditRow.model_fields)
-        assert {"note_provenance", "past_session"} <= row_fields
+        assert {"note_provenance", "past_session", "recording"} <= row_fields
         assert "commit_deferred" not in row_fields
+        assert "recording_kept" not in row_fields
 
     def test_the_write_error_is_a_controller_error(self) -> None:
         """D12: the Start refusal's text reaches every screen."""
@@ -461,7 +482,7 @@ class TestRowStore:
         log = _log(tmp_path)
         _begin_unlinked(log)
         sid = _sid()
-        path = _seal(log, sid, {"schema_version": 3, "session_id": sid, "anything": [1, 2]})
+        path = _seal(log, sid, {"schema_version": 4, "session_id": sid, "anything": [1, 2]})
         before = path.read_bytes()
         assert log.record_deletion(sid, "expired") is False
         assert log.record_start_failed(sid) is False
@@ -736,12 +757,12 @@ class TestRowStore:
         assert log.row_for(_sid()) is None  # no row for that session
         # A newer-format row is never shown (D8).
         newer = _sid()
-        _seal(log, newer, {"schema_version": 3, "session_id": newer})
+        _seal(log, newer, {"schema_version": 4, "session_id": newer})
         assert log.row_for(newer) is None
         # Round 16 LOW-006: one id in two month folders is never "no record".
         twice = _sid()
-        _seal(log, twice, {"schema_version": 3, "session_id": twice}, month="2026-09")
-        _seal(log, twice, {"schema_version": 3, "session_id": twice}, month="2026-10")
+        _seal(log, twice, {"schema_version": 4, "session_id": twice}, month="2026-09")
+        _seal(log, twice, {"schema_version": 4, "session_id": twice}, month="2026-10")
         with pytest.raises(AuditUnavailable) as twice_info:
             log.row_for(twice)
         assert twice_info.value.reason == "unavailable"
@@ -805,7 +826,17 @@ def _v1_document(row: AuditRow) -> dict[str, Any]:
     version, ``schema_version`` 1."""
     document = json.loads(row.model_dump_json())
     del document["mode"], document["app_version"]
+    del document["development_consent_version"], document["recording"]
     document["schema_version"] = 1
+    return document
+
+
+def _v2_document(row: AuditRow) -> dict[str, Any]:
+    """``row`` as the v2 schema (0.2.0) stored it: no development consent
+    version, no recording record, ``schema_version`` 2."""
+    document = json.loads(row.model_dump_json())
+    del document["development_consent_version"], document["recording"]
+    document["schema_version"] = 2
     return document
 
 
@@ -813,7 +844,8 @@ def _v1_document(row: AuditRow) -> dict[str, Any]:
 class TestAuditRowV2:
     """Pilot plan Task 1.3 (D6, D7): ``mode`` and ``app_version`` on every
     Start's row, a v1 row upgraded in ``_decode`` BEFORE validation, and a
-    v3 row read as newer (Start unaffected)."""
+    newer row (v4 since development-recordings Task 1.4) read as newer
+    (Start unaffected)."""
 
     def test_begin_records_the_mode_and_the_version(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
@@ -823,7 +855,7 @@ class TestAuditRowV2:
         assert _only_row(log, normal).mode is SessionMode.NORMAL
         for sid in (shadow, normal):
             row = _only_row(log, sid)
-            assert (row.schema_version, row.app_version) == (2, VERSION)
+            assert (row.schema_version, row.app_version) == (3, VERSION)
 
     @pytest.mark.parametrize("bad", ["0.2", "0.2.0-dev", "v0.2.0", "0.2.0\n", "", "0. 2.0"])
     def test_a_version_the_row_cannot_hold_is_left_out_not_refused(
@@ -839,6 +871,7 @@ class TestAuditRowV2:
             started_at=T0,
             mode=SessionMode.NORMAL,
             app_version=bad,
+            development_consent_version=None,
         )
         assert _only_row(log, sid).app_version is None
 
@@ -863,12 +896,14 @@ class TestAuditRowV2:
         sid = _begin_linked(log)
         _seal(log, sid, _v1_document(_only_row(log, sid)))
         row = _only_row(log, sid)
-        assert (row.schema_version, row.mode, row.app_version) == (2, SessionMode.NORMAL, None)
+        assert (row.schema_version, row.mode, row.app_version) == (3, SessionMode.NORMAL, None)
         assert row.treatment_note_id == NOTE  # the rest of the row as stored
+        assert (row.development_consent_version, row.recording) == (None, RecordingRecord())
 
     def test_a_v1_row_is_upgraded_before_validation(self) -> None:
-        """Constraint 2: ``_decode`` upgrades; ``AuditRow`` itself takes v2
-        only (a v1 document handed to the model directly is refused)."""
+        """Constraint 2: ``_decode`` upgrades; ``AuditRow`` itself takes the
+        current version only (a v1 document handed to the model directly is
+        refused)."""
         row = AuditRow(session_id=_sid(), session_date=date(2026, 10, 1), origin="recorded")
         document = _v1_document(row)
         with pytest.raises(ValueError):
@@ -888,7 +923,7 @@ class TestAuditRowV2:
         assert log.record_deletion(sid, "discarded") is False
         assert path.read_bytes() == before
 
-    def test_an_updated_v1_row_is_written_back_as_v2(self, tmp_path: Path) -> None:
+    def test_an_updated_v1_row_is_written_back_as_v3(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         sid = _begin_unlinked(log)
         _seal(log, sid, _v1_document(_only_row(log, sid)))
@@ -901,10 +936,11 @@ class TestAuditRowV2:
         finally:
             crypto.destroy()
         assert (stored["schema_version"], stored["mode"], stored["app_version"]) == (
-            2,
+            3,
             "normal",
             None,
         )
+        assert stored["development_consent_version"] is None
         assert _only_row(log, sid).deletion.state == "discarded"
 
     def test_a_v1_row_exports_as_normal_with_an_empty_version(self, tmp_path: Path) -> None:
@@ -917,17 +953,268 @@ class TestAuditRowV2:
         exported = dict(zip(CSV_COLUMNS, rows[1], strict=True))
         assert (exported["mode"], exported["app_version"]) == ("normal", "")
 
-    def test_a_v3_row_is_newer_and_start_is_unaffected(self, tmp_path: Path) -> None:
+    def test_a_v4_row_is_newer_and_start_is_unaffected(self, tmp_path: Path) -> None:
         log = _log(tmp_path)
         _begin_unlinked(log)
         sid = _sid()
-        path = _seal(log, sid, {"schema_version": 3, "session_id": sid, "mode": "pilot"})
+        path = _seal(log, sid, {"schema_version": 4, "session_id": sid, "mode": "pilot"})
         before = path.read_bytes()
         assert log.record_deletion(sid, "discarded") is False
         assert path.read_bytes() == before
         assert log.rows().newer == 1
         _begin_unlinked(log)  # a newer row never refuses another Start
         assert len(log.rows().rows) == 2
+
+
+def _decode_document(document: dict[str, Any]) -> Any:
+    return audit_mod._decode(json.dumps(document).encode())  # noqa: SLF001
+
+
+class TestAuditRowV3Decode:
+    """Development-recordings plan Task 1.4 (D15): the v3 row's decoding
+    rules, without DPAPI."""
+
+    def _row(self) -> AuditRow:
+        return AuditRow(session_id=_sid(), session_date=date(2026, 10, 7), origin="recorded")
+
+    def test_a_v2_row_upgrades_to_v3_with_the_defaults(self) -> None:
+        decoded = _decode_document(_v2_document(self._row()))
+        assert isinstance(decoded, AuditRow)
+        assert decoded.schema_version == 3
+        assert (decoded.development_consent_version, decoded.recording) == (
+            None,
+            RecordingRecord(),
+        )
+
+    def test_a_v1_row_chains_through_v2_to_v3(self) -> None:
+        decoded = _decode_document(_v1_document(self._row()))
+        assert isinstance(decoded, AuditRow)
+        assert (decoded.schema_version, decoded.mode, decoded.recording) == (
+            3,
+            SessionMode.NORMAL,
+            RecordingRecord(),
+        )
+
+    @pytest.mark.parametrize("field", ["development_consent_version", "recording"])
+    def test_a_v2_row_naming_a_v3_field_is_refused(self, field: str) -> None:
+        document = _v2_document(self._row())
+        document[field] = None if field == "development_consent_version" else {}
+        with pytest.raises(ValueError):
+            _decode_document(document)
+
+    def test_a_v3_row_naming_no_development_consent_version_is_refused(self) -> None:
+        """Mirrors the v2 ``mode`` rule: the default is for building a row."""
+        row = self._row()
+        document = json.loads(row.to_bytes())
+        assert _decode_document(document) == row
+        del document["development_consent_version"]
+        with pytest.raises(ValueError):
+            _decode_document(document)
+
+    def test_a_v3_row_naming_no_mode_is_refused(self) -> None:
+        document = json.loads(self._row().to_bytes())
+        del document["mode"]
+        with pytest.raises(ValueError):
+            _decode_document(document)
+
+    def test_a_v3_row_naming_no_recording_record_is_refused(self) -> None:
+        """Review round 8 LOW-006: every v3 row this app writes names its
+        ``recording`` record — the default is for building a row."""
+        document = json.loads(self._row().to_bytes())
+        del document["recording"]
+        with pytest.raises(ValueError):
+            _decode_document(document)
+
+    @pytest.mark.parametrize("version", [3.0, True, "3"])
+    def test_a_version_that_is_not_an_integer_is_refused(self, version: Any) -> None:
+        document = json.loads(self._row().to_bytes())
+        document["schema_version"] = version
+        with pytest.raises(ValueError):
+            _decode_document(document)
+
+    def test_v4_is_newer(self) -> None:
+        document = json.loads(self._row().to_bytes())
+        document["schema_version"] = 4
+        assert _decode_document(document) is audit_mod._NEWER  # noqa: SLF001
+
+    def test_the_new_fields_refuse_content(self) -> None:
+        for update in (
+            {"development_consent_version": "Jane Citizen"},
+            {"recording": {"exports": -1}},
+            {"recording": {"kept_at": "2026-10-07T09:00:00"}},  # naive
+            {"recording": {"note": "x"}},
+        ):
+            with pytest.raises(ValueError):
+                AuditRow.model_validate({**self._row().model_dump(), **update})
+
+    def test_a_rendering_of_the_recording_record_alone_is_dropped(self) -> None:
+        """C6: the nested record can be rendered without any of the row's
+        other names, so its own distinctive name is registered."""
+        record = RecordingRecord(kept_at=T0, exports=2)
+        tripwire = PayloadTripwireFilter()
+        for rendered in (repr(record), str(record.model_dump()), record.model_dump_json()):
+            log_record = logging.LogRecord("t", logging.INFO, __file__, 1, rendered, None, None)
+            assert tripwire.filter(log_record) is False, rendered
+        assert "kept_at=" in _PAYLOAD_SIGNATURES
+
+
+@windows_only
+class TestAuditRowV3:
+    """Development-recordings plan Task 1.4 (D3, D15): the development
+    consent's version on Start's row, and the kept recording's three facts —
+    fields, never events."""
+
+    def test_begin_records_the_development_consent_version(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        kept = _begin_linked(log, development=DEVELOPMENT)
+        not_kept = _begin_unlinked(log)
+        assert _only_row(log, kept).development_consent_version == DEVELOPMENT
+        assert _only_row(log, not_kept).development_consent_version is None
+        for sid in (kept, not_kept):
+            assert _only_row(log, sid).recording == RecordingRecord()
+
+    def test_a_version_the_row_cannot_hold_refuses_start(self, tmp_path: Path) -> None:
+        """Unlike the app version (left out), the consent version comes from
+        the app's own constant: a value the token refuses is a failed Start,
+        and nothing is written."""
+        log = _log(tmp_path)
+        with pytest.raises(AuditWriteError):
+            _begin_unlinked(log, development="Jane Citizen")
+        assert log.rows().rows == ()
+
+    def test_a_v2_row_on_disk_reads_and_is_written_back_as_v3(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        _seal(log, sid, _v2_document(_only_row(log, sid)))
+        row = _only_row(log, sid)
+        assert (row.schema_version, row.development_consent_version) == (3, None)
+        assert log.record_deletion(sid, "discarded")
+        assert _only_row(log, sid).deletion.state == "discarded"
+
+    @pytest.mark.parametrize("kept", [True, False])
+    def test_the_completion_write_sets_kept_at(self, tmp_path: Path, kept: bool) -> None:
+        clock = _Clock()
+        log = _log(tmp_path, clock)
+        sid = _begin_linked(log, development=DEVELOPMENT if kept else None)
+        clock.now = T0 + timedelta(minutes=30)
+        facts = CompletionFacts(past_session="archived", recording_kept=kept)
+        assert log.record_completion(sid, facts, deletion="completed")
+        row = _only_row(log, sid)
+        assert row.recording == RecordingRecord(kept_at=clock.now if kept else None)
+        assert [event.code for event in row.events] == ["started", "completed"]
+
+    def test_the_kept_repair_is_idempotent_and_never_moves_an_earlier_time(
+        self, tmp_path: Path
+    ) -> None:
+        clock = _Clock()
+        log = _log(tmp_path, clock)
+        sid = _begin_linked(log, development=DEVELOPMENT)
+        completed = T0 + timedelta(minutes=30)
+        assert log.record_recording_kept(sid, completed)
+        assert _only_row(log, sid).recording.kept_at == completed
+        path = _row_path(log, sid)
+        before = path.read_bytes()
+        assert log.record_recording_kept(sid, completed + timedelta(days=1))
+        assert path.read_bytes() == before  # nothing written the second time
+        assert _only_row(log, sid).recording.kept_at == completed
+
+    def test_a_row_the_repair_has_to_make_is_dated_by_the_entry(self, tmp_path: Path) -> None:
+        """Review round 8 LOW-002: with no row (a reset set the store aside),
+        the repair's ``pre_audit`` row lands in the session's month, not
+        today's; an Export's and a Delete recording's take ``created_at``."""
+        log = _log(tmp_path)  # the clock reads T0, 2026-10-01
+        _begin_unlinked(log)  # the store's key
+        kept, exported, deleted = _sid(), _sid(), _sid()
+        completed = datetime(2026, 8, 15, 9, 0, tzinfo=UTC)
+        assert log.record_recording_kept(kept, completed)
+        row = _only_row(log, kept)
+        assert (row.origin, row.session_date) == ("pre_audit", date(2026, 8, 15))
+        assert row.recording.kept_at == completed
+        assert _row_path(log, kept).parent.name == "2026-08"
+        started = datetime(2026, 7, 2, 9, 0, tzinfo=UTC).timestamp()
+        assert log.record_recording_exported(exported, created_at=started)
+        assert log.record_recording_deleted(deleted, created_at=started)
+        for sid in (exported, deleted):
+            assert _only_row(log, sid).session_date == date(2026, 7, 2)
+
+    def test_delete_recording_sets_deleted_at_once(self, tmp_path: Path) -> None:
+        clock = _Clock()
+        log = _log(tmp_path, clock)
+        sid = _begin_linked(log, development=DEVELOPMENT)
+        assert log.record_recording_kept(sid, T0)
+        clock.now = T0 + timedelta(days=2)
+        assert log.record_recording_deleted(sid)
+        clock.now = T0 + timedelta(days=3)
+        assert log.record_recording_deleted(sid)
+        assert _only_row(log, sid).recording.deleted_at == T0 + timedelta(days=2)
+
+    def test_exports_count_up_and_never_evict_the_events(self, tmp_path: Path) -> None:
+        """D15: 40 exports — more than ``MAX_EVENTS`` — leave ``started``
+        in the events and the count exact."""
+        log = _log(tmp_path)
+        sid = _begin_linked(log, development=DEVELOPMENT)
+        for _ in range(MAX_EVENTS + 8):
+            assert log.record_recording_exported(sid)
+        row = _only_row(log, sid)
+        assert row.recording.exports == MAX_EVENTS + 8
+        assert [event.code for event in row.events] == ["started"]
+
+    @pytest.mark.parametrize("state", ["deleted_early", "expired"])
+    def test_delete_now_and_expiry_record_a_kept_recordings_deletion(
+        self, tmp_path: Path, state: Any
+    ) -> None:
+        """Round 3 PR-MED-032: those paths destroy the audio with the entry
+        key, so ``recording.deleted_at`` follows — on a kept row only, and
+        never moving an earlier audio-only deletion."""
+        clock = _Clock()
+        log = _log(tmp_path, clock)
+        kept, unkept, earlier = (_begin_linked(log) for _ in range(3))
+        for sid in (kept, earlier):
+            assert log.record_recording_kept(sid, T0)
+        clock.now = T0 + timedelta(days=1)
+        assert log.record_recording_deleted(earlier)
+        clock.now = T0 + timedelta(days=5)
+        for sid in (kept, unkept, earlier):
+            assert log.record_past_session(sid, state)
+        assert _only_row(log, kept).recording.deleted_at == clock.now
+        assert _only_row(log, unkept).recording == RecordingRecord()
+        assert _only_row(log, earlier).recording.deleted_at == T0 + timedelta(days=1)
+        for sid in (kept, unkept, earlier):
+            assert _only_row(log, sid).past_session.state == state
+
+    def test_an_archived_reconciliation_leaves_the_recording_alone(self, tmp_path: Path) -> None:
+        log = _log(tmp_path)
+        sid = _begin_linked(log)
+        assert log.record_recording_kept(sid, T0)
+        assert log.record_past_session(sid, "archived")
+        assert _only_row(log, sid).recording == RecordingRecord(kept_at=T0)
+
+    def test_export_names_the_four_v3_columns_last(self, tmp_path: Path) -> None:
+        assert CSV_COLUMNS[-4:] == (
+            "development_consent_version",
+            "recording.kept_at",
+            "recording.deleted_at",
+            "recording.exports",
+        )
+        clock = _Clock()
+        log = _log(tmp_path, clock)
+        kept = _begin_linked(log, development=DEVELOPMENT)
+        plain = _begin_unlinked(log)
+        assert log.record_recording_kept(kept, T0)
+        clock.now = T0 + timedelta(days=1)
+        assert log.record_recording_deleted(kept)
+        assert log.record_recording_exported(kept)
+        target = tmp_path / "export.csv"
+        assert log.export_csv(target) == 2
+        rows = list(csv.reader(io.StringIO(target.read_text(encoding="utf-8-sig"))))
+        by_id = {row[0]: dict(zip(CSV_COLUMNS, row, strict=True)) for row in rows[1:]}
+        assert [by_id[kept][name] for name in CSV_COLUMNS[-4:]] == [
+            DEVELOPMENT,
+            "2026-10-01T07:30:00+00:00",
+            "2026-10-02T07:30:00+00:00",
+            "1",
+        ]
+        assert [by_id[plain][name] for name in CSV_COLUMNS[-4:]] == ["", "", "", "0"]
 
 
 @windows_only
@@ -1058,8 +1345,9 @@ class TestCsv:
         )
 
     def test_export_names_the_mode_and_the_version(self, tmp_path: Path) -> None:
-        """Pilot plan Task 1.3: the two v2 columns, last, filled per row."""
-        assert CSV_COLUMNS[-2:] == ("mode", "app_version")
+        """Pilot plan Task 1.3: the two v2 columns, filled per row — last
+        until development-recordings Task 1.4's four v3 columns followed."""
+        assert CSV_COLUMNS[-6:-4] == ("mode", "app_version")
         log = _log(tmp_path)
         shadow = _begin_linked(log, mode=SessionMode.SHADOW)
         normal = _begin_unlinked(log)
@@ -1455,6 +1743,16 @@ class TestAppWiring:
 
             def record_past_session(self, session_id: str, state: str, **kwargs: Any) -> bool:
                 events.append(("past_session", session_id, state))
+                return True
+
+            # Development-recordings Task 1.4 (review round 8 LOW-004).
+            def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
+            def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
+                return True
+
+            def record_recording_exported(self, *args: Any, **kwargs: Any) -> bool:
                 return True
 
         class FakePastSessions:

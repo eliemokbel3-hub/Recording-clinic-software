@@ -274,6 +274,14 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"generated_text"',
     "'generated_text'",
     "generated_text=",
+    # Development-recordings plan Task 1.4 (D15; C6): the audit row's nested
+    # ``RecordingRecord`` can be rendered on its own, and none of the row's
+    # other names would then appear — so its distinctive field ``kept_at`` is
+    # registered (a whole row is already dropped by the names above). No
+    # ``log_event`` key renders as it (pinned by test).
+    '"kept_at"',
+    "'kept_at'",
+    "kept_at=",
 )
 
 # THE production log format — one string, used to build every handler's

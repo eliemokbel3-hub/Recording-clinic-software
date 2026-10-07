@@ -306,7 +306,11 @@ _MODE_CONSTRUCTIONS: Counter[tuple[str, str]] = Counter(
 _MODELESS: Final = [("session.py", "_complete_locked")]
 
 
-def _mode_constructions(sources: dict[str, ast.Module]) -> list[tuple[str, str, ast.Call]]:
+def _mode_constructions(
+    sources: dict[str, ast.Module], keywords: dict[str, str] = _MODE_KEYWORD
+) -> list[tuple[str, str, ast.Call]]:
+    """Every call to a callee of ``keywords`` (and every Start, when the map
+    names ``_START``)."""
     found: list[tuple[str, str, ast.Call]] = []
     for relative, tree in sources.items():
         for _scope, node in _scoped_nodes(tree):
@@ -314,9 +318,9 @@ def _mode_constructions(sources: dict[str, ast.Module]) -> list[tuple[str, str, 
                 continue
             name = _callee(node)
             func = node.func
-            if name in _MODE_KEYWORD:
+            if name in keywords:
                 found.append((relative, str(name), node))
-            elif name == "start" and (
+            elif _START in keywords and name == "start" and (
                 # Round 23: any `.start(` carrying a consent is a Start too.
                 "consent" in [kw.arg for kw in node.keywords]
                 or (
@@ -329,11 +333,14 @@ def _mode_constructions(sources: dict[str, ast.Module]) -> list[tuple[str, str, 
     return found
 
 
-def _without_mode(found: list[tuple[str, str, ast.Call]]) -> list[tuple[str, str]]:
+def _without_mode(
+    found: list[tuple[str, str, ast.Call]], keywords: dict[str, str] = _MODE_KEYWORD
+) -> list[tuple[str, str]]:
+    """The calls in ``found`` that do not name their ``keywords`` keyword."""
     return [
         (relative, name)
         for relative, name, call in found
-        if _MODE_KEYWORD[name] not in [kw.arg for kw in call.keywords]
+        if keywords[name] not in [kw.arg for kw in call.keywords]
     ]
 
 
@@ -341,6 +348,91 @@ def test_every_construction_of_a_mode_names_it() -> None:
     found = _mode_constructions(_package_sources())
     assert Counter((relative, name) for relative, name, _ in found) == _MODE_CONSTRUCTIONS
     assert _without_mode(found) == _MODELESS
+
+
+# Development-recordings plan Task 1.5 (C3, D2): every construction of a
+# recording, its encounter record, the Start call and the audit row's
+# ``begin`` names the DEVELOPMENT consent explicitly — the defaults (None, not
+# kept) exist for tests building records, so a new production site relying on
+# one would silently drop a consent, or (after a refactor) keep a recording
+# nobody decided to keep. No exemptions. Task 2.1 adds
+# ``_complete_locked`` → ``kept`` to this map in its own commit.
+_CONSENT_KEYWORD: Final[dict[str, str]] = {
+    "RecordingSession": "development_consent",
+    "EncounterRecord": "development_consent",
+    _START: "development_consent",
+    "begin": "development_consent_version",
+}
+_CONSENT_CONSTRUCTIONS: Counter[tuple[str, str]] = Counter(
+    {
+        ("session.py", "RecordingSession"): 2,  # Start; adopt_queued (from the record)
+        ("session.py", "EncounterRecord"): 1,  # Start's encounter.enc
+        ("ui/main_window.py", "EncounterRecord"): 1,  # `_open_adopted`'s checkout record
+        ("ui/session_screen.py", _START): 1,  # the one Start funnel
+        ("session.py", "begin"): 1,  # Start's audit row
+    }
+)
+
+
+def test_every_construction_names_its_development_consent() -> None:
+    found = _mode_constructions(_package_sources(), _CONSENT_KEYWORD)
+    assert Counter((relative, name) for relative, name, _ in found) == _CONSENT_CONSTRUCTIONS
+    assert _without_mode(found, _CONSENT_KEYWORD) == []
+
+
+@pytest.mark.parametrize(
+    ("statement", "missing"),
+    [
+        (
+            "RecordingSession(key_reference='key.dpapi', consent=None, mode=None)",
+            "RecordingSession",
+        ),
+        ("EncounterRecord(consent=None, mode=None)", "EncounterRecord"),
+        ("other.start(0, consent=None, mode=None)", _START),
+        ("self._audit.begin('x', consent=None, mode=None)", "begin"),
+    ],
+)
+def test_a_site_omitting_the_development_consent_fails(statement: str, missing: str) -> None:
+    sources = _with_extra(_package_sources(), "session.py", "SessionController.discard", statement)
+    found = _mode_constructions(sources, _CONSENT_KEYWORD)
+    assert Counter((relative, name) for relative, name, _ in found) != _CONSENT_CONSTRUCTIONS
+    assert _without_mode(found, _CONSENT_KEYWORD) == [("session.py", missing)]
+
+
+@pytest.mark.parametrize(
+    ("relative", "name"),
+    [
+        ("session.py", "RecordingSession"),
+        ("session.py", "EncounterRecord"),
+        ("ui/main_window.py", "EncounterRecord"),
+        ("ui/session_screen.py", _START),
+        ("session.py", "begin"),
+    ],
+)
+def test_each_existing_site_dropping_the_keyword_fails(relative: str, name: str) -> None:
+    """Every counted site in turn, with its keyword removed in memory: the
+    check names exactly that site."""
+    sources = dict(_package_sources())
+    tree = ast.parse(ast.unparse(sources[relative]))
+    stripped = 0
+    for _scope, node in _scoped_nodes(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        callee = _callee(node)
+        hit = callee == name or (
+            name == _START
+            and callee == "start"
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "_controller"
+        )
+        if hit and stripped == 0:
+            node.keywords = [kw for kw in node.keywords if kw.arg != _CONSENT_KEYWORD[name]]
+            stripped += 1
+    assert stripped == 1
+    sources[relative] = tree
+    found = _mode_constructions(sources, _CONSENT_KEYWORD)
+    assert _without_mode(found, _CONSENT_KEYWORD) == [(relative, name)]
 
 
 @pytest.mark.parametrize(
