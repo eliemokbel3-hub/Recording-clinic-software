@@ -56,6 +56,7 @@ from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import SweepResult, default_sessions_root, sweep_sessions
 from scribe_desktop.ui.main_window import MainWindow
 from scribe_desktop.ui.past_sessions_view import audit_moment, unattended_write
+from scribe_desktop.ui.past_sessions_view import export_recovery_lines as export_recovery_lines_for
 
 if sys.platform == "win32":
     import pywintypes
@@ -798,6 +799,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     last_prune = time.monotonic()
     audit.prune()  # Flow 4: the audit month prune at start-up...
+    # Development-recordings Task 3.3: an export a hard kill interrupted is
+    # resolved FIRST — before staging, reconciliation, the kept-fact repair,
+    # tidy and the retention sweep — and what it could not remove is named
+    # on the Past sessions status line.
+    export_recovery_lines = export_recovery_lines_for(past_sessions.recover_exports())
     # Flow 3: app start -> sweep BEFORE the recovery list renders; at start-up
     # only, the kept-recording repair (development-recordings Task 2.2).
     run_sweep(repair_kept=True)
@@ -822,6 +828,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         windows_layer=windows_layer,
         live_ready=warmup.is_finished,
         start_hold=warmup.holds_start,
+        export_recovery_lines=export_recovery_lines,
     )
     # D8: a linked Start's audit row names the clinic's Cliniko user id,
     # read from the window's clinic registry at each Start.

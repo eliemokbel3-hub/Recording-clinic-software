@@ -1028,6 +1028,27 @@ def _fake_entry_unwrap(directory: Path) -> SessionCrypto:
     return SessionCrypto.from_key(blob[len(_FAKE_ENTRY_KEY) :])
 
 
+_FAKE_LEDGER_KEY = b"FAKE-LEDGER-KEY:"
+
+
+def _fake_ledger_wrap(crypto: SessionCrypto, root: Path) -> None:
+    """Development-recordings Task 3.3: the export ledger's key, raw behind
+    a marker (no DPAPI)."""
+    from scribe_desktop.past_sessions import EXPORT_LEDGER_KEY_FILENAME
+
+    (root / EXPORT_LEDGER_KEY_FILENAME).write_bytes(_FAKE_LEDGER_KEY + crypto.export_key())
+
+
+def _fake_ledger_unwrap(root: Path) -> SessionCrypto:
+    from scribe_desktop.past_sessions import EXPORT_LEDGER_KEY_FILENAME
+    from scribe_desktop.session_store import KeyCustodyError
+
+    blob = (root / EXPORT_LEDGER_KEY_FILENAME).read_bytes()
+    if not blob.startswith(_FAKE_LEDGER_KEY):
+        raise KeyCustodyError("not a ledger key")
+    return SessionCrypto.from_key(blob[len(_FAKE_LEDGER_KEY) :])
+
+
 def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any) -> Any:
     """Every `MainWindow` a test builds (Phase H round 24 MED-006): the
     learned-style store and the language model's presence are SEAMS — a
@@ -1048,11 +1069,14 @@ def _main_window(tmp_path: Path, controller: Any | None = None, **overrides: Any
             tmp_path / "past_sessions",
             wrap_key=_fake_entry_wrap,
             unwrap_key=_fake_entry_unwrap,
+            wrap_ledger_key=_fake_ledger_wrap,
+            unwrap_ledger_key=_fake_ledger_unwrap,
         ),
         # Round 16 LOW-018: the tab's dialogs are seams — a test never opens a
         # real confirmation or save dialog (C6).
         "past_sessions_confirm": lambda text, _action: pytest.fail(f"a confirmation: {text}"),
         "past_sessions_save_path": lambda: pytest.fail("a save dialog"),
+        "past_sessions_wav_path": lambda _sid: pytest.fail("a WAV save dialog"),
         "style_root": tmp_path / "style",
         "language_model_available": lambda: False,
         # Cliniko safeguards Task 2.2: never the real clinics.json, never the
@@ -9626,6 +9650,8 @@ def _ps_store(
         clock=lambda: clock,
         wrap_key=_fake_entry_wrap,
         unwrap_key=unwrap if unwrap is not None else _fake_entry_unwrap,
+        wrap_ledger_key=_fake_ledger_wrap,
+        unwrap_ledger_key=_fake_ledger_unwrap,
     )
 
 
@@ -9710,6 +9736,10 @@ class TestPastSessionsTab:
         confirm: Callable[[str, str], bool] | None = None,
         choose: Callable[[], Path | None] | None = None,
         monotonic: Callable[[], float] | None = None,
+        choose_wav: Callable[[str], Path | None] | None = None,
+        layer: Any = None,
+        recovery_lines: tuple[str, ...] = (),
+        clock: datetime = _PS_NOW,
     ) -> Any:
         from scribe_desktop.ui.past_sessions import PastSessionsScreen
 
@@ -9720,13 +9750,22 @@ class TestPastSessionsTab:
             _ps_store(tmp_path / "past_sessions") if store == "default" else store,
             audit=audit,
             config_root=tmp_path / "config",
-            clock=lambda: _PS_NOW,
+            clock=lambda: clock,
             monotonic=monotonic if monotonic is not None else (lambda: 100.0),
             local_zone=UTC,
             confirm=confirm if confirm is not None else refuse_confirm,
             choose_csv_path=(
                 choose if choose is not None else (lambda: pytest.fail("a save dialog"))
             ),
+            # Development-recordings Task 3.3: never a real WAV dialog or a
+            # real Windows layer (C6, C9).
+            choose_wav_path=(
+                choose_wav
+                if choose_wav is not None
+                else (lambda _sid: pytest.fail("a WAV save dialog"))
+            ),
+            windows_layer=layer,
+            export_recovery_lines=recovery_lines,
         )
         return screen
 
@@ -11373,3 +11412,691 @@ class TestPastSessionsTab:
         assert screen._open_entry is None
         assert self._rows(screen) == [] and screen._listings == []  # round 16 LOW-008
         window.close()
+
+    # --- the kept recording (development-recordings plan Phase 3) -----------
+
+    @staticmethod
+    def _kept_row(screen: Any, sid: str) -> str:
+        from PySide6.QtCore import Qt
+
+        for i in range(screen.entry_list.count()):
+            item = screen.entry_list.item(i)
+            if item.data(Qt.ItemDataRole.UserRole) == sid:
+                return str(item.text())
+        pytest.fail("no such row")
+
+    def test_the_marker_comes_from_both_files_and_decrypts_nothing_more(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 3.1 (D4): "(recording kept)" from ``audio.enc`` AND a live
+        ``audio-key.enc`` — never a decryption beyond the one label read per
+        entry; a missing file or a zeroed key reads as not kept."""
+        from scribe_desktop.past_sessions import AUDIO_KEY_FILE_BYTES, AUDIO_KEY_FILENAME
+        from scribe_desktop.session_store import AUDIO_FILENAME
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        unwraps = _CountedUnwrap()
+        store = _ps_store(root, unwrap=unwraps)
+        kept, _ = _ps_entry(store, audio=True)
+        plain, _ = _ps_entry(store, started=_PS_NOW - timedelta(days=1))
+        unwraps.calls = 0
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        assert unwraps.calls == 2  # the two labels, nothing for the marker
+        assert self._kept_row(screen, kept).endswith(f"({view.RECORDING_KEPT_MARK})")
+        assert view.RECORDING_KEPT_MARK not in self._kept_row(screen, plain)
+        for damage in ("audio", "zeroed"):
+            if damage == "audio":
+                (root / kept / AUDIO_FILENAME).rename(root / kept / "moved")
+            else:
+                (root / kept / "moved").rename(root / kept / AUDIO_FILENAME)
+                (root / kept / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+            screen.refresh()
+            assert view.RECORDING_KEPT_MARK not in self._kept_row(screen, kept)
+        screen.deleteLater()
+
+    def test_an_unreadable_entry_still_says_its_recording_is_kept(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        sid, _ = _ps_entry(_ps_store(root), audio=True)
+
+        def refuse(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        screen = self._screen(tmp_path, store=_ps_store(root, unwrap=refuse))
+        screen.refresh()
+        assert self._rows(screen) == [
+            f"{view.ENTRY_UNREADABLE_ROW} ({view.RECORDING_KEPT_MARK})"
+        ]
+        self._select(screen, sid)
+        # Its recording can still be found and deleted (C3), with no date.
+        assert not screen.recording_box.isHidden()
+        assert screen.recording_line_label.text() == "Recording kept for development."
+        assert screen.delete_recording_button.isEnabled()
+        screen.deleteLater()
+
+    def test_the_review_falls_due_at_365_days_and_not_at_364(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 3.1 (D9): ``completed_at + 365 days <= now``, compared as
+        instants; the status line counts the due ones; the opened entry says
+        when (month and year, local time) and, once due, "Review due."."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+
+        def completed(days: int, *, audio: bool = True) -> str:
+            at = _PS_NOW - timedelta(days=days)
+            sid, _ = _ps_entry(
+                _ps_store(root, clock=at), started=at - timedelta(minutes=20), audio=audio
+            )
+            return sid
+
+        due, not_yet = completed(365), completed(364)
+        old_plain = completed(900, audio=False)
+        screen = self._screen(tmp_path, store=_ps_store(root))
+        screen.refresh()
+        assert view.review_due_line(1) in screen.status_lines()
+        assert screen.status_label.text().count("due for review") == 1
+        self._select(screen, due)
+        assert screen.recording_line_label.text() == (
+            "Recording kept for development - review due October 2026. Review due."
+        )
+        self._select(screen, not_yet)
+        assert screen.recording_line_label.text() == (
+            "Recording kept for development - review due October 2026."
+        )
+        self._select(screen, old_plain)  # no recording: no line, no box
+        assert screen.recording_box.isHidden()
+        assert screen.recording_line_label.text() == ""
+        # The pure predicate at the boundary, whatever the zone.
+        label = screen._listing(due).label
+        assert view.review_due(label, label.completed_at + timedelta(days=365))
+        assert not view.review_due(label, label.completed_at + timedelta(days=365, seconds=-1))
+        assert not view.review_due(None, _PS_NOW)
+        assert view.review_due_line(2) == (
+            "2 kept recordings are due for review - delete each or note in the pilot log why "
+            "it is kept."
+        )
+        screen.deleteLater()
+
+    def test_a_review_falling_due_while_the_tab_is_open_is_shown_by_the_tick(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Codex round 23 PR-LOW-006: the recording crosses its 12 months with
+        the tab open — the next tick shows the count and "Review due." with
+        no refresh."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        root = tmp_path / "past_sessions"
+        at = _PS_NOW - timedelta(days=364)
+        sid, _ = _ps_entry(
+            _ps_store(root, clock=at), started=at - timedelta(minutes=20), audio=True
+        )
+        screen = self._screen(tmp_path, store=_ps_store(root))
+        screen.refresh()
+        self._select(screen, sid)
+        assert view.review_due_line(1) not in screen.status_lines()
+        assert not screen.recording_line_label.text().endswith(view.REVIEW_DUE_MARK)
+        later = _PS_NOW + timedelta(days=2)
+        screen._clock = lambda: later
+        screen._tick()
+        assert view.review_due_line(1) in screen.status_label.text()
+        assert screen.recording_line_label.text().endswith(view.REVIEW_DUE_MARK)
+        screen.deleteLater()
+
+    def test_the_review_month_is_local_time(self) -> None:
+        from datetime import timezone
+
+        from scribe_desktop.past_sessions import PastSessionLabel
+        from scribe_desktop.ui import past_sessions_view as view
+
+        label = PastSessionLabel(
+            session_id="a" * 32,
+            completed_at=datetime(2025, 10, 31, 20, 0, tzinfo=UTC),
+            recording="desktop",
+            has_generated=False,
+            has_saved=False,
+        )
+        now = datetime(2026, 1, 1, tzinfo=UTC)
+        east = timezone(timedelta(hours=10))
+        assert view.recording_line(label, now=now, zone=UTC).endswith("October 2026.")
+        assert view.recording_line(label, now=now, zone=east).endswith("November 2026.")
+
+    def test_no_new_line_names_the_patient_when_names_are_hidden(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, audio=True)
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        screen.on_hide_names(True)
+        self._select(screen, sid)
+        texts = [
+            screen.heading_label.text(),
+            screen.recording_line_label.text(),
+            *self._rows(screen),
+            *screen.status_lines(),
+        ]
+        assert all("Jane Citizen" not in text for text in texts)
+        assert view.PATIENT_HIDDEN in screen.heading_label.text()
+        assert screen.heading_label.text().endswith(f"({view.RECORDING_KEPT_MARK})")
+        screen.on_hide_names(False)
+        assert "Jane Citizen" not in screen.recording_line_label.text()
+        screen.deleteLater()
+
+    def test_delete_recording_takes_two_clicks_and_keeps_the_transcript_and_notes(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task 3.2 (D8): the audio ALONE; the kept fact first, then the
+        deletion recorded THROUGH ``on_destroyed`` — with the key file zeroed
+        and still present — then the files go."""
+        from scribe_desktop.past_sessions import AUDIO_KEY_FILENAME
+        from scribe_desktop.session_store import AUDIO_FILENAME
+        from scribe_desktop.session_store import KEY_FILENAME as KEY
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        started = _PS_NOW - timedelta(hours=3)
+        sid, _ = _ps_entry(store, started=started, audio=True)
+        audit = _FakePastAudit()
+        at_record: list[bytes] = []
+        real_record = audit.record_recording_deleted
+
+        def record(session_id: str, *, created_at: float | None = None) -> bool:
+            at_record.append((store.root / session_id / AUDIO_KEY_FILENAME).read_bytes())
+            return real_record(session_id, created_at=created_at)
+
+        audit.record_recording_deleted = record  # type: ignore[method-assign]
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        assert not screen.recording_box.isHidden()
+        screen.on_delete_recording_clicked()
+        assert screen.delete_recording_button.text() == view.DELETE_RECORDING_CONFIRM_LABEL
+        assert screen.message_label.text() == view.DELETE_RECORDING_CONFIRM_MESSAGE
+        assert store.recording_kept(sid)  # one click deletes nothing
+        assert screen.delete_button.text() == view.DELETE_LABEL  # Delete now untouched
+        screen.on_delete_recording_clicked()
+        assert not (store.root / sid / AUDIO_FILENAME).exists()
+        assert not (store.root / sid / AUDIO_KEY_FILENAME).exists()
+        assert (store.root / sid / KEY).is_file()
+        entry = store.read_entry(sid)  # the transcript and notes stay readable
+        assert entry.saved_note is not None
+        assert at_record and not at_record[0].strip(b"\0")  # recorded at the zeros
+        writes = [
+            call for call in audit.calls if call[0] in {"recording_kept", "recording_deleted"}
+        ]
+        assert writes == [
+            ("recording_kept", sid, _PS_NOW, started.timestamp()),
+            ("recording_deleted", sid, started.timestamp()),
+        ]
+        assert not any(call[0] == "past_session" for call in audit.calls)
+        assert screen.message_label.text() == view.DELETE_RECORDING_DONE
+        assert view.RECORDING_KEPT_MARK not in self._kept_row(screen, sid)
+        assert screen.recording_box.isHidden()
+        assert screen.delete_recording_button.text() == view.DELETE_RECORDING_LABEL
+        assert screen.generated_view.toPlainText() != ""  # the entry stays open
+        screen.deleteLater()
+
+    def test_an_unrecorded_kept_fact_keeps_the_zeroed_files_for_the_next_run(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Review round 21 LOW-002: the deletion is recorded, but the kept
+        fact is not — the zeroed files stay as the evidence the next run's
+        full record needs (the unattended path's rule)."""
+        from scribe_desktop.past_sessions import AUDIO_KEY_FILENAME
+        from scribe_desktop.session_store import AUDIO_FILENAME
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, audio=True)
+        audit = _FakePastAudit()
+        audit.record_recording_kept = (  # type: ignore[method-assign]
+            lambda *_args, **_kwargs: False
+        )
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_recording_clicked()
+        screen.on_delete_recording_clicked()
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        assert key.is_file() and not key.read_bytes().strip(b"\0")  # zeroed, kept
+        assert (store.root / sid / AUDIO_FILENAME).is_file()
+        assert not store.recording_kept(sid)  # destroyed all the same
+        assert screen.message_label.text() == view.DELETE_RECORDING_DONE
+        screen.deleteLater()
+
+    def test_the_recording_delete_arming_expires_and_follows_the_selection(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        now = [100.0]
+        store = _ps_store(tmp_path / "past_sessions")
+        first, _ = _ps_entry(store, audio=True)
+        second, _ = _ps_entry(store, started=_PS_NOW - timedelta(days=1), audio=True)
+        screen = self._screen(tmp_path, store=store, monotonic=lambda: now[0])
+        screen.refresh()
+        self._select(screen, first)
+        screen.on_delete_recording_clicked()
+        now[0] += view.DELETE_CONFIRM_SECONDS + 1
+        screen.on_delete_recording_clicked()  # late: asks again, deletes nothing
+        assert screen.message_label.text() == view.DELETE_RECORDING_CONFIRM_MESSAGE
+        assert store.recording_kept(first)
+        now[0] += view.DELETE_CONFIRM_SECONDS + 1
+        screen._tick()
+        assert screen.delete_recording_button.text() == view.DELETE_RECORDING_LABEL
+        assert screen.message_label.text() == ""
+        screen.on_delete_recording_clicked()
+        self._select(screen, second)  # another entry disarms
+        assert screen.delete_recording_button.text() == view.DELETE_RECORDING_LABEL
+        screen.on_delete_recording_clicked()
+        screen.on_delete_clicked()  # Delete now's first click disarms it too
+        assert screen.delete_recording_button.text() == view.DELETE_RECORDING_LABEL
+        assert store.recording_kept(first) and store.recording_kept(second)
+        screen.deleteLater()
+
+    def test_a_failed_delete_recording_says_why_and_records_no_deletion(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.past_sessions import PastSessionError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, audio=True)
+
+        def refuse(session_id: str, *, on_destroyed: Any = None) -> None:
+            raise PastSessionError("recording_delete_failed")
+
+        monkeypatch.setattr(store, "delete_recording", refuse)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_recording_clicked()
+        screen.on_delete_recording_clicked()
+        assert screen.message_label.text() == (
+            "The recording could not be deleted: that kept recording could not be deleted. "
+            "The transcript and notes are unchanged - try again."
+        )
+        assert not any(call[0] == "recording_deleted" for call in audit.calls)
+        assert self._kept_row(screen, sid).endswith(f"({view.RECORDING_KEPT_MARK})")
+        screen.deleteLater()
+
+    def test_a_refused_deletion_record_leaves_the_zeroed_files_for_the_next_run(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.past_sessions import AUDIO_KEY_FILENAME
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, audio=True)
+        audit = _FakePastAudit()
+        audit.record_recording_deleted = (  # type: ignore[method-assign]
+            lambda session_id, *, created_at=None: False
+        )
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_recording_clicked()
+        screen.on_delete_recording_clicked()
+        key = (store.root / sid / AUDIO_KEY_FILENAME).read_bytes()
+        assert key and not key.strip(b"\0")  # destroyed; the evidence stays
+        assert store.recording_state(sid) == "gone"
+        assert screen.message_label.text() == view.DELETE_RECORDING_DONE
+        screen.deleteLater()
+
+    def test_the_recording_controls_are_absent_for_an_entry_without_one(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store)
+        screen = self._screen(tmp_path, store=store, layer=_ExportLayer())
+        screen.refresh()
+        self._select(screen, sid)
+        assert screen.recording_box.isHidden()
+        assert not screen.delete_recording_button.isEnabled()
+        assert not screen.export_recording_button.isEnabled()
+        screen.on_delete_recording_clicked()
+        assert screen.message_label.text() == view.NO_KEPT_RECORDING
+        screen.on_export_recording()  # the WAV dialog would fail the test
+        assert screen.message_label.text() == view.NO_KEPT_RECORDING
+        screen.deleteLater()
+
+    # --- Export recording (Task 3.3) -----------------------------------------
+
+    def _export_screen(
+        self,
+        tmp_path: Path,
+        *,
+        shadow: bool = False,
+        layer: Any = "default",
+        confirm: Callable[[str, str], bool] | None = None,
+    ) -> tuple[Any, Any, str, Path, Any]:
+        store = _ps_store(tmp_path / "past_sessions")
+        started = _PS_NOW - timedelta(hours=3)
+        sid, _ = _ps_entry(store, started=started, audio=True, shadow=shadow)
+        folder = tmp_path / "labelling"
+        folder.mkdir()
+        audit = _FakePastAudit()
+        screen = self._screen(
+            tmp_path,
+            store=store,
+            audit=audit,
+            confirm=confirm,
+            choose_wav=lambda proposed: folder / f"{proposed}.wav",
+            layer=_ExportLayer() if layer == "default" else layer,
+        )
+        screen.refresh()
+        self._select(screen, sid)
+        return screen, store, sid, folder, audit
+
+    def test_export_writes_the_wav_and_counts_it_only_once_in_place(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        import wave
+
+        from scribe_desktop.ui import past_sessions_view as view
+
+        screen, store, sid, folder, audit = self._export_screen(tmp_path)
+        assert screen.export_recording_button.isEnabled()
+        screen.on_export_recording()
+        final = folder / f"{sid}.wav"
+        with wave.open(str(final), "rb") as reader:
+            header = (reader.getnchannels(), reader.getsampwidth(), reader.getframerate())
+            pcm = reader.readframes(reader.getnframes())
+        assert header == (1, 2, 16_000)
+        assert pcm == b"\x01\x02" * 160
+        assert sorted(p.name for p in folder.iterdir()) == [f"{sid}.wav"]
+        started = (_PS_NOW - timedelta(hours=3)).timestamp()
+        assert [c for c in audit.calls if c[0] == "recording_exported"] == [
+            ("recording_exported", sid, started)
+        ]
+        assert screen.message_label.text() == view.recording_exported_line(sid)
+        assert screen.message_label.text() == (
+            f"Exported as {sid}.wav. The file is not encrypted - delete it when you have "
+            "finished labelling it."
+        )
+        assert store.recording_kept(sid)  # the kept recording is untouched
+        screen.deleteLater()
+
+    def test_export_with_no_windows_layer_is_refused_before_the_dialog(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, _ = _ps_entry(store, audio=True)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)  # no layer
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_export_recording()  # the WAV dialog would fail the test
+        assert screen.message_label.text() == view.EXPORT_RECORDING_NO_LAYER
+        assert not any(call[0] == "recording_exported" for call in audit.calls)
+        screen.deleteLater()
+
+    @pytest.mark.parametrize(
+        ("resolved", "env", "drives", "code"),
+        [
+            (r"C:\Elsewhere\OneDrive\x", {"OneDrive": r"C:\Elsewhere\OneDrive"}, {}, "onedrive"),
+            (r"\\server\share\x", {}, {}, "network"),
+            (r"Z:\x", {}, {"Z:\\": 4}, "network"),
+            (r"C:\Elsewhere\AppData\Roaming\x", {"APPDATA": r"C:\Elsewhere\AppData\Roaming"},
+             {}, "roaming"),
+            (r"E:\x", {}, {"E:\\": 2}, "not_fixed"),
+            (r"E:\x", {}, {"E:\\": 0}, "not_fixed"),
+            (r"C:\Elsewhere\AppData\Local\ClinikoScribe\x", {}, {}, "app_folder"),
+            (r"C:\Elsewhere\AppData\Local\ClinikoScribe-dev", {}, {}, "app_folder"),
+        ],
+        ids=["onedrive", "unc", "remote", "roaming", "removable", "unknown", "prod", "dev"],
+    )
+    def test_export_refuses_a_destination_off_this_computer_or_in_custody(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        resolved: str,
+        env: dict[str, str],
+        drives: dict[str, int],
+        code: str,
+    ) -> None:
+        """Round 1 PR-HIGH-002: REFUSED by name, never "export anyway" —
+        nothing written, nothing counted, no question asked."""
+        from scribe_desktop import exclusions
+        from scribe_desktop.ui import past_sessions_view as view
+
+        folder_key = str(tmp_path / "labelling")
+        layer = _ExportLayer(real={folder_key: resolved}, env=env, drives=drives)
+        screen, _store, _sid, folder, audit = self._export_screen(tmp_path, layer=layer)
+        screen.on_export_recording()
+        reason = {
+            "onedrive": exclusions.EXPORT_ONEDRIVE,
+            "network": exclusions.EXPORT_NETWORK,
+            "roaming": exclusions.EXPORT_ROAMING,
+            "not_fixed": exclusions.EXPORT_NOT_FIXED,
+            "app_folder": exclusions.EXPORT_APP_FOLDER,
+        }[code]
+        assert screen.message_label.text() == view.export_refused_line(reason)
+        assert list(folder.iterdir()) == []
+        assert not any(call[0] == "recording_exported" for call in audit.calls)
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("accept", [False, True])
+    def test_a_shadow_recording_asks_before_the_write(
+        self, qapp: Any, tmp_path: Path, accept: bool
+    ) -> None:
+        """D7: the one question Export asks — declined writes nothing."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        asked: list[tuple[str, str]] = []
+
+        def confirm(text: str, action: str) -> bool:
+            asked.append((text, action))
+            return accept
+
+        screen, _store, sid, folder, audit = self._export_screen(
+            tmp_path, shadow=True, confirm=confirm
+        )
+        screen.on_export_recording()
+        assert asked == [(view.EXPORT_SHADOW_CONFIRM, view.EXPORT_SHADOW_ACTION)]
+        assert view.EXPORT_SHADOW_CONFIRM == (
+            "This was a shadow recording; the file will hold the whole consultation "
+            "unencrypted. Export it?"
+        )
+        assert (folder / f"{sid}.wav").exists() is accept
+        exported = [call for call in audit.calls if call[0] == "recording_exported"]
+        assert len(exported) == (1 if accept else 0)
+        screen.deleteLater()
+
+    def test_a_folder_changed_during_the_question_is_refused_by_the_store(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Codex round 23 PR-HIGH-001: the tab's check passed, then — while
+        the shadow question waits — the folder comes to resolve into
+        OneDrive; the store's own check of the RESOLVED folder refuses it,
+        with the same line, nothing written and nothing counted."""
+        import os
+
+        from scribe_desktop import exclusions
+        from scribe_desktop.ui import past_sessions_view as view
+
+        layer = _ExportLayer(env={"OneDrive": r"C:\Elsewhere\OneDrive"})
+
+        def confirm(_text: str, _action: str) -> bool:
+            # The mapping changes while the user reads the question.
+            layer.real[os.path.realpath(tmp_path / "labelling")] = r"C:\Elsewhere\OneDrive\x"
+            return True
+
+        screen, _store, sid, folder, audit = self._export_screen(
+            tmp_path, shadow=True, confirm=confirm, layer=layer
+        )
+        screen.on_export_recording()
+        assert screen.message_label.text() == view.export_refused_line(exclusions.EXPORT_ONEDRIVE)
+        assert list(folder.iterdir()) == []
+        assert not any(call[0] == "recording_exported" for call in audit.calls)
+        screen.deleteLater()
+
+    def test_an_unreadable_label_is_asked_neutrally_and_counted_undated(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Review round 20 LOW: asked (fail closed), never told it WAS shadow.
+        from dataclasses import replace
+
+        from scribe_desktop.ui import past_sessions_view as view
+
+        asked: list[str] = []
+
+        def confirm(text: str, _action: str) -> bool:
+            asked.append(text)
+            return True
+
+        screen, _store, sid, folder, audit = self._export_screen(tmp_path, confirm=confirm)
+        listing = screen._selected_listing()
+        monkeypatch.setattr(screen, "_selected_listing", lambda: replace(listing, label=None))
+        screen.on_export_recording()
+        assert asked == [view.EXPORT_UNKNOWN_CONFIRM]
+        assert "cannot tell whether" in view.EXPORT_UNKNOWN_CONFIRM
+        assert (folder / f"{sid}.wav").is_file()
+        assert [c for c in audit.calls if c[0] == "recording_exported"] == [
+            ("recording_exported", sid, None)
+        ]
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("failure", ["corrupt_chunk", "rename"])
+    def test_a_failure_after_plaintext_leaves_no_file_and_no_count(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+    ) -> None:
+        from scribe_desktop import past_sessions as past_module
+        from scribe_desktop.past_sessions import PastSessionError
+        from scribe_desktop.ui import past_sessions_view as view
+
+        screen, store, sid, folder, audit = self._export_screen(tmp_path)
+        if failure == "corrupt_chunk":
+
+            def broken(session_id: str) -> Any:
+                yield b"\x01\x02" * 80  # earlier plaintext, then an authentication failure
+                raise PastSessionError("unreadable")
+
+            monkeypatch.setattr(store, "read_recording", broken)
+        else:
+
+            def refuse(*_args: Any) -> None:
+                raise PermissionError(13, "denied")
+
+            monkeypatch.setattr(past_module.os, "rename", refuse)
+        screen.on_export_recording()
+        assert list(folder.iterdir()) == []
+        assert not any(call[0] == "recording_exported" for call in audit.calls)
+        reason = "unreadable" if failure == "corrupt_chunk" else "export_failed"
+        assert screen.message_label.text() == view.export_recording_failed_line(
+            PastSessionError(reason), sid
+        )
+        assert screen.message_label.text().startswith("The recording was not exported: ")
+        screen.deleteLater()
+
+    def test_a_partial_file_that_cannot_be_removed_is_named(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import past_sessions as past_module
+
+        screen, _store, sid, folder, audit = self._export_screen(tmp_path)
+
+        def refuse(*_args: Any) -> None:
+            raise PermissionError(13, "denied")
+
+        monkeypatch.setattr(past_module.os, "rename", refuse)
+        monkeypatch.setattr(past_module, "_remove_part", lambda *_args: False)
+        screen.on_export_recording()
+        # Review round 20 LOW-007: named — its session id is the only way to
+        # find it.
+        assert screen.message_label.text() == (
+            f"The recording could not be exported. A partial unencrypted file {sid}.wav.part "
+            "may remain in the folder you chose - delete it by hand now."
+        )
+        assert (folder / f"{sid}.wav.part").is_file()
+        assert not any(call[0] == "recording_exported" for call in audit.calls)
+        screen.deleteLater()
+
+    def test_the_start_up_recovery_lines_are_on_the_status_line(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        line = "A partial export file x.wav.part could not be removed - delete it by hand."
+        screen = self._screen(tmp_path, recovery_lines=(line,))
+        assert line in screen.status_lines()
+        assert line in screen.status_label.text()
+        screen.deleteLater()
+
+    def test_the_window_hands_the_tab_its_layer_dialog_and_lines(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        layer = _ExportLayer()
+
+        def chooser(_sid: str) -> Path | None:
+            return None
+
+        window = _main_window(
+            tmp_path,
+            windows_layer=layer,
+            past_sessions_wav_path=chooser,
+            export_recovery_lines=("a start-up line",),
+        )
+        screen = window.past_sessions_screen
+        assert screen._windows_layer is layer
+        assert screen._choose_wav_path is chooser
+        assert "a start-up line" in screen.status_lines()
+        window.close()
+
+
+class _ExportLayer:
+    """A ``WindowsLayer`` for the recording export (development-recordings
+    Task 3.3; C6, C9): ``real`` maps a folder to what it resolves to, every
+    drive is fixed unless ``drives`` says otherwise, and the profile lives
+    at ``C:\\Elsewhere`` — never the developer's own."""
+
+    def __init__(
+        self,
+        *,
+        real: dict[str, str] | None = None,
+        env: dict[str, str] | None = None,
+        drives: dict[str, int] | None = None,
+    ) -> None:
+        self.real = dict(real or {})
+        self.env = {
+            "LOCALAPPDATA": r"C:\Elsewhere\AppData\Local",
+            "USERPROFILE": r"C:\Elsewhere",
+            **(env or {}),
+        }
+        self.drives = dict(drives or {})
+
+    def environ(self, name: str) -> str | None:
+        return self.env.get(name) or None
+
+    def realpath(self, path: str) -> str:
+        return self.real.get(path, path)
+
+    def drive_type(self, root: str) -> int:
+        return self.drives.get(root.upper(), 3)
+
+    def file_attributes(self, path: str) -> int:
+        return 0x10
+
+    def set_file_attributes(self, path: str, attributes: int) -> bool:
+        return True
+
+    def wer_exclusions(self, hive: str = "HKCU") -> dict[str, int]:
+        return {}
+
+    def backup_exclusions(self) -> dict[str, tuple[str, ...]]:
+        return {}
+
+    def native_host_entries(self, key: str) -> tuple[Any, ...]:
+        return ()

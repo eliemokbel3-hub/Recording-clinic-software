@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import errno
 import os
+import shutil
+import stat
 import sys
 import uuid
 from dataclasses import replace
@@ -2619,3 +2621,914 @@ class TestKeptFactsInTheAudit:
             assert (row.origin, row.session_date) == ("pre_audit", started.date())
             assert row.past_session.state == "expired"
             assert (row.recording.kept_at, row.recording.deleted_at) == (completed, later)
+
+
+# ---------------------------------------------------------------------------
+# Export recording (development-recordings plan Task 3.3; D10, C2, C5): the
+# store's custody of the one unencrypted file — the exclusive ``.part``, the
+# export ledger OUTSIDE the entries, and its start-up recovery.
+# ---------------------------------------------------------------------------
+
+_FAKE_LEDGER = b"FAKE-LEDGER-KEY:"
+
+
+def _fake_ledger_wrap(crypto: SessionCrypto, root: Path) -> None:
+    (root / past_sessions.EXPORT_LEDGER_KEY_FILENAME).write_bytes(
+        _FAKE_LEDGER + crypto.export_key()
+    )
+
+
+def _fake_ledger_unwrap(root: Path) -> SessionCrypto:
+    blob = (root / past_sessions.EXPORT_LEDGER_KEY_FILENAME).read_bytes()
+    if not blob.startswith(_FAKE_LEDGER):
+        raise KeyCustodyError("not a ledger key")
+    return SessionCrypto.from_key(blob[len(_FAKE_LEDGER) :])
+
+
+def _export_store(tmp_path: Path) -> PastSessionStore:
+    return _store(
+        tmp_path, wrap_ledger_key=_fake_ledger_wrap, unwrap_ledger_key=_fake_ledger_unwrap
+    )
+
+
+def _anywhere(_folder: Path) -> str | None:
+    """The store's destination check, admitting every folder — the location
+    rule is ``exclusions.check_export_location``'s, tested there."""
+    return None
+
+
+def _wav_pcm(path: Path) -> tuple[int, int, int, bytes]:
+    import wave
+
+    with wave.open(str(path), "rb") as reader:
+        return (
+            reader.getnchannels(),
+            reader.getsampwidth(),
+            reader.getframerate(),
+            reader.readframes(reader.getnframes()),
+        )
+
+
+def _left_part(store: PastSessionStore, folder: Path, sid: str) -> Path:
+    """What a hard kill mid-export leaves: the exclusively created ``.part``
+    (holding some plaintext) and its ledger row."""
+    part = folder / f"{sid}.wav.part"
+    descriptor = os.open(part, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0))
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(b"RIFF partial plaintext")
+        status = os.fstat(stream.fileno())
+    identity = past_sessions.ExportIdentity(file_index=status.st_ino, device=status.st_dev)
+    rows = store._read_ledger()
+    rows[sid] = past_sessions.ExportRow(folder=str(folder), identity=identity)
+    store._write_ledger(rows)
+    return part
+
+
+class TestExportRecording:
+    def test_the_kept_recording_is_written_as_a_16k_mono_pcm16_wav(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "labelling"
+        folder.mkdir()
+        final = store.export_recording(sid, folder, check_destination=_anywhere)
+        assert final == folder / f"{sid}.wav"
+        assert _wav_pcm(final) == (1, 2, 16_000, b"".join(_PCM))
+        assert sorted(p.name for p in folder.iterdir()) == [f"{sid}.wav"]  # no .part left
+        assert store._read_ledger() == {}  # the row dropped after the rename
+        # What the app writes names its version (the read refuses one without).
+        crypto = _fake_ledger_unwrap(store.root)
+        stored = crypto.decrypt(
+            (store.root / past_sessions.EXPORT_LEDGER_FILENAME).read_bytes(),
+            past_sessions._EXPORT_LEDGER_AAD,
+        )
+        assert b'"schema_version":1' in stored
+        # The ledger lives OUTSIDE every entry, and the listing ignores it.
+        assert (store.root / past_sessions.EXPORT_LEDGER_FILENAME).is_file()
+        assert [listing.session_id for listing in store.list_entries()] == [sid]
+        assert store.recording_kept(sid)  # the recording itself is untouched
+
+    def test_the_row_is_written_after_the_create_and_before_the_first_chunk(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import speech
+
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        part = tmp_path / f"{sid}.wav.part"
+        real_write = speech.write_wav
+        seen: list[Any] = []
+
+        def spy(target: Any, chunks: Any) -> int:
+            status = os.stat(part)
+            row = store._read_ledger()[sid]
+            seen.append((status.st_size, row.folder, row.identity.file_index, status.st_ino))
+            return real_write(target, chunks)
+
+        monkeypatch.setattr(speech, "write_wav", spy)
+        store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        [(size, folder, recorded, actual)] = seen
+        assert (size, folder, recorded) == (0, str(tmp_path), actual)
+
+    def test_the_resolved_folder_is_checked_just_before_the_create(
+        self, tmp_path: Path
+    ) -> None:
+        """Codex round 23 PR-HIGH-001: the junction the caller checked is
+        retargeted while it waits on the user — the store checks the folder
+        it RESOLVED, and a refusal writes nothing there."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        allowed = tmp_path / "allowed"
+        forbidden = tmp_path / "forbidden"
+        allowed.mkdir()
+        forbidden.mkdir()
+        link = tmp_path / "via"
+        _link("junction", link, allowed)
+        checked: list[str] = []
+
+        def check(folder: Path) -> str | None:
+            checked.append(str(folder))
+            if Path(os.path.realpath(folder)) == Path(os.path.realpath(forbidden)):
+                return "that folder is inside OneDrive, which can copy the file off this computer."
+            return None
+
+        assert check(link) is None  # what the caller saw before its question
+        checked.clear()
+        link.rmdir()  # the junction itself, never its target
+        _link("junction", link, forbidden)  # retargeted during the wait
+        with pytest.raises(past_sessions.ExportDestinationRefused) as caught:
+            store.export_recording(sid, link, check_destination=check)
+        assert caught.value.reason == "export_destination_refused"
+        assert caught.value.line is not None and "OneDrive" in caught.value.line
+        assert checked == [os.path.realpath(forbidden)]  # the RESOLVED folder
+        assert list(forbidden.iterdir()) == [] and list(allowed.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_destination_check_that_raises_refuses(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+
+        def broken(_folder: Path) -> str | None:
+            raise OSError(errno.EIO, "cannot look")
+
+        with pytest.raises(past_sessions.ExportDestinationRefused) as caught:
+            store.export_recording(sid, tmp_path, check_destination=broken)
+        assert caught.value.line is None
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+        assert not (tmp_path / f"{sid}.wav").exists()
+
+    def test_a_file_already_named_part_is_never_adopted(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        part = tmp_path / f"{sid}.wav.part"
+        part.write_bytes(b"the practitioner's own file")
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_part_exists"
+        assert part.read_bytes() == b"the practitioner's own file"
+        assert not (tmp_path / f"{sid}.wav").exists()
+        assert store._read_ledger() == {}
+
+    def test_an_existing_wav_is_never_overwritten(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        final = tmp_path / f"{sid}.wav"
+        final.write_bytes(b"an earlier export")
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_exists"
+        assert final.read_bytes() == b"an earlier export"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+
+    def test_an_entry_without_a_kept_recording_writes_nothing(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _published(store)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "recording_not_kept"
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["past_sessions"]
+
+    def test_a_corrupt_later_chunk_leaves_no_file_and_no_row(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``iter_chunks`` yields earlier plaintext before a later chunk
+        fails authentication: the ``.part`` holding it is removed."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+
+        def broken(session_id: str) -> Any:
+            yield _PCM[0]
+            raise PastSessionError("unreadable")
+
+        monkeypatch.setattr(store, "read_recording", broken)
+        folder = tmp_path / "out"
+        folder.mkdir()
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        assert caught.value.reason == "unreadable"
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_real_corrupt_chunk_on_disk_leaves_no_file(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        audio = store.root / sid / AUDIO_FILENAME
+        blob = bytearray(audio.read_bytes())
+        blob[-40] ^= 0xFF  # a later chunk (or the footer) fails authentication
+        audio.write_bytes(bytes(blob))
+        folder = tmp_path / "out"
+        folder.mkdir()
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        # Review round 22: the recording's damage, never this account's.
+        assert caught.value.reason == "recording_unreadable"
+        assert "may be damaged" in str(caught.value)
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_failed_rename_leaves_neither_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+
+        def refuse(*_args: Any) -> None:
+            raise PermissionError(errno.EACCES, "denied")
+
+        monkeypatch.setattr(past_sessions.os, "rename", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        assert caught.value.reason == "export_failed"
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_part_that_cannot_be_removed_keeps_its_row_for_the_next_start(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+
+        def refuse(*_args: Any) -> None:
+            raise PermissionError(errno.EACCES, "denied")
+
+        # Codex round 27 PR-LOW-001: the test's own patches are SCOPED — an
+        # ``undo()`` would also lift the conftest's injected ``.part`` kernel.
+        with monkeypatch.context() as patched:
+            patched.setattr(past_sessions.os, "rename", refuse)
+            patched.setattr(past_sessions, "_remove_part", lambda *_args: False)
+            with pytest.raises(PastSessionError) as caught:
+                store.export_recording(sid, folder, check_destination=_anywhere)
+        assert caught.value.reason == "export_cleanup_failed"
+        part = folder / f"{sid}.wav.part"
+        assert part.is_file()
+        assert sid in store._read_ledger()
+        # The next start removes it — it is still the file the app created.
+        assert _export_store(tmp_path).recover_exports() == past_sessions.ExportRecovery()
+        assert not part.exists()
+        assert store._read_ledger() == {}
+
+    def test_a_new_export_resolves_an_earlier_unresolved_row_first(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        left = _left_part(store, tmp_path, earlier)
+        store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert not left.exists()
+        assert (tmp_path / f"{sid}.wav").is_file()
+        assert store._read_ledger() == {}
+
+    def test_a_replaced_part_refuses_the_new_export_and_is_never_deleted(
+        self, tmp_path: Path
+    ) -> None:
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        left = _left_part(store, tmp_path, earlier)
+        left.unlink()
+        left.write_bytes(b"a different file now")  # a new identity at that name
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_unresolved"
+        # Review round 21 LOW-005: the refusal names the file to delete.
+        assert isinstance(caught.value, past_sessions.ExportUnresolvedError)
+        assert caught.value.session_ids == (earlier,)
+        assert left.read_bytes() == b"a different file now"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+        assert not (tmp_path / f"{sid}.wav").exists()
+        assert earlier in store._read_ledger()
+
+    def test_an_undeletable_part_refuses_the_new_export(
+        self, tmp_path: Path, part_kernel: Any
+    ) -> None:
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        left = _left_part(store, tmp_path, earlier)
+        part_kernel.refuse_delete = True
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_unresolved"
+        assert left.is_file()
+
+    def test_an_unreadable_ledger_refuses_an_export_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        (store.root / past_sessions.EXPORT_LEDGER_FILENAME).write_bytes(b"not a ledger")
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_ledger_unreadable"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+
+    def test_a_close_that_fails_after_a_failure_still_removes_the_part(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 20 MED-001: the close fails (a full disk fails its
+        flush) and so does the clean-up's close — the clean-up still runs,
+        and only a ``PastSessionError`` leaves."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+        real_fdopen = os.fdopen
+
+        class _CloseFails:
+            def __init__(self, real: Any) -> None:
+                self._real = real
+
+            def __getattr__(self, name: str) -> Any:
+                return getattr(self._real, name)
+
+            def close(self) -> None:
+                self._real.close()
+                raise OSError(errno.ENOSPC, "full")
+
+        monkeypatch.setattr(
+            past_sessions.os, "fdopen", lambda *args: _CloseFails(real_fdopen(*args))
+        )
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        assert caught.value.reason == "export_failed"
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_row_that_cannot_be_written_writes_no_audio(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop import speech
+
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+        written: list[Any] = []
+        monkeypatch.setattr(speech, "write_wav", lambda *args: written.append(args))
+
+        def refuse(_rows: Any) -> None:
+            raise OSError(errno.EACCES, "denied")
+
+        monkeypatch.setattr(store, "_write_ledger", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        assert caught.value.reason == "export_unrecorded"
+        assert written == []
+        assert list(folder.iterdir()) == []  # the empty .part removed
+
+    def test_a_resolution_that_cannot_be_recorded_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        left = _left_part(store, tmp_path, earlier)
+        left.unlink()  # deleted by hand: this export resolves the row
+
+        def refuse(_rows: Any) -> None:
+            raise OSError(errno.EACCES, "denied")
+
+        monkeypatch.setattr(store, "_write_ledger", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_unrecorded"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+        assert not (tmp_path / f"{sid}.wav").exists()
+        assert earlier in store._read_ledger()
+
+    def test_a_ledger_that_cannot_be_read_this_time_refuses_and_is_never_reset(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 20 LOW-004: a transient read error is not damage."""
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        left = _left_part(store, tmp_path, earlier)
+
+        real_read = past_sessions._read_capped
+
+        def busy(path: Path, cap: int) -> bytes:
+            if path.name == past_sessions.EXPORT_LEDGER_FILENAME:
+                raise PermissionError(errno.EACCES, "in use")
+            return real_read(path, cap)
+
+        monkeypatch.setattr(past_sessions, "_read_capped", busy)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert caught.value.reason == "export_ledger_busy"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+        assert store.recover_exports() == past_sessions.ExportRecovery(busy=True)
+        monkeypatch.undo()
+        assert earlier in store._read_ledger()  # never started again
+        assert left.is_file()
+
+    @pytest.mark.parametrize("wrapped", [True, False])
+    def test_a_ledger_key_that_cannot_be_read_this_time_is_busy_too(
+        self, tmp_path: Path, wrapped: bool
+    ) -> None:
+        """Review round 21 LOW-001: the KEY file locked by a scanner — raw,
+        or wrapped in ``KeyCustodyError`` as ``unwrap_key_from_file`` does —
+        is busy; the ledger and its row survive."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+
+        def locked(_root: Path) -> SessionCrypto:
+            error = PermissionError(errno.EACCES, "in use")
+            if not wrapped:
+                raise error
+            raise KeyCustodyError("key custody blob unreadable") from error
+
+        busy = _store(tmp_path, wrap_ledger_key=_fake_ledger_wrap, unwrap_ledger_key=locked)
+        assert busy.recover_exports() == past_sessions.ExportRecovery(busy=True)
+        assert sid in store._read_ledger()
+        assert left.is_file()
+
+    def test_a_missing_ledger_key_is_damage_and_resets(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        _left_part(store, tmp_path, sid)
+        (store.root / past_sessions.EXPORT_LEDGER_KEY_FILENAME).unlink()
+        assert store.recover_exports() == past_sessions.ExportRecovery(reset=True)
+
+    def test_an_identity_that_cannot_be_read_removes_the_part_by_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 21 LOW-003: no identity, so no row — the file the
+        export created an instant ago goes by its name."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+
+        def refuse(_descriptor: int) -> Any:
+            raise OSError(errno.EIO, "fstat")
+
+        monkeypatch.setattr(past_sessions.os, "fstat", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        monkeypatch.undo()
+        assert caught.value.reason == "export_failed"
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_row_that_cannot_be_dropped_after_the_rename_is_resolved_later(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 21 LOW-003: the export succeeded; the stale row names
+        a ``.part`` that is gone, which the next resolution drops — the
+        finished ``.wav`` is never touched."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        real_write = store._write_ledger
+
+        def refuse_empty(rows: Any) -> None:
+            if not rows:
+                raise OSError(errno.EACCES, "denied")
+            real_write(rows)
+
+        with monkeypatch.context() as patched:  # codex round 27 PR-LOW-001
+            patched.setattr(store, "_write_ledger", refuse_empty)
+            final = store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert final.is_file()
+        assert sid in store._read_ledger()
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert store._read_ledger() == {}
+        assert final.is_file()
+
+    def test_a_recovery_that_cannot_be_recorded_is_resolved_again(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 21 LOW-003: the ``.part`` is removed but the ledger
+        rewrite fails — the row stays, and the next start drops it."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+
+        def refuse(_rows: Any) -> None:
+            raise OSError(errno.EACCES, "denied")
+
+        with monkeypatch.context() as patched:  # codex round 27 PR-LOW-001
+            patched.setattr(store, "_write_ledger", refuse)
+            assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert not left.exists()
+        assert sid in store._read_ledger()
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert store._read_ledger() == {}
+
+    def test_a_relative_folder_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 22: the folder EXISTS relative to the working directory, so
+        only the refusal — not a failing create — keeps it empty."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        (tmp_path / "out").mkdir()
+        monkeypatch.chdir(tmp_path)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, Path("out"), check_destination=_anywhere)
+        assert caught.value.reason == "export_failed"
+        assert list((tmp_path / "out").iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_the_resolved_folder_is_exported_into_and_recorded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 21 LOW-007, pinned in round 22: through a junction the
+        file lands in, and the ledger names, the folder the link resolves to."""
+        from scribe_desktop import speech
+
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        real = tmp_path / "real"
+        real.mkdir()
+        link = tmp_path / "via"
+        _link("junction", link, real)
+        seen: list[str] = []
+        real_write = speech.write_wav
+
+        def spy(target: Any, chunks: Any) -> int:
+            seen.append(store._read_ledger()[sid].folder)
+            return real_write(target, chunks)
+
+        monkeypatch.setattr(speech, "write_wav", spy)
+        final = store.export_recording(sid, link, check_destination=_anywhere)
+        assert seen == [os.path.realpath(real)]
+        assert final == Path(os.path.realpath(real)) / f"{sid}.wav"
+        assert (real / f"{sid}.wav").is_file()
+
+    def test_a_folder_that_cannot_be_resolved_writes_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+
+        def refuse(_path: Any) -> str:
+            raise OSError(errno.EIO, "cannot resolve")
+
+        monkeypatch.setattr(past_sessions.os.path, "realpath", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        monkeypatch.undo()
+        assert caught.value.reason == "export_failed"
+        assert not (tmp_path / f"{sid}.wav.part").exists()
+        assert store._read_ledger() == {}
+
+    def test_an_export_file_that_cannot_be_opened_as_a_stream_is_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 22 LOW: nothing that can fail sits between the
+        create and the clean-up — a failing ``fdopen`` removes the empty
+        file, and only a ``PastSessionError`` leaves."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+
+        def refuse(*_args: Any) -> Any:
+            raise OSError(errno.EMFILE, "too many")
+
+        monkeypatch.setattr(past_sessions.os, "fdopen", refuse)
+        with pytest.raises(PastSessionError) as caught:
+            store.export_recording(sid, folder, check_destination=_anywhere)
+        monkeypatch.undo()
+        assert caught.value.reason == "export_failed"
+        assert list(folder.iterdir()) == []
+        assert store._read_ledger() == {}
+
+    def test_a_deleted_export_folder_drops_its_row(self, tmp_path: Path) -> None:
+        """Review round 20 LOW-005 (kept): a folder deleted by hand takes its
+        partial file with it — the row must not refuse every later export."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        folder = tmp_path / "out"
+        folder.mkdir()
+        _left_part(store, folder, sid)
+        shutil.rmtree(folder)
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert store._read_ledger() == {}
+
+    @pytest.mark.parametrize("destroyer", ["delete_now", "expiry"])
+    def test_the_row_survives_its_entry(self, tmp_path: Path, destroyer: str) -> None:
+        """Round 6 PR-MED-061: the ledger is OUTSIDE the entries, so Delete
+        now and expiry of the entry never erase the record of its export."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        if destroyer == "delete_now":
+            store.delete_entry(sid)
+        else:
+            assert store.sweep(SEVEN, NOW + WINDOW + timedelta(days=1)) == [sid]
+        assert not (store.root / sid).exists()
+        assert sid in store._read_ledger()
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert not left.exists()
+
+
+class TestRecoverExports:
+    def test_nothing_to_recover_reads_nothing(self, tmp_path: Path) -> None:
+        unwraps = _Unwraps()
+        store = _store(
+            tmp_path, wrap_ledger_key=_fake_ledger_wrap, unwrap_ledger_key=unwraps
+        )
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert unwraps.calls == 0
+        assert not store.root.exists()  # nothing created either
+
+    def test_a_left_over_part_is_deleted_and_a_finished_wav_spared(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid, done = _kept(store), _kept(store)
+        # Codex round 23 PR-LOW-002: the finished export FIRST — an export
+        # resolves earlier rows itself, so a leftover made before it would
+        # already be gone and this recovery would prove nothing.
+        store.export_recording(done, tmp_path, check_destination=_anywhere)
+        finished = tmp_path / f"{done}.wav"
+        left = _left_part(store, tmp_path, sid)
+        assert left.is_file() and sid in store._read_ledger()  # really left over
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert not left.exists()
+        assert finished.is_file()  # the practitioner's file, never touched
+        assert store._read_ledger() == {}
+
+    def test_a_replaced_part_is_spared_and_its_row_kept(self, tmp_path: Path) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        left.unlink()
+        left.write_bytes(b"not the app's file")
+        assert store.recover_exports() == past_sessions.ExportRecovery(kept=(sid,))
+        assert left.read_bytes() == b"not the app's file"
+        assert sid in store._read_ledger()
+        # Deleted by hand: the next start drops the row.
+        left.unlink()
+        assert store.recover_exports() == past_sessions.ExportRecovery()
+        assert store._read_ledger() == {}
+
+    def test_an_undeletable_part_keeps_its_row(
+        self, tmp_path: Path, part_kernel: Any
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        part_kernel.refuse_delete = True
+        assert store.recover_exports() == past_sessions.ExportRecovery(kept=(sid,))
+        assert left.is_file()
+        assert sid in store._read_ledger()
+
+    def test_a_file_swapped_in_after_the_check_is_never_deleted(
+        self, tmp_path: Path, part_kernel: Any
+    ) -> None:
+        """Codex round 24 PR-MED-001: the deletion goes through the handle
+        whose identity was read, never the path — a file put at the path
+        after the check is the practitioner's and stays."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        part_kernel.swap_after_status = b"the practitioner's own file"
+        store.recover_exports()
+        assert left.read_bytes() == b"the practitioner's own file"
+
+    def test_a_part_another_program_holds_open_keeps_its_row(
+        self, tmp_path: Path, part_kernel: Any
+    ) -> None:
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        part_kernel.refuse_open = True
+        assert store.recover_exports() == past_sessions.ExportRecovery(kept=(sid,))
+        assert left.is_file()
+        assert sid in store._read_ledger()
+
+    @pytest.mark.parametrize("damage", ["bytes", "key"])
+    def test_an_unreadable_ledger_is_reset_with_one_line(
+        self, tmp_path: Path, damage: str
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        left = _left_part(store, tmp_path, sid)
+        name = (
+            past_sessions.EXPORT_LEDGER_FILENAME
+            if damage == "bytes"
+            else past_sessions.EXPORT_LEDGER_KEY_FILENAME
+        )
+        (store.root / name).write_bytes(b"damaged")
+        recovery = store.recover_exports()
+        assert recovery == past_sessions.ExportRecovery(reset=True)
+        assert not (store.root / past_sessions.EXPORT_LEDGER_FILENAME).exists()
+        assert not (store.root / past_sessions.EXPORT_LEDGER_KEY_FILENAME).exists()
+        assert left.is_file()  # unknown now: named by the line, never guessed at
+        [line] = view.export_recovery_lines(recovery)
+        assert ".wav.part" in line and sid not in line
+        # A fresh ledger works afterwards.
+        store.export_recording(_kept(store), tmp_path, check_destination=_anywhere)
+
+    def test_the_lines_name_each_kept_part_by_its_session_id(self) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        sid = "a" * 32
+        assert view.export_recovery_lines(past_sessions.ExportRecovery(kept=(sid,))) == [
+            f"A partial export file {sid}.wav.part could not be removed from the folder you "
+            "chose - delete it by hand."
+        ]
+        assert view.export_recovery_lines(past_sessions.ExportRecovery()) == []
+
+    def test_a_busy_ledger_has_its_own_start_up_line(self) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        [line] = view.export_recovery_lines(past_sessions.ExportRecovery(busy=True))
+        assert line.startswith("Clinic Scribe could not open its record of recording exports")
+        assert "check again next time" in line
+
+    def test_each_refusal_names_the_file_it_is_about(self) -> None:
+        """Review round 21 LOW-005: only the chosen folder is used, so every
+        line about a file names it."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        sid, earlier = "a" * 32, "b" * 32
+        lines = {
+            reason: view.export_recording_failed_line(PastSessionError(reason), sid)
+            for reason in ("export_exists", "export_part_exists", "export_cleanup_failed")
+        }
+        assert f"{sid}.wav is already" in lines["export_exists"]
+        assert f"{sid}.wav.part is already" in lines["export_part_exists"]
+        assert f"{sid}.wav.part may remain" in lines["export_cleanup_failed"]
+        unresolved = view.export_recording_failed_line(
+            past_sessions.ExportUnresolvedError((earlier,)), sid
+        )
+        assert f"delete {earlier}.wav.part by hand first" in unresolved
+        assert sid not in unresolved
+        assert view.recording_exported_line(sid).startswith(f"Exported as {sid}.wav. ")
+        assert "such as Documents" not in view.export_refused_line("x.")
+        # Codex round 23 PR-HIGH-001: the store's own refusal reads as the
+        # tab's would; a check that could not be made reads "could not check".
+        from scribe_desktop.exclusions import EXPORT_ONEDRIVE, EXPORT_UNCHECKED
+
+        refused = past_sessions.ExportDestinationRefused
+        assert view.export_recording_failed_line(
+            refused(EXPORT_ONEDRIVE), sid
+        ) == view.export_refused_line(EXPORT_ONEDRIVE)
+        assert view.export_recording_failed_line(refused(None), sid) == view.export_refused_line(
+            EXPORT_UNCHECKED
+        )
+
+    def test_a_ledger_version_that_is_not_an_integer_is_unreadable(self) -> None:
+        with pytest.raises(ValueError):
+            past_sessions.ExportLedger.model_validate_json(b'{"schema_version": true, "rows": {}}')
+        with pytest.raises(ValueError):  # a stored ledger naming no version
+            past_sessions.ExportLedger.model_validate_json(b'{"rows": {}}')
+        named = past_sessions.ExportLedger.model_validate_json(b'{"schema_version": 1, "rows": {}}')
+        assert named.rows == {}
+        with pytest.raises(ValueError):
+            past_sessions.ExportLedger.model_validate_json(
+                b'{"schema_version": 1, "rows": {"not-an-id": '
+                b'{"folder": "C:/x", "identity": {"file_index": 1, "device": 1}}}}'
+            )
+
+
+class _ScriptedKernel:
+    """A ``PartKernel`` reporting a given status, for ``_remove_part``'s
+    own decisions (codex round 24 PR-MED-001) — every call recorded."""
+
+    def __init__(
+        self,
+        status: Any,
+        *,
+        open_error: BaseException | None = None,
+        mark_error: BaseException | None = None,
+        close_error: BaseException | None = None,
+    ) -> None:
+        self._status = status
+        self.open_error = open_error
+        self.mark_error = mark_error
+        self.close_error = close_error
+        self.calls: list[str] = []
+
+    def open(self, path: Path) -> int:
+        self.calls.append("open")
+        if self.open_error is not None:
+            raise self.open_error
+        return 7
+
+    def status(self, descriptor: int) -> Any:
+        self.calls.append("status")
+        return self._status
+
+    def mark_deleted(self, descriptor: int) -> None:
+        self.calls.append("mark")
+        if self.mark_error is not None:
+            raise self.mark_error
+
+    def close(self, descriptor: int) -> None:
+        self.calls.append("close")
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class _Status:
+    """The fields ``_remove_part`` reads from ``os.fstat``."""
+
+    def __init__(self, mode: int, *, ino: int = 11, dev: int = 22, attributes: int = 0) -> None:
+        self.st_mode, self.st_ino, self.st_dev = mode, ino, dev
+        self.st_file_attributes = attributes
+
+
+class TestRemovePart:
+    """``_remove_part`` decides from ONE handle and deletes through it —
+    both ways for every branch (codex round 24 PR-MED-001; C6: a scripted
+    kernel, never the real Windows API)."""
+
+    _ID = past_sessions.ExportIdentity(file_index=11, device=22)
+
+    def test_the_apps_own_file_is_marked_through_its_handle_then_closed(self) -> None:
+        kernel = _ScriptedKernel(_Status(stat.S_IFREG))
+        assert past_sessions._remove_part(Path("x.wav.part"), self._ID, kernel)
+        assert kernel.calls == ["open", "status", "mark", "close"]
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            _Status(stat.S_IFREG, ino=12),
+            _Status(stat.S_IFREG, dev=23),
+            _Status(stat.S_IFLNK),
+            _Status(stat.S_IFDIR),
+            _Status(stat.S_IFREG, attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT),
+        ],
+        ids=["another-file", "another-volume", "symlink", "folder", "reparse-point"],
+    )
+    def test_anything_but_the_apps_own_file_is_closed_unmarked(self, status: Any) -> None:
+        kernel = _ScriptedKernel(status)
+        assert not past_sessions._remove_part(Path("x.wav.part"), self._ID, kernel)
+        assert kernel.calls == ["open", "status", "close"]
+
+    def test_absent_is_gone_and_a_refused_open_is_kept(self) -> None:
+        absent = _ScriptedKernel(_Status(stat.S_IFREG), open_error=FileNotFoundError())
+        assert past_sessions._remove_part(Path("x"), self._ID, absent)
+        held = _ScriptedKernel(_Status(stat.S_IFREG), open_error=PermissionError(13, "in use"))
+        assert not past_sessions._remove_part(Path("x"), self._ID, held)
+        assert held.calls == ["open"]
+
+    def test_a_refused_mark_closes_and_keeps(self) -> None:
+        kernel = _ScriptedKernel(_Status(stat.S_IFREG), mark_error=PermissionError(5, "denied"))
+        assert not past_sessions._remove_part(Path("x"), self._ID, kernel)
+        assert kernel.calls == ["open", "status", "mark", "close"]
+
+    def test_a_close_that_fails_after_the_mark_is_not_counted_gone(self) -> None:
+        kernel = _ScriptedKernel(_Status(stat.S_IFREG), close_error=OSError(5, "close"))
+        assert not past_sessions._remove_part(Path("x"), self._ID, kernel)
+
+    def test_the_real_kernel_is_never_built_in_a_test(self) -> None:
+        assert not isinstance(past_sessions.part_kernel(), past_sessions.Win32PartKernel)
+
+    def test_lifting_the_fixture_refuses_rather_than_reaching_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Codex round 27 PR-LOW-001: ``undo()`` restores the conftest's
+        # run-wide refusal, never the real seam.
+        monkeypatch.undo()
+        with pytest.raises(AssertionError, match="real Win32PartKernel"):
+            past_sessions.part_kernel()
+        with pytest.raises(AssertionError, match="real Win32PartKernel"):
+            past_sessions._remove_part(Path("x"), self._ID)
+
+    def test_the_real_seam_builds_the_windows_kernel(self) -> None:
+        from conftest import REAL_PART_KERNEL
+
+        # Built only — it has no constructor and no method is called, so no
+        # Windows API runs (C6).
+        assert isinstance(REAL_PART_KERNEL(), past_sessions.Win32PartKernel)
+
+
+@windows_only
+class TestRealLedgerKey:
+    def test_the_ledger_key_has_its_own_description(self, tmp_path: Path) -> None:
+        root = tmp_path / "past_sessions"
+        root.mkdir()
+        past_sessions._wrap_ledger_key(SessionCrypto(), root)
+        assert (root / past_sessions.EXPORT_LEDGER_KEY_FILENAME).is_file()
+        assert not (root / KEY_FILENAME).exists()
+        past_sessions._unwrap_ledger_key(root).destroy()
+        with pytest.raises(KeyCustodyError):
+            session_store.unwrap_key_from_file(
+                root,
+                description=past_sessions.PAST_SESSION_KEY_DESCRIPTION,
+                filename=past_sessions.EXPORT_LEDGER_KEY_FILENAME,
+            )

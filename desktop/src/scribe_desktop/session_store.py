@@ -603,33 +603,42 @@ SESSION_KEY_DESCRIPTION: Final = "ClinikoScribe session key"
 
 
 def wrap_key_to_file(
-    crypto: SessionCrypto, session_dir: Path, *, description: str = SESSION_KEY_DESCRIPTION
+    crypto: SessionCrypto,
+    session_dir: Path,
+    *,
+    description: str = SESSION_KEY_DESCRIPTION,
+    filename: str = KEY_FILENAME,
 ) -> Path:
     """DPAPI-wrap the key and write `key.dpapi` ATOMICALLY (temp + fsync +
     os.replace) — for a session, called BEFORE the first chunk. The blob
-    carries ``description`` and ``unwrap_key_from_file`` verifies it."""
+    carries ``description`` and ``unwrap_key_from_file`` verifies it.
+    ``filename`` names a key file that is not its folder's ``key.dpapi``
+    (development-recordings plan Task 3.3: the export ledger's key)."""
     _require_windows()
     import win32crypt
 
     blob: bytes = win32crypt.CryptProtectData(
         crypto.export_key(), description, None, None, None, 0
     )
-    key_path = session_dir / KEY_FILENAME
+    key_path = session_dir / filename
     atomic_write_bytes(key_path, blob, error_label="key custody blob")
     return key_path
 
 
 def unwrap_key_from_file(
-    session_dir: Path, *, description: str = SESSION_KEY_DESCRIPTION
+    session_dir: Path,
+    *,
+    description: str = SESSION_KEY_DESCRIPTION,
+    filename: str = KEY_FILENAME,
 ) -> SessionCrypto:
-    """Read + DPAPI-unwrap `key.dpapi`. Missing/zero-length/truncated blobs,
-    a failed unwrap, and a blob whose stored description is not
-    ``description`` raise KeyCustodyError — the data under that key is
+    """Read + DPAPI-unwrap `key.dpapi` (or ``filename``). Missing/zero-length/
+    truncated blobs, a failed unwrap, and a blob whose stored description is
+    not ``description`` raise KeyCustodyError — the data under that key is
     cryptographically unrecoverable through THIS custody store."""
     _require_windows()
     import win32crypt
 
-    key_path = session_dir / KEY_FILENAME
+    key_path = session_dir / filename
     try:
         blob = key_path.read_bytes()
     except OSError as exc:

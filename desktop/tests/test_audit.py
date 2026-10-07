@@ -42,6 +42,7 @@ from scribe_desktop.audit import (
 )
 from scribe_desktop.encounter import Verification, unlinked_consent
 from scribe_desktop.logging_setup import _PAYLOAD_SIGNATURES, ALLOWED_KEYS, PayloadTripwireFilter
+from scribe_desktop.past_sessions import ExportRecovery
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionControllerError
 from scribe_desktop.session_mode import SessionMode
@@ -1623,6 +1624,12 @@ class TestAppWiring:
             def __init__(self, **kwargs: Any) -> None:
                 events.append(("past", sorted(kwargs)))
 
+            # Development-recordings Task 3.3: an interrupted export is
+            # resolved FIRST at start-up; what it kept is named on screen.
+            def recover_exports(self) -> ExportRecovery:
+                events.append(("exports",))
+                return ExportRecovery(kept=("c" * 32,))
+
             def clean_staging(self) -> int:
                 events.append(("staging",))
                 return 0
@@ -1659,8 +1666,11 @@ class TestAppWiring:
             def set_clinic_user_resolver(self, resolver: Any) -> None:
                 events.append(("resolver", resolver))
 
+        window_kwargs: dict[str, Any] = {}
+
         class FakeWindow:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
+                window_kwargs.update(kwargs)
                 events.append(("window", kwargs["audit"], kwargs["past_sessions"]))
 
             def clinic_user_id(self, clinic_id: str) -> str | None:
@@ -1711,6 +1721,7 @@ class TestAppWiring:
             "past",
             "controller",
             "prune",
+            "exports",  # development-recordings Task 3.3: FIRST of the store's
             "staging",
             "sweep",
             "reconcile",
@@ -1726,14 +1737,20 @@ class TestAppWiring:
         assert events[1] == ("past", ["logger"])
         _kind, audit, past = events[2]
         assert isinstance(audit, FakeAudit) and isinstance(past, FakePastSessions)
-        assert events[12][1:] == (audit, past)  # the window gets the same two
+        assert events[13][1:] == (audit, past)  # the window gets the same two
         # C1: the sweep's hook is the archive's unfinished-entry removal, and
         # the reconciliation runs over the same sessions root, after it.
-        assert events[5][1] == past.remove_pending_entry
-        assert events[6] == ("reconcile", tmp_path / "sessions")
-        assert events[10] == ("record", expired, "expired", {"created_at": 1_700_000_000.0})
-        assert events[11][2] == "orphan_gc"
-        assert getattr(events[13][1], "__name__", "") == "clinic_user_id"
+        assert events[6][1] == past.remove_pending_entry
+        assert events[7] == ("reconcile", tmp_path / "sessions")
+        assert events[11] == ("record", expired, "expired", {"created_at": 1_700_000_000.0})
+        assert events[12][2] == "orphan_gc"
+        assert getattr(events[14][1], "__name__", "") == "clinic_user_id"
+        # The partial export the recovery could not remove is named on the
+        # Past sessions status line (by its session id only).
+        assert window_kwargs["export_recovery_lines"] == [
+            f"A partial export file {'c' * 32}.wav.part could not be removed from the folder "
+            "you chose - delete it by hand."
+        ]
 
     def test_main_runs_the_retention_sweep_at_start_up_and_records_reconciled_commits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1810,6 +1827,10 @@ class TestAppWiring:
         class FakePastSessions:
             def __init__(self, **kwargs: Any) -> None:
                 pass
+
+            def recover_exports(self) -> ExportRecovery:
+                events.append(("exports",))
+                return ExportRecovery()
 
             def clean_staging(self) -> int:
                 events.append(("staging",))
@@ -1911,11 +1932,12 @@ class TestAppWiring:
         with pytest.raises(_StopMain):
             app_module.main()
         # Development-recordings Task 2.2, the start-up order:
-        # `clean_staging` -> `reconcile_pending` -> the kept-fact repair (an
-        # entry whose label cannot be read is left for the next start) ->
-        # the deletion record (rounds 11-13) -> `tidy_dead_recordings` -> the
-        # retention sweep. (Task 3.3 puts `recover_exports` first.)
+        # `recover_exports` (Task 3.3: FIRST) -> `clean_staging` ->
+        # `reconcile_pending` -> the kept-fact repair (an entry whose label
+        # cannot be read is left for the next start) -> the deletion record
+        # (rounds 11-13) -> `tidy_dead_recordings` -> the retention sweep.
         assert events == [
+            ("exports",),
             ("staging",),
             ("reconcile",),
             # Review round 16 PR-MED-001: every unattended write passes the

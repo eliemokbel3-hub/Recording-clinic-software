@@ -127,7 +127,9 @@ view patterns · tokens · microcopy.
   transcript must otherwise be kept for at least 7 years. Its notes and transcript cannot
   be recovered. Press Confirm delete to delete it." (a selection change or the deadline
   disarms it, checked at the click), and the second click destroys the entry's key first
-  (`ui/past_sessions.py`). A plain line under the button says the same limit ("Use Delete
+  (`ui/past_sessions.py`). Its **Delete recording** (a kept recording only, the audio
+  alone) takes the same two clicks as "Confirm delete recording" (Microcopy, kept
+  recordings). A plain line under the button says the same limit ("Use Delete
   now only for a recording made in error: the wrong patient, a test, or one recorded
   without consent.", `DELETE_HELP`). Choosing "7 years" over "Until I delete them" is the
   other destructive choice there (the only two choices since the 7-year minimum,
@@ -505,17 +507,23 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - Complete names where the session went, without claiming what one Complete kept (the
   screen does not know: a test-provider session keeps nothing, and a delete-note path
   never keeps the saved note): the tooltip "Verify the encrypted transcript, keep the
-  transcript and notes in Past sessions (never the audio; a test-provider session keeps
-  nothing), then delete the session and its key - the audio becomes unrecoverable.",
-  the lines "Session completed: transcript verified and the session key destroyed - the
-  audio cannot be recovered. Past sessions shows what was kept." and "Session completed
-  without a note: transcript verified and the session key destroyed. Past sessions shows
-  what was kept - never the saved note." (`ui/models.py` `COMPLETE_TOOLTIP` /
-  `COMPLETE_DONE_LINE` / `COMPLETE_WITHOUT_NOTE_LINE`), and, when the copy's marker could
-  not be removed after the key, "Completed. The Past-sessions copy will appear after the
-  next check." (`COMPLETE_DEFERRED_LINE`).
+  transcript and notes in Past sessions (not the audio, unless it was kept for
+  development under written consent; a test-provider session keeps nothing), then delete
+  the session and its key - the session's audio becomes unrecoverable.", the lines
+  "Session completed: transcript verified and the session key destroyed - the audio
+  cannot be recovered, unless it was kept for development under written consent. Past
+  sessions shows what was kept." and "Session completed without a note: transcript
+  verified and the session key destroyed. Past sessions shows what was kept - never the
+  saved note." (`ui/models.py` `COMPLETE_TOOLTIP` / `COMPLETE_DONE_LINE` /
+  `COMPLETE_WITHOUT_NOTE_LINE`), and, when the copy's marker could not be removed after
+  the key, "Completed. The Past-sessions copy will appear after the next check."
+  (`COMPLETE_DEFERRED_LINE`). A Complete that ACTUALLY kept the recording (the
+  controller's outcome, never the consent tick) adds "The recording was kept for
+  development." (`COMPLETE_KEPT_LINE`), on the Transcript screen and on the Session tab
+  the window lands on.
 - A Past-sessions line carries a date, the patient's name as the entry's label holds it
-  (never under Hide names) and authored words — never an id, a path or exception text; a
+  (never under Hide names) and authored words — never an id (but for an exported
+  recording's file name, below), a path or exception text; a
   failure names its authored reason, and an error the app did not author reads the one
   fixed reason (`past_sessions_view.failure_reason`). The retention warning is pinned
   text: "A kept transcript becomes part of your health record - under the VIC Health
@@ -612,6 +620,88 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   never a promise about Save. The Past sessions list marks the entry "(shadow
   recording)" and its Copy says "This was a shadow recording for the pilot, so its
   note cannot be copied. Read it as shown."
+- Kept recordings (development-recordings plan, 0.3.0; D1-D10). The Status tab's
+  setting "Keep recordings for development (written consent only)" carries the help
+  line "Each kept recording needs the patient's written consent and the tick above
+  Start; the recording stays on this computer and can be deleted on the Past sessions
+  tab." and, when its file cannot be read, "The keep-recordings setting could not be
+  read, so no recording is kept. Tick the box again to turn it on." (and, when a change
+  cannot be saved, "The keep-recordings setting could not be saved; the box shows the
+  setting in use.") — the opposite polarity to shadow mode: anything unresolved keeps
+  NOTHING (`ui/main_window.py` `DEVELOPMENT_*`). With the setting on, the Session tab shows a second box above Start,
+  "I confirm the patient has consented in writing to this recording being kept for
+  developing the program" (`ui/models.py` `DEVELOPMENT_CONSENT_LABEL` and the lines
+  below), never pre-ticked, hidden while
+  the setting is off, read at the click and cleared by every Start (only the "still
+  getting ready" refusal keeps it); the line under the ticks reads "Next recording will
+  be kept for development" while it is armed and "This recording is being kept for
+  development" while a kept recording runs. A tick cleared by anything but a Start that
+  ran — Chrome moving to another note or patient, the link dropping, a refused Start,
+  the computer locking or sleeping — is NAMED, never silent: "The keep-for-development
+  tick was cleared - the Cliniko note changed, the computer locked or a Start was
+  refused. Tick it again before Start if the patient consented in writing."
+  (`DEVELOPMENT_TICK_CLEARED_LINE`). On the Past sessions tab an entry holding a kept
+  recording ends "(recording kept)" (also on the unreadable row, so it can still be
+  deleted); its opened entry shows the group "Recording kept for development" with
+  "Recording kept for development - review due October 2027." (the month in local time,
+  completion + 365 days) and, once due, "Review due." (an entry whose label cannot be
+  read shows "Recording kept for development." and is never due); the status line counts
+  them: "1 kept recording is due for review - delete it or note in the pilot log why it
+  is kept." / "N kept recordings are due for review - delete each or note in the pilot
+  log why it is kept." Either button pressed with no kept recording selected reads
+  "Select a past session whose recording is kept first." **Delete recording** carries
+  "Delete recording deletes the kept recording only - the transcript and notes stay. Use
+  it when the patient withdraws consent for the recording, or at its review." and
+  follows Delete now's two-click pattern: it becomes "Confirm delete recording" for 10
+  seconds for the same entry with "Delete this recording? The transcript and notes stay.
+  Use it when the patient withdraws consent for the recording, or at its review. The
+  recording cannot be recovered. Press Confirm delete recording to delete it." (a
+  selection change, Delete now's or Export's click, a refresh, leaving the tab or the
+  deadline disarms it), then "Recording deleted."; a failure reads "The recording could
+  not be deleted: <reason>. The transcript and notes are unchanged - try again."
+  **Export recording (WAV)** carries "Export makes one unencrypted copy of the
+  recording, for labelling who is speaking. It must stay on this computer's own drive -
+  delete it when you have finished."; the save dialog proposes `<session id>.wav` in
+  Documents, never asks to replace a file, and only the chosen folder is used. A
+  destination the app positively identifies as off this computer or outside its custody
+  is REFUSED, never asked ("The recording was not exported: that folder is inside
+  OneDrive, which can copy the file off this computer. Choose a folder on this
+  computer's own drive." — no example folder: Documents is itself inside OneDrive on
+  many computers — and likewise a network drive, the roaming profile, a removable or
+  unidentified drive, Clinic Scribe's own data folder, or a folder it could not check;
+  `exclusions.check_export_location` — run again on the resolved folder just before
+  the file is created, so a folder that changes while the shadow question waits is
+  refused with the same line); a window with no Windows layer refuses every
+  export with "The recording was not exported: Clinic Scribe cannot check where a file
+  would go in this window." The ONE question Export asks is for a shadow recording:
+  "This was a shadow recording; the file will hold the whole consultation unencrypted.
+  Export it?" — or, when the entry's label cannot be read, "Clinic Scribe cannot tell
+  whether this was a shadow recording; the file will hold the whole consultation
+  unencrypted. Export it?" — with "Export the recording" against "Keep things as they
+  are". Success reads "Exported as <session id>.wav. The file is not encrypted - delete
+  it when you have finished labelling it."; a refusal by the store reads "The recording
+  was not exported: <reason>." — naming the file it is about: "<session id>.wav is
+  already in the folder you chose, and it is never replaced.", "a partial export file
+  <session id>.wav.part is already in the folder you chose - delete it by hand first.",
+  "a partial file from an earlier export could not be removed from the folder it was
+  exported to - delete <session id>.wav.part by hand first." (the earlier export's id),
+  or, when the record of exports cannot be opened, "the record of earlier exports could
+  not be opened - try again in a moment"; a recording that fails part-way through
+  reads "the kept recording could not be read to the end, so it may be damaged - the
+  transcript and notes are unaffected, and Delete recording removes it"; a partial file that could not be removed reads "The recording could not be
+  exported. A partial unencrypted file <session id>.wav.part may remain in the folder
+  you chose - delete it by hand now.", one an interrupted export left that the next
+  start could not remove is named on the status line by its session id ("A partial
+  export file <session id>.wav.part could not be removed from the folder you chose -
+  delete it by hand."), a record of exports that could not be read is started again
+  with "Clinic Scribe's record of recording exports could not be read and was started
+  again, so a partial export file (its name ends .wav.part) may remain in a folder you
+  exported to - delete it by hand.", and one that could not be opened at start-up is
+  left as it is with "Clinic Scribe could not open its record of recording exports, so
+  it could not check for a partial export file (its name ends .wav.part) left by an
+  interrupted export - it will check again next time." (`ui/past_sessions_view.py`).
+  These export lines are the one place a Past-sessions line names an id — the file can
+  be found by no other name.
 - The Microphone tab's hardware check reports whisper, then the prose stage
   (installation plan D11): "Prose stage (Narrative style): R of S sections, load L s
   (or model already loaded); sections W s wall, C s CPU; … per section OK|WARNING|

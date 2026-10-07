@@ -30,10 +30,11 @@ Constraints honoured (plan Critical Constraints / executor facts):
 
 from __future__ import annotations
 
+import wave
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, BinaryIO, Protocol
 
 from scribe_desktop import install_layout
 from scribe_desktop.benchmark import assert_offline_env, default_models_root
@@ -48,6 +49,28 @@ CONTEXT_SAMPLES = 64
 BYTES_PER_SAMPLE = 2  # PCM16
 FRAME_BYTES = FRAME_SAMPLES * BYTES_PER_SAMPLE
 FRAME_SECONDS = FRAME_SAMPLES / SAMPLE_RATE
+
+
+def write_wav(target: Path | BinaryIO, chunks: Iterable[bytes]) -> int:
+    """THE one WAV writer in the package (development-recordings plan D10):
+    ``chunks`` of PCM16 as a 16 kHz mono 16-bit WAV — the
+    ``speaker_eval.read_wav_pcm`` contract — streamed chunk by chunk, never
+    joined whole. ``target`` is a path (created or replaced) or an open,
+    seekable binary stream the CALLER owns and closes (Export's exclusively
+    created ``.part`` file; the validation-set builder's buffer). Returns the
+    PCM bytes written. A plaintext-audio exit: ``tests/test_shadow_exits.py``
+    pins that the package opens a WAV for writing nowhere else."""
+    written = 0
+    destination = str(target) if isinstance(target, Path) else target
+    with wave.open(destination, "wb") as writer:
+        writer.setnchannels(1)
+        writer.setsampwidth(BYTES_PER_SAMPLE)
+        writer.setframerate(SAMPLE_RATE)
+        for chunk in chunks:
+            writer.writeframes(chunk)
+            written += len(chunk)
+    return written
+
 
 # Hysteresis defaults, tuned on the SAPI-synthesized probe (speech frames
 # score ~0.7 mean / ~1.0 peaks, silence < 0.02 against the cached model).

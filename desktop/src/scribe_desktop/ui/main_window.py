@@ -488,6 +488,8 @@ class MainWindow(QMainWindow):
         windows_layer: WindowsLayer | None = None,
         live_ready: Callable[[], bool] | None = None,
         start_hold: Callable[[], bool] | None = None,
+        past_sessions_wav_path: Callable[[str], Path | None] | None = None,
+        export_recovery_lines: Sequence[str] = (),
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
@@ -724,6 +726,13 @@ class MainWindow(QMainWindow):
             confirm=past_sessions_confirm,
             choose_csv_path=past_sessions_save_path,
             exclusion_warnings=exclusion_warnings,
+            # Development-recordings Task 3.3: Export recording's save dialog
+            # (a seam like the CSV one), the layer its location check reads
+            # (None refuses every export — fail closed) and the start-up
+            # lines of the export recovery.
+            choose_wav_path=past_sessions_wav_path,
+            windows_layer=windows_layer,
+            export_recovery_lines=export_recovery_lines,
         )
 
         self.tabs = QTabWidget()

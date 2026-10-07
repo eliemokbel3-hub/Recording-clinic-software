@@ -442,6 +442,66 @@ def check_location(
     return warnings
 
 
+# --- the recording export's destination (development-recordings Task 3.3) -------
+
+DRIVE_FIXED: Final = 3
+EXPORT_ONEDRIVE: Final = (
+    "that folder is inside OneDrive, which can copy the file off this computer."
+)
+EXPORT_NETWORK: Final = (
+    "that folder is on a network drive, so the file would be kept off this computer."
+)
+EXPORT_ROAMING: Final = (
+    "that folder is in the roaming part of your Windows profile, which Windows can copy to "
+    "other computers."
+)
+EXPORT_NOT_FIXED: Final = (
+    "that folder is not on this computer's own fixed drive (it is on a removable drive, or "
+    "the drive could not be identified)."
+)
+EXPORT_APP_FOLDER: Final = "that folder is inside Clinic Scribe's own data folder."
+EXPORT_UNCHECKED: Final = "Clinic Scribe could not check where that folder is."
+_EXPORT_LOCATION_LINES: Final[dict[str, str]] = {
+    "location_onedrive": EXPORT_ONEDRIVE,
+    "location_network": EXPORT_NETWORK,
+    "location_roaming": EXPORT_ROAMING,
+}
+
+
+def check_export_location(layer: WindowsLayer, folder: Path) -> ExclusionWarning | None:
+    """Where a recording export may go (development-recordings plan D10, C2):
+    None when ``folder`` resolves to this computer's own fixed drive, outside
+    both channels' data folders; otherwise the REFUSAL — never a warning to
+    export anyway (round 1 PR-HIGH-002). Refused: every ``check_location``
+    finding (OneDrive, a ``\\\\`` path or a remote drive, the roaming
+    profile), any drive whose type is not ``DRIVE_FIXED`` (removable or
+    unknown, which ``check_location`` never tests), and either app data
+    folder (``install_layout.app_data_root_via`` of both channels — round
+    26 SEC-005's rule). A check that cannot be made refuses too (fail
+    closed). Read-only; never raises. Named residues (threat model; review
+    round 20 MED-003): sync software the layer cannot see, an external drive
+    Windows itself reports as fixed (a USB SSD), and another volume mounted
+    into a folder of a fixed drive (the drive letter's type is read, not the
+    mounted volume's)."""
+    try:
+        for warning in check_location(layer, folder):
+            return ExclusionWarning(warning.code, _EXPORT_LOCATION_LINES[warning.code])
+        real = _normalised(layer.realpath(str(folder)))
+        drive, _rest = ntpath.splitdrive(real)
+        if not (len(drive) == 2 and drive[1] == ":") or (
+            layer.drive_type(drive.upper() + "\\") != DRIVE_FIXED
+        ):
+            return ExclusionWarning("location_not_fixed", EXPORT_NOT_FIXED)
+        channels: tuple[install_layout.Channel, ...] = ("production", "dev")
+        for of in channels:
+            own = _normalised(layer.realpath(str(install_layout.app_data_root_via(layer, of))))
+            if _contains(own, real):
+                return ExclusionWarning("location_app_folder", EXPORT_APP_FOLDER)
+    except Exception:  # noqa: BLE001 - a destination that cannot be checked is refused
+        return ExclusionWarning("location_unchecked", EXPORT_UNCHECKED)
+    return None
+
+
 def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
     """D10's WER check. Read-only. Warns when any of the channel's exclusions
     (``wer_applications``) is missing (or not DWORD 1) in every hive the

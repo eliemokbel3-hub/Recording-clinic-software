@@ -41,8 +41,23 @@ Custody and content rules:
   reaches a log record or the audit (C3); failures show authored reasons.
   Named residue: Hide names masks the entry's LABEL; a name spoken in the
   transcript or written in a note is shown as it was kept.
-- The confirmations and the save dialog are injected seams (``confirm``,
-  ``choose_csv_path``), so a test never opens a real dialog (C6).
+- The confirmations and the save dialogs are injected seams (``confirm``,
+  ``choose_csv_path``, ``choose_wav_path``), so a test never opens a real
+  dialog (C6).
+
+A KEPT recording (development-recordings plan Phase 3; D7-D10): its row
+ends "(recording kept)" (two files' presence and a zero-check, never a
+decryption); the opened entry says when its 12-month review falls due, and
+the status line counts the ones due (D9). "Delete recording" (two clicks,
+like Delete now) deletes the audio ALONE and records the deletion through
+the store's ``on_destroyed`` hook (D8). "Export recording" writes ONE
+unencrypted ``<session id>.wav`` through the store's export custody, to a
+folder ``exclusions.check_export_location`` admits — synced, network,
+roaming, removable or unknown drives and either app data folder are
+REFUSED, never asked; with no ``WindowsLayer`` Export is refused (fail
+closed); a shadow recording asks first (D7); the audit's export count rises
+only after the file is in place. Both are DELIBERATE writers: each records
+its own event, making a row if none exists (review round 15 PR-MED-003).
 """
 
 from __future__ import annotations
@@ -51,6 +66,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, tzinfo
+from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import QStandardPaths, Qt, QTimer
@@ -70,6 +86,7 @@ from PySide6.QtWidgets import (
 )
 
 from scribe_desktop.audit import AuditRow
+from scribe_desktop.exclusions import WindowsLayer, check_export_location
 from scribe_desktop.past_sessions import (
     PastSessionEntry,
     PastSessionListing,
@@ -93,6 +110,33 @@ _TICK_MS = 1000
 # goes ahead (the other one keeps things as they are). True to go ahead.
 Confirm = Callable[[str, str], bool]
 ChooseCsvPath = Callable[[], Path | None]
+# Development-recordings Task 3.3: the recording export's save dialog, given
+# the session id (the proposed file name); only the chosen FOLDER is used.
+ChooseWavPath = Callable[[str], Path | None]
+
+
+def _record_deletion(
+    audit: view.PastSessionsAudit,
+    session_id: str,
+    created_at: float | None,
+    *,
+    kept_recorded: bool,
+) -> bool:
+    """Delete recording's ``on_destroyed``: the deletion recorded, and True
+    only when the kept fact was recorded too (review round 21 LOW-002)."""
+    deleted = audit.record_recording_deleted(session_id, created_at=created_at)
+    return kept_recorded and deleted
+
+
+def _destination_check(layer: WindowsLayer) -> Callable[[Path], str | None]:
+    """Export's location check as the store takes it (codex round 23
+    PR-HIGH-001): the refusal's line, or None for a folder it admits."""
+
+    def check(folder: Path) -> str | None:
+        refusal = check_export_location(layer, folder)
+        return None if refusal is None else refusal.line
+
+    return check
 
 
 def _utc_now() -> datetime:
@@ -132,6 +176,9 @@ class PastSessionsScreen(QWidget):
         confirm: Confirm | None = None,
         choose_csv_path: ChooseCsvPath | None = None,
         exclusion_warnings: Sequence[str] = (),
+        choose_wav_path: ChooseWavPath | None = None,
+        windows_layer: WindowsLayer | None = None,
+        export_recovery_lines: Sequence[str] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -140,6 +187,15 @@ class PastSessionsScreen(QWidget):
         # run (computed before the window was built), so the derived status
         # line always carries them.
         self._exclusion_warnings = tuple(exclusion_warnings)
+        # Development-recordings Task 3.3: the start-up lines of
+        # ``PastSessionStore.recover_exports`` (fixed for the run), and the
+        # layer the export location check reads — None refuses every export.
+        self._export_recovery_lines = tuple(export_recovery_lines)
+        self._windows_layer = windows_layer
+        self._choose_wav_path: ChooseWavPath = (
+            choose_wav_path if choose_wav_path is not None else self._ask_wav_path
+        )
+        self._recording_delete_armed: tuple[str, float] | None = None
         self._audit = audit
         self._config_root = config_root
         self._clock = clock
@@ -159,6 +215,7 @@ class PastSessionsScreen(QWidget):
         self._delete_armed: tuple[str, float] | None = None
         self._audit_key_unreadable = False
         self._shown_failures = 0
+        self._shown_review: tuple[int, bool] = (0, False)
         # The latest retention sweep's report and the retention it ran under
         # (round 16 MED-002, round 17 LOW-020): its status lines are DERIVED
         # from it while that setting is still current (``_current_sweep``,
@@ -240,6 +297,27 @@ class PastSessionsScreen(QWidget):
         # buttons (the Note tab's Write-button pattern).
         self.copy_reason_label = _plain_label()
 
+        # Development-recordings Phase 3: the selected entry's kept recording
+        # — shown only while the selected entry holds one (its label may be
+        # unreadable: the recording can still be deleted).
+        self.recording_line_label = _plain_label()
+        self.delete_recording_button = QPushButton(view.DELETE_RECORDING_LABEL)
+        self.delete_recording_button.clicked.connect(self.on_delete_recording_clicked)
+        self.export_recording_button = QPushButton(view.EXPORT_RECORDING_LABEL)
+        self.export_recording_button.clicked.connect(self.on_export_recording)
+        recording_buttons = QHBoxLayout()
+        recording_buttons.addWidget(self.delete_recording_button)
+        recording_buttons.addWidget(self.export_recording_button)
+        recording_buttons.addStretch(1)
+        self.recording_box = QGroupBox(view.RECORDING_GROUP_TITLE)
+        recording_layout = QVBoxLayout()
+        recording_layout.addWidget(self.recording_line_label)
+        recording_layout.addLayout(recording_buttons)
+        recording_layout.addWidget(_plain_label(view.DELETE_RECORDING_HELP))
+        recording_layout.addWidget(_plain_label(view.EXPORT_RECORDING_HELP))
+        self.recording_box.setLayout(recording_layout)
+        self.recording_box.setVisible(False)
+
         notes = QSplitter(Qt.Orientation.Horizontal)
         for heading, panel in (
             (view.GENERATED_HEADING, self.generated_view),
@@ -262,6 +340,7 @@ class PastSessionsScreen(QWidget):
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.addWidget(self.heading_label)
         right_layout.addWidget(self.write_line_label)
+        right_layout.addWidget(self.recording_box)
         right_layout.addWidget(notes, 2)
         right_layout.addLayout(buttons)
         right_layout.addWidget(self.copy_reason_label)
@@ -300,6 +379,7 @@ class PastSessionsScreen(QWidget):
         re-check the audit key. Drops any opened entry and any stale line."""
         self.close_entry()
         self._disarm_delete()
+        self._disarm_recording_delete()
         self._show_message("")
         self._reload_settings()
         listed = True
@@ -322,9 +402,11 @@ class PastSessionsScreen(QWidget):
         again re-lists."""
         self.close_entry()
         self._disarm_delete()
+        self._disarm_recording_delete()
         self._listings = []
         self._listed = False
         self._render_list()
+        self._render_status()  # the review-due count follows the listings
 
     def _check_audit_key(self) -> bool:
         if self._audit is None:
@@ -371,8 +453,13 @@ class PastSessionsScreen(QWidget):
                 return listing
         return None
 
+    def _selected_listing(self) -> PastSessionListing | None:
+        session_id = self._selected_id()
+        return self._listing(session_id) if session_id is not None else None
+
     def _on_selection_changed(self) -> None:
         self._disarm_delete()
+        self._disarm_recording_delete()
         session_id = self._selected_id()
         if session_id is None:
             self.close_entry()
@@ -426,7 +513,12 @@ class PastSessionsScreen(QWidget):
         if entry is None:
             return
         hide = self._settings.hide_names
-        listing = PastSessionListing(entry.label.session_id, entry.label)
+        listed = self._listing(entry.label.session_id)
+        listing = PastSessionListing(
+            entry.label.session_id,
+            entry.label,
+            recording_kept=listed is not None and listed.recording_kept,
+        )
         self.heading_label.setText(view.entry_line(listing, hide_names=hide, zone=self._zone))
         self.generated_view.setPlainText(
             entry.generated.generated_text
@@ -508,6 +600,7 @@ class PastSessionsScreen(QWidget):
         if session_id is None or self._store is None:
             self._show_message(view.SELECT_FIRST)
             return
+        self._disarm_recording_delete()
         armed = self._delete_armed
         if armed is not None and self._delete_confirmable(armed, session_id):
             self._disarm_delete()
@@ -595,8 +688,127 @@ class PastSessionsScreen(QWidget):
             self.close_entry()
         if self._delete_armed is not None and self._delete_armed[0] in gone:
             self._disarm_delete()
+        armed = self._recording_delete_armed
+        if armed is not None and armed[0] in gone:
+            self._disarm_recording_delete()
         self._listings = [item for item in self._listings if item.session_id not in gone]
         self._render_list()
+        self._render_status()  # a deleted kept recording leaves the due count
+
+    # --- the kept recording (development-recordings plan Tasks 3.2-3.3) -----
+
+    def on_delete_recording_clicked(self) -> None:
+        """Delete recording (D8): the first click asks; a second within
+        ``DELETE_CONFIRM_SECONDS`` for the same entry deletes the recording
+        ALONE — the transcript and notes stay."""
+        listing = self._selected_listing()
+        if self._store is None or listing is None or not listing.recording_kept:
+            self._show_message(view.NO_KEPT_RECORDING)
+            return
+        self._disarm_delete()
+        armed = self._recording_delete_armed
+        if armed is not None and self._delete_confirmable(armed, listing.session_id):
+            self._disarm_recording_delete()
+            self._delete_recording(listing)
+            return
+        self._recording_delete_armed = (listing.session_id, self._monotonic())
+        self.delete_recording_button.setText(view.DELETE_RECORDING_CONFIRM_LABEL)
+        self._show_message(view.DELETE_RECORDING_CONFIRM_MESSAGE)
+
+    def _disarm_recording_delete(self) -> None:
+        self._recording_delete_armed = None
+        self.delete_recording_button.setText(view.DELETE_RECORDING_LABEL)
+        if self.message_label.text() == view.DELETE_RECORDING_CONFIRM_MESSAGE:
+            self._show_message("")
+
+    def _delete_recording(self, listing: PastSessionListing) -> None:
+        """The deletion: the kept fact first (true either way; Task 2.2's
+        amendment), then the store zeroes the audio key, and the deletion is
+        recorded THROUGH ``on_destroyed`` — after the verified zeros, before
+        the unlinks (review round 12 LOW-003): a record that fails leaves the
+        zeroed files for the next run's deletion record. A DELIBERATE writer
+        (review round 15 PR-MED-003): dated by the session's start, and
+        making a row when there is none (dated now with no readable label).
+        The deletion counts as recorded only when the kept fact was too
+        (review round 21 LOW-002): otherwise the zeroed files stay as the
+        evidence the next run's full record (``app.record_deleted_recordings``)
+        needs — the rule the unattended path already keeps."""
+        store = self._store
+        if store is None:
+            return
+        session_id, label, audit = listing.session_id, listing.label, self._audit
+        created_at = view.started_epoch(label)
+        on_destroyed: Callable[[], object] | None = None
+        if audit is not None:
+            kept_recorded = True
+            if label is not None:
+                kept_recorded = audit.record_recording_kept(
+                    session_id, label.completed_at, created_at=created_at
+                )
+            on_destroyed = partial(
+                _record_deletion, audit, session_id, created_at, kept_recorded=kept_recorded
+            )
+        try:
+            store.delete_recording(session_id, on_destroyed=on_destroyed)
+        except Exception as exc:  # noqa: BLE001 - the view maps it to an authored line (C3)
+            self._show_message(view.recording_delete_failed_line(exc))
+            return
+        self._listings = [
+            replace(item, recording_kept=False) if item.session_id == session_id else item
+            for item in self._listings
+        ]
+        self._render_list()
+        self._render_entry()
+        self._render_status()
+        self._show_message(view.DELETE_RECORDING_DONE)
+
+    def on_export_recording(self) -> None:
+        """Export recording (D10, D7, C2): the save dialog, then the location
+        check — a destination it positively identifies as off this computer
+        or outside custody is REFUSED, never asked — then, for a shadow
+        recording (or one whose label cannot be read), the one question
+        Export asks; then the store's export custody, which runs the same
+        check AGAIN on the resolved folder just before it creates the file
+        (codex round 23 PR-HIGH-001). The audit's export count rises only
+        once the file is in place."""
+        listing = self._selected_listing()
+        store = self._store
+        if store is None or listing is None or not listing.recording_kept:
+            self._show_message(view.NO_KEPT_RECORDING)
+            return
+        self._disarm_delete()
+        self._disarm_recording_delete()
+        layer = self._windows_layer
+        if layer is None:  # fail closed: an unchecked destination is never written
+            self._show_message(view.EXPORT_RECORDING_NO_LAYER)
+            return
+        session_id, label = listing.session_id, listing.label
+        path = self._choose_wav_path(session_id)
+        if path is None:
+            return
+        folder = path.parent
+        refusal = check_export_location(layer, folder)
+        if refusal is not None:
+            self._show_message(view.export_refused_line(refusal.line))
+            return
+        question = view.export_confirm_question(label)
+        if question is not None and not self._confirm(question, view.EXPORT_SHADOW_ACTION):
+            self._show_message("")
+            return
+        try:
+            # Codex round 23 PR-HIGH-001: the store checks the RESOLVED folder
+            # again, after the question above waited on the user.
+            store.export_recording(
+                session_id, folder, check_destination=_destination_check(layer)
+            )
+        except Exception as exc:  # noqa: BLE001 - the view maps it to an authored line (C3)
+            self._show_message(view.export_recording_failed_line(exc, session_id))
+            return
+        if self._audit is not None:
+            self._audit.record_recording_exported(
+                session_id, created_at=view.started_epoch(label)
+            )
+        self._show_message(view.recording_exported_line(session_id))
 
     # --- settings -------------------------------------------------------------
 
@@ -830,14 +1042,38 @@ class PastSessionsScreen(QWidget):
         failures = self._audit_failures()
         if failures:
             lines.append(view.audit_failures_line(failures))
+        # Development-recordings D9: the kept recordings due for review —
+        # from the listing in memory (no decryption beyond the labels it
+        # already read), so only while the tab holds a listing.
+        due, _selected_due = self._review_state()
+        if due:
+            lines.append(view.review_due_line(due))
+        lines.extend(self._export_recovery_lines)
         lines.extend(self._exclusion_warnings)
         return lines
 
     def _audit_failures(self) -> int:
         return self._audit.failure_count if self._audit is not None else 0
 
+    def _review_state(self) -> tuple[int, bool]:
+        """D9's review reminder as now: how many kept recordings are due,
+        and whether the selected entry's is — what the status line and the
+        "Review due." mark show (codex round 23 PR-LOW-006: ``_tick``
+        re-renders when it changes, so a recording that crosses its 12
+        months while the tab stays open is marked without a refresh)."""
+        now = self._clock()
+        due = sum(
+            1 for item in self._listings if item.recording_kept and view.review_due(item.label, now)
+        )
+        listing = self._selected_listing()
+        selected = (
+            listing is not None and listing.recording_kept and view.review_due(listing.label, now)
+        )
+        return due, selected
+
     def _render_status(self) -> None:
         self._shown_failures = self._audit_failures()
+        self._shown_review = self._review_state()
         lines = self.status_lines()
         self.status_label.setText("\n".join(lines))
         self.status_label.setVisible(bool(lines))
@@ -860,12 +1096,30 @@ class PastSessionsScreen(QWidget):
         self.copy_reason_label.setText(shown or "")
         self.copy_reason_label.setVisible(shown is not None)
         self.transcript_button.setEnabled(opened)
+        # Development-recordings Phase 3: the selected entry's kept recording
+        # (from the listing's file check — no decryption).
+        listing = self._selected_listing()
+        kept = has_store and listing is not None and listing.recording_kept
+        self.recording_box.setVisible(kept)
+        self.delete_recording_button.setEnabled(kept)
+        self.export_recording_button.setEnabled(kept)
+        self.recording_line_label.setText(
+            view.recording_line(listing.label, now=self._clock(), zone=self._zone)
+            if kept and listing is not None
+            else ""
+        )
 
     def _tick(self) -> None:
         armed = self._delete_armed
         if armed is not None and not self._delete_confirmable(armed, armed[0]):
             self._disarm_delete()
-        if self._audit_failures() != self._shown_failures:
+        armed = self._recording_delete_armed
+        if armed is not None and not self._delete_confirmable(armed, armed[0]):
+            self._disarm_recording_delete()
+        if (
+            self._audit_failures() != self._shown_failures
+            or self._review_state() != self._shown_review
+        ):
             self._render_status()
 
     def _show_message(self, text: str) -> None:
@@ -896,5 +1150,25 @@ class PastSessionsScreen(QWidget):
         start = str(Path(folder) / view.EXPORT_DEFAULT_NAME) if folder else view.EXPORT_DEFAULT_NAME
         name, _filter = QFileDialog.getSaveFileName(
             self, view.EXPORT_DIALOG_TITLE, start, view.EXPORT_FILTER
+        )
+        return Path(name) if name else None
+
+    def _ask_wav_path(self, session_id: str) -> Path | None:
+        """Development-recordings Task 3.3: the recording export's save
+        dialog, proposing ``<session id>.wav`` in Documents. Only the chosen
+        folder is used — the file is always named by the session id, so the
+        dialog never asks to replace a file (review round 21 LOW-005: nothing
+        is ever replaced; the success line names the file written)."""
+        folder = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.DocumentsLocation
+        )
+        proposed = f"{session_id}.wav"
+        start = str(Path(folder) / proposed) if folder else proposed
+        name, _filter = QFileDialog.getSaveFileName(
+            self,
+            view.EXPORT_RECORDING_DIALOG_TITLE,
+            start,
+            view.EXPORT_RECORDING_FILTER,
+            options=QFileDialog.Option.DontConfirmOverwrite,
         )
         return Path(name) if name else None

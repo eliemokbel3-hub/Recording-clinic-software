@@ -131,10 +131,11 @@ def data_root(of: Channel | None = None) -> Path:
     return _data_root_from(os.environ.get("LOCALAPPDATA"), of)
 
 
-def app_data_root_via(layer: WindowsLayer) -> Path:
-    """``data_root()`` with ``LOCALAPPDATA`` read through the ``WindowsLayer``
-    seam (the start-up exclusion checks, C6)."""
-    return _data_root_from(layer.environ("LOCALAPPDATA"))
+def app_data_root_via(layer: WindowsLayer, of: Channel | None = None) -> Path:
+    """``data_root(of)`` with ``LOCALAPPDATA`` read through the
+    ``WindowsLayer`` seam (the start-up exclusion checks, C6; the recording
+    export's app-folder refusal reads both channels')."""
+    return _data_root_from(layer.environ("LOCALAPPDATA"), of)
 
 
 def backup_exclusion_patterns() -> tuple[str, ...]:

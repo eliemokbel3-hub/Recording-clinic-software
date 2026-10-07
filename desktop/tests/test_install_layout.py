@@ -435,6 +435,7 @@ _NON_PATH_LITERALS: dict[tuple[str, str], str] = {
     ("session_store.py", "SESSION_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
     ("audit.py", "AUDIT_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
     ("past_sessions.py", "PAST_SESSION_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
+    ("past_sessions.py", "EXPORT_LEDGER_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
     ("practitioner_profile.py", "PROFILE_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
     ("practitioner_profile.py", "STYLE_KEY_DESCRIPTION"): "a DPAPI key description (C2)",
     ("app.py", "_single_instance_mutex_name"): "the single-instance mutex name (C2, D3)",

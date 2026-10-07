@@ -41,6 +41,13 @@ layout (D1 / D3), all under ``%LOCALAPPDATA%\\ClinikoScribe\\past_sessions\\``
   it is moved into place; ``clean_staging`` removes whatever a crash left
   there, at every start-up and sweep tick, whatever the retention setting.
 
+- ``exports.enc`` + ``exports-key.dpapi`` (development-recordings plan Task
+  3.3) — the EXPORT LEDGER, outside every entry: each export in flight (the
+  chosen folder and the created ``<session id>.wav.part`` file's identity),
+  so ``recover_exports`` (first at every start-up) deletes a partial
+  plaintext file a hard kill left. The exported ``<session id>.wav`` itself
+  is the practitioner's to delete; the app never touches it again.
+
 The lifecycle (C1). ``write_entry`` stages the entry, FULLY verifies it
 through its own key read back from disk (the exact file set, every
 plaintext's SHA-256 against the source bytes, and the existing readers),
@@ -82,7 +89,7 @@ from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, Protocol
 
 from pydantic import (
     AwareDatetime,
@@ -141,6 +148,17 @@ AUDIO_KEY_FILENAME: Final = "audio-key.enc"
 AUDIO_KEY_FILE_BYTES: Final = 60
 STAGING_DIRNAME: Final = ".staging"
 SETTINGS_FILENAME: Final = "past_sessions.json"
+# Development-recordings plan Task 3.3 (D10, C5): the EXPORT LEDGER — which
+# partial export (``<session id>.wav.part``) is in flight where, and the
+# created file's identity — kept OUTSIDE every entry (so Delete now, expiry
+# and ``reconcile_pending`` never remove it), under its own DPAPI-wrapped key.
+EXPORT_LEDGER_FILENAME: Final = "exports.enc"
+EXPORT_LEDGER_KEY_FILENAME: Final = "exports-key.dpapi"
+EXPORT_LEDGER_KEY_DESCRIPTION: Final = "ClinikoScribe export ledger key"
+MAX_EXPORT_LEDGER_BYTES: Final = 256 * 1024
+EXPORT_SUFFIX: Final = ".wav"
+EXPORT_PART_SUFFIX: Final = ".wav.part"
+_EXPORT_LEDGER_AAD: Final = b"past-export-ledger"
 # The retention setting (Agreed Scope, amended by practitioner decision
 # 2026-10-02): a kept transcript is part of the health record, kept for 7
 # YEARS MINIMUM (VIC/NSW/ACT health-records law). The one offered window is 7
@@ -197,6 +215,30 @@ PAST_SESSION_REASONS: Final[dict[str, str]] = {
     # the recording is destroyed, whatever the unlinks after.
     "recording_delete_failed": "that kept recording could not be deleted",
     "recording_not_kept": "that Past-sessions entry holds no kept recording",
+    "recording_unreadable": (
+        "the kept recording could not be read to the end, so it may be damaged - the "
+        "transcript and notes are unaffected, and Delete recording removes it"
+    ),
+    # Task 3.3 (D10): Export recording's refusals and failures.
+    "export_exists": "a file of that name is already in the folder you chose",
+    "export_part_exists": (
+        "a partial export file of that name (it ends .wav.part) is already in the folder "
+        "you chose - delete it by hand first"
+    ),
+    "export_unresolved": (
+        "an earlier partial export file (its name ends .wav.part) could not be removed - "
+        "delete it by hand first"
+    ),
+    "export_ledger_unreadable": (
+        "the record of earlier exports cannot be read - restart Clinic Scribe and try again"
+    ),
+    "export_ledger_busy": (
+        "the record of earlier exports could not be opened - try again in a moment"
+    ),
+    "export_destination_refused": "Clinic Scribe could not check where that folder is",
+    "export_unrecorded": "the export could not be recorded, so nothing was written",
+    "export_failed": "the file could not be written",
+    "export_cleanup_failed": "a partial unencrypted file may remain in the folder you chose",
 }
 
 
@@ -208,6 +250,27 @@ class PastSessionError(Exception):
     def __init__(self, reason: str) -> None:
         super().__init__(PAST_SESSION_REASONS.get(reason, reason))
         self.reason = reason
+
+
+class ExportUnresolvedError(PastSessionError):
+    """``export_unresolved``, naming the session ids of the earlier partial
+    export files that could not be removed (review round 21 LOW-005: the
+    id is the only way to find such a file)."""
+
+    def __init__(self, session_ids: tuple[str, ...]) -> None:
+        super().__init__("export_unresolved")
+        self.session_ids = session_ids
+
+
+class ExportDestinationRefused(PastSessionError):
+    """``export_destination_refused``: the store's own check of the RESOLVED
+    folder, immediately before the create (codex round 23 PR-HIGH-001),
+    refused it. ``line`` is the check's authored refusal, or None when the
+    check itself could not be made."""
+
+    def __init__(self, line: str | None) -> None:
+        super().__init__("export_destination_refused")
+        self.line = line
 
 
 class PastSessionSettingsError(Exception):
@@ -385,6 +448,82 @@ class PastSessionEntry:
 
 
 # ---------------------------------------------------------------------------
+# The export ledger (development-recordings plan Task 3.3).
+# ---------------------------------------------------------------------------
+
+
+class ExportIdentity(BaseModel):
+    """A created ``.part`` file's identity (``os.fstat``: the file index and
+    the volume) — a file at that path with any other identity is not the one
+    the app created, and is never deleted (round 7 PR-MED-071)."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    file_index: int = Field(ge=0, strict=True)
+    device: int = Field(ge=0, strict=True)
+
+
+class ExportRow(BaseModel):
+    """One export in flight: the folder chosen (content-free — the file is
+    named by the session id) and the created ``.part`` file's identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    folder: str = Field(min_length=1, max_length=32_767)
+    identity: ExportIdentity
+
+
+class ExportLedger(BaseModel):
+    """``exports.enc``'s document: the unresolved exports by session id."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = 1
+    rows: dict[str, ExportRow] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _an_integer_version(cls, data: Any) -> Any:
+        if isinstance(data, dict) and type(data.get("schema_version")) is not int:
+            raise ValueError("a ledger names its integer version")  # round 26's rule
+        return data
+
+    @field_validator("rows")
+    @classmethod
+    def _session_ids(cls, rows: dict[str, ExportRow]) -> dict[str, ExportRow]:
+        if not all(_SESSION_ID_RE.fullmatch(session_id) for session_id in rows):
+            raise ValueError("a ledger row is keyed by a session id")
+        return rows
+
+    def to_bytes(self) -> bytes:
+        return self.model_dump_json().encode("utf-8")
+
+
+@dataclass(frozen=True)
+class ExportRecovery:
+    """``recover_exports``'s answer: the session ids whose partial export
+    file could not be removed (each owed one start-up line), and whether an
+    unreadable ledger was started again (one line), or one could not be
+    opened this time and was left as it is (one line — review round 21: a
+    ledger that is never openable must not be silent). Content-free."""
+
+    kept: tuple[str, ...] = ()
+    reset: bool = False
+    busy: bool = False
+
+
+class _LedgerUnreadable(Exception):
+    """The ledger exists but cannot be read (a link, its key, its bytes or
+    its shape) — never shown; the callers decide."""
+
+
+class _LedgerBusy(Exception):
+    """The ledger's file could not be opened or read THIS time (a lock, a
+    scanner, a transient error) — never a reason to start it again (review
+    round 20 LOW: a reset forgets every unresolved partial file)."""
+
+
+# ---------------------------------------------------------------------------
 # The store.
 # ---------------------------------------------------------------------------
 
@@ -398,6 +537,21 @@ def _wrap_entry_key(crypto: SessionCrypto, directory: Path) -> object:
 
 def _unwrap_entry_key(directory: Path) -> SessionCrypto:
     return unwrap_key_from_file(directory, description=PAST_SESSION_KEY_DESCRIPTION)
+
+
+def _wrap_ledger_key(crypto: SessionCrypto, root: Path) -> object:
+    return wrap_key_to_file(
+        crypto,
+        root,
+        description=EXPORT_LEDGER_KEY_DESCRIPTION,
+        filename=EXPORT_LEDGER_KEY_FILENAME,
+    )
+
+
+def _unwrap_ledger_key(root: Path) -> SessionCrypto:
+    return unwrap_key_from_file(
+        root, description=EXPORT_LEDGER_KEY_DESCRIPTION, filename=EXPORT_LEDGER_KEY_FILENAME
+    )
 
 
 class _EntryKeeper:
@@ -432,12 +586,19 @@ class PastSessionStore:
         logger: logging.Logger | None = None,
         wrap_key: WrapKey = _wrap_entry_key,
         unwrap_key: UnwrapKey = _unwrap_entry_key,
+        wrap_ledger_key: WrapKey = _wrap_ledger_key,
+        unwrap_ledger_key: UnwrapKey = _unwrap_ledger_key,
     ) -> None:
         self._root = root if root is not None else default_past_sessions_root()
         self._clock = clock
         self._logger = logger
         self._wrap_key = wrap_key
         self._unwrap_key = unwrap_key
+        # Development-recordings Task 3.3: the export ledger's key custody —
+        # given the archive ROOT, it writes / reads ``exports-key.dpapi``
+        # there (a test seam, like the entry key's).
+        self._wrap_ledger_key = wrap_ledger_key
+        self._unwrap_ledger_key = unwrap_ledger_key
         # The retention sweep's dates (review round 11 MED-001): a committed
         # entry's ``completed_at`` never changes, so each is decrypted ONCE
         # per process, not on every hourly tick (C5: the sweep runs on the
@@ -831,10 +992,11 @@ class PastSessionStore:
         unwrap — ``PastSessionError`` ``not_found`` / ``pending`` for the
         entry, ``recording_not_kept`` when it holds no live recording (a
         missing or zeroed key file). The returned generator unwraps on its
-        first step and destroys both keys when it finishes or is closed; any
-        failure while reading (a later chunk failing authentication among
-        them) raises ``PastSessionError("unreadable")`` — the caller has
-        then already received the earlier chunks."""
+        first step and destroys both keys when it finishes or is closed; a
+        failure before any audio is read raises
+        ``PastSessionError("unreadable")``, and one after it (a later chunk
+        failing authentication) ``PastSessionError("recording_unreadable")``
+        — the caller has then already received the earlier chunks."""
         entry = self._committed(session_id)
         if not _recording_kept_in(entry):
             raise PastSessionError("recording_not_kept")
@@ -845,12 +1007,17 @@ class PastSessionStore:
             crypto = self._unwrap_key(entry)
         except Exception as exc:
             raise PastSessionError("unreadable") from exc
+        started = False
         try:
-            yield from _audio_chunks(entry, crypto, entry.name)
+            for chunk in _audio_chunks(entry, crypto, entry.name):
+                started = True
+                yield chunk
         except PastSessionError:
             raise
         except Exception as exc:
-            raise PastSessionError("unreadable") from exc
+            # Review round 22 LOW: once audio has been read, a later failure
+            # is the RECORDING's (a damaged chunk), never this account's.
+            raise PastSessionError("recording_unreadable" if started else "unreadable") from exc
         finally:
             crypto.destroy()
 
@@ -965,6 +1132,299 @@ class PastSessionStore:
             self._log(None, "tidy_failed")
         self._spared = frozenset(held)
         return removed
+
+    # --- Export recording (development-recordings plan Task 3.3; D10, C5) ---
+
+    def export_recording(
+        self,
+        session_id: str,
+        folder: Path,
+        *,
+        check_destination: Callable[[Path], str | None],
+    ) -> Path:
+        """Write the COMMITTED entry's kept recording to ``folder`` as
+        ``<session id>.wav`` (16 kHz mono PCM16, through the ONE writer
+        ``speech.write_wav``) and return its path. A shadow recording's
+        confirm is the caller's. The DESTINATION is checked HERE as well as
+        by the caller (codex round 23 PR-HIGH-001): ``check_destination``
+        (the caller's location check — ``exclusions.check_export_location``
+        — answering a refusal line or None) is REQUIRED and runs on the
+        RESOLVED folder immediately before the exclusive create, so a
+        junction or drive mapping changed while the caller waited on the
+        user cannot redirect the file; a refusal, or a check that raises,
+        refuses (``ExportDestinationRefused``) with nothing written. This is
+        the custody of the file:
+
+        1. ``read_recording`` refuses (``not_found`` / ``pending`` /
+           ``recording_not_kept``) before anything is written;
+        2. every earlier unresolved ledger row is resolved — its ``.part``
+           deleted only while it is still the file the app created — and one
+           that cannot be resolved REFUSES (``export_unresolved``), so a
+           partial export is never forgotten by a later one; an unreadable
+           ledger refuses too (start-up resets it, with a line), and one that
+           could not be opened this time refuses (``export_ledger_busy``);
+           a relative folder refuses (``export_failed``);
+        3. an existing ``<id>.wav`` refuses (``export_exists``: never
+           overwritten); the resolved folder is checked
+           (``check_destination``); ``<id>.wav.part`` is created EXCLUSIVELY — a file of
+           that name already there refuses (``export_part_exists``; the app
+           never adopts a file it did not create);
+        4. the ledger row (the folder and the created file's identity) is
+           written BEFORE the first byte of audio (``export_unrecorded`` when
+           it cannot be — the empty file is removed);
+        5. the PCM is streamed into the ``.part`` file, synced and renamed;
+           the row is dropped after the rename.
+
+        On ANY failure after the ``.part`` exists — a later chunk failing
+        authentication (``iter_chunks`` yields earlier plaintext first), a
+        full disk, a failed rename — the handle is closed and the ``.part``
+        removed (``export_failed``, or the read's own reason); a ``.part``
+        that cannot be removed keeps its row for the next start and raises
+        ``export_cleanup_failed``. ``PastSessionError`` only."""
+        chunks = self.read_recording(session_id)
+        try:
+            return self._export(session_id, folder, chunks, check_destination)
+        finally:
+            close = getattr(chunks, "close", None)
+            if close is not None:
+                close()
+
+    def _export(
+        self,
+        session_id: str,
+        folder: Path,
+        chunks: Iterator[bytes],
+        check_destination: Callable[[Path], str | None],
+    ) -> Path:
+        if not folder.is_absolute():
+            # Review round 20 LOW-003: the ledger records the folder the next
+            # start resolves a partial file in — never one relative to
+            # whatever the working directory then is.
+            raise PastSessionError("export_failed")
+        # Review round 21 LOW-007: export into — and record — the RESOLVED
+        # folder the location check judged, never a mapping (a `subst` drive)
+        # that may be gone when the next start looks for a partial file.
+        try:
+            folder = Path(os.path.realpath(folder))
+        except (OSError, ValueError):
+            raise PastSessionError("export_failed") from None
+        try:
+            rows = self._read_ledger()
+        except _LedgerUnreadable:
+            raise PastSessionError("export_ledger_unreadable") from None
+        except _LedgerBusy:
+            raise PastSessionError("export_ledger_busy") from None
+        remaining = self._resolve(rows)
+        if remaining != rows:
+            try:
+                self._write_ledger(remaining)
+            except Exception:  # noqa: BLE001 - the rows are kept; refused below
+                self._log(session_id, "export_ledger_failed")
+                raise PastSessionError("export_unrecorded") from None
+        if remaining:
+            raise ExportUnresolvedError(tuple(sorted(remaining)))
+        final = folder / f"{session_id}{EXPORT_SUFFIX}"
+        part = _part_path(folder, session_id)
+        if _exists(final) or _is_link(final):
+            raise PastSessionError("export_exists")
+        # Imported BEFORE the file exists (review round 22 LOW): nothing that
+        # can fail may sit between the create and the clean-up below.
+        from scribe_desktop.speech import write_wav
+
+        # Codex round 23 PR-HIGH-001: the RESOLVED folder is checked here,
+        # the last step before the create — the caller's own check ran before
+        # it waited on the user. Anything but a clear None refuses.
+        try:
+            refusal = check_destination(folder)
+        except Exception:  # noqa: BLE001 - a check that cannot be made refuses
+            self._log(session_id, "export_destination_refused")
+            raise ExportDestinationRefused(None) from None
+        if refusal is not None:
+            self._log(session_id, "export_destination_refused")
+            raise ExportDestinationRefused(refusal)
+        flags =os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        try:
+            descriptor = os.open(part, flags, 0o600)
+        except FileExistsError:
+            raise PastSessionError("export_part_exists") from None
+        except OSError:
+            self._log(session_id, "export_failed")
+            raise PastSessionError("export_failed") from None
+        try:
+            stream = os.fdopen(descriptor, "wb")
+        except Exception:  # noqa: BLE001 - the empty file goes, by its name
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass  # already closed
+            self._log(session_id, "export_failed")
+            if not _unlink_quietly(part):
+                raise PastSessionError("export_cleanup_failed") from None
+            raise PastSessionError("export_failed") from None
+        identity: ExportIdentity | None = None
+        try:
+            status = os.fstat(stream.fileno())
+            identity = ExportIdentity(file_index=status.st_ino, device=status.st_dev)
+            try:
+                self._write_ledger({session_id: ExportRow(folder=str(folder), identity=identity)})
+            except Exception:  # noqa: BLE001 - nothing written yet: refused
+                self._log(session_id, "export_ledger_failed")
+                raise PastSessionError("export_unrecorded") from None
+            write_wav(stream, chunks)
+            stream.flush()
+            os.fsync(stream.fileno())
+            stream.close()
+            os.rename(part, final)
+        except BaseException as exc:
+            # Review round 20 MED-001: the clean-up runs on EVERY failure — a
+            # close that raises a second disk-full error included — and only
+            # a PastSessionError leaves (the docstring's contract).
+            try:
+                stream.close()
+            except OSError:
+                pass  # the buffered bytes are lost; the handle is closed
+            self._log(session_id, "export_failed")
+            # Created exclusively an instant ago: with no identity read yet
+            # (and so no row) it is removed by its name.
+            removed = (
+                _remove_part(part, identity) if identity is not None else _unlink_quietly(part)
+            )
+            if not removed:
+                raise PastSessionError("export_cleanup_failed") from None
+            self._drop_export_row(session_id)
+            if isinstance(exc, PastSessionError) or not isinstance(exc, Exception):
+                raise
+            raise PastSessionError("export_failed") from exc
+        self._drop_export_row(session_id)
+        return final
+
+    def recover_exports(self) -> ExportRecovery:
+        """At START-UP, FIRST — before ``clean_staging``, ``reconcile_pending``,
+        the kept-fact repair, ``tidy_dead_recordings`` and the retention sweep
+        (Task 3.3): a hard kill or power loss mid-export skips
+        ``export_recording``'s clean-up, so every ledger row's ``.part`` is
+        deleted here while it is still the file the app created; a completed
+        ``<id>.wav`` and a file whose identity differs are never touched. The
+        resolved rows are dropped; a row whose ``.part`` could not be removed
+        or no longer matches is KEPT and named in the answer (one start-up
+        line each). An unreadable ledger is started again (``reset``: one
+        line — a partial file may remain); one that could not be opened this
+        time is left as it is (``busy``: one line). NEVER raises."""
+        try:
+            rows = self._read_ledger()
+        except _LedgerUnreadable:
+            self._log(None, "export_ledger_reset")
+            self._reset_ledger()
+            return ExportRecovery(reset=True)
+        except _LedgerBusy:
+            # Left as it is: the next export, or the next start, resolves it.
+            self._log(None, "export_ledger_failed")
+            return ExportRecovery(busy=True)
+        if not rows:
+            return ExportRecovery()
+        remaining = self._resolve(rows)
+        if remaining != rows:
+            try:
+                self._write_ledger(remaining)
+            except Exception:  # noqa: BLE001 - the next start resolves them again
+                self._log(None, "export_ledger_failed")
+        for session_id in remaining:
+            self._log(session_id, "export_part_kept")
+        return ExportRecovery(kept=tuple(sorted(remaining)))
+
+    @staticmethod
+    def _resolve(rows: dict[str, ExportRow]) -> dict[str, ExportRow]:
+        """The rows whose ``.part`` is still there and could not be removed
+        as the app's own file — the unresolved ones."""
+        return {
+            session_id: row
+            for session_id, row in rows.items()
+            if not _remove_part(_part_path(row.folder, session_id), row.identity)
+        }
+
+    def _drop_export_row(self, session_id: str) -> None:
+        """After a finished export: its row goes. NEVER raises — a row left
+        behind names a ``.part`` that is gone, which the next resolution
+        drops."""
+        try:
+            rows = self._read_ledger()
+            if session_id in rows:
+                self._write_ledger({sid: row for sid, row in rows.items() if sid != session_id})
+        except Exception:  # noqa: BLE001 - resolved later
+            self._log(session_id, "export_ledger_failed")
+
+    def _read_ledger(self) -> dict[str, ExportRow]:
+        """The ledger's rows; none when it does not exist. Raises
+        ``_LedgerUnreadable`` when it exists but cannot be read (it is
+        started again at the next start) and ``_LedgerBusy`` when its file
+        could not be looked at or read this time (it is left as it is)."""
+        path = self._root / EXPORT_LEDGER_FILENAME
+        if _absent(path):
+            return {}
+        linked = link_state(path)
+        if linked is None:
+            raise _LedgerBusy
+        if linked:
+            raise _LedgerUnreadable
+        try:
+            blob = _read_capped(path, MAX_EXPORT_LEDGER_BYTES)
+        except PastSessionError:
+            raise _LedgerUnreadable from None
+        except OSError as exc:
+            raise _LedgerBusy from exc
+        try:
+            crypto = self._unwrap_ledger_key(self._root)
+        except Exception as exc:
+            # Review round 21 LOW-001: the KEY file read failing this time (a
+            # scanner's lock) is busy too; a missing key, or one that does not
+            # unwrap, is damage.
+            if _transient(exc):
+                raise _LedgerBusy from exc
+            raise _LedgerUnreadable from exc
+        try:
+            try:
+                plaintext = crypto.decrypt(blob, _EXPORT_LEDGER_AAD)
+            finally:
+                crypto.destroy()
+            return dict(ExportLedger.model_validate_json(plaintext).rows)
+        except Exception as exc:
+            raise _LedgerUnreadable from exc
+
+    def _write_ledger(self, rows: dict[str, ExportRow]) -> None:
+        """Replace the ledger (atomically) with ``rows`` — its key created
+        first when there is none. Raises on failure (the callers decide)."""
+        key_path = self._root / EXPORT_LEDGER_KEY_FILENAME
+        self._root.mkdir(parents=True, exist_ok=True)
+        if _absent(key_path):
+            crypto = SessionCrypto()
+            try:
+                self._wrap_ledger_key(crypto, self._root)
+            except BaseException:
+                crypto.destroy()
+                raise
+        else:
+            crypto = self._unwrap_ledger_key(self._root)
+        try:
+            atomic_write_bytes(
+                self._root / EXPORT_LEDGER_FILENAME,
+                # The version is NAMED: the validator refuses a ledger
+                # without one, written or read.
+                crypto.encrypt(
+                    ExportLedger(schema_version=1, rows=rows).to_bytes(), _EXPORT_LEDGER_AAD
+                ),
+                error_label="export ledger",
+            )
+        finally:
+            crypto.destroy()
+
+    def _reset_ledger(self) -> None:
+        """An unreadable ledger is started again: both its files go (a fresh
+        key comes with the next row). Never raises."""
+        for name in (EXPORT_LEDGER_FILENAME, EXPORT_LEDGER_KEY_FILENAME):
+            try:
+                (self._root / name).unlink(missing_ok=True)
+            except OSError:
+                self._log(None, "export_ledger_failed")
 
     def read_entry(self, session_id: str) -> PastSessionEntry:
         """Open a COMMITTED entry through the existing readers.
@@ -1383,6 +1843,178 @@ def _recording_deleted_in(entry: Path) -> bool:
     """``entry`` held a kept recording that was deleted and not yet tidied
     (``_recording_state``); anything that cannot be read decides nothing."""
     return _recording_state(entry) == "gone"
+
+
+def _part_path(folder: str | Path, session_id: str) -> Path:
+    """An export's temporary file: ``<folder>\\<session id>.wav.part``."""
+    return Path(folder) / f"{session_id}{EXPORT_PART_SUFFIX}"
+
+
+class PartKernel(Protocol):
+    """The Windows calls ``_remove_part`` makes (codex round 24 PR-MED-001),
+    behind ONE seam: the file is opened ONCE — exclusively, never through a
+    link — and that same handle is identified and marked for deletion, so
+    nothing can be swapped in at the path between the check and the delete.
+    ``Win32PartKernel`` is the real one; tests inject a double (the conftest
+    pins ``part_kernel``), and no test reaches the real Windows API."""
+
+    def open(self, path: Path) -> int:
+        """An exclusive descriptor on ``path`` itself (no sharing; a link
+        opened as itself). ``FileNotFoundError`` when it — or its folder —
+        is not there; any other ``OSError`` when it cannot be opened."""
+        ...
+
+    def status(self, descriptor: int) -> os.stat_result:
+        """``os.fstat`` of that descriptor — the same identity the export
+        recorded from its own descriptor."""
+        ...
+
+    def mark_deleted(self, descriptor: int) -> None:
+        """Mark the OPEN file for deletion when it is closed. Raises
+        ``OSError`` when Windows refuses."""
+        ...
+
+    def close(self, descriptor: int) -> None: ...
+
+
+_DELETE: Final = 0x00010000
+_FILE_READ_ATTRIBUTES: Final = 0x0080
+_FILE_FLAG_OPEN_REPARSE_POINT: Final = 0x00200000
+_OPEN_EXISTING: Final = 3
+_FILE_DISPOSITION_INFO_CLASS: Final = 4  # FileDispositionInfo
+
+
+class Win32PartKernel:
+    """The real ``PartKernel``: ``_winapi.CreateFile`` (share mode 0, the
+    reparse point opened as itself) handed to an ``msvcrt`` descriptor,
+    ``os.fstat`` on it, and ``SetFileInformationByHandle(FileDispositionInfo)``
+    through ``ctypes`` — the standard library only. Windows only; never
+    built in tests."""
+
+    def open(self, path: Path) -> int:
+        import _winapi
+        import msvcrt
+
+        handle = _winapi.CreateFile(
+            str(path),
+            _DELETE | _FILE_READ_ATTRIBUTES,
+            0,
+            0,
+            _OPEN_EXISTING,
+            _FILE_FLAG_OPEN_REPARSE_POINT,
+            0,
+        )
+        try:
+            return int(msvcrt.open_osfhandle(handle, os.O_RDONLY))
+        except BaseException:
+            _winapi.CloseHandle(handle)
+            raise
+
+    def status(self, descriptor: int) -> os.stat_result:
+        return os.fstat(descriptor)
+
+    def mark_deleted(self, descriptor: int) -> None:
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        set_information = kernel32.SetFileInformationByHandle
+        set_information.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        set_information.restype = wintypes.BOOL
+        delete_file = ctypes.c_ubyte(1)  # FILE_DISPOSITION_INFO { BOOLEAN DeleteFile; }
+        handle = msvcrt.get_osfhandle(descriptor)
+        if not set_information(
+            handle, _FILE_DISPOSITION_INFO_CLASS, ctypes.byref(delete_file), 1
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def close(self, descriptor: int) -> None:
+        os.close(descriptor)
+
+
+def part_kernel() -> PartKernel:
+    """The ``PartKernel`` in use — the conftest pins a double (C6)."""
+    return Win32PartKernel()
+
+
+def _remove_part(path: Path, identity: ExportIdentity, kernel: PartKernel | None = None) -> bool:
+    """Task 3.3: remove an export's ``.part`` file ONLY while it is still the
+    file the app created — a regular file (not a link or other reparse
+    point) with the recorded identity (file index and volume). True when it
+    is gone (removed, or CONFIRMED absent); False when it is still there —
+    another identity (a file the practitioner put there, never deleted), a
+    file another program holds open, or a removal Windows refused — and the
+    caller then KEEPS its ledger row. Never raises.
+
+    Codex round 24 PR-MED-001: the identity is read from, and the deletion
+    made through, ONE exclusive handle (``PartKernel``) — never a check by
+    path followed by a delete by path, which a file swapped in between would
+    have turned into deleting the practitioner's file. Anything that does not
+    secure the file that way keeps it.
+
+    A missing FOLDER also reads "not found" and counts as gone (review
+    round 20 LOW-005, kept): an export folder deleted by hand would
+    otherwise hold its row — and refuse every later export — for ever, and
+    the destination check admits only this computer's fixed drives."""
+    kernel = kernel if kernel is not None else part_kernel()
+    try:
+        descriptor = kernel.open(path)
+    except FileNotFoundError:
+        return True
+    except Exception:  # noqa: BLE001 - not secured: the row is kept
+        return False
+    try:
+        status = kernel.status(descriptor)
+        reparse = getattr(status, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        owned = (
+            stat.S_ISREG(status.st_mode)
+            and not reparse
+            and (status.st_ino, status.st_dev) == (identity.file_index, identity.device)
+        )
+        if owned:
+            kernel.mark_deleted(descriptor)
+    except Exception:  # noqa: BLE001 - not secured: the row is kept
+        owned = False
+    if not owned:
+        _close_quietly(kernel, descriptor)  # never marked: the file stays as it was
+        return False
+    try:
+        kernel.close(descriptor)  # the deletion happens as the handle closes
+    except Exception:  # noqa: BLE001 - unknown: the row is kept; the next start looks again
+        return False
+    return True
+
+
+def _close_quietly(kernel: PartKernel, descriptor: int) -> None:
+    try:
+        kernel.close(descriptor)
+    except Exception:  # noqa: BLE001 - the file is left as it was
+        pass
+
+
+def _transient(exc: BaseException) -> bool:
+    """A key read that failed with an ``OSError`` other than "not found" —
+    itself or as the cause ``unwrap_key_from_file`` wraps in
+    ``KeyCustodyError`` — may succeed next time (review round 21 LOW-001)."""
+    for error in (exc, exc.__cause__):
+        if isinstance(error, OSError) and not isinstance(error, FileNotFoundError):
+            return True
+    return False
+
+
+def _unlink_quietly(path: Path) -> bool:
+    """Unlink ``path``: True when it is gone afterwards. Never raises."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return False
+    return True
 
 
 def _exists(path: Path) -> bool:

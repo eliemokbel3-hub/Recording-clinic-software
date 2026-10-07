@@ -48,7 +48,6 @@ import random
 import re
 import sys
 import tempfile
-import wave
 from array import array
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -58,6 +57,7 @@ from typing import Final
 from scribe_desktop import install_layout
 from scribe_desktop.speaker_eval import configure_output
 from scribe_desktop.speech import BYTES_PER_SAMPLE, SAMPLE_RATE
+from scribe_desktop.speech import write_wav as speech_write_wav
 from scribe_desktop.validation import (
     ENCOUNTER_ID_PATTERN,
     REPO_ROOT,
@@ -309,13 +309,10 @@ def label_track(roles: Sequence[str], placement: Placement) -> str:
 
 def wav_bytes(pcm: bytes) -> bytes:
     """``pcm`` as a 16 kHz mono 16-bit WAV file's bytes (the
-    ``speaker_eval.read_wav_pcm`` contract)."""
+    ``speaker_eval.read_wav_pcm`` contract), through the package's ONE WAV
+    writer (``speech.write_wav``; development-recordings plan D10)."""
     buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as writer:
-        writer.setnchannels(1)
-        writer.setsampwidth(BYTES_PER_SAMPLE)
-        writer.setframerate(TARGET_SAMPLE_RATE)
-        writer.writeframes(pcm)
+    speech_write_wav(buffer, (pcm,))
     return buffer.getvalue()
 
 

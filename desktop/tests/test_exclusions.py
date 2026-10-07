@@ -24,6 +24,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from conftest import use_channel, use_frozen  # noqa: E402
 from scribe_desktop import exclusions, install_layout  # noqa: E402
+from scribe_desktop import past_sessions as exclusions_past_sessions  # noqa: E402
 from scribe_desktop.exclusions import (  # noqa: E402
     BACKUP_EXCLUSION_KEYS,
     BACKUP_NOT_EXCLUDED,
@@ -267,6 +268,91 @@ class TestCheckLocation:
         root, real = _root_at(_LOCAL + r"\ClinikoScribe")
         env = {**_PROFILE_ENV, "OneDrive": "", "APPDATA": ""}
         assert check_location(FakeLayer(env=env, real=real), root) == []
+
+
+# ---------------------------------------------------------------------------
+# check_export_location (development-recordings plan Task 3.3; D10, C2).
+# ---------------------------------------------------------------------------
+
+
+def _folder_at(resolved: str) -> tuple[Path, dict[str, str]]:
+    folder = Path("chosen-folder")
+    return folder, {str(folder): resolved}
+
+
+class TestCheckExportLocation:
+    """Every destination the code positively identifies as off this
+    computer or outside custody is REFUSED (a returned refusal — never a
+    warning to export anyway, round 1 PR-HIGH-002); a folder on this
+    computer's own fixed drive, outside both app data folders, is admitted."""
+
+    def _check(self, resolved: str, **layer: Any) -> exclusions.ExclusionWarning | None:
+        folder, real = _folder_at(resolved)
+        env = {**_PROFILE_ENV, **layer.pop("env", {})}
+        return exclusions.check_export_location(FakeLayer(env=env, real=real, **layer), folder)
+
+    def test_a_folder_on_the_fixed_drive_is_admitted(self) -> None:
+        assert self._check(r"C:\Users\pat\Documents") is None
+        assert self._check(r"D:\Labelling") is None
+
+    def test_onedrive_is_refused(self) -> None:
+        refusal = self._check(
+            r"C:\Users\pat\OneDrive\Documents", env={"OneDrive": r"C:\Users\pat\OneDrive"}
+        )
+        assert refusal == exclusions.ExclusionWarning(
+            "location_onedrive", exclusions.EXPORT_ONEDRIVE
+        )
+
+    @pytest.mark.parametrize("resolved", [r"\\server\share\labels", r"\\?\UNC\server\share"])
+    def test_a_unc_path_is_refused(self, resolved: str) -> None:
+        refusal = self._check(resolved)
+        assert refusal is not None and refusal.code == "location_network"
+        assert refusal.line == exclusions.EXPORT_NETWORK
+
+    def test_a_remote_drive_is_refused(self) -> None:
+        refusal = self._check(r"Z:\labels", drives={"Z:\\": DRIVE_REMOTE})
+        assert refusal is not None and refusal.code == "location_network"
+
+    def test_the_roaming_profile_is_refused(self) -> None:
+        refusal = self._check(
+            r"C:\Users\pat\AppData\Roaming\labels",
+            env={"APPDATA": r"C:\Users\pat\AppData\Roaming"},
+        )
+        assert refusal == exclusions.ExclusionWarning(
+            "location_roaming", exclusions.EXPORT_ROAMING
+        )
+
+    @pytest.mark.parametrize(
+        "drive_type", [0, 1, 2, 5, 6], ids=["unknown", "no_root", "removable", "cdrom", "ramdisk"]
+    )
+    def test_a_drive_that_is_not_fixed_is_refused(self, drive_type: int) -> None:
+        refusal = self._check(r"E:\labels", drives={"E:\\": drive_type})
+        assert refusal == exclusions.ExclusionWarning(
+            "location_not_fixed", exclusions.EXPORT_NOT_FIXED
+        )
+
+    @pytest.mark.parametrize(
+        "resolved",
+        [_LOCAL + r"\ClinikoScribe", _LOCAL + r"\ClinikoScribe\past_sessions",
+         _LOCAL + r"\CLINIKOSCRIBE-DEV\exports"],
+        ids=["production", "production_child", "dev_any_case"],
+    )
+    def test_either_app_data_folder_is_refused(self, resolved: str) -> None:
+        """Round-26 SEC-005's rule, BOTH channels, whatever this one is."""
+        refusal = self._check(resolved)
+        assert refusal == exclusions.ExclusionWarning(
+            "location_app_folder", exclusions.EXPORT_APP_FOLDER
+        )
+
+    def test_a_sibling_of_the_app_folder_is_admitted(self) -> None:
+        assert self._check(_LOCAL + r"\ClinikoScribeLabels") is None
+
+    @pytest.mark.parametrize("broken", ["environ", "realpath", "drive_type"])
+    def test_a_check_that_cannot_be_made_refuses(self, broken: str) -> None:
+        refusal = self._check(r"C:\Users\pat\Documents", broken=(broken,))
+        assert refusal == exclusions.ExclusionWarning(
+            "location_unchecked", exclusions.EXPORT_UNCHECKED
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1038,6 +1124,9 @@ def test_main_installs_the_hooks_first_and_checks_before_the_window(
     class FakePastSessions:
         def __init__(self, **kwargs: Any) -> None:
             pass
+
+        def recover_exports(self) -> Any:  # development-recordings Task 3.3
+            return exclusions_past_sessions.ExportRecovery()
 
         def clean_staging(self) -> int:
             return 0

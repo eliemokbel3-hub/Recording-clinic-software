@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from datetime import datetime, tzinfo
+from datetime import UTC, datetime, timedelta, tzinfo
 from functools import partial
 from pathlib import Path
 from typing import Final, NamedTuple, Protocol, runtime_checkable
@@ -29,9 +29,13 @@ from scribe_desktop.audit import (
     AuditUnavailable,
     PastSessionEvent,
 )
+from scribe_desktop.exclusions import EXPORT_UNCHECKED
 from scribe_desktop.past_sessions import (
     MIN_RETENTION_DAYS,
     PAST_SESSION_REASONS,
+    ExportDestinationRefused,
+    ExportRecovery,
+    ExportUnresolvedError,
     PastSessionError,
     PastSessionLabel,
     PastSessionListing,
@@ -366,12 +370,231 @@ def entry_line(
 ) -> str:
     """One list row: date + name (Flow 5), or the unreadable line — such an
     entry is still listed so it can be deleted. A shadow recording's row
-    ends "(shadow recording)" (pilot plan Task 1.6)."""
+    ends "(shadow recording)" (pilot plan Task 1.6); an entry holding a kept
+    recording, "(recording kept)" (development-recordings plan Task 3.1) —
+    from the listing's file check, never a decryption, and on the unreadable
+    row too, so its recording can still be found and deleted (C3)."""
     label = listing.label
     if label is None:
-        return ENTRY_UNREADABLE_ROW
-    line = f"{_local_text(_moment(label), zone)} - {who_line(label, hide_names=hide_names)}"
-    return f"{line} ({SHADOW_MARK})" if label.shadow else line
+        line = ENTRY_UNREADABLE_ROW
+    else:
+        line = f"{_local_text(_moment(label), zone)} - {who_line(label, hide_names=hide_names)}"
+        if label.shadow:
+            line = f"{line} ({SHADOW_MARK})"
+    return f"{line} ({RECORDING_KEPT_MARK})" if listing.recording_kept else line
+
+
+# --- the kept recording (development-recordings plan Tasks 3.1-3.3) ----------
+
+RECORDING_KEPT_MARK: Final = "recording kept"
+# D9: the review is a reminder, at 12 months after the Complete.
+REVIEW_AFTER: Final = timedelta(days=365)
+# Locale-free month names (``%B`` would follow whatever C locale Qt set).
+_MONTHS: Final = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def review_due(label: PastSessionLabel | None, now: datetime) -> bool:
+    """D9: a kept recording is due for review once 365 days have passed
+    since its Complete — compared as instants (UTC), so the local zone
+    never moves it. A label that cannot be read is never due (it has no
+    date; its row still says the recording is kept)."""
+    if label is None:
+        return False
+    return label.completed_at.astimezone(UTC) + REVIEW_AFTER <= now.astimezone(UTC)
+
+
+def _month_text(moment: datetime, zone: tzinfo | None) -> str:
+    """``October 2027`` in the practitioner's zone (UTC when this computer
+    cannot convert it, as ``_local_text``)."""
+    try:
+        local = moment.astimezone(zone)
+    except (OSError, OverflowError, ValueError):
+        local = moment.astimezone(UTC)
+    return f"{_MONTHS[local.month - 1]} {local.year}"
+
+
+REVIEW_DUE_MARK: Final = "Review due."
+
+
+def recording_line(
+    label: PastSessionLabel | None, *, now: datetime, zone: tzinfo | None = None
+) -> str:
+    """The opened entry's line for a kept recording (Task 3.1): when its
+    review falls due and, once it has, "Review due." No name (the heading
+    above carries the masked one) and no id."""
+    if label is None:
+        return "Recording kept for development."
+    due = _month_text(label.completed_at + REVIEW_AFTER, zone)
+    line = f"Recording kept for development - review due {due}."
+    return f"{line} {REVIEW_DUE_MARK}" if review_due(label, now) else line
+
+
+def review_due_line(count: int) -> str:
+    """D9's status line: how many kept recordings are due for review."""
+    if count == 1:
+        return (
+            "1 kept recording is due for review - delete it or note in the pilot log why "
+            "it is kept."
+        )
+    return (
+        f"{count} kept recordings are due for review - delete each or note in the pilot "
+        "log why it is kept."
+    )
+
+
+RECORDING_GROUP_TITLE: Final = "Recording kept for development"
+
+# Task 3.2 (D8): Delete recording, two clicks like Delete now.
+DELETE_RECORDING_LABEL: Final = "Delete recording"
+DELETE_RECORDING_CONFIRM_LABEL: Final = "Confirm delete recording"
+DELETE_RECORDING_HELP: Final = (
+    "Delete recording deletes the kept recording only - the transcript and notes stay. "
+    "Use it when the patient withdraws consent for the recording, or at its review."
+)
+DELETE_RECORDING_CONFIRM_MESSAGE: Final = (
+    "Delete this recording? The transcript and notes stay. Use it when the patient "
+    "withdraws consent for the recording, or at its review. The recording cannot be "
+    "recovered. Press Confirm delete recording to delete it."
+)
+DELETE_RECORDING_DONE: Final = "Recording deleted."
+NO_KEPT_RECORDING: Final = "Select a past session whose recording is kept first."
+
+
+def recording_delete_failed_line(exc: BaseException) -> str:
+    return (
+        f"The recording could not be deleted: {failure_reason(exc)}. The transcript and "
+        "notes are unchanged - try again."
+    )
+
+
+# Task 3.3 (D7, D10, C2): Export recording.
+EXPORT_RECORDING_LABEL: Final = "Export recording (WAV)"
+EXPORT_RECORDING_DIALOG_TITLE: Final = "Export recording"
+EXPORT_RECORDING_FILTER: Final = "WAV audio (*.wav)"
+EXPORT_RECORDING_HELP: Final = (
+    "Export makes one unencrypted copy of the recording, for labelling who is speaking. "
+    "It must stay on this computer's own drive - delete it when you have finished."
+)
+
+
+def recording_exported_line(session_id: str) -> str:
+    """Export's success, naming the file it wrote (review round 21 LOW-005:
+    only the chosen FOLDER is used, so a name typed in the dialog is not)."""
+    return (
+        f"Exported as {session_id}.wav. The file is not encrypted - delete it when you have "
+        "finished labelling it."
+    )
+
+
+EXPORT_RECORDING_NO_LAYER: Final = (
+    "The recording was not exported: Clinic Scribe cannot check where a file would go in "
+    "this window."
+)
+# D7: the only question Export ever asks (a destination is refused, never asked).
+EXPORT_SHADOW_CONFIRM: Final = (
+    "This was a shadow recording; the file will hold the whole consultation unencrypted. "
+    "Export it?"
+)
+# Review round 20 LOW: an entry whose label cannot be read is asked too
+# (fail closed), but never told it WAS a shadow recording.
+EXPORT_UNKNOWN_CONFIRM: Final = (
+    "Clinic Scribe cannot tell whether this was a shadow recording; the file will hold the "
+    "whole consultation unencrypted. Export it?"
+)
+EXPORT_SHADOW_ACTION: Final = "Export the recording"
+# Review round 21 LOW-006: no example folder — Documents itself is inside
+# OneDrive (refused) on many Windows 11 computers.
+EXPORT_CHOOSE_LOCAL: Final = "Choose a folder on this computer's own drive."
+
+
+def export_confirm_question(label: PastSessionLabel | None) -> str | None:
+    """D7: the question Export asks first — for a shadow recording, and for
+    one whose label cannot be read — or None (no question)."""
+    if label is None:
+        return EXPORT_UNKNOWN_CONFIRM
+    return EXPORT_SHADOW_CONFIRM if label.shadow else None
+
+
+def export_refused_line(reason: str) -> str:
+    """A destination ``exclusions.check_export_location`` refused: its fixed
+    reason, then where to choose instead (round 1 PR-HIGH-002: refused,
+    never "export anyway")."""
+    return f"The recording was not exported: {reason} {EXPORT_CHOOSE_LOCAL}"
+
+
+def export_recording_failed_line(exc: BaseException, session_id: str) -> str:
+    """An export the store refused or could not finish — its authored
+    reason; a partial file that could not be removed says so first, NAMED
+    (review round 20 LOW: its session id is the only way to find it) — as
+    is every file a refusal is about (review round 21 LOW-005)."""
+    reason = exc.reason if isinstance(exc, PastSessionError) else None
+    if isinstance(exc, ExportDestinationRefused):
+        # Codex round 23 PR-HIGH-001: the store's own check, on the resolved
+        # folder, refused — the same line as the tab's check would show.
+        return export_refused_line(exc.line or EXPORT_UNCHECKED)
+    if reason == "export_cleanup_failed":
+        return (
+            "The recording could not be exported. A partial unencrypted file "
+            f"{session_id}.wav.part may remain in the folder you chose - delete it by hand now."
+        )
+    if reason == "export_exists":
+        return (
+            f"The recording was not exported: {session_id}.wav is already in the folder you "
+            "chose, and it is never replaced."
+        )
+    if reason == "export_part_exists":
+        return (
+            f"The recording was not exported: a partial export file {session_id}.wav.part is "
+            "already in the folder you chose - delete it by hand first."
+        )
+    if isinstance(exc, ExportUnresolvedError) and exc.session_ids:
+        names = ", ".join(f"{sid}.wav.part" for sid in exc.session_ids)
+        return (
+            "The recording was not exported: a partial file from an earlier export could not "
+            f"be removed from the folder it was exported to - delete {names} by hand first."
+        )
+    return f"The recording was not exported: {failure_reason(exc)}."
+
+
+def export_recovery_lines(recovery: ExportRecovery) -> list[str]:
+    """The start-up lines ``PastSessionStore.recover_exports`` owes (Task
+    3.3): one per partial export file it could not remove — named by its
+    session id, the only way to find it — one when the export record could
+    not be read and was started again, and one when it could not be opened
+    this time."""
+    lines = [
+        f"A partial export file {session_id}.wav.part could not be removed from the folder "
+        "you chose - delete it by hand."
+        for session_id in recovery.kept
+    ]
+    if recovery.reset:
+        lines.append(
+            "Clinic Scribe's record of recording exports could not be read and was started "
+            "again, so a partial export file (its name ends .wav.part) may remain in a folder "
+            "you exported to - delete it by hand."
+        )
+    if recovery.busy:
+        # Review round 21 LOW-011: a record that can never be opened is not
+        # silent at start-up.
+        lines.append(
+            "Clinic Scribe could not open its record of recording exports, so it could not "
+            "check for a partial export file (its name ends .wav.part) left by an interrupted "
+            "export - it will check again next time."
+        )
+    return lines
 
 
 def sorted_listings(listings: Sequence[PastSessionListing]) -> list[PastSessionListing]:

@@ -26,7 +26,13 @@ and combo-box tests at the end):
 - THE one send to Cliniko (``ClinikoCall.write_draft_note``) is reached
   only from ``draft_write.send_write``, which takes a ``PreparedWrite`` that
   only ``prepare_write`` makes, after refusing a shadow session (pinned in
-  ``test_draft_write.py``).
+  ``test_draft_write.py``);
+- recorded audio leaves as a plaintext WAV through ONE writer,
+  ``speech.write_wav`` (development-recordings plan D7/D10: the note-text
+  rule extended to recorded audio) — every reference to ``wave``, to the
+  writer and to the kept recording's plaintext readers counted where it is,
+  a tripwire against an accidental second exit rather than a sandbox
+  against deliberately obfuscated code (codex rounds 23–26).
 
 Sites are COUNTED, not just located (peer round 9 PR-MED-A01), and each
 count is proven to catch an in-memory added site.
@@ -628,3 +634,331 @@ def test_a_second_send_in_draft_write_fails_the_count(function: str) -> None:
         _package_sources(), "draft_write.py", function, "call.write_draft_note('1', None)"
     )
     assert _send_callers(sources) != _SEND_CALLERS
+
+
+# Development-recordings plan D7/D10 (Task 3.3): this file's "note text"
+# rule extends to RECORDED AUDIO — a plaintext WAV is an exit as surely as a
+# clipboard write, so the package opens a WAV for writing in ONE place,
+# ``speech.write_wav`` (Export's and the validation-set builder's shared
+# writer).
+#
+# Codex round 26 (class R23-2, its fifth instance in four rounds): every
+# EXEMPTION this pin had — a read mode judged from the call's arguments, a
+# list of harmless attributes — became the next escape (a starred argument
+# that rebinds the mode; ``Wave_read``'s ``__globals__``). So the pin has NO
+# exemptions: EVERY reference to the ``wave`` module — the bare name or
+# ``<x>.wave`` through any module, called, stored, passed or introspected,
+# reading or writing — counts where it is, and the package's references are
+# pinned by count at the three sites that hold them today: the one writer
+# and the two named readers (``benchmark.generate_speech_sample`` checks
+# the length of a WAV it synthesized; ``speaker_eval.read_wav_pcm`` reads a
+# labelled recording and refuses a malformed one by ``wave.Error``). A new
+# reference ANYWHERE — a second writer, a second reader, a new use inside
+# one of those three — changes a count and fails.
+#
+# What this pin IS: a tripwire against an ACCIDENTAL second writer, not a
+# sandbox against deliberately obfuscated code in the package itself. Its
+# residue (named for Task 5.3a): an in-place edit of a pinned site that
+# keeps its count (``"rb"`` changed to ``"wb"`` at one of the two readers —
+# a diff review reads), and the module or a name in it reached by a name
+# built at run time (a computed string, ``exec`` / ``eval``, an object's
+# ``__globals__`` with a computed key).
+_WAVE_REFERENCES: Counter[tuple[str, str]] = Counter(
+    {
+        ("speech.py", "write_wav"): 1,  # THE writer: wave.open(..., "wb")
+        ("benchmark.py", "generate_speech_sample"): 1,  # wave.open(..., "rb")
+        ("speaker_eval.py", "read_wav_pcm"): 2,  # wave.open(..., "rb") and wave.Error
+    }
+)
+
+
+def _is_wave(node: ast.expr) -> bool:
+    """``wave`` itself or any ``<x>.wave`` (review round 21 LOW-004:
+    ``speech.wave.open`` is the same module reached another way)."""
+    return (isinstance(node, ast.Name) and node.id == "wave") or (
+        isinstance(node, ast.Attribute) and node.attr == "wave"
+    )
+
+
+def _wav_writers(sources: dict[str, ast.Module]) -> Counter[tuple[str, str]]:
+    """Every reference to the ``wave`` module, per scope — NO exemptions
+    (codex round 26; see the comment above ``_WAVE_REFERENCES``)."""
+    found: Counter[tuple[str, str]] = Counter()
+    for relative, tree in sources.items():
+        for scope, node in _scoped_nodes(tree):
+            if isinstance(node, ast.Name | ast.Attribute) and _is_wave(node):
+                found[(relative, scope)] += 1
+    return found
+
+
+def test_the_package_writes_a_wav_only_through_the_one_writer() -> None:
+    assert _wav_writers(_package_sources()) == _WAVE_REFERENCES
+
+
+@pytest.mark.parametrize(
+    ("relative", "function", "statement"),
+    [
+        ("speech.py", "write_wav", "wave.open(target, 'wb')"),
+        ("past_sessions.py", "PastSessionStore._export", "wave.open(part, 'wb')"),
+        ("ui/past_sessions.py", "PastSessionsScreen.on_export_recording", "wave.open(p, mode)"),
+        ("validation_set.py", "wav_bytes", "wave.open(buffer, mode='wb')"),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "speech.wave.open(p, 'wb')",
+        ),
+        ("benchmark.py", "generate_speech_sample", "wave.Wave_write(f)"),
+        # Codex round 23 PR-MED-005: a stored reference called later, and a
+        # bare ``wave`` handed on.
+        ("speech.py", "write_wav", "o = wave.open"),
+        ("speaker_eval.py", "read_wav_pcm", "w = wave"),
+        ("speaker_eval.py", "read_wav_pcm", "getattr(wave, 'open')(p, 'wb')"),
+        # Codex round 24 PR-MED-002: the module reached THROUGH another
+        # module, stored under an alias and written through it.
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from scribe_desktop import speech; w = speech.wave; w.open(p, 'wb')",
+        ),
+        # Codex round 25 PR-MED-001: namespace and introspection access, and
+        # any name off the allow-list.
+        ("speaker_eval.py", "read_wav_pcm", "wave.__dict__['open'](p, 'wb')"),
+        ("speaker_eval.py", "read_wav_pcm", "wave.__getattribute__('open')(p, 'wb')"),
+        ("speaker_eval.py", "read_wav_pcm", "vars(wave)['open'](p, 'wb')"),
+        ("speaker_eval.py", "read_wav_pcm", "wave.open.__call__(p, 'wb')"),
+        ("speaker_eval.py", "read_wav_pcm", "wave.Error = None"),
+        # Codex round 26: a starred argument that rebinds a literal "rb", and
+        # a read-only class's ``__globals__`` — each a new reference.
+        ("speaker_eval.py", "read_wav_pcm", "wave.open(p, *(), 'rb', mode='wb')"),
+        ("benchmark.py", "generate_speech_sample", "wave.open(p, *[], 'rb', mode='wb')"),
+        (
+            "speaker_eval.py",
+            "read_wav_pcm",
+            "wave.Wave_read.__init__.__globals__['open'](p, 'wb')",
+        ),
+    ],
+)
+def test_a_second_wav_writer_fails_the_count(relative: str, function: str, statement: str) -> None:
+    sources = _with_extra(_package_sources(), relative, function, statement)
+    assert _wav_writers(sources) != _WAVE_REFERENCES
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["x = speech.wave.Error", "wave.open(p, 'rb')", "speech.wave.open(p, mode='r')"],
+)
+def test_a_new_reader_counts_too(statement: str) -> None:
+    """Codex round 26 (reverses round 24's positive case): with no
+    exemptions, a new READ of a WAV — or ``wave.Error`` — anywhere is a new
+    reference and fails the pin; a genuine new reader is added by updating
+    ``_WAVE_REFERENCES`` in the same change, where review sees it."""
+    target = "PastSessionsScreen.on_export_recording"
+    sources = _with_extra(_package_sources(), "ui/past_sessions.py", target, statement)
+    assert _wav_writers(sources) != _WAVE_REFERENCES
+
+
+# Review round 20 LOW: the count above sees ``wave.open`` only by that name,
+# so an alias (``import wave as w``) or a ``from wave import`` would slip
+# past it — the module is imported, unaliased, only where it is today (the
+# two readers and the one writer).
+_WAVE_IMPORTS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("benchmark.py", "import wave"),
+        ("speaker_eval.py", "import wave"),
+        ("speech.py", "import wave"),
+    }
+)
+
+
+def _wave_imports(sources: dict[str, ast.Module]) -> frozenset[tuple[str, str]]:
+    found: set[tuple[str, str]] = set()
+    for relative, tree in sources.items():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.split(".")[0] == "wave":
+                        suffix = f" as {alias.asname}" if alias.asname else ""
+                        found.add((relative, f"import {alias.name}{suffix}"))
+            elif isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] == "wave":
+                found.add((relative, f"from {node.module} import"))
+            elif isinstance(node, ast.ImportFrom) and any(
+                alias.name == "wave" for alias in node.names
+            ):
+                # Review round 22: ``wave`` re-exported through another
+                # module (``from scribe_desktop.speech import wave as w``).
+                found.add((relative, f"from {node.module} import wave"))
+            elif isinstance(node, ast.Constant) and node.value == "wave":
+                # Codex round 23 PR-MED-005: ``importlib.import_module("wave")``,
+                # ``__import__("wave")``, ``getattr(speech, "wave")``.
+                found.add((relative, "the string 'wave'"))
+    return frozenset(found)
+
+
+def test_the_wave_module_is_imported_only_where_it_is_today() -> None:
+    assert _wave_imports(_package_sources()) == _WAVE_IMPORTS
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "import wave as w",
+        "from wave import open as wopen",
+        "from wave import Wave_write",
+        "from scribe_desktop.speech import wave as w",
+        "import importlib; importlib.import_module('wave')",
+        "__import__('wave')",
+        # Codex round 24 PR-MED-002: the module fished out of another
+        # module's namespace by its name.
+        "m = vars(speech)['wave']",
+    ],
+)
+def test_an_aliased_wave_import_fails_the_pin(statement: str) -> None:
+    sources = _with_extra(
+        _package_sources(), "past_sessions.py", "PastSessionStore._export", statement
+    )
+    assert _wave_imports(sources) != _WAVE_IMPORTS
+
+
+# Review round 21 MED-001, made ONE rule in codex round 23 (PR-MED-003,
+# PR-MED-004): the pins above count where a WAV is OPENED, not who turns a
+# kept recording into plaintext or reaches the writer. So EVERY reference
+# to the kept recording's plaintext readers, and to the writer and its
+# public wrappers, is counted where it occurs — by its own name, by any
+# alias an import gives it anywhere in the package (``speech_write_wav``),
+# as an attribute (``store.read_recording``, ``speech.write_wav``), as an
+# import of that name from ANY module (a re-export), and as a string equal
+# to the name (``getattr(store, "read_recording")``) — whether it is called,
+# stored under another name or passed on. A second call through an allowed
+# alias raises its scope's count; a stored reference counts where it is
+# taken. RESIDUE (named for Task 5.3a): a reference built at run time — a
+# computed string (``"read_" + "recording"``), ``exec`` / ``eval``, or an
+# object handed in from outside the package — is beyond what an AST count
+# can see; review is the guard there.
+_PLAINTEXT_READERS: Final = frozenset({"read_recording", "_recording_chunks", "_audio_chunks"})
+_WRITER_NAMES: Final = frozenset({"write_wav", "wav_bytes"})
+_READER_REFERENCES: Counter[tuple[str, str]] = Counter(
+    {
+        ("past_sessions.py", "PastSessionStore._verify_staged"): 1,  # staging's digest
+        ("past_sessions.py", "PastSessionStore.read_recording"): 1,
+        ("past_sessions.py", "PastSessionStore._recording_chunks"): 1,
+        ("past_sessions.py", "PastSessionStore.export_recording"): 1,  # Export: the one reader
+    }
+)
+_WRITER_REFERENCES: Counter[tuple[str, str]] = Counter(
+    {
+        ("past_sessions.py", "PastSessionStore._export"): 2,  # the import and the one call
+        ("validation_set.py", ""): 3,  # the aliased import and two ``__all__`` strings
+        ("validation_set.py", "wav_bytes"): 1,
+        ("validation_set.py", "write_wav"): 1,
+        ("validation_set.py", "build_encounter"): 1,  # synthetic role-play PCM
+    }
+)
+
+
+def _references(sources: dict[str, ast.Module], names: frozenset[str]) -> Counter[tuple[str, str]]:
+    aliases = set(names)
+    for tree in sources.values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                aliases.update(
+                    alias.asname for alias in node.names if alias.name in names and alias.asname
+                )
+    found: Counter[tuple[str, str]] = Counter()
+    for relative, tree in sources.items():
+        for scope, node in _scoped_nodes(tree):
+            if (
+                (
+                    isinstance(node, ast.ImportFrom)
+                    and any(alias.name in aliases for alias in node.names)
+                )
+                or (isinstance(node, ast.Name) and node.id in aliases)
+                or (isinstance(node, ast.Attribute) and node.attr in aliases)
+                or (isinstance(node, ast.Constant) and node.value in aliases)
+            ):
+                found[(relative, scope)] += 1
+    return found
+
+
+def test_the_kept_recording_is_read_only_by_export() -> None:
+    assert _references(_package_sources(), _PLAINTEXT_READERS) == _READER_REFERENCES
+
+
+def test_the_one_writer_is_referenced_only_where_it_is_today() -> None:
+    assert _references(_package_sources(), _WRITER_NAMES) == _WRITER_REFERENCES
+
+
+@pytest.mark.parametrize(
+    ("relative", "function", "statement"),
+    [
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "x = store.read_recording(sid)",
+        ),
+        ("past_sessions.py", "PastSessionStore.delete_recording", "self.read_recording(sid)"),
+        # Codex round 23 PR-MED-004: a bound method stored, called later.
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "r = store.read_recording",
+        ),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "getattr(store, 'read_recording')(sid)",
+        ),
+        ("past_sessions.py", "PastSessionStore.delete_recording", "self._recording_chunks(e)"),
+        ("past_sessions.py", "PastSessionStore.export_recording", "self.read_recording(sid)"),
+    ],
+)
+def test_a_second_recording_reader_fails_the_count(
+    relative: str, function: str, statement: str
+) -> None:
+    sources = _with_extra(_package_sources(), relative, function, statement)
+    assert _references(sources, _PLAINTEXT_READERS) != _READER_REFERENCES
+
+
+@pytest.mark.parametrize(
+    ("relative", "function", "statement"),
+    [
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from scribe_desktop.speech import write_wav as w",
+        ),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from scribe_desktop import speech; speech.write_wav(p, chunks)",
+        ),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from . import speech as s; s.write_wav(p, chunks)",
+        ),
+        # Codex round 23 PR-MED-003: another call through the existing
+        # alias, a re-export of that alias, and a stored reference.
+        ("validation_set.py", "wav_bytes", "speech_write_wav(buffer, chunks)"),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from scribe_desktop.validation_set import speech_write_wav",
+        ),
+        ("past_sessions.py", "PastSessionStore._export", "w = write_wav"),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "getattr(speech, 'write_wav')(p, chunks)",
+        ),
+        (
+            "ui/past_sessions.py",
+            "PastSessionsScreen.on_export_recording",
+            "from scribe_desktop.validation_set import wav_bytes",
+        ),
+    ],
+)
+def test_a_second_writer_reference_fails_the_count(
+    relative: str, function: str, statement: str
+) -> None:
+    sources = _with_extra(_package_sources(), relative, function, statement)
+    assert _references(sources, _WRITER_NAMES) != _WRITER_REFERENCES

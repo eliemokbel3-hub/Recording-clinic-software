@@ -409,6 +409,9 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "controller = SessionController(backend, sessions_root=root, audit=audit,\n"
         "                               past_sessions=past)\n"
         "audit.prune()\n"
+        # Development-recordings Task 3.3: the export recovery, first, as at
+        # start-up (an empty ledger: nothing read, no key unwrapped).
+        "past.recover_exports()\n"
         # Development-recordings Task 2.2 (review round 13 LOW-014): as at
         # start-up, with the kept-fact repair and the deletion record.
         "record_sweep_results(audit, sweep_with_archive(\n"

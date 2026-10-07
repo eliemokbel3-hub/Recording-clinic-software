@@ -446,6 +446,11 @@ class _InertPastSessions:
     (privacy-professional-controls Task 2.3): cleans, removes and commits
     nothing, and never reaches the real ``%LOCALAPPDATA%``."""
 
+    def recover_exports(self) -> object:  # development-recordings Task 3.3
+        from scribe_desktop.past_sessions import ExportRecovery
+
+        return ExportRecovery()
+
     def clean_staging(self) -> int:
         return 0
 

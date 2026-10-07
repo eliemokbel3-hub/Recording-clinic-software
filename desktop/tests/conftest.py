@@ -9,6 +9,7 @@ plan's speech-engine sentinel for the validation-set builder."""
 import io
 import itertools
 import json
+import os
 import struct
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -16,7 +17,14 @@ from typing import Any
 
 import pytest
 
-from scribe_desktop import exclusions, install_layout, ml_warmup, note_config, validation_set
+from scribe_desktop import (
+    exclusions,
+    install_layout,
+    ml_warmup,
+    note_config,
+    past_sessions,
+    validation_set,
+)
 from scribe_desktop.encounter import unlinked_consent
 from scribe_desktop.install_layout import Channel
 from scribe_desktop.protocol import PROTOCOL_VERSION
@@ -33,6 +41,9 @@ REAL_PILOT_SETTINGS_ROOT = note_config.pilot_settings_root
 # Development-recordings plan Task 1.1: the real development-settings
 # resolver, for its own test.
 REAL_DEVELOPMENT_SETTINGS_ROOT = note_config.development_settings_root
+# Codex round 27 PR-LOW-001: the real ``.part`` kernel seam, captured before
+# ``pytest_configure`` replaces it with ``_no_real_part_kernel``.
+REAL_PART_KERNEL = past_sessions.part_kernel
 
 
 def _production() -> Channel:
@@ -43,6 +54,13 @@ def _not_frozen() -> bool:
     return False
 
 
+def _no_real_part_kernel() -> past_sessions.PartKernel:
+    raise AssertionError(
+        "a test reached the real Win32PartKernel (C6) - keep the conftest "
+        "part_kernel fixture in place (scope patches with monkeypatch.context())"
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Installation plan D2, from before collection: a test module's
     import-time code — a ``skipif`` that looks for a local model, a root
@@ -50,9 +68,13 @@ def pytest_configure(config: pytest.Config) -> None:
     (not frozen), as every test does (``_production_channel`` re-pins both
     per test; a test child process pins them itself, see
     ``test_integration_no_sockets.py``). Neither is read from ``sys.frozen``
-    (C6, round 11 PR-LOW-016)."""
+    (C6, round 11 PR-LOW-016). The export's ``.part`` kernel seam is replaced
+    for the whole run by a refusal (codex round 27 PR-LOW-001): a test that
+    lifts the ``part_kernel`` fixture with ``monkeypatch.undo()`` fails
+    loudly instead of reaching the real Windows API."""
     install_layout.channel = _production  # type: ignore[assignment]
     install_layout.is_frozen = _not_frozen  # type: ignore[assignment]
+    past_sessions.part_kernel = _no_real_part_kernel
 
 
 @pytest.fixture(autouse=True)
@@ -235,6 +257,66 @@ def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     if exclusions.remove_exception_hooks():
         pytest.fail("a test left the app's exception hooks installed (C6)")
+
+
+class FsPartKernel:
+    """The test double of ``past_sessions.PartKernel`` (codex round 24
+    PR-MED-001; C6): the same contract over the test's own files with plain
+    ``os`` calls — ``open`` refuses an absent file (or folder) with
+    ``FileNotFoundError``, ``status`` is the path's ``lstat`` (a link reads
+    as itself), and a file marked for deletion is unlinked when it is
+    closed. ``refuse_open`` / ``refuse_delete`` make a test's Windows say
+    no; ``swap_after_status`` replaces the file at the path after its
+    identity was read (what a same-handle delete must survive)."""
+
+    def __init__(self) -> None:
+        self.refuse_open = False
+        self.refuse_delete = False
+        self.swap_after_status: bytes | None = None
+        self._open: dict[int, Path] = {}
+        self._marked: set[int] = set()
+        self._next = itertools.count(1000)
+
+    def open(self, path: Path) -> int:
+        os.lstat(path)  # FileNotFoundError when it, or its folder, is absent
+        if self.refuse_open:
+            raise PermissionError(13, "in use")
+        descriptor = next(self._next)
+        self._open[descriptor] = path
+        return descriptor
+
+    def status(self, descriptor: int) -> os.stat_result:
+        path = self._open[descriptor]
+        status = os.lstat(path)
+        if self.swap_after_status is not None:
+            # The same handle still names the ORIGINAL file: a real
+            # exclusive handle refuses the swap, so the double keeps the
+            # identity it read and leaves the new file at the path alone.
+            path.unlink()
+            path.write_bytes(self.swap_after_status)
+            self._open[descriptor] = path.with_name(path.name + ".swapped-away")
+        return status
+
+    def mark_deleted(self, descriptor: int) -> None:
+        if self.refuse_delete:
+            raise PermissionError(5, "access denied")
+        self._marked.add(descriptor)
+
+    def close(self, descriptor: int) -> None:
+        path = self._open.pop(descriptor)
+        if descriptor in self._marked:
+            self._marked.discard(descriptor)
+            path.unlink(missing_ok=True)
+
+
+@pytest.fixture(autouse=True)
+def part_kernel(monkeypatch: pytest.MonkeyPatch) -> FsPartKernel:
+    """Codex round 24 PR-MED-001 (C6), for EVERY test: the export's
+    same-handle removal runs on ``FsPartKernel``, never the real Windows
+    API; a test takes this fixture to make it refuse."""
+    kernel = FsPartKernel()
+    monkeypatch.setattr(past_sessions, "part_kernel", lambda: kernel)
+    return kernel
 
 
 @pytest.fixture(autouse=True)

@@ -273,6 +273,21 @@ class TestLabelTrack:
             assert span.start_seconds * RATE == pytest.approx(offset, abs=1e-6)
 
 
+class TestTheSharedWavWriter:
+    """Development-recordings plan D10 (Task 3.3): the builder's WAV bytes
+    come from the package's ONE writer, ``speech.write_wav`` — the same file
+    a recording export writes, read back by ``read_wav_pcm``."""
+
+    def test_wav_bytes_is_the_shared_writer_s_output(self, tmp_path: Path) -> None:
+        from scribe_desktop.speech import write_wav
+
+        pcm = _tone(0.2, 440.0, 8000.0)
+        target = tmp_path / "shared.wav"
+        assert write_wav(target, [pcm[:100], pcm[100:]]) == len(pcm)
+        assert target.read_bytes() == validation_set.wav_bytes(pcm)
+        assert read_wav_pcm(target) == pcm
+
+
 # ---------------------------------------------------------------------------
 # One encounter and the set
 # ---------------------------------------------------------------------------
