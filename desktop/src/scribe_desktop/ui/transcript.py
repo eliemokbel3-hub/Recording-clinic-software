@@ -1082,10 +1082,18 @@ class TranscriptScreen(QWidget):
         the screen clears and shows ``line`` — or, Flow 3 step 4, the
         deferred-copy line when the Past-sessions entry was left for the next
         reconciliation — then emits ``closed(closed_as)``. ``_clear`` never
-        completes anything, so reading the flag first is the same read."""
+        completes anything, so reading the flag first is the same read.
+        Development-recordings plan Task 2.4: when the Complete ACTUALLY kept
+        the recording (``last_completion_kept`` — never the consent: a
+        consented test-provider session keeps none), the line says so."""
         deferred = self._complete_deferred()
+        controller = self._controller
+        kept = controller is not None and controller.last_completion_kept()
         self._clear()
-        self.message_label.setText(models.COMPLETE_DEFERRED_LINE if deferred else line)
+        text = models.COMPLETE_DEFERRED_LINE if deferred else line
+        if kept:
+            text = f"{text} {models.COMPLETE_KEPT_LINE}"
+        self.message_label.setText(text)
         self.closed.emit(closed_as)
 
     def complete_written(self, on_complete_written: Callable[[], object]) -> None:

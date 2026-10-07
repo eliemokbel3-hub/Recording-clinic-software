@@ -354,9 +354,10 @@ view patterns · tokens · microcopy.
   `busy`, "The app is busy with a recording - wait for it to finish."; a Start
   `session_active`), "Open for review" (`REVIEW_OPEN_DISCARDING_LINE`) and closing the
   window wait until it ends. If live transcription outlasts the wait, nothing is
-  deleted. The recording has stopped and is kept, and the line says what to do:
+  deleted. The recording has stopped and is still there, and the line says what to do
+  ("kept" is reserved for a recording kept for development):
   "Recording stopped, but live transcription did not stop in time, so nothing was
-  deleted - the recording is kept. Press Discard again in a moment to delete it."
+  deleted - the recording is still here. Press Discard again in a moment to delete it."
   (`DISCARD_KEPT_LIVE_STOPPING_MESSAGE`).
   It is never called a device failure. The next Discard takes the usual two clicks and
   is never retried automatically: a destructive step waits for a fresh confirmation

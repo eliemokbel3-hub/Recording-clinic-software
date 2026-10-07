@@ -3081,8 +3081,14 @@ guard). A pre-audit session's
 creation time before 2026-01-01 (or missing, or in the future) is untrusted
 and its row is dated by the clock of the update that creates it. A Past-sessions event on a row the audit no longer holds (pruned, or
 set aside by a D9 reset) creates a `pre_audit` row — dated by the entry's
-start for Delete now, its completion for expiry, and "now" for a reconciled
-commit.
+start for Delete now ("now" when its label cannot be read: a deliberate
+destruction is recorded even then). The UNATTENDED writers — a reconciled
+commit's `archived`, the start-up and tick repairs of a kept recording's
+facts, and the retention sweep's kept fact and `expired` outcome — follow one
+rule: dated by the entry's start, never written to a re-made row in a month
+the prune has passed (an expiry reached after the audit's own seven years
+leaves no row), nor to any re-made row when the label cannot be read
+(development-recordings review rounds 15–16).
 (q) A TOKEN IS A WORD. The token pattern admits any single word with no
 space, so what a caller puts in a token field is the caller's to keep
 content-free; the only producers are the persisted model and provider names

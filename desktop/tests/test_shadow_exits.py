@@ -355,13 +355,16 @@ def test_every_construction_of_a_mode_names_it() -> None:
 # ``begin`` names the DEVELOPMENT consent explicitly — the defaults (None, not
 # kept) exist for tests building records, so a new production site relying on
 # one would silently drop a consent, or (after a refactor) keep a recording
-# nobody decided to keep. No exemptions. Task 2.1 adds
-# ``_complete_locked`` → ``kept`` to this map in its own commit.
+# nobody decided to keep. No exemptions. Task 2.1: every ``_complete_locked``
+# call names ``kept`` — the four live Completes from the live session's
+# consent, and (unlike ``_MODELESS``) ``complete_recovered``'s too, from the
+# checkout's one decrypt handed in by the window.
 _CONSENT_KEYWORD: Final[dict[str, str]] = {
     "RecordingSession": "development_consent",
     "EncounterRecord": "development_consent",
     _START: "development_consent",
     "begin": "development_consent_version",
+    "_complete_locked": "kept",
 }
 _CONSENT_CONSTRUCTIONS: Counter[tuple[str, str]] = Counter(
     {
@@ -370,6 +373,7 @@ _CONSENT_CONSTRUCTIONS: Counter[tuple[str, str]] = Counter(
         ("ui/main_window.py", "EncounterRecord"): 1,  # `_open_adopted`'s checkout record
         ("ui/session_screen.py", _START): 1,  # the one Start funnel
         ("session.py", "begin"): 1,  # Start's audit row
+        ("session.py", "_complete_locked"): 5,  # four live Completes; complete_recovered
     }
 )
 
@@ -390,6 +394,7 @@ def test_every_construction_names_its_development_consent() -> None:
         ("EncounterRecord(consent=None, mode=None)", "EncounterRecord"),
         ("other.start(0, consent=None, mode=None)", _START),
         ("self._audit.begin('x', consent=None, mode=None)", "begin"),
+        ("self._complete_locked(directory, crypto, label=None, mode=None)", "_complete_locked"),
     ],
 )
 def test_a_site_omitting_the_development_consent_fails(statement: str, missing: str) -> None:
@@ -407,11 +412,14 @@ def test_a_site_omitting_the_development_consent_fails(statement: str, missing: 
         ("ui/main_window.py", "EncounterRecord"),
         ("ui/session_screen.py", _START),
         ("session.py", "begin"),
+        ("session.py", "_complete_locked"),
     ],
 )
 def test_each_existing_site_dropping_the_keyword_fails(relative: str, name: str) -> None:
     """Every counted site in turn, with its keyword removed in memory: the
-    check names exactly that site."""
+    check names exactly that site. (For a callee with several sites the
+    FIRST is stripped; the package-wide ``_without_mode(...) == []`` check
+    catches any other site dropping its keyword.)"""
     sources = dict(_package_sources())
     tree = ast.parse(ast.unparse(sources[relative]))
     stripped = 0

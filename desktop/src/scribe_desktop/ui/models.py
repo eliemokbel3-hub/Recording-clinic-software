@@ -41,6 +41,7 @@ from scribe_desktop.draft_write import (
     dev_build_writes_off,
 )
 from scribe_desktop.encounter import (
+    DEVELOPMENT_CONSENT_TEXT,
     RECORDING_CONSENT_TEXT,
     ConsentAttestation,
     DevelopmentConsent,
@@ -1016,7 +1017,7 @@ DISCARD_CONFIRM_MESSAGE: Final = (
 DISCARD_STOPPING_LIVE_LINE: Final = "Discarding - stopping live transcription first..."
 DISCARD_KEPT_LIVE_STOPPING_MESSAGE: Final = (
     "Recording stopped, but live transcription did not stop in time, so nothing was "
-    "deleted - the recording is kept. Press Discard again in a moment to delete it."
+    "deleted - the recording is still here. Press Discard again in a moment to delete it."
 )
 # Round 40 LOW-002: why "Open for review" waits while the Session tab discards.
 REVIEW_OPEN_DISCARDING_LINE: Final = (
@@ -1224,6 +1225,11 @@ class SessionControllerLike(Protocol):
     @property
     def last_complete_deferred(self) -> bool: ...
 
+    # Development-recordings plan Task 2.1 (round 1 PR-MED-005): whether the
+    # last Complete ACTUALLY kept the recording's audio — every Complete
+    # message reads this, never the consent.
+    def last_completion_kept(self) -> bool: ...
+
     def discard(self) -> RecordingSession: ...
 
     def active_session_ids(self) -> frozenset[str]: ...
@@ -1266,7 +1272,12 @@ class SessionControllerLike(Protocol):
     def custody_protected_ids(self) -> frozenset[str]: ...
 
     def complete_recovered(
-        self, directory: Path, crypto: SessionCrypto, *, label: KeepLabel | None = None
+        self,
+        directory: Path,
+        crypto: SessionCrypto,
+        *,
+        label: KeepLabel | None = None,
+        kept: bool = False,
     ) -> None: ...
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None: ...
@@ -1819,6 +1830,21 @@ SHADOW_SETTING_LINE: Final = (
 SHADOW_RECORDING_LINE: Final = (
     "This is a shadow recording: its note cannot be copied or written to Cliniko."
 )
+# Development-recordings plan Task 2.3 (D2): the Session tab's second tick —
+# the development consent's own wording, verbatim (C7) — and the tracked
+# lines: while the tick is armed for the next Start, and for a live recording
+# started with it.
+DEVELOPMENT_CONSENT_LABEL: Final = DEVELOPMENT_CONSENT_TEXT
+DEVELOPMENT_ARMED_LINE: Final = "Next recording will be kept for development"
+DEVELOPMENT_RECORDING_LINE: Final = "This recording is being kept for development"
+# Review round 12 LOW-007: the tick cleared by something other than a Start
+# that ran (Chrome moved, the link dropped, a refused Start, the computer
+# locked) — named, so a consented recording is never silently not kept.
+DEVELOPMENT_TICK_CLEARED_LINE: Final = (
+    "The keep-for-development tick was cleared - the Cliniko note changed, the "
+    "computer locked or a Start was refused. Tick it again before Start if the "
+    "patient consented in writing."
+)
 # Pilot plan D13 (Task 1.9): the learning line and every queue line of a
 # shadow review — it names the control that decides (the recording's mode),
 # never a promise that Save will learn.
@@ -2351,18 +2377,26 @@ COMPLETE_DEFERRED_LINE: Final = (
 # The Transcript screen's Complete (privacy-professional-controls C9): every
 # non-mock Complete keeps the transcript and notes in Past sessions (D6) and
 # then removes the session folder and its key. The screen does not know which
-# files a given Complete kept (a test-provider session keeps nothing; a
-# delete-note path never keeps the saved note), so the lines point at the tab
-# rather than claim them.
+# transcript and note files a given Complete kept (a test-provider session
+# keeps nothing; a delete-note path never keeps the saved note), so the lines
+# point at the tab rather than claim them. Development-recordings plan Task
+# 2.4: the audio too is kept when — and only when — the recording was kept for
+# development under written consent, and THAT the screen does know: the
+# Complete appends ``COMPLETE_KEPT_LINE`` from the ACTUAL outcome
+# (``last_completion_kept``), never from the consent — the lines' "unless"
+# clause is the plan's wording for the Complete that kept nothing.
 COMPLETE_TOOLTIP: Final = (
     "Verify the encrypted transcript, keep the transcript and notes in Past sessions "
-    "(never the audio; a test-provider session keeps nothing), then delete the session "
-    "and its key - the audio becomes unrecoverable."
+    "(not the audio, unless it was kept for development under written consent; a "
+    "test-provider session keeps nothing), then delete the session and its key - "
+    "the session's audio becomes unrecoverable."
 )
 COMPLETE_DONE_LINE: Final = (
     "Session completed: transcript verified and the session key destroyed - the audio "
-    "cannot be recovered. Past sessions shows what was kept."
+    "cannot be recovered, unless it was kept for development under written consent. "
+    "Past sessions shows what was kept."
 )
+COMPLETE_KEPT_LINE: Final = "The recording was kept for development."
 COMPLETE_WITHOUT_NOTE_LINE: Final = (
     "Session completed without a note: transcript verified and the session key "
     "destroyed. Past sessions shows what was kept - never the saved note."
@@ -4202,6 +4236,10 @@ __all__ = [
     "LIVE_TRANSCRIPT_NOT_READY_PLACEHOLDER",
     "START_GETTING_READY_MESSAGE",
     "RECORDING_CONSENT_LABEL",
+    "DEVELOPMENT_CONSENT_LABEL",
+    "DEVELOPMENT_ARMED_LINE",
+    "DEVELOPMENT_RECORDING_LINE",
+    "DEVELOPMENT_TICK_CLEARED_LINE",
     "CONSENT_REQUIRED_MESSAGE",
     "NOT_LINKED_LABEL",
     "NOT_LINKED_DETAIL",

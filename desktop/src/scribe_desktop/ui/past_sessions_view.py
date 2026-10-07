@@ -17,8 +17,9 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from datetime import datetime, tzinfo
+from functools import partial
 from pathlib import Path
-from typing import Final, Protocol, runtime_checkable
+from typing import Final, NamedTuple, Protocol, runtime_checkable
 
 from scribe_desktop.audit import (
     AUDIT_REASONS,
@@ -43,6 +44,12 @@ from scribe_desktop.ui.models import CUSTODY_UNEXPECTED_REASON
 PAST_SESSIONS_TAB_TITLE: Final = "Past sessions"
 
 
+class _KeepsRows(Protocol):
+    """What ``unattended_write`` asks of an audit log."""
+
+    def keeps_rows_of(self, at: datetime) -> bool: ...
+
+
 @runtime_checkable
 class PastSessionsAudit(Protocol):
     """EXACTLY what the Past sessions tab and its retention sweep use of the
@@ -63,17 +70,39 @@ class PastSessionsAudit(Protocol):
     def row_for(self, session_id: str) -> AuditRow | None: ...
 
     def record_past_session(
-        self, session_id: str, state: PastSessionEvent, *, created_at: float | None = None
+        self,
+        session_id: str,
+        state: PastSessionEvent,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
     ) -> bool: ...
 
     def export_csv(self, path: Path) -> int: ...
+
+    # Development-recordings review round 16 PR-MED-001: the retention
+    # sweep is an UNATTENDED writer (``unattended_write``).
+    def keeps_rows_of(self, at: datetime) -> bool: ...
 
     # Development-recordings plan Task 1.4 (D15): the kept recording's facts.
     # Declared AHEAD of their callers — Delete recording and Export recording
     # (that plan's Tasks 3.2 / 3.3) — so every pinned double carries them
     # from the commit that adds them to ``AuditLog`` (review round 8 LOW-013).
     def record_recording_deleted(
-        self, session_id: str, *, created_at: float | None = None
+        self, session_id: str, *, created_at: float | None = None, create: bool = True
+    ) -> bool: ...
+
+    # Task 2.2 (review round 8 LOW-003): every destroyer of a kept entry
+    # here — Delete now, the retention sweep, and (from Task 3.2) Delete
+    # recording — records the kept fact first, since a kept Complete's own
+    # audit write can fail.
+    def record_recording_kept(
+        self,
+        session_id: str,
+        at: datetime,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
     ) -> bool: ...
 
     def record_recording_exported(
@@ -362,6 +391,45 @@ def started_epoch(label: PastSessionLabel | None) -> float | None:
     return _moment(label).timestamp()
 
 
+def audit_moment(label: PastSessionLabel | None) -> datetime | None:
+    """The moment an audit row for ``label``'s session is filed and judged
+    by — its START (``begin`` files the row in the local month the session
+    started), else its completion; None with no label."""
+    return None if label is None else _moment(label)
+
+
+class UnattendedWrite(NamedTuple):
+    """How an unattended audit writer writes one session's row: the
+    ``created_at`` and ``create`` to pass to every ``record_*`` call."""
+
+    created_at: float | None
+    create: bool
+
+
+def unattended_write(audit: _KeepsRows, moment: datetime | None) -> UnattendedWrite | None:
+    """THE rule for every UNATTENDED audit writer — the start-up repairs and
+    every sweep tick (``app.record_reconciled_commit``, ``repair_kept_facts``,
+    ``record_deleted_recordings``) and the retention sweep (its kept and
+    deletion facts and its ``expired`` outcome) — so the class of
+    development-recordings review rounds 11, 14, 15 and 16 cannot recur at
+    a new site: ``moment`` is the session's ``audit_moment``. A month the
+    audit prune has passed (``keeps_rows_of`` False) → None: write nothing,
+    never re-make a row the prune removed. No moment (no readable label) →
+    the EXISTING row only (``create=False``): there is no date to judge the
+    window by. Otherwise a missing row is re-made in the session's own month
+    (D8). A DELIBERATE practitioner action (Delete now, and from Task 3.2
+    Delete recording and Export) records its event instead — it makes a row
+    even then (review round 15 PR-MED-003). NEVER raises (None)."""
+    if moment is None:
+        return UnattendedWrite(None, create=False)
+    try:
+        if not audit.keeps_rows_of(moment):
+            return None
+        return UnattendedWrite(moment.timestamp(), create=True)
+    except Exception:  # noqa: BLE001 - fail towards making nothing
+        return None
+
+
 # --- the write outcome, from the audit row (Flow 5) -------------------------
 
 WRITE_NO_ROW: Final = "Cliniko write: no audit record is kept for this session."
@@ -502,6 +570,33 @@ def delete_failed_line(exc: BaseException) -> str:
 # --- the retention sweep (Task 3.2; Flow 4) ---------------------------------
 
 
+def _record_kept(
+    audit: PastSessionsAudit,
+    session_id: str,
+    completed: datetime,
+    started: datetime,
+    recording_gone: bool,
+) -> bool:
+    """The retention sweep's kept fact (``kept_at`` = the completion) — and,
+    for a recording already deleted but not yet tidied (review round 15
+    PR-MED-002), that deletion too — under the unattended rule (review
+    round 16 PR-MED-001: judged and dated by the session's start; a row the
+    prune removed is never re-made, and nothing is then owed). True when
+    every write landed or none was owed."""
+    write = unattended_write(audit, started)
+    if write is None:
+        return True
+    kept = audit.record_recording_kept(
+        session_id, completed, created_at=write.created_at, create=write.create
+    )
+    if not recording_gone:
+        return kept
+    deleted = audit.record_recording_deleted(
+        session_id, created_at=write.created_at, create=write.create
+    )
+    return deleted and kept
+
+
 def retention_sweep(
     store: PastSessionStore,
     audit: PastSessionsAudit | None,
@@ -511,13 +606,38 @@ def retention_sweep(
     """Delete every committed entry older than the setting through the app's
     ONE shared store (round 12 LOW-001: its per-process date cache — never
     ``sweep_past_sessions``), then record each as ``expired`` in its audit
-    row, by session id only (C7), with the entry's completion date for a
-    row the audit no longer holds (round 16 LOW-005: a ``pre_audit`` row
-    then carries the session's date, not today's). "Never" (None) returns
+    row, by session id only (C7), under the unattended rule
+    (``unattended_write``; development-recordings review round 16
+    PR-MED-001): a row the audit no longer holds is re-made dated by the
+    session's START (privacy round 16 LOW-005: the session's date, not
+    today's) — unless the prune removed it, when nothing is written: an
+    expiry is the scheduled end of the retention minimum, reached together
+    with the audit's own seven years, not an early destruction the audit
+    must show (Delete now records itself, review round 15). "Never" (None) returns
     at once and decrypts nothing. Returns the store's report (what was
-    deleted, and whether anything due could not be). Neither call raises."""
-    report = store.sweep_report(retention_days, now)
+    deleted, and whether anything due could not be). Neither call raises.
+    Development-recordings plan Task 2.2 (review round 8 LOW-003): an
+    expiring entry that holds a kept recording first gets its row's
+    ``recording.kept_at`` — idempotent — so the ``expired`` outcome can
+    record ``recording.deleted_at`` even when the Complete's own audit write
+    failed; review round 14 PR-MED-003: recorded BEFORE the entry is deleted
+    (``before_held_delete``), never after, so no interruption between the
+    two loses it; round 15 PR-MED-002: a recording already deleted but not
+    yet tidied gets its deletion recorded there too, and the entry is held
+    (retention is a minimum) while that cannot be recorded. The ``expired``
+    outcome follows the deletion (it is true only once the entry is
+    gone)."""
+    report = store.sweep_report(
+        retention_days,
+        now,
+        before_held_delete=None if audit is None else partial(_record_kept, audit),
+    )
     if audit is not None:
+        started = dict(report.started)
         for session_id, completed in report.expired:
-            audit.record_past_session(session_id, "expired", created_at=completed.timestamp())
+            write = unattended_write(audit, started.get(session_id, completed))
+            if write is not None:
+                audit.record_past_session(
+                    session_id, "expired", created_at=write.created_at, create=write.create
+                )
     return report

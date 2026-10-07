@@ -11,6 +11,7 @@ import os
 import sys
 import threading
 import uuid
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -702,7 +703,7 @@ class _AuditRecorder:
         return None
 
     def record_past_session(
-        self, session_id: str, state: str, *, created_at: float | None = None
+        self, session_id: str, state: str, *, created_at: float | None = None, create: bool = True
     ) -> bool:
         self.calls.append(("past_session", session_id, state))
         return True
@@ -710,10 +711,15 @@ class _AuditRecorder:
     def export_csv(self, path: Path) -> int:
         pytest.fail("a draft-write test exported the audit record")
 
+    # Development-recordings review round 16 PR-MED-001: the retention
+    # sweep's unattended writes ask it.
+    def keeps_rows_of(self, at: datetime) -> bool:
+        return True
+
     # Development-recordings plan Task 1.4: never reached here either (the
     # tab is never opened by these tests).
     def record_recording_deleted(
-        self, session_id: str, *, created_at: float | None = None
+        self, session_id: str, *, created_at: float | None = None, create: bool = True
     ) -> bool:
         pytest.fail("a draft-write test deleted a kept recording")
 
@@ -721,6 +727,16 @@ class _AuditRecorder:
         self, session_id: str, *, created_at: float | None = None
     ) -> bool:
         pytest.fail("a draft-write test exported a kept recording")
+
+    def record_recording_kept(
+        self,
+        session_id: str,
+        at: datetime,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
+    ) -> bool:
+        pytest.fail("a draft-write test destroyed a kept recording")
 
 
 def test_the_audit_recorder_implements_the_past_sessions_surface() -> None:
@@ -1622,4 +1638,79 @@ class TestKeepLabel:
         _settled(qapp, window)
         label = window.keep_label_for(directory.name)
         assert (label.patient_name, label.recording) == (None, "desktop")
+        window.close()
+
+
+class TestRecoveredKept:
+    """Development-recordings plan Task 2.1 (C3, D2): a recovered Complete is
+    told ``kept`` from the record the checkout already holds — its ONE
+    decrypt, never a second — and anything unresolved is NOT kept."""
+
+    @pytest.mark.parametrize(
+        "consented, readable, kept_outcome",
+        [
+            (True, True, True),
+            (True, True, False),
+            (False, True, False),
+            (True, False, False),
+        ],
+        ids=["consented", "consented_kept_nothing", "not_consented", "unreadable_record"],
+    )
+    def test_the_recovered_complete_takes_kept_from_the_held_record(
+        self,
+        qapp: Any,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        consented: bool,
+        readable: bool,
+        kept_outcome: bool,
+    ) -> None:
+        import scribe_desktop.ui.main_window as main_window_mod
+        from scribe_desktop.encounter import development_consent
+
+        controller = FakeController()
+        window = _window(tmp_path, _registry(tmp_path), controller)
+        record = EncounterRecord(
+            consent=unlinked_consent(),
+            context=None,
+            development_consent=development_consent() if consented else None,
+        )
+        directory, crypto = _recoverable(tmp_path, record if readable else None)
+        real = main_window_mod.read_encounter_record
+        reads: list[str] = []
+
+        def counting(*args: Any) -> Any:
+            reads.append(args[2])
+            return real(*args)
+
+        monkeypatch.setattr(main_window_mod, "read_encounter_record", counting)
+        _check_out(window, directory, crypto)
+        expected = consented and readable
+        assert window.session_kept_for(directory.name) is expected
+        assert window.session_kept_for(uuid.uuid4().hex) is False
+        assert window.session_kept_for(None) is False
+        # Task 2.4 (review round 11 LOW-008, round 12 LOW-013): the message
+        # follows the controller's OUTCOME — a consented recovered session
+        # that kept nothing (a test provider) says nothing about keeping.
+        controller.completion_kept = kept_outcome
+        window.transcript_screen.on_complete()
+        assert controller.recovered_kept == [expected]
+        assert reads == [directory.name]  # the checkout's one decrypt, and no other
+        for label in (window.transcript_screen.message_label, window.session_screen.message_label):
+            assert label.text().endswith(models.COMPLETE_KEPT_LINE) is kept_outcome
+        window.close()
+
+    def test_a_live_session_is_never_answered_from_the_checkout(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """The live paths decide from the controller's own copy; with no
+        checkout held the window answers NOT kept for any id."""
+        from scribe_desktop.encounter import development_consent
+
+        controller = FakeController()
+        controller.session_value = RecordingSession(
+            consent=unlinked_consent(), development_consent=development_consent()
+        ).with_state(SessionState.QUEUED)
+        window = _window(tmp_path, _registry(tmp_path), controller)
+        assert window.session_kept_for(controller.session_value.session_id) is False
         window.close()

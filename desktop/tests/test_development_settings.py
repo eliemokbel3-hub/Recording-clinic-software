@@ -13,12 +13,15 @@ Every file is under ``tmp_path`` or the conftest's pinned development root
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from conftest import REAL_DEVELOPMENT_SETTINGS_ROOT, bounded_read_spy
+from conftest import REAL_DEVELOPMENT_SETTINGS_ROOT, bounded_read_spy, use_channel
 from scribe_desktop import note_config
+from scribe_desktop.install_layout import Channel
 from scribe_desktop.note_config import (
     DEVELOPMENT_SETTINGS_FILENAME,
     MAX_DEVELOPMENT_SETTINGS_BYTES,
@@ -174,3 +177,130 @@ class TestTheDefaultRoot:
         self, pinned_development_root: Path, pinned_pilot_root: Path
     ) -> None:
         assert pinned_development_root != pinned_pilot_root
+
+
+# ---------------------------------------------------------------------------
+# Task 2.3: the Status tab's checkbox (both channels; unreadable reads OFF).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def qapp() -> Any:
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    yield app
+
+
+def _panel(monkeypatch: pytest.MonkeyPatch, config_root: Path, which: Channel) -> Any:
+    from scribe_desktop.status import RegistrationStatus
+    from scribe_desktop.ui import main_window
+
+    use_channel(monkeypatch, which)
+    # Never the real registry (C6).
+    monkeypatch.setattr(
+        main_window,
+        "read_registration_status",
+        lambda layer: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
+    )
+    return main_window.StatusPanel(config_root=config_root)
+
+
+class TestTheStatusCheckbox:
+    @pytest.mark.parametrize("which", ["production", "dev"])
+    def test_both_channels_show_it_off_with_its_help_and_save_a_tick(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, which: Channel
+    ) -> None:
+        from scribe_desktop.ui.main_window import DEVELOPMENT_CHECKBOX_TEXT, DEVELOPMENT_HELP
+
+        config = tmp_path / "config"
+        panel = _panel(monkeypatch, config, which)
+        checkbox = panel.development_checkbox
+        assert checkbox.text() == DEVELOPMENT_CHECKBOX_TEXT == (
+            "Keep recordings for development (written consent only)"
+        )
+        assert panel.development_help_label.text() == DEVELOPMENT_HELP
+        assert not checkbox.isChecked()
+        assert panel.development_label.isHidden()
+        changed: list[bool] = []
+        panel.development_changed.connect(lambda: changed.append(True))
+        checkbox.setChecked(True)
+        assert read_development_settings(config) == ON
+        checkbox.setChecked(False)
+        assert read_development_settings(config) == OFF
+        assert changed == [True, True]
+        panel.close()
+
+    def test_it_shows_a_saved_tick(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config = tmp_path / "config"
+        _write(config, DevelopmentSettings(keep_recordings=True).to_bytes())
+        panel = _panel(monkeypatch, config, "production")
+        assert panel.development_checkbox.isChecked()
+        assert panel.development_label.isHidden()
+        panel.close()
+
+    def test_an_unreadable_file_shows_the_box_unticked_and_names_it(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The inverse of shadow's: unreadable keeps NOTHING (D1, C3)."""
+        from scribe_desktop.ui.main_window import DEVELOPMENT_UNREADABLE
+
+        config = tmp_path / "config"
+        _write(config, "{garbled")
+        panel = _panel(monkeypatch, config, "production")
+        assert not panel.development_checkbox.isChecked()
+        assert panel.development_label.text() == DEVELOPMENT_UNREADABLE
+        assert not panel.development_label.isHidden()
+        panel.development_checkbox.setChecked(True)  # saves a readable file
+        assert read_development_settings(config) == ON
+        assert panel.development_label.isHidden()
+        panel.close()
+
+    def test_a_failed_save_puts_the_box_back_and_says_so(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from scribe_desktop.ui import main_window
+        from scribe_desktop.ui.main_window import DEVELOPMENT_SAVE_FAILED
+
+        config = tmp_path / "config"
+
+        def refused(settings: DevelopmentSettings, *, config_root: Path | None) -> Path:
+            raise NoteConfigError("refused")
+
+        panel = _panel(monkeypatch, config, "production")
+        monkeypatch.setattr(main_window, "save_development_settings", refused)
+        changed: list[bool] = []
+        panel.development_changed.connect(lambda: changed.append(True))
+        panel.development_checkbox.setChecked(True)
+        assert not panel.development_checkbox.isChecked()
+        assert panel.development_label.text() == DEVELOPMENT_SAVE_FAILED
+        assert not panel.development_label.isHidden()
+        assert changed == [True]
+        assert read_development_settings(config) == OFF
+        panel.close()
+
+    def test_the_window_wires_the_setting_to_the_session_tab(
+        self, qapp: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Ticking the Status box shows the second tick on the Session tab at
+        once (``development_changed`` -> ``SessionScreen.refresh``), and the
+        Session tab reads the same config root."""
+        from scribe_desktop.status import RegistrationStatus
+        from scribe_desktop.ui import main_window
+        from test_ui_screens import _main_window
+
+        monkeypatch.setattr(
+            main_window,
+            "read_registration_status",
+            lambda layer: RegistrationStatus(None, manifest_exists=False, launcher_exists=False),
+        )
+        window = _main_window(tmp_path)
+        assert window.session_screen.development_checkbox.isHidden()
+        window.status_panel.development_checkbox.setChecked(True)
+        assert not window.session_screen.development_checkbox.isHidden()
+        window.status_panel.development_checkbox.setChecked(False)
+        assert window.session_screen.development_checkbox.isHidden()
+        window.close()

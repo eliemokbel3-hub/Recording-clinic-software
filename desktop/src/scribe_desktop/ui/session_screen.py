@@ -28,8 +28,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from scribe_desktop.encounter import ConsentAttestation, EncounterContext, unlinked_consent
-from scribe_desktop.note_config import shadow_mode_on
+from scribe_desktop.encounter import (
+    ConsentAttestation,
+    EncounterContext,
+    development_consent,
+    unlinked_consent,
+)
+from scribe_desktop.note_config import keep_recordings_on, shadow_mode_on
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session import SessionState
 from scribe_desktop.session_mode import SessionMode
@@ -41,6 +46,11 @@ from scribe_desktop.ui.tasks import TaskThread
 # same session; otherwise the first click is asked for again.
 DISCARD_CONFIRM_SECONDS: Final = 10.0
 DISCARD_CONFIRM_LABEL: Final = "Confirm discard"
+
+# Development-recordings plan D2: what the development tick is bound to when
+# armed — the Chrome-reported treatment-note and patient ids (never a name),
+# or None when Chrome reported no note.
+DevelopmentTarget = tuple[str, str] | None
 
 
 class SessionScreen(QWidget):
@@ -78,6 +88,7 @@ class SessionScreen(QWidget):
             [], Callable[[Path, SessionCrypto], TranscriptDocument]
         ] = models.build_transcriber,
         shadow_mode: Callable[[], bool] | None = None,
+        keep_recordings: Callable[[], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -91,6 +102,21 @@ class SessionScreen(QWidget):
         self._shadow_mode: Callable[[], bool] = (
             shadow_mode if shadow_mode is not None else (lambda: shadow_mode_on())
         )
+        # Development-recordings plan D1/D2: the keep-recordings setting, read
+        # at every refresh (the second tick shows only while it is on) and at
+        # every Start (a kept recording needs it on AND the tick). None reads
+        # the default root (the test suite pins it to an empty folder: off).
+        self._keep_recordings: Callable[[], bool] = (
+            keep_recordings if keep_recordings is not None else (lambda: keep_recordings_on())
+        )
+        # D2: the Chrome bridge's report of the current note's ids, read when
+        # the tick is armed; the bridge disarms the tick when Chrome's context
+        # moves away from it. None: no bridge (no Chrome target).
+        self._development_target_provider: Callable[[], DevelopmentTarget] | None = None
+        self._development_target: DevelopmentTarget = None
+        # Review round 13 LOW-007: an armed tick was cleared by something
+        # other than a Start that ran — named on the tracked line.
+        self._tick_cleared = False
         self._task: TaskThread | None = None
         self._transcribing = False
         # Installation plan round 40 LOW-002: a confirmed Discard waiting off
@@ -133,6 +159,18 @@ class SessionScreen(QWidget):
         self.consent_checkbox = QCheckBox(models.RECORDING_CONSENT_LABEL)
         self.consent_checkbox.setChecked(False)
         self.consent_checkbox.toggled.connect(lambda _checked: self.refresh())
+        # Development-recordings plan Task 2.3 (D2): the SECOND tick — the
+        # patient's written consent to the recording being kept — shown only
+        # while the Status tab's setting is on, NEVER pre-ticked, read at the
+        # Start click and cleared by every Start and every refused Start but
+        # the warm-up's hold, and by Chrome moving to another note or patient.
+        self.development_checkbox = QCheckBox(models.DEVELOPMENT_CONSENT_LABEL)
+        self.development_checkbox.setChecked(False)
+        self.development_checkbox.toggled.connect(self._on_development_toggled)
+        self.development_label = QLabel()
+        self.development_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.development_label.setWordWrap(True)
+        self.development_label.hide()
         # Task 4.5: the Chrome link, as the bridge reports it (plain text —
         # it may carry a patient's name for the linked live session).
         self.chrome_label = QLabel()
@@ -180,7 +218,9 @@ class SessionScreen(QWidget):
         layout.addWidget(self.link_label)
         layout.addWidget(self.chrome_label)
         layout.addWidget(self.shadow_label)
+        layout.addWidget(self.development_label)
         layout.addWidget(self.consent_checkbox)
+        layout.addWidget(self.development_checkbox)
         layout.addLayout(buttons)
         layout.addWidget(self.progress_label)
         layout.addWidget(self.progress_bar)
@@ -261,6 +301,15 @@ class SessionScreen(QWidget):
         startable = controls.start and not busy and not generating and not writing
         self.consent_checkbox.setEnabled(startable)
         self.start_button.setEnabled(startable and self.consent_checkbox.isChecked())
+        # Development-recordings Task 2.3: the second tick exists only while
+        # the setting is on (a tick armed before it was turned off is
+        # cleared, never kept hidden), and is enabled with Start.
+        keeping = self._keep_recordings()
+        if not keeping and self.development_checkbox.isChecked():
+            self.disarm_development_tick()
+        self.development_checkbox.setVisible(keeping)
+        self.development_checkbox.setEnabled(startable)
+        self._refresh_development_line(keeping)
         hint = ""
         if controls.start and generating:
             hint = models.REVIEW_OPEN_START_HINT
@@ -289,6 +338,90 @@ class SessionScreen(QWidget):
             lines.append(models.SHADOW_SETTING_LINE)
         self.shadow_label.setText("\n".join(lines))
         self.shadow_label.setVisible(bool(lines))
+
+    def _refresh_development_line(self, keeping: bool) -> None:
+        """Development-recordings Task 2.3: the tracked recording's own keep
+        while it is not finished (fixed at Start), then the armed tick (only
+        while the setting is on)."""
+        lines: list[str] = []
+        session = self._controller.session
+        if (
+            session is not None
+            and not session.is_terminal
+            and session.development_consent is not None
+        ):
+            lines.append(models.DEVELOPMENT_RECORDING_LINE)
+        if keeping and self.development_checkbox.isChecked():
+            lines.append(models.DEVELOPMENT_ARMED_LINE)
+        if not keeping:
+            self._tick_cleared = False
+        elif self._tick_cleared and not self.development_checkbox.isChecked():
+            # Review rounds 12 LOW-007 / 13 LOW-007: a tick cleared by
+            # something the practitioner did not do here stays named on this
+            # tracked line (never the shared message line, which the next
+            # message replaces) until the tick is armed again or a Start runs.
+            lines.append(models.DEVELOPMENT_TICK_CLEARED_LINE)
+        self.development_label.setText("\n".join(lines))
+        self.development_label.setVisible(bool(lines))
+
+    # --- the development tick (development-recordings plan Task 2.3, D2) -------
+
+    def set_development_target_provider(
+        self, provider: Callable[[], DevelopmentTarget] | None
+    ) -> None:
+        """The Chrome bridge's report of the current note's ids, read when the
+        tick is armed (None: no bridge, no Chrome target)."""
+        self._development_target_provider = provider
+
+    def development_armed(self) -> bool:
+        """The development tick is ticked (whatever the setting: ``_start``
+        re-reads the setting at the click)."""
+        return self.development_checkbox.isChecked()
+
+    @property
+    def development_target(self) -> DevelopmentTarget:
+        """The note and patient ids the armed tick is bound to (D2)."""
+        return self._development_target
+
+    def disarm_development_tick(self, *, announce: bool = False) -> None:
+        """Clear the development tick — every refused Start but the warm-up's
+        hold, Chrome moving to another note or patient or its link dropping,
+        and a lock or suspend (D2). With ``announce`` (every clearing but a
+        Start that ran and the Status setting turned off — review rounds 12
+        LOW-007 / 13 LOW-007, LOW-011) a tick that WAS armed is named on the
+        tracked line (``DEVELOPMENT_TICK_CLEARED_LINE``), so its going is
+        never silent."""
+        armed = self.development_checkbox.isChecked()
+        if armed and announce:
+            self._tick_cleared = True  # set first: the toggle below refreshes
+        if armed:
+            self.development_checkbox.setChecked(False)
+        self._development_target = None
+
+    def _on_development_toggled(self, checked: bool) -> None:
+        provider = self._development_target_provider
+        self._development_target = provider() if checked and provider is not None else None
+        if checked:
+            self._tick_cleared = False
+        self.refresh()
+
+    def _start_consuming_ticks(
+        self, consent: ConsentAttestation, context: EncounterContext | None
+    ) -> bool:
+        """Both Starts' shared step past their refusals (D2's ordering): READ
+        the development tick, clear both ticks, then ``_start`` with what was
+        read. True when it started. Round 13 LOW-011: a Start that read an
+        armed tick and then failed (the guard, no device, the controller)
+        cleared it unused — named on the tracked line like every other
+        clearing."""
+        keep = self.development_armed()
+        self.consent_checkbox.setChecked(False)
+        self.disarm_development_tick()
+        started = self._start(consent, context, keep=keep)
+        if keep and not started:
+            self._tick_cleared = True
+            self.refresh()
+        return started
 
     def _show_message(self, text: str) -> None:
         self.message_label.setText(text)
@@ -349,17 +482,26 @@ class SessionScreen(QWidget):
         """The desktop Start: an UNLINKED recording, behind the consent tick
         (Constraint 4). The tick is cleared whatever the outcome — except
         when the start-up warm-up's hold refuses the press (round 36
-        MED-001), which keeps it for the next one."""
+        MED-001), which keeps it for the next one.
+
+        Development-recordings plan Task 2.3 (D2): the development tick is
+        READ here, after the hold check and before both ticks are cleared
+        (``_start`` runs after the clearing), and handed to ``_start``. It is
+        cleared on every outcome but the hold — a discard under way and a
+        Start without consent included."""
         if not self.consent_checkbox.isChecked():
+            self.disarm_development_tick(announce=True)
             self._show_message(models.CONSENT_REQUIRED_MESSAGE)
             self.refresh()
             return
         if self._refuse_while_held():
-            return  # round 36 MED-001: the tick is KEPT for the next press
+            return  # round 36 MED-001: both ticks are KEPT for the next press
         if self._discarding:
-            return  # round 40 LOW-002: its own line is up; the tick is kept
-        self.consent_checkbox.setChecked(False)
-        self._start(unlinked_consent(), None)
+            # Round 40 LOW-002: its own line is up; the consent tick is kept,
+            # the development tick is not (D2: only the hold keeps it).
+            self.disarm_development_tick(announce=True)
+            return
+        self._start_consuming_ticks(unlinked_consent(), None)
 
     def start_linked(self, consent: ConsentAttestation, context: EncounterContext) -> bool:
         """A linked Start, from the Chrome side panel (Task 4.5): the panel's
@@ -367,11 +509,15 @@ class SessionScreen(QWidget):
         bound report's verification produced. The controller refuses a
         consent that does not name the context's note. True when it started.
         The desktop tick is cleared too (every Start clears it) — but not by
-        a Start the warm-up's hold refuses (round 36 MED-001)."""
-        if self._refuse_while_held() or self._discarding:
-            return False  # the hold, or a discard under way (round 40 LOW-002)
-        self.consent_checkbox.setChecked(False)
-        return self._start(consent, context)
+        a Start the warm-up's hold refuses (round 36 MED-001). The desktop-
+        armed development tick is read and cleared exactly as ``on_start``
+        does (D2: a Chrome Start may consume it)."""
+        if self._refuse_while_held():
+            return False
+        if self._discarding:
+            self.disarm_development_tick(announce=True)
+            return False  # a discard under way (round 40 LOW-002)
+        return self._start_consuming_ticks(consent, context)
 
     def _refuse_while_held(self) -> bool:
         """Round 36 MED-001: name the hold and refuse, or False to go on."""
@@ -381,7 +527,13 @@ class SessionScreen(QWidget):
         self.refresh()
         return True
 
-    def _start(self, consent: ConsentAttestation, context: EncounterContext | None) -> bool:
+    def _start(
+        self,
+        consent: ConsentAttestation,
+        context: EncounterContext | None,
+        *,
+        keep: bool = False,
+    ) -> bool:
         guard = self._start_guard
         refusal = guard() if guard is not None else None
         if refusal is not None:
@@ -400,18 +552,20 @@ class SessionScreen(QWidget):
         # Pilot plan D1: the mode is the setting at THIS click (D3: an
         # unreadable setting reads as shadow).
         mode = SessionMode.SHADOW if self._shadow_mode() else SessionMode.NORMAL
+        # Development-recordings plan D2 (C3): kept only when the tick was
+        # given at this click AND the setting reads on NOW; anything else —
+        # an unreadable setting among it — is not kept.
+        development = development_consent() if keep and self._keep_recordings() else None
         try:
             session = self._controller.start(
                 device_id,
                 consent=consent,
                 context=context,
                 mode=mode,
-                # Development-recordings Task 1.5: named explicitly and None
-                # (not kept, C3) until Task 2.3 resolves the setting and the
-                # second tick at the click.
-                development_consent=None,
+                development_consent=development,
             )
             started = True
+            self._tick_cleared = False  # a Start ran: an earlier clearing is past
             if (
                 previous is not None
                 and not previous.is_terminal

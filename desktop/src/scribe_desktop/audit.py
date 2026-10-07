@@ -807,6 +807,7 @@ class AuditLog:
         *,
         stage: str,
         created_at: float | None = None,
+        create: bool = True,
     ) -> bool:
         """Apply ``change`` to the session's row and write it back. NEVER
         raises: any failure — the key, the folder, an unreadable or newer row
@@ -817,11 +818,14 @@ class AuditLog:
         A session with no row (started before the audit existed) gets a
         ``pre_audit`` row, dated by ``created_at`` (``session_created_at``,
         read by the caller before the directory went) or, when that is
-        missing or untrusted, by now (D8). The store is resolved PER CALL
-        (every path and the key are looked up again), so nothing bound at
-        construction can go stale."""
+        missing or untrusted, by now (D8) — unless ``create`` is False
+        (development-recordings review round 14 PR-MED-001: a caller with no
+        date to judge the retention window by never re-makes a row the prune
+        removed), when nothing is written and True returned. The store is
+        resolved PER CALL (every path and the key are looked up again), so
+        nothing bound at construction can go stale."""
         try:
-            self._update(session_id, change, created_at)
+            self._update(session_id, change, created_at, create=create)
         except Exception:  # noqa: BLE001 - C2: an audit failure never blocks custody
             self._count_failure(stage)
             return False
@@ -857,23 +861,35 @@ class AuditLog:
         return self.update(session_id, _deleted(state), stage=state, created_at=created_at)
 
     def record_past_session(
-        self, session_id: str, state: PastSessionEvent, *, created_at: float | None = None
+        self,
+        session_id: str,
+        state: PastSessionEvent,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
     ) -> bool:
         """A Past-sessions outcome after the Complete: ``archived`` for an
         entry ``reconcile_pending`` committed (round 12 LOW-002),
         ``deleted_early`` for the tab's Delete now, ``expired`` for the
         retention sweep (Tasks 3.1 / 3.2) — each only over the states
         ``_PAST_SESSION_FROM`` allows. ``created_at`` dates a ``pre_audit``
-        row (D8)."""
+        row (D8); with ``create`` False a session with no row is left
+        without one (development-recordings review round 15 PR-MED-001)."""
         return self.update(
             session_id,
             _past_session_recorded(state),
             stage=f"past_session_{state}",
             created_at=created_at,
+            create=create,
         )
 
     def record_recording_kept(
-        self, session_id: str, at: datetime, *, created_at: float | None = None
+        self,
+        session_id: str,
+        at: datetime,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
     ) -> bool:
         """The start-up repair (development-recordings Task 2.2): a
         committed Past-sessions entry holds a recording, so its row's
@@ -881,21 +897,31 @@ class AuditLog:
         only when it is None, so a second run changes nothing.
         ``created_at`` dates a ``pre_audit`` row (D8; review round 8
         LOW-002 — a row reset away is re-made in its session's month, not
-        today's): None dates it by ``at``."""
+        today's): None dates it by ``at``. With ``create`` False a session
+        with no row is left without one (review round 16 PR-MED-001)."""
         if created_at is None:
             created_at = _timestamp_or_none(at)
         return self.update(
-            session_id, _recording_kept(at), stage="recording_kept", created_at=created_at
+            session_id,
+            _recording_kept(at),
+            stage="recording_kept",
+            created_at=created_at,
+            create=create,
         )
 
     def record_recording_deleted(
-        self, session_id: str, *, created_at: float | None = None
+        self, session_id: str, *, created_at: float | None = None, create: bool = True
     ) -> bool:
         """Delete recording (D8): ``recording.deleted_at``, kept when one is
-        already set. ``created_at`` dates a ``pre_audit`` row (D8). Never
-        raises (``update``)."""
+        already set. ``created_at`` dates a ``pre_audit`` row (D8); with
+        ``create`` False a session with no row is left without one (review
+        round 14 PR-MED-001). Never raises (``update``)."""
         return self.update(
-            session_id, _recording_deleted, stage="recording_deleted", created_at=created_at
+            session_id,
+            _recording_deleted,
+            stage="recording_deleted",
+            created_at=created_at,
+            create=create,
         )
 
     def record_recording_exported(
@@ -987,6 +1013,18 @@ class AuditLog:
         finally:
             crypto.destroy()
         return decoded if isinstance(decoded, AuditRow) else None
+
+    def keeps_rows_of(self, at: datetime) -> bool:
+        """Whether a row for a session dated ``at`` is still inside the
+        retention window (D7): False once its local month's
+        ``month_prune_at`` has passed — so a repair never re-makes, as a
+        ``pre_audit`` row, a row the prune removed (development-recordings
+        review round 11 LOW-003). NEVER raises (False)."""
+        try:
+            day = _local_date(at, self._zone)
+            return month_prune_at(day.year, day.month) > self._clock()
+        except Exception:  # noqa: BLE001 - fail towards making nothing
+            return False
 
     def prune(self) -> int:
         """Remove every month folder whose ``month_prune_at`` has passed (D7)
@@ -1098,7 +1136,9 @@ class AuditLog:
             except Exception:  # noqa: BLE001 - counting must not raise either
                 pass
 
-    def _update(self, session_id: str, change: Change, created_at: float | None) -> None:
+    def _update(
+        self, session_id: str, change: Change, created_at: float | None, *, create: bool = True
+    ) -> None:
         validate_session_id(session_id)
         now = self._clock()
         crypto = self._open_key()
@@ -1112,6 +1152,8 @@ class AuditLog:
                 if not isinstance(current, AuditRow):
                     # D8: a newer or unreadable row is never overwritten.
                     raise AuditUnavailable("unavailable")
+            elif not create:
+                return  # no row, and none to be made (round 14 PR-MED-001)
             else:
                 current = AuditRow(
                     session_id=session_id,

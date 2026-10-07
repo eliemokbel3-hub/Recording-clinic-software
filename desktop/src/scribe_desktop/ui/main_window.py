@@ -31,6 +31,7 @@ from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import BenchmarkResult
 from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.context_rules import (
+    SYSTEM_REASONS,
     PauseReason,
     ReminderEntry,
     ReminderIndex,
@@ -82,16 +83,20 @@ from scribe_desktop.hotkey import (
 )
 from scribe_desktop.note import GeneratedNote
 from scribe_desktop.note_config import (
+    DevelopmentSettings,
     DevSettings,
     NoteConfig,
     NoteConfigError,
     PilotSettings,
     TemplateProfile,
     dev_writes_allowed,
+    keep_recordings_on,
     load_dev_settings,
     load_note_config,
+    read_development_settings,
     read_pilot_settings,
     save_dev_settings,
+    save_development_settings,
     save_pilot_settings,
     shadow_mode_on,
 )
@@ -232,6 +237,21 @@ SHADOW_MODE_UNREADABLE: Final = (
 SHADOW_MODE_SAVE_FAILED: Final = (
     "The shadow-mode setting could not be saved; the box shows the setting in use."
 )
+# Development-recordings plan Task 2.3 (D1, D2): the keep-recordings checkbox,
+# in both channels — OFF unless readable and on (the inverse of shadow's
+# unreadable wording).
+DEVELOPMENT_CHECKBOX_TEXT: Final = "Keep recordings for development (written consent only)"
+DEVELOPMENT_HELP: Final = (
+    "Each kept recording needs the patient's written consent and the tick above Start; "
+    "the recording stays on this computer and can be deleted on the Past sessions tab."
+)
+DEVELOPMENT_UNREADABLE: Final = (
+    "The keep-recordings setting could not be read, so no recording is kept. Tick the "
+    "box again to turn it on."
+)
+DEVELOPMENT_SAVE_FAILED: Final = (
+    "The keep-recordings setting could not be saved; the box shows the setting in use."
+)
 
 
 def version_line(version: str) -> str:
@@ -258,10 +278,19 @@ class StatusPanel(QWidget):
     cannot be read shows the box ticked (shadow on, D3) with a line naming
     it; a failed save says so and re-reads the box. ``shadow_mode_changed``
     fires after every save attempt. And the app version (``app_version``,
-    the seam; ``__version__`` when None)."""
+    the seam; ``__version__`` when None).
+
+    Development-recordings plan Task 2.3 (D1): in BOTH channels, the "Keep
+    recordings for development (written consent only)" checkbox and its
+    help line, read from and saved to ``config\\development.json`` (None:
+    ``note_config.development_settings_root``); a file that cannot be read
+    shows the box UNticked (nothing is kept — the opposite polarity to
+    shadow) with a line naming it; a failed save says so and re-reads the
+    box. ``development_changed`` fires after every save attempt."""
 
     dev_writes_changed = Signal()
     shadow_mode_changed = Signal()
+    development_changed = Signal()
 
     def __init__(
         self,
@@ -285,6 +314,15 @@ class StatusPanel(QWidget):
         self.shadow_label.setTextFormat(Qt.TextFormat.PlainText)
         self._show_shadow_setting()
         self.shadow_checkbox.toggled.connect(self._on_shadow_toggled)
+        self.development_checkbox = QCheckBox(DEVELOPMENT_CHECKBOX_TEXT)
+        self.development_help_label = QLabel(DEVELOPMENT_HELP)
+        self.development_help_label.setWordWrap(True)
+        self.development_help_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.development_label = QLabel()
+        self.development_label.setWordWrap(True)
+        self.development_label.setTextFormat(Qt.TextFormat.PlainText)
+        self._show_development_setting()
+        self.development_checkbox.toggled.connect(self._on_development_toggled)
         self.intended_use_label = QLabel(models.INTENDED_USE_LINE)
         self.intended_use_label.setWordWrap(True)
         self.intended_use_label.setTextFormat(Qt.TextFormat.PlainText)
@@ -311,6 +349,9 @@ class StatusPanel(QWidget):
         layout.addWidget(self.registration_label)
         layout.addWidget(self.shadow_checkbox)
         layout.addWidget(self.shadow_label)
+        layout.addWidget(self.development_checkbox)
+        layout.addWidget(self.development_help_label)
+        layout.addWidget(self.development_label)
         if install_layout.channel() == "dev":
             checkbox = QCheckBox(DEV_WRITES_CHECKBOX_TEXT)
             checkbox.setChecked(load_dev_settings(config_root).allow_cliniko_writes)
@@ -369,6 +410,32 @@ class StatusPanel(QWidget):
             return
         self._show_shadow_setting()
         self.shadow_mode_changed.emit()
+
+    def _show_development_setting(self) -> bool:
+        """Show the development setting as it is ON DISK (D1: unreadable
+        reads as OFF, named); True when the file could not be read."""
+        setting = read_development_settings(self._config_root)
+        self.development_checkbox.blockSignals(True)
+        self.development_checkbox.setChecked(setting.keep_recordings)
+        self.development_checkbox.blockSignals(False)
+        self.development_label.setText(DEVELOPMENT_UNREADABLE if setting.unreadable else "")
+        self.development_label.setVisible(setting.unreadable)
+        return setting.unreadable
+
+    def _on_development_toggled(self, checked: bool) -> None:
+        try:
+            save_development_settings(
+                DevelopmentSettings(keep_recordings=checked), config_root=self._config_root
+            )
+        except NoteConfigError:
+            # The box shows what is ON DISK, re-read; every Start re-reads it.
+            if not self._show_development_setting():
+                self.development_label.setText(DEVELOPMENT_SAVE_FAILED)
+                self.development_label.show()
+            self.development_changed.emit()
+            return
+        self._show_development_setting()
+        self.development_changed.emit()
 
     def refresh_registration(self) -> None:
         # Installation plan Task 2.3 (D9): read in Chrome's order through the
@@ -495,6 +562,9 @@ class MainWindow(QMainWindow):
             # Pilot plan D1: the pilot setting under this window's config root
             # (None: ``note_config.pilot_settings_root``), read at each Start.
             shadow_mode=lambda: shadow_mode_on(config_root),
+            # Development-recordings plan D1/D2: the keep-recordings setting,
+            # likewise, read at each refresh and at each Start.
+            keep_recordings=lambda: keep_recordings_on(config_root),
         )
         # Installation plan round 36 MED-001 (the practitioner's option (b)):
         # every Start waits out the start-up import warm-up, bounded
@@ -637,6 +707,9 @@ class MainWindow(QMainWindow):
         # Pilot plan Task 1.7: the Session tab's line follows the setting at
         # once (a recording's own mode stays fixed at Start, D1).
         self.status_panel.shadow_mode_changed.connect(self.session_screen.refresh)
+        # Development-recordings plan Task 2.3: the Session tab's second tick
+        # shows (or hides, cleared) as the setting changes.
+        self.status_panel.development_changed.connect(self.session_screen.refresh)
         # Privacy-professional-controls Task 3.1: what the archive kept, its
         # retention setting and the audit record's export. Construction reads
         # only the settings file under `config_root`; the archive is listed
@@ -928,6 +1001,11 @@ class MainWindow(QMainWindow):
         lock; Phase 7's hotkey and spoken pause). The Chrome bridge applies it when attached
         (it owns the block); otherwise the same table pauses through the
         Session screen's slot."""
+        if reason in SYSTEM_REASONS:
+            # Development-recordings D2 (review round 12 LOW-008): a suspend
+            # or lock ends the consultation the tick was armed for — the
+            # next patient's Start must not consume it.
+            self.session_screen.disarm_development_tick(announce=True)
         if self.chrome_bridge is not None:
             self.chrome_bridge.pause_for(reason)
             return
@@ -1554,7 +1632,10 @@ class MainWindow(QMainWindow):
             outcome.document,
             # D5: the label is resolved at the click, before the Complete.
             on_complete=lambda: self._controller.complete_recovered(
-                directory, crypto, label=self.keep_label_for(directory.name)
+                directory,
+                crypto,
+                label=self.keep_label_for(directory.name),
+                kept=self.session_kept_for(directory.name),
             ),
             on_discard=lambda: self._controller.discard_recovered(directory, crypto),
             store_finished=outcome.store_finished,
@@ -1870,6 +1951,20 @@ class MainWindow(QMainWindow):
             return record.mode if record is not None else SessionMode.SHADOW
         return SessionMode.SHADOW
 
+    def session_kept_for(self, session_id: str | None) -> bool:
+        """Development-recordings plan Task 2.1 (C3, D2): whether the
+        RECOVERED checkout ``session_id`` was started under written
+        development consent — from the record the checkout already holds
+        (the ONE decrypt, ``_open_checkout_encounter``), never a second read.
+        No held record, an unreadable one, or any other id is NOT kept (fail
+        closed — the opposite polarity to ``session_mode_for``). A live
+        session's Complete decides from the controller's own copy instead."""
+        checkout = self._checkout
+        if session_id is None or checkout.session_id != session_id:
+            return False
+        record = checkout.record
+        return record is not None and record.development_consent is not None
+
     def _live_mode(self) -> SessionMode:
         """The live session's mode (the Note tab's review and reopened saved
         note belong to it); SHADOW with no non-terminal live session."""
@@ -1981,9 +2076,25 @@ class MainWindow(QMainWindow):
             self.recovery_screen.release_checkout(source)
         else:
             self.recovery_screen.refresh()
+        # Development-recordings Task 2.4 (review round 11 MED-001): the
+        # Complete that just succeeded kept the recording (the ACTUAL outcome,
+        # never the consent) — said on the Session tab too, where the window
+        # lands, so a mis-kept recording is noticed (D2).
+        kept = outcome in ("completed", "written") and self._controller.last_completion_kept()
         if outcome == "written":
             # Draft-write D6 (seen mode): the terminal line, after refresh().
-            self.session_screen.show_notice(models.write_line("written_done"))
+            line = models.write_line("written_done")
+            self.session_screen.show_notice(
+                f"{line} {models.COMPLETE_KEPT_LINE}" if kept else line
+            )
+        elif kept:
+            self.session_screen.show_notice(models.COMPLETE_KEPT_LINE)
+        elif self.session_screen.message_label.text().endswith(models.COMPLETE_KEPT_LINE):
+            # Review rounds 12 LOW-006 / 13 LOW-006: an earlier Complete's
+            # sentence (alone, or after ``written_done``) must not read as
+            # this close's — a Complete that kept nothing or a Discard; only
+            # that line is cleared, never another notice.
+            self.session_screen.show_notice("")
         # Peer round 44 PR-MED-026: a terminal exit that dropped queued
         # phrases stays on the Transcript screen so the appended sentence is
         # actually seen; every other close (ordinary Complete, Complete after

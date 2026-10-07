@@ -2,7 +2,9 @@
 D1, D3, D5, D6, D13; Critical Constraints C1 and C4).
 
 At every non-mock Complete the app keeps, encrypted, the session's
-transcript, its saved note and its generated note — never audio. On-disk
+transcript, its saved note and its generated note — and audio only for a
+recording kept under written development consent (plan-development-
+recordings D5/D6); the archive's first key-under-key. On-disk
 layout (D1 / D3), all under ``%LOCALAPPDATA%\\ClinikoScribe\\past_sessions\\``
 (``ClinikoScribe-dev`` from a source checkout — ``install_layout``):
 
@@ -24,7 +26,16 @@ layout (D1 / D3), all under ``%LOCALAPPDATA%\\ClinikoScribe\\past_sessions\\``
     — the SOURCE-DERIVED set (D6): the transcript always, the others when
     the completed session held them;
   - ``pending`` — a content-free marker the entry is PUBLISHED with and
-    keeps until its Complete has deleted the source key (C1).
+    keeps until its Complete has deleted the source key (C1);
+  - for a KEPT recording only (development-recordings plan D5/D6):
+    ``audio.enc`` — the session chunk-store format under a FRESH audio key —
+    and ``audio-key.enc``, that key's 32 bytes encrypted under the ENTRY key
+    with the associated data ``past-audio-key:<session id>``. Deleting
+    ``key.dpapi`` therefore destroys the audio too, on any build; Delete
+    recording zeroes ``audio-key.enc`` in place, then unlinks it and
+    ``audio.enc`` — the recording's two files alone. "Kept"
+    is both files present and the key file not all zeros (``recording_kept``
+    — no decryption).
 
 - ``.staging\\<session id>\\`` — where an entry is built and verified before
   it is moved into place; ``clean_staging`` removes whatever a crash left
@@ -45,9 +56,11 @@ key deletion — and ``commit`` (inside the Complete) or ``reconcile_pending``
 (start-up and every sweep tick, on a CONFIRMED-absent source key only)
 removes its marker.
 
-What this store never holds: audio (C4 — the source session's key, which
-also encrypted ``audio.enc``, is still deleted), the source key, or an
-audit id. The patient's name lives only in ``label.enc``.
+What this store never holds: audio not kept under development consent (C4
+— the source session's key, which also encrypted the session's
+``audio.enc``, is still deleted; a kept recording is RE-encrypted under its
+own key), the source key, or an audit id. The patient's name lives only in
+``label.enc``.
 
 Threading: every method runs on the GUI thread (the controller's custody
 calls under its lock, the sweep timer), like the stores it sits beside
@@ -63,8 +76,9 @@ import math
 import os
 import re
 import shutil
+import stat
 import unicodedata
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -91,6 +105,7 @@ from scribe_desktop.note_config import (
 )
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
+    AUDIO_FILENAME,
     CLOCK_SKEW_TOLERANCE,
     GENERATED_FILENAME,
     KEY_FILENAME,
@@ -99,8 +114,10 @@ from scribe_desktop.session_store import (
     TRANSCRIPT_FILENAME,
     ArchiveSource,
     GeneratedRecord,
+    SessionChunkStore,
     atomic_write_bytes,
     generated_aad,
+    iter_chunks,
     link_state,
     read_generated,
     read_note,
@@ -118,6 +135,10 @@ LABEL_FILENAME: Final = "label.enc"
 # shadow (D6).
 LABEL_SCHEMA_VERSION: Final = 2
 PENDING_FILENAME: Final = "pending"
+# Development-recordings plan D6: the kept recording's audio key, wrapped
+# under the entry key (12-byte nonce + 32-byte key + 16-byte tag).
+AUDIO_KEY_FILENAME: Final = "audio-key.enc"
+AUDIO_KEY_FILE_BYTES: Final = 60
 STAGING_DIRNAME: Final = ".staging"
 SETTINGS_FILENAME: Final = "past_sessions.json"
 # The retention setting (Agreed Scope, amended by practitioner decision
@@ -171,6 +192,11 @@ PAST_SESSION_REASONS: Final[dict[str, str]] = {
     "pending": "that Past-sessions entry is not finished yet",
     "unreadable": "that Past-sessions entry cannot be read on this Windows account",
     "delete_failed": "that Past-sessions entry could not be deleted",
+    # Development-recordings plan Task 2.2 (D8): raised ONLY when the audio
+    # key could not be overwritten and verified — once its zeros are synced
+    # the recording is destroyed, whatever the unlinks after.
+    "recording_delete_failed": "that kept recording could not be deleted",
+    "recording_not_kept": "that Past-sessions entry holds no kept recording",
 }
 
 
@@ -295,13 +321,23 @@ def _label_aad(session_id: str) -> bytes:
     return b"past-label:" + validate_session_id(session_id).encode("ascii")
 
 
+def _audio_key_aad(session_id: str) -> bytes:
+    """The kept recording's wrapped audio key (development-recordings plan
+    D6): distinct from every other artifact's, and bound to the entry."""
+    return b"past-audio-key:" + validate_session_id(session_id).encode("ascii")
+
+
 @dataclass(frozen=True)
 class PastSessionListing:
     """One COMMITTED entry as the list shows it: its label, or None when the
-    label cannot be read (the entry is still listed, so it can be deleted)."""
+    label cannot be read (the entry is still listed, so it can be deleted).
+    ``recording_kept`` (development-recordings plan Task 2.2): the entry
+    holds a kept recording — from two files' presence and a zero-check of
+    the key file, never a decryption."""
 
     session_id: str
     label: PastSessionLabel | None = field(repr=False)
+    recording_kept: bool = False
 
 
 @dataclass(frozen=True)
@@ -322,6 +358,14 @@ class RetentionSweepReport:
     # and REFUSED it: nothing was read or deleted (practitioner decision
     # 2026-10-02 — the 7-year minimum, held here as well as in the settings).
     too_short: bool = False
+    # Development-recordings plan Task 2.2: the expired ids whose entry held a
+    # kept recording, read before the key went — so the audit can record the
+    # kept fact before the expiry (review round 8 LOW-003).
+    kept: frozenset[str] = frozenset()
+    # Development-recordings review round 16 PR-MED-001: each expired id's
+    # audit moment — its session's start, else its completion — what the
+    # audit's unattended writes are judged and dated by (content-free).
+    started: tuple[tuple[str, datetime], ...] = ()
 
     @property
     def problem(self) -> bool:
@@ -402,6 +446,11 @@ class PastSessionStore:
         # name. Dropped whenever this store writes, publishes or removes
         # the id's entry.
         self._completed_dates: dict[str, datetime] = {}
+        # Development-recordings review round 16 PR-MED-001: each dated
+        # entry's audit moment (its start, else its completion), read from
+        # the same decryption — what the sweep's audit writes are judged and
+        # dated by. Kept and dropped with ``_completed_dates``.
+        self._started_dates: dict[str, datetime] = {}
         # The retention sweep's unreadable labels (H1 round 32 LOW-004, the
         # same class): when each id's label last failed to read, so an entry
         # whose key or label cannot be read (D9's broken DPAPI makes that
@@ -409,12 +458,19 @@ class PastSessionStore:
         # unwrapped again on every hourly tick. Still counted as undated
         # (kept) every tick. Dropped with the date cache's rule.
         self._undated: dict[str, datetime] = {}
+        # Development-recordings review round 14 PR-MED-002: the entries the
+        # latest ``tidy_dead_recordings`` held back because their recording's
+        # deletion was not cleared (round 17 PR-MED-001: not listed and
+        # recorded) — the retention sweep holds them too, so the evidence the
+        # next record needs is not expired away.
+        self._spared: frozenset[str] = frozenset()
 
     def _forget_dates(self, session_id: str) -> None:
         """The date caches' one rule: whenever this store writes, publishes
         or removes ``session_id``'s entry, both caches forget it (H2 round 34
         SIMP-002)."""
         self._completed_dates.pop(session_id, None)
+        self._started_dates.pop(session_id, None)
         self._undated.pop(session_id, None)
 
     @property
@@ -459,9 +515,9 @@ class PastSessionStore:
             if not _remove_key_first(staging):
                 raise PastSessionError("write_failed")
             document = self._label_for(source, label)
-            expected = self._stage(staging, source, document)
+            expected, audio_digest = self._stage(staging, source, document)
             stage = "verify_failed"
-            self._verify_staged(staging, source, document, expected)
+            self._verify_staged(staging, source, document, expected, audio_digest)
             stage = "publish_failed"
             self._publish(staging, self._root / session_id)
         except Exception as exc:
@@ -491,11 +547,13 @@ class PastSessionStore:
 
     def _stage(
         self, staging: Path, source: ArchiveSource, document: PastSessionLabel
-    ) -> frozenset[str]:
+    ) -> tuple[frozenset[str], bytes | None]:
         """Write the entry into ``staging`` under a FRESH key; returns the
-        exact file set it must hold."""
+        exact file set it must hold and, for a kept recording, the SHA-256
+        of the audio PCM as it was staged (None without audio)."""
         session_id = source.session_id
         crypto = SessionCrypto()
+        audio_digest: bytes | None = None
         try:
             staging.mkdir(parents=True)
             self._wrap_key(crypto, staging)
@@ -511,10 +569,14 @@ class PastSessionStore:
                 )
             for name, blob in files.items():
                 atomic_write_bytes(staging / name, blob, error_label="past-session entry")
+            names = {KEY_FILENAME, PENDING_FILENAME, *files}
+            if source.audio_chunks is not None:
+                audio_digest = _stage_audio(staging, crypto, session_id, source.audio_chunks)
+                names |= {AUDIO_FILENAME, AUDIO_KEY_FILENAME}
             atomic_write_bytes(staging / PENDING_FILENAME, b"", error_label="pending marker")
         finally:
             crypto.destroy()
-        return frozenset({KEY_FILENAME, PENDING_FILENAME, *files})
+        return frozenset(names), audio_digest
 
     def _verify_staged(
         self,
@@ -522,13 +584,18 @@ class PastSessionStore:
         source: ArchiveSource,
         document: PastSessionLabel,
         expected: frozenset[str],
+        audio_digest: bytes | None = None,
     ) -> None:
         """D1's full verification, through the entry's OWN key read back from
         disk: exactly the expected files; the label as written; every
         plaintext's SHA-256 equal to the source bytes; and the existing
         readers (``read_transcript``, ``read_note`` — which re-checks the
         note's session binding and transcript digest — ``read_generated``)
-        accepting what they will later read. Raises on any difference."""
+        accepting what they will later read. A kept recording's audio
+        (development-recordings plan D5, C4): its key unwrapped through the
+        entry key, the STAGED store re-read chunk by chunk with its footer
+        required, and the PCM's SHA-256 equal to the digest taken while it
+        was staged — never a whole-file read. Raises on any difference."""
         present = frozenset(path.name for path in staging.iterdir())
         if present != expected:
             raise PastSessionError("verify_failed")
@@ -556,6 +623,12 @@ class PastSessionStore:
                     source.generated_plain,
                 )
                 if read_generated(staging, crypto, session_id) is None:
+                    raise PastSessionError("verify_failed")
+            if audio_digest is not None:
+                digest = hashlib.sha256()
+                for chunk in _audio_chunks(staging, crypto, session_id):
+                    digest.update(chunk)
+                if digest.digest() != audio_digest:
                     raise PastSessionError("verify_failed")
         finally:
             crypto.destroy()
@@ -679,8 +752,219 @@ class PastSessionStore:
         LOW-003)."""
         listings: list[PastSessionListing] = []
         for entry in self._committed_dirs(strict=True):
-            listings.append(PastSessionListing(entry.name, self._read_label(entry)))
+            listings.append(
+                PastSessionListing(
+                    entry.name, self._read_label(entry), _recording_kept_in(entry)
+                )
+            )
         return listings
+
+    def kept_entries(self) -> list[PastSessionListing]:
+        """Every COMMITTED entry holding a kept recording (development-
+        recordings plan Task 2.2: the start-up repair of the audit's
+        ``recording.kept_at``), its label decrypted — None when it cannot be
+        read. Only these labels are decrypted. NEVER raises: an archive that
+        cannot be listed is empty here (the next start tries again)."""
+        return self._labelled_where(_recording_kept_in, kept=True)
+
+    def deleted_recordings(self) -> list[PastSessionListing]:
+        """Every COMMITTED entry whose kept recording was DELETED but not yet
+        tidied — its ``audio-key.enc`` zeroed, or gone with ``audio.enc``
+        still there (review round 11 LOW-004: the start-up repair records the
+        deletion before ``tidy_dead_recordings`` removes that evidence). Its
+        label decrypted, None when it cannot be read; only these labels are.
+        NEVER raises."""
+        return self._labelled_where(_recording_deleted_in, kept=False)
+
+    def _labelled_where(
+        self, holds: Callable[[Path], bool], *, kept: bool
+    ) -> list[PastSessionListing]:
+        try:
+            return [
+                PastSessionListing(entry.name, self._read_label(entry), recording_kept=kept)
+                for entry in self._committed_dirs()
+                if holds(entry)
+            ]
+        except Exception:  # noqa: BLE001 - a later start tries again
+            self._log(None, "kept_list_failed")
+            return []
+
+    def entry_label(self, session_id: str) -> PastSessionLabel | None:
+        """The COMMITTED entry's label (one key unwrap), or None when there is
+        no such entry or its label cannot be read — what a reconciled commit's
+        audit write is dated and judged by (development-recordings review
+        round 15 PR-MED-001). NEVER raises."""
+        try:
+            return self._read_label(self._committed(session_id))
+        except Exception:  # noqa: BLE001 - no label is an answer, never a raise
+            return None
+
+    def recording_kept(self, session_id: str) -> bool:
+        """True when ``session_id``'s entry holds a kept recording: BOTH
+        ``audio.enc`` and ``audio-key.enc`` present and the key file not all
+        zeros (a zeroed key is "destroyed, cleanup pending" — round 4
+        PR-MED-041). A ~60-byte read, no decryption. A link, or anything not
+        a session id, holds none. Never raises."""
+        return self.recording_state(session_id) == "kept"
+
+    def recording_held(self, session_id: str) -> bool:
+        """True when ``session_id``'s entry holds a kept recording OR one whose
+        deletion is not yet tidied (review round 13 LOW-001). No decryption;
+        never raises."""
+        return self.recording_state(session_id) != "none"
+
+    def recording_state(self, session_id: str) -> RecordingState:
+        """``kept``, ``gone`` (deleted, not yet tidied) or ``none`` from ONE
+        read (``_recording_state``) — what Delete now decides from before it
+        destroys the entry, so the kept fact and an earlier deletion are
+        recorded first (review rounds 13–17). A link, or anything not a
+        session id, holds none. No decryption; never raises."""
+        try:
+            entry = self._root / validate_session_id(session_id)
+        except ValueError:
+            return "none"
+        return "none" if _is_link(entry) else _recording_state(entry)
+
+    def read_recording(self, session_id: str) -> Iterator[bytes]:
+        """The COMMITTED entry's kept recording as PCM chunks (entry key ->
+        audio key -> ``iter_chunks``, footer required). Refused BEFORE any
+        unwrap — ``PastSessionError`` ``not_found`` / ``pending`` for the
+        entry, ``recording_not_kept`` when it holds no live recording (a
+        missing or zeroed key file). The returned generator unwraps on its
+        first step and destroys both keys when it finishes or is closed; any
+        failure while reading (a later chunk failing authentication among
+        them) raises ``PastSessionError("unreadable")`` — the caller has
+        then already received the earlier chunks."""
+        entry = self._committed(session_id)
+        if not _recording_kept_in(entry):
+            raise PastSessionError("recording_not_kept")
+        return self._recording_chunks(entry)
+
+    def _recording_chunks(self, entry: Path) -> Iterator[bytes]:
+        try:
+            crypto = self._unwrap_key(entry)
+        except Exception as exc:
+            raise PastSessionError("unreadable") from exc
+        try:
+            yield from _audio_chunks(entry, crypto, entry.name)
+        except PastSessionError:
+            raise
+        except Exception as exc:
+            raise PastSessionError("unreadable") from exc
+        finally:
+            crypto.destroy()
+
+    def delete_recording(
+        self, session_id: str, *, on_destroyed: Callable[[], object] | None = None
+    ) -> None:
+        """Delete recording (development-recordings plan D8, D6): the kept
+        recording ALONE — ``key.dpapi``, the transcript and the notes are
+        never touched. ``audio-key.enc`` is overwritten with zeros IN PLACE
+        (opened ``r+b``, the same file — never the atomic writer, whose
+        replacement would leave the original bytes behind; round 1
+        PR-HIGH-001), flushed, synced and read back as zeros; THEN it and
+        ``audio.enc`` are unlinked best-effort. Once the zeros are synced the
+        recording is destroyed: a failed unlink (a Windows file lock, or a
+        crash between the two) is still a successful deletion whose cleanup
+        is pending (``tidy_dead_recordings`` finishes it).
+        ``PastSessionError`` — ``not_found`` / ``pending`` for the entry,
+        ``recording_not_kept`` when it holds no live recording, and
+        ``recording_delete_failed`` ONLY when the overwrite could not be
+        completed and verified (the key file is then as it was, or partly
+        zeroed — never reported deleted). ``on_destroyed`` (the caller's
+        audit record of the deletion; True when recorded) runs between the
+        verified zeros and the unlinks; when it does not record, the files
+        are left for the next run."""
+        entry = self._committed(session_id)
+        if not _recording_kept_in(entry):
+            raise PastSessionError("recording_not_kept")
+        key_path = entry / AUDIO_KEY_FILENAME
+        try:
+            # Review round 11 LOW-001: the archive's only write THROUGH an
+            # existing file in an entry, so it never follows a link (a
+            # symlink, or a hard link naming another file) and never zeroes
+            # more than a key file holds.
+            if link_state(key_path) is not False:
+                raise OSError("the audio key is a link")
+            with key_path.open("r+b") as stream:
+                status = os.fstat(stream.fileno())
+                length = status.st_size
+                if not _is_own_key_file(status):
+                    raise OSError("not this entry's audio key")
+                stream.seek(0)
+                stream.write(b"\0" * length)
+                stream.flush()
+                os.fsync(stream.fileno())
+                stream.seek(0)
+                if stream.read(length + 1).strip(b"\0"):
+                    raise OSError("the audio key did not read back as zeros")
+        except OSError as exc:
+            self._log(session_id, "recording_delete_failed")
+            raise PastSessionError("recording_delete_failed") from exc
+        # Review round 12 LOW-003: the caller records the deletion HERE —
+        # after the zeros are synced and verified, before the unlinks — so a
+        # kill after the unlinks never leaves an unrecorded deletion; a record
+        # that fails (False, or raises) keeps the zeroed key as the evidence
+        # the next run's deletion record (``app.record_deleted_recordings``)
+        # needs, and the files stay for it.
+        if on_destroyed is not None:
+            try:
+                recorded = bool(on_destroyed())
+            except Exception:  # noqa: BLE001 - the deletion itself has happened
+                recorded = False
+            if not recorded:
+                self._log(session_id, "recording_cleanup_pending")
+                return
+        for name in (AUDIO_KEY_FILENAME, AUDIO_FILENAME):
+            try:
+                (entry / name).unlink(missing_ok=True)
+            except OSError:
+                self._log(session_id, "recording_cleanup_pending")
+
+    def tidy_dead_recordings(self, *, cleared: frozenset[str] | None = None) -> int:
+        """Remove every ``audio.enc`` whose ``audio-key.enc`` is CONFIRMED
+        gone or zeroed, and every zeroed key file — what a Delete recording
+        interrupted between its zeros and its unlinks (or refused an unlink
+        by a file lock) leaves (development-recordings plan Task 2.2). Called
+        where ``clean_staging`` is. A live key is never touched; a key file
+        that cannot be read decides nothing. POSITIVE CLEARANCE (review
+        round 17 PR-MED-001): given ``cleared`` — the ids whose deletion the
+        caller's discovery LISTED and recorded (or owed no record) — an entry
+        is tidied only when its id is in it; any other dead recording found
+        here (its record refused, or missed by a discovery read that failed —
+        tidy's own read is never trusted alone) is left for the next run and
+        held from the retention sweep until a later call clears it (round 14
+        PR-MED-002). ``cleared`` None (no audit: nothing can be recorded)
+        tidies every one. Returns how many files went. NEVER raises."""
+        held: set[str] = set()
+        removed = 0
+        try:
+            for entry in self._entry_dirs():
+                # Review round 18 PR-LOW-001: discovery's own rule decides what
+                # is dead — a non-file where ``audio.enc`` would be, beside no
+                # key, is no recording, so it is neither tidied nor held.
+                if _recording_state(entry) != "gone":
+                    continue
+                paths = [
+                    entry / name
+                    for name in (AUDIO_FILENAME, AUDIO_KEY_FILENAME)
+                    if _exists(entry / name)
+                ]
+                if not paths:
+                    continue
+                if cleared is not None and entry.name not in cleared:
+                    held.add(entry.name)
+                    continue
+                for path in paths:
+                    try:
+                        path.unlink()
+                        removed += 1
+                    except OSError:
+                        self._log(entry.name, "recording_cleanup_pending")
+        except Exception:  # noqa: BLE001 - a later start tries again
+            self._log(None, "tidy_failed")
+        self._spared = frozenset(held)
+        return removed
 
     def read_entry(self, session_id: str) -> PastSessionEntry:
         """Open a COMMITTED entry through the existing readers.
@@ -725,7 +1009,13 @@ class PastSessionStore:
         """``sweep_report``'s deleted ids (the retention sweep as a list)."""
         return [session_id for session_id, _date in self.sweep_report(retention_days, now).expired]
 
-    def sweep_report(self, retention_days: int | None, now: datetime) -> RetentionSweepReport:
+    def sweep_report(
+        self,
+        retention_days: int | None,
+        now: datetime,
+        *,
+        before_held_delete: Callable[[str, datetime, datetime, bool], object] | None = None,
+    ) -> RetentionSweepReport:
         """The retention sweep (Flow 4): delete every committed entry
         completed ``retention_days`` or more before ``now``. ``None``
         ("never") returns at once — nothing is decrypted. An entry with no
@@ -742,13 +1032,28 @@ class PastSessionStore:
         ``MIN_RETENTION_DAYS`` is REFUSED before any read — nothing deleted,
         ``too_short`` set, ``retention_too_short`` logged (the 7-year
         minimum, practitioner decision 2026-10-02; the settings file cannot
-        hold one, so this is the second line). NEVER raises."""
+        hold one, so this is the second line). Each expired id's audit
+        moment (its start, else its completion — review round 16 PR-MED-001)
+        is reported in ``started``. ``before_held_delete(id, completed,
+        started, recording_gone)`` runs just before an entry holding (or
+        that held, deletion not yet tidied — ``recording_gone``) a kept
+        recording is deleted — the caller records the kept fact there, and
+        for a gone recording its deletion, before the evidence goes
+        (development-recordings review round 14 PR-MED-003); for a live
+        recording whatever it returns or raises (logged) lets the deletion go
+        ahead (the audit never blocks custody), while a gone recording whose
+        deletion it did not record (anything but True) is HELD and counted
+        as not deleted — retention is a minimum (round 15 PR-MED-002). So is
+        an entry the latest ``tidy_dead_recordings`` spared (round 14
+        PR-MED-002). NEVER raises."""
         if retention_days is None:
             return RetentionSweepReport()
         if retention_days < MIN_RETENTION_DAYS:
             self._log(None, "retention_too_short")
             return RetentionSweepReport(too_short=True)
         expired: list[tuple[str, datetime]] = []
+        starts: list[tuple[str, datetime]] = []
+        kept: set[str] = set()
         failed = 0
         undated = 0
         try:
@@ -774,24 +1079,72 @@ class PastSessionStore:
                     self._undated.pop(session_id, None)
                     completed = label.completed_at
                     self._completed_dates[session_id] = completed
+                    self._started_dates[session_id] = (
+                        label.started_at if label.started_at is not None else completed
+                    )
+                # Round 16 PR-MED-001: read here — the deletion forgets it.
+                started = self._started_dates.get(session_id, completed)
                 if completed > now + timedelta(seconds=CLOCK_SKEW_TOLERANCE):
                     continue
                 if now - completed < window:
                     continue
+                if session_id in self._spared:
+                    # Round 14 PR-MED-002: its recording's deletion is not yet
+                    # recorded — due, but held (counted as not deleted) until
+                    # a later sweep records it; retention is a minimum.
+                    failed += 1
+                    continue
+                # Round 13 LOW-001: a deletion not yet tidied counts too.
+                # Round 17 PR-MED-001: ONE read decides both.
+                recording = _recording_state(entry)
+                held_recording = recording != "none"
+                recording_gone = recording == "gone"
+                if held_recording and before_held_delete is not None:
+                    # Review round 14 PR-MED-003: the kept fact is recorded
+                    # BEFORE the entry (and its evidence) goes — a true fact
+                    # whether or not the deletion then succeeds.
+                    try:
+                        recorded = before_held_delete(
+                            session_id, completed, started, recording_gone
+                        )
+                    except Exception:  # noqa: BLE001 - the audit never blocks custody (C2)
+                        self._log(session_id, "kept_record_failed")
+                        recorded = False
+                    if recording_gone and recorded is not True:
+                        # Round 15 PR-MED-002: a recording deleted but not yet
+                        # tidied whose deletion cannot be recorded now is
+                        # held as a spared one is (judged afresh, not only
+                        # from the latest tidy's spare set).
+                        failed += 1
+                        continue
                 try:
                     self.delete_entry(session_id)
                 except PastSessionError:
                     failed += 1
                     continue
                 expired.append((session_id, completed))
+                starts.append((session_id, started))
+                if held_recording:
+                    kept.add(session_id)
             for gone in set(self._completed_dates) - present:
                 del self._completed_dates[gone]
+            for gone in set(self._started_dates) - present:
+                del self._started_dates[gone]
             for gone in set(self._undated) - present:
                 del self._undated[gone]
         except Exception:  # noqa: BLE001 - a later tick tries again
             self._log(None, "sweep_failed")
-            return RetentionSweepReport(tuple(expired), failed, complete=False, undated=undated)
-        return RetentionSweepReport(tuple(expired), failed, undated=undated)
+            return RetentionSweepReport(
+                tuple(expired),
+                failed,
+                complete=False,
+                undated=undated,
+                kept=frozenset(kept),
+                started=tuple(starts),
+            )
+        return RetentionSweepReport(
+            tuple(expired), failed, undated=undated, kept=frozenset(kept), started=tuple(starts)
+        )
 
     # --- internals ----------------------------------------------------------
 
@@ -905,6 +1258,133 @@ def _require_same(actual: bytes, expected: bytes) -> None:
         raise PastSessionError("verify_failed")
 
 
+# ---------------------------------------------------------------------------
+# The kept recording (development-recordings plan D5, D6).
+# ---------------------------------------------------------------------------
+
+
+def _stage_audio(
+    staging: Path, crypto: SessionCrypto, session_id: str, chunks: Iterator[bytes]
+) -> bytes:
+    """Copy ``chunks`` (the source session's PCM, one-shot) into
+    ``staging/audio.enc`` under a FRESH audio key, chunk by chunk — never
+    buffered whole — and write that key, encrypted under the entry key
+    ``crypto``, as ``audio-key.enc``. Returns the SHA-256 of the PCM as
+    copied. The entry's ``key.dpapi`` must already be written
+    (``SessionChunkStore.create`` refuses otherwise). The audio key is
+    destroyed, and the source iterator closed, on every path."""
+    audio_crypto = SessionCrypto()
+    digest = hashlib.sha256()
+    try:
+        store = SessionChunkStore.create(staging / AUDIO_FILENAME, audio_crypto, session_id)
+        try:
+            for chunk in chunks:
+                digest.update(chunk)
+                store.append_chunk(chunk)
+            store.finish()
+        finally:
+            store.close()
+        atomic_write_bytes(
+            staging / AUDIO_KEY_FILENAME,
+            crypto.encrypt(audio_crypto.export_key(), _audio_key_aad(session_id)),
+            error_label="past-session audio key",
+        )
+    finally:
+        audio_crypto.destroy()
+        if isinstance(chunks, Generator):
+            chunks.close()  # the source store's handle, on a failure part-way
+    return digest.digest()
+
+
+def _audio_chunks(entry: Path, crypto: SessionCrypto, session_id: str) -> Iterator[bytes]:
+    """The kept recording in ``entry`` (a staged or committed entry) as PCM
+    chunks: ``audio-key.enc`` decrypted under the entry key ``crypto``, then
+    ``audio.enc`` streamed with its footer required. A zeroed key file is a
+    destroyed recording — ``recording_not_kept`` before any decryption. The
+    audio key is destroyed when the generator finishes or is closed."""
+    blob = _read_capped(entry / AUDIO_KEY_FILENAME, AUDIO_KEY_FILE_BYTES)
+    if not blob.strip(b"\0"):
+        raise PastSessionError("recording_not_kept")
+    audio_crypto = SessionCrypto.from_key(crypto.decrypt(blob, _audio_key_aad(session_id)))
+    try:
+        yield from iter_chunks(entry / AUDIO_FILENAME, audio_crypto, require_footer=True)
+    finally:
+        audio_crypto.destroy()
+
+
+AudioKeyState = Literal["absent", "zeroed", "live", "unknown"]
+
+
+def _is_own_key_file(status: os.stat_result) -> bool:
+    """THE rule for an entry's own ``audio-key.enc`` (review round 13
+    LOW-004), read through its open handle: a regular file with no other
+    name (``st_nlink``) holding 1–60 bytes — what ``_audio_key_state``
+    reads by and ``delete_recording`` zeroes under."""
+    return (
+        stat.S_ISREG(status.st_mode)
+        and status.st_nlink == 1
+        and 0 < status.st_size <= AUDIO_KEY_FILE_BYTES
+    )
+
+
+def _audio_key_state(path: Path) -> AudioKeyState:
+    """``audio-key.enc``'s state without decrypting it: CONFIRMED absent,
+    all zeros (destroyed, cleanup pending), live, or ``unknown`` when it
+    cannot be read (which decides nothing). Review round 13 LOW-004: only
+    the app's own key file decides — a link, a file that is not regular or
+    has another name (``st_nlink``), or a size outside 1–60 bytes is
+    ``unknown`` (an empty file is never read as a deletion), by the same
+    rule ``delete_recording`` writes under. Never raises."""
+    try:
+        if link_state(path) is not False:
+            return "unknown"
+        with path.open("rb") as stream:
+            if not _is_own_key_file(os.fstat(stream.fileno())):
+                return "unknown"
+            blob = stream.read(AUDIO_KEY_FILE_BYTES + 1)
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return "unknown"
+    return "live" if blob.strip(b"\0") else "zeroed"
+
+
+RecordingState = Literal["none", "kept", "gone"]
+
+
+def _recording_state(entry: Path) -> RecordingState:
+    """What ``entry`` holds of a kept recording, from ONE read of its key
+    file (review round 17 PR-MED-001: a destroyer decides from one read,
+    never two that a transient error can make disagree). ``kept`` (D4/D6):
+    ``audio.enc`` present and the key file present and not zeroed — a key
+    file that cannot be read counts as present (``_exists``'s direction:
+    shown, so it can be deleted). ``gone`` — deleted and not yet tidied: the
+    key file CONFIRMED zeroed, or CONFIRMED gone with ``audio.enc``
+    CONFIRMED present as a regular file, never a link, which no recording is
+    (review round 12 LOW-005). Otherwise ``none``. Never raises."""
+    key = _audio_key_state(entry / AUDIO_KEY_FILENAME)
+    if key == "zeroed":
+        return "gone"
+    if key == "absent":
+        try:
+            status = os.lstat(entry / AUDIO_FILENAME)
+        except OSError:
+            return "none"
+        return "gone" if stat.S_ISREG(status.st_mode) else "none"
+    return "kept" if _exists(entry / AUDIO_FILENAME) else "none"
+
+
+def _recording_kept_in(entry: Path) -> bool:
+    """D4/D6: ``entry`` holds a kept recording (``_recording_state``)."""
+    return _recording_state(entry) == "kept"
+
+
+def _recording_deleted_in(entry: Path) -> bool:
+    """``entry`` held a kept recording that was deleted and not yet tidied
+    (``_recording_state``); anything that cannot be read decides nothing."""
+    return _recording_state(entry) == "gone"
+
+
 def _exists(path: Path) -> bool:
     """True when ``path`` is there. An error other than absence reads as
     present — the direction that never commits, lists as gone, or deletes."""
@@ -954,6 +1434,13 @@ def _remove_key_first(directory: Path) -> bool:
         pass  # the directory itself is absent
     except OSError:
         return False
+    # Development-recordings plan D6: a kept recording's audio key goes next,
+    # best-effort — belt and braces, never load-bearing (the audio is already
+    # dead under the entry key), and never deciding the result.
+    try:
+        (directory / AUDIO_KEY_FILENAME).unlink(missing_ok=True)
+    except OSError:
+        pass
     shutil.rmtree(directory, ignore_errors=True)
     return True
 

@@ -1222,14 +1222,19 @@ class ArchiveSource:
     controls D1 / D6): the SOURCE-DERIVED set, as verified plaintext bytes —
     the transcript always, the saved note when this path completes it (never
     on a delete-note path), the generated note when ``generated.enc`` read
-    back authentic. Never audio. ``created_at`` is the session's trusted
-    creation time (epoch seconds) or None. repr-hidden: clinical text."""
+    back authentic. Audio only for a kept recording (development-recordings
+    plan D5): ``audio_chunks`` is then a ONE-SHOT iterator over the session's
+    ``audio.enc`` plaintext chunks, consumed once by the keeper while it
+    hashes them (its verification re-reads the STAGED copy, never this);
+    otherwise None. ``created_at`` is the session's trusted creation time
+    (epoch seconds) or None. repr-hidden: clinical text and audio."""
 
     session_id: str
     created_at: float | None
     transcript_plain: bytes = field(repr=False)
     note_plain: bytes | None = field(repr=False)
     generated_plain: bytes | None = field(repr=False)
+    audio_chunks: Iterator[bytes] | None = field(default=None, repr=False)
 
 
 class ArchiveKeeper(Protocol):
@@ -1258,6 +1263,7 @@ def complete_session(
     *,
     delete_note: bool = False,
     keep: ArchiveKeeper | None = None,
+    keep_audio: bool = False,
 ) -> CompletionFacts:
     """Complete ordering (binding): fsync `transcript.enc` -> verify a
     decrypt round-trip -> verify `note.enc` when one exists -> the Past-
@@ -1296,6 +1302,15 @@ def complete_session(
     as an orphan (``orphan_gc``, whose confirmed-absent key commits any
     entry).
 
+    ``keep_audio`` (development-recordings plan Task 2.1, D5): the recording
+    was started under written development consent, so a NON-mock Complete
+    hands the keeper the session's ``audio.enc`` as a one-shot chunk
+    iterator (read with ``store_has_footer``'s answer, as the app's other
+    readers do — a crash-recovered store has no footer). A session with no
+    readable audio store fails inside ``keep.write`` — ``ArchiveWriteError``,
+    key kept. ``recording_kept`` is True only when the keeper accepted that
+    audio; a mock session keeps none, consented or not.
+
     Returns the content-free ``CompletionFacts`` (privacy-professional-
     controls plan D4), gathered best-effort while the key is still in hand:
     a fact that cannot be read is ``unknown``, never a failure.
@@ -1332,6 +1347,7 @@ def complete_session(
     transcript_models = _transcript_model_name(transcript_plain)
     facts = _completion_facts(session_dir, crypto, transcript_models, completed_note, generated)
     past_session: Literal["none", "archived", "not_kept_mock"] = "none"
+    recording_kept = False
     if keep is not None:
         if _is_mock_session(transcript_models[0], generated, completed_note):
             past_session = "not_kept_mock"
@@ -1353,18 +1369,26 @@ def complete_session(
                 # outlive a Discard and then be committed (round 11 LOW-001).
                 raise ArchiveWriteError("the session identity is not its directory; key retained")
             created = audit_created_at(session_dir)
+            audio_chunks: Iterator[bytes] | None = None
+            if keep_audio:
+                audio_path = session_dir / AUDIO_FILENAME
+                audio_chunks = iter_chunks(
+                    audio_path, crypto, require_footer=store_has_footer(audio_path)
+                )
             source = ArchiveSource(
                 session_id=session_id,
                 created_at=created if created is not None and math.isfinite(created) else None,
                 transcript_plain=transcript_plain,
                 note_plain=archived_note,
                 generated_plain=generated.plaintext if generated is not None else None,
+                audio_chunks=audio_chunks,
             )
             try:
                 keep.write(source)
             except Exception as exc:  # noqa: BLE001 - any archive failure keeps the key
                 raise ArchiveWriteError("Past-sessions entry not written; key retained") from exc
             past_session = "archived"
+            recording_kept = audio_chunks is not None
     delete_session_key(session_dir)  # THE BOUNDARY: nothing below raises
     # PR-HIGH-001 (downgraded MED): after successful custody deletion no
     # application-owned object may decrypt the session — destroy the
@@ -1377,7 +1401,12 @@ def complete_session(
         except Exception:  # noqa: BLE001 - after the boundary: deferred, never raised
             commit_deferred = True
     shutil.rmtree(session_dir, ignore_errors=True)
-    return replace(facts, past_session=past_session, commit_deferred=commit_deferred)
+    return replace(
+        facts,
+        past_session=past_session,
+        commit_deferred=commit_deferred,
+        recording_kept=recording_kept,
+    )
 
 
 def discard_session(session_dir: Path, crypto: SessionCrypto | None = None) -> None:

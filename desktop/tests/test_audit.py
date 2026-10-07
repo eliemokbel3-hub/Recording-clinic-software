@@ -18,6 +18,7 @@ import sys
 import uuid
 from datetime import UTC, date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -1633,6 +1634,21 @@ class TestAppWiring:
                 events.append(("reconcile", sessions_root))
                 return []
 
+            def entry_label(self, session_id: str) -> Any:  # review round 15 PR-MED-001
+                return None
+
+            def kept_entries(self) -> list[Any]:
+                events.append(("kept",))
+                return []
+
+            def deleted_recordings(self) -> list[Any]:
+                events.append(("deleted",))
+                return []
+
+            def tidy_dead_recordings(self, *, cleared: frozenset[str] | None = None) -> int:
+                events.append(("tidy",))
+                return 0
+
         class FakeController:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
                 events.append(("controller", kwargs["audit"], kwargs["past_sessions"]))
@@ -1698,6 +1714,9 @@ class TestAppWiring:
             "staging",
             "sweep",
             "reconcile",
+            "kept",  # development-recordings Task 2.2: the start-up repair
+            "deleted",  # review round 11 LOW-004: deleted, not yet tidied
+            "tidy",
             "record",
             "record",
             "window",
@@ -1707,14 +1726,14 @@ class TestAppWiring:
         assert events[1] == ("past", ["logger"])
         _kind, audit, past = events[2]
         assert isinstance(audit, FakeAudit) and isinstance(past, FakePastSessions)
-        assert events[9][1:] == (audit, past)  # the window gets the same two
+        assert events[12][1:] == (audit, past)  # the window gets the same two
         # C1: the sweep's hook is the archive's unfinished-entry removal, and
         # the reconciliation runs over the same sessions root, after it.
         assert events[5][1] == past.remove_pending_entry
         assert events[6] == ("reconcile", tmp_path / "sessions")
-        assert events[7] == ("record", expired, "expired", {"created_at": 1_700_000_000.0})
-        assert events[8][2] == "orphan_gc"
-        assert getattr(events[10][1], "__name__", "") == "clinic_user_id"
+        assert events[10] == ("record", expired, "expired", {"created_at": 1_700_000_000.0})
+        assert events[11][2] == "orphan_gc"
+        assert getattr(events[13][1], "__name__", "") == "clinic_user_id"
 
     def test_main_runs_the_retention_sweep_at_start_up_and_records_reconciled_commits(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1730,6 +1749,31 @@ class TestAppWiring:
 
         events: list[Any] = []
         committed = "c" * 32
+        kept = [
+            (committed, datetime(2026, 10, 7, 4, 0, tzinfo=UTC)),
+            ("b" * 32, datetime(2026, 9, 1, 4, 0, tzinfo=UTC)),
+        ]
+        # Review round 11 LOW-003: a row the audit prune already removed is
+        # never re-made by the repair.
+        pruned_at = datetime(2018, 1, 1, 4, 0, tzinfo=UTC)
+        deleted = ("9" * 32, datetime(2026, 8, 3, 4, 0, tzinfo=UTC))
+        # Round 13 LOW-013: started in the month before it completed — every
+        # re-made row is dated by the START.
+        deleted_started = datetime(2026, 7, 31, 23, 0, tzinfo=UTC)
+
+        def label(completed: datetime, started: datetime | None = None) -> Any:
+            return SimpleNamespace(completed_at=completed, started_at=started)
+
+        # Review round 15 PR-MED-001: each reconciled commit's ``archived`` is
+        # dated by its label's START, skipped when that month is pruned, and
+        # made on an existing row only when the label cannot be read.
+        committed_started = datetime(2026, 9, 30, 23, 0, tzinfo=UTC)
+        reconciled: dict[str, Any] = {
+            committed: label(kept[0][1], started=committed_started),
+            "e" * 32: None,
+            "4" * 32: label(pruned_at),
+        }
+        repairing: list[bool] = []  # set once the kept-fact repair begins
 
         class FakeAudit:
             def __init__(self, **kwargs: Any) -> None:
@@ -1738,19 +1782,27 @@ class TestAppWiring:
             def prune(self) -> int:
                 return 0
 
+            def keeps_rows_of(self, at: datetime) -> bool:
+                return at != pruned_at
+
             def record_deletion(self, *args: Any, **kwargs: Any) -> bool:
                 return True
 
             def record_past_session(self, session_id: str, state: str, **kwargs: Any) -> bool:
-                events.append(("past_session", session_id, state))
+                # Review round 15 PR-MED-001: a reconciled commit's write
+                # shows how it was dated (or that it may make no row).
+                shown = kwargs if session_id in reconciled and not repairing else {}
+                events.append(("past_session", session_id, state, *([shown] if shown else [])))
                 return True
 
             # Development-recordings Task 1.4 (review round 8 LOW-004).
-            def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
+            def record_recording_kept(self, session_id: str, at: datetime, **kwargs: Any) -> bool:
+                events.append(("kept_fact", session_id, at))
                 return True
 
-            def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
-                return True
+            def record_recording_deleted(self, session_id: str, **kwargs: Any) -> bool:
+                events.append(("recording_deleted", session_id, kwargs))
+                return session_id != "8" * 32  # this one's write is refused
 
             def record_recording_exported(self, *args: Any, **kwargs: Any) -> bool:
                 return True
@@ -1760,13 +1812,48 @@ class TestAppWiring:
                 pass
 
             def clean_staging(self) -> int:
+                events.append(("staging",))
                 return 0
+
+            def deleted_recordings(self) -> list[Any]:
+                return [
+                    SimpleNamespace(
+                        session_id=deleted[0], label=label(deleted[1], started=deleted_started)
+                    ),
+                    SimpleNamespace(session_id="8" * 32, label=None),
+                    SimpleNamespace(session_id="7" * 32, label=label(pruned_at)),
+                ]
 
             def remove_pending_entry(self, session_id: str) -> bool:
                 return True
 
             def reconcile_pending(self, sessions_root: Path) -> list[str]:
-                return [committed]
+                events.append(("reconcile",))
+                return list(reconciled)
+
+            def entry_label(self, session_id: str) -> Any:
+                return reconciled[session_id]
+
+            # Development-recordings Task 2.2: the kept-fact repair covers
+            # EVERY kept entry, not only the newly committed one.
+            def kept_entries(self) -> list[Any]:
+                repairing.append(True)
+                return [
+                    SimpleNamespace(session_id=sid, label=label(at)) for sid, at in kept
+                ] + [
+                    SimpleNamespace(session_id="d" * 32, label=None),
+                    SimpleNamespace(session_id="6" * 32, label=label(pruned_at)),
+                    # Review round 12 LOW-001: started in a pruned month and
+                    # completed in a kept one — judged by its START, skipped.
+                    SimpleNamespace(
+                        session_id="5" * 32,
+                        label=label(datetime(2026, 8, 1, 1, 0, tzinfo=UTC), started=pruned_at),
+                    ),
+                ]
+
+            def tidy_dead_recordings(self, *, cleared: frozenset[str] | None = None) -> int:
+                events.append(("tidy", cleared))
+                return 0
 
         class FakeController:
             def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -1823,8 +1910,45 @@ class TestAppWiring:
             monkeypatch.setattr(app_module, name, value)
         with pytest.raises(_StopMain):
             app_module.main()
+        # Development-recordings Task 2.2, the start-up order:
+        # `clean_staging` -> `reconcile_pending` -> the kept-fact repair (an
+        # entry whose label cannot be read is left for the next start) ->
+        # the deletion record (rounds 11-13) -> `tidy_dead_recordings` -> the
+        # retention sweep. (Task 3.3 puts `recover_exports` first.)
         assert events == [
-            ("past_session", committed, "archived"),
+            ("staging",),
+            ("reconcile",),
+            # Review round 16 PR-MED-001: every unattended write passes the
+            # shared rule's ``created_at`` and ``create`` (`unattended_write`).
+            (
+                "past_session",
+                committed,
+                "archived",
+                {"created_at": committed_started.timestamp(), "create": True},
+            ),
+            ("past_session", "e" * 32, "archived", {"created_at": None, "create": False}),
+            *[
+                event
+                for sid, at in kept
+                for event in (("kept_fact", sid, at), ("past_session", sid, "archived"))
+            ],
+            # Review round 11 LOW-004: a deleted-but-untidied recording's
+            # deletion is recorded (after its kept fact) BEFORE tidy.
+            ("kept_fact", deleted[0], deleted[1]),
+            ("past_session", deleted[0], "archived"),
+            (
+                "recording_deleted",
+                deleted[0],
+                {"created_at": deleted_started.timestamp(), "create": True},
+            ),
+            # Round 13 LOW-012: an unreadable label's deletion is recorded
+            # alone (no dates) — refused here, so tidy is not cleared for it.
+            # Round 14 PR-MED-001: an existing row only.
+            ("recording_deleted", "8" * 32, {"created_at": None, "create": False}),
+            # Round 17 PR-MED-001: tidy gets POSITIVE clearance — the
+            # recorded one and the pruned one (nothing owed), never the
+            # refused one.
+            ("tidy", frozenset({deleted[0], "7" * 32})),
             ("window",),
             ("reminders",),
             ("retention",),

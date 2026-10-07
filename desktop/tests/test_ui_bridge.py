@@ -193,16 +193,20 @@ class Harness:
         open_review: Any = None,
         call_spacing: float = 0.0,
         latch_clock: Callable[[], float] | None = None,
+        keep_recordings: bool = False,
     ) -> None:
         self.qapp = qapp
         self.transport = transport if transport is not None else NoteTransport()
         self.registry = make_registry(tmp_path, transport=self.transport)
         self.controller = BridgeController()
         # Never the real ML stack: a Finish transcribes to a fixed document.
+        # Development-recordings Task 2.3: the keep-recordings setting, as a
+        # seam (off unless a test turns it on).
         self.screen = SessionScreen(
             self.controller,
             device_provider=lambda: device,
             transcriber_factory=lambda: (lambda _d, _c: _document()),
+            keep_recordings=lambda: keep_recordings,
         )
         self.now = 1000.0  # the bridge's clock (a "Resume previous" lapses)
         # Draft-write D13: the shared 429 latch, injected as the main window
@@ -1101,6 +1105,161 @@ class TestStart:
         h.start()
         assert h.sender.last.last_refusal is None
         assert all(envelope.type == "state" for _, envelope in h.sender.sent)
+
+
+class TestDevelopmentTick:
+    """Development-recordings plan Task 2.3 (D2): a Chrome Start consumes the
+    desktop-armed development tick; EVERY refused Start clears it but the
+    warm-up's hold (decided by the outcome — round 3 PR-MED-031); and Chrome
+    moving to another note or patient clears it whatever the session's state
+    (round 1 PR-MED-004). Ids only are compared, never a name."""
+
+    def _armed(self, h: Harness) -> None:
+        h.verified_report()
+        h.screen.development_checkbox.setChecked(True)
+        assert h.screen.development_target == (PATIENT, NOTE)
+
+    def test_a_chrome_start_consumes_the_armed_tick(
+        self, harness: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        # A Start that ran used the tick: no clearing of it is announced
+        # (round 13 LOW-010: a spy, since the Start's own refresh would hide
+        # a wrongly set announcement from any check of the text).
+        announced: list[bool] = []
+        real = h.screen.disarm_development_tick
+
+        def spy(*, announce: bool = False) -> None:
+            announced.append(announce and h.screen.development_checkbox.isChecked())
+            real(announce=announce)
+
+        monkeypatch.setattr(h.screen, "disarm_development_tick", spy)
+        h.start()
+        assert h.sender.last.last_refusal is None
+        [given] = h.controller.started_development
+        assert given is not None and given.text_version == "development-consent-v1"
+        assert not h.screen.development_checkbox.isChecked()
+        assert h.screen.development_target is None
+        assert announced and not any(announced)
+        assert models.DEVELOPMENT_TICK_CLEARED_LINE not in h.screen.development_label.text()
+
+    def test_a_chrome_start_without_the_tick_keeps_nothing(self, harness: Any) -> None:
+        h = harness(keep_recordings=True)
+        h.verified_report()
+        h.start()
+        assert h.controller.started_development == [None]
+
+    @pytest.mark.parametrize(
+        "refusal", ["locked", "lock_unknown", "stale_state", "target_mismatch", "session_active"]
+    )
+    def test_every_bridge_refusal_but_the_hold_clears_the_tick(
+        self, harness: Any, refusal: str
+    ) -> None:
+        """A Start refused at the bridge, then a Start that runs WITHOUT
+        re-arming: the recording is NOT kept."""
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        lock: list[str | None] = [None]
+        h.bridge.set_lock_refusal(lambda: lock[0])
+        if refusal in ("locked", "lock_unknown"):
+            lock[0] = refusal
+            h.start()
+            lock[0] = None
+        elif refusal == "stale_state":
+            h.start(state_rev=h.bridge.state_rev - 1)
+        elif refusal == "target_mismatch":
+            h.start(tab_id=OTHER_TAB)
+        else:
+            h.controller.state_value = SessionState.RECORDING
+            h.start()
+            h.controller.state_value = SessionState.IDLE
+        refused = h.sender.last.last_refusal
+        assert refused is not None and (refused.action, refused.reason) == ("start", refusal)
+        assert not h.screen.development_checkbox.isChecked()
+        # Rounds 12-13 LOW-007: never silent — the tracked line names it.
+        assert h.screen.development_label.text() == models.DEVELOPMENT_TICK_CLEARED_LINE
+        h.start()
+        assert h.sender.last.last_refusal is None
+        assert h.controller.started_development == [None]
+
+    def test_no_microphone_clears_the_tick(self, harness: Any) -> None:
+        h = harness(keep_recordings=True, device=None)
+        self._armed(h)
+        h.start()
+        refused = h.sender.last.last_refusal
+        assert refused is not None and refused.reason == "no_microphone"
+        assert not h.screen.development_checkbox.isChecked()
+
+    def test_the_warm_up_hold_keeps_the_tick(self, harness: Any) -> None:
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        held = [True]
+        h.screen.set_start_hold(lambda: held[0])
+        h.start()
+        refused = h.sender.last.last_refusal
+        assert refused is not None and refused.reason == "getting_ready"
+        assert h.screen.development_checkbox.isChecked()
+        held[0] = False
+        h.start()
+        [given] = h.controller.started_development
+        assert given is not None
+
+    @pytest.mark.parametrize("state", [SessionState.IDLE, SessionState.QUEUED])
+    @pytest.mark.parametrize(
+        "moved", ["other_note", "other_patient", "not_a_note", "closed"]
+    )
+    def test_chrome_moving_away_clears_the_tick(
+        self, harness: Any, state: SessionState, moved: str
+    ) -> None:
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        if state is SessionState.QUEUED:
+            h.controller.state_value = SessionState.QUEUED
+            h.controller.session_value = RecordingSession(
+                consent=unlinked_consent()
+            ).with_state(SessionState.QUEUED)
+        if moved == "other_note":
+            h.report(note_id=OTHER_NOTE)
+        elif moved == "other_patient":
+            h.report(patient_id="999999")
+        elif moved == "not_a_note":
+            h.report(page="other_cliniko")
+        else:
+            h.report(page="closed")
+        assert not h.screen.development_checkbox.isChecked()
+        assert h.screen.development_target is None
+        assert h.screen.development_label.text() == models.DEVELOPMENT_TICK_CLEARED_LINE
+
+    def test_losing_the_chrome_link_clears_a_tick_armed_for_its_note(
+        self, harness: Any
+    ) -> None:
+        """Review round 11 LOW-005: the link that reported the note is gone,
+        so a later desktop Start must not consume the tick for whoever is in
+        the room then; a tick armed with no Chrome note is unaffected."""
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        h.bridge.disconnected(1, "closed")
+        h.pump()
+        assert not h.screen.development_checkbox.isChecked()
+        assert h.screen.development_target is None
+        assert h.screen.development_label.text() == models.DEVELOPMENT_TICK_CLEARED_LINE
+        h.connect(2)
+        h.screen.development_checkbox.setChecked(True)  # no note reported yet
+        assert h.screen.development_target is None
+        # Re-arming retires the cleared line (round 13 LOW-007).
+        assert h.screen.development_label.text() == models.DEVELOPMENT_ARMED_LINE
+        h.bridge.disconnected(2, "closed")
+        h.pump()
+        assert h.screen.development_checkbox.isChecked()
+
+    def test_a_report_of_the_same_note_keeps_the_tick(self, harness: Any) -> None:
+        h = harness(keep_recordings=True)
+        self._armed(h)
+        h.report()  # the same note again (a refocus, a reload)
+        h.report(tab_id=OTHER_TAB, focused=False, note_id=OTHER_NOTE)  # a background tab
+        assert h.screen.development_checkbox.isChecked()
+        assert h.screen.development_target == (PATIENT, NOTE)
 
 
 class TestSessionCommands:

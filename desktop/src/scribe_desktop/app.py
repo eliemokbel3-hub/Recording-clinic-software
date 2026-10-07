@@ -55,6 +55,7 @@ from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import SweepResult, default_sessions_root, sweep_sessions
 from scribe_desktop.ui.main_window import MainWindow
+from scribe_desktop.ui.past_sessions_view import audit_moment, unattended_write
 
 if sys.platform == "win32":
     import pywintypes
@@ -412,6 +413,7 @@ def sweep_with_archive(
     logger: logging.Logger | None = None,
     *,
     audit: AuditLog | None = None,
+    repair_kept: bool = False,
 ) -> list[SweepResult]:
     """Privacy-professional-controls Flow 4 / C1, at start-up and on every
     sweep tick: staging copies a crash left are removed (whatever the
@@ -422,7 +424,24 @@ def sweep_with_archive(
     committed, and each committed id is recorded in ``audit`` as
     ``archived`` (round 12 LOW-002: the Complete that published it may have
     stopped before its own audit update; a row that already says so is left
-    alone). None of these raises; nothing is decrypted."""
+    alone) — dated and judged by its label (``record_reconciled_commit``,
+    development-recordings review round 15 PR-MED-001: only those just
+    committed entries' labels are decrypted). None of these raises.
+
+    Development-recordings plan Task 2.2: at START-UP (``repair_kept``) the
+    kept-fact repair follows (``repair_kept_facts``: every committed entry
+    holding a kept recording, its label decrypted; the audit fact follows
+    the FILES, never consent). Then, here and on every tick (review round 12
+    LOW-002), a deleted-but-untidied recording's deletion is recorded
+    (``record_deleted_recordings``: only those entries' labels decrypted)
+    and ``tidy_dead_recordings`` runs as ``clean_staging`` does — tidying
+    ONLY the ids that step listed and cleared (review round 17 PR-MED-001:
+    positive clearance, so neither a refused record nor a discovery read
+    that failed lets evidence go before its fact is). Without an audit
+    nothing can be recorded and tidy clears everything. The order is
+    ``clean_staging`` -> ``reconcile_pending`` -> the kept-fact repair ->
+    the deletion record -> ``tidy_dead_recordings``; the retention sweep
+    runs after (``main``)."""
     past_sessions.clean_staging()
     results = sweep_sessions(
         sessions_root,
@@ -431,10 +450,102 @@ def sweep_with_archive(
         before_destroy=past_sessions.remove_pending_entry,
     )
     committed = past_sessions.reconcile_pending(sessions_root)
+    cleared: frozenset[str] | None = None
     if audit is not None:
         for session_id in committed:
-            audit.record_past_session(session_id, "archived")
+            record_reconciled_commit(past_sessions, audit, session_id)
+        if repair_kept:
+            repair_kept_facts(past_sessions, audit)
+        cleared = record_deleted_recordings(past_sessions, audit)
+    past_sessions.tidy_dead_recordings(cleared=cleared)
     return results
+
+
+def record_reconciled_commit(
+    past_sessions: PastSessionStore, audit: AuditLog, session_id: str
+) -> None:
+    """Round 12 LOW-002's ``archived`` for an entry ``reconcile_pending``
+    just committed, under THE unattended rule (``unattended_write``;
+    development-recordings review rounds 15–16 PR-MED-001): judged and any
+    re-made row dated by the session's start (``audit_moment``), so a row
+    the prune removed is never re-made dated today and a reset-away row is
+    re-made in its own month; with no readable label it lands on an
+    EXISTING row only. Never raises (``entry_label``, ``unattended_write``
+    and ``update`` don't)."""
+    label = past_sessions.entry_label(session_id)
+    write = unattended_write(audit, audit_moment(label))
+    if write is not None:
+        audit.record_past_session(
+            session_id, "archived", created_at=write.created_at, create=write.create
+        )
+
+
+def repair_kept_facts(past_sessions: PastSessionStore, audit: AuditLog) -> None:
+    """Development-recordings plan Task 2.2 (D15): ``recording.kept_at`` for
+    every committed entry holding a kept recording, dated by its label's
+    completion time — set only when unset (``record_recording_kept``), so a
+    second run changes nothing. The row is also recorded ``archived`` (from
+    ``none`` only, ``_PAST_SESSION_FROM``): a committed entry whose
+    completion write never landed is one ``reconcile_pending`` skips. An
+    entry whose label cannot be read is left for the next start; one whose
+    row the audit prune has already removed (its session month older than
+    the retention window) is left alone, never re-made (round 11 LOW-003;
+    round 12 LOW-001: judged, and any re-made row dated, by the session's
+    start — THE unattended rule, ``unattended_write``, review round 16).
+    Never raises (``kept_entries``, ``unattended_write`` and ``update``
+    don't)."""
+    for listing in past_sessions.kept_entries():
+        label = listing.label
+        if label is None:
+            continue  # no completion time for ``kept_at``
+        write = unattended_write(audit, audit_moment(label))
+        if write is None:
+            continue
+        sid, created_at, create = listing.session_id, write.created_at, write.create
+        audit.record_recording_kept(sid, label.completed_at, created_at=created_at, create=create)
+        audit.record_past_session(sid, "archived", created_at=created_at, create=create)
+
+
+def record_deleted_recordings(past_sessions: PastSessionStore, audit: AuditLog) -> frozenset[str]:
+    """Review round 11 LOW-004 / round 12 LOW-002: an entry whose recording
+    was DELETED but not yet tidied (``deleted_recordings``) gets the kept
+    fact, ``archived`` and then ``recording.deleted_at`` (dated now, when it
+    is found) — at start-up and on every tick, before
+    ``tidy_dead_recordings`` removes that evidence. Returns the CLEARED ids
+    (review round 17 PR-MED-001): those it listed whose deletion was
+    recorded or owed no record — tidy removes only their evidence; one whose
+    write was refused, or one this listing missed, stays for the next run.
+    An entry whose row the prune has already removed needs no record
+    (``keeps_rows_of``) and is cleared. One whose label cannot be read has
+    no dates, so its deletion alone is recorded, as Delete now does for it
+    (round 13 LOW-012; ``_recording_deleted`` needs no ``kept_at``) — on its
+    EXISTING row only (``create=False``, round 14 PR-MED-001: with no date
+    the retention window cannot be judged, so a row the prune removed is
+    never re-made, dated today) — THE unattended rule, ``unattended_write``
+    (review round 16). Never raises (``deleted_recordings``,
+    ``unattended_write`` and ``update`` don't)."""
+    cleared: set[str] = set()
+    for listing in past_sessions.deleted_recordings():
+        session_id, label = listing.session_id, listing.label
+        write = unattended_write(audit, audit_moment(label))
+        if write is None:
+            cleared.add(session_id)  # the prune removed its row: nothing owed
+            continue
+        created_at, create = write.created_at, write.create
+        recorded = (
+            label is None
+            or (
+                audit.record_recording_kept(
+                    session_id, label.completed_at, created_at=created_at, create=create
+                )
+                and audit.record_past_session(
+                    session_id, "archived", created_at=created_at, create=create
+                )
+            )
+        ) and audit.record_recording_deleted(session_id, created_at=created_at, create=create)
+        if recorded:
+            cleared.add(session_id)
+    return frozenset(cleared)
 
 
 def prune_audit_if_due(audit: AuditLog, last_prune: float, now: float) -> float:
@@ -666,7 +777,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     sessions_root = default_sessions_root()
 
-    def run_sweep(extra_protected: frozenset[str] = frozenset()) -> list[SweepResult]:
+    def run_sweep(
+        extra_protected: frozenset[str] = frozenset(), *, repair_kept: bool = False
+    ) -> list[SweepResult]:
         # Skips live sessions by STATE (never mtime), plus the controller's
         # own non-terminal session (round 42 MED-001 — see
         # sweep_protected_ids). The results are recorded in the audit (C7);
@@ -678,13 +791,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             sweep_protected_ids(controller, extra_protected),
             logger,
             audit=audit,
+            repair_kept=repair_kept,
         )
         record_sweep_results(audit, results)
         return results
 
     last_prune = time.monotonic()
     audit.prune()  # Flow 4: the audit month prune at start-up...
-    run_sweep()  # Flow 3: app start -> sweep BEFORE the recovery list renders
+    # Flow 3: app start -> sweep BEFORE the recovery list renders; at start-up
+    # only, the kept-recording repair (development-recordings Task 2.2).
+    run_sweep(repair_kept=True)
     # Task 4.1 (Flow 6, D10): before the window is built, the data folder is
     # marked not-content-indexed (best effort) and the read-only location and
     # WER checks run against the RUNNING interpreter. Their warning lines show

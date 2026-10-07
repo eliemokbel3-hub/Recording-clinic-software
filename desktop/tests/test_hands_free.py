@@ -431,6 +431,9 @@ class _InertAudit:
     def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
         return True
 
+    def keeps_rows_of(self, *args: Any) -> bool:  # review round 13 LOW-005
+        return True
+
     def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
         return True
 
@@ -451,6 +454,19 @@ class _InertPastSessions:
 
     def reconcile_pending(self, sessions_root: Path) -> list[str]:
         return []
+
+    def entry_label(self, session_id: str) -> object:  # review round 15 PR-MED-001
+        return None
+
+    # Development-recordings Task 2.2: the start-up repair and the tidy.
+    def kept_entries(self) -> list[object]:
+        return []
+
+    def deleted_recordings(self) -> list[object]:
+        return []
+
+    def tidy_dead_recordings(self, *, cleared: frozenset[str] | None = None) -> int:
+        return 0
 
 
 def _recording(controller: FakeController) -> RecordingSession:

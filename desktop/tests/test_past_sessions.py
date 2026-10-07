@@ -24,6 +24,8 @@ from cryptography.exceptions import InvalidTag
 from scribe_desktop import past_sessions, session_store
 from scribe_desktop.note import GeneratedNote, digest_bytes
 from scribe_desktop.past_sessions import (
+    AUDIO_KEY_FILE_BYTES,
+    AUDIO_KEY_FILENAME,
     LABEL_FILENAME,
     LEGACY_RETENTION_DAYS,
     MAX_PATIENT_NAME_CHARS,
@@ -34,6 +36,7 @@ from scribe_desktop.past_sessions import (
     UNKNOWN_LABEL,
     KeepLabel,
     PastSessionError,
+    PastSessionListing,
     PastSessionSettings,
     PastSessionSettingsError,
     PastSessionStore,
@@ -44,6 +47,7 @@ from scribe_desktop.past_sessions import (
 )
 from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_store import (
+    AUDIO_FILENAME,
     GENERATED_FILENAME,
     KEY_FILENAME,
     NOTE_FILENAME,
@@ -52,6 +56,8 @@ from scribe_desktop.session_store import (
     ArchiveWriteError,
     GeneratedRecord,
     KeyCustodyError,
+    SessionChunkStore,
+    StoreCorruptError,
     complete_session,
     sweep_sessions,
     write_generated,
@@ -1395,6 +1401,9 @@ class TestSweepWithArchive:
             def record_recording_kept(self, *args: Any, **kwargs: Any) -> bool:
                 return True
 
+            def keeps_rows_of(self, *args: Any) -> bool:  # review round 13 LOW-005
+                return True
+
             def record_recording_deleted(self, *args: Any, **kwargs: Any) -> bool:
                 return True
 
@@ -1425,3 +1434,1188 @@ class TestRealEntryKeys:
         session_store.wrap_key_to_file(SessionCrypto(), session_dir)
         with pytest.raises(KeyCustodyError):
             past_sessions._unwrap_entry_key(session_dir)
+
+
+# ---------------------------------------------------------------------------
+# Kept recordings (development-recordings plan Tasks 2.1 and 2.2; D5, D6, D8,
+# D15; C3, C4, C5).
+# ---------------------------------------------------------------------------
+
+_PCM: tuple[bytes, ...] = (b"\x01\x02" * 800, b"\x03\x04" * 500, b"\x05\x06" * 300)
+_WITH_AUDIO: frozenset[str] = frozenset(
+    {
+        KEY_FILENAME,
+        LABEL_FILENAME,
+        TRANSCRIPT_FILENAME,
+        NOTE_FILENAME,
+        GENERATED_FILENAME,
+        AUDIO_FILENAME,
+        AUDIO_KEY_FILENAME,
+    }
+)
+
+
+def _audio_session(
+    root: Path, *, finished: bool = True, **kwargs: Any
+) -> tuple[Path, SessionCrypto]:
+    """``_session`` with a real ``audio.enc`` under the session key (the
+    L1157 pattern) — finished, or as a crash leaves it (no footer)."""
+    directory, crypto = _session(root, **kwargs)
+    audio = SessionChunkStore.create(directory / AUDIO_FILENAME, crypto, directory.name)
+    for chunk in _PCM:
+        audio.append_chunk(chunk)
+    if finished:
+        audio.finish()
+    audio.close()
+    return directory, crypto
+
+
+def _kept(
+    store: PastSessionStore, *, commit: bool = True, started: datetime | None = None
+) -> str:
+    """A kept entry written through the store's own verified path — the
+    session started at ``started`` (the label's ``started_at``) if given."""
+    source = replace(_source(), audio_chunks=iter(_PCM))
+    if started is not None:
+        source = replace(source, created_at=started.timestamp())
+    store.write_entry(source, LINKED)
+    if commit:
+        assert store.commit(source.session_id)
+    return source.session_id
+
+
+class _SourceKeeper:
+    """A fake keeper: records what each Complete handed it (D4)."""
+
+    def __init__(self) -> None:
+        self.audio: list[bytes | None] = []
+
+    def write(self, source: ArchiveSource) -> None:
+        chunks = source.audio_chunks
+        self.audio.append(None if chunks is None else b"".join(chunks))
+
+    def commit(self, session_id: str) -> bool:
+        return True
+
+    def drop_unfinished(self, session_id: str) -> bool:
+        return True
+
+
+class TestKeptCompleteSource:
+    """Task 2.1: only a kept, non-mock Complete hands the keeper the audio."""
+
+    @pytest.mark.parametrize("finished", [True, False], ids=["finished", "crash_recovered"])
+    def test_a_kept_complete_hands_the_keeper_the_pcm(
+        self, tmp_path: Path, finished: bool
+    ) -> None:
+        """``store_has_footer`` decides footer enforcement, as the app's
+        readers do: a crash-recovered store without one is still kept."""
+        keeper = _SourceKeeper()
+        directory, crypto = _audio_session(tmp_path, finished=finished)
+        facts = complete_session(directory, crypto, keep=keeper, keep_audio=True)
+        assert keeper.audio == [b"".join(_PCM)]
+        assert (facts.past_session, facts.recording_kept) == ("archived", True)
+
+    def test_every_other_complete_hands_none(self, tmp_path: Path) -> None:
+        keeper = _SourceKeeper()
+        directory, crypto = _audio_session(tmp_path)
+        facts = complete_session(directory, crypto, keep=keeper)
+        assert keeper.audio == [None]
+        assert (facts.past_session, facts.recording_kept) == ("archived", False)
+
+    def test_a_consented_mock_session_keeps_no_audio(self, tmp_path: Path) -> None:
+        keeper = _SourceKeeper()
+        directory, crypto = _audio_session(tmp_path, model_name="mock")
+        facts = complete_session(directory, crypto, keep=keeper, keep_audio=True)
+        assert keeper.audio == []  # write never called
+        assert (facts.past_session, facts.recording_kept) == ("not_kept_mock", False)
+
+    def test_no_keeper_keeps_no_audio(self, tmp_path: Path) -> None:
+        directory, crypto = _audio_session(tmp_path)
+        assert complete_session(directory, crypto, keep_audio=True).recording_kept is False
+
+
+class TestKeptRecording:
+    """Task 2.2: the sidecar — written and verified with the entry, under its
+    own key wrapped by the entry key, destroyed by every destroyer."""
+
+    def test_a_kept_complete_publishes_the_exact_set_and_the_pcm_reads_back(
+        self, tmp_path: Path
+    ) -> None:
+        store = _store(tmp_path)
+        directory, crypto = _audio_session(tmp_path / "sessions")
+        facts = complete_session(directory, crypto, keep=store.keeper(LINKED), keep_audio=True)
+        assert (facts.past_session, facts.recording_kept) == ("archived", True)
+        assert not directory.exists()
+        entry = store.root / directory.name
+        assert {path.name for path in entry.iterdir()} == _WITH_AUDIO
+        assert (entry / AUDIO_KEY_FILENAME).stat().st_size == AUDIO_KEY_FILE_BYTES
+        assert b"".join(store.read_recording(directory.name)) == b"".join(_PCM)
+        [listing] = store.list_entries()
+        assert listing.recording_kept and store.recording_kept(directory.name)
+        # The transcript and notes read as before.
+        assert store.read_entry(directory.name).saved_note is not None
+
+    def test_the_exact_set_without_audio_holds_neither_file(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        sid = _published(store)
+        names = {path.name for path in (store.root / sid).iterdir()}
+        assert names == _WITH_AUDIO - {AUDIO_FILENAME, AUDIO_KEY_FILENAME}
+        assert not store.recording_kept(sid)
+        assert [listing.recording_kept for listing in store.list_entries()] == [False]
+        with pytest.raises(PastSessionError) as info:
+            store.read_recording(sid)
+        assert info.value.reason == "recording_not_kept"
+
+    def test_the_audio_has_its_own_key_wrapped_by_the_entry_key(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        sid = _kept(store)
+        entry = store.root / sid
+        entry_crypto = _fake_unwrap(entry)
+        with pytest.raises(StoreCorruptError):
+            next(session_store.iter_chunks(entry / AUDIO_FILENAME, entry_crypto))
+        wrapped = (entry / AUDIO_KEY_FILENAME).read_bytes()
+        with pytest.raises(InvalidTag):
+            entry_crypto.decrypt(wrapped)  # bound to its associated data
+        key = entry_crypto.decrypt(wrapped, b"past-audio-key:" + sid.encode())
+        audio = SessionCrypto.from_key(key)
+        chunks = session_store.iter_chunks(entry / AUDIO_FILENAME, audio, require_footer=True)
+        assert b"".join(chunks) == b"".join(_PCM)
+
+    def test_a_digest_mismatch_keeps_the_source_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """C4: the staged audio is re-read and its digest compared with the
+        one taken while it was copied — a difference refuses the entry
+        BEFORE the key boundary."""
+
+        class Tampering(SessionChunkStore):
+            def append_chunk(self, data: bytes) -> int:
+                return super().append_chunk(bytes([data[0] ^ 1]) + data[1:])
+
+        monkeypatch.setattr(past_sessions, "SessionChunkStore", Tampering)
+        store = _store(tmp_path)
+        directory, crypto = _audio_session(tmp_path / "sessions")
+        with pytest.raises(ArchiveWriteError, match="key retained"):
+            complete_session(directory, crypto, keep=store.keeper(LINKED), keep_audio=True)
+        assert (directory / KEY_FILENAME).exists() and not crypto.destroyed
+        assert not (store.root / directory.name).exists()
+        assert list(store.staging_root.iterdir()) == []
+
+    def test_a_kept_complete_with_no_audio_store_keeps_the_key(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        directory, crypto = _session(tmp_path / "sessions")  # writes no audio.enc
+        with pytest.raises(ArchiveWriteError, match="key retained"):
+            complete_session(directory, crypto, keep=store.keeper(LINKED), keep_audio=True)
+        assert (directory / KEY_FILENAME).exists() and not crypto.destroyed
+        assert not (store.root / directory.name).exists()
+
+    def test_a_consented_mock_complete_writes_no_audio(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        directory, crypto = _audio_session(tmp_path / "sessions", note_provider="mock-x")
+        facts = complete_session(directory, crypto, keep=store.keeper(LINKED), keep_audio=True)
+        assert (facts.past_session, facts.recording_kept) == ("not_kept_mock", False)
+        assert not store.root.exists()
+
+    def test_deleting_the_entry_key_alone_makes_the_recording_unreadable(
+        self, tmp_path: Path
+    ) -> None:
+        """D6/C5: the audio key is wrapped under the entry key — another key
+        in its place opens nothing, and with none the entry is gone."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        _fake_wrap(SessionCrypto(), store.root / sid)  # a different entry key
+        with pytest.raises(PastSessionError) as info:
+            b"".join(store.read_recording(sid))
+        assert info.value.reason == "unreadable"
+        (store.root / sid / KEY_FILENAME).unlink()
+        with pytest.raises(PastSessionError) as info:
+            store.read_recording(sid)
+        assert info.value.reason == "not_found"
+
+    def test_a_pending_kept_entry_is_not_read(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        sid = _kept(store, commit=False)
+        with pytest.raises(PastSessionError) as info:
+            store.read_recording(sid)
+        assert info.value.reason == "pending"
+
+    @pytest.mark.parametrize("destroyer", ["delete_entry", "remove_pending_entry", "expiry"])
+    def test_every_destroyer_deletes_both_keys(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, destroyer: str
+    ) -> None:
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        sid = _kept(store, commit=destroyer != "remove_pending_entry")
+        unlinked: list[str] = []
+        real_unlink = Path.unlink
+
+        def unlink(self: Path, missing_ok: bool = False) -> None:
+            unlinked.append(self.name)
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        if destroyer == "delete_entry":
+            store.delete_entry(sid)
+        elif destroyer == "remove_pending_entry":
+            assert store.remove_pending_entry(sid)
+        else:
+            assert store.sweep(SEVEN, NOW) == [sid]
+        # The entry's own removal (any staging copy's comes first): its key,
+        # then the audio key, before the tree.
+        assert unlinked[-2:] == [KEY_FILENAME, AUDIO_KEY_FILENAME]
+        assert not (store.root / sid).exists()
+
+    def test_a_failing_audio_key_unlink_does_not_flip_the_result(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Only ``key.dpapi`` decides: the audio is already dead under it."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        real_unlink = Path.unlink
+
+        def unlink(self: Path, missing_ok: bool = False) -> None:
+            if self.name == AUDIO_KEY_FILENAME:
+                raise PermissionError(errno.EACCES, "in use")
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        store.delete_entry(sid)  # no raise
+        assert not (store.root / sid / KEY_FILENAME).exists()
+        assert store.list_entries() == []
+
+    @pytest.mark.parametrize("missing", [AUDIO_FILENAME, AUDIO_KEY_FILENAME])
+    def test_kept_needs_both_files(self, tmp_path: Path, missing: str) -> None:
+        store = _store(tmp_path)
+        sid = _kept(store)
+        (store.root / sid / missing).unlink()
+        assert not store.recording_kept(sid)
+        assert [listing.recording_kept for listing in store.list_entries()] == [False]
+
+    def test_a_zeroed_key_is_not_kept_and_is_refused_before_any_unwrap(
+        self, tmp_path: Path
+    ) -> None:
+        unwraps = _Unwraps()
+        store = _store(tmp_path, unwrap_key=unwraps)
+        sid = _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        key.write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        calls = unwraps.calls
+        assert not store.recording_kept(sid)
+        with pytest.raises(PastSessionError) as info:
+            store.read_recording(sid)
+        assert info.value.reason == "recording_not_kept"
+        assert unwraps.calls == calls
+
+    def test_the_listing_marker_decrypts_nothing(self, tmp_path: Path) -> None:
+        unwraps = _Unwraps()
+        store = _store(tmp_path, unwrap_key=unwraps)
+        sid = _kept(store)
+        calls = unwraps.calls
+        assert store.recording_kept(sid)
+        assert unwraps.calls == calls
+
+    def test_delete_recording_zeroes_the_original_file_then_unlinks(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """D6 (round 1 PR-HIGH-001): the zeros land IN the original file — the
+        same file, not a replacement — before it is unlinked; the transcript
+        and notes stay readable."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        original = os.stat(key)
+        seen: list[tuple[str, bytes, bool]] = []
+        real_unlink = Path.unlink
+
+        def unlink(self: Path, missing_ok: bool = False) -> None:
+            if self.name == AUDIO_KEY_FILENAME:
+                now = os.stat(self)
+                same = (now.st_ino, now.st_dev) == (original.st_ino, original.st_dev)
+                seen.append((self.name, self.read_bytes(), same))
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        store.delete_recording(sid)
+        assert seen == [(AUDIO_KEY_FILENAME, b"\0" * AUDIO_KEY_FILE_BYTES, True)]
+        assert not key.exists() and not (store.root / sid / AUDIO_FILENAME).exists()
+        assert not store.recording_kept(sid)
+        entry = store.read_entry(sid)
+        assert entry.saved_note is not None and entry.generated is not None
+        assert (store.root / sid / KEY_FILENAME).exists()
+        with pytest.raises(PastSessionError) as info:
+            store.delete_recording(sid)
+        assert info.value.reason == "recording_not_kept"
+
+    def test_a_zeroed_recording_whose_unlinks_fail_is_deleted_and_tidied_later(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Round 4 PR-MED-041: once the zeros are synced the recording is
+        destroyed — a failed unlink is a pending cleanup, never a failure."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        real_unlink = Path.unlink
+
+        def unlink(self: Path, missing_ok: bool = False) -> None:
+            if self.name in (AUDIO_KEY_FILENAME, AUDIO_FILENAME):
+                raise PermissionError(errno.EACCES, "locked")
+            real_unlink(self, missing_ok=missing_ok)
+
+        monkeypatch.setattr(Path, "unlink", unlink)
+        store.delete_recording(sid)  # success
+        monkeypatch.undo()
+        entry = store.root / sid
+        assert (entry / AUDIO_KEY_FILENAME).read_bytes() == b"\0" * AUDIO_KEY_FILE_BYTES
+        assert (entry / AUDIO_FILENAME).exists()
+        assert [listing.recording_kept for listing in store.list_entries()] == [False]
+        assert store.tidy_dead_recordings() == 2
+        assert not (entry / AUDIO_KEY_FILENAME).exists()
+        assert not (entry / AUDIO_FILENAME).exists()
+        assert store.read_entry(sid).transcript is not None
+
+    def test_a_failed_overwrite_raises_with_the_key_intact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = _store(tmp_path)
+        sid = _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        before = key.read_bytes()
+        real_open = Path.open
+
+        def refuse(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            if self.name == AUDIO_KEY_FILENAME and mode == "r+b":
+                raise PermissionError(errno.EACCES, "locked")
+            return real_open(self, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", refuse)
+        with pytest.raises(PastSessionError) as info:
+            store.delete_recording(sid)
+        assert info.value.reason == "recording_delete_failed"
+        assert str(info.value) == "that kept recording could not be deleted"
+        monkeypatch.undo()
+        assert key.read_bytes() == before
+        assert store.recording_kept(sid)
+
+    def test_delete_recording_never_zeroes_through_a_hard_link(self, tmp_path: Path) -> None:
+        """Review round 11 LOW-001: the in-place overwrite is the archive's
+        only write through an existing file — a key file that is a hard link
+        to another file is refused and NOTHING is zeroed (neither name)."""
+        store = _store(tmp_path)
+        victim, sid = _kept(store), _kept(store)
+        victim_key = store.root / victim / AUDIO_KEY_FILENAME
+        before = victim_key.read_bytes()
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        key.unlink()
+        os.link(victim_key, key)
+        with pytest.raises(PastSessionError) as info:
+            store.delete_recording(sid)
+        assert info.value.reason == "recording_delete_failed"
+        assert victim_key.read_bytes() == before
+        assert b"".join(store.read_recording(victim)) == b"".join(_PCM)
+
+    @pytest.mark.parametrize("answer", [True, None], ids=["a_link", "uninspectable"])
+    def test_delete_recording_refuses_a_linked_or_uninspectable_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: bool | None
+    ) -> None:
+        """Review round 12 MED-001: both answers the guard must refuse — a
+        symlink (True; ``fstat`` through it would see the TARGET as a regular
+        one-link file) and "cannot tell" (None)."""
+        from scribe_desktop import past_sessions as module
+
+        store = _store(tmp_path)
+        sid = _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        before = key.read_bytes()
+        real = module.link_state
+        monkeypatch.setattr(
+            module,
+            "link_state",
+            lambda path: answer if path.name == AUDIO_KEY_FILENAME else real(path),
+        )
+        with pytest.raises(PastSessionError) as info:
+            store.delete_recording(sid)
+        assert info.value.reason == "recording_delete_failed"
+        assert key.read_bytes() == before
+
+    def test_delete_recording_never_zeroes_more_than_a_key_file(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        sid = _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        oversized = b"\x07" * (AUDIO_KEY_FILE_BYTES + 1)
+        key.write_bytes(oversized)
+        assert store.recording_kept(sid)  # still shown, so it can be deleted
+        with pytest.raises(PastSessionError) as info:
+            store.delete_recording(sid)
+        assert info.value.reason == "recording_delete_failed"
+        assert key.read_bytes() == oversized
+
+    def test_an_unreadable_key_file_counts_as_kept_and_is_never_tidied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 11 LOW-009: a key file that cannot be read decides
+        nothing — shown as kept (so it can be deleted), and tidy keeps both."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        real_open = Path.open
+
+        def refuse(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+            if self.name == AUDIO_KEY_FILENAME:
+                raise PermissionError(errno.EACCES, "locked")
+            return real_open(self, mode, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "open", refuse)
+        assert store.recording_kept(sid)
+        assert store.tidy_dead_recordings() == 0
+        assert [listing.session_id for listing in store.kept_entries()] == [sid]
+        assert store.deleted_recordings() == []
+        monkeypatch.undo()
+        assert (store.root / sid / AUDIO_FILENAME).exists()
+        assert (store.root / sid / AUDIO_KEY_FILENAME).exists()
+
+    def test_the_deletion_is_recorded_between_the_zeros_and_the_unlinks(
+        self, tmp_path: Path
+    ) -> None:
+        """Review round 12 LOW-003: ``on_destroyed`` runs once the zeros are
+        verified and BEFORE the unlinks, so a kill after the unlinks never
+        leaves an unrecorded deletion."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        entry = store.root / sid
+        seen: list[tuple[bytes, bool]] = []
+
+        def recorded() -> bool:
+            seen.append(
+                ((entry / AUDIO_KEY_FILENAME).read_bytes(), (entry / AUDIO_FILENAME).exists())
+            )
+            return True
+
+        store.delete_recording(sid, on_destroyed=recorded)
+        assert seen == [(b"\0" * AUDIO_KEY_FILE_BYTES, True)]
+        assert not (entry / AUDIO_KEY_FILENAME).exists()
+        assert not (entry / AUDIO_FILENAME).exists()
+
+    @pytest.mark.parametrize("outcome", ["refused", "raised"])
+    def test_an_unrecorded_deletion_keeps_its_evidence(
+        self, tmp_path: Path, outcome: str
+    ) -> None:
+        """A record that fails leaves the zeroed key (the recording IS
+        destroyed) for the next run's deletion record; nothing is raised."""
+        store = _store(tmp_path)
+        sid = _kept(store)
+        entry = store.root / sid
+
+        def record() -> bool:
+            if outcome == "raised":
+                raise RuntimeError("audit unavailable")
+            return False
+
+        store.delete_recording(sid, on_destroyed=record)
+        assert (entry / AUDIO_KEY_FILENAME).read_bytes() == b"\0" * AUDIO_KEY_FILE_BYTES
+        assert (entry / AUDIO_FILENAME).exists()
+        assert not store.recording_kept(sid)
+        assert [listing.session_id for listing in store.deleted_recordings()] == [sid]
+
+    def test_a_stray_non_file_audio_is_never_a_deleted_recording(self, tmp_path: Path) -> None:
+        """Review round 12 LOW-005: with the key gone, only a REGULAR
+        ``audio.enc`` is evidence of a deletion — never a link or a folder,
+        which no recording is. Review round 18 PR-LOW-001: nor is it held by
+        tidy's clearance rule — repeated sweeps with a healthy audit leave it
+        alone and the retention sweep still expires the entry."""
+        from scribe_desktop.app import sweep_with_archive
+        from scribe_desktop.ui import past_sessions_view as view
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        sid = _kept(store)
+        entry = store.root / sid
+        (entry / AUDIO_KEY_FILENAME).unlink()
+        (entry / AUDIO_FILENAME).unlink()
+        (entry / AUDIO_FILENAME).mkdir()
+        assert store.deleted_recordings() == []
+        assert store.recording_state(sid) == "none"
+
+        class Healthy:
+            def keeps_rows_of(self, at: datetime) -> bool:
+                return True
+
+            def record_past_session(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+            def record_recording_kept(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+            def record_recording_deleted(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+        audit: Any = Healthy()
+        for _tick in range(2):
+            sweep_with_archive(sessions, store, frozenset(), audit=audit)
+            assert (entry / AUDIO_FILENAME).is_dir()  # not a recording: not tidied
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert ([session_id for session_id, _ in report.expired], report.failed) == ([sid], 0)
+        assert not entry.exists()
+
+    def test_a_sweep_spares_a_deletion_it_could_not_record(self, tmp_path: Path) -> None:
+        """Review round 12 LOW-002: on every sweep (a tick here) the deletion
+        record runs before tidy, and tidy spares an entry whose record an
+        audit refused — the zeroed key stays until a later run records it."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        store = _store(tmp_path)
+        sid = _kept(store)
+        entry = store.root / sid
+        (entry / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        calls: list[tuple[str, str]] = []
+
+        class Refusing:
+            ok = False
+
+            def keeps_rows_of(self, at: datetime) -> bool:
+                return True
+
+            def record_past_session(self, session_id: str, state: str, **kw: Any) -> bool:
+                calls.append((state, session_id))
+                return self.ok
+
+            def record_recording_kept(self, session_id: str, at: datetime, **kw: Any) -> bool:
+                calls.append(("kept", session_id))
+                return self.ok
+
+            def record_recording_deleted(self, session_id: str, **kw: Any) -> bool:
+                calls.append(("deleted", session_id))
+                return self.ok
+
+        audit: Any = Refusing()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert calls == [("kept", sid)]
+        assert (entry / AUDIO_KEY_FILENAME).exists() and (entry / AUDIO_FILENAME).exists()
+        audit.ok = True
+        calls.clear()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert calls == [("kept", sid), ("archived", sid), ("deleted", sid)]
+        assert not (entry / AUDIO_KEY_FILENAME).exists()
+        assert not (entry / AUDIO_FILENAME).exists()
+
+    @pytest.mark.parametrize("discovery", ["read_fails", "listing_fails"])
+    def test_tidy_needs_positive_clearance(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, discovery: str
+    ) -> None:
+        """Review round 17 PR-MED-001: tidy removes a dead recording's files
+        ONLY when the deletion record LISTED and recorded it. A discovery
+        that missed it — its key read failing then (or the whole listing
+        failing) but succeeding for tidy — leaves the evidence, held from the
+        retention sweep; the next sweep records it, then tidies."""
+        from scribe_desktop.app import sweep_with_archive
+        from scribe_desktop.ui import past_sessions_view as view
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        sid = _kept(store)
+        entry = store.root / sid
+        (entry / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        failing = [True]
+        real_state = past_sessions._audio_key_state  # noqa: SLF001
+        real_listing = store.deleted_recordings
+
+        def state(path: Path) -> Any:
+            if failing[0] and discovery == "read_fails":
+                return "unknown"  # an OSError while discovery reads the key
+            return real_state(path)
+
+        def listing() -> list[PastSessionListing]:
+            try:
+                if discovery == "listing_fails":
+                    return []  # `_labelled_where` swallowed a listing failure
+                return real_listing()
+            finally:
+                failing[0] = False  # tidy's own read then succeeds
+
+        monkeypatch.setattr(past_sessions, "_audio_key_state", state)
+        monkeypatch.setattr(store, "deleted_recordings", listing)
+        calls: list[tuple[str, str]] = []
+
+        class Audit:
+            def keeps_rows_of(self, at: datetime) -> bool:
+                return True
+
+            def record_past_session(self, session_id: str, state: str, **kw: Any) -> bool:
+                calls.append((state, session_id))
+                return True
+
+            def record_recording_kept(self, session_id: str, at: datetime, **kw: Any) -> bool:
+                calls.append(("kept", session_id))
+                return True
+
+            def record_recording_deleted(self, session_id: str, **kw: Any) -> bool:
+                calls.append(("deleted", session_id))
+                return True
+
+        audit: Any = Audit()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert ("deleted", sid) not in calls  # discovery missed it ...
+        assert (entry / AUDIO_KEY_FILENAME).exists() and (entry / AUDIO_FILENAME).exists()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)  # ... and expiry holds it
+        assert (report.expired, report.failed) == ((), 1)
+        failing[0] = True
+        monkeypatch.setattr(store, "deleted_recordings", real_listing)
+        monkeypatch.setattr(past_sessions, "_audio_key_state", real_state)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert ("deleted", sid) in calls
+        assert not (entry / AUDIO_KEY_FILENAME).exists()
+        assert not (entry / AUDIO_FILENAME).exists()
+
+    def test_a_destroyer_decides_from_one_read(self, tmp_path: Path) -> None:
+        """Review round 17 PR-MED-001: ``recording_state`` (Delete now) and
+        the retention sweep decide kept / gone from ONE read of the key; an
+        unreadable key reads as kept (shown, so it can be deleted)."""
+        store = _store(tmp_path)
+        kept, gone, plain = _kept(store), _kept(store), _published(store)
+        (store.root / gone / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        assert store.recording_state(kept) == "kept"
+        assert store.recording_state(gone) == "gone"
+        assert store.recording_state(plain) == "none"
+        assert store.recording_state("not-an-id") == "none"
+        (store.root / gone / AUDIO_KEY_FILENAME).unlink()  # key gone, audio left
+        assert store.recording_state(gone) == "gone"
+
+    @pytest.mark.parametrize("shape", ["empty", "hard_linked"])
+    def test_only_the_apps_own_key_file_decides(self, tmp_path: Path, shape: str) -> None:
+        """Review round 13 LOW-004: an empty key file, or one with another
+        name (a hard link), is ``unknown`` — never read as a deletion (no
+        audit record, no tidy), still shown as kept so the entry can go."""
+        store = _store(tmp_path)
+        other, sid = _kept(store), _kept(store)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        if shape == "empty":
+            key.write_bytes(b"")
+        else:
+            zeros = store.root / other / AUDIO_KEY_FILENAME
+            zeros.write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+            key.unlink()
+            os.link(zeros, key)  # both names now share zeroed bytes
+        assert store.recording_kept(sid)
+        assert sid not in [listing.session_id for listing in store.deleted_recordings()]
+        store.tidy_dead_recordings()
+        assert (store.root / sid / AUDIO_FILENAME).exists()
+
+    def test_a_deletion_not_yet_tidied_still_counts_as_held(self, tmp_path: Path) -> None:
+        """Review round 13 LOW-001: a destroyer of the WHOLE entry (Delete
+        now, the retention sweep) asks ``recording_held`` — a zeroed key not
+        yet tidied counts, so the kept fact (and with it the deletion) is
+        recorded before the entry goes."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        sid, plain = _kept(store), _published(store)
+        (store.root / sid / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        assert not store.recording_kept(sid) and store.recording_held(sid)
+        assert not store.recording_held(plain)
+        calls: list[tuple[Any, ...]] = []
+
+        class Recorder:
+            def record_recording_kept(self, session_id: str, at: datetime, **kw: Any) -> bool:
+                calls.append(("kept", session_id))
+                return True
+
+            def record_past_session(self, session_id: str, state: str, **kw: Any) -> bool:
+                calls.append((state, session_id))
+                return True
+
+            # Review round 15 PR-MED-002: the deletion is already a fact.
+            def record_recording_deleted(self, session_id: str, **kw: Any) -> bool:
+                calls.append(("deleted", session_id))
+                return True
+
+            def keeps_rows_of(self, at: datetime) -> bool:  # review round 16 PR-MED-001
+                return True
+
+        audit: Any = Recorder()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert report.kept == frozenset({sid})
+        order = [calls.index((kind, sid)) for kind in ("kept", "deleted", "expired")]
+        assert order == sorted(order)
+        assert ("deleted", plain) not in calls
+
+    @pytest.mark.parametrize("failure", ["refused", "raises"])
+    def test_an_unrecordable_deletion_is_held_from_the_retention_sweep(
+        self, tmp_path: Path, failure: str
+    ) -> None:
+        """Review round 15 PR-MED-002: the sweep judges a deleted-but-untidied
+        recording AFRESH (not only from the latest tidy's spare set) — its
+        deletion is recorded before the entry goes, and while that cannot be
+        recorded the entry is held (counted as not deleted); a LIVE kept
+        recording whose kept fact fails still expires (C2)."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        gone, live = _kept(store), _kept(store)
+        (store.root / gone / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        assert store.recording_held(gone) and not store.recording_kept(gone)
+        present_at_record: list[bool] = []
+
+        class Audit:
+            ok = False
+
+            def keeps_rows_of(self, at: datetime) -> bool:  # review round 16 PR-MED-001
+                return True
+
+            def record_recording_kept(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+            def record_recording_deleted(self, session_id: str, **kw: Any) -> bool:
+                present_at_record.append((store.root / session_id / KEY_FILENAME).exists())
+                if not self.ok and failure == "raises":
+                    raise RuntimeError("audit unavailable")
+                return self.ok
+
+            def record_past_session(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+        audit: Any = Audit()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert [session_id for session_id, _ in report.expired] == [live]
+        assert report.failed == 1
+        assert (store.root / gone / KEY_FILENAME).exists()
+        audit.ok = True
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert [session_id for session_id, _ in report.expired] == [gone]
+        assert not (store.root / gone).exists()
+        assert present_at_record == [True, True]
+
+    def test_a_spared_deletion_is_held_from_the_retention_sweep(self, tmp_path: Path) -> None:
+        """Review round 14 PR-MED-002: a deletion whose audit write failed is
+        spared by tidy AND held by the retention sweep that follows in the
+        same start-up (due, counted as not deleted) — then, once a later
+        sweep records it, tidied and expired as usual."""
+        from scribe_desktop.app import sweep_with_archive
+        from scribe_desktop.ui import past_sessions_view as view
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        sid = _kept(store)
+        entry = store.root / sid
+        (entry / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+
+        class Audit:
+            ok = False
+
+            def keeps_rows_of(self, at: datetime) -> bool:
+                return True
+
+            def record_recording_kept(self, *args: Any, **kw: Any) -> bool:
+                return self.ok
+
+            def record_past_session(self, *args: Any, **kw: Any) -> bool:
+                return self.ok
+
+            def record_recording_deleted(self, *args: Any, **kw: Any) -> bool:
+                return self.ok
+
+        audit: Any = Audit()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert (report.expired, report.failed) == ((), 1)
+        assert (entry / AUDIO_KEY_FILENAME).exists() and (entry / KEY_FILENAME).exists()
+        audit.ok = True
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert not (entry / AUDIO_KEY_FILENAME).exists()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert [session_id for session_id, _ in report.expired] == [sid]
+        assert not entry.exists()
+
+    def test_tidy_spares_a_live_recording(self, tmp_path: Path) -> None:
+        store = _store(tmp_path)
+        live = _kept(store)
+        dead = _kept(store)
+        (store.root / dead / AUDIO_KEY_FILENAME).unlink()
+        assert store.tidy_dead_recordings() == 1
+        assert not (store.root / dead / AUDIO_FILENAME).exists()
+        assert store.recording_kept(live)
+        assert b"".join(store.read_recording(live)) == b"".join(_PCM)
+
+    def test_kept_entries_reads_only_the_kept_labels(self, tmp_path: Path) -> None:
+        unwraps = _Unwraps()
+        store = _store(tmp_path, unwrap_key=unwraps)
+        kept = _kept(store)
+        _published(store)
+        calls = unwraps.calls
+        [listing] = store.kept_entries()
+        assert (listing.session_id, listing.recording_kept) == (kept, True)
+        assert listing.label is not None and listing.label.completed_at == NOW
+        assert unwraps.calls == calls + 1
+
+    def test_the_retention_sweep_reports_which_expired_entries_were_kept(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        kept, plain = _kept(store), _published(store)
+        calls: list[tuple[Any, ...]] = []
+        present_at_record: list[bool] = []
+
+        class Recorder:
+            def record_recording_kept(self, session_id: str, at: datetime, **kw: Any) -> bool:
+                calls.append(("kept", session_id, at))
+                # Round 14 PR-MED-003: recorded BEFORE the entry goes.
+                present_at_record.append((store.root / session_id / KEY_FILENAME).exists())
+                return True
+
+            def record_past_session(self, session_id: str, state: str, **kw: Any) -> bool:
+                calls.append((state, session_id))
+                return True
+
+            def keeps_rows_of(self, at: datetime) -> bool:  # review round 16 PR-MED-001
+                return True
+
+        audit: Any = Recorder()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert report.kept == frozenset({kept})
+        completed = NOW - WINDOW - timedelta(days=1)
+        assert calls.index(("kept", kept, completed)) < calls.index(("expired", kept))
+        assert ("expired", plain) in calls
+        assert not any(call[0] == "kept" and call[1] == plain for call in calls)
+        assert present_at_record == [True]
+        assert not (store.root / kept).exists()
+
+    def test_a_failing_kept_record_never_blocks_the_expiry(self, tmp_path: Path) -> None:
+        """C2: the audit never blocks custody — a kept-fact record that
+        raises is logged and the expiry goes ahead."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=1))
+        kept = _kept(store)
+
+        raised: list[str] = []
+
+        class Raising:
+            def keeps_rows_of(self, at: datetime) -> bool:  # review round 16 PR-MED-001
+                return True
+
+            def record_recording_kept(self, session_id: str, *args: Any, **kw: Any) -> bool:
+                raised.append(session_id)
+                raise RuntimeError("audit unavailable")
+
+            def record_past_session(self, *args: Any, **kw: Any) -> bool:
+                return True
+
+        audit: Any = Raising()
+        report = view.retention_sweep(store, audit, SEVEN, NOW)
+        assert raised == [kept]  # the raising write was reached
+        assert [session_id for session_id, _ in report.expired] == [kept]
+        assert not (store.root / kept).exists()
+
+    def test_the_unattended_rule(self) -> None:
+        """Review round 16 PR-MED-001: THE rule every unattended audit writer
+        uses (``past_sessions_view.unattended_write``) — no moment → the
+        existing row only; a pruned month → nothing; otherwise a re-made row
+        dated by the moment; a failing ``keeps_rows_of`` → nothing."""
+        from scribe_desktop.ui import past_sessions_view as view
+
+        class Window:
+            def __init__(self, keeps: bool | None) -> None:
+                self.keeps = keeps
+
+            def keeps_rows_of(self, at: datetime) -> bool:
+                if self.keeps is None:
+                    raise RuntimeError("no window")
+                return self.keeps
+
+        assert view.unattended_write(Window(True), None) == (None, False)
+        assert view.unattended_write(Window(False), NOW) is None
+        assert view.unattended_write(Window(True), NOW) == (NOW.timestamp(), True)
+        assert view.unattended_write(Window(None), NOW) is None
+        assert view.audit_moment(None) is None
+
+
+@windows_only
+class TestKeptFactsInTheAudit:
+    """Task 2.2 with the REAL audit record: the kept fact follows the files —
+    repaired at start-up for an interrupted completion (both shapes), and
+    recorded by a destroyer before its own outcome (review round 8 LOW-003)."""
+
+    def _audit(self, tmp_path: Path) -> Any:
+        from scribe_desktop.audit import AuditLog
+
+        return AuditLog(tmp_path / "audit", clock=lambda: NOW, local_zone=UTC)
+
+    def _begin(self, audit: Any, session_id: str) -> None:
+        from scribe_desktop.encounter import unlinked_consent
+        from scribe_desktop.session_mode import SessionMode
+
+        audit.begin(
+            session_id,
+            consent=unlinked_consent(NOW - timedelta(minutes=30)),
+            context=None,
+            user_id=None,
+            started_at=NOW - timedelta(minutes=30),
+            mode=SessionMode.NORMAL,
+            app_version="0.3.0",
+            development_consent_version="development-consent-v1",
+        )
+
+    def _row(self, audit: Any, session_id: str) -> Any:
+        row = audit.row_for(session_id)
+        assert row is not None
+        return row
+
+    @pytest.mark.parametrize("shape", ["pending", "committed"])
+    def test_an_interrupted_completion_is_repaired_at_start_up(
+        self, tmp_path: Path, shape: str
+    ) -> None:
+        """``pending``: killed between the key deletion and the commit;
+        ``committed``: killed after ``keep.commit()`` and before the audit
+        update — no ``pending``, which ``reconcile_pending`` skips (round 6
+        PR-MED-062). Both end ``archived`` with ``recording.kept_at``, and a
+        second start changes nothing."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        completed = NOW - timedelta(days=2)  # round 12 LOW-012: not the audit's clock
+        store = _store(tmp_path, clock=completed)
+        audit = self._audit(tmp_path)
+        sid = _kept(store, commit=shape == "committed")
+        self._begin(audit, sid)  # its completion write never ran
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        row = self._row(audit, sid)
+        assert row.past_session.state == "archived"
+        assert row.recording.kept_at == completed
+        before = row.to_bytes()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        assert self._row(audit, sid).to_bytes() == before
+
+    def test_a_sweep_tick_does_not_repair(self, tmp_path: Path) -> None:
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        store = _store(tmp_path)
+        audit = self._audit(tmp_path)
+        sid = _kept(store)
+        self._begin(audit, sid)
+        # Review round 11 LOW-010: tidy runs on the tick too (as
+        # `clean_staging` does) — a zeroed recording's files go.
+        dead = _kept(store)
+        (store.root / dead / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert self._row(audit, sid).recording.kept_at is None
+        assert not (store.root / dead / AUDIO_FILENAME).exists()
+        assert not (store.root / dead / AUDIO_KEY_FILENAME).exists()
+
+    @pytest.mark.parametrize("zeroed", [True, False], ids=["zeroed", "key_gone"])
+    def test_a_deleted_untidied_recording_is_recorded_before_tidy(
+        self, tmp_path: Path, zeroed: bool
+    ) -> None:
+        """Review round 11 LOW-004: Delete recording synced its zeros (or
+        also removed the key) and the process stopped before its audit
+        write — the start-up repair records the kept fact AND the deletion
+        before ``tidy_dead_recordings`` removes that evidence; idempotent."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        completed = NOW - timedelta(days=2)  # round 12 LOW-012: not the audit's clock
+        store = _store(tmp_path, clock=completed)
+        audit = self._audit(tmp_path)
+        sid = _kept(store)
+        self._begin(audit, sid)
+        key = store.root / sid / AUDIO_KEY_FILENAME
+        if zeroed:
+            key.write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        else:
+            key.unlink()
+        assert [listing.session_id for listing in store.deleted_recordings()] == [sid]
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        row = self._row(audit, sid)
+        # Kept at the label's completion; deleted when found (the audit's now).
+        assert (row.recording.kept_at, row.recording.deleted_at) == (completed, NOW)
+        assert row.past_session.state == "archived"
+        assert not (store.root / sid / AUDIO_FILENAME).exists()
+        assert store.deleted_recordings() == []
+        before = row.to_bytes()
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        assert self._row(audit, sid).to_bytes() == before
+
+    def test_the_repair_never_remakes_a_pruned_row(self, tmp_path: Path) -> None:
+        """Review round 11 LOW-003: a kept entry older than the audit's
+        retention window ("Until I delete them") — its row the prune removed
+        — is left alone, never re-made as a ``pre_audit`` row."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        old = NOW - timedelta(days=366 * 8)
+        store = _store(tmp_path, clock=old)
+        audit = self._audit(tmp_path)
+        sid = _kept(store, started=old - timedelta(minutes=20))
+        assert not audit.keeps_rows_of(old) and audit.keeps_rows_of(NOW)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        assert audit.row_for(sid) is None
+        assert store.recording_kept(sid)
+
+    def test_the_window_is_judged_by_the_session_start(self, tmp_path: Path) -> None:
+        """Review round 12 LOW-001: ``begin`` files a row in the month the
+        session STARTED. Started 31 Aug 2019 (its month pruned by NOW, 1 Oct
+        2026) and completed 1 Sep 2019 (that month not yet): the row is gone,
+        so the repair re-makes nothing."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        started = datetime(2019, 8, 31, 23, 50, tzinfo=UTC)
+        completed = datetime(2019, 9, 1, 0, 10, tzinfo=UTC)
+        store = _store(tmp_path, clock=completed)
+        audit = self._audit(tmp_path)
+        sid = _kept(store, started=started)
+        assert not audit.keeps_rows_of(started) and audit.keeps_rows_of(completed)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        assert audit.row_for(sid) is None
+
+    @pytest.mark.parametrize("has_row", [True, False], ids=["row", "pruned"])
+    def test_an_unreadable_labels_deletion_never_remakes_a_row(
+        self, tmp_path: Path, has_row: bool
+    ) -> None:
+        """Review round 14 PR-MED-001: a deleted-but-untidied recording whose
+        label cannot be read has no date to judge the retention window by —
+        its deletion lands on the EXISTING row only; with no row (pruned)
+        nothing is re-made, and the evidence is tidied (nothing to record)."""
+        from scribe_desktop.app import sweep_with_archive
+
+        def refuse(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        sid = _kept(_store(tmp_path))
+        (_store(tmp_path).root / sid / AUDIO_KEY_FILENAME).write_bytes(
+            b"\0" * AUDIO_KEY_FILE_BYTES
+        )
+        store = _store(tmp_path, unwrap_key=refuse)
+        [listing] = store.deleted_recordings()
+        assert listing.label is None
+        audit = self._audit(tmp_path)
+        if has_row:
+            self._begin(audit, sid)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        if has_row:
+            assert self._row(audit, sid).recording.deleted_at == NOW
+        else:
+            assert audit.row_for(sid) is None
+        assert not (store.root / sid / AUDIO_FILENAME).exists()
+
+    @pytest.mark.parametrize("case", ["reset", "pruned", "unreadable_row", "unreadable_none"])
+    def test_a_reconciled_commit_is_dated_by_its_label(self, tmp_path: Path, case: str) -> None:
+        """Review round 15 PR-MED-001: ``reconcile_pending``'s ``archived``
+        follows the kept-fact repair's rule — a reset-away row is re-made in
+        the session's START month, a pruned one is never re-made, and with
+        no readable label it lands on an existing row only."""
+        from scribe_desktop.app import sweep_with_archive
+
+        def refuse(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        started = (
+            datetime(2018, 8, 31, 23, 50, tzinfo=UTC)
+            if case == "pruned"
+            else datetime(2026, 8, 31, 23, 50, tzinfo=UTC)
+        )
+        writer = _store(tmp_path, clock=started + timedelta(minutes=20))
+        source = replace(_source(), created_at=started.timestamp())
+        writer.write_entry(source, LINKED)  # pending; its source key is absent
+        sid = source.session_id
+        unreadable = case.startswith("unreadable")
+        store = _store(tmp_path, unwrap_key=refuse) if unreadable else writer
+        audit = self._audit(tmp_path)
+        if case == "unreadable_row":
+            self._begin(audit, sid)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit)
+        assert not (store.root / sid / PENDING_FILENAME).exists()
+        row = audit.row_for(sid)
+        if case in ("pruned", "unreadable_none"):
+            assert row is None
+        else:
+            assert row is not None and row.past_session.state == "archived"
+            if case == "reset":
+                assert (row.origin, row.session_date) == ("pre_audit", started.date())
+
+    def test_a_remade_row_is_filed_in_the_month_the_session_started(
+        self, tmp_path: Path
+    ) -> None:
+        """Review round 13 LOW-013: a kept entry whose row is gone (reset
+        away) is re-made as ``pre_audit`` in its session's START month, where
+        ``begin`` filed it — not the completion's."""
+        from scribe_desktop.app import sweep_with_archive
+
+        sessions = tmp_path / "sessions"
+        sessions.mkdir()
+        started = datetime(2026, 8, 31, 23, 50, tzinfo=UTC)
+        completed = datetime(2026, 9, 1, 0, 10, tzinfo=UTC)
+        store = _store(tmp_path, clock=completed)
+        audit = self._audit(tmp_path)
+        sid = _kept(store, started=started)
+        sweep_with_archive(sessions, store, frozenset(), audit=audit, repair_kept=True)
+        row = self._row(audit, sid)
+        assert row.origin == "pre_audit"
+        assert row.session_date == started.date()
+        assert row.recording.kept_at == completed
+
+    def test_expiry_records_the_deletion_of_a_kept_row_whose_completion_failed(
+        self, tmp_path: Path
+    ) -> None:
+        from scribe_desktop.ui import past_sessions_view as view
+
+        completed = NOW - WINDOW - timedelta(days=1)
+        store = _store(tmp_path, clock=completed)
+        audit = self._audit(tmp_path)
+        sid = _kept(store)
+        self._begin(audit, sid)  # its completion write never landed
+        view.retention_sweep(store, audit, SEVEN, NOW)
+        row = self._row(audit, sid)
+        assert row.past_session.state == "expired"
+        assert (row.recording.kept_at, row.recording.deleted_at) == (completed, NOW)
+
+    @pytest.mark.parametrize("case", ["reset", "pruned"])
+    def test_the_retention_sweep_follows_the_unattended_rule(
+        self, tmp_path: Path, case: str
+    ) -> None:
+        """Review round 16 PR-MED-001: the sweep's kept fact, and its
+        ``expired`` outcome, are UNATTENDED writes — a reset-away row is
+        re-made in the session's START month; a row whose start month the
+        prune has passed is never re-made, even when the completion's month
+        is still kept (started 31 Aug 2027, completed 1 Sep 2027), and the
+        entry still expires. Dated 2027 / 2034: a ``pre_audit`` date before
+        2026 is untrusted (dated now, ``audit._EARLIEST_SESSION``)."""
+        from scribe_desktop.audit import AuditLog
+        from scribe_desktop.ui import past_sessions_view as view
+
+        if case == "reset":
+            started = datetime(2027, 9, 30, 8, 40, tzinfo=UTC)
+            completed = datetime(2027, 9, 30, 9, 0, tzinfo=UTC)
+            later = datetime(2034, 10, 1, 9, 0, tzinfo=UTC)
+        else:
+            started = datetime(2027, 8, 31, 23, 50, tzinfo=UTC)
+            completed = datetime(2027, 9, 1, 0, 10, tzinfo=UTC)
+            later = datetime(2034, 9, 15, 9, 0, tzinfo=UTC)
+        store = _store(tmp_path, clock=completed)
+        audit = AuditLog(tmp_path / "audit", clock=lambda: later, local_zone=UTC)
+        sid = _kept(store, started=started)
+        assert audit.keeps_rows_of(completed)
+        assert audit.keeps_rows_of(started) is (case == "reset")
+        report = view.retention_sweep(store, audit, SEVEN, later)
+        assert [session_id for session_id, _ in report.expired] == [sid]
+        assert not (store.root / sid).exists()
+        row = audit.row_for(sid)
+        if case == "pruned":
+            assert row is None
+        else:
+            assert row is not None
+            assert (row.origin, row.session_date) == ("pre_audit", started.date())
+            assert row.past_session.state == "expired"
+            assert (row.recording.kept_at, row.recording.deleted_at) == (completed, later)

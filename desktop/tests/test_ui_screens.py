@@ -225,6 +225,13 @@ class FakeController:
         # Privacy-professional-controls Task 2.3 (D5): the label each Complete
         # was given, apart from `calls` (whose exact lists tests pin).
         self.completed_labels: list[tuple[str, Any]] = []
+        # Development-recordings Task 2.1: the `kept` each recovered Complete
+        # was given, and what `last_completion_kept()` answers (Task 2.4).
+        self.recovered_kept: list[bool] = []
+        self.completion_kept = False
+
+    def last_completion_kept(self) -> bool:
+        return self.completion_kept
 
     def write_record_status(self, session_id: str) -> WriteRecordStatus:
         self.calls.append(("write_record_status", session_id))
@@ -429,12 +436,13 @@ class FakeController:
         return ids
 
     def complete_recovered(
-        self, directory: Path, crypto: SessionCrypto, *, label: Any = None
+        self, directory: Path, crypto: SessionCrypto, *, label: Any = None, kept: bool = False
     ) -> None:
         self.calls.append(("complete_recovered", directory))
         if self.generation_error is not None:
             raise self.generation_error
         self._labelled("complete_recovered", label)
+        self.recovered_kept.append(kept)
         crypto.destroy()
 
     def discard_recovered(self, directory: Path, crypto: SessionCrypto | None) -> None:
@@ -2646,6 +2654,179 @@ class TestSessionScreenConsent:
         context = _linked_context()
         assert screen.start_linked(linked_consent(context), context) is False
         assert controller.started_with == []
+        screen.deleteLater()
+
+
+class TestSessionScreenDevelopmentTick:
+    """Development-recordings plan Task 2.3 (D2, C3): the second tick above
+    Start — shown only while the setting is on, never pre-ticked, read at the
+    click and cleared by every Start and every refused Start but the hold."""
+
+    def _screen(self, controller: FakeController, setting: list[bool]) -> Any:
+        from scribe_desktop.ui.session_screen import SessionScreen
+
+        screen = SessionScreen(
+            controller,
+            device_provider=lambda: 7,
+            transcriber_factory=lambda: (lambda d, c: _document()),  # type: ignore[arg-type]
+            keep_recordings=lambda: setting[0],
+        )
+        screen.consent_checkbox.setChecked(True)
+        return screen
+
+    def test_hidden_while_the_setting_is_off_and_never_pre_ticked(self, qapp: Any) -> None:
+        from scribe_desktop.encounter import DEVELOPMENT_CONSENT_TEXT
+        from scribe_desktop.ui.session_screen import SessionScreen
+
+        default = SessionScreen(FakeController(), device_provider=lambda: 7)
+        assert default.development_checkbox.isHidden()  # the pinned root: off
+        default.deleteLater()
+        setting = [False]
+        screen = self._screen(FakeController(), setting)
+        assert screen.development_checkbox.isHidden()
+        assert screen.development_checkbox.text() == DEVELOPMENT_CONSENT_TEXT
+        assert DEVELOPMENT_CONSENT_TEXT == (
+            "I confirm the patient has consented in writing to this recording being kept "
+            "for developing the program"
+        )
+        setting[0] = True
+        screen.refresh()
+        assert not screen.development_checkbox.isHidden()
+        assert not screen.development_checkbox.isChecked()
+        assert screen.development_checkbox.isEnabled()
+        screen.deleteLater()
+
+    def test_turning_the_setting_off_clears_an_armed_tick(self, qapp: Any) -> None:
+        setting = [True]
+        controller = FakeController()
+        screen = self._screen(controller, setting)
+        screen.development_checkbox.setChecked(True)
+        setting[0] = False
+        screen.refresh()
+        assert screen.development_checkbox.isHidden()
+        assert not screen.development_checkbox.isChecked()
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()
+        assert controller.started_development == [None]
+        screen.deleteLater()
+
+    def test_a_desktop_start_reads_then_clears_both_ticks(self, qapp: Any) -> None:
+        from scribe_desktop.encounter import DEVELOPMENT_CONSENT_TEXT_VERSION
+
+        controller = FakeController()
+        screen = self._screen(controller, [True])
+        screen.development_checkbox.setChecked(True)
+        screen.on_start()
+        [given] = controller.started_development
+        assert given is not None and given.text_version == DEVELOPMENT_CONSENT_TEXT_VERSION
+        assert not screen.consent_checkbox.isChecked()
+        assert not screen.development_checkbox.isChecked()
+        screen.consent_checkbox.setChecked(True)
+        screen.on_start()  # the next Start, not re-armed
+        assert controller.started_development == [given, None]
+        screen.deleteLater()
+
+    def test_a_linked_start_consumes_the_desktop_armed_tick(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller, [True])
+        screen.development_checkbox.setChecked(True)
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is True
+        [given] = controller.started_development
+        assert given is not None
+        assert not screen.development_checkbox.isChecked()
+        screen.deleteLater()
+
+    def test_the_setting_is_read_again_at_the_click(self, qapp: Any) -> None:
+        """C3: a tick armed while the setting was on keeps nothing if the
+        setting reads off (or unreadable) at the click."""
+        setting = [True]
+        controller = FakeController()
+        screen = self._screen(controller, setting)
+        screen.development_checkbox.setChecked(True)
+        setting[0] = False  # no refresh in between
+        screen.on_start()
+        assert controller.started_development == [None]
+        screen.deleteLater()
+
+    def test_a_failed_start_and_a_discard_under_way_clear_it(self, qapp: Any) -> None:
+        controller = FakeController()
+
+        def failing_start(device_id: int, **_kwargs: Any) -> Any:
+            raise RuntimeError("no device")
+
+        controller.start = failing_start  # type: ignore[method-assign]
+        screen = self._screen(controller, [True])
+        screen.development_checkbox.setChecked(True)
+        screen.on_start()
+        assert "Start failed" in screen.message_label.text()
+        assert not screen.development_checkbox.isChecked()
+        screen.development_checkbox.setChecked(True)
+        screen.consent_checkbox.setChecked(True)
+        screen._discarding = True  # noqa: SLF001 - a discard waiting off the GUI thread
+        screen.on_start()
+        assert not screen.development_checkbox.isChecked()
+        assert screen.consent_checkbox.isChecked()  # round 40: the consent tick stays
+        screen.development_checkbox.setChecked(True)
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is False
+        assert not screen.development_checkbox.isChecked()
+        screen._discarding = False  # noqa: SLF001
+        screen.deleteLater()
+
+    def test_a_start_without_consent_clears_it(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller, [True])
+        screen.development_checkbox.setChecked(True)
+        screen.consent_checkbox.setChecked(False)
+        screen.on_start()
+        assert controller.calls == []
+        assert not screen.development_checkbox.isChecked()
+        screen.deleteLater()
+
+    def test_the_hold_keeps_it_for_the_next_press(self, qapp: Any) -> None:
+        controller = FakeController()
+        screen = self._screen(controller, [True])
+        held = [True]
+        screen.set_start_hold(lambda: held[0])
+        screen.development_checkbox.setChecked(True)
+        screen.on_start()
+        context = _linked_context()
+        assert screen.start_linked(linked_consent(context), context) is False
+        assert screen.development_checkbox.isChecked()
+        assert controller.started_development == []
+        held[0] = False
+        screen.on_start()
+        [given] = controller.started_development
+        assert given is not None
+        screen.deleteLater()
+
+    def test_the_tracked_lines(self, qapp: Any) -> None:
+        from PySide6.QtCore import Qt
+
+        from scribe_desktop.encounter import development_consent
+
+        controller = FakeController()
+        screen = self._screen(controller, [True])
+        assert screen.development_label.isHidden()
+        assert screen.development_label.textFormat() == Qt.TextFormat.PlainText
+        screen.development_checkbox.setChecked(True)
+        assert screen.development_label.text() == models.DEVELOPMENT_ARMED_LINE
+        screen.development_checkbox.setChecked(False)
+        controller.session_value = RecordingSession(
+            consent=unlinked_consent(), development_consent=development_consent()
+        ).with_state(SessionState.RECORDING)
+        controller.state_value = SessionState.RECORDING
+        screen.refresh()
+        assert screen.development_label.text() == models.DEVELOPMENT_RECORDING_LINE
+        # Review round 11 LOW-011: disabled with Start — never armed while
+        # a recording runs (it would bind whatever Chrome shows then).
+        assert not screen.start_button.isEnabled()
+        assert not screen.development_checkbox.isEnabled()
+        controller.session_value = controller.session_value.with_state(SessionState.WRITTEN)
+        controller.state_value = SessionState.WRITTEN
+        screen.refresh()
+        assert screen.development_label.isHidden()
         screen.deleteLater()
 
 
@@ -7755,15 +7936,110 @@ class TestTranscriptPastSessions:
         screen, _result = self._screen(controller)
         assert screen.complete_button.toolTip() == (
             "Verify the encrypted transcript, keep the transcript and notes in Past sessions "
-            "(never the audio; a test-provider session keeps nothing), then delete the session "
-            "and its key - the audio becomes unrecoverable."
+            "(not the audio, unless it was kept for development under written consent; a "
+            "test-provider session keeps nothing), then delete the session and its key - "
+            "the session's audio becomes unrecoverable."
         )
         screen.on_complete()
         assert screen.message_label.text() == (
             "Session completed: transcript verified and the session key destroyed - the audio "
-            "cannot be recovered. Past sessions shows what was kept."
+            "cannot be recovered, unless it was kept for development under written consent. "
+            "Past sessions shows what was kept."
         )
         screen.deleteLater()
+
+    @pytest.mark.parametrize("kept", [True, False])
+    @pytest.mark.parametrize(
+        ("status", "line"),
+        [
+            (WriteRecordStatus("none"), models.COMPLETE_DONE_LINE),
+            (WriteRecordStatus("written", note_matches=True), models.write_line("written_done")),
+        ],
+    )
+    def test_a_kept_recording_is_said_from_the_outcome(
+        self, qapp: Any, status: WriteRecordStatus, line: str, kept: bool
+    ) -> None:
+        """Development-recordings Task 2.4: the Complete line gains
+        ``COMPLETE_KEPT_LINE`` exactly when the controller says the Complete
+        kept the recording (``last_completion_kept``), on the plain and the
+        seen-in-Cliniko paths."""
+        controller = TestTranscriptGeneration()._live(status)
+        controller.completion_kept = kept
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        expected = f"{line} {models.COMPLETE_KEPT_LINE}" if kept else line
+        assert screen.message_label.text() == expected
+        assert models.COMPLETE_KEPT_LINE == "The recording was kept for development."
+        screen.deleteLater()
+
+    def test_a_kept_deferred_entry_says_both(self, qapp: Any) -> None:
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        controller.last_complete_deferred = True
+        controller.completion_kept = True
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        assert screen.message_label.text() == (
+            f"{models.COMPLETE_DEFERRED_LINE} {models.COMPLETE_KEPT_LINE}"
+        )
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("kept", [True, False])
+    def test_the_pre_save_exit_says_a_kept_recording(self, qapp: Any, kept: bool) -> None:
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        controller.completion_kept = kept
+        screen, _result = self._screen(controller)
+        screen.set_role(SPEAKER_2)
+        screen.set_profile("clinic-a")
+        screen.generate()
+        assert _process_until(qapp, lambda: screen._generation_result is not None)
+        screen.abandon_note_and_complete()
+        assert controller.completed_labels == [("complete_without_note", None)]
+        text = screen.message_label.text()
+        assert text.endswith(models.COMPLETE_KEPT_LINE) is kept
+        screen.deleteLater()
+
+    def test_a_failed_complete_never_says_kept(self, qapp: Any) -> None:
+        from scribe_desktop.session import PastSessionWriteError
+
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        controller.completion_kept = True  # a stale answer must not be read
+
+        def refuse(*, label: Any = None) -> RecordingSession:
+            raise PastSessionWriteError()
+
+        controller.complete = refuse  # type: ignore[method-assign]
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        assert models.COMPLETE_KEPT_LINE not in screen.message_label.text()
+        screen.deleteLater()
+
+    def test_a_consented_session_that_kept_nothing_never_says_kept(self, qapp: Any) -> None:
+        """Review round 11 LOW-007 (round 1 PR-MED-005): the line follows the
+        OUTCOME — a consented test-provider session keeps no audio, so with
+        the consent on the session and ``last_completion_kept()`` False the
+        Complete says nothing about keeping."""
+        from scribe_desktop.encounter import development_consent
+
+        controller = TestTranscriptGeneration()._live(WriteRecordStatus("none"))
+        assert controller.session_value is not None
+        controller.session_value = controller.session_value.model_copy(
+            update={"development_consent": development_consent()}
+        )
+        controller.completion_kept = False
+        screen, _result = self._screen(controller)
+        screen.on_complete()
+        assert screen.message_label.text() == models.COMPLETE_DONE_LINE
+        screen.deleteLater()
+
+    def test_the_stalled_discard_line_never_says_kept(self) -> None:
+        """Task 2.3: "kept" now means kept for development, so a Discard that
+        live transcription outlasted says the recording is still here."""
+        assert models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE == (
+            "Recording stopped, but live transcription did not stop in time, so nothing was "
+            "deleted - the recording is still here. Press Discard again in a moment to "
+            "delete it."
+        )
+        assert "kept" not in models.DISCARD_KEPT_LIVE_STOPPING_MESSAGE
 
     def test_an_archive_failure_says_so_and_changes_nothing(self, qapp: Any) -> None:
         from scribe_desktop.session import PAST_SESSION_WRITE_FAILED_TEXT, PastSessionWriteError
@@ -7782,6 +8058,101 @@ class TestTranscriptPastSessions:
         assert closed == []
         assert screen.transcript_view.toPlainText() != ""
         screen.deleteLater()
+
+
+class TestKeptLineWhereTheWindowLands:
+    """Development-recordings Task 2.4 (review round 11 MED-001): after a
+    Complete the window lands on the Session tab, so the kept sentence is
+    said THERE too — from the actual outcome, never on a Discard."""
+
+    @pytest.mark.parametrize("kept", [True, False])
+    @pytest.mark.parametrize("outcome", ["completed", "written", "discarded"])
+    def test_the_landing_tab_says_a_kept_recording(
+        self, qapp: Any, tmp_path: Path, outcome: str, kept: bool
+    ) -> None:
+        controller = FakeController()
+        controller.completion_kept = kept  # a Discard must never read it
+        window = _main_window(tmp_path, controller)
+        window.session_screen.show_notice("")
+        window._on_transcript_closed(outcome)
+        assert window.tabs.currentWidget() is window.session_screen
+        text = window.session_screen.message_label.text()
+        says_kept = kept and outcome != "discarded"
+        assert text.endswith(models.COMPLETE_KEPT_LINE) is says_kept
+        if outcome == "written":
+            assert text.startswith(models.write_line("written_done"))
+        window.close()
+
+    def test_an_earlier_kept_sentence_never_reads_as_a_later_completes(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Review round 12 LOW-006: a kept Complete, then one that kept
+        nothing (a recovered session) — the earlier sentence is cleared, and
+        only that line: another notice is left alone."""
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        controller.completion_kept = True
+        window._on_transcript_closed("completed")
+        assert window.session_screen.message_label.text() == models.COMPLETE_KEPT_LINE
+        controller.completion_kept = False
+        window._on_transcript_closed("completed")
+        assert window.session_screen.message_label.text() == ""
+        window.session_screen.show_notice("Recording paused - the computer was locked.")
+        window._on_transcript_closed("completed")
+        assert window.session_screen.message_label.text() == (
+            "Recording paused - the computer was locked."
+        )
+        window.close()
+
+    @pytest.mark.parametrize("then", ["completed", "discarded"])
+    def test_a_kept_written_sentence_is_cleared_by_the_next_close(
+        self, qapp: Any, tmp_path: Path, then: str
+    ) -> None:
+        """Review round 13 LOW-006: the sentence after ``written_done`` too,
+        and by a Discard as well as a Complete that kept nothing."""
+        controller = FakeController()
+        window = _main_window(tmp_path, controller)
+        controller.completion_kept = True
+        window._on_transcript_closed("written")
+        assert window.session_screen.message_label.text().endswith(models.COMPLETE_KEPT_LINE)
+        controller.completion_kept = then == "discarded"  # a Discard never reads it
+        window._on_transcript_closed(then)
+        assert window.session_screen.message_label.text() == ""
+        window.close()
+
+    def test_a_lock_or_suspend_clears_an_armed_tick_and_says_so(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Review round 12 LOW-008 (D2): a suspend or lock ends the
+        consultation the tick was armed for; the hotkey does not."""
+        from scribe_desktop.context_rules import PauseReason
+        from scribe_desktop.note_config import DevelopmentSettings, save_development_settings
+
+        save_development_settings(
+            DevelopmentSettings(keep_recordings=True), config_root=tmp_path / "config"
+        )
+        window = _main_window(tmp_path, FakeController())
+        tick = window.session_screen.development_checkbox
+        tick.setChecked(True)
+        window.pause_for(PauseReason.HOTKEY)
+        assert tick.isChecked()
+        label = window.session_screen.development_label
+        for reason in (PauseReason.LOCKED, PauseReason.SUSPEND):
+            tick.setChecked(True)
+            assert label.text() == models.DEVELOPMENT_ARMED_LINE
+            window.pause_for(reason)
+            assert not tick.isChecked()
+            assert window.session_screen.development_target is None
+            # Round 13 LOW-007: on the tracked line, which no message replaces.
+            assert label.text() == models.DEVELOPMENT_TICK_CLEARED_LINE
+            window.session_screen.show_notice("Another message.")
+            assert label.text() == models.DEVELOPMENT_TICK_CLEARED_LINE
+        tick.setChecked(True)
+        tick.setChecked(False)  # unticked here by the practitioner: not announced
+        assert label.isHidden()
+        window.pause_for(PauseReason.LOCKED)  # nothing armed: nothing said
+        assert label.isHidden()
+        window.close()
 
 
 class TestGeneratedShown:
@@ -9186,10 +9557,17 @@ class _FakePastAudit:
         self.reset_error: Exception | None = None
 
     def record_past_session(
-        self, session_id: str, state: str, *, created_at: float | None = None
+        self, session_id: str, state: str, *, created_at: float | None = None, create: bool = True
     ) -> bool:
         self.calls.append(("past_session", session_id, state, created_at))
         return True
+
+    # Development-recordings review round 16 PR-MED-001: the retention
+    # sweep's unattended writes ask it (``past_sessions_view.unattended_write``).
+    keeps_rows = True
+
+    def keeps_rows_of(self, at: datetime) -> bool:
+        return self.keeps_rows
 
     def row_for(self, session_id: str) -> Any:
         self.calls.append(("row_for", session_id))
@@ -9213,7 +9591,7 @@ class _FakePastAudit:
     # Development-recordings plan Task 1.4: Delete recording and Export
     # recording's audit facts (the tab calls them from Phase 3).
     def record_recording_deleted(
-        self, session_id: str, *, created_at: float | None = None
+        self, session_id: str, *, created_at: float | None = None, create: bool = True
     ) -> bool:
         self.calls.append(("recording_deleted", session_id, created_at))
         return True
@@ -9222,6 +9600,19 @@ class _FakePastAudit:
         self, session_id: str, *, created_at: float | None = None
     ) -> bool:
         self.calls.append(("recording_exported", session_id, created_at))
+        return True
+
+    # Task 2.2 (review round 8 LOW-003): a destroyer of a kept entry records
+    # the kept fact first.
+    def record_recording_kept(
+        self,
+        session_id: str,
+        at: datetime,
+        *,
+        created_at: float | None = None,
+        create: bool = True,
+    ) -> bool:
+        self.calls.append(("recording_kept", session_id, at, created_at))
         return True
 
 
@@ -9247,10 +9638,12 @@ def _ps_entry(
     note: bool = True,
     generated: bool = True,
     shadow: bool = False,
+    audio: bool = False,
 ) -> tuple[str, GeneratedNote | None]:
     """One committed Past-sessions entry: a transcript, a saved note and a
     generated note (each optional but the transcript), written through the
-    store's own verified path — a shadow recording's with ``shadow``."""
+    store's own verified path — a shadow recording's with ``shadow``, one
+    holding a kept recording with ``audio`` (development-recordings Task 2.2)."""
     from scribe_desktop.note import digest_bytes
     from scribe_desktop.past_sessions import keep_label
     from scribe_desktop.session_store import ArchiveSource, GeneratedRecord
@@ -9294,6 +9687,7 @@ def _ps_entry(
             transcript_plain=transcript,
             note_plain=saved.to_bytes() if saved is not None else None,
             generated_plain=kept.to_bytes() if kept is not None else None,
+            audio_chunks=iter([b"\x01\x02" * 160]) if audio else None,
         ),
         keep_label(name, recording, None, shadow=shadow),  # type: ignore[arg-type]
     )
@@ -9731,6 +10125,101 @@ class TestPastSessionsTab:
 
     # --- Delete now -------------------------------------------------------------
 
+    @pytest.mark.parametrize("audio", [True, False])
+    def test_delete_now_records_a_kept_recording_first(
+        self, qapp: Any, tmp_path: Path, audio: bool
+    ) -> None:
+        """Development-recordings Task 2.2 (review round 8 LOW-003): Delete
+        now of an entry holding a kept recording records the kept fact (from
+        the label, read before the deletion) BEFORE ``deleted_early``, so a
+        row whose completion facts were lost still says the recording was
+        kept; an entry without one records no kept fact."""
+        store = _ps_store(tmp_path / "past_sessions")
+        started = _PS_NOW - timedelta(hours=3)
+        sid, _ = _ps_entry(store, started=started, audio=audio)
+        assert store.recording_kept(sid) is audio
+        audit = _FakePastAudit()
+        present_at_record: list[bool] = []
+        real_record = audit.record_recording_kept
+
+        def record(session_id: str, at: datetime, *, created_at: float | None = None) -> bool:
+            # Review round 14 PR-MED-003: recorded BEFORE the entry goes.
+            present_at_record.append((store.root / session_id).exists())
+            return real_record(session_id, at, created_at=created_at)
+
+        audit.record_recording_kept = record  # type: ignore[method-assign]
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert not (store.root / sid).exists()
+        writes = [
+            call for call in audit.calls if call[0] in {"recording_kept", "past_session"}
+        ]
+        assert present_at_record == ([True] if audio else [])
+        if audio:
+            assert [call[0] for call in writes] == ["recording_kept", "past_session"]
+            # Round 12 LOW-011: the label's completion time (the store's
+            # clock), never the start or now.
+            assert writes[0][1:] == (sid, _PS_NOW, started.timestamp())
+        else:
+            assert [call[0] for call in writes] == ["past_session"]
+        assert writes[-1] == ("past_session", sid, "deleted_early", started.timestamp())
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("readable", [True, False])
+    def test_delete_now_records_an_untidied_deletion_before_the_entry_goes(
+        self, qapp: Any, tmp_path: Path, readable: bool
+    ) -> None:
+        """Review round 15 PR-MED-002: Delete now of an entry whose recording
+        was already deleted but not yet tidied (perhaps spared because that
+        deletion's record failed) records the deletion BEFORE the entry —
+        and its evidence — goes; a refused write never holds the Delete now
+        (C2: only ``begin`` refuses)."""
+        from scribe_desktop.past_sessions import AUDIO_KEY_FILE_BYTES, AUDIO_KEY_FILENAME
+
+        root = tmp_path / "past_sessions"
+        started = _PS_NOW - timedelta(hours=3)
+        sid, _ = _ps_entry(_ps_store(root), started=started, audio=True)
+        (root / sid / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+
+        def refuse_unwrap(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        store = _ps_store(root) if readable else _ps_store(root, unwrap=refuse_unwrap)
+        assert store.recording_held(sid) and not store.recording_kept(sid)
+        audit = _FakePastAudit()
+        present_at_record: list[bool] = []
+
+        def record(session_id: str, *, created_at: float | None = None) -> bool:
+            present_at_record.append((root / session_id).exists())
+            audit.calls.append(("recording_deleted", session_id, created_at))
+            return False  # refused: the Delete now still goes ahead
+
+        audit.record_recording_deleted = record  # type: ignore[method-assign]
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert not (root / sid).exists()
+        writes = [
+            call
+            for call in audit.calls
+            if call[0] in {"recording_kept", "recording_deleted", "past_session"}
+        ]
+        epoch = started.timestamp() if readable else None
+        expected = [
+            ("recording_deleted", sid, epoch),
+            ("past_session", sid, "deleted_early", epoch),
+        ]
+        if readable:
+            expected.insert(0, ("recording_kept", sid, _PS_NOW, epoch))
+        assert writes == expected
+        assert present_at_record == [True]
+        screen.deleteLater()
+
     def test_delete_now_takes_two_clicks_and_records_deleted_early(
         self, qapp: Any, tmp_path: Path
     ) -> None:
@@ -9803,7 +10292,8 @@ class TestPastSessionsTab:
 
         root = tmp_path / "past_sessions"
         completed = _PS_NOW - _PS_WINDOW - timedelta(days=40)
-        old, _ = _ps_entry(_ps_store(root, clock=completed))
+        started = completed - timedelta(minutes=20)
+        old, _ = _ps_entry(_ps_store(root, clock=completed), started=started)
         recent, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - timedelta(days=2)))
         store = _ps_store(root)
         asked: list[tuple[str, str]] = []
@@ -9828,8 +10318,9 @@ class TestPastSessionsTab:
         )
         assert load_past_session_settings(tmp_path / "config").retention_days == _PS_SEVEN
         assert [item.session_id for item in store.list_entries()] == [recent]
-        # Round 16 LOW-005: dated by the entry's completion, for a pre_audit row.
-        assert ("past_session", old, "expired", completed.timestamp()) in audit.calls
+        # Round 16 LOW-005: dated by the session, for a pre_audit row — by its
+        # START (development-recordings review round 16 PR-MED-001).
+        assert ("past_session", old, "expired", started.timestamp()) in audit.calls
         assert len(self._rows(screen)) == 1  # dropped from the list in memory
         assert screen.message_label.text() == view.retention_changed_line(_PS_SEVEN, 1)
         assert screen.message_label.text() == (
@@ -9899,7 +10390,8 @@ class TestPastSessionsTab:
 
         root = tmp_path / "past_sessions"
         completed = _PS_NOW - _PS_WINDOW - timedelta(days=1)
-        old, _ = _ps_entry(_ps_store(root, clock=completed))
+        started = completed - timedelta(minutes=20)
+        old, _ = _ps_entry(_ps_store(root, clock=completed), started=started)
         kept, _ = _ps_entry(_ps_store(root, clock=_PS_NOW - _PS_WINDOW + timedelta(days=1)))
         save_past_session_settings(
             PastSessionSettings(retention_days=_PS_SEVEN), config_root=tmp_path / "config"
@@ -9909,7 +10401,8 @@ class TestPastSessionsTab:
         audit = _FakePastAudit()
         screen = self._screen(tmp_path, store=store, audit=audit)
         assert screen.run_retention_sweep() == [old]
-        assert audit.calls == [("past_session", old, "expired", completed.timestamp())]
+        # Development-recordings review round 16 PR-MED-001: the START.
+        assert audit.calls == [("past_session", old, "expired", started.timestamp())]
         assert screen.status_lines() == []  # a sweep that finished says nothing
         assert unwrap.calls == 2
         # Round 12 LOW-001: the ONE store's date cache — a later tick reads no label.
@@ -10345,7 +10838,12 @@ class TestPastSessionsTab:
 
         class _FailingAudit(_FakePastAudit):
             def record_past_session(
-                self, session_id: str, state: str, *, created_at: float | None = None
+                self,
+                session_id: str,
+                state: str,
+                *,
+                created_at: float | None = None,
+                create: bool = True,
             ) -> bool:
                 super().record_past_session(session_id, state, created_at=created_at)
                 self.failure_count += 1
@@ -10442,6 +10940,39 @@ class TestPastSessionsTab:
         assert not (root / sid).exists()
         assert ("past_session", sid, "deleted_early", None) in audit.calls
         assert view.undated_line(1) not in screen.status_lines()  # it is gone
+        screen.deleteLater()
+
+    @pytest.mark.parametrize("audio", [True, False])
+    def test_an_unreadable_kept_entry_records_its_recording_deletion(
+        self, qapp: Any, tmp_path: Path, audio: bool
+    ) -> None:
+        """Review round 12 LOW-004: Delete now of an entry whose label cannot
+        be read but whose files show a kept recording records the recording's
+        deletion itself (no completion time for the kept fact) BEFORE
+        ``deleted_early``; an entry without one records none."""
+        root = tmp_path / "past_sessions"
+        sid, _ = _ps_entry(_ps_store(root), audio=audio)
+
+        def refuse_unwrap(_directory: Path) -> SessionCrypto:
+            raise OSError("DPAPI refused")
+
+        store = _ps_store(root, unwrap=refuse_unwrap)
+        audit = _FakePastAudit()
+        screen = self._screen(tmp_path, store=store, audit=audit)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_delete_clicked()
+        screen.on_delete_clicked()
+        assert not (root / sid).exists()
+        writes = [
+            call
+            for call in audit.calls
+            if call[0] in {"recording_kept", "recording_deleted", "past_session"}
+        ]
+        expected = [("past_session", sid, "deleted_early", None)]
+        if audio:
+            expected.insert(0, ("recording_deleted", sid, None))
+        assert writes == expected
         screen.deleteLater()
 
     @pytest.mark.parametrize(

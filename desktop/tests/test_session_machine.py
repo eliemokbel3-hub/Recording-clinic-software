@@ -1498,8 +1498,10 @@ class TestCompleteAfterWrite:
 
         def observed(directory: Path, crypto: SessionCrypto, **kwargs: Any) -> Any:
             # Task 1.1: no flag — every Complete removes the directory; Task
-            # 2.3: no archive on a controller built without one.
-            assert kwargs == {"delete_note": False, "keep": None}
+            # 2.3: no archive on a controller built without one; development-
+            # recordings Task 2.1: a session without development consent
+            # never asks for its audio.
+            assert kwargs == {"delete_note": False, "keep": None, "keep_audio": False}
             facts = real(directory, crypto, **kwargs)
             seen.append(
                 (
@@ -2867,3 +2869,122 @@ class TestPastSessionsThroughTheController:
         controller.discard_recovered(directory, crypto)
         assert not directory.exists()
         assert not (store.root / directory.name).exists()
+
+
+@windows_only
+class TestKeptRecordingThroughTheController:
+    """Development-recordings plan Task 2.1 (C3, D2, D15): each of the five
+    Complete paths keeps the audio exactly when the recording was started
+    under development consent (a recovered one: when the window says so,
+    from its checkout record); ``last_completion_kept()`` and the audit
+    row's ``recording.kept_at`` report the ACTUAL outcome — never the
+    consent, so a consented mock session reads not kept."""
+
+    _COMPLETE_PATHS = TestPastSessionsThroughTheController._COMPLETE_PATHS
+
+    def _parts(self, tmp_path: Path) -> tuple[SessionController, Any, Any, Path]:
+        from scribe_desktop.audit import AuditLog
+
+        store = _archive(tmp_path)
+        audit = AuditLog(tmp_path / "audit", clock=lambda: NOW)
+        root = tmp_path / "sessions"
+        controller = SessionController(
+            MockCaptureBackend(), sessions_root=root, audit=audit, past_sessions=store
+        )
+        return controller, store, audit, root
+
+    def _complete(
+        self, tmp_path: Path, path: str, *, kept: bool, model_name: str = "small"
+    ) -> tuple[SessionController, Any, Any, str]:
+        from scribe_desktop.encounter import development_consent
+
+        controller, store, audit, root = self._parts(tmp_path)
+        if path == "complete_recovered":
+            directory = root / uuid.uuid4().hex
+            directory.mkdir(parents=True)
+            (directory / KEY_FILENAME).write_bytes(b"\0" * 64)
+            crypto = SessionCrypto()
+            (directory / TRANSCRIPT_FILENAME).write_bytes(
+                crypto.encrypt(_document(directory.name, model_name=model_name))
+            )
+            audio = SessionChunkStore.create(directory / "audio.enc", crypto, directory.name)
+            audio.append_chunk(b"\x01\x02" * 64)
+            audio.finish()
+            controller.complete_recovered(directory, crypto, label=None, kept=kept)
+            return controller, store, audit, directory.name
+        given = development_consent(NOW) if kept else None
+        session = controller.start(0, consent=unlinked_consent(), development_consent=given)
+        controller.finish()
+        controller.mark_queued()
+        sid = session.session_id
+        directory = root / sid
+        crypto = unwrap_key_from_file(directory)
+        transcript = _document(sid, model_name=model_name)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(crypto.encrypt(transcript))
+        note = _archived_note(sid, transcript)
+        (directory / NOTE_FILENAME).write_bytes(crypto.encrypt(note))
+        if path == "complete":
+            controller.complete()
+        elif path == "complete_without_note":
+            controller.complete_without_note(controller.begin_generation())
+        elif path == "complete_deleting_saved_note":
+            controller.complete_deleting_saved_note()
+        else:
+            seed = controller.reserve_write(sid)
+            identity = hashlib.sha256(note).hexdigest()
+            controller.with_write_custody(
+                seed,
+                lambda d, c: store_write_record(
+                    d, c, sid, _write_record("written", identity=identity)
+                ),
+            )
+            seed.release()
+            controller.complete_after_write(controller.reserve_write(sid))
+        return controller, store, audit, sid
+
+    @pytest.mark.parametrize("kept", [True, False], ids=["kept", "not_kept"])
+    @pytest.mark.parametrize("path", _COMPLETE_PATHS)
+    def test_every_path_keeps_the_audio_only_under_consent(
+        self, tmp_path: Path, path: str, kept: bool
+    ) -> None:
+        controller, store, audit, sid = self._complete(tmp_path, path, kept=kept)
+        assert controller.last_completion_kept() is kept
+        assert store.recording_kept(sid) is kept
+        assert [listing.recording_kept for listing in store.list_entries()] == [kept]
+        assert _audit_row(audit, sid).recording.kept_at == (NOW if kept else None)
+
+    @pytest.mark.parametrize("path", _COMPLETE_PATHS)
+    def test_a_consented_mock_session_reads_not_kept(self, tmp_path: Path, path: str) -> None:
+        controller, store, audit, sid = self._complete(
+            tmp_path, path, kept=True, model_name="mock"
+        )
+        assert controller.last_completion_kept() is False
+        assert not store.root.exists()
+        assert _audit_row(audit, sid).recording.kept_at is None
+
+    def test_a_failed_kept_complete_reads_not_kept_and_keeps_the_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The flag is reset at each attempt: after a kept Complete, a second
+        kept recording whose archive write fails reads not kept."""
+        from scribe_desktop.encounter import development_consent
+        from scribe_desktop.session import PastSessionWriteError
+
+        controller, _store, _audit, _sid = self._complete(tmp_path, "complete", kept=True)
+        assert controller.last_completion_kept() is True
+        session = controller.start(
+            0, consent=unlinked_consent(), development_consent=development_consent(NOW)
+        )
+        controller.finish()
+        controller.mark_queued()
+        directory = tmp_path / "sessions" / session.session_id
+        crypto = unwrap_key_from_file(directory)
+        (directory / TRANSCRIPT_FILENAME).write_bytes(
+            crypto.encrypt(_document(session.session_id))
+        )
+        _refuse_publish(monkeypatch)
+        with pytest.raises(PastSessionWriteError):
+            controller.complete()
+        assert controller.last_completion_kept() is False
+        assert (directory / KEY_FILENAME).is_file()
+        assert controller.state is SessionState.QUEUED

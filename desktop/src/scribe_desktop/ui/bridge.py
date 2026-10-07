@@ -347,6 +347,9 @@ class ChromeBridge(QObject):
         # H1 round 54 MED-052: and every Start, the desktop's too, meets the lock.
         session_screen.set_start_guard(self._start_guard_message)
         session_screen.session_resumed.connect(self._on_resumed)
+        # Development-recordings plan D2: the desktop-armed development tick
+        # is bound to the note Chrome reports when it is armed.
+        session_screen.set_development_target_provider(self._development_target)
 
     # --- the pipe's side (called on the PIPE thread: emit only) --------------
 
@@ -469,6 +472,11 @@ class ChromeBridge(QObject):
         # previous" lapses (it must be clicked again on the new connection).
         self._rules.lose_tab()
         self._pending_resume = None
+        # Development-recordings D2 (review round 11 LOW-005): a tick armed
+        # for a Chrome note lapses with the link that reported it — a later
+        # desktop Start must not consume it for another patient.
+        if self._screen.development_target is not None:
+            self._screen.disarm_development_tick(announce=True)
 
     def _on_connected(self, conn_id: int) -> None:
         self._conn = conn_id
@@ -715,6 +723,25 @@ class ChromeBridge(QObject):
         except ValidationError:
             return None
 
+    def _development_target(self) -> tuple[str, str] | None:
+        """Development-recordings plan D2: the ids — patient and treatment
+        note, never a name — of the note Chrome's focused (bound) tab reports
+        now, or None when it reports none."""
+        report = self._tabs.get(self._bound_tab) if self._bound_tab is not None else None
+        target = self._target_of(report) if report is not None else None
+        return None if target is None else (target.patient_id, target.note_id)
+
+    def _check_development_target(self) -> None:
+        """D2 (round 1 PR-MED-004): an armed development tick is disarmed when
+        Chrome's current context differs from the note it was armed on — for
+        any report of the bound tab, whatever the session's state (the D5
+        rule acts only while capturing). A report of the same note keeps it."""
+        screen = self._screen
+        if screen.development_armed() and self._development_target() != (
+            screen.development_target
+        ):
+            screen.disarm_development_tick(announce=True)
+
     def _on_context(self, report: ContextPayload) -> None:
         if report.seq <= self._last_seq:
             return  # replayed or out of order
@@ -729,6 +756,7 @@ class ChromeBridge(QObject):
         # while it is not the focused one.
         self._apply_rule(report)
         if report.tab_id == self._bound_tab:
+            self._check_development_target()
             request = self._ledger.report(report.seq, self._target_of(report))
             if report.page == "closed":
                 self._bound_tab = None
@@ -871,6 +899,12 @@ class ChromeBridge(QObject):
     def _refuse(
         self, action: str, reason: str, note_refusal: NoteRefusal | None = None
     ) -> None:
+        if action == "start" and reason != "getting_ready":
+            # Development-recordings plan D2 (round 3 PR-MED-031): EVERY
+            # refused Start clears the desktop-armed development tick but the
+            # warm-up's hold — decided by the OUTCOME, so the lock refusal
+            # that comes before the hold check clears it too.
+            self._screen.disarm_development_tick(announce=True)
         self._refusal = _Refusal(
             action,
             reason,

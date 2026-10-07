@@ -537,17 +537,45 @@ class PastSessionsScreen(QWidget):
         if store is None:
             return
         listing = self._listing(session_id)
+        # Development-recordings Task 2.2 (review round 8 LOW-003): whether it
+        # held a kept recording, read from the files before its key goes.
+        # Round 13 LOW-001 / round 15 PR-MED-002: held = kept, or deleted but
+        # not yet tidied (``gone``: perhaps held back by tidy because its
+        # deletion record failed) — decided from ONE read (round 17 PR-MED-001).
+        recording = store.recording_state(session_id)
+        held_recording = recording != "none"
+        recording_gone = recording == "gone"
+        label = listing.label if listing else None
+        created_at = view.started_epoch(label)
+        if self._audit is not None and held_recording and label is not None:
+            # The kept fact first (idempotent), so `deleted_early` can record
+            # the recording's deletion even when the Complete's own audit
+            # write failed — and BEFORE the entry goes (review round 14
+            # PR-MED-003): a true fact whether or not the deletion succeeds,
+            # so no interruption between the two loses it.
+            self._audit.record_recording_kept(session_id, label.completed_at, created_at=created_at)
+        if self._audit is not None and recording_gone:
+            # Round 15 PR-MED-002: that deletion is ALREADY a fact, so it is
+            # recorded before its evidence goes too. A refused write never
+            # holds the Delete now (only `begin` may refuse; C2): the entry
+            # goes, as every Delete now does during an audit outage.
+            self._audit.record_recording_deleted(session_id, created_at=created_at)
         try:
             store.delete_entry(session_id)
         except Exception as exc:  # noqa: BLE001 - the view maps it to an authored line (C3)
             self._show_message(view.delete_failed_line(exc))
             return
         if self._audit is not None:
-            self._audit.record_past_session(
-                session_id,
-                "deleted_early",
-                created_at=view.started_epoch(listing.label if listing else None),
-            )
+            if held_recording and label is None and not recording_gone:
+                # Review round 12 LOW-004: no label, so no completion time for
+                # the kept fact — the deletion itself is recorded (it needs no
+                # `kept_at`, `audit._recording_deleted`). Like `deleted_early`
+                # beside it, a deliberate destruction is a NEW event the audit
+                # records, so with no row it makes one dated now (D8; review
+                # round 15 PR-MED-003, accepted) — unlike the unattended repair
+                # (`app.record_deleted_recordings`, `create=False`).
+                self._audit.record_recording_deleted(session_id)
+            self._audit.record_past_session(session_id, "deleted_early", created_at=created_at)
         self._drop([session_id])
         swept = self._current_sweep()
         if listing is not None and listing.label is None and swept is not None and swept.undated:
