@@ -61,9 +61,10 @@ result is recorded there as a dated RUN line.
 4. **Ten shadow consultations at clinic 1 (P.4).** After P.3 passes (the
    consent sheet `patient-info-v2`,
    `docs/practice/patient-information-and-consent.md`, was approved on
-   2026-10-07). Tick "Shadow mode
-   (pilot)" on the Status tab; for each consultation obtain consent with the v2
-   sheet and record it in Cliniko as v2, let the app draft its note, score it
+   2026-10-07; its successor `patient-info-v3`, for 0.3.0's kept recordings,
+   replaces it once the practitioner approves it). Tick "Shadow mode
+   (pilot)" on the Status tab; for each consultation obtain consent with the
+   current sheet and record its version in Cliniko, let the app draft its note, score it
    on the rubric at the scoring point, write your own note in Cliniko as usual,
    and add one log row. Untick the box afterwards.
 5. **Twenty reviewed consultations at clinic 1 (P.5).** Shadow mode off; the
@@ -98,7 +99,13 @@ result is recorded there as a dated RUN line.
   (its category and the part of the app), never the patient.
 - **Synthetic encounter ids** (`syn-01` …) and neutral role-play ids (`rp-01` …)
   may appear in the register; they identify invented content only.
-- **Real consultations are never exported** to a WAV or fed to the validation
-  harness (pilot plan Constraint 8). The audit record's CSV export, which shows
+- **Real consultations are never fed to the validation harness** (pilot plan
+  Constraint 8). Since 0.3.0 a real consultation's recording may be kept with
+  the patient's written consent (`docs/practice/development-recording-consent.md`)
+  and exported to a WAV for speaker labelling — on this computer's own
+  drive, in its own folder (never the role-play folder or a validation set
+  folder), deleted when the labelling is done; Constraint 8 records that
+  reconciliation (2026-10-08). Each kept recording's 12-month review goes in the
+  pilot log's "Kept recordings — review" table. The audit record's CSV export, which shows
   each recording's mode and app version, stays outside the repository too (it
   carries Cliniko ids).

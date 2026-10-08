@@ -48,6 +48,8 @@ LOG_COLUMNS = (
     "Clinic",
     "Mode",
     "App version",
+    # Development-recordings plan Task 5.3b (D9): yes / no.
+    "Kept",
     "R1",
     "R2",
     "R3",
@@ -70,6 +72,16 @@ LOG_TOTAL_COLUMNS = (
     "Median minutes",
     "Missed total",
     "Would sign yes",
+)
+# Development-recordings plan Task 5.3b (D9): why a kept recording is still
+# kept at its 12-month review — closed words, linked by the log's row number
+# (or, outside the pilot log, the consultation's date).
+LOG_REVIEW_COLUMNS = (
+    "Row",
+    "Consulted",
+    "Reviewed",
+    "Outcome",
+    "Kept for",
 )
 REGISTER_COLUMNS = (
     "ID",
@@ -195,17 +207,22 @@ class TestPilotDocuments:
 class TestPilotLogTemplate:
     def test_the_columns_are_the_fixed_list(self) -> None:
         tables = _tables(TEMPLATE)
-        assert [tuple(table[0]) for table in tables] == [LOG_COLUMNS, LOG_TOTAL_COLUMNS]
+        assert [tuple(table[0]) for table in tables] == [
+            LOG_COLUMNS,
+            LOG_TOTAL_COLUMNS,
+            LOG_REVIEW_COLUMNS,
+        ]
 
     def test_the_template_stays_unfilled(self) -> None:
         """The filled log lives off the repository (README): the template's
-        one row carries only its row number, and the totals rows only their
-        clinic and mode."""
-        log, totals = _tables(TEMPLATE)
+        one row carries only its row number, the totals rows only their
+        clinic and mode, and the kept-recordings review row nothing."""
+        log, totals, review = _tables(TEMPLATE)
         assert log[1:] == [["1"] + [""] * (len(LOG_COLUMNS) - 1)]
         for row in totals[1:]:
             assert row[0] in {"1", "2"} and row[1] in {"shadow", "normal"}
             assert row[2:] == [""] * (len(LOG_TOTAL_COLUMNS) - 2)
+        assert review[1:] == [[""] * len(LOG_REVIEW_COLUMNS)]
 
 
 class TestFindingsRegister:

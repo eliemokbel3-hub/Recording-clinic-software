@@ -1,4 +1,4 @@
-# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot)
+# Threat Model (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings)
 
 Scope: the implemented system — extension shell, native-messaging host,
 registration chain, logging, credential/session-crypto foundations (Phase 1),
@@ -29,7 +29,12 @@ per-machine installer, the separately shipped model pack, the build of record,
 and the developer build as a separate channel ("Installation" below); plus the
 pilot (PLAN.md Phase 7's pilot half, the pilot plan, built 2026-10-04): shadow
 mode, schema v2 of the audit row, the encounter record and the Past-sessions
-label, and the developer-build validation harness ("The pilot" below). Every
+label, and the developer-build validation harness ("The pilot" below); plus
+the kept recordings (the development-recordings plan, 0.3.0, built
+2026-10-07 → 2026-10-08): a consultation's audio kept beside its Past-sessions
+entry under the patient's written consent, Delete recording, Export
+recording (WAV) and the developer-build replay tool ("Kept recordings"
+below). Every
 `%LOCALAPPDATA%\ClinikoScribe` path in this document is the installed
 (production) app's data folder; a source checkout — the developer build —
 keeps the same layout under `%LOCALAPPDATA%\ClinikoScribe-dev`, plus its own
@@ -40,8 +45,11 @@ per-session keys; an UNPROTECTED recovery store expires at ~24 h (eligible at
 24 h, destroyed by the next successful sweep), while a live or under-review
 session is sweep-exempt (see the retention schedule for the exemption). Since
 the privacy-professional-controls plan, every non-mock Complete also KEEPS
-the session's transcript, saved note and generated note — never its audio —
-in a Past-sessions entry under its own key, for a retention the practitioner
+the session's transcript, saved note and generated note — never its audio,
+except (since the development-recordings plan, 0.3.0) for a recording kept
+under the patient's written development consent, whose audio joins the entry
+under a key wrapped by the entry key ("Kept recordings" below) — in a
+Past-sessions entry under its own key, for a retention the practitioner
 chooses (default: until they delete it), and every session leaves a
 content-free audit row for 7 years.
 Patient NAMES now exist too: in memory, fetched from Cliniko for a verified
@@ -172,7 +180,10 @@ remains an accepted residual.
    may retain the wrapped key blob or ciphertext until overwritten.
    Cryptographic deletion therefore holds at the same-user boundary the
    model already accepts, not against a forensic examiner with the disk.
-   No overwrite-before-delete code (weak on NTFS/SSD anyway); full-volume
+   No overwrite-before-delete code (weak on NTFS/SSD anyway) — except, since
+   0.3.0, Delete recording's in-place zeroing of a kept recording's
+   `audio-key.enc`, which carries the same NTFS/SSD limits ("Kept recordings",
+   residue (6)); full-volume
    encryption (BitLocker) is the real mitigation and is OS hygiene, not app
    scope.
 3. **Runtime offline enforcement (primary proof: environment, not
@@ -2106,7 +2117,9 @@ note, never anything but the note's `content`. What the structure enforces:
   session — audio, transcript, `note.enc`, `encounter.enc`, `write.enc` — is
   gone with its key. What remains: the draft in Cliniko, which the clinician
   still finalises (the system of record); the session's Past-sessions entry
-  (transcript, saved note, generated note — never audio or the write record)
+  (transcript, saved note, generated note — never the write record, and never
+  audio unless the recording was kept under written development consent,
+  "Kept recordings" below)
   for the practitioner's retention setting; and its audit row, with the
   write's attempts, last outcome and written-at, for 7 years
   (privacy-professional-controls plan; "Privacy and professional controls"
@@ -2730,7 +2743,8 @@ THE REVERSAL. Until this plan, Complete destroyed everything of a session and
 the draft in Cliniko was the only copy. At the practitioner's request ("like
 Heidi") every non-mock Complete now KEEPS the session's transcript, saved note
 (unless the path deletes it) and generated note (when readable) — never its
-audio — in a Past-sessions entry, for a
+audio (since 0.3.0 a recording kept under written development consent also
+keeps its audio, "Kept recordings" below) — in a Past-sessions entry, for a
 retention the practitioner chooses (default: until they delete it); every
 session also leaves a content-free audit row for 7 years. Two long-lived
 stores of clinical and ids-only data now sit beside the session store, under
@@ -2750,7 +2764,10 @@ THE PAST-SESSIONS ARCHIVE (`past_sessions.py`; D1, D3, D6; C1, C4).
   present and not deleted by the path — never on Complete without a note or
   Complete deleting the saved note. NEVER audio (C4: the source key, which
   also encrypted `audio.enc` and any superseded temporary file, is still
-  deleted), `encounter.enc`, `write.enc`, `saved-provenance.enc` or an audit
+  deleted) — except, since 0.3.0, a non-mock Complete of a recording kept
+  under written development consent, which stages a re-encrypted COPY of the
+  audio under its own key wrapped by the entry key ("Kept recordings" below;
+  the session's own `audio.enc` and key still go) — and never `encounter.enc`, `write.enc`, `saved-provenance.enc` or an audit
   id. A MOCK session keeps nothing (audit `not_kept_mock`): the transcript's
   model, the generated note's provider or the saved note's provider starting
   with `mock`, casefolded (the mock transcriber records `MockSpeechProvider`).
@@ -3338,7 +3355,7 @@ boundary (one type-name line, exit 1). RESIDUE: a source run's worker
 (`python -m scribe_desktop.benchmark`) still prints a Python traceback to its
 stderr on an exception — developer build only.
 
-## The pilot: shadow mode, audit v2 and the validation harness (pilot plan, PLAN.md Phase 7 pilot half; Phase 1 BUILT 2026-10-04, Phase 2 2026-10-04 → 2026-10-07, live smokes PASS 2026-10-04 and 2026-10-07 on the developer build; version 0.2.0, NOT YET a build of record)
+## The pilot: shadow mode, audit v2 and the validation harness (pilot plan, PLAN.md Phase 7 pilot half; Phase 1 BUILT 2026-10-04, Phase 2 2026-10-04 → 2026-10-07, live smokes PASS 2026-10-04 and 2026-10-07 on the developer build; version 0.2.0, a build of record since 2026-10-07)
 
 What exists: a per-recording SHADOW mode in which the app drafts its note as
 usual but never lets it be copied or written to Cliniko, so the practitioner's
@@ -3437,7 +3454,11 @@ learned: shadow recording". A demotion of a learned rule the practitioner
 corrected still applies — it only makes the app more cautious.
 
 WHAT A SHADOW RECORDING STILL KEEPS. Everything else is unchanged: the audio
-is destroyed at Complete or Discard, the transcript and notes are kept in its
+is destroyed at Complete or Discard — except that, since 0.3.0, a non-mock
+COMPLETE keeps it when the patient consented in writing to it being kept for
+development (a Discard destroys it whatever was ticked; a shadow recording may
+be kept and exported, D7 of the development-recordings plan; "Kept recordings"
+below, shadow residue) — the transcript and notes are kept in its
 Past-sessions entry (marked "(shadow recording)" in the list) for the
 retention setting, and its audit row records `mode` `shadow`. The kept label's
 shadow flag follows the live session at Complete: each of the four live
@@ -3458,7 +3479,15 @@ names. A v1 row — a v1 `pre_audit` row included — is upgraded in `_decode` B
 validation (mode `normal`, no version) and exports that way; a v1 row that already names either field is not
 one this app wrote and is refused, and so are stored bytes naming no
 `schema_version` and a v2 row without `mode` (review round 22). The CSV gains
-the two columns. THE
+the two columns. AUDIT V3 (development-recordings plan D15, 0.3.0) adds the
+flat token `development_consent_version` (a v3 row must NAME it, null
+allowed, as v2 names `mode`) and the nested content-free `recording` record
+(`kept_at`, `deleted_at`, `exports`); a v2 row upgrades through `_upgrade_v2`
+(none, an empty record) and a v1 row through both upgrades; the CSV gains
+four columns LAST (a v3 row must also name `recording`); `kept_at` is
+registered in the log tripwire
+("Kept recordings" below). A v3 row is NEWER to 0.2.0, and so is every row
+0.3.0 has updated (`docs/release/pilot-builds.md`). THE
 PAST-SESSIONS LABEL v2 adds `shadow` (strict bool; v1 reads as not shadow; a
 label naming v1 with a shadow flag, or v2 without one, is refused, and so is
 a stored label naming no version at all — review round 22, the encounter
@@ -3550,8 +3579,12 @@ a leftover `<id>.built` from an interrupted build, which it takes as its own
 `docs/testing/validation-harness.md`). RESIDUES: (1)
 CONSTRAINT 8 IS AN OPERATING RULE: the harness cannot tell a mock recording
 from a real one, so "a real consultation is never exported to a WAV or fed to
-the harness" is the practitioner's to keep — the app itself never writes audio
-outside its encrypted store; (2) the set folder, the role-play WAVs and the
+the harness" is the practitioner's to keep — until 0.3.0 the app itself never
+wrote audio outside its encrypted stores; since the development-recordings
+plan its Export of a KEPT recording writes one `<session id>.wav` (the
+practitioner's explicit choice, "Kept recordings" below), and Constraint 8
+carries a dated reconciliation: such a file is for speaker labelling in its
+own folder, never a set folder; (2) the set folder, the role-play WAVs and the
 redirected report are outside the app's custody (plaintext audio of invented
 or mock content; the retention schedule's Pilot rows — the role-plays kept in
 one local folder under decision 3.6, with a review date); (3) a leftover temporary store the OS refuses to delete or
@@ -3568,6 +3601,328 @@ never copying it (rule v1, call 1, `docs/testing/validation-harness.md`), is
 the practitioner's operating rule, not an enforced control — and the file is
 committed to the public repository, so a copied one would publish the
 practitioner's learned phrases.
+
+## Kept recordings (development-recordings plan; 0.3.0; BUILT 2026-10-07 → 2026-10-08, live smokes PASS on the developer build)
+
+THE REVERSAL, NARROWED. Until 0.3.0 no consultation's audio outlived its
+session key. With the patient's WRITTEN consent to the recording being kept
+for developing the program (`docs/practice/development-recording-consent.md`,
+`development-consent-v1`), ONE recording's audio is now kept, encrypted,
+beside its Past-sessions entry, until the practitioner deletes it, with a
+review reminder 365 days after its Complete (none for an entry whose label
+cannot be read, which the practitioner reviews by hand); it can be deleted alone at any time, exported
+as a plaintext WAV on this computer for speaker labelling (each Export writes
+one `<session id>.wav`; the audit row counts them, short of an export whose
+count write is lost — residue (5)), and replayed
+by a practitioner-run developer tool that prints numbers only. Everything is
+under the existing same-user DPAPI boundary (boundary 2); nothing reaches a
+network. The plan's D1–D15 and C1–C10; data-flow-map flow 27 and the
+retention schedule's "Kept recordings" rows describe the same surfaces.
+
+THE SETTING (D1). "Keep recordings for development (written consent only)"
+on the Status tab, both channels, saved as `config\development.json`
+(`{"schema_version": 1, "keep_recordings": bool}`, at most 4 KiB) through the
+config folder's one atomic write path. FAIL CLOSED TO NOT KEPT — the
+opposite polarity to `pilot.json`: absent, unreadable, over its bound, not
+valid, naming no version or a non-integer one, or not naming
+`keep_recordings` all read OFF, and the Status tab names the unreadable state.
+RESIDUE: a user setting, writable by any process of this Windows user — it
+decides only whether the second tick is offered.
+
+THE SECOND CONSENT (D2, D3, C3, C7). With the setting on, the Session tab
+shows a second tick above Start, `encounter.DEVELOPMENT_CONSENT_TEXT` ("I
+confirm the patient has consented in writing to this recording being kept for
+developing the program"), never pre-ticked. Both Start funnels (desktop and a
+linked Start from Chrome) READ the tick after the warm-up hold check, clear
+both ticks, and resolve a `DevelopmentConsent(confirmed_at, text_version=
+"development-consent-v1")` only when the setting, re-read at the click, is
+still on. It is written into the frozen `RecordingSession`, `encounter.enc`
+v3 (a v3 record must NAME `development_consent`, null allowed; a v1 or v2
+record naming it, a v3 record omitting it or omitting `mode`, and a newer
+version are refused) and the audit row v3 (`development_consent_version`)
+before any audio. Every construction of a session or encounter record, the
+Start call, `AuditLog.begin` and all five `_complete_locked` calls name their
+keyword explicitly — `tests/test_shadow_exits.py` counts them by callee
+(`_CONSENT_KEYWORD`), so a site that omits it fails. The tick survives ONLY
+the held `getting_ready` refusal; every other refused Start (at the screen or
+the bridge, the session-lock refusal included), a Chrome report naming
+another note or patient than the ids bound when it was armed (ids only —
+compared in the bridge's context handler, for every report of the bound tab,
+whatever the session state), a dropped Chrome link (for a tick armed while
+Chrome reported a note), a lock or a suspend clears it, and the Session tab
+says so ("The keep-for-development tick was cleared …"); the setting going
+off clears it too, unannounced (the tick is hidden then).
+Kept is decided ONCE: a live Complete from the controller's copy; a recovered
+Complete from the checkout's ONE decrypt of `encounter.enc`
+(`MainWindow.session_kept_for` reads the HELD record; none → not kept) —
+never the UI's tick and never a fourth `read_encounter_record` caller. The
+Complete message says "The recording was kept for development." from the
+ACTUAL outcome (`SessionController.last_completion_kept`), never the intent,
+so a consented mock session (which keeps nothing) does not claim it.
+RESIDUES: (1) THE APP RECORDS AN ATTESTATION, IT CANNOT VERIFY A SIGNATURE:
+that a written form exists is the practitioner's to keep (the consent
+document's Part B). (2) A CHROME START CONSUMES THE DESKTOP-ARMED TICK
+(practitioner, 2026-10-07): the practitioner is looking at Chrome when it is
+used; the bound-ids clear and the Complete line are the controls, and a
+mis-kept recording is deleted by Delete recording. (3) No Chrome indicator
+(no protocol change).
+
+THE SIDECAR AND ITS TWO KEYS (D5, D6, C4, C5). At a non-mock Complete of a
+kept session, `complete_session(keep_audio=True)` hands the archive a ONE-SHOT
+iterator over the session's own `audio.enc` (`iter_chunks`, footer required
+exactly when the store has one — a crash-recovered store has none); the
+archive stages, inside the entry's own staging and after its `key.dpapi`, a
+FRESH audio key and `past_sessions\<id>\audio.enc` in the session
+chunk-store format, appending chunk by chunk (at most 1 MiB of plaintext at a
+time) while hashing the PCM, then `audio-key.enc` = the audio key's 32 bytes
+encrypted under the ENTRY key with AAD `past-audio-key:<id>` (60 bytes) — the
+codebase's FIRST key-under-key (every other store is one DPAPI blob). The
+staged entry's verification adds the audio: the exact file set with both
+names, the audio key unwrapped through the entry key, the staged audio re-read
+with its footer REQUIRED and hashed again, the digests equal — never a
+whole-file read. Any failure, a session with no readable audio store included,
+raises before the session key goes, so Complete keeps the key and can be
+retried (C4). Deleting the ENTRY key destroys the audio on every build,
+0.2.0's Delete now and expiry included (the audio key is wrapped under it).
+Every entry destroyer unlinks `audio-key.enc` best-effort after `key.dpapi`
+— belt-and-braces; only `key.dpapi` decides its result. "KEPT" is both files
+present and the key file not all zeros — a 60-byte read, no decryption — and
+a zeroed key file is the recognisable "destroyed, cleanup pending" state.
+`read_recording` (entry key → audio key → `iter_chunks`) destroys both keys
+when its generator closes; the readers of a kept recording are COUNTED in
+`tests/test_shadow_exits.py` (`_READER_REFERENCES`: staging's digest, the
+store's reader, Export and the replay tool).
+
+THE AUDIT FACTS (D15, C6). The audit row v3 carries the nested content-free
+`recording` record — `kept_at`, `deleted_at`, `exports` — as FIELDS, not
+events (32 events keep only the newest, and the CSV has no events column);
+the CSV gains `development_consent_version`, `recording.kept_at`,
+`recording.deleted_at`, `recording.exports` LAST. `kept_at` is set in the
+completion write itself. The facts follow the FILES, never the consent: at
+start-up (`recover_exports` → `clean_staging` → the session sweep →
+`reconcile_pending` and its reconciled commits' `archived` → the kept-fact
+repair over EVERY committed kept entry → the deletion record →
+`tidy_dead_recordings` → the retention sweep; every later 15-minute sweep tick
+runs `clean_staging` → the session sweep → `reconcile_pending` and its
+`archived` → the deletion record → `tidy_dead_recordings` — no export
+recovery and no kept-fact repair — and the retention sweep at most hourly) a
+kept entry whose completion
+write never landed gets `kept_at` (idempotent) WHEN ITS LABEL CAN BE READ —
+`kept_at` is the label's completion time, so an entry with no readable label
+is left for a later start (`app.repair_kept_facts`) — and a recording found
+deleted but not yet tidied gets `deleted_at` BEFORE tidy removes the
+evidence; tidy removes a dead recording's files only for ids whose deletion
+was recorded (POSITIVE clearance) and holds the rest from expiry. Every
+destroyer of a kept entry (Delete now, Delete recording, the retention sweep)
+records the kept fact first when the entry's label can be read, from ONE read
+of the entry's recording state (with no readable label there is no
+completion time: Delete now and Delete recording record only the deletion,
+and the retention sweep never expires an undated entry); Delete now and
+expiry of a kept entry also set `deleted_at`. Every unattended
+audit write (the reconciled commit's `archived`, the kept-fact repair, the
+deletion record, the sweep's kept / deletion / `expired` writes) goes through
+ONE rule, `ui/past_sessions_view.unattended_write`: nothing for a month the
+7-year prune has passed (judged by the month's prune date, whether or not the
+prune has run yet), an existing row only when the label cannot be read,
+otherwise dated by the session's START; the deliberate actions (Delete
+recording, Export) make a `pre_audit` row when none exists, as Delete now
+does. `kept_at` is registered in `logging_setup._PAYLOAD_SIGNATURES`, so a
+rendering of the nested record on its own is dropped by the tripwire.
+RESIDUES: (4) a record write can fail (counted, never raised) — the custody
+action goes ahead (C2 of the privacy plan), and the start-up repair closes
+the kept and deleted facts only from files that SURVIVE — a committed kept
+entry with a readable label (its `kept_at`; an unreadable label gives no
+`kept_at` until it reads again), or a deleted recording's zeroed key or
+leftover files held back by tidy (its `deleted_at`, recorded with or without
+a label — on an existing row only when the label cannot be read). A WHOLE-ENTRY destroyer leaves nothing
+to repair from: Delete now and expiry record the kept fact BEFORE the entry
+goes, but its `deleted_at` (with `deleted_early` / `expired`) only after,
+because it is true only once the entry is gone — so if that one write fails,
+the row keeps `kept_at` with no `deleted_at` for good, an audit gap (never a
+custody one: the recording is destroyed); (5) an export count lost to a kill
+between the rename and its audit write (review round 22 LOW-004) is not
+repaired (the ledger row is already gone — or, for a kill before its drop,
+dropped at the next start as resolved, with no count).
+
+DELETE RECORDING (D8, D6). Two clicks within 10 s on the Past sessions tab,
+for a kept entry only, deletes the recording ALONE: `audio-key.enc` is opened
+`r+b` — refused when it is a link, a hard link naming another file, not a
+regular file or larger than a key file — overwritten with zeros IN PLACE
+(never the atomic writer, whose replacement would leave the original bytes),
+flushed, `fsync`ed and read back as zeros; THEN the deletion is recorded in
+the audit row (`on_destroyed`), THEN `audio-key.enc` and `audio.enc` are
+unlinked best-effort — skipped when the record fails, so the zeroed key stays
+as the evidence the next deletion record needs. Once the zeros are synced the
+recording is destroyed: an unlink that fails or is skipped (a Windows file
+lock, a crash, a failed record) is still a successful deletion, finished by a
+later tidy (at start-up or the next sweep tick, once its deletion is
+recorded); a failed or unverified overwrite
+raises `recording_delete_failed` with the key file as it was (or partly
+zeroed — never reported deleted). `key.dpapi`, the transcript and the notes
+are never touched. RESIDUE (6) — WEAKER THAN DELETE NOW: the ENTRY key stays
+on disk and usable by this Windows user by design, so the deletion rests on
+the 60 old bytes of `audio-key.enc` being unrecoverable; a file that small
+lives inside its NTFS file record and is overwritten there, but the file
+system's journal, a volume shadow copy, a backup made before the deletion or
+an SSD's remapped cells may still hold the old bytes, and with them and this
+user's DPAPI the audio is readable again until the entry itself is deleted.
+Delete now destroys the entry's whole DPAPI-wrapped key instead (the same
+forensic class as every key unlink here, but nothing on disk then opens the
+audio). Full-disk encryption (BitLocker) is the practice's control for the
+disk-level copies.
+
+EXPORT — A PLAINTEXT EXIT (D7, D10, C2, C5). Each "Export recording (WAV)"
+writes ONE unencrypted `<session id>.wav` (16 kHz mono PCM16, the whole
+consultation) by the practitioner's explicit choice — the planner's
+recommendation was no export (declined 2026-10-07); the app does not limit how
+many exports are made (to different folders, or after a WAV is deleted) — it
+counts them (residue (5): a count write can be lost). The custody, in order: the TAB refuses with no injected
+`WindowsLayer` (fail closed); the save dialog, whose FOLDER only is used (the
+name is fixed); the tab's `exclusions.check_export_location` on that folder;
+then, for a shadow entry (or one whose label cannot be read), the one
+question. Then the STORE: a relative folder refuses; the folder is RESOLVED
+(`os.path.realpath`); every earlier unresolved ledger row is resolved (one
+that cannot be refuses the export; an unreadable or busy ledger refuses too);
+an existing `<id>.wav` refuses (never replaced); the resolved folder is
+checked AGAIN by the same rule immediately before the create (codex round 23
+PR-HIGH-001), so a junction or drive mapping changed while the dialog or the
+question was open cannot redirect the file. REFUSED, never asked: every
+`check_location` finding (a folder in or under one of OneDrive's environment
+roots, a `\\` path or a `DRIVE_REMOTE`
+drive, the roaming profile), any drive whose type is not `DRIVE_FIXED`
+(removable or unknown), either channel's app data folder, and any check that
+raises. Then `<id>.wav.part` is created EXCLUSIVELY
+(`O_CREAT | O_EXCL`; a file of that name refuses — the app never adopts a file
+it did not create); the EXPORT LEDGER row (`past_sessions\exports.enc` under
+`exports-key.dpapi`, outside every entry so Delete now and expiry never
+remove it: the folder and the created file's identity — file index and
+volume, read by `os.fstat` on the app's own descriptor) is written BEFORE the
+first byte of audio; the PCM is streamed through the ONE WAV writer
+`speech.write_wav`, synced and renamed; the row is dropped and
+`recording.exports` counted only after the rename. Any failure after the
+`.part` exists — a later chunk failing authentication after earlier
+plaintext was written, a full disk, a failed close or rename — closes the
+handle and removes the `.part` (through the one exclusive handle below once
+its identity has been read; by its name if the failure came before that); one
+that cannot be removed is NAMED for removal by hand, and keeps its ledger row
+when one was written (the next start's recovery retries it) — a failure
+before the row exists (the stream not opened, the identity not read, the row
+not written) leaves only the named line. A hard kill or power loss skips that: the next
+start's `recover_exports`, before every other Past-sessions start-up step,
+removes each row's `.part` ONLY while it is still the file the app created —
+verified and deleted through ONE exclusive Windows handle (`PartKernel`:
+`CreateFile` with no sharing, the reparse point opened as itself, `fstat`,
+then delete-on-close through `SetFileInformationByHandle`; codex round 24
+PR-MED-001) — sparing a finished `.wav` and any file whose identity differs
+(kept row, one line); an unreadable ledger is reset with one line saying a
+partial file may remain (naming none); one that cannot be opened this time is
+left alone, with one line, and resolved by the next export or start.
+The finished WAV is the practitioner's to delete; the app never touches it
+again. THE ONE WRITER: the only `wave` reference that writes is
+`speech.write_wav` (the validation-set builder calls it too), pinned in
+`tests/test_shadow_exits.py` by counting EVERY reference to `wave`
+(`_WAVE_REFERENCES`) and to `write_wav` / `wav_bytes`
+(`_WRITER_REFERENCES`) in the package, with no exemption list.
+The conftest replaces the real `PartKernel` for the whole run, so no test
+reaches the Windows API. RESIDUES: (7) THE LOCATION CHECK'S REACH: sync
+software the layer cannot see (anything but OneDrive's own environment
+roots, a network path and the roaming profile — and a OneDrive folder whose
+variable is unset or points elsewhere is not seen either: an unset variable
+is skipped); an external drive Windows
+itself reports as fixed (many USB SSDs) and another volume mounted into a
+folder of a fixed drive — the drive LETTER's type is read, not the mounted
+volume's (review round 20 MED-003); a folder other local accounts can read
+(the single-practitioner machine's residue, round 20 LOW-012). (8) THE
+INSTANTS: between the store's re-check and the exclusive create (a same-user
+process could re-point the folder; codex round 23); and a `.part` the export
+created an instant earlier with no identity yet read is removed by its name
+(round 24) — everything else is removed through the one handle. (9) AN
+UNPLUGGED DRIVE: a `.part` on an external drive Windows reported as fixed,
+unplugged at the next start, reads as not found and its ledger row is dropped
+(a folder deleted by hand must not hold its row for ever; review rounds 20
+LOW-002 and 22 LOW-001) — the file stays on that drive. (10) THE AUDIO EXIT
+PINS ARE A TRIPWIRE, NOT A SANDBOX: they count every reference by any name
+but cannot see a reference built at run time (a computed string, `exec` /
+`eval`, an object handed in from outside the package), nor an in-place edit
+of a pinned `wave` site that keeps its count (codex rounds 23, 25–26) — they
+catch an accidental second writer, not deliberately obfuscated code in the
+package. (11) THE SHELL'S RECENT FILES: the save dialog leaves the folder and
+`<session id>.wav` in Windows' recent-files lists, as the CSV export does —
+content-free. (12) GUI-THREAD BOUNDS: a kept Complete adds three AES-GCM and
+SHA-256 passes over the audio (about 58 MB for 30 minutes: about a second on
+an SSD, several on a slow laptop) inside `_complete_locked` on the GUI thread,
+and Export streams on the GUI thread too; Chrome commands queue meanwhile.
+Complete is not moved off-thread (the lock-ordering lessons, `docs/lessons.md`).
+
+THE SHADOW RESIDUE (D7). A shadow recording may be kept and exported: shadow
+governs where the NOTE goes, keeping and export concern the RECORDING under
+the patient's own written consent. The same open entry says its note cannot
+be copied beside an enabled Export, and the WAV holds everything the note
+holds — so Export's confirm for a shadow entry says it was a shadow recording
+and that the file holds the whole consultation unencrypted, and the
+one-writer pin extends the shadow-exit test's "note text" rule to recorded
+audio. (13) A practitioner who confirms carries the consultation out of the
+app's custody as plaintext; the pilot's no-clinical-use rule for a shadow
+note does not reach the audio.
+
+THE REPLAY TOOL (D11, C1, C5, C6, C8). `scripts/replay-kept-recordings.py
+<past_sessions folder>` → `scribe_desktop.replay_kept.main`, developer build
+only (a packaged build refuses), practitioner-run from a normal terminal.
+CUSTODY: a pure reader of the folder it is given — `kept_session_ids` (names
+and the key file's zero-check, nothing decrypted), then per replayed entry
+`read_replay_inputs` (the transcript and the saved note only — never the
+label, so no patient's name, nor the generated note) and `read_recording`;
+writes nothing there and no audit row. Each recording's PCM is held in memory
+for its own entry only and transcribed in a temporary store under
+`%TEMP%\scribe-speaker-eval-*` whose key lives in MEMORY only
+(`speaker_eval.transcribe_in_temporary_store(..., persist_key=False)`: no
+`key.dpapi` is ever written — round 5 PR-HIGH-051 — so a hard kill or power
+loss leaves ciphertext no key opens), torn down on every path; a store that
+cannot be shown gone STOPS the run with `speaker_eval`'s own custody
+diagnostic. THE HELD EXCLUSION: the run proceeds only when
+`app.acquire_instance_exclusion()` is `acquired` (`already_running` and
+`unavailable` refuse) and HOLDS it to the end, released in `finally`, so
+neither build can start, sweep, reconcile or Complete underneath; the
+acquire and release are injected seams and the conftest refuses the real
+one, so no test takes the real `app.lock`. C8 — THE ONE READ-ONLY EXCEPTION
+to the installation plan's C8: pointed at the installed app's
+`past_sessions`, the developer channel reads that folder (named only on the
+command line; the production path is spelled only in a docstring) and touches
+the production data folder otherwise only through `app.lock`, the one path
+both channels already share. OUTPUT: session ids, numbers, model names
+shaped like names, the folder given on the command line, and fixed text —
+drift, not accuracy, under the shipped
+default note config (never the app's `config\`); errors by exception type
+or closed reason code, each written after its handler; the custody line and
+an `EnrolmentError`'s fixed numbers-only text are the only exception texts
+printed; a command line it cannot parse, a non-id `--only` and a path that is
+not a folder are refused without echoing what was typed. OFFLINE:
+`apply_offline_env()` then `assert_offline_env()` before any model loads.
+RESIDUES: (14) the PCM and both transcripts are plaintext in the tool's
+memory for one entry at a time (the best-effort scrubbing residual); (15) a
+temporary folder left by a kill holds ciphertext only and is named for
+deletion by the Ctrl+C line; (16) the practitioner pastes the numbers to the
+agent — C1 is an operating rule: no tool or test asks the agent to open,
+play, transcribe or describe a kept recording.
+
+OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
+ignores the audio (listing and reading test only `key.dpapi` and `pending`);
+its Delete now and expiry still destroy the audio (the key under the entry
+key). A live session whose `encounter.enc` is v3 opens on 0.2.0 through
+Recovery as UNLINKED and SHADOW, and an Unreviewed adoption refuses it; a v3
+audit row — and every row 0.3.0 has updated — is NEWER to 0.2.0 (kept, its
+updates fail and are counted, omitted from its CSV). 0.2.0 ignores
+`development.json` and the export ledger, so it never resolves an
+interrupted export. RESIDUE (17) — THE ROLLBACK GATE: finish or discard live
+sessions, then start 0.3.0 once more so its start-up resolves the
+interrupted exports it still knows of, search every folder ever exported to
+by hand, then install the older build (`docs/release/pilot-builds.md`,
+"Rolling back below 0.3.0"); nothing enforces it. A start-up that finds the
+ledger unreadable or busy, or a `.part` on a drive that is not attached
+(residue (9)), resolves nothing it can name — and a row an EARLIER start
+dropped (an unplugged drive, residue (9)) or forgot (a reset ledger) is no
+longer known at all, so the rule's by-hand search of every folder ever
+exported to is ALWAYS part of the gate, not only when a warning shows.
 
 ## Out of scope (tracked in PLAN.md phases)
 
@@ -3628,4 +3983,12 @@ reader of the audit row, the encounter record or the Past-sessions label, a
 rollback below 0.2.0, the shadow setting becoming anything other than a user
 setting, the mode reaching Chrome (a protocol change), or the validation
 harness gaining a store, a network module or an input other than a set
-folder of invented or mock encounters.
+folder of invented or mock encounters. For the kept recordings: a new reader
+or writer of a kept recording or of plaintext audio (a pin change in
+`tests/test_shadow_exits.py`), a second export destination rule or an
+"export anyway", a copy of a kept recording leaving this computer (excluded
+by the practitioner's decision of 2026-10-07 — it needs a new decision and
+its own consent wording), a change of the development-consent wording (a new
+version), a backup of Past sessions (which would carry the audio), the
+independent review's report on `development-consent-v1`, or a rollback below
+0.3.0.

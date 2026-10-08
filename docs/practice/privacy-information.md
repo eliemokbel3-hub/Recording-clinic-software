@@ -6,10 +6,13 @@
 > See the [practice documents README](README.md) for the sources and the open questions.
 
 Draft 1 (2026-10-01; the record of a recording and "How we use it" updated 2026-10-07 for
-the pilot build, approved by the practitioner the same day).
+the pilot build, approved by the practitioner the same day; the kept recording added
+2026-10-08 for version 0.3.0, awaiting the practitioner's approval).
 Text for the practice's privacy policy and collection notice, describing what Clinic
 Scribe does with patients' information. Fill in the bracketed parts; keep it in step with
-the [patient information](patient-information-and-consent.md) (`patient-info-v2`).
+the [patient information](patient-information-and-consent.md) (`patient-info-v3`) and
+[Keeping a recording to help develop the program](development-recording-consent.md)
+(`development-consent-v1`).
 
 ---
 
@@ -18,7 +21,11 @@ the [patient information](patient-information-and-consent.md) (`patient-info-v2`
 With your consent, your practitioner may use **Clinic Scribe**, a program on their own
 computer, to help write the notes of your appointment. It collects:
 
-- **an audio recording** of the appointment, while it is in progress;
+- **an audio recording** of the appointment, held while your practitioner prepares the
+  note (and, if something interrupts that, for up to 24 hours — "How long it is kept"
+  below) and deleted when the note is finished or the recording is discarded; it is
+  kept after the note is finished only if you separately agree in writing ("How we use
+  it" below);
 - **a transcript** — the conversation turned into text;
 - **a draft note** made from the transcript, which your practitioner checks, corrects and
   saves;
@@ -29,11 +36,21 @@ computer, to help write the notes of your appointment. It collects:
   the program and of its speech and note software were used, whether it was a comparison
   appointment (one where your practitioner also wrote the note the usual way and the
   program's draft was not used), whether the note was placed in Cliniko, and what was
-  later deleted. This record holds **no name and nothing that was said**.
+  later deleted — and, for a recording kept with your written consent (below), that
+  consent's version, when the recording was kept or deleted and how many times it was
+  copied. This record
+  holds **no name and nothing that was said**.
 
 ## How we use it
 
-Only to write the clinical notes of your appointment. For a limited number of
+Only to write the clinical notes of your appointment — and, **only if you separately
+agree in writing**, to keep the recording of the appointment so that your practitioner
+can check and improve how the program hears and writes (see
+[Keeping a recording to help develop the program](development-recording-consent.md)):
+the program keeps it encrypted on your practitioner's computer (apart from a short-lived
+unencrypted copy they may make there to mark who is speaking — see below), it is used
+only by them, and the program never sends it anywhere (backup and sync software are
+covered under "Where it goes"). For a limited number of
 appointments while the program is being checked, your practitioner also compares the
 program's draft with the note they wrote themselves, to check the quality of its drafts;
 the scores they keep hold no name and nothing that was said. The program does not diagnose,
@@ -66,17 +83,20 @@ practice's existing collection notice.]**
   being set up correctly: once set up, Windows does not collect crash reports about it,
   and it asks Windows not to index the contents of its folder. Once installed, it also
   asks Windows backup tools to leave out recordings in progress and its logs; some tools
-  ignore that request, and it never covers the kept transcripts and notes. It cannot
+  ignore that request, and it never covers the kept transcripts, notes and recordings. It cannot
   stop backup or sync software copying its folder. If crash reports are not excluded, or its folder is
-  somewhere that could be copied off the computer (such as OneDrive or a network drive),
-  it **warns** your practitioner but keeps working — the practitioner must fix the cause.
+  somewhere it can recognise as able to be copied off the computer (such as OneDrive or
+  a network drive — it cannot recognise every such place), it **warns** your practitioner
+  but keeps working — the practitioner must fix the cause.
   **[Practice: confirm the computer's backup and sync settings.]**
 
 ## How it is protected
 
 - Everything the program keeps about an appointment — the recording while it exists,
   the transcript, the notes and the record that a recording happened — is **encrypted**,
-  with keys that only your practitioner's Windows login on that computer can unlock. Each
+  with keys that only your practitioner's Windows login on that computer can unlock
+  (apart from the unencrypted copy of a kept recording your practitioner may make,
+  described above). Each
   recording, and each kept past session, has its own key, so one can be deleted without
   affecting the others. (The short phrases your practitioner's notes teach it, described
   above, are kept as your practitioner's own plain-text settings on the same computer.)
@@ -90,7 +110,7 @@ practice's existing collection notice.]**
 
 | What | How long |
 |---|---|
-| Audio recording | **Not kept.** Destroyed when the note is finished or the recording is discarded. If the program is interrupted, the encrypted recording is kept for up to 24 hours so the note can be finished, and deleted the next time the program runs after that. |
+| Audio recording | **Not kept** — unless you have separately agreed in writing to it being kept to help develop the program. Otherwise destroyed when the note is finished or the recording is discarded; if the program is interrupted, the encrypted recording is kept for up to 24 hours so the note can be finished, and deleted the next time the program runs after that. A recording kept with your written consent stays, encrypted, on your practitioner's computer until they delete it; they review it at least every 12 months, and delete it the same day if you withdraw. To mark who is speaking, your practitioner may make an unencrypted copy on the same computer (the program refuses some places it can recognise — a OneDrive folder it can find, network drives and removable drives such as USB sticks — but cannot recognise every synced folder, OneDrive included, so your practitioner keeps it on the computer's own internal drive and checks it is in no synced or shared folder) and deletes it afterwards. **[Reviewer: whether a kept recording must itself be kept like a health record — in Victoria, NSW and the ACT at least 7 years, or until 25 for a child; elsewhere APP 11.2 — see the README.]** |
 | Transcript, the draft the program made, and the saved note ("Past sessions") | On your practitioner's computer, encrypted, for at least 7 years, like other health records — in Victoria, NSW and the ACT the law requires at least 7 years, or until you turn 25 if you were a child (the Acts in the row below); elsewhere the Australian Privacy Principles apply (APP 11.2): **[Practice: your setting — the program offers 7 years, or until deleted; its default is until deleted. Choose until deleted for a patient who was a child.]** A kept transcript is deleted early only when the recording was made in error (the wrong patient, a test, or recorded without consent). |
 | Record that a recording happened | 7 years. |
 | Your clinical record in Cliniko | As the practice keeps all clinical records — in Victoria, NSW and the ACT at least 7 years after your last visit, or until you turn 25 if you were a child (Health Records Act 2001 (Vic); Health Records and Information Privacy Act 2002 (NSW); Health Records (Privacy and Access) Act 1997 (ACT)). Elsewhere, the Australian Privacy Principles apply (APP 11.2). |
@@ -116,6 +136,9 @@ and the early deletion of a recording made in error — see the README.]**
   a court, for example by subpoena.
 - **Saying no.** You can decline AI-assisted note-taking at any appointment, or ask your
   practitioner to stop it, with no effect on your care.
+- **Withdrawing a kept recording.** If you agreed in writing to a recording being kept to
+  help develop the program, you can withdraw at any time; your kept recordings are
+  deleted the same day (the transcript and notes stay, as above).
 
 ## If something goes wrong
 
@@ -139,6 +162,17 @@ may complain to if you are not satisfied with our response.]**
   7 years or until deleted, with no shorter setting (Delete now is for a recording made in
   error); the content-free audit record kept 7 years; the only
   network use is Cliniko's own API.
+- Since version 0.3.0 (2026-10-08): a recording may be kept, encrypted beside its past
+  session, only when the practitioner has turned on "Keep recordings for development
+  (written consent only)", ticked the separate written-consent box before Start and
+  then Completed the recording (a discarded recording is never kept); it is kept until
+  deleted (Delete recording, any time; reviewed after 12 months), its only unencrypted
+  copy is one the practitioner exports to a folder the program accepts (it refuses the
+  OneDrive folders Windows tells it about, network and removable drives, but not an
+  external drive Windows reports as fixed or a synced folder it cannot recognise — the
+  practitioner checks), and the audit
+  record notes the consent's version, when the recording was kept or deleted and how
+  many times it was exported. Every other recording's audio is still destroyed at Complete or Discard.
 - The app's own warning beside the retention setting (it cites the same Acts, APP 11.2
   and APP 12) — change both together.
 - The audit record can be exported as a CSV for the practice's own records. The CSV holds

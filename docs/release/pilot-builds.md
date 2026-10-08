@@ -59,6 +59,61 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.0
+
+From 0.3.0 (the development-recordings build) a recording the patient
+consented in writing to keep for developing the program keeps its audio,
+encrypted, in its Past-sessions entry (`audio.enc` beside `audio-key.enc`),
+and the encounter record and the audit row are schema v3. A build older than
+0.3.0 (0.2.0) reads 0.3.0's data as follows:
+
+- **A kept recording's Past-sessions entry**: 0.2.0 opens its transcript and
+  notes as usual and simply does not show the recording (it ignores the two
+  files). Its **Delete now**, and its retention expiry, still destroy the
+  recording too, because the recording's key is wrapped under the entry's key.
+  A kept recording therefore cannot be deleted ALONE on 0.2.0 — a patient's
+  withdrawal needs Delete recording, so install 0.3.0 or later again to honour
+  it the same day. Never use Delete now for a withdrawal: it is only for a
+  recording made in error, and it would also delete the transcript and notes,
+  which are kept as health information.
+- **An unfinished recording started on 0.3.0** (its `encounter.enc` is v3):
+  0.2.0 cannot read the record, so it opens the session through Recovery as
+  UNLINKED and SHADOW, and refuses it from the Unreviewed list
+  (`consent_unavailable`). A 0.2.0 Complete keeps no audio.
+- **The audit record**: a v3 row is NEWER to 0.2.0 — kept byte for byte, its
+  updates fail (counted on the Past sessions tab) and it is OMITTED from 0.2.0's
+  CSV, so a 0.2.0 Complete of a 0.3.0-started session is not recorded in that
+  row. And EVERY row 0.3.0 has updated is v3, not only the rows of
+  0.3.0-started sessions: an update re-writes the row it read, upgraded — a
+  write, a Discard, a Complete, Delete now, an expiry or the start-up repair of a
+  0.2.0-started session — so 0.2.0 also omits those rows from its CSV and fails
+  its own later updates of them.
+- **The files 0.2.0 ignores**: `config\development.json` (the "Keep recordings
+  for development" setting), and the export ledger `past_sessions\exports.enc`
+  with its key `past_sessions\exports-key.dpapi` — so 0.2.0 never resolves an
+  export that was interrupted (a `<session id>.wav.part` file, the recording
+  unencrypted, left in the folder it was being exported to).
+
+**The rule: before installing any build older than 0.3.0, take TWO steps.**
+
+1. **Finish (Complete) or Discard every recording** — nothing on the Recovery
+   tab and nothing in the Unreviewed list.
+2. **Start 0.3.0 once more and let it open** — its start-up removes any
+   interrupted export's partial file without comment, and names on the Past
+   sessions tab any it could not remove (delete that one by hand) — **then close
+   it.** Then, **always** — whatever the tab said, and also when 0.3.0 cannot
+   run — look in every folder you have ever exported a recording to (attach
+   any external drive you exported to first) for a `<session id>.wav.part`
+   file, delete it by hand, then empty the Recycle Bin. The start-up cannot
+   find every one: a partial file on a drive that was unplugged at an earlier
+   start, or listed in a record of exports that was later started again, is
+   forgotten by the app but still on that drive.
+
+Finishing the recordings alone does not satisfy the rule. Nothing enforces it
+(development-recordings plan D14; threat model, "Kept recordings"). Below
+0.2.0, the rule that follows applies as well. Installing 0.3.0 or later again
+reads everything as before, the kept recordings included.
+
 ## Rolling back below 0.2.0
 
 From 0.2.0 (the pilot build) the app records each recording's mode — normal or

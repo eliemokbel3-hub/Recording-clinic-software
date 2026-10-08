@@ -51,10 +51,14 @@ reviews and finalises every note in Cliniko.
   threat model's "Cliniko API client" and the data-flow map, flow 18).
 - **Not a system of record.** Cliniko remains the permanent record. After a
   draft is written, the clinician checks it in Chrome and presses Complete.
-  Every Complete destroys the recording's audio and the session itself; since
+  Every Complete destroys the session's audio and the session itself; since
   2026-10-01 (PLAN.md Phase 6, the privacy-professional-controls plan) it
   first keeps the transcript, the saved note (unless that Complete deletes
   it) and the note the app first showed in its most recent generation (when readable; a regeneration replaces the earlier one) — never the audio,
+  except (since 0.3.0, the development-recordings plan) a recording the
+  patient consented in writing to keep for developing the program, kept
+  until the practitioner deletes it and reviewed at 12 months; that is a
+  development aid, never part of the record —
   and nothing for a test-provider session — in **Past sessions**, encrypted on this PC
   and this Windows login only, with no backup, for as long as the
   practitioner's retention setting says — at least 7 years: "7 years" or

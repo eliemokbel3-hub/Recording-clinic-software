@@ -6,7 +6,8 @@
 > cover every state and territory the research looked at.
 
 Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
-approved by the practitioner the same day). For the practitioner, before saving a note and before finalising it
+approved by the practitioner the same day; the kept-recording line added 2026-10-08 for
+version 0.3.0, awaiting the practitioner's approval). For the practitioner, before saving a note and before finalising it
 in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
@@ -85,7 +86,12 @@ where each line came from: the transcript, something you typed, or your own pre-
 - Then press **Complete** in the app. Complete destroys the recording's audio and the
   session; the transcript and the notes are kept in **Past sessions** for your retention
   setting (old entries are deleted only while the app is running — at start-up and then
-  about hourly).
+  about hourly). The one exception is a recording the patient consented in writing to
+  keep for development, with its box ticked before Start (see
+  [Keeping a recording to help develop the program](development-recording-consent.md)):
+  its audio is kept with the past session until you delete it, and Complete says "The
+  recording was kept for development." If it says so for a patient who did not sign
+  that form, press **Delete recording** on the Past sessions tab at once.
 - **Finalise the note in Cliniko** yourself, after reading it there in full. The app
   never finalises a note.
 - If you **copy** the note instead, paste it into the right patient's note and check the
@@ -133,5 +139,12 @@ note** (what you saved), with the transcript behind
   Privacy Principles apply, with no fixed period); the app does not know a patient's
   age, so choose "Until I delete them" when that applies. **Cliniko stays the
   record**.
-- **Delete now** (press twice) deletes an entry for good. Use it only for a recording
-  made in error: the wrong patient, a test, or one recorded without consent.
+- **Delete now** (press twice) deletes an entry for good — with its kept recording, if it
+  has one. Use it only for a recording made in error: the wrong patient, a test, or one
+  recorded without consent.
+- An entry marked "(recording kept)" also holds its recording, kept with the patient's
+  written consent for development. **Delete recording** (press twice) deletes the
+  recording alone — when the patient withdraws, or at its 12-month review — and the
+  transcript and notes stay; **Export recording (WAV)** makes an unencrypted copy for
+  labelling who is speaking, to delete when you have finished. See
+  [Keeping a recording to help develop the program](development-recording-consent.md).

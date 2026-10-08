@@ -6,7 +6,9 @@
 > cover every state and territory the research looked at.
 
 Draft 1 (2026-10-01; the patient-information version and the shadow-recording line
-updated 2026-10-07 for the pilot build, approved by the practitioner the same day). For
+updated 2026-10-07 for the pilot build, approved by the practitioner the same day; the
+kept recording added 2026-10-08 for version 0.3.0, awaiting the practitioner's
+approval). For
 the practitioner. The rule behind every step: **Clinic Scribe
 is a writing aid, and Cliniko is the record.** If the app is not working, write the note
 in Cliniko yourself, the usual way; nothing about the patient's care waits for the app.
@@ -30,7 +32,9 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 - Open the app and check the Chrome icon shows a green **OK**.
 - Look at the Status tab: it should show no warning lines under the intended-use line.
 - Have a way to write notes without the app (Cliniko open as usual). The patient
-  information sheet (its current version, `patient-info-v2`) should be at hand.
+  information sheet (its current version: `patient-info-v3` once you have approved it,
+  until then `patient-info-v2`) should be at hand, and the development-recording consent
+  form (`development-consent-v1`, once approved) if you may ask for one.
 
 ## When the app is not available
 
@@ -65,9 +69,12 @@ If the app or the computer stops during a recording:
    note in Cliniko yourself.
 3. The end of the recording may be missing. Check the transcript's last lines against
    your memory of the consultation.
-4. Then **Complete** it (the transcript is kept in Past sessions, the audio is
-   destroyed) or **Discard** it (nothing is kept except the record that a recording
-   happened and was discarded — no name, nothing that was said).
+4. Then **Complete** it (the transcript is kept in Past sessions; the audio is
+   destroyed, unless the patient consented in writing to it being kept for development
+   and you ticked that box before Start — then it is kept with the past session and
+   Complete says "The recording was kept for development.") or **Discard** it (nothing
+   is kept except the record that a recording happened and was discarded — no name,
+   nothing that was said — even for a recording you had ticked to keep).
 
 Recordings waiting for review after back-to-back consultations are listed as
 **Unreviewed**. The app warns two hours before one would be deleted and lists them when
@@ -118,6 +125,11 @@ write the note yourself. Then:
 - **"Completed. The Past-sessions copy will appear after the next check."** The session
   is finished; its copy appears in Past sessions after the app's next check (within
   about 15 minutes while it runs, or at the next start).
+- **"A partial export file … .wav.part could not be removed from the folder you chose -
+  delete it by hand."** (or "… may remain in a folder you exported to …") — an export
+  of a kept recording was interrupted, and the half-written copy is **not encrypted**.
+  Find the file by that name in the folder you exported to, delete it, and empty the
+  Recycle Bin.
 
 ## Start-up warnings
 
@@ -160,12 +172,15 @@ when you can.
 ## Losing the computer
 
 - If the computer, its disk or your Windows login is lost: the kept transcripts and
-  notes in Past sessions are **lost with it** — there is no backup — and so is the audit
-  record. The clinical record in Cliniko is not affected.
+  notes in Past sessions are **lost with it** — there is no backup — and so are any
+  recordings kept for development and the audit record. The clinical record in Cliniko
+  is not affected.
 - If the computer was lost or stolen (not just broken), the encrypted data can only be
   opened through your Windows login, but the app's plain settings, learned phrases,
-  clinic list and logs can be read by anyone with the disk unless it has full-disk
-  encryption (BitLocker) — treat it as a possible data breach: follow the
+  clinic list and logs — and any exported copy of a kept recording you had not yet
+  deleted, or a partial export file (`.wav.part`) left behind, which are not encrypted
+  at all — can be read by anyone with the disk unless it
+  has full-disk encryption (BitLocker) — treat it as a possible data breach: follow the
   incident process and assess it under the Notifiable Data Breaches scheme. **[Reviewer:
   that scheme was not part of the 2026-10-01 research — confirm the wording.]**
 - Change your Windows password and your Cliniko password, and replace each clinic's

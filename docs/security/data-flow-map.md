@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -7,7 +7,10 @@ per-session keys; an unprotected recovery store expires at ~24 h (eligible at
 24 h, destroyed by the next successful sweep), while a live or under-review
 session is sweep-exempt (flow 10; retention schedule). Since the
 privacy-professional-controls plan (PLAN.md Phase 6) every non-mock Complete
-copies the session's transcript, saved note and generated note — never audio —
+copies the session's transcript, saved note and generated note — never audio,
+except (since the development-recordings plan, 0.3.0) a recording kept under
+the patient's written development consent, whose audio is re-encrypted into
+the same entry under a key wrapped by the entry key (flow 27) —
 into an encrypted Past-sessions entry kept for the practitioner's retention
 setting, with the patient's name in that entry's label, and every session
 leaves a content-free audit row for 7 years (flow 22). Phase 3A also adds **clinician-authored config** (plaintext,
@@ -56,7 +59,11 @@ Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
 ticked is a SHADOW recording, whose note never leaves the app by Copy or by
 the draft write (flow 25), and the developer build carries an offline
 validation harness that runs the pipeline over invented or mock recordings
-outside the app's own stores (flow 26).
+outside the app's own stores (flow 26). Since the development-recordings plan
+(0.3.0) a recording the patient consented in writing to keep is kept,
+encrypted, beside its Past-sessions entry, can be deleted alone or exported
+as an unencrypted WAV on this computer, and can be replayed by a
+practitioner-run developer tool that prints numbers only (flow 27).
 
 ## Components
 
@@ -969,8 +976,11 @@ outside the app's own stores (flow 26).
       the consent time and text version, `linked`, the verification state, the
       app's clinic id and the Cliniko practitioner, user (from the clinic
       registry), booking and treatment-note ids, and since the pilot plan's v2
-      the recording's `mode` and the app's `app_version` (flow 25) — never the
-      patient id, a name or any text. A failed write refuses Start. Later, best-effort and never
+      the recording's `mode` and the app's `app_version` (flow 25), and since
+      the development-recordings plan's v3 the `development_consent_version`
+      token and the nested `recording` record (`kept_at`, `deleted_at`,
+      `exports` — fields, not events, all four exported last in the CSV; flow
+      27) — never the patient id, a name or any text. A failed write refuses Start. Later, best-effort and never
       blocking: the draft write's transitions (`MainWindow._store_write_record`)
       and pre-send refusal codes (`AuditLog.record_write_refusal`, from
       `_on_write_requested` / `_prepare_attempt`), Complete's model and provider tokens
@@ -1008,8 +1018,11 @@ outside the app's own stores (flow 26).
       never persisted at Start. The staged entry is verified through its own
       key read back from disk, moved to `past_sessions\<id>\` with a
       `pending` marker, and only THEN is the session key deleted; the marker
-      and the session directory are removed after it. Audio, `encounter.enc`,
-      `write.enc` and `saved-provenance.enc` are never copied. Discard (live
+      and the session directory are removed after it. `encounter.enc`,
+      `write.enc` and `saved-provenance.enc` are never copied, and neither is
+      audio — except, since 0.3.0, a recording kept under written development
+      consent, whose audio is re-encrypted into the staged entry and verified
+      with it (flow 27). Discard (live
       and `discard_recovered`), the recovery list's Discard, the sweep's expiry, a dead key's
       `orphan_gc` and a mock Complete (which keeps nothing) remove any
       unfinished entry for the id, key first, BEFORE the source key goes — a
@@ -1182,6 +1195,83 @@ outside the app's own stores (flow 26).
       the temporary folder and the `scribe-speaker-eval-*` prefix for a
       left-over store (which may still hold its key) to delete.
 
+27. **Kept recordings (development-recordings plan, D1–D15; BUILT 2026-10-07 →
+    2026-10-08, version 0.3.0; zero network).** With the patient's WRITTEN
+    consent (`docs/practice/development-recording-consent.md`,
+    `development-consent-v1`), one recording's audio outlives its Complete.
+    - SETTING. The Status tab's "Keep recordings for development (written
+      consent only)" writes `config\development.json` (`{"schema_version": 1,
+      "keep_recordings": bool}`, at most 4 KiB, no patient data) through the
+      config folder's atomic write path; absent, unreadable or invalid = OFF
+      (the opposite polarity to flow 25's `pilot.json`).
+    - START. With the setting on, the Session tab shows a second, never
+      pre-ticked tick above Start (`encounter.DEVELOPMENT_CONSENT_TEXT`). At
+      the click — desktop or linked from Chrome — the setting is re-read and
+      the tick read then cleared; both → a `DevelopmentConsent` (time,
+      `development-consent-v1`) in the in-memory session, `encounter.enc` v3
+      (flow 6) and the audit row v3 (`development_consent_version`, flow 22);
+      otherwise none. Only the warm-up hold keeps the tick; any other refused
+      Start, a Chrome report naming another note or patient than the ids bound
+      when it was armed (ids only, no names), a dropped Chrome link (for a
+      tick armed on a Chrome note), a lock or a suspend clears it, with a line;
+      the setting going off clears it unannounced. Chrome is not told (no
+      protocol change).
+    - COMPLETE. A non-mock Complete of a session carrying the consent — the
+      four live paths from the controller's copy, a recovered one from the
+      checkout's ONE decrypt — streams the session's `audio.enc` chunk by
+      chunk (decrypted under the session key, hashed, re-encrypted) into the
+      staged entry as `past_sessions\<id>\audio.enc` under a FRESH audio key,
+      whose 32 bytes are encrypted under the ENTRY key into `audio-key.enc`
+      (AAD `past-audio-key:<id>`); verification re-reads the staged audio and
+      compares digests BEFORE the session key goes (flow 22's ordering). The
+      audit row's `recording.kept_at` is set in the completion write (or
+      repaired at start-up from the committed files, when the entry's label
+      can be read — `kept_at` is its completion time). Discard, expiry, a mock
+      session or no consent: no audio is kept.
+    - PAST SESSIONS. The row says "(recording kept)" from two files'
+      existence and a zero-check of the key file (nothing decrypted). DELETE
+      RECORDING zeroes `audio-key.enc` in place, syncs and reads it back,
+      records `recording.deleted_at`, then unlinks both files (a failed unlink,
+      or one skipped because the record failed, is finished by a later tidy —
+      at start-up or a sweep tick — once the deletion is recorded); Delete now
+      and expiry destroy the audio with the entry key, recording `deleted_at`
+      too — once the entry is gone, so a failed write there is not repaired
+      (threat model, "Kept recordings", residue (4)). A status line counts the kept recordings 365 days or more past
+      their Complete, and the opened entry says "Review due." (an entry whose
+      label cannot be read has no date, so it is never counted or marked —
+      the practitioner reviews it by hand, `docs/practice/development-recording-consent.md`)
+    - EXPORT. "Export recording (WAV)": a save dialog; the RESOLVED folder is
+      checked (`exclusions.check_export_location` — a folder in one of the
+      OneDrive roots the environment names (one it does not name is not
+      detected, residue (7)), a network share
+      or remote drive, the roaming profile, any drive not `DRIVE_FIXED`, and
+      either app data folder are REFUSED) by the tab and again by the store
+      just before the exclusive create of `<folder>\<id>.wav.part`; a row in
+      the export ledger (`past_sessions\exports.enc` under
+      `exports-key.dpapi`: the folder and the file's identity, no content)
+      precedes the first byte; the audio is decrypted chunk by chunk and
+      written through the ONE WAV writer `speech.write_wav` (16 kHz mono
+      PCM16), synced and renamed to `<id>.wav`; the row is dropped and
+      `recording.exports` counted. A failure removes the `.part` through one
+      exclusive handle (by its name if no identity was read yet); a hard kill
+      leaves the row, and the next start's
+      `recover_exports` (before every other Past-sessions start-up step) removes the `.part`
+      while it is still the file the app created, or names it for deletion by
+      hand. The WAV is the practitioner's to delete; the app never touches it
+      again. A shadow recording asks first.
+    - REPLAY. `scripts/replay-kept-recordings.py <past_sessions folder>`
+      (developer build, practitioner-run, app closed): holds the app's
+      instance exclusion for its run; lists kept ids with nothing decrypted;
+      per entry decrypts only the transcript, the saved note and the audio
+      (never the label or the generated note), holds the PCM in memory for that
+      entry, transcribes it in a temporary store under
+      `%TEMP%\scribe-speaker-eval-*` whose key lives in MEMORY only
+      (`persist_key=False`: no `key.dpapi`), its teardown attempted on every
+      path — a leftover it cannot remove, or one an interrupted run leaves,
+      is ciphertext with no key anywhere, named for deletion by hand; prints a
+      numbers-only drift table to standard output; writes nothing in the folder
+      and no audit row.
+
 ## Explicit non-flows
 
 - No application-generated plaintext clinical content at rest — the
@@ -1192,9 +1282,16 @@ outside the app's own stores (flow 26).
   privacy-professional-controls plan, ONLY encrypted under per-entry keys
   inside `past_sessions\<id>\` (the kept transcript and notes, and the label
   with the patient's name), plus the content-free audit rows encrypted under
-  the audit key (flow 22). The ONE plaintext export is the audit CSV, which
-  holds no text or name but Cliniko ids, and lands only where the
-  practitioner saves it (flow 22). Config files (flow
+  the audit key (flow 22) — and, since the development-recordings plan, a kept
+  recording's audio, ONLY encrypted inside its entry under an audio key that
+  is itself encrypted under the entry key (flow 27). The plaintext exports
+  are TWO: the audit CSV, which holds no text or name but Cliniko ids, and
+  lands only where the practitioner saves it (flow 22); and, since 0.3.0, a
+  kept recording's `<session id>.wav`, the whole consultation unencrypted,
+  written only by the practitioner's Export into a folder on a drive Windows
+  reports as fixed, outside both app data folders (the check's limits are the
+  threat model's "Kept recordings" residue (7)),
+  and the practitioner's to delete after labelling (flow 27). Config files (flow
   11) are a SEPARATE,
   operator-authored plaintext class: INTENDED as clinician-authored non-patient
   boilerplate, but that is an operational rule the loader cannot enforce
@@ -1329,13 +1426,36 @@ outside the app's own stores (flow 26).
   — and skips BY NAME until the wheel and the file exist, so that evidence is
   conditional.
 - No real consultation in the validation harness (pilot plan Constraint 8;
-  flow 26). The app never writes a consultation's audio outside its encrypted
-  session store, and the harness reads only the set folder it is given. That a
+  flow 26). Until 0.3.0 the app never wrote a consultation's audio outside its
+  encrypted stores; since the development-recordings plan the practitioner's
+  Export of a KEPT recording writes one (flow 27), so keeping exported real
+  recordings out of a set folder is part of the same operating rule (the
+  development-recordings plan's dated reconciliation of Constraint 8 in
+  `.cursor/plans/plan-pilot.md`). The harness reads only the set folder it is
+  given. That a
   set folder holds only invented scripts' speech and mock role-plays is an
   OPERATING RULE the practitioner keeps — the harness cannot tell a mock
   recording from a real one (threat model, "The pilot", harness residue (1)).
   The filled pilot log stays off the repository and the findings register in
   the repository holds no clinical content (`docs/pilot/`).
+- No network and no second root for a kept recording (development-recordings
+  plan, C2, D5; flow 27). A kept recording lives only in its own
+  Past-sessions entry, in the channel's data folder — never a separate store,
+  never a copy the app makes elsewhere except the practitioner's own Export
+  and the replay tool's temporary store (a re-encrypted copy under `%TEMP%`
+  for one entry at a time, under a key held only in memory and never written,
+  its teardown attempted on every path, a leftover being keyless ciphertext
+  named for deletion by hand — flow 27, REPLAY),
+  never a backup — and nothing that
+  reads or writes it opens a connection: the archive, the Past sessions tab
+  and the export import no network module (the confinement test of flow 18
+  covers them), and the replay tool applies and asserts the offline
+  environment before any model loads. Export is the only path to a plaintext
+  copy, refused for any destination positively identified as synced, remote,
+  roaming, removable or unknown; sync software the location check cannot see,
+  an external drive Windows reports as fixed and a volume mounted into a
+  folder of a fixed drive are the named residue (threat model, "Kept
+  recordings", residue (7)).
 
 ## The Chrome side at a glance
 

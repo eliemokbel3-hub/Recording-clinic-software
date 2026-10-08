@@ -41,7 +41,14 @@ When in doubt, stop using the software and investigate before resuming.
   clinic's Cliniko tab
 - (Phase 2+) any indication audio/transcripts persisted beyond their
   retention window or reached the network — since PLAN.md Phase 6 that
-  includes audio found anywhere after Complete, a Past-sessions entry still
+  includes audio found anywhere after Complete (since 0.3.0 EXCEPT a kept
+  recording's `past_sessions\<id>\audio.enc` beside its `audio-key.enc`, for
+  a recording whose Complete said "The recording was kept for development."
+  under the patient's written consent — but a kept recording with no signed
+  development-consent form, one still present after Delete recording, or an
+  exported `<session id>.wav` left in place after its speaker labelling was
+  done, or found anywhere off this computer's own drive, IS an incident), a
+  Past-sessions entry still
   present after Delete now or after its retention setting expired it while
   the app was running, an entry for a session that was discarded, a
   patient's name or any note text in the audit record or its CSV, or a Past
@@ -145,7 +152,8 @@ follow the steps below — then enter the finding. The clinic's exit gate
 2. Do NOT press Complete for that recording in the app yet: Complete after a
    written draft destroys the session — its audio and the write's record
    (`write.enc`, with its per-question digests) — keeping only the
-   transcript and notes in Past sessions and the outcome in the audit row.
+   transcript and notes in Past sessions (and, for a recording kept for
+   development, its audio) and the outcome in the audit row.
    Leave it on the Transcript screen or in the Unreviewed list, and note its
    time — once the app is closed it lasts only until the 24 h expiry, run at
    the next start-up (Immediate steps, step 4).

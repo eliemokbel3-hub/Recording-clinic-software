@@ -6,10 +6,14 @@
 > looked at. See the [practice documents README](README.md) for the sources and the open
 > questions.
 
-**Document version: `patient-info-v2`** (2026-10-07, approved by the practitioner the same
-day; it adds "Checking the program" to Part A, the matching lines to Part B, a bullet
-to Part C and the program's version to the record of a recording — `patient-info-v1`
-was 2026-10-01). Record this version in the patient's
+**Document version: `patient-info-v3`** (2026-10-08, awaiting the practitioner's
+approval; it qualifies "the audio is not kept" in Parts A, B and C for a recording the
+patient has separately agreed in writing to keep — see
+[Keeping a recording to help develop the program](development-recording-consent.md) —
+and adds that to the record of a recording). History: `patient-info-v2` (2026-10-07,
+approved by the practitioner the same day) added "Checking the program" to Part A, the
+matching lines to Part B, a bullet to Part C and the program's version to the record of a
+recording; `patient-info-v1` was 2026-10-01. Record this version in the patient's
 Cliniko record when you give it.
 
 This document has three parts: an information sheet to give or read to the patient
@@ -53,18 +57,20 @@ said.
 - Everything the program keeps on the computer about your appointment — the recording
   while it exists, the transcript, the notes and the record that a recording happened —
   is encrypted and can only be opened from your practitioner's own Windows login on that
-  computer. The program cannot stop the computer's own backup or file-sync software
+  computer (apart from a short-lived unencrypted copy of a recording you agreed in
+  writing to keep — see that separate sheet). The program cannot stop the computer's own backup or file-sync software
   from copying these encrypted files; it warns your practitioner if its folder is in a
-  place that is synced or shared, such as OneDrive or a network drive.
+  place it can recognise as synced or shared, such as OneDrive or a network drive (it
+  cannot recognise every one, so your practitioner checks).
 
 ### What is kept, and for how long?
 
 | What | Kept? | For how long |
 |---|---|---|
-| The audio recording | **No** | Only while the note is being prepared. It is destroyed when your practitioner finishes or discards the recording. If something interrupts that (for example the computer restarts), the encrypted recording is kept for up to 24 hours so the note can still be finished, and is deleted the next time the program runs after that. |
+| The audio recording | **No** — unless you have separately agreed in writing to it being kept to help develop the program (see the separate information sheet, [Keeping a recording to help develop the program](development-recording-consent.md)); then it is kept, encrypted, on your practitioner's computer until they delete it, and reviewed at least every 12 months | Otherwise only while the note is being prepared. It is destroyed when your practitioner finishes or discards the recording. If something interrupts that (for example the computer restarts), the encrypted recording is kept for up to 24 hours so the note can still be finished, and is deleted the next time the program runs after that. A recording you agreed in writing to keep is deleted the same day if you withdraw. **[Reviewer: whether a kept recording must itself be kept like a health record — in Victoria, NSW and the ACT at least 7 years, or until 25 for a child; elsewhere APP 11.2 — see the README.]** |
 | The transcript and the notes (the draft the program made, and the note your practitioner saved) | Yes, encrypted, on your practitioner's computer | At least 7 years, like other health records (in Victoria, NSW and the ACT the law requires at least 7 years, or until you turn 25 if you were a child; elsewhere in Australia the Australian Privacy Principles apply). Your practitioner chooses in the program either 7 years or "until I delete them" (the program's default, and the choice for a patient who was a child). **[Practice: state your setting here.]** They become part of the health information the practice holds about you. |
 | Your clinical record in Cliniko | Yes | As the practice keeps all clinical records. In Victoria, NSW and the ACT that is at least 7 years after your last visit, or until you turn 25 if you were a child. Elsewhere in Australia, the Australian Privacy Principles apply. |
-| A record that a recording happened | Yes, encrypted, on your practitioner's computer | 7 years. It holds the date, that consent was confirmed, the Cliniko reference numbers of the appointment and note, the program's version, and whether it was one of the comparison appointments — **not** your name and **nothing that was said**. |
+| A record that a recording happened | Yes, encrypted, on your practitioner's computer | 7 years. It holds the date, that consent was confirmed, the Cliniko reference numbers of the appointment and note, the program's version, whether it was one of the comparison appointments, and — if you agreed in writing to the recording being kept — that consent's version, when the recording was kept or deleted and how many times it was copied — **not** your name and **nothing that was said**. |
 
 The program keeps the transcript on that one computer only and makes no backup of it. If the computer fails,
 the kept transcript is lost; your clinical record in Cliniko is not affected.
@@ -79,7 +85,9 @@ the kept transcript is lost; your clinical record in Cliniko is not affected.
   transcript is part of the health information the practice must keep for at least
   7 years, so it is deleted early only when the recording was made in error (for
   example, recorded without consent). **[Reviewer: confirm what the practice can offer
-  here — see the README.]**
+  here — see the README.]** If you agreed in writing to a recording being kept to help
+  develop the program, you can withdraw that at any time and the recording is deleted
+  the same day.
 - **You can ask to see** the health information the practice holds about you, which
   includes a kept transcript. A kept transcript could also be requested by a court
   (for example by subpoena).
@@ -100,7 +108,8 @@ approach for children and for people who cannot consent for themselves.]**
 
 > "To help with my notes, I'd like to use a program that records our conversation on my
 > computer and drafts the notes for me. The program doesn't send it to the cloud, and
-> the audio is deleted once I've finished the note. A written
+> the audio is deleted once I've finished the note (unless I ask you separately and you
+> agree in writing to it being kept). A written
 > transcript is kept, encrypted, on my computer for [your setting — at least 7 years]. I check and finalise
 > every note myself. You can say no, and it won't change your care at all. Is that okay
 > with you?"
@@ -129,12 +138,18 @@ Offer Part A to read or take home.
 - **In Cliniko** (Ahpra's guidance is to note the patient's response in the health
   record), for example:
 
-  > "Informed about AI-assisted note-taking (patient-info-v2). Consented verbally."
+  > "Informed about AI-assisted note-taking (patient-info-v3). Consented verbally."
   >
   > or "… Declined; notes written without it."
 
-  For a comparison appointment you may add: "Comparison appointment — the program's
+  Name the version of this sheet the patient was given: patient-info-v2 until you have
+  approved this version. For a comparison appointment you may add: "Comparison appointment — the program's
   draft was not used."
+- **Keeping the recording** to help develop the program is a separate consent, asked
+  for afterwards, separately and only in writing, with its own tick in Clinic Scribe and
+  its own line in Cliniko — see
+  [Keeping a recording to help develop the program](development-recording-consent.md)
+  (`development-consent-v1`). Without it, no recording is kept.
 
 ### If the patient says no, or changes their mind
 
@@ -157,12 +172,13 @@ Offer Part A to read or take home.
 
 ## Part C — Written consent form (optional)
 
-**AI-assisted note-taking — consent** (`patient-info-v2`)
+**AI-assisted note-taking — consent** (`patient-info-v3`)
 
 I have read, or had read to me, the information about Clinic Scribe. I understand that:
 
 - my appointment will be recorded on my practitioner's computer and the recording will
-  not be kept once the note is finished;
+  not be kept once the note is finished, unless I separately agree in writing to it
+  being kept to help develop the program;
 - a transcript and the notes will be kept, encrypted, on that computer for the time the
   practice has set, and will form part of my health information held by the practice;
 - my practitioner checks and finalises every note;
