@@ -87,8 +87,8 @@ practice's existing collection notice.]**
   stop backup or sync software copying its folder. If crash reports are not excluded, or its folder is
   somewhere it can recognise as able to be copied off the computer (such as OneDrive or
   a network drive — it cannot recognise every such place), it **warns** your practitioner
-  but keeps working — the practitioner must fix the cause.
-  **[Practice: confirm the computer's backup and sync settings.]**
+  but keeps working — the practitioner must fix the cause. Your practitioner's computer
+  runs no backup or file-sync software.
 
 ## How it is protected
 

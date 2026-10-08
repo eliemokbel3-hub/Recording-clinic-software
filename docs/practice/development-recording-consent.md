@@ -63,10 +63,9 @@ README's open questions.]**
   such as a USB stick — but it cannot recognise every synced or shared folder, OneDrive
   included. So your practitioner checks that the copy is not in any synced, shared or
   backed-up folder, and deletes it as soon as they have finished with it.
-- Like everything on the computer, the recording — and an unencrypted copy while it
-  exists — can be copied by backup or file-sync software the practice runs on the
-  computer, which the program cannot stop. **[Practice: confirm the computer's backup and
-  sync settings.]**
+- Your practitioner's computer runs **no backup or file-sync software**, so nothing
+  copies the recording — or an unencrypted copy while it exists — anywhere else. (The
+  program itself could not stop such software if it were ever installed.)
 
 ### Who can use it
 

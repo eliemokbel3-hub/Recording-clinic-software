@@ -43,3 +43,6 @@ extension/key-dev.pem
 # ClinikoScribe, or ClinikoScribe-dev from a source checkout — outside the repo)
 scripts/com.scribe.cliniko_host.json
 scripts/dev-host-launcher.bat
+
+# Printable patient handouts with the practice contact details (never committed: the repository is public)
+practice-handouts/
