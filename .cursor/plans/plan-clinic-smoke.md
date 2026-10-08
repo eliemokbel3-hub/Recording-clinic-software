@@ -1,0 +1,334 @@
+# Feature Implementation Plan
+**Feature:** clinic-smoke (the clinic 1 smoke — one practitioner-run programme that feeds every remaining recording-dependent task from real, consented consultations kept under `development-consent-v1`)
+**Overall Progress:** `4%` (1 of 24 tasks)
+
+## Lifecycle State
+- Active
+
+## Completion Status
+- Completion timestamp:
+- Main implementation complete: No
+- Ready for archive: No
+
+## Plan Lineage
+- Parent plan: `plan-pilot.md` (Active; this plan replaces its Task P.2 and amends P.3/P.4, decision 3.5's call 3 and decision 3.6).
+- Discharges (by amendment, not by closing them here): `plan-practitioner-profile.md` Tasks 6.1–6.3 and D-S1; `plan-phase3a-note-pipeline.md` Task 2.3, the 9.1 run and the 9.2 gate; `plan-development-recordings.md`'s deferred measurement item; `plan-note-learning-and-styles.md` Task P.2 (sequenced into the reviewed consultations, unchanged in substance).
+- Follow-up plans: None.
+
+## Goal
+### Why this plan
+Six open items across five plans all wait on "a recording set": Phase 3A Task 2.3 / profile Task 6.2 (the speaker-measurement harness run: three conditions and auto-confirm correctness, incl. the enrolled condition), decision D-S1 (speaker count ≥3), the profile plan's Task 6.1 (the shared set) and 6.3 (resuming the 9.1 gate run on that set), the 9.1 shipping-gate run (paused since 2026-09-05 "until one recording set serves the gate, Task 2.3 and the enrolment measurement"), the pilot's Task P.2 (ten mock role-plays with a second real person) and the development-recordings plan's deferred "speaker measurement over real consultations". They were all designed before 0.3.0 could keep a consultation's audio with the patient's written consent. The practitioner's decision (2026-10-09): condense them into **one smoke** run in the developer channel over the kept recordings that accumulate during ordinary clinic days, instead of staging mock role-plays with a second person. Three design calls were made the same day: the 9.1 set is the pilot's ten shadow consultations, scored live under `clean`; the Phase 3A 9.2 completion gate is folded in; accent coverage in the synthetic validation set comes from an extra non-Australian Windows voice in ten new scripts, with real-speech accent evidence an aggregate count from measured kept consultations.
+
+What this plan does NOT change: the app's recording, note or custody code (the one code change is a fifth crash-report exclusion in the register script, D11), the consent documents (`development-consent-v1` and `patient-info-v3` already cover a kept shadow consultation, a third voice and one unencrypted copy at a time — `development-recording-consent.md:162, :212, :255`), rubric v1 (bytes frozen; a dated addendum only), rule v1's thresholds and its call 1 (its call 3 is met differently, by dated amendment), the pilot's Constraint 8 (a validation set folder never holds a real consultation), nor the pilot log's three tables and their columns (`test_pilot_docs.py` pins them; the shadow rows' R1–R6 already carry the 9.1 scores — only prose is added).
+
+### What done looks like
+The agent builds only what the programme needs first: ten more synthetic scripts (the recorded fallback of pilot assumption D-C, now the chosen path), the register script's `audacity.exe` exclusion, and the document and plan amendments that retire the role-play set — committed and peer-converged. Then, practitioner-run: the validation run of record (synthetic only, ≥50 encounters); ten shadow consultations scored live = the 9.1 measurement; twenty reviewed consultations including one Cliniko draft write (9.2) and note-learning P.2; about ten kept recordings measured one at a time (Task 2.3 / profile 6.2 numbers, D-S1 decided; profile 6.3 is closed by the 9.1 run itself); the clinic 1 exit gate.
+
+## Planning Extraction Summary
+
+**Workflow Schema:** v22
+
+**Executor tier:** entirely premium — planned on Fable 5.1 (`claude-fable-5-1`); the agent-built phases (1–2 and H) run through `/execute-loop` (executor Opus-class, cross-family peer codex `gpt-6-astra`, agent-driven); every Phase 0 and Phase P step is run by the PRACTITIONER from a normal terminal, Explorer, Chrome and the installed app, never by an agent shell (`docs/lessons.md`, MSIX). The agent never reads, plays or describes a kept recording, transcript or note (C1 of the development-recordings plan): every number it handles is a text-free aggregate the practitioner pastes. Tier-gap dosing applied: the decisions D1–D17, the script constraints (Task 1.1), the per-file amendment lists (Phase 2) and the acceptance checks are locked here so the executor rediscovers nothing.
+
+Planning sources: the practitioner's instruction, three design answers and four hardening answers of 2026-10-09; the inventory of remaining tasks (this session); the amendment manifest over every file that cites role-plays, decision 3.6, Task 6.1, D-S1, 2.3, 9.1 or "40 synthetic" (this session) and the `/review-plan` lenses' locator verification at `194139d`; `docs/testing/validation-harness.md`, `shipping-gate.md`, `speaker-measurement.md`, `kept-recordings.md`; `docs/practice/development-recording-consent.md`. No exploration scratch was consumed (both `explore-*.md` files belong to other plans; practitioner 2026-10-09).
+
+### Agreed Scope (Build Now)
+- Decisions D1–D17 below, ratified by the practitioner on 2026-10-09 (plan approval and the hardening answers) and recorded in the amended documents with that date.
+- Ten synthetic scripts `syn-41`…`syn-50` whose patient part uses a third installed Windows voice at the SAPI index Task 0.3 selects (`voice_slots: {"clinician": 0, "patient": <that index>}`), the lint widened, every "40" and "two voices" statement updated.
+- The register script's `audacity.exe` crash-report exclusion (D11) with its test and the run-step wording.
+- The document, plan and test amendments listed under Phase 2 — reword live passages, add dated reconciliation notes to closed ones, never rewrite history.
+- A sequenced Phase P with running text-free tallies in this plan, and the practitioner's three Phase 0 inputs (decisions, the cue file, the voice list) before Phase 1 starts.
+
+### Deferred — Actionable Later
+- Estimated speaker count (D-S1's implementation) — decided by this plan's P.6, built under its own plan if the decision is "build".
+  - Why deferred: the decision needs the measurement numbers this programme produces (approved with the plan, 2026-10-09).
+  - Risk if deferred: ux-degradation · Revisit by: P.6.
+- Content-free timing metrics in the audit row (the pilot plan's deferred item) — unchanged; revisit at the clinic 1 exit gate.
+- The "facts script" half of the development-recordings plan's deferred item (a per-consultation facts list for the harness's material-fact metrics over real speech) — stays deferred: it would need the practitioner to write content about a real consultation into a file the agent reads.
+  - Risk if deferred: minor · Revisit by: after P.6, if the speaker numbers alone prove insufficient.
+
+### Excluded — Revisit Only If Needed
+- A new `accent` axis token in `validation.Axis` — excluded: accent is a property of the voice, not of a script's content; the schema stays v1 and the run's record names the voices used (D4). Revisit only if a later rule wants an accent threshold.
+- Renaming the harness's internal "role-play" vocabulary (`RolePlayScriptError`, "a role-play script is recorded, not built"; `validation_set.py:102–703`) — excluded: code behaviour is unchanged (a script without `conditions` is a recorded one); the harness doc and `validation.py`'s module docstring gain one sentence saying so. Pins: `test_validation_set.py:37,394,437–450,533–541,633,813,834,848`, `test_shadow_exits.py:857`.
+- A consent-document change — excluded by construction: every flow here fits the approved wording (one copy at a time; a kept shadow consultation; others in the room sign). The tension that the programme targets about ten kept recordings while the consent's banner says "only occasionally and with care until [the independent review]" is resolved by the practitioner's P.4 decision of 2026-10-09 (own review; the feature never ships to other practitioners) and is stated in `docs/pilot/README.md`'s smoke step.
+- Clinic 2's install, P.1 and gate — unchanged in `plan-pilot.md` P.7, blocked on Cliniko API-key permission.
+
+### Accepted Assumptions — Revalidate Later
+- About ten patients over the clinic days will sign Part C of `development-recording-consent.md`, at least one with another adult in the room who also signs. Fallback if fewer: the measurement is recorded over what exists (the numbers carry n) and D-S1 is decided on that evidence or explicitly re-deferred with a date. Revalidate after the fifth kept recording (P.6).
+- A third SAPI voice (non-Australian English) is available on this computer or can be installed. Voices added through Settings → Speech are OneCore voices and may NOT appear in `sapi_voices()` (SAPI5 tokens only, `validation_set.py:141–147`); Phase 0 Task 0.3 settles this before Phase 1. Fallback: syn-41…50 use slots 0/1 like the others and D4's synthetic-accent clause is recorded "not met — no third SAPI voice", never silently. The renderer checks only that a slot is in bounds and synthesises whatever voice now sits at that index, so an inventory that is reordered between Task 0.3 and a build (a voice added or removed) would build all 50 with a different patient voice without any error: before EVERY build after H4 (the Phase 1 smoke and P.3) the practitioner pastes `sapi_voices()` again and the build proceeds only if the voice NAME at every used slot (0, 1 and the chosen slot) equals the CURRENT VOICE BASELINE — otherwise the inventory is restored, or the scripts are remapped (peer round 2 PR-MED-005). The current voice baseline is Task 0.3's recorded list until a remap supersedes it: a remap writes a dated line on Task 0.3 with the new list and slot, lands in a new commit that passes the lint, and that commit becomes the RUN-OF-RECORD COMMIT in place of H4; Flow 1, the Phase 1 smoke, P.3 and D9 all refer to "the current baseline" and "the run-of-record commit" (H4 unless superseded), never to the original list by name (peer round 3 PR-MED-007).
+
+### Key Design Decisions
+- D1 — The role-play set is retired. No role-play WAV exists or will; the smoke's recordings are kept recordings under the "Kept recordings" rows of the retention schedule. Decision 3.6 is superseded (its "agreement of everyone recorded" and "review date" conditions are met by `development-consent-v1` and the 12-month review).
+- D2 — The Task 9.1 set is the pilot's ten shadow consultations, consented real patients under `patient-info-v3`, scored live at rubric v1's scoring point (step 4 of the procedure, `shipping-gate.md:41`: after the last proposal decision or warning acknowledgement, before Save) under the `clean` style; rubric v1 unchanged; the mock default, the "second real person" clarification and the desktop-Start wording (`:19, :21, :38`) are superseded for this run by a dated addendum. C01–C10 are the ten ELIGIBLE shadow scores in chronological order — an attempt excluded under D15 (scored under another style) stays a pilot-log row but takes no C slot, so the run ends at the tenth eligible score, not the tenth attempt; P.1's two mock shadow rows are never eligible. The C-slot ↔ log-Row mapping, with its excluded attempts, is one prose line in the off-repo pilot log, fixed as it is written, never by date (peer round 2 PR-MED-006). The config is the practitioner's LIVE config as installed, pinned by D15 — not `docs/testing/shipping-gate-config/` (real consultations cannot be arranged to hit a scripted composition; EVERY composition item of `shipping-gate.md:23–30` — the 8–12 count spanning new and follow-up patients, three regions with a prefill seed, each of :27's AI-quality axes at least once, the trigger spoken by each role, one role correction, one three-speaker consultation — is "as the clinic presents", each recorded in the addendum as met or not met over C01–C10, and the pass-rule result is stated SEPARATELY from composition coverage, unmet coverage being a recorded limitation of the measurement, never a reason to arrange a consultation or touch a threshold; peer round 1 PR-MED-004). Shadow consultations start from Chrome as usual (a shadow recording refuses Write and Copy whichever way it starts, pilot D4) and end in Complete, not Discard; a kept recording under Part C is allowed for them (`shipping-gate.md:30` superseded).
+- D3 — The Phase 3A 9.2 completion gate is folded in: its evidence is CI green on `main`, the suite's global properties, the validation run of record passing rule v1 (P.3) and one reviewed consultation's draft written to Cliniko in P.5 and seen there. 9.2's "several labelled human recordings including a three-speaker one" becomes "the smoke's measured recordings, a three-speaker one if the clinic yields one, otherwise recorded as not measured".
+- D4 — Accents: rule v1's call 3 is amended, not retired. The synthetic set carries one non-Australian English SAPI voice as the patient of `syn-41`…`syn-50`, and the run's record names every voice used (SAPI order). The real-speech half is an AGGREGATE COUNT ONLY — "n of N measured recordings had a speaker whose accent differed from the practitioner's" — written in the off-repo pilot log and NEVER copied into this plan, its tallies, a completion note, a reconciliation record or any committed file; the repository records only the synthetic voice (practitioner 2026-10-09: a per-recording accent is sensitive information and not "numbers only"; peer round 1 PR-HIGH-001). Rule v1's thresholds and the JSON are untouched; the amendment is dated and cited as "rule v1 as amended 2026-10-09".
+- D5 — Constraint 8 stands: a validation set folder holds synthetic files only; a kept recording reaches measurement ONLY through Export recording (WAV) → the measurement folder → `measure-speakers.py` → deletion. Nothing is built "into" a shared folder.
+- D6 — An exported WAV is renamed `k-NN.wav` (its label track `k-NN.txt`) only after the app's success line, because the report echoes the file stem and session ids never appear in the repository or this plan. The k-NN ↔ consultation link is a prose line in the off-repo pilot log naming the log ROW (the log forbids session ids), kept until the measurement population is frozen (D17).
+- D7 — Phase P's record of progress is the off-repo pilot log (the row record and every interim count) plus the text-free tallies table in this plan, which changes ONLY at a completed-block boundary (counts and aggregates only, dated by MONTH). No new tracker document, table or column: `test_pilot_docs.py:207–231` pins exactly three template tables and one register table — and that test scans `docs/pilot/*.md` ONLY, never the plans, so before any commit the composer diffs `.cursor/plans/` and `docs/` for a per-consultation delta or attribute by hand (peer round 1 PR-MED-001).
+- D8 — The findings register's `role-play` Stage and `rp-NN` Encounter vocabulary go; `smoke` is added as a Stage; a real consultation's Encounter is `—`. The register text and the two regexes in `test_pilot_docs.py:109–110` change in the same commit.
+- D9 — Rule v1's call 1 stands: the practitioner's own fresh `section_cues.json` is COMMITTED in `validation/config` (cue phrases only, never patient content, never copied from the app's config folder) BEFORE Phase 1, so syn-41…50 and the routing lints over syn-01…50 are checked against it once; the run of record is made from the clean checkout at the run-of-record commit — this plan's hardening commit H4, unless a voice remap supersedes it (Accepted Assumptions; PR-MED-007). The earlier draft's `.gitignore` idea is withdrawn.
+- D10 — One unencrypted copy at a time (`development-recording-consent.md:212, :222`): Flow 3 handles ONE recording per cycle — export, label, measure with `--enrolment` (a single pair is enough under the enrolled condition), delete, empty the Recycle Bin — and the composer combines the per-recording aggregates. A "batch" in this plan means a group of cycles run on one day, never several copies at once.
+- D11 — Audacity keeps an unsaved working copy of the opened audio in its TEMPORARY DIRECTORY (default `%LOCALAPPDATA%\Audacity\SessionData`, but configurable under Preferences → Directories and read at start-up — a change needs a restart; peer round 1 PR-HIGH-002), and `audacity.exe` is not excluded from Windows crash reporting (the exposure round 45 of the development-recordings plan closed for `python.exe`). Control (practitioner 2026-10-09): in P.2 the practitioner sets Audacity's temporary directory to a dedicated folder under the measurement folder (for example `C:\scribe-measure\audacity-temp\`), restarts Audacity and confirms the setting; the register script writes a fifth per-user WER exclusion, `audacity.exe` (Task 1.5); Flow 3 closes Audacity WITHOUT saving a project, confirms THAT temporary folder is empty, never accepts Audacity's crash recovery for a real recording (discard it), and clears Audacity's and Explorer's recent files; the retention schedule gains an "Audacity working copy" row and the threat model a named residue.
+- D12 — Public-repository hygiene: nothing per consultation or per cycle is written into a tracked file, committed or not (a later unrelated commit would capture a working-tree delta). The 9.1 table in `plan-phase3a` is filled once, when the tenth eligible score is in (D2); Task 2.3 / profile 6.2 numbers are written once, when the population is frozen (D17); this plan's tallies change at those two boundaries only and carry the month. A commit's day never pairs with a consultation.
+- D13 — Three-voice rule: a recording is kept ONLY if every person heard on it has signed Part C (someone who declines, or who joined after Start and was never asked, means Delete recording the same day, never Export); no recording of a child or of a person who cannot consent for themselves is kept while `development-recording-consent.md:115`'s reviewer note is unresolved; the three-voice target then reads "not measured", not "failed".
+- D14 — The enrolment WAV (`me.wav`, the practitioner reading alone, plaintext) lives in the measurement folder's `enrolment\` subfolder (`find_recording_pairs` ignores subfolders; `--enrolment` needs no label), is kept until profile 6.2's (Task 2.3's) and D-S1's records are written, then deleted with the Recycle Bin emptied — a new retention-schedule row.
+- D15 — The 9.1 run's "live config recorded": before the first attempt and after the TENTH ELIGIBLE score (D2) the practitioner pastes `Get-FileHash -Algorithm SHA256` over every `*.json` in the installed app's `config\` folder; the run record states whether the two lists match and, if not, which files changed — with the stated limit that the row after which they changed cannot be known. The writing style is checked as `clean` before every shadow Start; an attempt scored under another style takes no C slot (D2), is logged in the register, and the run continues until ten eligible scores exist; the table is filled and the final hashes taken only then.
+- D17 — Measurement population (peer round 3 PR-MED-008): the unit is the CONSULTATION (one pilot-log Row), counted once however many cycles it takes — a re-export or re-measurement of the same Row (the ledger row is gone after a successful export, so a second export is always possible) SUPERSEDES the earlier result and reuses its k-NN number; the k-NN ↔ Row lines stay in the off-repo log until the population is FROZEN, which is the moment the composer writes the P.6 totals (Task 2.3 / profile 6.2 numbers, the three-voice count, and the off-repo accent count share this one population and denominator; the 9.1 run's ten eligible scores — profile 6.3, P.4 — are a DIFFERENT population and never enter this one). A recording deleted on the patient's withdrawal AFTER its measurement stays in the population (its numbers are content-free aggregates produced under the consent in force; the audio is deleted per the consent) and the log line records "withdrawn"; one deleted BEFORE measurement never enters. After the freeze nothing is added, replaced or removed; a later measurement is a new population under a new record.
+- D16 — The measurement folder is outside the user profile on the internal drive (for example `C:\scribe-measure\`; the actual path in the git-ignored `AGENTS.local.md`), confirmed by the practitioner to be outside File History and Windows Backup, because `check_export_location` cannot see every synced or backed-up folder and the save dialog opens in Documents.
+
+## Key Findings
+
+### Files / Symbols Involved
+- Scripts and lint: `validation/scripts/syn-NN.json` — schema `validation.py:152–189` (`SCRIPT_SCHEMA_VERSION = 1`, `ENCOUNTER_ID_PATTERN`, `Axis`, `FactKind`, `AppointmentType`), `ExpectedFact` :240–268, `SyntheticConditions` :271–305 (`voice_slots: dict[str, int]`, slots ≥ 0 and distinct, no upper bound), `EncounterScript._check_script` :344–357 (`set(voice_slots)` = the roles used; `noise` ⇔ `snr_db`, `overlap` ⇔ `overlap_lines` with `overlap_seconds` > 0, `rate` ⇔ `rate` ≠ 0); `validation_set.py:79` `MIN_VOICES = 2`, :141–147 `sapi_voices()` (SAPI5 tokens in SAPI order), :338–372 `render_encounter` (a per-encounter `BuildError` "role 'patient' uses voice slot 2, but only N voice(s) are installed" — the build continues and counts an error, so a two-voice machine yields 40 built + 10 errors); `desktop/tests/test_validation_scripts.py:40–41` (`MIN_PER_AXIS = 3`, `MIN_PER_KIND = 3`), :63 (`>= 40`), :64 (unique ids), :66–72 (axis / fact-kind minimums), :122 and :155 (the two routing lints read `validation/config` through `load_note_config`), `TestValidationConfig` (exactly 3 autofill rules; a trigger phrase only in clinician lines and only in scripts with non-empty `expected_warnings`), :204–211 (`TestRenderable` renders with `("Voice 0", "Voice 1")`).
+- The comment `validation.py:168–170` ("accents cannot be synthesised and are left to the role-plays"), the module docstring :3 / :12–13 and :276 ("a role-play folder"), and `transcription.py:54` / :875 (D-S1 "needs the shared recording set") — live `src/` comments to reword.
+- The WER lists in `exclusions.py:88–103` (`WER_PRODUCTION_APPLICATIONS`, `WER_EXCLUDED_APPLICATIONS` — imported by `scripts/register-native-host.py:76–81` and fed to the app's own check by `wer_applications()`) and the pin `test_exclusions.py:175–181`; Task 1.5 adds a registration-owned superset beside them; `check_tool_wer` is unchanged (it checks the running interpreter only).
+- Pins touched: `desktop/tests/test_pilot_docs.py:109` (Stage regex), :110 (Encounter regex); :191–194 forbid any id-shaped token (hex ≥16 or digits ≥7 — `k-01`, `C01`, `syn-41` pass) in `docs/pilot/*.md`; :207–214 and :228–231 pin the table counts.
+- Documents (verified at `194139d`): `docs/security/retention-schedule.md:24,99,105,106,109,134` (+ two new rows); `docs/security/threat-model.md:3585–3600,4043` (+ one residue); `docs/security/data-flow-map.md:61,1175–1181,1444–1446`; `docs/pilot/README.md:4,29–60,80,100–111`; `docs/pilot/exit-gate.md:21–34`; `docs/pilot/findings-register.md:3,19–20,29–32`; `docs/pilot/pilot-log-template.md` (prose only); `docs/testing/validation-harness.md:3,15,19,25,27–28,73,84,86,90,91,94–95`; `docs/testing/speaker-measurement.md:9,11,28`; `docs/testing/kept-recordings.md:3,54–57,61`; `docs/testing/shipping-gate.md:3` + a dated addendum after :100 superseding :19,:21,:26,:30,:38,:42,:44,:80; `docs/testing/shipping-gate-config/README.md:1–3,10–17`; `docs/design-system.md:495–497`; `PLAN.md:177–179`; `AGENTS.md:12,36,68,70,73,77,85,90–91,116,118,119` + run step 5's exclusion list; `CHANGELOG.md` (one `[Unreleased]` entry); `validation/README.md:3`; `scripts/README.md:71,73`; `scripts/build-validation-set.py:7–8`.
+- Plans (live sections only; verified): `plan-pilot.md:38,40,76–85,146,176,198,209,235,288,1894 (record) + 1898 (sub-bullet),1899–1905,1923–1933`; `plan-practitioner-profile.md:28,30,35–42,116–120,236–237,305,309,982–985` + a new dated top bullet in its Current State (the newest run-state line :317 still says "record the shared set"); `plan-phase3a-note-pipeline.md:195,349,363 (new top bullet),1226–1227,1403–1407`; `plan-note-learning-and-styles.md:48–54,76`; `plan-development-recordings.md:38–46,57,153`; `plan-phase2-recording-transcription.md:61–67`; `plan-cliniko-draft-write.md:91`; `plan-cliniko-workflow-safeguards.md:75–81`; `plan-installation.md:2439–2441,2468`.
+
+### Codebase Integration Notes
+- `scripts/measure-speakers.py <dir> [--enrolment me.wav]` (a thin launcher for `speaker_eval.main`): `<name>.wav` + `<name>.txt` Audacity label pairs at the top level only (`find_recording_pairs` skips subfolders); exactly one DISTINCT label value equal to `clinician` per file (many spans are fine); returns 2 with `[refused]` unless `check_tool_wer` confirms `python.exe`'s crash-report exclusion (run step 5 was re-run 2026-10-04 — re-run the register script if it refuses); keys its report by `wav_path.stem` (hence D6); prints aggregates only; under `--enrolment` a single pair suffices (the leave-one-out fallback needs ≥2 only without it).
+- `scripts/replay-kept-recordings.py <past_sessions folder>` (run step 13): both builds closed; prints ids, DRIFT numbers and model names only. Once per new build of record, not per cycle.
+- `scripts/run-validation.py <set> --config validation\config --rule validation\rules\option-a-proposed.json` from a clean committed checkout; the report prints the rule name (`option-a-proposed`, no version or date) and the commit, never the voices — so the run record also cites `git rev-parse HEAD:validation/rules/option-a-proposed.json`, the amendment date and the pasted voice list.
+- Listing voices: `.venv\Scripts\python.exe -c "from scribe_desktop.validation_set import sapi_voices; print(*sapi_voices(), sep='\n')"` — the SAPI index is the `voice_slots` value; adding a token can renumber slots 0 and 1, so the list is pasted before AND after any install and on the day of the run.
+- Export: `PastSessionStore.export_recording` names the file by session id, drops the ledger row when `.part` → `.wav` succeeds (`past_sessions.py:1207`), `recover_exports` touches only a ledger `.part` — renaming the finished WAV is safe; a shadow or unreadable-label entry asks before Export (`ui/past_sessions_view.py:509–530`). Explorer's recent items keep `<session id>.wav` (threat-model residue (11)) — cleared each cycle.
+- CI runs the full suite on `windows-latest` with the real speech engine blocked for every test (`conftest.py:337–350` `_no_real_speech_engine`); every new test uses fake voice names and never calls `sapi_voices()`.
+- Rubric v1's procedure and scoring point: `docs/testing/shipping-gate.md:38–44` (step 4 at :41); R1–R6 :52–65; pass rule :69–76; the scoring table `plan-phase3a-note-pipeline.md:1410–1424` (C01–C10 :1412–1421, Totals :1422, decision :1424).
+
+### External / API Findings
+- None. The programme adds no network use; the one Cliniko write in P.5 is the existing `write_draft_note`.
+
+## Planned Workflow Summary
+
+### Flow 1 — a validation run (synthetic only)
+Practitioner, developer checkout at the run-of-record commit (H4 unless superseded), installed app closed: paste `sapi_voices()` and STOP unless the name at every used slot equals the current voice baseline (PR-MED-005/007) → `build-validation-set.py validation\scripts <set-folder outside the repo>` (50 encounters, three voices) → `run-validation.py … --rule validation\rules\option-a-proposed.json` → paste the text-free summary; the composer records voices, commit, rule blob hash, "rule v1 as amended 2026-10-09", result.
+
+### Flow 2 — a shadow consultation (one of ten)
+Status tab: Shadow mode on, writing style `clean` (checked each time) → Chrome: consent (`patient-info-v3`), optional Part C → Start from the side panel → at the scoring point score R1–R6 → Save → Complete → pilot-log row (Mode shadow, Kept yes/no); before the first attempt and after the tenth eligible score the D15 hashes. Scores reach the composer only when the tenth eligible score is in (D2/D12).
+
+### Flow 3 — one kept-recording cycle (D10, D11)
+Past sessions → Export recording (WAV) of ONE entry to the measurement folder (D16) → after the success line rename `k-NN.wav` → Audacity: label speakers, export `k-NN.txt`, close WITHOUT saving a project, confirm the `audacity-temp\` folder (D11) is empty → `measure-speakers.py <folder> --enrolment <folder>\enrolment\me.wav` → paste the aggregate → delete the WAV and label, empty the Recycle Bin, clear Audacity's and Explorer's recent files → the prose line in the pilot log (k-NN ↔ Row; export deleted) → next entry.
+
+## Design Decisions
+See Key Design Decisions D1–D17; their records are written into the documents by Phase 2 with the ratification date 2026-10-09.
+
+## Schema / Data Changes
+- None in the app's data. Script schema v1 unchanged (`voice_slots` already admits any slot). Findings-register vocabulary: Stage `validation|smoke|shadow|reviewed|everyday|other`, Encounter `syn-[0-9]{2,}|—`. The register script writes one more per-user WER value (`audacity.exe`) from a new registration-owned constant; the app's own required-exclusion list is unchanged (Task 1.5).
+
+## Config / Environment / Deployment Impact
+- A third SAPI voice on this computer (Phase 0 Task 0.3). The practitioner's `validation/config/section_cues.json`, committed (D9).
+- No build of record is needed: the app binary is unchanged (0.3.0 installed); the register script change is for the developer checkout's run step 5 (re-run it once after H4).
+- The measurement folder (D16) and its path in `AGENTS.local.md`.
+
+## Critical Constraints
+1. The agent never reads, plays or describes a kept recording, transcript, note or name; it receives aggregates and counts only. No session id, patient initial, consultation-date-plus-clinic pair, per-recording attribute or Cliniko number enters this plan or any committed file (D12).
+2. A validation set folder holds synthetic files only (pilot Constraint 8). An exported WAV never enters a set folder, the repository or any synced folder; one exists at a time and is deleted in its cycle (D10).
+3. Rubric v1, rule v1's thresholds and call 1 are never changed; D4's amendment is dated before P.3 and cited by the run's record.
+4. Reword live passages only; closed Review Findings Log blocks, dated handoff bullets, `phase-history.md` and CHANGELOG history are left as written. Superseded decisions (pilot D10, 3.6, assumptions D-C and the two-voice assumption) get a dated "Superseded/Revalidated" sub-bullet, not deletion.
+5. `test_pilot_docs.py`: no id-shaped token in any `docs/pilot/*.md`; exactly three template tables and one register table — new wording is prose, never a table or column.
+6. Everything in Phase 0 and Phase P runs from a normal terminal/Explorer/Chrome with the right build: the validation run and measurement in the DEVELOPER checkout with the installed app closed; the consultations on the INSTALLED app (0.3.0).
+7. Commits only at the composer seat; no push without the practitioner's explicit approval; `/simplify` runs before the commit that carries Task 1.5's code (the only `src/`/`scripts/` logic change); docs-and-tests-only commits skip it.
+8. The scripts are linted against the practitioner's committed cue file (D9); a routing lint that fails is resolved by a script revision, never by a cue or rule change.
+
+## Validation / Verification
+- Phase 1: `cd desktop && ../.venv/Scripts/python.exe -m pytest -q tests/test_validation_scripts.py tests/test_validation_set.py tests/test_exclusions.py` plus the registration tests (the files that grep `scribe-host.exe` under `desktop/tests`); the lint passes over 50 scripts with the computed `FAKE_VOICES` inventory and the practitioner's cue file in place; `wer_applications("dev")` still returns four names.
+- Phase 2: `pytest -q tests/test_pilot_docs.py tests/test_install_layout.py`; `rg -n "role-play|rp-0|Task 6\.1|decision 3\.6|40 (synthetic|invented)|two (Windows )?voices" docs PLAN.md AGENTS.md validation scripts desktop/src .cursor/plans/plan-*.md` returns only history lines, dated supersession notes and the harness's code vocabulary; full suite + ruff + mypy before the hardening commit.
+- Phase 1 smoke (practitioner, normal terminal, after H4): `build-validation-set.py validation\scripts <scratch folder>` builds 50 with 0 set-level errors; the scratch folder is deleted.
+- Phase P: the tallies table reaches its targets; the exit gate's reworded items each have a recorded value; CI green on `main` at the run-of-record commit.
+
+## Deferred / Out of Scope
+As in the Planning Extraction Summary.
+
+## Current State / Handoff Note
+- 2026-10-09: plan drafted in Plan Mode on Fable 5.1 from the manifest and APPROVED by the practitioner the same day (Task 0.1 ratified); hardened by `/review-plan` the same day (three lenses; two forced reversals — the cue file is committed, one exported copy at a time — and the practitioner's four answers: aggregate accent count off-repo, `audacity.exe` excluded, config hashes before C01 / after C10, no scratch consumed). Codex plan peer loop (`gpt-6-astra` medium, agent-driven, read-only sandbox, rounds transcribed by the composer) CONVERGED the same day at round 5 of 5: 13 build-affecting + 1 record-only findings applied (D17 added; the current-voice-baseline / run-of-record-commit terms; profile 6.2/6.3 re-mapped). NEXT: commit this plan; Phase 0 Tasks 0.2–0.3 (practitioner — the cue file committed with its blob hash recorded, the voice list pasted) BEFORE Phase 1; then `/execute-loop` for Phases 1–2 and H.
+
+### Smoke tallies (text-free; month only; changed by the composer ONLY when a block completes — the ten shadow rows scored, the measurement target reached — never per consultation or per cycle, D7/D12; interim counts live in the off-repo pilot log)
+| Measure | Target | So far | Month |
+|---|---|---|---|
+| Validation run of record (rule v1 as amended 2026-10-09) | 1 pass over ≥50 | — | |
+| Shadow consultations scored (9.1 set) | 10 | 0 | |
+| Reviewed consultations | 20 | 0 | |
+| Draft written to Cliniko and seen there (9.2) | ≥1 | 0 | |
+| Consultations measured (one per log Row; a retry supersedes, D17) | ~10 | 0 | |
+| Three-voice recordings measured | ≥1 (or "not measured") | 0 | |
+| Drift replays (one per build) | 1 per build | 1 (0.3.0) | 2026-10 |
+
+## Review History
+- 2026-10-09 — `/review-plan` (Fable 5.1; three subagent lenses: locators, coverage, risk) — 6 HIGH / 6 MED / 4 LOW raised by the risk lens, all disposed in the hardened plan (two forced reversals, four practitioner answers, the rest folded as D11–D16 and locator fixes); skew=none; action=none.
+- 2026-10-09 — Round 1 — codex `gpt-6-astra` medium plan peer-review — 0 CRIT / 2 HIGH / 4 MED / 0 LOW; Materiality 6 build-affecting / 0 record-only / 0 invalid; all six applied as plan amendments; skew=none; action=none (round 2 owed — plan mode never converges on round 1).
+- 2026-10-09 — Round 2 — codex `gpt-6-astra` medium plan peer-review — 0 CRIT / 0 HIGH / 2 MED / 1 LOW; Materiality 3 build-affecting / 0 record-only / 0 invalid (verified as labelled); all three applied; skew=none; action=none (round 3 owed — new build-affecting findings).
+- 2026-10-09 — Round 3 — codex `gpt-6-astra` medium plan peer-review — 0 CRIT / 0 HIGH / 2 MED / 0 LOW; Materiality 2 build-affecting / 0 record-only / 0 invalid (both fix-induced: gaps in round 2's own amendments); both applied (the current voice baseline; D17 measurement population); skew=fix-induced; action=none (round 4 owed).
+- 2026-10-09 — Round 4 — codex `gpt-6-astra` medium plan peer-review — 0 CRIT / 0 HIGH / 2 MED / 1 LOW; Materiality 2 build-affecting / 1 record-only / 0 invalid (MED-009 fix-induced — round 3's baseline not propagated to Task 2.4 and Agreed Scope; MED-010 pre-existing — profile 6.2/6.3 crossed in the draft); all three applied; skew=mixed; action=none (round 5 = the cap).
+- 2026-10-09 — Round 5 — codex `gpt-6-astra` medium plan peer-review — 0 CRIT / 0 HIGH / 0 MED / 0 LOW; Materiality 0 / 0 / 0; CONVERGED at the cap (6 → 3 → 2 → 3 → 0 over five rounds; 13 build-affecting + 1 record-only applied in all); skew=none; action=none.
+
+## Review Findings Log
+(the `/review-plan` lens findings are disposed inline above)
+
+### Round 1 — 2026-10-09
+
+Source: Codex plan peer-review (`gpt-6-astra`, medium; read-only sandbox — block transcribed by the composer from `.cursor/loops/clinic-smoke-plan-peer-r1.log`, findings verbatim)
+Round status: Closed (6 applied)
+Materiality: 6 build-affecting / 0 record-only / 0 invalid (verified labels = the peer's)
+
+**PR-HIGH-001 — Public tally contradicts the off-repository accent decision**
+- Materiality: build-affecting
+- Evidence: `.cursor/plans/plan-clinic-smoke.md:64` restricts the real-speech accent count to the off-repository log, but `:153` includes that count in this public plan's tallies.
+- Proposed amendment: Remove the accent-count tally from the plan and explicitly prohibit copying that off-repository count into completion notes or reconciliation records.
+- /fix decision: Applied — the tallies row removed; D4 now forbids the count in this plan, any completion note or reconciliation record.
+
+**PR-HIGH-002 — Audacity cleanup checks an assumed temporary directory**
+- Materiality: build-affecting
+- Evidence: plan `:71`, `:109`, `:193` assume `%LOCALAPPDATA%\Audacity\SessionData`; Audacity's temporary directory is configurable (Preferences → Directories) and a change needs a restart.
+- Proposed amendment: Add a P.2 prerequisite to verify or set Audacity's actual temporary directory to a dedicated non-synced internal-drive folder, restart Audacity, and check that same directory after closing or discarding recovery.
+- /fix decision: Applied — D11 and P.2: the temporary directory is set to a folder under the measurement folder, Audacity restarted, and Flow 3's emptiness check is over that folder.
+
+**PR-MED-001 — Per-cycle public updates undermine D12's batching rule**
+- Materiality: build-affecting
+- Evidence: plan `:72` prohibits incremental consultation commits, while `:197` requires updating public tallies after every recording cycle; `:152` includes the three-voice count. `desktop/tests/test_pilot_docs.py:191–194` scans only `docs/pilot/*.md`.
+- Proposed amendment: Keep interim tallies in the off-repository log, update the public plan only at the completed-block boundary, and require a composer diff check covering plans, findings and reconciliation notes while stating that the pilot-document tests do not cover them.
+- /fix decision: Applied — D7/D12 and P.6: interim counts live in the off-repo pilot log; this plan's tallies change only when a block completes; the composer diffs `.cursor/plans/` and `docs/` for per-consultation deltas before any commit; the plan states that `test_pilot_docs.py` never scans the plans.
+
+**PR-MED-002 — WER task misidentifies the shared exclusion list**
+- Materiality: build-affecting
+- Evidence: plan `:174` describes a tuple in the register script, but `scripts/register-native-host.py:76–81` imports `WER_EXCLUDED_APPLICATIONS` from `desktop/src/scribe_desktop/exclusions.py:89–93`; `wer_applications` (`:99–103`) feeds the app's own check from the same tuple. The canonical pin is `desktop/tests/test_exclusions.py:175–181`.
+- Proposed amendment: Specify a registration-owned list containing the existing four names plus `audacity.exe`, use it for write/read-back/output/unregistration, update the registration tests, and leave the app's required exclusions and `check_tool_wer` unchanged.
+- /fix decision: Applied — Task 1.5 rewritten: `WER_REGISTERED_APPLICATIONS = (*WER_EXCLUDED_APPLICATIONS, "audacity.exe")` in `exclusions.py`, used only by the register script's four operations; `WER_EXCLUDED_APPLICATIONS`, `wer_applications()` and `check_tool_wer` unchanged; the pins named.
+
+**PR-MED-003 — Fixed three-slot tests can reject the selected SAPI voice**
+- Materiality: build-affecting
+- Evidence: plan `:167` selects from the actual voice inventory, but `:171` requires every slot `<3` and exactly three fake voices; `validation_set.py:141–147` preserves SAPI order and `:350–355` indexes it directly.
+- Proposed amendment: Bind the scripts to the selected qualifying voice's actual index and size the fake inventory and slot bound accordingly, retaining the two-voice fallback.
+- /fix decision: Applied — Tasks 0.3, 1.1 and 1.2: the chosen voice's actual SAPI index is the patient slot; the lint's fake inventory holds (highest slot used + 1) names and the slot bound is that size.
+
+**PR-MED-004 — The addendum leaves an unresolved composition requirement**
+- Materiality: build-affecting
+- Evidence: plan D2 (`:62`) makes several composition items opportunistic and Task 2.2 lists superseded passages, but `docs/testing/shipping-gate.md:27` still requires every applicable AI-quality axis at least once.
+- Proposed amendment: Address the remaining composition clauses in the dated addendum, record unmet coverage as a limitation, and distinguish the numerical pass-rule result from full composition coverage.
+- /fix decision: Applied — D2 and Task 2.2: the addendum records each of `:27`'s axes as met or not met over C01–C10 and states the pass-rule result separately from composition coverage; `:27` joins the superseded-by-addendum list.
+
+/fix notes: every amendment re-read on disk after the edit and sibling statements swept (D4 ↔ tallies ↔ P.6; D7 ↔ D12 ↔ P.6; D11 ↔ Flow 3 ↔ P.2; Task 1.5 ↔ Files / Symbols ↔ Config; Task 0.3 ↔ 1.1 ↔ 1.2; D2 ↔ Task 2.2).
+
+
+### Round 2 — 2026-10-09
+
+Source: Codex plan peer-review (`gpt-6-astra`, medium; read-only sandbox — block transcribed by the composer from `.cursor/loops/clinic-smoke-plan-peer-r2.log`, findings verbatim)
+Round status: Closed (3 applied)
+Materiality: 3 build-affecting / 0 record-only / 0 invalid (verified labels = the peer's)
+
+**PR-MED-005 — Voice inventory changes can silently invalidate the chosen accent**
+- Materiality: build-affecting
+- Evidence: plan `:92`, `:103`, `:212`, `:239`; `validation_set.py:350–358`. The plan requests the run-day voice list but specifies no comparison or refusal when its index mapping differs from Task 0.3; the renderer checks only index bounds, so a same-length reorder builds all 50 scripts with a different patient voice.
+- Proposed amendment: Before either post-H4 build, require every used slot's voice identity to match the approved inventory, otherwise restore that inventory or remap the scripts and establish a newly verified run-of-record commit.
+- /fix decision: Applied — the voice-name check at every used slot before the Phase 1 smoke and P.3 (Accepted Assumptions, Flow 1, Phase 1 smoke, P.3); a mismatch stops the build.
+
+**PR-MED-006 — Replacement rows conflict with the C10 completion boundary**
+- Materiality: build-affecting
+- Evidence: plan `:62`, `:75`, `:106`, `:240`; `docs/pilot/pilot-log-template.md:16`; `docs/testing/shipping-gate.md:32`. D2 defines C*n* as the nth real shadow row while D15 excludes and replaces a wrong-style row; chronological C10 could arrive with nine eligible scores yet trigger the final hashes and publication.
+- Proposed amendment: Define an immutable off-repository mapping between chronological log Rows, excluded attempts and ten eligible C slots, with final hashes and publication triggered only after the tenth eligible score.
+- /fix decision: Applied — D2: C01–C10 are the ten eligible scores in order, an excluded attempt is a log row without a C slot, the mapping is one fixed prose line in the off-repo log; D15 and P.4 trigger the final hashes and the table fill at the tenth eligible score.
+
+**PR-LOW-001 — Task 0.2 contradicts the required cue-file commit order**
+- Materiality: build-affecting
+- Evidence: plan `:69`, `:211`, `:215`. D9 requires the cue file committed before Phase 1, but Task 0.2 commits it with Phase 1 and accepts a new file in `git status`.
+- Proposed amendment: Make the cue-file commit and its recorded identity Task 0.2's completion criteria and an explicit prerequisite for starting Phase 1.
+- /fix decision: Applied — Task 0.2 completes only when the file is in a commit on `main` with its blob hash recorded on the task; Phase 1 does not start before.
+
+/fix notes: every amendment re-read on disk after the edit and siblings swept (D2 ↔ D15 ↔ P.4 ↔ Flow 2; Accepted Assumptions ↔ Flow 1 ↔ Phase 1 smoke ↔ P.3; D9 ↔ Task 0.2 ↔ Task 1.1).
+
+### Round 3 — 2026-10-09
+
+Source: Codex plan peer-review (`gpt-6-astra`, medium; read-only sandbox — block transcribed by the composer from `.cursor/loops/clinic-smoke-plan-peer-r3.log`, findings verbatim)
+Round status: Closed (2 applied)
+Materiality: 2 build-affecting / 0 record-only / 0 invalid (verified labels = the peer's; both fix-induced by round 2's amendments)
+
+**PR-MED-007 — Voice-remapping recovery retains the obsolete baseline and commit**
+- Materiality: build-affecting
+- Evidence: plan `:58` permits remapped scripts and a new verified run-of-record commit, but `:103`, `:247` and `:266` still require equality against Task 0.3's original same-slot voice list; `:69` and `:266` still require the H4 checkout. `validation_set.py:350–358` selects voices by index. After an inventory reorder, correctly remapped scripts cannot satisfy the original same-index comparison; returning to H4 restores the obsolete mappings.
+- Proposed amendment: Define a superseding voice-to-index baseline and verified run commit after remapping, and make D9, Flow 1, the Phase 1 smoke and P.3 consistently reference that current baseline and commit.
+- /fix decision: Applied — "the current voice baseline" (Task 0.3's list until a dated remap line supersedes it) and "the run-of-record commit" (H4 unless superseded) defined in Accepted Assumptions; D9, Flow 1, the Phase 1 smoke and P.3 now reference them.
+
+**PR-MED-008 — Measurement membership is undefined across retries and withdrawal**
+- Materiality: build-affecting
+- Evidence: plan `:66` permits dropping the k-NN ↔ Row link after WAV deletion, while `:70`, `:151` and `:269` count measurement cycles without deduplication, replacement or withdrawal rules. `past_sessions.py:1199–1208` and `:1377–1384`: a successful export loses its ledger row, so a re-export is always possible. `docs/security/retention-schedule.md:120–123` requires audio deletion on withdrawal but does not settle aggregate membership.
+- Proposed amendment: Keep stable k-NN ↔ Row membership off-repository until aggregation is final, count each successfully measured consultation once, supersede retry results, and define withdrawal treatment and the membership freeze point before publishing totals.
+- /fix decision: Applied — new D17 (the consultation is the unit, counted once; a retry supersedes and reuses its k-NN; a withdrawal after measurement stays in the population and is marked, one before measurement never enters; the population is frozen when the P.6 totals are written and shared by every aggregate including the off-repo accent count); D6 and P.6 amended to match.
+
+/fix notes: every amendment re-read on disk after the edit and siblings swept (Accepted Assumptions ↔ D9 ↔ Flow 1 ↔ Phase 1 smoke ↔ P.3; D6 ↔ D17 ↔ P.6 ↔ tallies).
+
+### Round 4 — 2026-10-09
+
+Source: Codex plan peer-review (`gpt-6-astra`, medium; read-only sandbox — block transcribed by the composer from `.cursor/loops/clinic-smoke-plan-peer-r4.log`, findings verbatim)
+Round status: Closed (3 applied)
+Materiality: 2 build-affecting / 1 record-only / 0 invalid (verified labels = the peer's)
+
+**PR-MED-009 — Voice-remap fixes still conflict with sibling instructions**
+- Materiality: build-affecting
+- Evidence: plan `:275` instructs Task 2.4 to amend pilot P.3 to use "the H4 commit", contradicting the superseding run-of-record commit defined at `:58` and used at `:69` and `:288`; Agreed Scope at `:37` fixes the patient slot to `2`, whereas Tasks 0.3/1.1 require its actual SAPI index.
+- Proposed amendment: Make Task 2.4 use the defined current voice baseline and run-of-record commit, including supersession, and replace Scope's hardcoded patient index with Task 0.3's selected index.
+- /fix decision: Applied — Task 2.4's pilot P.3 wording now names "the run-of-record commit — H4 unless a voice remap supersedes it"; Agreed Scope names "the SAPI index Task 0.3 selects".
+
+**PR-MED-010 — Task 6.3 is incorrectly assigned the speaker-measurement population**
+- Materiality: build-affecting
+- Evidence: at HEAD `plan-practitioner-profile.md:984` assigns the three measurement conditions and auto-confirm results to 6.2; `:985` assigns 6.3 to resuming the Task 9.1 gate run and closing its pause pointer. The smoke plan called 6.3 "the enrolment measurement" (`:20`), gave it the enrolment reference (`:287`), wrote measurement numbers there (`:291`) and put it in D17's population (`:76`), whereas P.4's population is the ten eligible shadow scores.
+- Proposed amendment: Assign enrolment measurements and their retention dependency to 6.2, route 6.3's gate record and pause-pointer closure through P.4, and exclude 6.3 from D17's measurement population.
+- /fix decision: Applied — Goal, D14, D17, P.2, P.6 re-pointed to 6.2 / Task 2.3; D17 states that the 9.1 run's population (profile 6.3, P.4) is a different population; Task 2.4 now carries the explicit 6.1 / 6.2 / 6.3 mapping.
+
+**PR-LOW-002 — D17's summary references remain stale**
+- Materiality: record-only
+- Evidence: plan `:31`, `:113`, `:259` still name D1–D16 while `:36` includes D17; the tally label at `:152` says "one cycle each" although D17 permits superseding retries.
+- Proposed amendment: Update the decision references to D1–D17 and label the tally as unique consultations measured, with retries superseding earlier results.
+- /fix decision: Applied — the three references read D1–D17 (Task 0.1 notes D17's ratification basis); the tally row reads "Consultations measured (one per log Row; a retry supersedes, D17)".
+
+/fix notes: every amendment re-read on disk after the edit and siblings swept (Agreed Scope ↔ Tasks 0.3/1.1; Task 2.4 ↔ Accepted Assumptions ↔ D9 ↔ P.3; Goal ↔ D14 ↔ D17 ↔ P.2 ↔ P.6 ↔ Task 2.4 for 6.2/6.3; D1–D17 references ↔ tallies).
+
+### Round 5 — 2026-10-09
+
+Source: Codex plan peer-review (`gpt-6-astra`, medium; read-only sandbox — block transcribed by the composer from `.cursor/loops/clinic-smoke-plan-peer-r5.log`)
+Round status: Closed
+Materiality: 0 build-affecting / 0 record-only / 0 invalid
+
+No new findings this round. The peer re-verified the prior amendments, plan-wide consistency and the specified code/document contracts. Converged (plan-review mode: zero new build-affecting findings on a round ≥ 2; cap 5 reached at convergence, no raise needed).
+
+## Tasks
+
+### Phase 0 — The practitioner's inputs (before any build)
+- 🟩 0.1 `[decision]` Ratified 2026-10-09 (plan approval and the hardening answers): D1–D16; D17 (peer round 3) ratified by the same authority as a consequence of D10 and D12.
+- 🟥 0.2 Write your own fresh `section_cues.json` into `validation\config` (cue phrases only, written fresh — never copied from the app's config folder — rule v1 call 1), from a normal terminal or editor; tell the composer when it is there. The composer then COMMITS it (on its own or together with this plan's commit) and records its blob hash (`git rev-parse HEAD:validation/config/section_cues.json`) on this task — Phase 1 does not start until that commit exists (D9; peer round 2 PR-LOW-001). Acceptance: the file is in a commit on `main`, its blob hash recorded here, and the existing routing lints over syn-01…40 pass against it.
+- 🟥 0.3 Voices: run `.venv\Scripts\python.exe -c "from scribe_desktop.validation_set import sapi_voices; print(*sapi_voices(), sep='\n')"` from a normal terminal and paste the list. If fewer than three voices, or none non-Australian, add an English voice (Settings → Time & language → Speech → Add voices; note that voices installed there may be OneCore and not appear — then a SAPI5 voice package is needed) and paste the list again. The composer fixes Task 1.1's patient slot from the final list — the chosen voice's ACTUAL SAPI index, whatever it is (2, 3, 5 …) — and records whether slots 0 and 1 moved. Acceptance: a pasted list, the slot decision written on Task 1.1 (peer round 1 PR-MED-003).
+
+### Phase 1 — Ten more synthetic scripts and the Audacity exclusion (agent-built; `/execute-loop` phase)
+- 🟥 1.1 Author `validation/scripts/syn-41.json` … `syn-50.json`: invented content only (pilot Constraint 8); `schema_version` 1, file stem = `encounter_id`; `voice_slots` per Task 0.3's decision (`{"clinician": 0, "patient": <the chosen voice's SAPI index>}`; fallback slots 0/1); `axes` from `validation.Axis` with `noise` ⇔ `snr_db`, `overlap` ⇔ `overlap_lines` (+ `overlap_seconds`), `rate` ⇔ `rate` ≠ 0 — spread across the six appointment types and the eleven axes so every axis and fact kind keeps ≥3 scripts; at least one `clinician` line each; at least one material fact each; at least three `expect_uncertain` facts across the ten (never on an `absent` fact), each in a clause the committed cue file routes; two scripts on `end_and_new_patient`; consent routed as a material fact in at least one; the three autofill trigger phrases only in clinician lines and only where `expected_warnings` is non-empty; no fact edge word repeated beside it; lines ≤ 2000 chars, file ≤ 256 KiB. Acceptance: `test_validation_scripts.py` passes with 50 scripts against the practitioner's committed cue file.
+- 🟥 1.2 Widen the lint: a module constant `FAKE_VOICES = tuple(f"Voice {i}" for i in range(N))` where N = (the highest slot any script uses) + 1 — computed from the scripts, so the chosen voice's real index (Task 0.3) never fails the lint; `TestRenderable::test_every_script_renders_with_two_fake_voices` renders with `FAKE_VOICES` (renamed `…_with_fake_voices`); `test_every_script_loads` asserts `>= 50`; add one test that every slot used is < `len(FAKE_VOICES)` and — unless Task 0.3 chose the fallback — that at least ten scripts use the chosen slot (pins D4's synthetic coverage). Fake names only; no `sapi_voices()` call (peer round 1 PR-MED-003).
+- 🟥 1.3 Reword the live `src/` comments: `validation.py:168–170` (accents: a third installed voice carries them in the set; real-speech accents are the smoke's aggregate count), `validation.py:3`, `:12–13`, `:276` ("role-play" = a recorded script without conditions), `transcription.py:54` and `:875` (D-S1 is decided from the clinic 1 smoke's measured recordings, `plan-clinic-smoke.md`). Comments only; ruff/mypy unchanged.
+- 🟥 1.4 Counts and voices: 40 → 50 in `validation/README.md:3`, `docs/testing/validation-harness.md:19` (+ the recount at :86), `PLAN.md:177`, `AGENTS.md:77`, `plan-pilot.md:38`, `plan-installation.md:2468`; "two voices" → "three voices" in `validation-harness.md:25` and :91, `scripts/README.md:71`, `scripts/build-validation-set.py:7–8` (docstring), `plan-pilot.md:81–85` (the accepted assumption, with a dated revalidation line); `validation-harness.md` gains the "listing voices" command and the sentence that scripts 41–50's patient uses the third installed voice (or the fallback, if Task 0.3 chose it).
+- 🟥 1.5 `audacity.exe` (D11): the register script imports the shared `WER_EXCLUDED_APPLICATIONS` from `exclusions.py:89–93` (`scripts/register-native-host.py:76–81`), and that tuple also feeds the app's own check through `wer_applications()` (`exclusions.py:99–103`) — so it must NOT grow. Add a registration-owned superset in `exclusions.py`, `WER_REGISTERED_APPLICATIONS: Final = (*WER_EXCLUDED_APPLICATIONS, "audacity.exe")`, and make the register script's four operations — write, read-back, the `wer :` line and `--unregister` — use it; `WER_EXCLUDED_APPLICATIONS`, `WER_PRODUCTION_APPLICATIONS`, `wer_applications()` and `check_tool_wer` stay byte-identical. Pins: `test_exclusions.py:175–181` (the four-name tuple, unchanged) gains an assertion for the five-name superset; the registration tests (grep `scribe-host.exe` under `desktop/tests/`) pin that all four operations use the superset. Update AGENTS.md run step 5's list and the threat model's EXCLUSIONS paragraph with one clause. `/simplify` before this phase's commit. Acceptance: ruff, mypy, `test_exclusions.py` and the registration tests green; `wer_applications("dev")` still returns four names (peer round 1 PR-MED-002).
+- Phase 1 smoke (practitioner, normal terminal, after H4): re-run `scripts\register-native-host.py` (a fifth `wer :` value); paste `sapi_voices()` and continue only if every used slot's name equals the current voice baseline (PR-MED-005/007); then `build-validation-set.py validation\scripts <scratch folder>` builds 50 with 0 set-level errors; delete the scratch folder.
+
+### Phase 2 — Retire the role-play set (agent-built, documents + plans + two regexes; `/execute-loop` phase)
+- 🟥 2.1 Governance and test pin: `docs/pilot/findings-register.md:3,19–20,29–32` (D8) and `desktop/tests/test_pilot_docs.py:109–110` in one commit; `docs/pilot/README.md:4,29–60,80,100–111` (step 2 rewritten as "The clinic 1 smoke (P.2)" per Flow 3 one cycle at a time, D13's three-voice rule and the "about ten, under the practitioner's own review" statement; step 3 synthetic-only, "syn-41…50 authored first"); `docs/pilot/exit-gate.md:21–34` reworded (never an exception beside a signature: "Clinic 1 smoke records exist" — the 9.1 table, the speaker numbers, D-S1 decided; "Exported copies deleted and every kept recording reviewed or deleted"; the ten shadow rows "each scored under `clean`"; P.1's mock rows excluded from C01–C10); `docs/pilot/pilot-log-template.md` PROSE only (a k-NN ↔ Row line and "export deleted" are written as notes beside the review table, which keeps its 12-month meaning; the aggregate accent count is one line) — no new table or column.
+- 🟥 2.2 Testing docs: `shipping-gate.md:3` status line + a dated addendum after :100 (D2 in full including the per-item composition record with its met / not-met cells and the separate pass-rule line, D15's hashes, D12's single commit; superseding :19, :21, :23–30, :38, :42, :44, :80 by number); `shipping-gate-config/README.md:1–3,10–17` ("not used by the 9.1 run of 2026-10; kept for a future scripted run"); `validation-harness.md:3,15,27–28,73 (D4's dated amendment line, both halves),84,90,94–95` + the "role-play means a recorded script" sentence; `speaker-measurement.md:9,11,28` + the rename step (D6) and the one-at-a-time rule (D10); `kept-recordings.md:3,54–57,61` (its steps 1–3 renamed per D6; the Audacity steps per D11; the folder per D16).
+- 🟥 2.3 Security docs: `retention-schedule.md:24,99,105,106 (retired row with a dated note),109,134` + two new rows ("Audacity working copy", "Enrolment WAV" per D11/D14); `threat-model.md:3585–3600` (residues (1)–(2) reworded), :4043, + the Audacity residue in "Kept recordings"; `data-flow-map.md:61,1175–1181,1444–1446`. Read the threat model's "The pilot" and "Kept recordings" sections first.
+- 🟥 2.4 Plans: `plan-pilot.md` (D-C revalidated :76–80; D10 :176 superseded; :146, :198, :209, :235, :288; 3.5's record :1894 left, a dated sub-bullet under :1898 naming both halves of call 3; 3.6 superseded :1899–1905; P.2 → "the clinic 1 smoke — `plan-clinic-smoke.md` Phase P"; P.3 synthetic-only from the run-of-record commit — H4 unless a voice remap supersedes it (Accepted Assumptions); P.4 = the 9.1 set under D2/D15); `plan-practitioner-profile.md:28,30,35–42,116–120,236–237,305,309` and its Tasks 6.1–6.3 at :982–985 with THIS mapping — 6.1 → "discharged by the clinic 1 smoke's consented recordings and enrolment WAV (`plan-clinic-smoke.md` P.2/P.6)", 6.2 → "run over that population; its numbers are written by the smoke's P.6", 6.3 → "closed by the smoke's P.4: the 9.1 run is the ten eligible shadow consultations, the pause pointer closed by the shipping-gate addendum" — + a dated top bullet in its Current State; `plan-phase3a-note-pipeline.md:195,349,1226–1227,1403–1407` + a dated top bullet in its Current State (:363); `plan-note-learning-and-styles.md:48–54,76`; `plan-development-recordings.md:38–46 (Promoted),57,153`; `plan-phase2-recording-transcription.md:61–67`; `plan-cliniko-draft-write.md:91`; `plan-cliniko-workflow-safeguards.md:75–81`; `plan-installation.md:2439–2441`.
+- 🟥 2.5 Briefings: `PLAN.md:177–179`; `AGENTS.md:12,36` (0.3.0 installed since 2026-10-08), :68, :70, :73 (safeguards "Open:" — the re-check and SEC-007 passed 2026-09-29), :85, :90–91, :116, :118, :119, run step 10's wording (one pair at a time; the rename), a Subsystem pointer for this plan; `docs/design-system.md:495–497`; `scripts/README.md:73`; `CHANGELOG.md` `[Unreleased]` entry. Then the Validation / Verification grep returns history and code vocabulary only.
+- No live smoke (documents and tests only).
+
+### Hardening stage
+- 🟥 H1 `/review-loop` over the Phase 1–2 diff (accept-closed at the cap).
+- 🟥 H2 `/simplify` over Task 1.5's code; `/security-review` over the diff (the exclusion list, the scripts' content rule).
+- 🟥 H3 Codex peer pass (agent-driven), converged or accept-closed.
+- 🟥 H4 Full suite + ruff + mypy green; `/document`; the hardening commit (the run-of-record commit for P.3). Push only on the practitioner's word.
+
+### Phase P — The clinic 1 smoke (practitioner-run; the composer records tallies and decisions)
+- 🟥 P.1 Pilot P.1 as written in `plan-pilot.md` (two mock shadow recordings on the installed 0.3.0, ~10 min) — unchanged; their rows are not C01–C10.
+- 🟥 P.2 Prerequisites: initial the shipping-gate addendum (`shipping-gate.md:100`); create the measurement folder (D16) with its `enrolment\` and `audacity-temp\` subfolders and put its path in `AGENTS.local.md`; in Audacity set Preferences → Directories → temporary files to `audacity-temp\`, restart Audacity and confirm it (D11); record `me.wav` reading alone into `enrolment\` (the `--enrolment` reference for profile 6.2 / Task 2.3); re-run the register script (Task 1.5's fifth value).
+- 🟥 P.3 Validation run of record (Flow 1) from a clean checkout at the run-of-record commit (H4 unless a remap superseded it), after the voice-name check against the current baseline (PR-MED-005/007); the composer records voices, commit, rule blob hash, result in `validation-harness.md`'s run record and `plan-pilot.md` P.3. A failure is a finding in the register, never a reason to tune the rule.
+- 🟥 P.4 Shadow consultations (Flow 2) until ten ELIGIBLE scores exist (D2/D15; an excluded attempt is a log row, not a C slot) = the 9.1 run under `clean` with D15's two hash pastes; when the tenth eligible score is in, the composer fills `plan-phase3a` Task 9.1's table in one commit and applies the pass rule (R4 = 0 every note; R6 yes majority; R1 ≥ 80 %; R3 ≤ 20 %); result recorded as a measurement. Any patient who also signs Part C adds a kept recording (D13 applies).
+- 🟥 P.5 Twenty reviewed consultations on the installed app, Shadow mode off: note-learning Task P.2's checks on the way; at least one draft written to Cliniko and seen there (9.2 evidence, D3). Kept recordings accumulate under Part C and D13.
+- 🟥 P.6 Kept-recording cycles (Flow 3, one at a time) until ~10 consultations are measured (one per Row, D17) incl. one three-voice if the clinic yields it: after each cycle the practitioner notes the count and the aggregate in the off-repo pilot log (nothing in a tracked file, D12); when the target is reached or the assumption's fallback applies, the practitioner confirms the population (D17: superseded retries resolved, withdrawals marked) and FREEZES it, then the composer updates the tallies and writes Task 2.3's numbers (and profile 6.2's, the same numbers) in their plans in one commit, and the practitioner decides D-S1 (build estimated-k / defer with a date) — `[decision]`; the aggregate accent count and each k-NN ↔ Row line stay in the pilot log; the drift replay once per new build; the enrolment WAV deleted at the end (D14).
+- 🟥 P.7 Clinic 1 exit gate (`docs/pilot/exit-gate.md` as reworded) and the findings register; then `plan-pilot.md`'s P.7 (clinic 2) unchanged and still blocked.
+
+## Retained Follow-Up Items
+(filled at close)
+
+## Follow-Up Continuation Notes
+- Sequence: Phase 0 Tasks 0.2–0.3 (practitioner) → the codex plan peer loop (agent-driven, plan-review mode; ~15-file slices if it reads the named documents) → commit the plan with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>` → `/execute-loop` (Opus executor, codex `gpt-6-astra` medium peer) for Phases 1, 2 and H → Phase P, practitioner-paced over the coming clinic weeks, the composer updating the tallies as results are pasted (month only; per-block commits).
