@@ -1779,7 +1779,13 @@ class TestAppWiring:
         deleted_started = datetime(2026, 7, 31, 23, 0, tzinfo=UTC)
 
         def label(completed: datetime, started: datetime | None = None) -> Any:
-            return SimpleNamespace(completed_at=completed, started_at=started)
+            # ``moment`` as ``PastSessionLabel.moment`` defines it (hardening
+            # round 43 SIMP-002).
+            return SimpleNamespace(
+                completed_at=completed,
+                started_at=started,
+                moment=started if started is not None else completed,
+            )
 
         # Review round 15 PR-MED-001: each reconciled commit's ``archived`` is
         # dated by its label's START, skipped when that month is pruned, and

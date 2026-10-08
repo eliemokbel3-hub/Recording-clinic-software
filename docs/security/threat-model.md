@@ -2941,12 +2941,18 @@ the installation plan also `packaging/scribe.iss`, its D6/D10).
     Reporting\ExcludedApplications` (machine-wide; uninstall removes them);
     the start-up check reads HKLM, then HKCU, and is satisfied by either;
   - a SOURCE checkout (the developer build): the register script writes, and
-    reads back, the per-user values `pythonw.exe`, `scribe-app.exe` and
-    `scribe-host.exe` = 1 under `HKCU\Software\Microsoft\Windows\Windows
-    Error Reporting\ExcludedApplications` (what
+    reads back, the per-user values `pythonw.exe`, `python.exe`,
+    `scribe-app.exe` and `scribe-host.exe` = 1 under
+    `HKCU\Software\Microsoft\Windows\Windows Error
+    Reporting\ExcludedApplications` (what
     `WerAddExcludedApplication(..., FALSE)` writes); `--unregister` removes
-    only those three values. `pythonw.exe` is needed because the venv
-    launchers start the BASE `pythonw.exe` as a child.
+    only those four values. `pythonw.exe` is needed because the venv
+    launchers start the BASE `pythonw.exe` as a child; `python.exe` (since the
+    development-recordings plan's hardening round 45, practitioner decision
+    2026-10-08) because the two tools that read a real consultation — the
+    kept-recordings replay and `measure-speakers.py` — run under it, and each
+    REFUSES to start unless the running interpreter's name is confirmed
+    excluded (`exclusions.check_tool_wer`, "Kept recordings" residue (18)).
 - Backup and snapshot (installation plan D6, installed app only): the
   installer writes one `REG_MULTI_SZ` value `ClinikoScribe` under each of
   `HKLM\SYSTEM\CurrentControlSet\Control\BackupRestore\FilesNotToBackup` and
@@ -3038,14 +3044,18 @@ install, Phase P, 2026-10-03); a source checkout alone sets none.
 (h) THE PAGEFILE AND HIBERNATION FILE may hold anything the process held in
 memory, including an opened entry's text and names (BitLocker is the
 mitigation, as for NTFS residue).
-(i) THE `pythonw.exe` WER BREADTH (a source checkout only — the installed
-app's exclusions name only its own two programs). The exclusion stops crash
-reports for EVERY pythonw program of this Windows user, not only the app's
-(practitioner-accepted). The documented console launch runs `python.exe`,
-which is NOT excluded, and the app says so at start-up ("Crash reports are
-not excluded for this launch (python.exe) — start the app with
-scribe-app.exe."). Native crashes are not Python exceptions: WER is the
-control for them, the hooks are not.
+(i) THE `pythonw.exe` AND `python.exe` WER BREADTH (a source checkout only —
+the installed app's exclusions name only its own two programs). The
+exclusions stop crash reports for EVERY pythonw and python program of this
+Windows user, not only the app's (practitioner-accepted; `python.exe` added
+by the development-recordings plan's hardening round 45, practitioner
+decision 2026-10-08, for the two tools that read a real consultation). The
+documented console launch therefore runs an excluded `python.exe` once the
+register script has been re-run; a launch by any other interpreter name (a
+versioned `python3.14.exe`, `py.exe`) is NOT excluded, and the app says so at
+start-up ("Crash reports are not excluded for this launch (<name>) — start
+the app with scribe-app.exe."). Native crashes are not Python exceptions: WER
+is the control for them, the hooks are not.
 (j) NOT-CONTENT-INDEXED IS FOLDERS ONLY. A file written before its folder was
 first marked keeps its old attribute until it is rewritten (session, log,
 profile and configuration files from before this build); links and
@@ -3649,9 +3659,12 @@ the bridge, the session-lock refusal included), a Chrome report naming
 another note or patient than the ids bound when it was armed (ids only —
 compared in the bridge's context handler, for every report of the bound tab,
 whatever the session state), a dropped Chrome link (for a tick armed while
-Chrome reported a note), a lock or a suspend clears it, and the Session tab
-says so ("The keep-for-development tick was cleared …"); the setting going
-off clears it too, unannounced (the tick is hidden then).
+Chrome reported a note), a lock or a suspend (while Windows reports it to the
+app — the Session tab and the status line name a lock or sleep registration
+that failed, `SYSTEM_PAUSE_FAILED_LINES`) clears
+it, and the Session tab says so ("The keep-for-development tick was cleared
+…"); the setting going off clears it too, unannounced (the tick is hidden
+then).
 Kept is decided ONCE: a live Complete from the controller's copy; a recovered
 Complete from the checkout's ONE decrypt of `encounter.enc`
 (`MainWindow.session_kept_for` reads the HELD record; none → not kept) —
@@ -3664,8 +3677,15 @@ that a written form exists is the practitioner's to keep (the consent
 document's Part B). (2) A CHROME START CONSUMES THE DESKTOP-ARMED TICK
 (practitioner, 2026-10-07): the practitioner is looking at Chrome when it is
 used; the bound-ids clear and the Complete line are the controls, and a
-mis-kept recording is deleted by Delete recording. (3) No Chrome indicator
-(no protocol change).
+mis-kept recording is deleted by Delete recording. A tick armed while Chrome
+reports no treatment note is bound to NO ids (Chrome reports patient and
+note ids only on a note page), so moving between other pages — another
+patient's included — never clears it (a reported note does, as do the other
+clearings above but the link drop): it can carry over to the next Start, for
+whichever patient (hardening review rounds 41 MED-001, 42). The "Next recording will be kept for development" line, the
+Complete line and Delete recording are the controls, and the consent
+document tells the practitioner to untick a box whose patient does not go
+ahead. (3) No Chrome indicator (no protocol change).
 
 THE SIDECAR AND ITS TWO KEYS (D5, D6, C4, C5). At a non-mock Complete of a
 kept session, `complete_session(keep_audio=True)` hands the archive a ONE-SHOT
@@ -3815,7 +3835,10 @@ verified and deleted through ONE exclusive Windows handle (`PartKernel`:
 then delete-on-close through `SetFileInformationByHandle`; codex round 24
 PR-MED-001) — sparing a finished `.wav` and any file whose identity differs
 (kept row, one line); an unreadable ledger is reset with one line saying a
-partial file may remain (naming none); one that cannot be opened this time is
+partial file may remain (naming none) — and a ledger KEY left with no ledger
+beside it (a reset whose key file could not be removed) that does not unwrap
+holds no row, so the next export replaces it (hardening review round 44
+SEC-002); one that cannot be opened this time is
 left alone, with one line, and resolved by the next export or start.
 The finished WAV is the practitioner's to delete; the app never touches it
 again. THE ONE WRITER: the only `wave` reference that writes is
@@ -3840,7 +3863,12 @@ created an instant earlier with no identity yet read is removed by its name
 UNPLUGGED DRIVE: a `.part` on an external drive Windows reported as fixed,
 unplugged at the next start, reads as not found and its ledger row is dropped
 (a folder deleted by hand must not hold its row for ever; review rounds 20
-LOW-002 and 22 LOW-001) — the file stays on that drive. (10) THE AUDIO EXIT
+LOW-002 and 22 LOW-001) — the file stays on that drive. The start-up
+recovery opens each row's recorded path without re-checking its drive: had
+that letter since been given to a network share, the open goes to the share
+— Windows' own file access to the share, no socket of the app's, one open
+per unresolved row at each start or later export (hardening review round 41
+LOW-006). (10) THE AUDIO EXIT
 PINS ARE A TRIPWIRE, NOT A SANDBOX: they count every reference by any name
 but cannot see a reference built at run time (a computed string, `exec` /
 `eval`, an object handed in from outside the package), nor an in-place edit
@@ -3903,7 +3931,36 @@ memory for one entry at a time (the best-effort scrubbing residual); (15) a
 temporary folder left by a kill holds ciphertext only and is named for
 deletion by the Ctrl+C line; (16) the practitioner pastes the numbers to the
 agent — C1 is an operating rule: no tool or test asks the agent to open,
-play, transcribe or describe a kept recording.
+play, transcribe or describe a kept recording; (18) CRASH REPORTS — CLOSED
+BY A REFUSAL, with a narrower residue. The tool runs under `python.exe` while
+it holds one real consultation in memory and runs native speech code
+(CTranslate2, onnxruntime); a native crash could leave a Windows Error
+Reporting report holding part of that memory, which Windows sends to
+Microsoft as its diagnostic settings allow. Since hardening review round 45
+(PR-HIGH-002; practitioner decision 2026-10-08, "close it in code",
+replacing round 44's printed note) the register script excludes
+`python.exe` per user as well (EXCLUSIONS above), and the tool REFUSES —
+after the folder checks and before the instance exclusion is taken, any
+model loads or anything is decrypted — unless the running interpreter's
+image name is confirmed excluded with DWORD 1 in HKCU
+(`exclusions.check_tool_wer`, through the injected Windows layer; an
+unreadable key, a failed layer or any other value refuses), naming the fix
+through `install_layout.registration_remedy()` (in a source checkout: run
+`scripts/register-native-host.py` again from a normal terminal). An
+interpreter whose image name is not one the register script excludes (a
+versioned `python3.14.exe`, `py.exe`) is refused before the registry is read
+— even if that name was excluded by hand — and told to start the tool with
+the developer build's `.venv\Scripts\python.exe` (hardening round 46
+PR-MED-001, decided fail closed: the reader stays confined to the values this
+app writes, reads back and removes).
+`measure-speakers.py` (whose recordings may be an EXPORTED real
+consultation) refuses the same way, before any recording is read. The
+RESIDUE: the exclusion is per user and removable (by `--unregister`, another
+program or the user), checked only at the tool's start — a value removed
+during a run is not seen; its breadth is every `python.exe` program of the
+user (residue (i)); an agent shell's MSIX-virtualized HKCU proves nothing
+(residue (l)); and a dump written by anything other than Windows Error
+Reporting (an attached debugger, for example) is outside it.
 
 OLDER BUILDS (D14). 0.2.0 opens a kept entry's transcript and notes and
 ignores the audio (listing and reading test only `key.dpapi` and `pending`);

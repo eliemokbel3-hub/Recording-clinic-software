@@ -83,7 +83,13 @@ from scribe_desktop.transcription import (
     label_speakers,
     transcribe_session,
 )
-from speaker_fakes import FrequencyEmbedder
+from speaker_fakes import (
+    VENV_PYTHON,
+    FrequencyEmbedder,
+    WerLayer,
+    excluded_wer_layer,
+    interpreter_image,
+)
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
 
@@ -93,6 +99,19 @@ def _offline_env() -> None:
     """Offline kill-switches active for every test: the clustering path's
     numpy import asserts them, exactly as the pipeline does."""
     apply_offline_env()
+
+
+_REAL_WINDOWS_LAYER = speaker_eval._windows_layer
+
+
+@pytest.fixture(autouse=True)
+def _crash_reports_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The running interpreter excluded from Windows crash reporting, as the
+    register script leaves it (development-recordings review round 45
+    PR-HIGH-002); the refusal tests replace it — never the registry. Launched
+    as the documented interpreter (round 46 PR-MED-001)."""
+    monkeypatch.setattr(sys, "executable", VENV_PYTHON)
+    monkeypatch.setattr(speaker_eval, "_windows_layer", excluded_wer_layer)
 
 
 # ---------------------------------------------------------------------------
@@ -1389,6 +1408,41 @@ def _scored(name: str) -> RecordingResult:
 
 
 class TestMain:
+    @pytest.mark.parametrize(
+        ("layer", "expected"),
+        [
+            # Round 45 PR-HIGH-002: the same refusal as the replay tool.
+            (lambda: WerLayer(), "crash reports are not excluded for"),
+            (lambda: WerLayer({interpreter_image(): 0}), "are not excluded"),
+            (lambda: WerLayer(error=PermissionError(5, "denied")), "could not check"),
+            (_REAL_WINDOWS_LAYER, "could not check"),
+        ],
+    )
+    def test_crash_reports_not_confirmed_excluded_are_refused_before_any_recording(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+        layer: object,
+        expected: str,
+    ) -> None:
+        (tmp_path / "a.wav").write_bytes(b"")
+        (tmp_path / "a.txt").write_text("", encoding="utf-8")
+        monkeypatch.setattr(speaker_eval, "_windows_layer", layer)
+        monkeypatch.setattr(speaker_eval, "SileroVad", _NeverBuilt)
+        monkeypatch.setattr(speaker_eval, "WhisperSpeechProvider", _NeverBuilt)
+
+        def never(*args: object, **kwargs: object) -> object:
+            raise AssertionError("no recording may be read before the check")
+
+        monkeypatch.setattr(speaker_eval, "find_recording_pairs", never)
+        monkeypatch.setattr(speaker_eval, "evaluate_recording", never)
+        assert main([str(tmp_path)]) == 2
+        captured = capsys.readouterr()
+        out = captured.out + captured.err
+        assert out.count("[refused]") == 1 and expected in out
+        assert "register-native-host.py again from a normal terminal, then retry" in out
+
     def test_unpaired_files_are_reported_and_no_model_is_built(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -339,8 +339,10 @@ def retention_kept_line(days: int | None) -> str:
 
 
 def _moment(label: PastSessionLabel) -> datetime:
-    """The entry's date: when its recording started, else when it completed."""
-    return label.started_at if label.started_at is not None else label.completed_at
+    """The entry's date: when its recording started, else when it completed
+    (``PastSessionLabel.moment``, the one definition — hardening round 43
+    SIMP-002)."""
+    return label.moment
 
 
 def _local_text(moment: datetime, zone: tzinfo | None) -> str:

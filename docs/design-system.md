@@ -636,8 +636,11 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   getting ready" refusal keeps it); the line under the ticks reads "Next recording will
   be kept for development" while it is armed and "This recording is being kept for
   development" while a kept recording runs. A tick cleared by anything but a Start that
-  ran — Chrome moving to another note or patient, the link dropping, a refused Start,
-  the computer locking or sleeping — is NAMED, never silent: "The keep-for-development
+  ran or the setting being turned off (the tick is then hidden, unannounced) — Chrome
+  showing another note than the one it was armed on, or none, the link dropping (both
+  only for a tick armed while Chrome showed a note: one armed with no note open is tied
+  to no patient — other pages never clear it, a reported note does), a refused Start, the computer locking or
+  sleeping (while that pause is available) — is NAMED, never silent: "The keep-for-development
   tick was cleared - the Cliniko note changed, the computer locked or a Start was
   refused. Tick it again before Start if the patient consented in writing."
   (`DEVELOPMENT_TICK_CLEARED_LINE`). On the Past sessions tab an entry holding a kept

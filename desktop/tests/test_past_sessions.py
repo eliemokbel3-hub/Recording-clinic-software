@@ -446,6 +446,33 @@ class TestPendingLifecycle:
         assert store.remove_pending_entry(source.session_id)
         assert not entry.exists()
 
+    def test_a_staging_folder_whose_link_status_cannot_be_read_refuses(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hardening review round 41 LOW-003: the same rule one level up —
+        "``.staging`` cannot be inspected" must not skip the staging copy and
+        answer True, or the destroyer deletes the SOURCE key while a staging
+        copy (since 0.3.0 possibly with a kept recording's audio) stays."""
+        store = _store(tmp_path)
+        source = _source()
+        staged = store.staging_root / source.session_id
+        staged.mkdir(parents=True)
+        (staged / KEY_FILENAME).write_bytes(b"k")
+        staging_root = store.staging_root
+        real_lstat = os.lstat
+
+        def uninspectable(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+            if Path(path) == staging_root:
+                raise PermissionError(errno.EACCES, "in use")
+            return real_lstat(path, *args, **kwargs)
+
+        monkeypatch.setattr(os, "lstat", uninspectable)
+        assert store.remove_pending_entry(source.session_id) is False
+        monkeypatch.undo()
+        assert (staged / KEY_FILENAME).exists()
+        assert store.remove_pending_entry(source.session_id)
+        assert not staged.exists()
+
     def test_link_state_reads_a_real_folder_a_missing_one_and_an_error(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -2083,6 +2110,60 @@ class TestKeptRecording:
         (store.root / gone / AUDIO_KEY_FILENAME).unlink()  # key gone, audio left
         assert store.recording_state(gone) == "gone"
 
+    @staticmethod
+    def _one_good_read(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+        """Instrument the key-state reader: each key file's FIRST read is
+        real, every later one fails transiently (``unknown``) — so a decision
+        made from two reads disagrees with itself. Returns the reads per
+        session id."""
+        real = past_sessions._audio_key_state
+        reads: dict[str, int] = {}
+
+        def flaky(path: Path) -> past_sessions.AudioKeyState:
+            sid = path.parent.name
+            reads[sid] = reads.get(sid, 0) + 1
+            return real(path) if reads[sid] == 1 else "unknown"
+
+        monkeypatch.setattr(past_sessions, "_audio_key_state", flaky)
+        return reads
+
+    def test_recording_state_reads_the_key_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hardening round 45 PR-LOW-001: the one-read rule itself, under a
+        transient failure of any second read."""
+        store = _store(tmp_path)
+        gone = _kept(store)
+        (store.root / gone / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        reads = self._one_good_read(monkeypatch)
+        assert store.recording_state(gone) == "gone"
+        assert reads == {gone: 1}
+
+    def test_the_retention_sweep_decides_from_one_read(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Hardening round 45 PR-LOW-001: an expired entry whose recording was
+        deleted (zeroed key, audio not yet tidied) — the sweep reads the key
+        ONCE, reports it to ``before_held_delete`` as gone (a second read that
+        failed would call it kept, so its deletion would never be recorded),
+        and deletes the entry once the deletion is recorded."""
+        store = _store(tmp_path, clock=NOW - WINDOW - timedelta(days=30))
+        gone = _kept(store)
+        (store.root / gone / AUDIO_KEY_FILENAME).write_bytes(b"\0" * AUDIO_KEY_FILE_BYTES)
+        reads = self._one_good_read(monkeypatch)
+        told: list[tuple[str, bool]] = []
+
+        def before_held_delete(sid: str, _completed: Any, _started: Any, was_gone: bool) -> bool:
+            told.append((sid, was_gone))
+            return True
+
+        report = store.sweep_report(SEVEN, NOW, before_held_delete=before_held_delete)
+        assert told == [(gone, True)]
+        assert [sid for sid, _ in report.expired] == [gone]
+        assert gone in report.kept
+        assert reads == {gone: 1}
+        assert not (store.root / gone).exists()
+
     @pytest.mark.parametrize("shape", ["empty", "hard_linked"])
     def test_only_the_apps_own_key_file_decides(self, tmp_path: Path, shape: str) -> None:
         """Review round 13 LOW-004: an empty key file, or one with another
@@ -3060,6 +3141,41 @@ class TestExportRecording:
         assert busy.recover_exports() == past_sessions.ExportRecovery(busy=True)
         assert sid in store._read_ledger()
         assert left.is_file()
+
+    def test_a_damaged_ledger_key_with_no_ledger_is_replaced_at_the_next_export(
+        self, tmp_path: Path
+    ) -> None:
+        """Hardening review round 44 SEC-002: a reset whose key unlink failed
+        leaves ``exports-key.dpapi`` with no ``exports.enc``; a key that does
+        not unwrap holds no row, so the next export replaces it rather than
+        failing every export for good."""
+        store = _export_store(tmp_path)
+        sid = _kept(store)
+        key = store.root / past_sessions.EXPORT_LEDGER_KEY_FILENAME
+        key.write_bytes(b"not a ledger key")
+        assert not (store.root / past_sessions.EXPORT_LEDGER_FILENAME).exists()
+        folder = tmp_path / "out"
+        folder.mkdir()
+        final = store.export_recording(sid, folder, check_destination=_anywhere)
+        assert final == folder / f"{sid}.wav"
+        assert key.read_bytes().startswith(_FAKE_LEDGER)  # a fresh key
+        assert store._read_ledger() == {}
+
+    def test_a_damaged_ledger_key_beside_a_ledger_is_never_replaced(
+        self, tmp_path: Path
+    ) -> None:
+        """SEC-002's limit: with a ledger present its rows live under that
+        key, so a key that does not unwrap still refuses (start-up resets
+        both, with its line)."""
+        store = _export_store(tmp_path)
+        earlier, sid = _kept(store), _kept(store)
+        _left_part(store, tmp_path, earlier)
+        key = store.root / past_sessions.EXPORT_LEDGER_KEY_FILENAME
+        key.write_bytes(b"not a ledger key")
+        with pytest.raises(PastSessionError):
+            store.export_recording(sid, tmp_path, check_destination=_anywhere)
+        assert key.read_bytes() == b"not a ledger key"
+        assert (store.root / past_sessions.EXPORT_LEDGER_FILENAME).exists()
 
     def test_a_missing_ledger_key_is_damage_and_resets(self, tmp_path: Path) -> None:
         store = _export_store(tmp_path)

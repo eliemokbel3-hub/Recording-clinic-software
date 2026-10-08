@@ -46,7 +46,11 @@ starts a new one — nothing is ever deleted by a reset.
 
 Threading: every method runs on the GUI thread (the controller's custody
 calls, the main window's write steps, the sweep timer), like the stores it
-records (C5)."""
+records (C5) — with one exception: a Discard that waits for live
+transcription runs the controller's ``discard`` off the GUI thread
+(installation plan round 40 LOW-002), and so its ``record_deletion``. That is
+safe because the log keeps no per-row state between calls; none may be added
+without a lock (hardening review round 42 LOW-003)."""
 
 from __future__ import annotations
 

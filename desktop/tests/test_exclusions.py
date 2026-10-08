@@ -169,7 +169,16 @@ def test_the_wer_names_and_key_are_d10s() -> None:
     assert WER_EXCLUDED_KEY == (
         r"Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications"
     )
-    assert WER_EXCLUDED_APPLICATIONS == ("pythonw.exe", "scribe-app.exe", "scribe-host.exe")
+    # Development-recordings hardening round 45 PR-HIGH-002: ``python.exe``
+    # joined the dev set (the developer tools that read a recording refuse
+    # without it); production's two are unchanged (installation plan C2).
+    assert WER_EXCLUDED_APPLICATIONS == (
+        "pythonw.exe",
+        "python.exe",
+        "scribe-app.exe",
+        "scribe-host.exe",
+    )
+    assert exclusions.WER_PRODUCTION_APPLICATIONS == ("scribe-app.exe", "scribe-host.exe")
 
 
 # ---------------------------------------------------------------------------
@@ -361,7 +370,7 @@ class TestCheckExportLocation:
 
 
 class TestCheckWer:
-    """D10's DEV branch — a source checkout, the three per-user values —
+    """D10's DEV branch — a source checkout, the four per-user values —
     which is what these cases always described (installation plan Task 2.4
     made the set follow the channel; the production branch is
     ``TestCheckWerProduction``)."""
@@ -376,19 +385,21 @@ class TestCheckWer:
             "pythonw.exe",
             r"C:\Recording clinic software\.venv\Scripts\pythonw.exe",
             r"C:\Python314\PythonW.EXE",
+            # Development-recordings hardening round 45: the console launch
+            # is covered from a source checkout once python.exe is excluded.
+            r"C:\Recording clinic software\.venv\Scripts\python.exe",
+            r"C:\Python314\PYTHON.EXE",
             "scribe-app.exe",
             "SCRIBE-HOST.EXE",
         ],
     )
-    def test_an_excluded_launch_with_all_three_values_is_clear(self, executable: str) -> None:
+    def test_an_excluded_launch_with_all_four_values_is_clear(self, executable: str) -> None:
         assert check_wer(FakeLayer(), executable) == []
 
-    def test_the_console_launch_shows_d10s_line(self) -> None:
-        warnings = check_wer(
-            FakeLayer(), r"C:\Recording clinic software\.venv\Scripts\python.exe"
-        )
+    def test_another_interpreter_name_shows_d10s_line(self) -> None:
+        warnings = check_wer(FakeLayer(), r"C:\Python314\python3.14.exe")
         assert [w.line for w in warnings] == [
-            "Crash reports are not excluded for this launch (python.exe) — "
+            "Crash reports are not excluded for this launch (python3.14.exe) — "
             "start the app with scribe-app.exe."
         ]
         assert _codes(warnings) == ["wer_uncovered_launch"]
@@ -398,8 +409,10 @@ class TestCheckWer:
         [
             {},
             {"pythonw.exe": 1, "scribe-app.exe": 1},
-            {"pythonw.exe": 1, "scribe-app.exe": 1, "scribe-host.exe": 0},
-            {"pythonw.exe": 2, "scribe-app.exe": 1, "scribe-host.exe": 1},
+            {"pythonw.exe": 1, "python.exe": 1, "scribe-app.exe": 1, "scribe-host.exe": 0},
+            {"pythonw.exe": 2, "python.exe": 1, "scribe-app.exe": 1, "scribe-host.exe": 1},
+            # Round 45: a registration from before python.exe joined the set.
+            {"pythonw.exe": 1, "scribe-app.exe": 1, "scribe-host.exe": 1},
         ],
     )
     def test_a_missing_or_wrong_value_warns(self, values: dict[str, int]) -> None:
@@ -425,7 +438,7 @@ class TestCheckWer:
         )
 
     def test_an_unreadable_registry_says_so_and_still_checks_the_launch(self) -> None:
-        warnings = check_wer(FakeLayer(wer_error=PermissionError("denied")), "python.exe")
+        warnings = check_wer(FakeLayer(wer_error=PermissionError("denied")), "py.exe")
         assert _codes(warnings) == ["wer_unchecked", "wer_uncovered_launch"]
         assert warnings[0].line == WER_UNCHECKED
 
@@ -440,6 +453,112 @@ class TestCheckWer:
         layer = FakeLayer(hklm_wer={})
         assert check_wer(layer, "pythonw.exe") == []
         assert layer.wer_hives == ["HKCU"]
+
+
+class TestCheckToolWer:
+    """Development-recordings hardening round 45 PR-HIGH-002 (practitioner
+    decision 2026-10-08): the developer tools that read a recording which may
+    hold a real consultation run only while the RUNNING interpreter's crash
+    reports are excluded — the one refusing check here, failing closed."""
+
+    _VENV_PYTHON = r"C:\Recording clinic software\.venv\Scripts\python.exe"
+
+    @pytest.fixture(autouse=True)
+    def _dev_channel(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        use_channel(monkeypatch, "dev")
+
+    @pytest.mark.parametrize(
+        "executable", [_VENV_PYTHON, r"C:\Python314\PYTHON.EXE", "pythonw.exe"]
+    )
+    def test_an_excluded_interpreter_runs(self, executable: str) -> None:
+        layer = FakeLayer()
+        assert exclusions.check_tool_wer(lambda: layer, executable) is None
+        assert layer.wer_hives == ["HKCU"]
+
+    @pytest.mark.parametrize(
+        "values",
+        [
+            {},
+            {"pythonw.exe": 1, "scribe-app.exe": 1, "scribe-host.exe": 1},  # before round 45
+            {"python.exe": 0},
+            {"python.exe": 2},
+        ],
+    )
+    def test_an_interpreter_not_excluded_is_refused(self, values: dict[str, int]) -> None:
+        refusal = exclusions.check_tool_wer(lambda: FakeLayer(wer=values), self._VENV_PYTHON)
+        assert refusal == "wer_not_excluded"
+
+    def test_only_the_running_interpreter_counts(self) -> None:
+        # The other names being excluded never clears an interpreter whose
+        # own name is not (nor one the layer does not read at all).
+        everything_else = {name: 1 for name in WER_EXCLUDED_APPLICATIONS if name != "python.exe"}
+        layer = FakeLayer(wer=everything_else)
+        assert exclusions.check_tool_wer(lambda: layer, self._VENV_PYTHON) == "wer_not_excluded"
+
+    @pytest.mark.parametrize("executable", [r"C:\Py\python3.14.exe", "py.exe", "evil\nname.exe"])
+    def test_a_name_the_register_script_never_excludes_is_refused_unread(
+        self, executable: str
+    ) -> None:
+        """Round 46 PR-MED-001, decided fail closed: the reader stays confined
+        to the values this app writes and removes, so an exclusion added by
+        hand for another image name never counts — refused before the
+        registry is read, with a remedy that can work (registration cannot)."""
+
+        def never() -> FakeLayer:
+            raise AssertionError("the registry must not be read for an uncovered name")
+
+        assert exclusions.check_tool_wer(never, executable) == "wer_uncovered_name"
+        line = exclusions.tool_wer_refusal_line("wer_uncovered_name", executable)
+        assert "register-native-host" not in line
+        assert line.endswith(
+            "start this with the developer build's .venv\\Scripts\\python.exe instead"
+        )
+
+    def test_the_uncovered_name_line(self) -> None:
+        assert exclusions.tool_wer_refusal_line("wer_uncovered_name", r"C:\Py\python3.14.exe") == (
+            "crash reports are checked only for the Python names the register script "
+            "excludes, not python3.14.exe - start this with the developer build's "
+            ".venv\\Scripts\\python.exe instead"
+        )
+
+    def test_an_unreadable_registry_refuses(self) -> None:
+        layer = FakeLayer(wer_error=PermissionError("denied"))
+        assert exclusions.check_tool_wer(lambda: layer, self._VENV_PYTHON) == "wer_unchecked"
+
+    def test_a_layer_that_cannot_be_built_refuses(self) -> None:
+        # The real layer in a test raises (the C6 sentinel): unresolved refuses.
+        refusal = exclusions.check_tool_wer(exclusions.Win32WindowsLayer, self._VENV_PYTHON)
+        assert refusal == "wer_unchecked"
+
+    def test_any_other_failure_refuses(self) -> None:
+        layer = FakeLayer(broken=("wer_exclusions",))
+        assert exclusions.check_tool_wer(lambda: layer, self._VENV_PYTHON) == "wer_unchecked"
+
+    def test_the_refusal_names_the_interpreter_and_the_fix(self) -> None:
+        line = exclusions.tool_wer_refusal_line("wer_not_excluded", self._VENV_PYTHON)
+        assert line == (
+            "crash reports are not excluded for python.exe, so a crash could put part of a "
+            "recording into a Windows crash report - run scripts/register-native-host.py "
+            "again from a normal terminal, then retry"
+        )
+        unchecked = exclusions.tool_wer_refusal_line("wer_unchecked", self._VENV_PYTHON)
+        assert unchecked == (
+            "could not check whether crash reports are excluded for python.exe - "
+            f"{install_layout.registration_remedy()}, then retry"
+        )
+
+    def test_the_refusal_takes_the_builds_remedy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Round 45, h-v45b: the remedy goes through install_layout (a packaged
+        # build would say to reinstall, never name a script).
+        use_frozen(monkeypatch, True)
+        refusals: tuple[exclusions.ToolWerRefusal, ...] = ("wer_not_excluded", "wer_unchecked")
+        for refusal in refusals:
+            line = exclusions.tool_wer_refusal_line(refusal, self._VENV_PYTHON)
+            assert line.endswith(f"- {install_layout.FROZEN_REMEDY}, then retry")
+            assert "scripts/" not in line
+        assert "this program" in exclusions.tool_wer_refusal_line(
+            "wer_not_excluded", "evil\nname.exe"
+        )
 
 
 class TestCheckWerProduction:
@@ -731,12 +850,14 @@ class TestStartupExclusions:
             refuse=(str(root),),
             wer={},
         )
-        lines = startup_exclusions(layer, executable="python.exe", logger=logger, root=root)
+        # Round 45: python.exe is in the dev set now — an interpreter name the
+        # checkout does not exclude still shows the uncovered-launch line.
+        lines = startup_exclusions(layer, executable="python3.14.exe", logger=logger, root=root)
         assert lines == (
             NOT_INDEXED_FAILED,
             LOCATION_ONEDRIVE,
             wer_not_excluded_line(),
-            uncovered_launch_line("python.exe"),
+            uncovered_launch_line("python3.14.exe"),
         )
         records = [record for record in caplog.records if record.name == logger.name]
         messages = [record.getMessage() for record in records]
@@ -781,9 +902,9 @@ class TestStartupExclusions:
         root = _real_root(tmp_path)
         layer = FakeLayer(env=_PROFILE_ENV, real={str(root): _LOCAL + r"\ClinikoScribe"})
         broken: Any = object()  # log_event's logger.info raises AttributeError
-        assert startup_exclusions(layer, executable="python.exe", logger=broken, root=root) == (
-            uncovered_launch_line("python.exe"),
-        )
+        assert startup_exclusions(
+            layer, executable="python3.14.exe", logger=broken, root=root
+        ) == (uncovered_launch_line("python3.14.exe"),)
 
 
 # ---------------------------------------------------------------------------

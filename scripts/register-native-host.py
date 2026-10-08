@@ -37,16 +37,21 @@ Two requirements learned at the Phase-1 gate, where a failure was SILENT
    Chrome's bare origin argv plus `--parent-window` directly. The copy still
    runs the repo's code — the launcher embeds the venv interpreter path.
 
-It also writes the three per-user Windows Error Reporting exclusions
+It also writes the four per-user Windows Error Reporting exclusions
 (privacy-professional-controls Task 4.2, D10): DWORD 1 for `pythonw.exe`,
-`scribe-app.exe` and `scribe-host.exe` under
+`python.exe`, `scribe-app.exe` and `scribe-host.exe` under
 HKCU\Software\Microsoft\Windows\Windows Error Reporting\ExcludedApplications
 (what `WerAddExcludedApplication(..., FALSE)` writes; no admin rights, no
 HKLM), and verifies each by reading it back — a value that does not read back
 as DWORD 1 fails the run. `pythonw.exe` is there because the venv launchers
 start the base `pythonw.exe` as a child; it therefore covers every pythonw
-process of this Windows user (the agreed breadth). `--unregister` removes
-those three values only, never the key or anyone else's values.
+process of this Windows user (the agreed breadth). `python.exe` (the
+development-recordings plan's hardening, round 45, practitioner decision
+2026-10-08) because the replay tool and `measure-speakers.py` read recordings
+that may hold a real consultation under it, and refuse to run unless it is
+excluded; it covers every python.exe process of this user the same way.
+`--unregister` removes those four values only, never the key or anyone else's
+values (after it, those two tools refuse again).
 
 RUN IT FROM A NORMAL TERMINAL (PowerShell or cmd), never from an agent shell:
 on this machine agent shells are MSIX-virtualized for both %LOCALAPPDATA% and
@@ -140,7 +145,7 @@ def generate_manifest() -> dict[str, object]:
 
 
 def register_wer(winreg: Any) -> list[str]:
-    """Write the three WER exclusions (HKCU, DWORD 1 each) and read each back.
+    """Write the four WER exclusions (HKCU, DWORD 1 each) and read each back.
 
     Returns the names that did NOT read back as DWORD 1 (empty: all verified).
     ``winreg`` is passed in so tests use a fake; nothing here touches HKLM."""
@@ -164,7 +169,7 @@ def register_wer(winreg: Any) -> list[str]:
 
 
 def unregister_wer(winreg: Any) -> list[str]:
-    """Delete the three WER values this script owns; returns the ones removed.
+    """Delete the four WER values this script owns; returns the ones removed.
     The key itself and any other value under it are left alone."""
     removed: list[str] = []
     try:
@@ -277,7 +282,7 @@ def unregister() -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Register the DEV channel's Chrome native-messaging host and the three "
+            "Register the DEV channel's Chrome native-messaging host and the four "
             "per-user crash-report (WER) exclusions (the installed app's link is its "
             "installer's). Run it from a normal terminal: a run or check from an agent "
             "shell proves nothing on this machine."
@@ -286,7 +291,7 @@ def main() -> int:
     parser.add_argument(
         "--unregister",
         action="store_true",
-        help="remove the dev registration, its generated files and the three WER values, "
+        help="remove the dev registration, its generated files and the four WER values, "
         "plus the per-user link under the installed app's name and its two files - until "
         "the app is installed, that is the source-run app's live Chrome link (Phase P "
         "step 2 removes it on purpose)",

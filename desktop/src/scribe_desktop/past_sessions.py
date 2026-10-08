@@ -71,7 +71,12 @@ own key), the source key, or an audit id. The patient's name lives only in
 
 Threading: every method runs on the GUI thread (the controller's custody
 calls under its lock, the sweep timer), like the stores it sits beside
-(C5). Nothing here touches the network.
+(C5) — with one exception: a Discard that waits for live transcription to
+stop runs the controller's ``discard`` off the GUI thread (installation plan
+round 40 LOW-002), and so ``remove_pending_entry`` with it, under the
+controller's lock; such a session is still live, so it has no entry or
+staging copy to remove (hardening review round 41 LOW-004). Nothing here
+touches the network.
 """
 
 from __future__ import annotations
@@ -374,6 +379,14 @@ class PastSessionLabel(BaseModel):
             if version == 2 and "shadow" not in data:
                 raise ValueError("a v2 label names its shadow flag")
         return data
+
+    @property
+    def moment(self) -> datetime:
+        """The entry's date: when its recording started, else when it
+        completed — what the list sorts by, and what every audit write for
+        the session is filed and judged by (development-recordings review
+        rounds 15–16; one definition since hardening round 43 SIMP-002)."""
+        return self.started_at if self.started_at is not None else self.completed_at
 
     def to_bytes(self) -> bytes:
         return self.model_dump_json().encode("utf-8")
@@ -833,14 +846,22 @@ class PastSessionStore:
         A link where an entry or a staging copy would be (or a linked
         ``.staging``) is NOT ours (round 13 PR-LOW-010): it is never listed,
         committed or followed, so it cannot become a finished entry — it
-        counts as nothing to remove and is left in place, untouched."""
+        counts as nothing to remove and is left in place, untouched. A
+        ``.staging`` whose link status cannot be read is neither (hardening
+        review round 41 LOW-003, the rule of ``_remove_key_first_unless_link``
+        one level up): a staging copy may sit under it — since 0.3.0 with a
+        kept recording's audio — so False, and the source key stays this
+        time."""
         try:
             validate_session_id(session_id)
         except ValueError:
             return True  # not a session id: nothing of ours can exist for it
         self._forget_dates(session_id)
+        staging_linked = link_state(self.staging_root)
+        if staging_linked is None:
+            return False
         removed = True
-        if not self._staging_linked():
+        if not staging_linked:
             removed = _remove_key_first_unless_link(self.staging_root / session_id)
         return _remove_key_first_unless_link(self._root / session_id) and removed
 
@@ -1096,9 +1117,7 @@ class PastSessionStore:
                 self._log(session_id, "recording_cleanup_pending")
                 return
         for name in (AUDIO_KEY_FILENAME, AUDIO_FILENAME):
-            try:
-                (entry / name).unlink(missing_ok=True)
-            except OSError:
+            if not _unlink_quietly(entry / name):
                 self._log(session_id, "recording_cleanup_pending")
 
     def tidy_dead_recordings(self, *, cleared: frozenset[str] | None = None) -> int:
@@ -1405,18 +1424,29 @@ class PastSessionStore:
 
     def _write_ledger(self, rows: dict[str, ExportRow]) -> None:
         """Replace the ledger (atomically) with ``rows`` — its key created
-        first when there is none. Raises on failure (the callers decide)."""
+        first when there is none, or when the one there does not unwrap and
+        no ledger exists. Raises on failure (the callers decide)."""
         key_path = self._root / EXPORT_LEDGER_KEY_FILENAME
         self._root.mkdir(parents=True, exist_ok=True)
-        if _absent(key_path):
+        crypto: SessionCrypto | None = None
+        if not _absent(key_path):
+            try:
+                crypto = self._unwrap_ledger_key(self._root)
+            except Exception as exc:
+                # Hardening review round 44 SEC-002: a key with NO ledger beside
+                # it holds no row (a reset whose key unlink failed), so one that
+                # does not unwrap is replaced — kept, it would refuse every
+                # later export. A ledger present, or a key read that failed
+                # only this time, still raises.
+                if _transient(exc) or not _absent(self._root / EXPORT_LEDGER_FILENAME):
+                    raise
+        if crypto is None:
             crypto = SessionCrypto()
             try:
                 self._wrap_ledger_key(crypto, self._root)
             except BaseException:
                 crypto.destroy()
                 raise
-        else:
-            crypto = self._unwrap_ledger_key(self._root)
         try:
             atomic_write_bytes(
                 self._root / EXPORT_LEDGER_FILENAME,
@@ -1434,9 +1464,7 @@ class PastSessionStore:
         """An unreadable ledger is started again: both its files go (a fresh
         key comes with the next row). Never raises."""
         for name in (EXPORT_LEDGER_FILENAME, EXPORT_LEDGER_KEY_FILENAME):
-            try:
-                (self._root / name).unlink(missing_ok=True)
-            except OSError:
+            if not _unlink_quietly(self._root / name):
                 self._log(None, "export_ledger_failed")
 
     def read_entry(self, session_id: str) -> PastSessionEntry:
@@ -1575,9 +1603,7 @@ class PastSessionStore:
                     self._undated.pop(session_id, None)
                     completed = label.completed_at
                     self._completed_dates[session_id] = completed
-                    self._started_dates[session_id] = (
-                        label.started_at if label.started_at is not None else completed
-                    )
+                    self._started_dates[session_id] = label.moment
                 # Round 16 PR-MED-001: read here — the deletion forgets it.
                 started = self._started_dates.get(session_id, completed)
                 if completed > now + timedelta(seconds=CLOCK_SKEW_TOLERANCE):
@@ -2105,10 +2131,7 @@ def _remove_key_first(directory: Path) -> bool:
     # Development-recordings plan D6: a kept recording's audio key goes next,
     # best-effort — belt and braces, never load-bearing (the audio is already
     # dead under the entry key), and never deciding the result.
-    try:
-        (directory / AUDIO_KEY_FILENAME).unlink(missing_ok=True)
-    except OSError:
-        pass
+    _unlink_quietly(directory / AUDIO_KEY_FILENAME)
     shutil.rmtree(directory, ignore_errors=True)
     return True
 

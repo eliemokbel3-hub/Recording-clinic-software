@@ -17,6 +17,7 @@ import math
 import os
 import shutil
 import struct
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -67,7 +68,13 @@ from scribe_desktop.validation import (
     confirm_all,
     transcript_wer,
 )
-from speaker_fakes import FrequencyEmbedder
+from speaker_fakes import (
+    VENV_PYTHON,
+    FrequencyEmbedder,
+    WerLayer,
+    excluded_wer_layer,
+    interpreter_image,
+)
 
 REPO = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=UTC)
@@ -247,6 +254,19 @@ def _dev_and_private_temp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     folder.mkdir()
     monkeypatch.setattr(tempfile, "tempdir", str(folder))
     return folder
+
+
+_REAL_WINDOWS_LAYER = replay_kept._windows_layer
+
+
+@pytest.fixture(autouse=True)
+def _crash_reports_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The running interpreter excluded from Windows crash reporting, as the
+    register script leaves it (round 45 PR-HIGH-002); the refusal tests
+    replace it — never the registry. Launched as the documented interpreter
+    (round 46 PR-MED-001)."""
+    monkeypatch.setattr(sys, "executable", VENV_PYTHON)
+    monkeypatch.setattr(replay_kept, "_windows_layer", excluded_wer_layer)
 
 
 def _temp_stores() -> set[Path]:
@@ -699,6 +719,7 @@ class TestMain:
         assert row in out
         assert out.count(" | small | scripted | ") == 1
         assert "Totals: 1 replayed, 0 error(s), 0 skipped" in out
+        assert "crash report" not in out  # round 45: a confirmed exclusion is silent
         _no_content(out)
         assert _snapshot(folder) == before  # not a byte changed in the folder
         assert _temp_stores() == set()  # the temporary store is gone
@@ -1109,6 +1130,59 @@ class TestRefusals:
         assert replay_kept.main(argv) == 2
         out = _output(capsys)
         assert out.count("[refused]") == 1 and "only on the developer build" in out
+
+    @pytest.mark.parametrize(
+        ("layer", "expected"),
+        [
+            # Hardening review round 45 PR-HIGH-002 (practitioner decision
+            # 2026-10-08: close it in code): no exclusion, another
+            # interpreter's only, or a value other than 1 — refused.
+            (lambda: WerLayer(), "crash reports are not excluded for"),
+            (lambda: WerLayer({"pythonw.exe": 1, "scribe-app.exe": 1}), "are not excluded"),
+            (lambda: WerLayer({interpreter_image(): 0}), "are not excluded"),
+            # Unreadable — refused, never assumed excluded.
+            (lambda: WerLayer(error=PermissionError(5, "denied")), "could not check"),
+            # The tool's own seam reaches the real layer (the conftest
+            # sentinel makes it raise) — a broken layer refuses too.
+            (_REAL_WINDOWS_LAYER, "could not check"),
+        ],
+    )
+    def test_crash_reports_not_confirmed_excluded_are_refused_before_any_read(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+        layer: Any,
+        expected: str,
+    ) -> None:
+        folder = tmp_path / "past_sessions"
+        _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+        monkeypatch.setattr(replay_kept, "_windows_layer", layer)
+        before = _snapshot(folder)
+        assert replay_kept.main([str(folder)]) == 2
+        out = _output(capsys)
+        assert out.count("[refused]") == 1 and expected in out
+        assert "register-native-host.py again from a normal terminal, then retry" in out
+        # Refused before the instance exclusion, the models and any entry.
+        assert (seams.acquired, seams.loaded, seams.unwrapped) == (0, 0, [])
+        assert _snapshot(folder) == before
+        assert _temp_stores() == set()
+
+    def test_an_interpreter_name_the_register_script_never_excludes_is_refused(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Round 46 PR-MED-001: even with that name excluded by hand."""
+        folder = tmp_path / "past_sessions"
+        _kept_entry(_store(folder))
+        seams = _Seams(monkeypatch)
+        monkeypatch.setattr(sys, "executable", r"C:\Py\python3.14.exe")
+        monkeypatch.setattr(replay_kept, "_windows_layer", lambda: WerLayer({"python3.14.exe": 1}))
+        assert replay_kept.main([str(folder)]) == 2
+        out = _output(capsys)
+        assert out.count("[refused]") == 1 and "not python3.14.exe" in out
+        assert ".venv\\Scripts\\python.exe instead" in out
+        assert (seams.acquired, seams.loaded, seams.unwrapped) == (0, 0, [])
 
     @pytest.mark.parametrize("state", ["already_running", "unavailable"])
     def test_only_an_acquired_exclusion_proceeds(

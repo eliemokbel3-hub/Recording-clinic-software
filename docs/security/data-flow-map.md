@@ -1053,10 +1053,13 @@ practitioner-run developer tool that prints numbers only (flow 27).
       7 years — and `hide_names`).
     - EXCLUSIONS. For a source checkout (the developer build),
       `scripts/register-native-host.py` (run from a normal
-      terminal) writes and reads back `pythonw.exe`, `scribe-app.exe` and
-      `scribe-host.exe` = DWORD 1 under `HKCU\Software\Microsoft\Windows\
-      Windows Error Reporting\ExcludedApplications`; `--unregister` removes
-      them. For the installed app the installer writes `scribe-app.exe` and
+      terminal) writes and reads back `pythonw.exe`, `python.exe`,
+      `scribe-app.exe` and `scribe-host.exe` = DWORD 1 under
+      `HKCU\Software\Microsoft\Windows\Windows Error
+      Reporting\ExcludedApplications`; `--unregister` removes them
+      (`python.exe` since the development-recordings plan's hardening round
+      45: the two tools that read a real consultation run under it and refuse
+      without it — flow 27). For the installed app the installer writes `scribe-app.exe` and
       `scribe-host.exe` = DWORD 1 under the same key in HKLM, plus the
       backup and snapshot values for live sessions and logs (flow 23). At
       every start-up, before the window, `app.main` marks the channel's data
@@ -1213,9 +1216,11 @@ practitioner-run developer tool that prints numbers only (flow 27).
       otherwise none. Only the warm-up hold keeps the tick; any other refused
       Start, a Chrome report naming another note or patient than the ids bound
       when it was armed (ids only, no names), a dropped Chrome link (for a
-      tick armed on a Chrome note), a lock or a suspend clears it, with a line;
-      the setting going off clears it unannounced. Chrome is not told (no
-      protocol change).
+      tick armed on a Chrome note), a lock or a suspend (while Windows reports
+      it) clears it, with a line; the setting going off clears it unannounced.
+      A tick armed with no Chrome note open is bound to no ids: other pages
+      (another patient's included) never clear it, a reported note does
+      (threat model residue (2)). Chrome is not told (no protocol change).
     - COMPLETE. A non-mock Complete of a session carrying the consent — the
       four live paths from the controller's copy, a recovered one from the
       checkout's ONE decrypt — streams the session's `audio.enc` chunk by
@@ -1260,7 +1265,10 @@ practitioner-run developer tool that prints numbers only (flow 27).
       hand. The WAV is the practitioner's to delete; the app never touches it
       again. A shadow recording asks first.
     - REPLAY. `scripts/replay-kept-recordings.py <past_sessions folder>`
-      (developer build, practitioner-run, app closed): holds the app's
+      (developer build, practitioner-run, app closed): refuses, before
+      anything else is read, unless the running interpreter is confirmed
+      excluded from Windows Error Reporting in HKCU (read-only; since
+      hardening round 45, threat-model residue (18)); holds the app's
       instance exclusion for its run; lists kept ids with nothing decrypted;
       per entry decrypts only the transcript, the saved note and the audio
       (never the label or the generated note), holds the PCM in memory for that
@@ -1455,7 +1463,12 @@ practitioner-run developer tool that prints numbers only (flow 27).
   roaming, removable or unknown; sync software the location check cannot see,
   an external drive Windows reports as fixed and a volume mounted into a
   folder of a fixed drive are the named residue (threat model, "Kept
-  recordings", residue (7)).
+  recordings", residue (7)). Windows' own crash reporting is closed by a
+  refusal: the replay tool (and `measure-speakers.py`) runs under
+  `python.exe` and refuses before it reads anything unless that name is
+  confirmed excluded from Windows Error Reporting for this user — the
+  register script's `python.exe` value, checked once at the tool's start
+  (residue (18): per user, removable, not re-checked during a run).
 
 ## The Chrome side at a glance
 

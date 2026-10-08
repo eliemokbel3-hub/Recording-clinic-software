@@ -35,7 +35,9 @@ What this module enforces, and what it does not:
   ``--model`` value not shaped as a name, an ``--enrolment`` that is not a
   file, a path that is not a folder (not echoed: it is not known to be the
   archive), a folder that cannot be scanned, a folder holding no entry key
-  (``key.dpapi``) — "not a Past-sessions folder" — and an app that is open:
+  (``key.dpapi``) — "not a Past-sessions folder" — crash reports not
+  excluded for this interpreter (or not checkable; hardening round 45), and
+  an app that is open:
   the run takes the app's instance exclusion (``app.acquire_instance_
   exclusion``, the one production path the developer build already
   shares) and proceeds ONLY when it is ``acquired`` — ``already_running``
@@ -47,7 +49,13 @@ What this module enforces, and what it does not:
   entry only, then handed to ``speaker_eval.transcribe_in_temporary_store``
   with ``persist_key=False``: the temporary store's key lives in memory
   only, so an interrupted run leaves ciphertext with no key anywhere, and
-  the store is torn down key-first on every path. A store that cannot be
+  the store is torn down key-first on every path. Crash reports: the run
+  is REFUSED, before the lock and any decryption, unless Windows Error
+  Reporting is excluded for the running interpreter's file name
+  (``exclusions.check_tool_wer``; ``scripts/register-native-host.py`` adds
+  ``python.exe`` per user) — a native crash would otherwise put part of a
+  recording into a report Windows may send off this computer (hardening
+  rounds 44 SEC-001, 45 PR-HIGH-002). A store that cannot be
   shown gone — or is gone but a teardown step failed — STOPS the run with
   ``speaker_eval``'s own custody diagnostic (the temporary path, the key
   state, and whether anything remains to delete by hand) — the one line
@@ -90,9 +98,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, NoReturn, Protocol
 
-from scribe_desktop import install_layout
+from scribe_desktop import exclusions, install_layout
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 from scribe_desktop.enrolment import EnrolmentError
+from scribe_desktop.exclusions import WerReader, check_tool_wer, tool_wer_refusal_line
 from scribe_desktop.note import GeneratedNote, compose_draft, finalise_note
 from scribe_desktop.note_check import check_note
 from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_config
@@ -152,6 +161,13 @@ _MODEL_NAME_RE: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 # shipped pipeline emits at most three).
 MAX_MAPPED_LABELS: Final = 6
 CONFIG_TEMP_PREFIX: Final = "scribe-replay-config-"
+
+
+def _windows_layer() -> WerReader:
+    """The real Windows layer for the crash-report check (hardening round 45
+    PR-HIGH-002) — resolved per call, so tests replace it (the conftest makes
+    the real one raise)."""
+    return exclusions.Win32WindowsLayer()
 
 
 class ExclusionLike(Protocol):
@@ -507,7 +523,8 @@ def main(argv: list[str] | None = None) -> int:
     (exit 2 through ``SystemExit``), a packaged build, an ``--only`` value
     that is not a session id, a ``--model`` value that is not a model name,
     an ``--enrolment`` that is not a file, a path that is not a folder, a
-    folder that cannot be scanned, a folder holding no entry key, the app's
+    folder that cannot be scanned, a folder holding no entry key, crash
+    reports not excluded for this interpreter (``check_tool_wer``), the app's
     instance exclusion not acquired, then (with the offline switches
     applied) a models folder that cannot be located, the models by name, a
     config or model that cannot be loaded (by type), and an archive that
@@ -547,6 +564,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not holds:
         print(f"[refused] {folder} is not a Past-sessions folder (it holds no entry key)")
+        return 2
+    # Hardening round 45 PR-HIGH-002 (practitioner decision 2026-10-08): a
+    # kept recording is a real consultation, so the run needs this
+    # interpreter's crash reports excluded — checked before the app's lock
+    # is taken and before anything is decrypted; unresolved refuses.
+    crash_reports = check_tool_wer(_windows_layer, sys.executable)
+    if crash_reports is not None:
+        print(f"[refused] {tool_wer_refusal_line(crash_reports, sys.executable)}")
         return 2
 
     acquire = _acquire_exclusion  # resolved per call: tests replace them

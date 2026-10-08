@@ -4,9 +4,44 @@ review round 29 LOW-015): no model file, no clinical audio — tones only."""
 
 from __future__ import annotations
 
+import ntpath
 import struct
+import sys
 
 from scribe_desktop.speech import SAMPLE_RATE
+
+
+class WerLayer:
+    """A fake ``exclusions.WerReader`` for the two tools' crash-report
+    refusal (development-recordings review round 45 PR-HIGH-002): the given
+    per-user values, or ``error`` raised on every read — never the registry."""
+
+    def __init__(self, values: dict[str, int] | None = None, error: OSError | None = None) -> None:
+        self.values = dict(values or {})
+        self.error = error
+
+    def wer_exclusions(self, hive: str = "HKCU") -> dict[str, int]:
+        if self.error is not None:
+            raise self.error
+        return dict(self.values)
+
+
+# The developer build's documented interpreter: the two tools' tests run as
+# if launched by it (round 46 PR-MED-001 — another image name is refused), so
+# they do not depend on how pytest itself was started.
+VENV_PYTHON = r"C:\dev\.venv\Scripts\python.exe"
+
+
+def interpreter_image() -> str:
+    """The running interpreter's image name, as Windows crash reporting
+    matches it."""
+    return ntpath.basename(sys.executable).casefold()
+
+
+def excluded_wer_layer() -> WerLayer:
+    """The running interpreter's image name excluded, as the register script
+    leaves it."""
+    return WerLayer({interpreter_image(): 1})
 
 
 class FrequencyEmbedder:

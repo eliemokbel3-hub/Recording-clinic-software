@@ -106,8 +106,10 @@ from pathlib import Path
 from statistics import fmean
 from typing import Final, Literal
 
+from scribe_desktop import exclusions
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
 from scribe_desktop.enrolment import EnrolmentError, enrol
+from scribe_desktop.exclusions import WerReader, check_tool_wer, tool_wer_refusal_line
 from scribe_desktop.note import SpeakerRolePreselection, speaker_role
 from scribe_desktop.practitioner_profile import ConsentRecord, PractitionerProfile
 from scribe_desktop.secure_storage import SessionCrypto
@@ -1399,13 +1401,23 @@ def _leave_one_out_pool(
     return pool, failures
 
 
+def _windows_layer() -> WerReader:
+    """The real Windows layer for the crash-report check (development-
+    recordings hardening round 45 PR-HIGH-002) — resolved per call, so tests
+    replace it (the conftest makes the real one raise)."""
+    return exclusions.Win32WindowsLayer()
+
+
 def main(argv: list[str] | None = None) -> int:
     """Exit status 0 only when at least one recording was scored and none
     errored; a refused or unpaired file is reported, not an error. An
     unusable ``--enrolment`` WAV or an absent speaker model under
     ``--enrolment`` is an error (the practitioner asked for that condition);
     without the flag the leave-one-out fallback needs the speaker model and
-    two or more pairs, and says so when it cannot run."""
+    two or more pairs, and says so when it cannot run. Exit status 2 when
+    crash reports are not excluded for this interpreter, or that cannot be
+    checked (``exclusions.check_tool_wer`` — hardening round 45: an exported
+    real consultation may be among the recordings), before any is read."""
     _configure_output()
     parser = argparse.ArgumentParser(
         description=(
@@ -1442,6 +1454,14 @@ def main(argv: list[str] | None = None) -> int:
     directory: Path = args.recordings_dir
     if not directory.is_dir():
         parser.error(f"{directory} is not a directory")
+    # Development-recordings hardening round 45 PR-HIGH-002 (practitioner
+    # decision 2026-10-08): a recording here may be an EXPORTED real
+    # consultation, so the run needs this interpreter's crash reports
+    # excluded — checked before any recording is read; unresolved refuses.
+    crash_reports = check_tool_wer(_windows_layer, sys.executable)
+    if crash_reports is not None:
+        print(f"[refused] {tool_wer_refusal_line(crash_reports, sys.executable)}")
+        return 2
 
     pairs, unpaired = find_recording_pairs(directory)
     for path in unpaired:

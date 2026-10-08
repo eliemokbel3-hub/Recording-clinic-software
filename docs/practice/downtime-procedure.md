@@ -7,8 +7,8 @@
 
 Draft 1 (2026-10-01; the patient-information version and the shadow-recording line
 updated 2026-10-07 for the pilot build, approved by the practitioner the same day; the
-kept recording added 2026-10-08 for version 0.3.0, awaiting the practitioner's
-approval). For
+kept recording added 2026-10-08 for version 0.3.0, and the terminal-launch crash-report
+line updated the same day, both awaiting the practitioner's approval). For
 the practitioner. The rule behind every step: **Clinic Scribe
 is a writing aid, and Cliniko is the record.** If the app is not working, write the note
 in Cliniko yourself, the usual way; nothing about the patient's care waits for the app.
@@ -158,8 +158,9 @@ when you can.
   before the next consultation. When the line above it also says the per-user link "is
   broken, and reinstalling does not remove it", Chrome cannot reach the app until that
   per-user link is removed; reinstalling will not help.
-- **"Crash reports are not excluded for this launch (python.exe) …"** — the app was
-  started from a terminal. Close it and start it with its usual shortcut.
+- **"Crash reports are not excluded for this launch (<a program's name>) …"** — the app
+  was started from a terminal in an unusual way. Close it and start it with its usual
+  shortcut.
 - **"Some of Clinic Scribe's folders could not be marked to stay out of Windows
   Search."** — usually low-risk (the clinical files are encrypted, though the settings,
   learned phrases and logs are not); restart the app, and look into it if it persists.

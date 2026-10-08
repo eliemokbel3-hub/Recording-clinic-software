@@ -18,11 +18,15 @@ At start-up, before the window is built, ``app.main`` runs
   ``\\`` path or a remote drive letter) or in the roaming part of the profile;
   a folder outside ``%USERPROFILE%\AppData\Local`` for any other reason is
   logged (content-free), not shown. The WER check reads the channel's
-  ``ExcludedApplications`` values — from a source checkout the three per-user
+  ``ExcludedApplications`` values — from a source checkout the four per-user
   ones ``scripts/register-native-host.py`` writes; in the installed build its
   two executables, HKLM then HKCU (installation plan D10) — and checks the
-  RUNNING interpreter's file name against them (D10, round 2 PR-MED-006): the
-  console launch runs ``python.exe``, which is not excluded.
+  RUNNING interpreter's file name against them (D10, round 2 PR-MED-006): in
+  the installed build a ``python.exe`` launch is not excluded; from a source
+  checkout it is, since the development-recordings hardening (round 45).
+- ``check_tool_wer`` is the one REFUSING check here: the developer tools
+  that read a recording which may hold a real consultation run only while
+  their interpreter's crash reports are excluded (round 45 PR-HIGH-002).
 - ``check_backup_exclusions`` (installation plan D6, Task 2.4), production
   only, READ-ONLY and never refusing: the installer's two HKLM backup and
   snapshot values must name the live sessions and logs.
@@ -75,10 +79,16 @@ WER_EXCLUDED_KEY: Final = r"Software\Microsoft\Windows\Windows Error Reporting\E
 # Installation plan D10 (Task 2.4): the production channel — the installed
 # build — runs only its two executables, and the installer excludes them in
 # HKLM (a per-user value is accepted too). The dev channel excludes those two
-# plus ``pythonw.exe``, per user (H.3 SIMP-003: the two are named once).
+# plus ``pythonw.exe``, per user (H.3 SIMP-003: the two are named once) — and,
+# since the development-recordings plan's hardening (round 45 PR-HIGH-002,
+# practitioner decision 2026-10-08), ``python.exe``: the developer tools that
+# read a real consultation (the replay tool, ``measure-speakers.py``) run
+# under it and refuse unless it is excluded (``check_tool_wer``). Its breadth
+# (every python.exe process of this user) is the same agreed residue.
 WER_PRODUCTION_APPLICATIONS: Final[tuple[str, ...]] = ("scribe-app.exe", "scribe-host.exe")
 WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
     "pythonw.exe",
+    "python.exe",
     *WER_PRODUCTION_APPLICATIONS,
 )
 WER_EXCLUDED_VALUE: Final = 1
@@ -187,7 +197,8 @@ BACKUP_UNCHECKED: Final = (
 NOT_INDEXED_FAILED: Final = (
     "Some of Clinic Scribe's folders could not be marked to stay out of Windows Search."
 )
-# D10, verbatim for the documented console launch.
+# D10, verbatim for a launch by an executable not in the channel's list (in a
+# source checkout since round 45: an interpreter other than python/pythonw).
 _UNCOVERED_LAUNCH: Final = (
     "Crash reports are not excluded for this launch ({name}) — start the app with scribe-app.exe."
 )
@@ -502,17 +513,18 @@ def check_export_location(layer: WindowsLayer, folder: Path) -> ExclusionWarning
     return None
 
 
-def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
-    """D10's WER check. Read-only. Warns when any of the channel's exclusions
-    (``wer_applications``) is missing (or not DWORD 1) in every hive the
-    channel reads (``wer_hives``: HKLM then HKCU in production, HKCU in
-    dev), and when the RUNNING interpreter's file name is not one of them —
-    the console launch (``python.exe``) — whatever the registry holds. Each
-    hive is read on its own (round 14 LOW-003): the hives that could be read
-    give the answer, and only when they leave an executable uncovered AND a
-    hive could not be read is it "could not check"."""
-    names = wer_applications()
-    warnings: list[ExclusionWarning] = []
+class WerReader(Protocol):
+    """The one ``WindowsLayer`` call the two WER checks make."""
+
+    def wer_exclusions(self, hive: Hive = "HKCU") -> dict[str, int]: ...
+
+
+def _read_wer_hives(layer: WerReader) -> tuple[list[dict[str, int]], bool]:
+    """Every hive the channel reads (``wer_hives``), each read on its own
+    (round 14 LOW-003): the values of those that could be read, and whether
+    any could not (an ``OSError``; anything else propagates). The one loop
+    behind ``check_wer`` and ``check_tool_wer`` (hardening round 48
+    SIMP-001)."""
     found: list[dict[str, int]] = []
     unreadable = False
     for hive in wer_hives():
@@ -520,6 +532,23 @@ def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
             found.append(layer.wer_exclusions(hive))
         except OSError:
             unreadable = True
+    return found, unreadable
+
+
+def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
+    """D10's WER check. Read-only. Warns when any of the channel's exclusions
+    (``wer_applications``) is missing (or not DWORD 1) in every hive the
+    channel reads (``wer_hives``: HKLM then HKCU in production, HKCU in
+    dev), and when the RUNNING interpreter's file name is not one of them
+    (since development-recordings round 45 a source checkout's console
+    launch, ``python.exe``, is one; another interpreter name is not) —
+    whatever the registry holds. Each
+    hive is read on its own (round 14 LOW-003): the hives that could be read
+    give the answer, and only when they leave an executable uncovered AND a
+    hive could not be read is it "could not check"."""
+    names = wer_applications()
+    warnings: list[ExclusionWarning] = []
+    found, unreadable = _read_wer_hives(layer)
     if any(all(values.get(name) != WER_EXCLUDED_VALUE for values in found) for name in names):
         if unreadable:
             warnings.append(ExclusionWarning("wer_unchecked", WER_UNCHECKED))
@@ -529,6 +558,70 @@ def check_wer(layer: WindowsLayer, executable: str) -> list[ExclusionWarning]:
     if name.casefold() not in names:
         warnings.append(ExclusionWarning("wer_uncovered_launch", uncovered_launch_line(name)))
     return warnings
+
+
+ToolWerRefusal = Literal["wer_not_excluded", "wer_unchecked", "wer_uncovered_name"]
+# The remedy is ``install_layout.registration_remedy()`` (every "run
+# scripts/…" remedy goes through ``install_layout``) — except for a name the
+# register script never excludes, which registration cannot fix (round 46
+# PR-MED-001).
+_TOOL_WER_LINES: Final[dict[str, str]] = {
+    "wer_not_excluded": (
+        "crash reports are not excluded for {name}, so a crash could put part of a "
+        "recording into a Windows crash report - {remedy}, then retry"
+    ),
+    "wer_unchecked": (
+        "could not check whether crash reports are excluded for {name} - {remedy}, then retry"
+    ),
+    "wer_uncovered_name": (
+        "crash reports are checked only for the Python names the register script "
+        "excludes, not {name} - start this with the developer build's "
+        ".venv\\Scripts\\python.exe instead"
+    ),
+}
+
+
+def check_tool_wer(
+    layer_factory: Callable[[], WerReader], executable: str
+) -> ToolWerRefusal | None:
+    """Development-recordings hardening round 45 PR-HIGH-002 (practitioner
+    decision 2026-10-08): a developer tool that reads a recording which may
+    hold a real consultation — the replay tool, ``measure-speakers.py`` —
+    runs only while Windows Error Reporting is excluded for the RUNNING
+    interpreter's file name, so a native crash cannot carry part of it off
+    this computer in a crash report. None when that name reads as DWORD 1 in
+    a hive the channel reads (``wer_hives``); otherwise why not —
+    ``wer_not_excluded``, or ``wer_unchecked`` when a hive could not be read
+    or the layer could not be built (FAIL CLOSED: anything unresolved
+    refuses). A name ``WindowsLayer.wer_exclusions`` does not read (not in
+    ``WER_EXCLUDED_APPLICATIONS``) is ``wer_uncovered_name``, refused before
+    the registry is read: the reader stays confined to the values this app
+    writes, reads back and removes, so an exclusion someone else added for
+    another image name never counts (round 46 PR-MED-001 — decided fail
+    closed; the documented commands all run ``.venv\\Scripts\\python.exe``).
+    Read-only; never raises. Checked once, at the tool's start — a value
+    removed during a run is not seen (the residue)."""
+    name = ntpath.basename(executable).casefold()
+    if name not in WER_EXCLUDED_APPLICATIONS:
+        return "wer_uncovered_name"
+    try:
+        found, unreadable = _read_wer_hives(layer_factory())
+        if any(values.get(name) == WER_EXCLUDED_VALUE for values in found):
+            return None
+        return "wer_unchecked" if unreadable else "wer_not_excluded"
+    except Exception:  # noqa: BLE001 - a check that cannot run refuses
+        return "wer_unchecked"
+
+
+def tool_wer_refusal_line(refusal: ToolWerRefusal, executable: str) -> str:
+    """The fixed refusal text for ``check_tool_wer``'s answer, naming the
+    interpreter only when its file name is a plain one, and the build's
+    registration remedy (``install_layout.registration_remedy``)."""
+    name = ntpath.basename(executable)
+    shown = name if _PLAIN_FILE_NAME.fullmatch(name) else "this program"
+    return _TOOL_WER_LINES[refusal].format(
+        name=shown, remedy=install_layout.registration_remedy()
+    )
 
 
 def check_backup_exclusions(layer: WindowsLayer) -> list[ExclusionWarning]:

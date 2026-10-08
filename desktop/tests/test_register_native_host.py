@@ -1,6 +1,7 @@
 """Privacy-professional-controls Task 4.2 (D10): ``scripts/register-native-
-host.py`` writes the three per-user WER exclusions, verifies them by reading
-them back, and ``--unregister`` removes exactly those three values.
+host.py`` writes the four per-user WER exclusions (``python.exe`` since the
+development-recordings hardening, round 45), verifies them by reading them
+back, and ``--unregister`` removes exactly those four values.
 
 The script is loaded through ``importlib`` (hyphenated, outside any package),
 as ``test_setup_scripts.py`` loads its scripts. ``winreg`` is a FAKE in every
@@ -124,10 +125,13 @@ def test_the_script_uses_the_apps_own_names_and_key(script: ModuleType) -> None:
     assert script.WER_EXCLUDED_KEY is exclusions.WER_EXCLUDED_KEY
 
 
-def test_register_wer_writes_three_dwords_and_reads_them_back(script: ModuleType) -> None:
+def test_register_wer_writes_four_dwords_and_reads_them_back(script: ModuleType) -> None:
     registry = FakeWinreg()
     assert script.register_wer(registry) == []
     assert registry.keys[_KEY] == {name: (1, FakeWinreg.REG_DWORD) for name in _NAMES}
+    # Development-recordings hardening round 45 PR-HIGH-002: python.exe, for
+    # the developer tools that read a recording (they refuse without it).
+    assert registry.keys[_KEY]["python.exe"] == (1, FakeWinreg.REG_DWORD)
     assert set(registry.roots) == {"HKCU"}  # per user only, never HKLM
 
 
@@ -137,6 +141,9 @@ def test_register_wer_writes_three_dwords_and_reads_them_back(script: ModuleType
         (FakeWinreg(drop=("scribe-host.exe",)), ["scribe-host.exe"]),
         (FakeWinreg(rewrite={"pythonw.exe": (0, FakeWinreg.REG_DWORD)}), ["pythonw.exe"]),
         (FakeWinreg(rewrite={"scribe-app.exe": ("1", FakeWinreg.REG_SZ)}), ["scribe-app.exe"]),
+        # Round 46 PR-LOW-002: the fourth value is READ BACK, not only written.
+        (FakeWinreg(drop=("python.exe",)), ["python.exe"]),
+        (FakeWinreg(rewrite={"python.exe": ("1", FakeWinreg.REG_SZ)}), ["python.exe"]),
         (FakeWinreg(unreadable=True), list(_NAMES)),
     ],
 )
@@ -146,12 +153,12 @@ def test_a_value_that_does_not_read_back_as_dword_1_fails(
     assert script.register_wer(registry) == failed
 
 
-def test_unregister_wer_removes_only_its_three_values(script: ModuleType) -> None:
+def test_unregister_wer_removes_only_its_four_values(script: ModuleType) -> None:
     registry = FakeWinreg()
     registry.keys[_KEY] = {"other.exe": (1, FakeWinreg.REG_DWORD)}
     script.register_wer(registry)
     del registry.keys[_KEY]["scribe-app.exe"]  # one already gone
-    assert script.unregister_wer(registry) == ["pythonw.exe", "scribe-host.exe"]
+    assert script.unregister_wer(registry) == ["pythonw.exe", "python.exe", "scribe-host.exe"]
     assert registry.keys[_KEY] == {"other.exe": (1, FakeWinreg.REG_DWORD)}  # key kept
     assert script.unregister_wer(registry) == []
     assert set(registry.roots) == {"HKCU"}

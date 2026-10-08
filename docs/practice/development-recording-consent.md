@@ -142,12 +142,17 @@ Give them Part A to read or take home.
    will be kept for development" while the box is ticked, and "This recording is being
    kept for development" while it records.
 3. Like the ordinary consent box, the second box is never ticked in advance and clears
-   after every Start, so it is given for each recording. It also clears if Chrome then
-   shows another note or patient, if Chrome's link to the app drops, if the computer
-   locks or sleeps, or if a Start is refused (except "still getting ready", which keeps
-   it) — the Session tab then says "The keep-for-development tick was cleared …" — and
-   when the Status-tab setting is turned off. Tick it again before Start if the patient
-   consented in writing.
+   after every Start, so it is given for each recording. If it was ticked while Chrome
+   showed a treatment note, it also clears when Chrome shows a different note or leaves
+   that note, or if Chrome's link to the app drops. It also clears if the computer locks
+   or sleeps (unless the Session tab says "Lock pause unavailable" or "Sleep pause may
+   not work"), or if a Start is refused (except "still getting ready", which keeps it)
+   — the Session tab then says "The keep-for-development tick was cleared …" — and when
+   the Status-tab setting is turned off. Tick it again before Start if the patient
+   consented in writing. A box ticked while Chrome shows no treatment note is tied to no
+   patient: moving to other pages in Chrome, another patient's included, does not clear
+   it (opening a treatment note does), so it can carry over to the next Start, whoever
+   that is for — if that patient does not go ahead, untick it yourself.
 4. When you press **Complete**, the message ends "The recording was kept for
    development." only when it actually was. If that sentence appears for a patient who
    did not sign Part C, delete the recording at once (below). If it does not appear, the
