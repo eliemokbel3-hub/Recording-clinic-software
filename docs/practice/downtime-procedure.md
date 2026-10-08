@@ -8,7 +8,7 @@
 Draft 1 (2026-10-01; the patient-information version and the shadow-recording line
 updated 2026-10-07 for the pilot build, approved by the practitioner the same day; the
 kept recording added 2026-10-08 for version 0.3.0, and the terminal-launch crash-report
-line updated the same day, both awaiting the practitioner's approval). For
+line updated the same day, both approved by the practitioner on 2026-10-09). For
 the practitioner. The rule behind every step: **Clinic Scribe
 is a writing aid, and Cliniko is the record.** If the app is not working, write the note
 in Cliniko yourself, the usual way; nothing about the patient's care waits for the app.
