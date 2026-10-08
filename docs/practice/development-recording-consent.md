@@ -5,7 +5,9 @@
 > (in Victoria); the state notes cover every state and territory the research looked at.
 > See the [practice documents README](README.md) for the sources and the open questions.
 > Until that review is done, keep recordings for development only occasionally and with
-> care.
+> care. Keeping recordings for development is for the developing practitioner's own
+> clinics only: it will not be part of the program offered to other practitioners
+> (practitioner decision, 2026-10-09).
 
 **Document version: `development-consent-v1`** (2026-10-08; approved by the practitioner
 on 2026-10-09). Record this version in the patient's Cliniko record when they sign Part C. The
