@@ -142,8 +142,7 @@ Offer Part A to read or take home.
   >
   > or "… Declined; notes written without it."
 
-  Name the version of this sheet the patient was given: patient-info-v2 until you have
-  approved this version. For a comparison appointment you may add: "Comparison appointment — the program's
+  Name the version of this sheet the patient was given. For a comparison appointment you may add: "Comparison appointment — the program's
   draft was not used."
 - **Keeping the recording** to help develop the program is a separate consent, asked
   for afterwards, separately and only in writing, with its own tick in Clinic Scribe and
