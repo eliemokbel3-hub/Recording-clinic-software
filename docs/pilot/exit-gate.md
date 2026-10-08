@@ -27,8 +27,8 @@ beside it — an open item becomes a finding and is resolved or controlled first
       review date are recorded.
 - [ ] **Ten shadow consultations logged** (Task P.4): ten rows with mode
       `shadow` in the pilot log, each with consent recorded in Cliniko as
-      `patient-info-v2` or its successor `patient-info-v3` (0.3.0, once
-      approved); the audit record's export shows at least ten `shadow`
+      `patient-info-v2` or its successor `patient-info-v3` (0.3.0, approved
+      2026-10-09); the audit record's export shows at least ten `shadow`
       rows on a 0.2.0 or later build, ten of them on the dates of those log rows (P.1's
       two mock shadow recordings, and any discarded shadow recording, add
       rows of their own); the R4 total over them is recorded.

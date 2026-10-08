@@ -32,9 +32,8 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 - Open the app and check the Chrome icon shows a green **OK**.
 - Look at the Status tab: it should show no warning lines under the intended-use line.
 - Have a way to write notes without the app (Cliniko open as usual). The patient
-  information sheet (its current version: `patient-info-v3` once you have approved it,
-  until then `patient-info-v2`) should be at hand, and the development-recording consent
-  form (`development-consent-v1`, once approved) if you may ask for one.
+  information sheet (its current version: `patient-info-v3`) should be at hand, and the
+  development-recording consent form (`development-consent-v1`) if you may ask for one.
 
 ## When the app is not available
 

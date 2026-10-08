@@ -62,7 +62,7 @@ result is recorded there as a dated RUN line.
    consent sheet `patient-info-v2`,
    `docs/practice/patient-information-and-consent.md`, was approved on
    2026-10-07; its successor `patient-info-v3`, for 0.3.0's kept recordings,
-   replaces it once the practitioner approves it). Tick "Shadow mode
+   approved on 2026-10-09, replaces it). Tick "Shadow mode
    (pilot)" on the Status tab; for each consultation obtain consent with the
    current sheet and record its version in Cliniko, let the app draft its note, score it
    on the rubric at the scoring point, write your own note in Cliniko as usual,

@@ -7,8 +7,8 @@
 > Until that review is done, keep recordings for development only occasionally and with
 > care.
 
-**Document version: `development-consent-v1`** (2026-10-08; awaiting the practitioner's
-approval). Record this version in the patient's Cliniko record when they sign Part C. The
+**Document version: `development-consent-v1`** (2026-10-08; approved by the practitioner
+on 2026-10-09). Record this version in the patient's Cliniko record when they sign Part C. The
 tick in the program carries the same version name.
 
 This is a **separate, second** consent. It is asked for only after the patient has agreed

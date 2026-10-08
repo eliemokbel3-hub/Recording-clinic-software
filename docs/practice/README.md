@@ -15,8 +15,8 @@ document must be corrected.
 
 | Document | For | Version |
 |---|---|---|
-| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v3` (awaiting approval; `patient-info-v2` until then) |
-| [Keeping a recording to help develop the program](development-recording-consent.md) | Patients asked for a recording to be kept, and the practitioner asking — a separate, written consent | `development-consent-v1` |
+| [Patient information and consent](patient-information-and-consent.md) | Patients, and the practitioner asking for consent | `patient-info-v3` (approved 2026-10-09) |
+| [Keeping a recording to help develop the program](development-recording-consent.md) | Patients asked for a recording to be kept, and the practitioner asking — a separate, written consent | `development-consent-v1` (approved 2026-10-09) |
 | [Privacy information](privacy-information.md) | The practice's privacy policy and collection notice | draft 1 |
 | [Downtime procedure](downtime-procedure.md) | The practitioner, when something stops working | draft 1 |
 | [Clinician review guide](clinician-review-guide.md) | The practitioner, before saving and finalising a note | draft 1 |
@@ -46,10 +46,10 @@ the program, under the separate document
 (`development-consent-v1`). That second consent has its own tick in the app ("I confirm
 the patient has consented in writing to this recording being kept for developing the
 program"), whose version in the app is also `development-consent-v1`: the document and
-the tick were written together, and a change to either is a new version of it. Both
-`patient-info-v3` and `development-consent-v1` await the practitioner's approval of
-their wording (as `patient-info-v2` was approved on 2026-10-07), and the independent
-review below.
+the tick were written together, and a change to either is a new version of it. The practitioner
+approved the wording of `patient-info-v3` and `development-consent-v1` on 2026-10-09 (as
+`patient-info-v2` was approved on 2026-10-07); both still await the independent review
+below.
 
 ## Keeping these documents
 
@@ -62,7 +62,7 @@ review below.
   own screen word for word, so it can be matched.
 - No promise the app cannot keep — for example, the app never ticks or fills Cliniko's
   consent field, and nothing it keeps has a backup.
-- The patient information's version (`patient-info-v3` once approved) and the app's consent tick are
+- The patient information's version (`patient-info-v3`) and the app's consent tick are
   versioned separately (above); the development consent's document and its tick share
   `development-consent-v1`.
 

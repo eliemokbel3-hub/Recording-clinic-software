@@ -6,8 +6,8 @@
 > looked at. See the [practice documents README](README.md) for the sources and the open
 > questions.
 
-**Document version: `patient-info-v3`** (2026-10-08, awaiting the practitioner's
-approval; it qualifies "the audio is not kept" in Parts A, B and C for a recording the
+**Document version: `patient-info-v3`** (2026-10-08, approved by the practitioner on
+2026-10-09; it qualifies "the audio is not kept" in Parts A, B and C for a recording the
 patient has separately agreed in writing to keep — see
 [Keeping a recording to help develop the program](development-recording-consent.md) —
 and adds that to the record of a recording). History: `patient-info-v2` (2026-10-07,
