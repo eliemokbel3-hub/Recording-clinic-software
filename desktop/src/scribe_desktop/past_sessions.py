@@ -928,6 +928,19 @@ class PastSessionStore:
         cannot be listed is empty here (the next start tries again)."""
         return self._labelled_where(_recording_kept_in, kept=True)
 
+    def kept_session_ids(self) -> list[str]:
+        """The session ids of every COMMITTED entry holding a kept recording
+        (``recording_kept``), from names and the key file's zero-check only:
+        NOTHING is decrypted (development-recordings review round 29 MED-001 —
+        the replay tool lists without opening every patient's name). A
+        missing archive is empty; one that exists but cannot be listed raises
+        ``PastSessionError("unreadable")``, as ``list_entries`` does."""
+        return [
+            entry.name
+            for entry in self._committed_dirs(strict=True)
+            if _recording_kept_in(entry)
+        ]
+
     def deleted_recordings(self) -> list[PastSessionListing]:
         """Every COMMITTED entry whose kept recording was DELETED but not yet
         tidied — its ``audio-key.enc`` zeroed, or gone with ``audio.enc``
@@ -1449,6 +1462,29 @@ class PastSessionStore:
         finally:
             crypto.destroy()
         return PastSessionEntry(label, transcript, saved, generated)
+
+    def read_replay_inputs(
+        self, session_id: str
+    ) -> tuple[TranscriptDocument, GeneratedNote | None]:
+        """The kept-recordings replay's reader (development-recordings review
+        round 30): a COMMITTED entry's transcript and saved note (None when
+        there is none) — and NOTHING else: the label (the patient's name) and
+        the generated note stay encrypted, so an unreadable label does not
+        stop a replay either. ``PastSessionError`` (``not_found``,
+        ``pending`` or ``unreadable``) otherwise."""
+        entry = self._committed(session_id)
+        try:
+            crypto = self._unwrap_key(entry)
+        except Exception as exc:
+            raise PastSessionError("unreadable") from exc
+        try:
+            transcript = read_transcript(entry, crypto)
+            saved = read_note(entry, crypto) if _exists(entry / NOTE_FILENAME) else None
+        except Exception as exc:
+            raise PastSessionError("unreadable") from exc
+        finally:
+            crypto.destroy()
+        return transcript, saved
 
     # --- deleting -----------------------------------------------------------
 

@@ -83,6 +83,7 @@ from scribe_desktop.transcription import (
     label_speakers,
     transcribe_session,
 )
+from speaker_fakes import FrequencyEmbedder
 
 windows_only = pytest.mark.skipif(sys.platform != "win32", reason="DPAPI is Windows-only")
 
@@ -1518,32 +1519,8 @@ def _no_speaker_model(*args: object, **kwargs: object) -> object:
     raise SpeakerModelError("speaker model not found - run scripts/setup-models.py")
 
 
-class _FrequencyEmbedder:
-    """An ML-free ``SpeakerEmbedder`` for the enrolled condition: the unit
-    vector e1 for a low-pitched tone (zero-crossing rate under 1000/s), e2
-    otherwise — so a 220 Hz voice matches an e1 profile and a 2600 Hz voice
-    does not, deterministically, with no model file."""
-
-    @property
-    def model_id(self) -> str:
-        return "mock-frequency-v1"
-
-    @property
-    def model_sha256(self) -> str:
-        return ""
-
-    @property
-    def embedding_dim(self) -> int:
-        return 2
-
-    def embed(self, pcm16: bytes) -> object:
-        import numpy as np
-
-        samples = struct.unpack(f"<{len(pcm16) // 2}h", pcm16)
-        pairs = zip(samples, samples[1:], strict=False)
-        crossings = sum(1 for a, b in pairs if (a < 0) != (b < 0))
-        rate = crossings / (len(samples) / SAMPLE_RATE)
-        return np.asarray([1.0, 0.0] if rate < 1000 else [0.0, 1.0], dtype=np.float32)
+# Shared with the replay tool's tests (round 29 LOW-015): ``speaker_fakes``.
+_FrequencyEmbedder = FrequencyEmbedder
 
 
 def _build_frequency_embedder(*args: object, **kwargs: object) -> _FrequencyEmbedder:
@@ -2008,3 +1985,91 @@ class TestMainEnrolled:
         assert seen["a"] is None
         assert isinstance(seen["b"], speaker_eval.EnrolmentInputs)
         assert f"[skip] a.wav: {ENROLLED} condition not measured" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# Development-recordings plan Task 4.1a: the memory-only key mode
+# ---------------------------------------------------------------------------
+
+
+class _Killed(BaseException):
+    """A hard kill stand-in: raised inside the pipeline with the teardown
+    switched off, so whatever the run wrote is left exactly as a killed
+    process would leave it."""
+
+
+class TestMemoryOnlyKey:
+    """``persist_key=False`` (the kept-recordings replay tool, round 5
+    PR-HIGH-051): the temporary store's key is never written to disk, so an
+    interrupted run leaves ciphertext with no key anywhere."""
+
+    @pytest.fixture(autouse=True)
+    def _private_temp(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        folder = tmp_path / "system-temp"
+        folder.mkdir()
+        monkeypatch.setattr(tempfile, "tempdir", str(folder))
+        return folder
+
+    def _spy(self, seen: list[bool]) -> object:
+        def transcribe(session_dir: Path, *args: object, **kwargs: object) -> TranscriptDocument:
+            seen.append((session_dir / KEY_FILENAME).exists())
+            assert (session_dir / "audio.enc").exists()
+            return _document([(0.0, 1.0, SPEAKER_1, "an invented line")])
+
+        return transcribe
+
+    def test_no_key_file_is_ever_written(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[bool] = []
+        monkeypatch.setattr(speaker_eval, "transcribe_session", self._spy(seen))
+
+        def no_wrap(*args: object, **kwargs: object) -> None:
+            raise AssertionError("a memory-only run wrapped its key to a file")
+
+        monkeypatch.setattr(speaker_eval, "wrap_key_to_file", no_wrap)
+        document, enrolled = speaker_eval.transcribe_in_temporary_store(
+            tone_pcm(1.0), MockSpeechProvider(), amplitude_vad, persist_key=False
+        )
+        assert seen == [False]
+        assert enrolled is None and document.transcript_segments
+        assert _temp_stores() == set()  # torn down as in the default mode
+
+    @windows_only
+    def test_the_default_mode_still_writes_the_dpapi_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[bool] = []
+        monkeypatch.setattr(speaker_eval, "transcribe_session", self._spy(seen))
+        speaker_eval.transcribe_in_temporary_store(
+            tone_pcm(1.0), MockSpeechProvider(), amplitude_vad
+        )
+        assert seen == [True]
+        assert _temp_stores() == set()
+
+    def test_an_interrupted_run_leaves_only_undecryptable_ciphertext(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The helper "killed" after the store is written (no teardown runs,
+        as on a hard kill or power loss): the surviving folder holds no key
+        file, and its ``audio.enc`` cannot be opened without the key that
+        died with the process."""
+
+        def killed(*args: object, **kwargs: object) -> TranscriptDocument:
+            raise _Killed
+
+        monkeypatch.setattr(speaker_eval, "transcribe_session", killed)
+        monkeypatch.setattr(speaker_eval, "destroy_temporary_store", _keep)
+        with pytest.raises(_Killed):
+            speaker_eval.transcribe_in_temporary_store(
+                tone_pcm(1.0), MockSpeechProvider(), amplitude_vad, persist_key=False
+            )
+        (root,) = _temp_stores()
+        (session_dir,) = list(root.iterdir())
+        # No key anywhere on disk: the folder holds the store and nothing
+        # else, and the store holds no plaintext audio (round 29 LOW-008 —
+        # the key itself died with the "killed" process's memory).
+        assert sorted(path.name for path in session_dir.iterdir()) == ["audio.enc"]
+        assert not list(root.rglob(KEY_FILENAME))
+        stored = (session_dir / "audio.enc").read_bytes()
+        assert len(stored) > len(tone_pcm(1.0)) // 2  # the audio was written ...
+        assert tone_pcm(1.0)[:4096] not in stored  # ... only as ciphertext
+        shutil.rmtree(root)

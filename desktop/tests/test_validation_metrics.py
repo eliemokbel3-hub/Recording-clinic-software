@@ -254,6 +254,12 @@ class TestWordErrors:
         assert errors == WordErrors(4, 4, 1)
         assert errors.rate == pytest.approx(0.25)
 
+    def test_the_script_is_the_reference_and_the_transcript_the_hypothesis(self) -> None:
+        """Development-recordings review round 31: unequal lengths pin the
+        argument order (the reference count is the script's)."""
+        script = _script(("clinician", "my left knee hurts"))
+        assert word_errors(_doc((SPEAKER_1, "my knee hurts")), script) == WordErrors(4, 3, 1)
+
 
 # ---------------------------------------------------------------------------
 # the Done-when cases

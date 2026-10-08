@@ -325,7 +325,10 @@ class SessionChunkStore:
     ) -> SessionChunkStore:
         """Create a fresh store. Refuses (durability ordering, binding) unless
         the DPAPI key blob already exists beside it — key BEFORE first chunk.
-        `require_key=False` exists ONLY for store-format unit tests."""
+        `require_key=False` exists ONLY for store-format unit tests, or a
+        memory-only temporary store (``speaker_eval.transcribe_in_temporary_store``
+        with ``persist_key=False`` — the replay tool's, whose key is never on
+        disk; development-recordings plan Task 4.1a)."""
         validate_session_id(session_id)
         if require_key and not (path.parent / KEY_FILENAME).exists():
             raise StoreStateError("key.dpapi must be durably written before the first chunk")

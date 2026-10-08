@@ -1221,6 +1221,7 @@ _MODELS_ROOT_CALLERS = frozenset(
         ("transcription.py", "default_whisper_model_dir"),
         ("ui/microphone.py", "_default_benchmark_runner"),
         ("validation.py", "main"),
+        ("replay_kept.py", "_run"),  # development-recordings plan Task 4.1a
         ("scripts/setup-models.py", "models_root"),
         ("scripts/setup-models.py", "main"),
     }

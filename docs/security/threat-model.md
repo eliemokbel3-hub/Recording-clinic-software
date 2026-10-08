@@ -3508,7 +3508,13 @@ DPAPI-wrapped key — the same helpers `measure-speakers.py` uses
 (`speaker_eval.transcribe_in_temporary_store` / `destroy_temporary_store`,
 under `%TEMP%\scribe-speaker-eval-*`) — torn down key-first with the
 fail-closed probe on every path; a store that cannot be shown gone STOPS the
-run and names its path. It reads no voice profile, writes no audit row and no
+run and names its path. The helper has two key modes (development-recordings
+plan Task 4.1a): by default the fresh key is also written beside the store as
+a DPAPI blob (`measure-speakers.py`, `run-validation.py`); with
+`persist_key=False` (the kept-recordings replay tool,
+`replay-kept-recordings.py`) no key file is ever written — the key lives only
+in the process's memory, so a hard kill or power loss mid-run leaves
+ciphertext with no key anywhere (round 5 PR-HIGH-051). The harness reads no voice profile, writes no audit row and no
 Past-sessions entry and reads none, and opens no connection: nothing it runs
 calls the Cliniko client or any network interface, and the offline
 environment is applied and asserted before any model loads (network-capable

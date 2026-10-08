@@ -76,6 +76,17 @@ set up and build it, and make releases; the installed app needs none of them.
   encrypted store torn down key-first and prints a text-free report, pass or
   fail against the rule. Developer build only, from a normal terminal; see
   `docs/testing/validation-harness.md`.
+- `replay-kept-recordings.py <past_sessions folder> [--only <session id> ...]
+  [--enrolment <wav>] [--model <name>]` (development-recordings plan Phase 4) —
+  thin launcher for `scribe_desktop.replay_kept`: replays every recording kept
+  for development in the Past-sessions folder you name through the current
+  pipeline (a temporary encrypted store whose key is never written to disk) and
+  prints session ids, DRIFT numbers and model names (and the folder given) — no
+  transcript, note or name text — the new transcript against the
+  kept one, and a note regenerated under the shipped default config against the
+  clinician's saved note. Reads the folder and writes nothing there; holds the
+  app's single-instance lock for its run (close Clinic Scribe first). Developer
+  build only, from a normal terminal; see `docs/testing/kept-recordings.md`.
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is

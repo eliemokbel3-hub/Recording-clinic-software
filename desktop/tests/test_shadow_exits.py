@@ -842,6 +842,10 @@ _READER_REFERENCES: Counter[tuple[str, str]] = Counter(
         ("past_sessions.py", "PastSessionStore.read_recording"): 1,
         ("past_sessions.py", "PastSessionStore._recording_chunks"): 1,
         ("past_sessions.py", "PastSessionStore.export_recording"): 1,  # Export: the one reader
+        # Development-recordings plan Task 4.1a (a deliberate pin change): the
+        # practitioner-run replay tool reads each kept recording into memory
+        # for its own entry only, into a memory-keyed temporary store.
+        ("replay_kept.py", "_replay_entry"): 1,
     }
 )
 _WRITER_REFERENCES: Counter[tuple[str, str]] = Counter(
@@ -879,7 +883,7 @@ def _references(sources: dict[str, ast.Module], names: frozenset[str]) -> Counte
     return found
 
 
-def test_the_kept_recording_is_read_only_by_export() -> None:
+def test_the_kept_recording_is_read_only_by_export_and_the_replay_tool() -> None:
     assert _references(_package_sources(), _PLAINTEXT_READERS) == _READER_REFERENCES
 
 

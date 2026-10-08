@@ -23,6 +23,7 @@ from scribe_desktop import (
     ml_warmup,
     note_config,
     past_sessions,
+    replay_kept,
     validation_set,
 )
 from scribe_desktop.encounter import unlinked_consent
@@ -44,6 +45,10 @@ REAL_DEVELOPMENT_SETTINGS_ROOT = note_config.development_settings_root
 # Codex round 27 PR-LOW-001: the real ``.part`` kernel seam, captured before
 # ``pytest_configure`` replaces it with ``_no_real_part_kernel``.
 REAL_PART_KERNEL = past_sessions.part_kernel
+# Development-recordings plan Task 4.1a: the replay tool's real instance
+# exclusion (the app's production ``app.lock``), captured before
+# ``pytest_configure`` replaces it with ``_no_real_exclusion``.
+REAL_REPLAY_EXCLUSION = replay_kept._acquire_exclusion
 
 
 def _production() -> Channel:
@@ -61,6 +66,13 @@ def _no_real_part_kernel() -> past_sessions.PartKernel:
     )
 
 
+def _no_real_exclusion() -> replay_kept.ExclusionLike:
+    raise AssertionError(
+        "a test reached the replay tool's real instance exclusion (the app's "
+        "app.lock) - replace replay_kept._acquire_exclusion in the test"
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Installation plan D2, from before collection: a test module's
     import-time code — a ``skipif`` that looks for a local model, a root
@@ -71,10 +83,13 @@ def pytest_configure(config: pytest.Config) -> None:
     (C6, round 11 PR-LOW-016). The export's ``.part`` kernel seam is replaced
     for the whole run by a refusal (codex round 27 PR-LOW-001): a test that
     lifts the ``part_kernel`` fixture with ``monkeypatch.undo()`` fails
-    loudly instead of reaching the real Windows API."""
+    loudly instead of reaching the real Windows API. So is the replay tool's
+    instance exclusion (development-recordings plan Task 4.1a): no test ever
+    takes the app's real ``app.lock``."""
     install_layout.channel = _production  # type: ignore[assignment]
     install_layout.is_frozen = _not_frozen  # type: ignore[assignment]
     past_sessions.part_kernel = _no_real_part_kernel
+    replay_kept._acquire_exclusion = _no_real_exclusion
 
 
 @pytest.fixture(autouse=True)

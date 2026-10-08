@@ -1,0 +1,60 @@
+# Kept recordings: replay, labelling and scoring (development-recordings plan Phase 4)
+
+How the practitioner uses the recordings kept for development — a consultation's audio kept, encrypted, beside its Past-sessions entry, only when the patient consented in writing (the Session tab's second tick; `development-consent-v1`). Three uses, all on this computer and all run by the practitioner: **replay** every kept recording through the current pipeline and read DRIFT numbers; **export** one as a WAV and **label** it for the speaker measurement; and, later, **script** one so the validation harness can score it.
+
+Code: `desktop/src/scribe_desktop/replay_kept.py`, launcher `scripts/replay-kept-recordings.py`, tests `desktop/tests/test_replay_kept.py` (and the memory-only key mode in `test_speaker_eval.py`). The agent never reads a kept recording, its transcript or its note — exported or not (the plan's C1): it reads only the numbers the practitioner pastes.
+
+## Replaying kept recordings
+
+From a normal terminal (never an agent shell — those cannot see the model folder or unwrap this Windows user's keys, `docs/lessons.md`), on the developer build, with the models downloaded by `scripts\setup-models.py` and **Clinic Scribe closed — both builds**. In **Command Prompt**:
+
+```bat
+.venv\Scripts\python.exe scripts\replay-kept-recordings.py "%LOCALAPPDATA%\ClinikoScribe\past_sessions"
+.venv\Scripts\python.exe scripts\replay-kept-recordings.py "%LOCALAPPDATA%\ClinikoScribe-dev\past_sessions" --only <session id>
+.venv\Scripts\python.exe scripts\replay-kept-recordings.py <folder> --enrolment <me.wav>
+echo %ERRORLEVEL%
+```
+
+In **PowerShell** (Windows Terminal's default) `%LOCALAPPDATA%` is not expanded — the tool would refuse the literal text as "not a folder" — so write `"$env:LOCALAPPDATA\ClinikoScribe\past_sessions"` instead, and read the exit status with `$LASTEXITCODE`.
+
+The first line reads the installed app's archive, the second the developer build's. Name the folder yourself every time: the tool never looks for one.
+
+Options: `--only <session id>` (repeatable) replays just those entries — an id with no kept recording in the folder is reported and skipped; `--enrolment <wav>` (16 kHz mono 16-bit PCM of you reading aloud, as `speaker-measurement.md` describes) makes the new transcript with your voice profile applied in memory (never saved), as the app makes it, and lets the regenerated note take the practitioner-attributed speaker as the clinician; `--model <name>` picks the Whisper model (default `medium`).
+
+**Refusals, in order, before anything is decrypted:** a command line it cannot parse (one fixed line and the usage — it never repeats what you typed); a packaged build; an `--only` value that is not shaped like a session id (it is never echoed — it could be a name — and the whole run is refused, so retype the ids); a `--model` value that is not a model name; an `--enrolment` that is not a file; a path that is not a folder (not repeated either); a folder that cannot be scanned; a folder holding no Past-sessions entry (no `<session id>\key.dpapi` inside — "not a Past-sessions folder"); Clinic Scribe running (either build) — "close Clinic Scribe first", also when the app's single-instance lock cannot be taken for any other reason (`unavailable`). Then, with the offline switches applied: a models folder that cannot be located, the Whisper model or the silero VAD model missing (with the remedy; a model you named with `--model` is not repeated), the shipped note config or the models failing to load (by error type; an unusable enrolment WAV says which format is needed), and an archive that cannot be listed (by its reason code). Listing the entries decrypts nothing (it reads the folder names and each entry's audio-key file, only to see whether it was zeroed), and a replayed entry has only its transcript and saved note decrypted — never its name label or its generated note. Exit status: 0 when at least one recording was replayed and none failed; 2 for a refusal; 1 otherwise (nothing to replay, an entry that failed, or a run that stopped).
+
+**A healthy report** is a Markdown table on standard output, one row per session id, under a header that says the numbers are DRIFT, names the folder, the Whisper model, how the clinician was chosen for the regenerated note and that the note config is the shipped defaults; then one totals line. Before it, one `[run ] <session id>` line per entry, `[skip] <session id>: no kept recording in this folder` for an `--only` id with nothing to replay, and `[error] <session id>: <reason or error type>` for an entry that could not be replayed (the run goes on). Nothing else: no transcript, note or name text. Redirect it to a file to keep it, and paste only the table.
+
+## What each number is — and is not
+
+Every number compares the CURRENT pipeline with what the app kept at the time. It says how much the output changed, not how right either one is: nothing here knows what was actually said.
+
+| Column | What it is | What it is NOT |
+|---|---|---|
+| Seconds | The kept recording's length. | — |
+| Kept model / New model | The Whisper model that made the kept transcript, and the one used now. A different model is the commonest cause of drift. | — |
+| Kept words / New words / Edit distance | Content words in each transcript (the harness's own tokens) and the word edit distance between them. | — |
+| Drift WER | Edit distance over kept words — the word error rate of the new transcript *taking the kept one as the reference*. | Accuracy. The kept transcript has its own errors; a lower number means "closer to what the app wrote then", not "closer to what was said". |
+| Label agreement | The share of aligned words whose speaker label agrees, under the best one-to-one matching of kept labels to new ones (so a swapped `speaker_1` / `speaker_2` is not counted as disagreement). | Speaker accuracy — there is no label track. Use the labelling path below for that. |
+| Sections missing | Sections the clinician's SAVED note holds that the regenerated note does not (a dash when the entry has no saved note). The saved note is the clinician-reviewed reference. | A note-quality score: the clinician may have typed lines no transcript supports, and the regenerated note uses the shipped default config, so your learned cues are missing from it ("drift includes your learned cues"). |
+| Check errors / Check reviews | The checker's warnings (Checks 1–4) on the regenerated note, by severity. Every proposal is confirmed, as the validation harness does. | What the clinician saw at the time. |
+
+Without `--enrolment` the regenerated note has no confirmed clinician (the header says so): clinician-owned sections (assessment, diagnosis, advice and home exercise, management plan) stay empty, so "Sections missing" counts them. Use `--enrolment` to compare like with like.
+
+## Custody
+
+- **The folder is only read.** The tool lists the entries by name, opens each kept recording's transcript and saved note (never its name label or generated note), and streams its audio; it writes, moves and deletes nothing there and writes no audit row.
+- **The app cannot run underneath.** The tool takes the app's single-instance lock for the whole run (the same lock both builds share) and refuses to start without it, so the app cannot start, sweep or reconcile the archive while it reads. It releases the lock when it ends, however it ends.
+- **One recording in memory at a time.** Each kept recording's audio is decrypted into memory for its own entry only, then re-encrypted into a temporary store under `%TEMP%\scribe-speaker-eval-*` whose key is NEVER written to disk (`persist_key=False`): a crash, a kill or a power cut mid-run leaves only ciphertext nobody can open. The store is removed key-first after each entry.
+- **Residue by path.** If a temporary store cannot be shown gone — or it is gone but one of its teardown steps failed — the run STOPS with one line naming its folder and saying what remains (or that nothing remains to remove by hand) — delete that folder by hand when one remains. That is the only line that names a path other than the folder you gave. A run stopped with Ctrl+C prints one line asking you to look in your temporary folder (`%TEMP%`) for a `scribe-speaker-eval-*` folder; its key was never on disk, so it holds only ciphertext — delete it.
+
+## Labelling a kept recording (speaker measurement)
+
+1. Past sessions tab, select the entry, **Export recording (WAV)**: it writes `<session id>.wav` (16 kHz mono 16-bit PCM — the format `measure-speakers.py` reads) to a folder you choose. Export refuses OneDrive, network, roaming, removable or unknown drives and the app's own data folders; choose a folder of its own on this computer's fixed drive, never a synced one. The file is NOT encrypted.
+2. Open it in Audacity and add the role labels `docs/testing/speaker-measurement.md` describes (`clinician`, `patient`, …; never a real name); export the labels as `<session id>.txt` beside the WAV.
+3. Run `measure-speakers.py` over that folder (`speaker-measurement.md`, "Running it"), paste the table.
+4. **Delete the WAV and the label file** when the measurement is recorded. Keep exported real recordings out of decision 3.6's role-play folder: that folder, its rows and its tools assume mock content.
+
+## Scoring a kept recording with the validation harness (deferred)
+
+The validation harness scores a recording against a facts script (`validation-harness.md`, "What goes in"). Writing one for a real consultation — its reference lines and expected facts, from the exported, labelled recording — is the plan's deferred item, not built here: the harness's set folders hold invented or mock content only (the pilot plan's Constraint 8) until that item is decided. When it is, the script and the exported WAV and label track would live in their own set folder on this computer's fixed drive, outside the repository, deleted after the run.

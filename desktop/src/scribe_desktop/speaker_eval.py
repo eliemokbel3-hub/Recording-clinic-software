@@ -871,8 +871,17 @@ def clinician_pcm(pcm: bytes, track: LabelTrack) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _write_store(session_dir: Path, crypto: SessionCrypto, session_id: str, pcm: bytes) -> None:
-    store = SessionChunkStore.create(session_dir / AUDIO_FILENAME, crypto, session_id)
+def _write_store(
+    session_dir: Path,
+    crypto: SessionCrypto,
+    session_id: str,
+    pcm: bytes,
+    *,
+    require_key: bool = True,
+) -> None:
+    store = SessionChunkStore.create(
+        session_dir / AUDIO_FILENAME, crypto, session_id, require_key=require_key
+    )
     try:
         for offset in range(0, len(pcm), STORE_CHUNK_BYTES):
             store.append_chunk(pcm[offset : offset + STORE_CHUNK_BYTES])
@@ -1058,6 +1067,7 @@ def transcribe_in_temporary_store(
     frame_probability: FrameProbabilityFn,
     *,
     enrolment: EnrolmentInputs | None = None,
+    persist_key: bool = True,
 ) -> tuple[TranscriptDocument, TranscriptDocument | None]:
     """Public since the pilot plan's Task 2.1, for the validation harness
     (``_transcribe_in_temporary_store`` is the same object). The contract a
@@ -1069,8 +1079,18 @@ def transcribe_in_temporary_store(
     any other exception from the pipeline propagates only after the same
     teardown. The caller's ``pcm`` is the only plaintext audio it holds.
 
-    ``pcm`` -> fresh store under a real DPAPI-wrapped key -> the shipped
-    ``transcribe_session`` (twice when ``enrolment`` is given: the plain
+    Two key modes (development-recordings plan Task 4.1a, round 5
+    PR-HIGH-051): by default the fresh key is ALSO written beside the store
+    as a DPAPI blob (``key.dpapi``, the shape the app's own sessions have —
+    ``measure-speakers.py`` and the validation harness); with
+    ``persist_key=False`` (the kept-recordings replay tool) no key file is
+    ever written — the key lives only in this process's memory, so a hard
+    kill or power loss mid-run leaves ciphertext with no key anywhere.
+    Teardown is the same in both modes (unlinking an absent key file is not
+    a failure).
+
+    ``pcm`` -> fresh store under a fresh key (DPAPI-wrapped beside it, or
+    memory-only) -> the shipped ``transcribe_session`` (twice when ``enrolment`` is given: the plain
     pass, then the same store with the embedder and profile through a
     ``_ReplayProvider``) -> ``destroy_temporary_store`` on every path.
     Returns ``(plain document, enrolled document or None)``.
@@ -1091,8 +1111,9 @@ def transcribe_in_temporary_store(
         session_id = secrets.token_hex(16)
         session_dir = temp_root / session_id
         session_dir.mkdir()
-        wrap_key_to_file(crypto, session_dir)
-        _write_store(session_dir, crypto, session_id, pcm)
+        if persist_key:
+            wrap_key_to_file(crypto, session_dir)
+        _write_store(session_dir, crypto, session_id, pcm, require_key=persist_key)
         try:
             if enrolment is None:
                 document = transcribe_session(session_dir, crypto, provider, frame_probability)

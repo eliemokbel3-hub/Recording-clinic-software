@@ -666,14 +666,7 @@ class _Alignment:
         self.hypothesis = hypothesis
         n, m = len(reference), len(hypothesis)
         self.n, self.m = n, m
-        forward = [array("i", [0]) * (m + 1) for _ in range(n + 1)]
-        forward[0] = array("i", range(m + 1))
-        for i in range(1, n + 1):
-            row, previous, token = forward[i], forward[i - 1], reference[i - 1]
-            row[0] = i
-            for j in range(1, m + 1):
-                diagonal = previous[j - 1] + (0 if token == hypothesis[j - 1] else 1)
-                row[j] = min(diagonal, previous[j] + 1, row[j - 1] + 1)
+        forward = _forward_table(reference, hypothesis)
         backward = [array("i", [0]) * (m + 1) for _ in range(n + 1)]
         backward[n] = array("i", (m - j for j in range(m + 1)))
         for i in range(n - 1, -1, -1):
@@ -717,6 +710,89 @@ class _Alignment:
                     flags[j] = True
                     break
         return flags
+
+
+def _forward_table(reference: Sequence[str], hypothesis: Sequence[str]) -> list[array[int]]:
+    """The alignment's forward cost table (Levenshtein, each edit costing
+    one): ``table[i][j]`` is the edit distance between the first ``i``
+    reference tokens and the first ``j`` hypothesis tokens. ONE definition,
+    shared by ``_Alignment`` and ``align_transcripts``."""
+    n, m = len(reference), len(hypothesis)
+    forward = [array("i", [0]) * (m + 1) for _ in range(n + 1)]
+    forward[0] = array("i", range(m + 1))
+    for i in range(1, n + 1):
+        row, previous, token = forward[i], forward[i - 1], reference[i - 1]
+        row[0] = i
+        for j in range(1, m + 1):
+            diagonal = previous[j - 1] + (0 if token == hypothesis[j - 1] else 1)
+            row[j] = min(diagonal, previous[j] + 1, row[j - 1] + 1)
+    return forward
+
+
+def _one_path(
+    forward: Sequence[array[int]], reference: Sequence[str], hypothesis: Sequence[str]
+) -> list[tuple[int, int]]:
+    """The (reference, hypothesis) index pairs aligned word to word — a
+    match or a substitution — on ONE optimal alignment, in order: the
+    deterministic backtrace over the forward table that prefers the
+    diagonal, then a deletion, then an insertion (development-recordings
+    plan Task 4.1a: the replay tool's speaker-label agreement)."""
+    pairs: list[tuple[int, int]] = []
+    i, j = len(reference), len(hypothesis)
+    while i > 0 or j > 0:
+        here = forward[i][j]
+        if i > 0 and j > 0:
+            cost = 0 if reference[i - 1] == hypothesis[j - 1] else 1
+            if forward[i - 1][j - 1] + cost == here:
+                i, j = i - 1, j - 1
+                pairs.append((i, j))
+                continue
+        if i > 0 and forward[i - 1][j] + 1 == here:
+            i -= 1
+        else:
+            j -= 1
+    pairs.reverse()
+    return pairs
+
+
+@dataclass(frozen=True)
+class TranscriptAlignment:
+    """Two token sequences aligned once (development-recordings plan Task
+    4.1a): the word error rate's parts and ONE optimal alignment's aligned
+    index pairs. Indices and counts only — never a token."""
+
+    words: WordErrors
+    pairs: tuple[tuple[int, int], ...]
+
+
+def align_transcripts(
+    reference_words: Sequence[str], hypothesis_words: Sequence[str]
+) -> TranscriptAlignment:
+    """The alignment between two already-normalised token sequences
+    (``note.content_tokens``), computed once over the harness's own forward
+    table (``_forward_table``): its word error parts and one optimal path's
+    aligned pairs. Only the forward table is built — the replay needs no
+    "every optimal alignment" query, so ``_Alignment``'s backward table
+    would double the memory and the time for nothing (review round 29
+    LOW-004: a long consultation is a table of tens of millions of cells)."""
+    forward = _forward_table(reference_words, hypothesis_words)
+    total = forward[len(reference_words)][len(hypothesis_words)]
+    return TranscriptAlignment(
+        WordErrors(len(reference_words), len(hypothesis_words), total),
+        tuple(_one_path(forward, reference_words, hypothesis_words)),
+    )
+
+
+def transcript_wer(reference_words: Sequence[str], hypothesis_words: Sequence[str]) -> WordErrors:
+    """The word error rate's parts between two token sequences — public for
+    the kept-recordings replay tool (development-recordings plan Task 4.1a),
+    where the reference is the KEPT transcript and the hypothesis the new
+    one, so the rate is DRIFT, not accuracy — and the harness's own
+    ``word_errors``. ``align_transcripts(...).words`` without the path: the
+    forward table alone (review round 30)."""
+    forward = _forward_table(reference_words, hypothesis_words)
+    total = forward[len(reference_words)][len(hypothesis_words)]
+    return WordErrors(len(reference_words), len(hypothesis_words), total)
 
 
 # The fact walk's state: (every token matched, every token deleted, some
@@ -861,8 +937,9 @@ def word_errors(document: TranscriptDocument, script: EncounterScript) -> WordEr
     encounter still reports it)."""
     reference, _ = _reference(script)
     hypothesis, _ = _hypothesis(document)
-    alignment = _Alignment(reference, hypothesis)
-    return WordErrors(len(reference), len(hypothesis), alignment.total)
+    # The forward table only: the backward table answers "every optimal
+    # alignment" queries this count never asks (review round 30).
+    return transcript_wer(reference, hypothesis)
 
 
 def _note_lines(
@@ -1878,8 +1955,10 @@ __all__ = [
     "ScriptError",
     "ScriptLine",
     "SyntheticConditions",
+    "TranscriptAlignment",
     "ValidationHarnessError",
     "WordErrors",
+    "align_transcripts",
     "clinician_speaker",
     "confirm_all",
     "encounter_metrics",
@@ -1897,6 +1976,7 @@ __all__ = [
     "rule_failures",
     "run_encounters",
     "run_passed",
+    "transcript_wer",
     "word_errors",
 ]
 
