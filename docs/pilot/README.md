@@ -99,6 +99,10 @@ result is recorded there as a dated RUN line.
    Record the totals and pass or fail; enter every
    failure in the findings register. A fail stops the pilot here until its
    findings are resolved or controlled and the run is repeated.
+   *Amended 2026-10-09, after run 1 failed:* the shadow consultations of
+   step 4 may start while run 1's findings are controlled by shadow mode (a
+   shadow note never reaches Cliniko); step 5 and the exit gate still wait for
+   a repeated run that passes under the same rule and cue file.
 4. **Ten shadow consultations at clinic 1 (P.4).** After P.3 passes (the
    consent sheet `patient-info-v2`,
    `docs/practice/patient-information-and-consent.md`, was approved on
