@@ -93,13 +93,17 @@ from scribe_desktop.note import (
 )
 from scribe_desktop.note_check import (
     # Package-private by name, shared deliberately (the note.py convention):
-    # the structured-claim word classes and the omission check's high-risk
-    # predicate are READ here, never re-spelled, so the harness and the
-    # checker cannot disagree about what a side, a dose or a negation is.
+    # the structured-claim word classes and the omission check's predicates
+    # are READ here, never re-spelled, so the harness and the checker cannot
+    # disagree about what a side, a dose or a negation is. Since the metric
+    # amendment of 2026-10-09 (note-routing-omissions plan D3, decision 0.2
+    # (b)) ``warned`` reads Check 4's predicate ``_omission_flag_token``;
+    # ``_is_high_risk_token`` stays for the run-1 comparison column.
     _LATERALITY_TOKENS,
     _STRENGTH_UNITS,
     _dose_quantity,
     _is_high_risk_token,
+    _omission_flag_token,
     _polarity_mark,
 )
 from scribe_desktop.note_config import (
@@ -537,7 +541,11 @@ class FactOutcome:
     statements of the fact in its line — and the worse one is reported
     (round 13 LOW-006). ``silently_omitted_somewhere``: SOME alternative or
     statement left the fact omitted and unwarned, whatever verdict is
-    reported (peer round 14, PR-MED-056)."""
+    reported (peer round 14, PR-MED-056). ``silently_omitted_v1``: the same
+    as ``silently_omitted_somewhere`` under run 1's omission predicate and
+    clinician-only scope — the report's comparison column only, never read
+    by a rule (metric amendment 2026-10-09, note-routing-omissions plan
+    D3)."""
 
     fact_index: int
     kind: FactKind
@@ -548,6 +556,7 @@ class FactOutcome:
     not_transcribed: bool
     ambiguous: bool
     silently_omitted_somewhere: bool = False
+    silently_omitted_v1: bool = False
 
     def __post_init__(self) -> None:
         _require_count(self.fact_index, "fact_index")
@@ -559,6 +568,7 @@ class FactOutcome:
             "not_transcribed",
             "ambiguous",
             "silently_omitted_somewhere",
+            "silently_omitted_v1",
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a flag")
@@ -580,6 +590,15 @@ class FactOutcome:
             return False
         reported = self.verdict == "omitted" and not self.warned
         return reported or self.silently_omitted_somewhere
+
+    @property
+    def silent_omission_v1(self) -> bool:
+        """``silent_omission`` read with run 1's predicate and scope (the
+        report's ``silent (run-1 predicate)`` column). Every run-1 warning
+        is also a current one (the predicate is a pinned superset), so a
+        current silent omission is always a run-1 one too — kept true by
+        construction here as well."""
+        return self.silent_omission or (self.material and self.silently_omitted_v1)
 
     @property
     def material_wrong(self) -> bool:
@@ -638,6 +657,12 @@ class EncounterMetrics:
         return sum(1 for fact in self.facts if fact.silent_omission)
 
     @property
+    def silent_omissions_v1(self) -> int:
+        """Run 1's silent-omission count (the comparison column; no rule
+        reads it — metric amendment 2026-10-09)."""
+        return sum(1 for fact in self.facts if fact.silent_omission_v1)
+
+    @property
     def warned_omissions(self) -> int:
         return sum(1 for fact in self.facts if fact.verdict == "omitted" and fact.warned)
 
@@ -651,10 +676,13 @@ class EncounterMetrics:
 
 
 class _WordInfo(NamedTuple):
-    """What one transcript word means to the fact walk — flags only."""
+    """What one transcript word means to the fact walk — flags only.
+    ``warned_v1`` is ``warned`` under run 1's predicate and clinician-only
+    scope (the report's comparison column, metric amendment 2026-10-09)."""
 
     covered: bool
     warned: bool
+    warned_v1: bool
     low_confidence: bool
 
 
@@ -803,13 +831,14 @@ def transcript_wer(reference_words: Sequence[str], hypothesis_words: Sequence[st
 
 # The fact walk's state: (every token matched, every token deleted, some
 # aligned word in a note line, every aligned word in a note line, warned,
-# uncertainty surfaced). Six flags, so at most 64 states per cell.
-_FactState = tuple[bool, bool, bool, bool, bool, bool]
-_INITIAL_STATE: Final[_FactState] = (True, True, False, True, False, False)
+# uncertainty surfaced, warned under run 1's predicate). Seven flags, so at
+# most 128 states per cell.
+_FactState = tuple[bool, bool, bool, bool, bool, bool, bool]
+_INITIAL_STATE: Final[_FactState] = (True, True, False, True, False, False, False)
 
 
 def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState:
-    all_matched, _deleted, in_any, in_all, warned, surfaced = state
+    all_matched, _deleted, in_any, in_all, warned, surfaced, warned_v1 = state
     return (
         all_matched and matched,
         False,
@@ -817,12 +846,13 @@ def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState
         in_all and info.covered,
         warned or info.warned,
         surfaced or info.low_confidence,
+        warned_v1 or info.warned_v1,
     )
 
 
 def _after_deletion(state: _FactState) -> _FactState:
-    _matched, deleted, in_any, in_all, warned, surfaced = state
-    return (False, deleted, in_any, in_all, warned, surfaced)
+    _matched, deleted, in_any, in_all, warned, surfaced, warned_v1 = state
+    return (False, deleted, in_any, in_all, warned, surfaced, warned_v1)
 
 
 def _fact_end_states(
@@ -863,10 +893,11 @@ class _Judged(NamedTuple):
     warned: bool
     surfaced: bool | None
     not_transcribed: bool
+    warned_v1: bool
 
 
 def _judge(state: _FactState, kind: FactKind, expect_uncertain: bool) -> _Judged:
-    all_matched, all_deleted, in_any, in_all, warned, surfaced = state
+    all_matched, all_deleted, in_any, in_all, warned, surfaced, warned_v1 = state
     verdict: FactVerdict
     if kind == "absent":
         verdict = "wrongly_present" if in_any else "correctly_absent"
@@ -878,7 +909,9 @@ def _judge(state: _FactState, kind: FactKind, expect_uncertain: bool) -> _Judged
         # Some of the fact's words are in a note line, but not all of them
         # matched and carried: the note states something other than the fact.
         verdict = "wrong"
-    return _Judged(verdict, warned, surfaced if expect_uncertain else None, all_deleted)
+    return _Judged(
+        verdict, warned, surfaced if expect_uncertain else None, all_deleted, warned_v1
+    )
 
 
 # Outcomes from best to worst. A warned omission is better than a silent one
@@ -1001,15 +1034,20 @@ def encounter_metrics(
       carries some of the fact's words but not the fact). An ``absent``
       fact is ``wrongly_present`` when any aligned word is inside a note
       line, else ``correctly_absent``. ``warned``: one of the fact's own
-      aligned words is outside every note line, high-risk by the omission
-      check's predicate, and its segment carries a ``high_risk_omission``
-      warning — a warning's interval proves nothing, and a warning elsewhere
-      in the segment never counts. ``uncertainty_surfaced`` (for
-      ``expect_uncertain`` facts): a ``low_confidence_source`` warning sits
-      on one of the fact's aligned words.
+      aligned words is outside every note line, flagged by the omission
+      check's predicate for its speaker (``_omission_flag_token`` since the
+      metric amendment of 2026-10-09), and its segment carries a
+      ``high_risk_omission`` warning — a warning's interval proves nothing,
+      and a warning elsewhere in the segment never counts. Run 1's predicate
+      with its clinician-only scope is kept beside it for the report's
+      ``silent (run-1 predicate)`` column, which no rule reads.
+      ``uncertainty_surfaced`` (for ``expect_uncertain`` facts): a
+      ``low_confidence_source`` warning sits on one of the fact's aligned
+      words.
     - Ambiguity is conservative: across equal-cost alignments, and across
       repeated occurrences of the tokens inside the fact's line, the fact
-      takes the worse outcome (``ambiguous`` says alternatives differed),
+      takes the worse outcome (``ambiguous`` says alternatives differed in
+      a reported outcome — never in the run-1 comparison flag alone),
       and its uncertainty counts as surfaced only when every alternative
       surfaces it, and it counts as a silent omission when any alternative
       omits it unwarned (peer round 14, PR-MED-056).
@@ -1041,13 +1079,22 @@ def encounter_metrics(
     for segment_index, word_index in positions:
         position = (segment_index, word_index)
         word_text = segments[segment_index].transcript_words[word_index].word_text
-        is_covered = position in covered
+        first_in_segment = word_index == 0
+        clinician = segments[segment_index].speaker == note.clinician_speaker
+        # The note's OWN warning on the segment is required either way, so a
+        # provider is never credited for a flag it did not raise.
+        flaggable = position not in covered and segment_index in omission_segments
         infos.append(
             _WordInfo(
-                covered=is_covered,
-                warned=not is_covered
-                and segment_index in omission_segments
-                and _is_high_risk_token(word_text, first_in_segment=word_index == 0),
+                covered=position in covered,
+                warned=flaggable
+                and _omission_flag_token(
+                    word_text, first_in_segment=first_in_segment, clinician=clinician
+                ),
+                # Run 1's predicate AND its clinician-only scope (D3).
+                warned_v1=flaggable
+                and clinician
+                and _is_high_risk_token(word_text, first_in_segment=first_in_segment),
                 low_confidence=position in low_confidence,
             )
         )
@@ -1078,6 +1125,9 @@ def encounter_metrics(
         # an equal-cost alternative does not; it is surfaced only if every
         # alternative surfaces it.
         surfaced = all(j.surfaced for j in judged) if fact.expect_uncertain else None
+        # Ambiguity is judged on the reported metric only: alternatives that
+        # differ in nothing but the run-1 comparison flag are not ambiguous.
+        outcomes = {j._replace(warned_v1=False) for j in judged}
         facts.append(
             FactOutcome(
                 fact_index=index,
@@ -1087,11 +1137,14 @@ def encounter_metrics(
                 warned=worst.warned,
                 uncertainty_surfaced=surfaced,
                 not_transcribed=worst.not_transcribed,
-                ambiguous=len(judged) > 1,
+                ambiguous=len(outcomes) > 1,
                 # Peer round 14 (PR-MED-056): the silent-omission tally is
                 # conservative on its own, like surfacing above.
                 silently_omitted_somewhere=any(
                     j.verdict == "omitted" and not j.warned for j in judged
+                ),
+                silently_omitted_v1=any(
+                    j.verdict == "omitted" and not j.warned_v1 for j in judged
                 ),
             )
         )
@@ -1530,9 +1583,10 @@ def render_report(
         "",
         "| Encounter | Status | Segments | Ref words | WER | Unsupported clinical lines "
         "| Other unsupported words | Transcript lines | Config lines | Facts | Correct "
-        "| Wrong (material) | Omitted | Silent omissions | Warned omissions "
-        "| Uncertainty missed | Ambiguous facts | Checker failures | Prose p/f/e | Rule |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
+        "| Warned omissions | Uncertainty missed | Ambiguous facts | Checker failures "
+        "| Prose p/f/e | Rule |",
+        "|" + "---|" * 21,
     ]
     totals = Counter[str]()
     for outcome in outcomes:
@@ -1545,7 +1599,7 @@ def render_report(
             totals["ref"] += words.reference_tokens
             totals["distance"] += words.edit_distance
         if metrics is None:
-            cells = ["-"] * 14
+            cells = ["-"] * 15
         else:
             facts = metrics.facts
             counts = {
@@ -1556,6 +1610,7 @@ def render_report(
                 "wrong": metrics.material_wrong,
                 "omitted": sum(1 for f in facts if f.verdict == "omitted"),
                 "silent": metrics.silent_omissions,
+                "silent_v1": metrics.silent_omissions_v1,
                 "warned": metrics.warned_omissions,
                 "missed": metrics.uncertainty_missed,
                 "ambiguous": metrics.ambiguous_facts,
@@ -1573,6 +1628,7 @@ def render_report(
                 str(counts["wrong"]),
                 str(counts["omitted"]),
                 str(counts["silent"]),
+                str(counts["silent_v1"]),
                 str(counts["warned"]),
                 str(counts["missed"]),
                 str(counts["ambiguous"]),
@@ -1594,7 +1650,7 @@ def render_report(
         f"| TOTAL | {sum(1 for o in outcomes if o.status == 'measured')} measured | - "
         f"| {totals['ref']} | {total_wer} | {totals['unsupported']} | {totals['other']} | - | - "
         f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
-        f"| {totals['silent']} | {totals['warned']} | {totals['missed']} "
+        f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
         f"| {totals['ambiguous']} | {totals['checker']} | - | {verdict} |"
     )
 

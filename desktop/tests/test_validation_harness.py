@@ -1106,6 +1106,55 @@ class TestReport:
     def test_every_exported_name_exists(self) -> None:
         assert set(validation.__all__) <= set(dir(validation))
 
+    def test_the_run_1_predicate_column_sits_beside_silent_and_rows_align(self) -> None:
+        """Metric amendment 2026-10-09 (note-routing-omissions plan D3,
+        PR-LOW-013): one more column after ``Silent omissions``; the header,
+        the separator, a measured row, an unmeasured row and the totals all
+        carry 21 cells."""
+        fact = validation.FactOutcome(
+            fact_index=0,
+            kind="present",
+            material=True,
+            verdict="omitted",
+            warned=True,
+            uncertainty_surfaced=None,
+            not_transcribed=False,
+            ambiguous=False,
+            silently_omitted_v1=True,
+        )
+        metrics = validation.EncounterMetrics(
+            words=validation.WordErrors(4, 4, 0),
+            transcript_lines=0,
+            config_lines=0,
+            unsupported_clinical_lines=0,
+            other_unsupported_words=0,
+            checker_tally=(("high_risk_omission", 1),),
+            checker_failures=(),
+            checker_failure_count=0,
+            expected_warnings_absent=(),
+            facts=(fact,),
+        )
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+        outcomes = [
+            EncounterOutcome(
+                "syn-001", "measured", segment_count=1, words=metrics.words, metrics=metrics
+            ),
+            EncounterOutcome("syn-002", "error", "OSError"),
+        ]
+        info = validation.RunInfo("medium", False, "silero", None, None, None)
+        report = render_report(outcomes, OPTION_A, info)
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        header, separator, measured, unmeasured, total = table[:5]
+        assert "| Silent omissions | Silent (run-1 predicate) | Warned omissions |" in header
+        for row in (header, separator, measured, unmeasured, total):
+            assert len(row.strip().strip("|").split("|")) == 21
+        # Omitted, silent, silent (run-1), warned — in that order.
+        assert "| 1 | 0 | 1 | 1 |" in measured
+        assert "| 1 | 0 | 1 | 1 |" in total
+        # The rule reads ``silent_omissions`` only (C1): the run-1 column
+        # never fails an encounter.
+        assert validation.rule_failures(OPTION_A, outcomes[0]) == ()
+
     @pytest.mark.parametrize("slot", ["words", "metrics", "prose"])
     def test_an_outcome_holds_only_its_validated_types(self, slot: str) -> None:
         """Round 12 LOW-002 (Constraint 7 at run time): a string where the

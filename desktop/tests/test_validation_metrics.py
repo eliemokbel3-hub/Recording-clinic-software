@@ -35,17 +35,28 @@ from scribe_desktop.note import (
     GeneratedNote,
     GeneratedSection,
     NoteAssertion,
+    NoteRequest,
     NoteSpan,
     NoteWarning,
     SourceCoords,
     compose_draft,
     finalise_note,
+    normalise_token,
     reconstruct_span_text,
     text_digest,
 )
-from scribe_desktop.note_check import omission_warnings, reconstruction_warnings
+from scribe_desktop.note_check import (
+    _LATERALITY_TOKENS,
+    _MEDICATION_LEXICON,
+    _POLARITY_TOKENS,
+    _STRENGTH_UNITS,
+    _omission_flag_token,
+    omission_warnings,
+    reconstruction_warnings,
+)
 from scribe_desktop.note_config import AutofillRule, NoteConfig, load_note_config
 from scribe_desktop.transcription import (
+    _NUMBER_WORDS,
     SPEAKER_1,
     SPEAKER_2,
     TranscriptDocument,
@@ -232,6 +243,44 @@ class TestStructuredClaimWords:
     def test_other_words_are_not(self, token: str) -> None:
         assert not is_structured_claim_word(token)
 
+    @pytest.mark.parametrize(
+        "token",
+        ["left", "right", "500", "five", "twenty-one", "500mg", "mg", "ml", "no", "not",
+         "never", "denies", "nil", "doesn't", "without", "Left,", "500mg.", "No", "Doesn’t"],
+    )
+    @pytest.mark.parametrize("clinician", [True, False])
+    @pytest.mark.parametrize("first_in_segment", [True, False])
+    def test_check_4s_predicate_is_a_superset_on_every_segment(
+        self, token: str, clinician: bool, first_in_segment: bool
+    ) -> None:
+        """C4 (note-routing-omissions plan): every structured-claim word is
+        flagged by Check 4 for ANY speaker, so the harness's ``warned`` (the
+        metric amendment of 2026-10-09) can never credit less than the
+        structured classes the rule's facts are written in."""
+        assert is_structured_claim_word(normalise_token(token))
+        assert _omission_flag_token(token, first_in_segment=first_in_segment, clinician=clinician)
+
+    def test_every_member_of_every_class_is_flagged_for_any_speaker(self) -> None:
+        """C4 by ENUMERATION, not by sample: every member of the closed
+        vocabularies behind ``is_structured_claim_word`` (and the medication
+        lexicon, the run-1 class Check 4 keeps for every speaker) is flagged
+        on a patient's line and on a clinician's, at a segment's start or
+        not. Numbers outside the word list are digit-bearing (pinned above)."""
+        structured = (
+            *_LATERALITY_TOKENS,
+            *_STRENGTH_UNITS,
+            *_POLARITY_TOKENS,
+            *_NUMBER_WORDS,
+        )
+        for token in structured:
+            assert is_structured_claim_word(token), token
+        for token in (*structured, *_MEDICATION_LEXICON):
+            for clinician in (True, False):
+                for first_in_segment in (True, False):
+                    assert _omission_flag_token(
+                        token, first_in_segment=first_in_segment, clinician=clinician
+                    ), token
+
 
 # ---------------------------------------------------------------------------
 # word error rate
@@ -287,7 +336,10 @@ class TestEmptyInputs:
     def test_empty_note(self) -> None:
         """A perfect transcript and a note with no line: the fact is
         transcribed but carried by nothing, so it is omitted (not 'not
-        transcribed'); no omission warning exists, so it is silent."""
+        transcribed'). Since the metric amendment of 2026-10-09 (note-routing-
+        omissions plan D3) Check 4 flags the uncovered side "left", so the
+        omission is WARNED; under run 1's predicate (numbers, names,
+        medications) it stays silent — the comparison column says so."""
         script = _script(
             ("clinician", "my left knee hurts"), facts=[_fact("laterality", "left knee", 0)]
         )
@@ -295,9 +347,9 @@ class TestEmptyInputs:
         metrics = encounter_metrics(document, _checked(document), script)
         assert metrics.words == WordErrors(4, 4, 0)
         fact = _only_fact(metrics)
-        assert (fact.verdict, fact.not_transcribed, fact.warned) == ("omitted", False, False)
-        assert metrics.silent_omissions == 1
-        assert metrics.checker_tally == ()
+        assert (fact.verdict, fact.not_transcribed, fact.warned) == ("omitted", False, True)
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+        assert metrics.checker_tally == (("high_risk_omission", 1),)
 
 
 class TestNegationFlip:
@@ -570,6 +622,103 @@ class TestOmissionWarnings:
         )
         fact = _only_fact(encounter_metrics(document, note, script))
         assert (fact.verdict, fact.warned) == ("omitted", False)
+
+
+class _RouteNothing:
+    """A provider that places nothing — the degenerate case the metric
+    amendment must never pass (note-routing-omissions plan D3, PR-MED-004)."""
+
+    @property
+    def provider_name(self) -> str:
+        return "route-nothing"
+
+    def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
+        return ()
+
+
+class TestOmissionMetricAmendment:
+    """Metric amendment 2026-10-09 (decision 0.2 (b)): ``warned`` reads Check
+    4's widened predicate; ``silent (run-1 predicate)`` keeps run 1's."""
+
+    def test_a_side_only_patient_fact_is_warned_and_silent_under_run_1(self) -> None:
+        """Segment 1 (the patient, SPEAKER_2) = [my, left, knee, is, sore],
+        nothing in the note. Check 4 now flags the patient's uncovered side
+        "left" — the fact's own word — so it is a warned omission; run 1
+        scoped Check 4 to the clinician, so there it is silent."""
+        script = _script(
+            ("clinician", "how is it today"),
+            ("patient", "my left knee is sore"),
+            facts=[_fact("laterality", "left knee", 1)],
+        )
+        document = _doc((SPEAKER_1, "how is it today"), (SPEAKER_2, "my left knee is sore"))
+        note = _checked(document)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("high_risk_omission", SourceCoords(1, 1, 1))
+        ]
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
+        assert fact.silent_omission_v1
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+        assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+    def test_the_run_1_column_keeps_run_1s_clinician_only_scope(self) -> None:
+        """Peer round 5 (PR-LOW-015): the patient fact's words are ones run
+        1's predicate ACCEPTS (a medication and a number), so only the
+        clinician-only scope keeps it silent in the run-1 column — run 1 never
+        warned a patient segment. Segment 1 (the patient, SPEAKER_2) = [i,
+        take, paracetamol, 3, times, a, day]; Check 4 flags words 2..3."""
+        script = _script(
+            ("clinician", "how often do you take it"),
+            ("patient", "i take paracetamol 3 times a day"),
+            facts=[_fact("dose", "paracetamol 3 times", 1)],
+        )
+        document = _doc(
+            (SPEAKER_1, "how often do you take it"),
+            (SPEAKER_2, "i take paracetamol 3 times a day"),
+        )
+        note = _checked(document)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("high_risk_omission", SourceCoords(1, 2, 3))
+        ]
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.warned, fact.silent_omission) == ("omitted", True, False)
+        assert fact.silent_omission_v1
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+
+    def test_a_provider_that_routes_nothing_still_fails_rule_v1(self, tmp_path: Path) -> None:
+        """Through the real compose -> confirm -> finalise pipeline with a
+        provider that places nothing. The material fact [rest, the, knee]
+        holds no token ``_omission_flag_token`` accepts for its speaker (no
+        side, number, dose, unit, negation, medication, nor a name-like
+        token on this clinician line), so it stays SILENT and option (a)
+        fails the encounter; the warned facts are never counted as placed.
+        The run-1 column can only count as many silent omissions or more."""
+        script = _script(
+            ("clinician", "rest the knee and take 2 tablets"),
+            ("patient", "my left knee is sore"),
+            facts=[
+                _fact("present", "rest the knee", 0),
+                _fact("dose", "2 tablets", 0),
+                _fact("laterality", "left knee", 1),
+            ],
+        )
+        document = _doc(
+            (SPEAKER_2, "rest the knee and take 2 tablets"), (SPEAKER_1, "my left knee is sore")
+        )
+        config = _pipeline_config(tmp_path)
+        draft = compose_draft(document, config, _RouteNothing(), clinician_speaker=SPEAKER_2)
+        note = finalise_note(draft, confirm_all(draft, _NOW), document, config, created_at=_NOW)
+        assert note.note_sections == ()
+        metrics = encounter_metrics(document, note, script)
+        rest, dose, side = metrics.facts
+        assert (rest.verdict, rest.warned) == ("omitted", False)
+        assert (dose.verdict, dose.warned) == ("omitted", True)
+        assert (side.verdict, side.warned) == ("omitted", True)
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (1, 2)
+        assert metrics.silent_omissions_v1 >= metrics.silent_omissions
+        assert rule_failures(OPTION_A, _measured(metrics)) == ("silent_omission",)
 
 
 class TestDeletedByTranscription:

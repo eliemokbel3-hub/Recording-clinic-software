@@ -461,7 +461,9 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         ),
         # The clinician's dosage instruction matched no cue: high-risk
         # clinician-spoken content, dropped -> flagged, not silently lost.
-        expected_reviews=("high_risk_omission",),
+        # Since the note-routing-omissions plan D2 the patient's uncued
+        # "paracetamol 500" (segment 1) is flagged too: a second warning.
+        expected_reviews=("high_risk_omission", "high_risk_omission"),
         material_segments=(2, 3),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
     ),
@@ -863,12 +865,15 @@ MOCK_CELLS: tuple[MockCell, ...] = (
             _whole_segment(AB_TURNS, "management_plan", 3, AB_TURNS[3][0], SPEAKER_1),
         ),
     ),
+    # Nothing resolvable is carried: both clinician segments flag, and since
+    # the note-routing-omissions plan D2 so does the patient's segment 0
+    # (its side, negation and numbers); segment 3 holds none of them.
     MockCell(
         "ab-malformed",
         AB_TURNS,
         "malformed_output",
         ("source_coords_invalid",),
-        ("high_risk_omission", "high_risk_omission"),
+        ("high_risk_omission", "high_risk_omission", "high_risk_omission"),
         (MockStatement("presenting_complaint", 4, 0, 0, "unverifiable content", None),),
     ),
     # Speaker-only misattribution: text, coordinates and section all check
@@ -1437,7 +1442,10 @@ class TestAxisCCells:
         warnings = check_note(note, document, _MATRIX_CONFIG)
         errors, reviews = _split_codes(warnings)
         assert errors == []
-        assert reviews == ["clinician_asserted"]
+        # Since the note-routing-omissions plan D2 the patient's uncarried
+        # medications and doses draw Check 4's review warning too (a config
+        # line covers no transcript words) — review, never an error.
+        assert reviews == ["clinician_asserted", "high_risk_omission"]
 
     def test_residue_compound_dose_mismatch_fires_per_anchor(self) -> None:
         """...and when the note's own quoted content disagrees with one of

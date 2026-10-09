@@ -35,6 +35,8 @@ from scribe_desktop.note import (
 from scribe_desktop.note_check import (
     CheckTargetMismatchError,
     NoteCheckError,
+    _is_high_risk_token,
+    _omission_flag_token,
     check_note,
     contradiction_warnings,
     omission_warnings,
@@ -1779,15 +1781,56 @@ class TestCheck4Omission:
         note = _note(document, (_quoted(document, 0, "management_plan"),))
         assert omission_warnings(note, document) == ()
 
-    def test_patient_side_chat_is_never_flagged(self) -> None:
-        """Done-when: a small-talk-heavy fixture produces no omission
-        warnings for patient-side chat, names and numbers included."""
+    def test_patient_small_talk_without_a_structured_claim_word_is_not_flagged(self) -> None:
+        """Patient names never flag (a mid-segment "I" is name-like), so
+        small talk with no side, negation, number, dose or medication draws
+        nothing (note-routing-omissions plan D2)."""
         document = _document(
-            ("I saw Margaret at the Coles on Saturday around 3.", SPEAKER_1),
+            ("I saw Margaret at the Coles on Saturday.", SPEAKER_1),
             ("Terrible traffic on Punt Road this morning.", SPEAKER_1),
         )
         note = _note(document, ())
         assert omission_warnings(note, document) == ()
+
+    @pytest.mark.parametrize(
+        ("text", "coords"),
+        [
+            ("I saw Margaret at the Coles around 3.", SourceCoords(0, 7, 7)),
+            ("I sleep on my left side.", SourceCoords(0, 4, 4)),
+            ("I never walk to the shops.", SourceCoords(0, 1, 1)),
+        ],
+    )
+    def test_patient_speech_with_a_structured_claim_word_is_flagged(
+        self, text: str, coords: SourceCoords
+    ) -> None:
+        """D2: a patient's uncovered number, side or negation draws ONE
+        review warning on its own words; the names around it do not."""
+        document = _document((text, SPEAKER_1))
+        warnings = omission_warnings(_note(document, ()), document)
+        assert _codes(warnings) == ["high_risk_omission"]
+        assert warnings[0].severity == "review"
+        assert warnings[0].source_coords == coords
+
+    @pytest.mark.parametrize(
+        "token",
+        ["Margaret", "Take", "Coles,", "500", "3.", "five", "twenty-one", "paracetamol",
+         "Paracetamol,", "left", "no", "500mg", "Punt"],
+    )
+    @pytest.mark.parametrize("first_in_segment", [True, False])
+    def test_the_predicate_is_a_superset_of_run_1s_on_clinician_segments(
+        self, token: str, first_in_segment: bool
+    ) -> None:
+        """C4: every token run 1's predicate flagged on a clinician segment
+        is still flagged; ``_is_high_risk_token`` itself is unchanged."""
+        if _is_high_risk_token(token, first_in_segment=first_in_segment):
+            assert _omission_flag_token(
+                token, first_in_segment=first_in_segment, clinician=True
+            )
+
+    def test_names_flag_for_the_clinician_only(self) -> None:
+        assert _omission_flag_token("Margaret", first_in_segment=False, clinician=True)
+        assert not _omission_flag_token("Margaret", first_in_segment=False, clinician=False)
+        assert _omission_flag_token("paracetamol", first_in_segment=False, clinician=False)
 
     def test_clinician_speech_without_high_risk_tokens_is_not_flagged(self) -> None:
         document = _document(("the weather is nice for the weekend", SPEAKER_2))

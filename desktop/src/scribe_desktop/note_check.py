@@ -121,21 +121,28 @@ What each check claims — and, recorded with equal care, what it does NOT:
   display attribution reviewed via Task 7.6, not a check; and the
   ``shown_text_digest``-vs-text match is ``write_note``'s verification
   (Task 6.2), deliberately not duplicated here.
-- **Check 4, ``omission_warnings``** — omission, SCOPED to
-  clinician-attributed transcript segments carrying high-risk tokens
-  (numbers via ``is_number_token``, names via ``is_name_like_token``,
-  medications via the closed lexicon) that no note assertion's coordinates
-  carry. One ``high_risk_omission`` review warning per affected segment,
-  its coordinates spanning the uncovered high-risk words. STATED LIMIT
-  (Task 5.4): this is a high-risk-token heuristic, not a materiality
-  classifier — the automated claim is "high-risk clinician-spoken content
-  is either carried or flagged", never the broader "no clinically material
-  omission" (fixtures' ``clinically_material_span_ids`` is a TEST oracle
-  with no runtime producer). Unscoped, this check is a false-positive
-  generator whose rate rises the better the note excludes small talk, which
-  ``PLAN.md`` requires the note to do — so patient-side speech never draws
-  an omission warning, and with no confirmed role the scoping predicate
-  does not exist and the check honestly emits nothing.
+- **Check 4, ``omission_warnings``** — omission of flagged tokens that no
+  note assertion's coordinates carry, over EVERY speaker's transcript
+  segments once a clinician role is confirmed (Task 5.4, widened by the
+  note-routing-omissions plan D2). The predicate, ``_omission_flag_token``:
+  for any speaker the structured-claim classes — a side
+  (``_LATERALITY_TOKENS``), a number (``is_number_token``), a dose or
+  strength unit (``_dose_quantity``, ``_STRENGTH_UNITS``), a negation
+  (``_polarity_mark``) — and medications via the closed lexicon; names
+  (``is_name_like_token``) on the confirmed clinician's segments only,
+  because a mid-segment "I" is name-like and patient speech would flag on
+  nearly every line. So patient speech now draws a warning when it carries
+  a structured-claim word or a medication, and small talk without one still
+  draws nothing. One ``high_risk_omission`` review warning per affected
+  segment, its coordinates spanning the uncovered flagged words. STATED
+  LIMIT (Task 5.4, kept): this is a token heuristic, not a materiality
+  classifier — the automated claim is "a side, negation, number, dose,
+  medication or clinician-spoken name is either carried or flagged", never
+  the broader "no clinically material omission" (fixtures'
+  ``clinically_material_span_ids`` is a TEST oracle with no runtime
+  producer); an uncued sentence with none of those words stays unflagged.
+  With no confirmed role there is no clinician to scope names by, and the
+  check honestly emits nothing.
 - **Check 5, ``fidelity_warnings``** (note-learning-and-styles plan Task
   4.2, D6) — the fidelity GATE over the local language model's prose for one
   section, run by the prose stage AFTER finalisation (it is NOT part of
@@ -1475,12 +1482,37 @@ def _is_high_risk_token(text: str, *, first_in_segment: bool) -> bool:
     return normalise_token(text) in _MEDICATION_LEXICON
 
 
+def _omission_flag_token(text: str, *, first_in_segment: bool, clinician: bool) -> bool:
+    """Check 4's predicate since the note-routing-omissions plan (D2): the
+    structured-claim classes — a side, a number, a dose or strength unit, a
+    negation — and the medication lexicon for EVERY speaker; name-like tokens
+    for the confirmed clinician's segments only (a mid-segment "I" is
+    name-like, so patient speech would flag on nearly every line).
+    Composition of the existing classes, never a re-spelled list, so it is a
+    superset of ``_is_high_risk_token`` on clinician segments and of the
+    harness's ``is_structured_claim_word`` on every segment (both pinned).
+    ``text`` is the RAW word: the name test needs its case."""
+    token = normalise_token(text)
+    if (
+        token in _LATERALITY_TOKENS
+        or is_number_token(text)
+        or _dose_quantity(token) is not None
+        or token in _STRENGTH_UNITS
+        or _polarity_mark(token) is not None
+        or token in _MEDICATION_LEXICON
+    ):
+        return True
+    return clinician and is_name_like_token(text, first_in_segment=first_in_segment)
+
+
 def omission_warnings(
     note: GeneratedNote, document: TranscriptDocument
 ) -> tuple[NoteWarning, ...]:
-    """One ``high_risk_omission`` review warning per clinician-attributed
-    segment whose high-risk tokens are not all carried by some assertion's
-    coordinates (Task 5.4; scope and stated limit in the module docstring).
+    """One ``high_risk_omission`` review warning per segment — ANY speaker's,
+    once a clinician role is confirmed — whose flagged tokens
+    (``_omission_flag_token``) are not all carried by some assertion's
+    coordinates (Task 5.4 as widened by the note-routing-omissions plan D2;
+    scope and stated limit in the module docstring).
 
     Coverage counts coordinate CARRIAGE, not faithfulness: an assertion
     whose text was mutated still cites the words, and Check 1's error
@@ -1502,13 +1534,14 @@ def omission_warnings(
                 covered.add((coords.segment_index, word_index))
     warnings: list[NoteWarning] = []
     for segment_index, segment in enumerate(document.transcript_segments):
-        if segment.speaker != note.clinician_speaker:
-            continue
+        clinician = segment.speaker == note.clinician_speaker
         uncovered = [
             word_index
             for word_index, word in enumerate(segment.transcript_words)
             if (segment_index, word_index) not in covered
-            and _is_high_risk_token(word.word_text, first_in_segment=word_index == 0)
+            and _omission_flag_token(
+                word.word_text, first_in_segment=word_index == 0, clinician=clinician
+            )
         ]
         if uncovered:
             warnings.append(

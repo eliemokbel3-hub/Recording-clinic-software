@@ -324,8 +324,10 @@ class TestFinaliseAndCheck:
         self, tmp_path: Path
     ) -> None:
         """A note holding ONLY pre-filled lines: no ``clinician_asserted``,
-        no blocking warning, one unrelated review (the omission of "2
-        weeks"), and it writes and reads back with its config decisions."""
+        no blocking warning, two unrelated reviews (the omission of the
+        patient's "left" — Check 4 widened by the note-routing-omissions plan
+        D2 — and of "2 weeks"), and it writes and reads back with its config
+        decisions."""
         draft = _draft(_auto_confirmed())
         note = finalise_note(draft, list(draft.config_decisions), _document(), _CONFIG)
         assertions = [a for s in note.note_sections for a in s.note_assertions]
@@ -337,7 +339,7 @@ class TestFinaliseAndCheck:
         counts = {a.proposal_id: a.confirmation.confirmation_count for a in assertions}  # type: ignore[union-attr]
         learned = _by_rule(draft.note_proposals)[LEARNED_ID].proposal_id
         assert counts[learned] == 3 and all(v is None for k, v in counts.items() if k != learned)
-        assert _codes(note.note_warnings) == ["high_risk_omission"]
+        assert _codes(note.note_warnings) == ["high_risk_omission", "high_risk_omission"]
         assert note.blocking_warnings() == ()
         body = models.format_note_body(note)
         assert f"[{models.PREFILLED_MARK} - autofill (clinician-authored)]" in body
