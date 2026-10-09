@@ -133,4 +133,4 @@ Composition record (filled once, in the commit above; `met` or `not met` only):
 | A clinician-role correction | |
 | A three-speaker consultation | |
 
-Addendum initialled by the practitioner before the first attempt: ____ (date ____).
+Addendum initialled by the practitioner before the first attempt: EM (date 2026-10-09).
