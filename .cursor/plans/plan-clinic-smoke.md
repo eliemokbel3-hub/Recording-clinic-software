@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** clinic-smoke (the clinic 1 smoke — one practitioner-run programme that feeds every remaining recording-dependent task from real, consented consultations kept under `development-consent-v1`)
-**Overall Progress:** `71%` (17 of 24 tasks)
+**Overall Progress:** `75%` (18 of 24 tasks)
 
 ## Lifecycle State
 - Active
@@ -657,7 +657,8 @@ The universal default-access claim at `docs/testing/kept-recordings.md:54` is un
   - 2026-10-09 done (composer): full suite 6883 passed / 9 skipped, ruff clean, mypy 64 files; `/document` (AGENTS.md Current Status, CHANGELOG, this plan's run-state); D7 by-hand diff check; the hardening commit (local, NOT pushed). Phase 1's practitioner smoke (re-run the register script, paste `sapi_voices()`, build 50) is now owed — see the Phase 1 smoke line.
 
 ### Phase P — The clinic 1 smoke (practitioner-run; the composer records tallies and decisions)
-- 🟥 P.1 Pilot P.1 as written in `plan-pilot.md` (two mock shadow recordings on the installed 0.3.0, ~10 min) — unchanged; their rows are not C01–C10.
+- 🟩 P.1 Pilot P.1 as written in `plan-pilot.md` (two mock shadow recordings on the installed 0.3.0, ~10 min) — unchanged; their rows are not C01–C10.
+  - 2026-10-09 PASS (practitioner, installed 0.3.0): recorded in `plan-pilot.md` Task P.1's RUN line (Write and Copy refused with the shadow reason on both mock recordings, the Past-sessions entries marked and not copyable, the saved note not selectable, the audit CSV's `mode` / `app_version` columns present). The two mock shadow rows are not C01–C10.
 - 🟥 P.2 Prerequisites: initial the shipping-gate addendum (`shipping-gate.md:100`); create the measurement folder (D16) with its `enrolment\` and `audacity-temp\` subfolders and put its path in `AGENTS.local.md`; in Audacity set Preferences → Directories → temporary files to `audacity-temp\`, restart Audacity and confirm it (D11); record `me.wav` reading alone into `enrolment\` (the `--enrolment` reference for profile 6.2 / Task 2.3); re-run the register script (Task 1.5's fifth value).
 - 🟥 P.3 PREREQUISITE: Task 0.2 (the practitioner's cue file committed, lints re-run, CI green). Then the validation run of record (Flow 1) from a clean checkout at the run-of-record commit (Accepted Assumptions — the cue-file commit or later), after the voice-name check against the current baseline (PR-MED-005/007); the composer records voices, commit, rule blob hash, result in `validation-harness.md`'s run record and `plan-pilot.md` P.3. A failure is a finding in the register, never a reason to tune the rule.
 - 🟥 P.4 Shadow consultations (Flow 2) until ten ELIGIBLE scores exist (D2/D15; an excluded attempt is a log row, not a C slot) = the 9.1 run under `clean` with D15's two hash pastes; when the tenth eligible score is in, the composer fills `plan-phase3a` Task 9.1's table in one commit and applies the pass rule (R4 = 0 every note; R6 yes majority; R1 ≥ 80 %; R3 ≤ 20 %); result recorded as a measurement. Any patient who also signs Part C adds a kept recording (D13 applies).
