@@ -59,6 +59,7 @@ Populated 2026-09-05 from the confirmed `/explore` scratch `.cursor/plans/explor
   - Recommended next action: name it in the commercialisation/packaging plan's scope when that plan is created; until then `setup-models.py` from a normal terminal is the documented dev step.
   - Risk if deferred: minor: a dev-only setup step; blocks nothing before commercialisation.
   - Revisit by: the packaging plan
+  - [2026-10-09 reconciliation] Superseded — built by `plan-installation.md` (COMPLETE 2026-10-04): a separate model pack `ClinikoScribe-models-<8 hex>` beside `setup.exe`, every file checked by the installer against `packaging/models-manifest.json` and installed into the app's own `models` folder (not `%LOCALAPPDATA%`); no in-app download. The licence check is done: the WeSpeaker export is CC BY 4.0, attributed in `packaging/speaker-model-ATTRIBUTION.txt`. `setup-models.py` remains the developer build's step only.
 - Multi-practitioner profiles on one Windows login
   - Why deferred: the app is single-practitioner per Windows user account today (per-user named mutex, per-user config and sessions roots); a second practitioner on the same login would be classified "someone else", which is visible at the auto-confirm line and correctable with one click.
   - Intended future outcome: a profile chooser at start of session, if commercialisation puts two practitioners on one login.

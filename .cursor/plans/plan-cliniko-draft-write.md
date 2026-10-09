@@ -65,6 +65,7 @@ Populated 2026-09-29 from the confirmed extraction (anchor: `.cursor/plans/explo
   - Recommended next action: `/create-plan` for Phase 6.
   - Risk if deferred: correctness: until Phase 6, durable evidence rests on Cliniko and the practitioner's own process.
   - Revisit by: PLAN.md Phase 6 planning
+  - [2026-10-09 reconciliation] Superseded — built by `plan-privacy-professional-controls.md` (COMPLETE 2026-10-02): the encrypted, content-free audit row per session (`audit.py`: consent time and text version, ids, write result, deletion results), kept 7 years, CSV export; the write outcome also survives in the Past-sessions entry.
 - **SIMP-013 / SIMP-014 / SIMP-015** (`pipe_client.py` importing `pipe_server`'s private helpers; test-only members and the unconnected `pipe_lost` signal; splitting `ui/models.py`, `ui/main_window.py`, `ui/bridge.py`).
   - Why deferred: deferral gate 2026-09-29 — none touches the draft write, and SIMP-015 would churn the two files this plan edits most.
   - Intended future outcome: as recorded in the safeguards plan's H2a list.
@@ -79,6 +80,7 @@ Populated 2026-09-29 from the confirmed extraction (anchor: `.cursor/plans/explo
   - Recommended next action: fold into the next custody change to `complete_session`.
   - Risk if deferred: minor: unreadable ciphertexts wait for the next sweep, as today.
   - Revisit by: the next custody change to `session_store.complete_session`
+  - [2026-10-09 reconciliation] Superseded — built by the privacy-professional-controls plan (its session test "every Complete removes the directory"): `session_store.complete_session` destroys the key, then removes the session directory best-effort, as Discard does; a failed removal leaves a keyless directory the sweep removes as an orphan.
 - **SEC-008** (A→B→A tab switching makes one extra Cliniko call while A's check runs).
   - Why deferred: deferral gate 2026-09-29 — the fix is bridge-internal (`VerificationLedger` keeping a current-connection, current-rev `Verified` answer whose run moved on; `_finish_task` reusing it before `_run`), and the `CallGate` that was to carry it became the smaller latch (D13).
   - Intended future outcome: A→B→A makes one note call, pinned by a test.
@@ -95,6 +97,7 @@ Populated 2026-09-29 from the confirmed extraction (anchor: `.cursor/plans/explo
 - **`POST /treatment_notes` (a second note).** Why excluded: Cliniko creates the draft when the practitioner opens treatment notes; filling it gives exactly one note per consultation by construction (practitioner 2026-09-27). When to revisit: if the test write shows the auto-created draft cannot be filled. Files: `cliniko_client.py`.
 - **A Chrome-side write state** (a `state` field, a panel line, a badge). Why excluded: practitioner 2026-09-29 — desktop only, no protocol bump; SIMP-009/011 stay deferred with the safeguards plan. When to revisit: the next protocol bump. Files: `protocol/fixtures/`, `ui/bridge.py`, `extension/src/panel*.ts`.
 - **Appending or asking when the note already holds text.** Why excluded: practitioner 2026-09-29 — refuse by name; Copy stays (D8). When to revisit: if refusals are frequent in clinic.
+  - [2026-10-09 reconciliation] Superseded — appending moved INTO scope by D15 (practitioner, 2026-09-30, after the batched smoke): the write appends below any existing text; D8 and D14 are superseded by D15. "Asking" stays excluded.
 - **Filling the "Presenting complaint" scaffold labels (Site / Chron / Sensory / …) individually.** Why excluded: practitioner 2026-09-29 — the scaffold is replaced whole; mapping into its labels is a template-config change. When to revisit: a practitioner-owned `template_profiles.json` change. Files: `config_defaults/template_profiles.json`, `note_config.py`.
 - **Writing the note `title`, `draft`, booking or patient fields.** Why excluded: the body carries `content` only (D1). When to revisit: never for `draft`; the title only if Cliniko's default title proves wrong in clinic.
 - **Starting a recording from the calendar; a trial account; a test-patient write guard; a separate network helper process; true overlap of consultations; automatic finalisation** — carried from the safeguards plan, unchanged (finalisation: never).
@@ -2947,6 +2950,7 @@ Use this section when the plan is in `Completed — Follow-ups Retained` state.
 
 ## Follow-Up Continuation Notes
 - Next follow-up first: PLAN.md Phase 6 (the audit record) — it reads the write outcome that today dies with `write.enc`; and clinic 2's P.1 + test write + smoke when its key exists.
+  - [2026-10-09 reconciliation] Superseded in part — PLAN.md Phase 6 is COMPLETE (`plan-privacy-professional-controls.md`, 2026-10-02: the audit row records the write result) and so is Phase 7's installation. Still valid — clinic 2's P.1, test write and smoke, waiting on its Cliniko API-key permission.
 - Stays out of scope there: POST of a second note, a Chrome write state, automatic finalisation. (Appending to a filled note moved INTO scope by D15, 2026-09-30.)
 - Decisions that still apply: D1–D15 here (D8 and D14 superseded by D15) and the safeguards plan's D2/D4/D9/D10-as-amended/D11/D13.
 - Must not be rediscovered: the write's own note GET is its verification (never the checkout's or the bridge's result); the `attempting` state is on disk before the PATCH is dispatched; a 200 is never relabelled; the reconcile compares per-question normalised digests, never a whole-body hash; the only copy after completion is in Cliniko; an already-open Cliniko editor's save DOES overwrite a PATCHed draft (P.1 Q5, hence seen mode); a partial `content` REPLACES the whole note (P.1 Q2, hence the full body); a PATCH 403 means the note was finalised (D5); D14's per-clinic default source was REMOVED by D15 (a legacy `default_source` in `clinics.json` is dropped on load); the venv `python.exe` is a launcher; `urllib` bypasses the host pin; no Cliniko call at startup or idle keeps the no-sockets legs at zero.

@@ -64,6 +64,7 @@ Source: `/explore` scratch `.cursor/plans/explore-cliniko-integration.md` (2026-
   - Recommended next action: `/create-plan` for Phase 4 from `.cursor/plans/explore-cliniko-integration.md` once this plan closes.
   - Risk if deferred: blocked-work: notes still reach Cliniko only by copy/paste until Phase 4 lands.
   - Revisit by: this plan's close
+  - [2026-10-09 reconciliation] Superseded — built as `plan-cliniko-draft-write.md`, COMPLETE for clinic 1 on 2026-10-01 (clinic 2 retained): the one `PATCH` `ClinikoCall.write_draft_note`, `write.enc` per attempt, a fresh read per click. As built it differs from the outcome above: the write APPENDS below existing text (D15, 2026-09-30) instead of refusing typed text, and the session completes on the clinician's Complete after seeing the draft, not automatically (D6).
 - **Durable consent evidence**
   - Why deferred: the recording-consent record lives in `encounter.enc` and is destroyed with the session (about 24 h). A lasting record belongs to PLAN.md Phase 6's minimal audit record (consent timestamp, user, clinic, booking/note ids, write and deletion results). Deferral gate, practitioner 2026-09-27.
   - Intended future outcome: a text-free audit record that outlives the session.
@@ -72,6 +73,7 @@ Source: `/explore` scratch `.cursor/plans/explore-cliniko-integration.md` (2026-
   - Recommended next action: carry into the Phase 6 plan.
   - Risk if deferred: correctness: until Phase 6, durable consent evidence rests on Cliniko and the practitioner's own process.
   - Revisit by: PLAN.md Phase 6 planning
+  - [2026-10-09 reconciliation] Superseded — built by `plan-privacy-professional-controls.md` (COMPLETE 2026-10-02): the encrypted, content-free audit row per session (`audit.py`, `consent_confirmed_at` and the consent text version), kept 7 years and exportable as CSV; Start is refused when it cannot be written.
 - **Three-or-more-speaker labelling and diarization tuning**
   - Why deferred: unchanged from `plan-phase3a-note-pipeline.md`; blocked on the shared recording set.
   - Intended future outcome: see that plan.
@@ -5476,6 +5478,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
       - The two stale guards differ on purpose: the ledger's tags, and the checkout's request identity.
       - Merging would put SEC-009's cooldown and spacing on the practitioner-opened checkout check, which is a behaviour change. Today that check makes one call per recovered session opened, and a 429 there reads as offline.
       - `Risk if deferred: maintainability` (two stale-result guards could diverge; each is pinned by its own tests) · `Revisit by: the draft-write plan's freshness task`. The Follow-Up Continuation Notes already say to wire one source there, not add a third.
+      - [2026-10-09 reconciliation] Superseded — met by the draft-write plan for the cooldown: one shared `encounter.RateLimitLatch` owned by `MainWindow`, consulted by the bridge, the checkout re-verification and the write (D13); the write takes a fresh read per click (D3), so no third freshness source exists. SEC-008 stays re-deferred there (gate 2026-09-29).
     - **SIMP-009**: ids, hosts, limits and the consent literal.
       - Every copy fails closed: a narrower copy refuses and never admits. The consent literal is pinned by the `command__start*` fixtures.
       - A shared module would also have to leave `cliniko_client.py` out, because of the TID251 pin.
@@ -5500,6 +5503,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
     - **SIMP-016**: `prune_reminders` keeps an unlinked or failed recording's `session_ref` until the process ends.
       - That is one short string per recording, and a stale ref resolves to no command: the controller's live-session check refuses it.
       - `Risk if deferred: minor` · `Revisit by: the draft-write plan`, which keys the write by session.
+      - [2026-10-09 reconciliation] Superseded — built in draft-write Task 4.2: `MainWindow.prune_session_refs()` forgets every controller ref neither live nor still indexed, run right after `prune_reminders`.
 - [x] 🟩 H3: `/security-review` — log findings; same impact-tiered routing
   - Done (leg `stage-9-exec-k3`, 2026-09-28; round 57; suites composer-run):
     - 22 findings: 21 LOW + 1 record-only. No CRIT, HIGH or MED; no must-pause.
@@ -5728,6 +5732,7 @@ Every task's verification is the per-phase suite in `Validation / Verification` 
 
 ## Follow-Up Continuation Notes
 - **Next focus after this plan: the Phase 4 plan (writing the draft).** Start with the practitioner's test write moved out of P.1, then `PATCH` into the verified note through `writeback_context`, the ledger, reconcile, and auto-complete.
+  - [2026-10-09 reconciliation] Superseded — the Phase 4 plan is built (`plan-cliniko-draft-write.md`, COMPLETE for clinic 1 2026-10-01). It also settled the notes below: a second session's note is APPENDED below existing text (D15); the write re-reads immediately before every click (D3, fresh read, one note GET since D15), answering the H1 round 53 freshness note and SEC-018's "no write path today". What stays open in this plan is clinic 2's P.1/P.2 and the deferred H2a/H3a items (SEC-008, SIMP-009/010/011/013/014/015, SEC-014's host half).
 - **Out of scope for that plan too:** POST of a second note, calendar Start, true overlap.
 - **Decisions that still apply:** D2 (protocol), D3/D4 (encounter and verification), D9 (client contract), D10 (registry), D11 (`encounter.enc`), D13 (page-script trust), and the Critical Constraints.
 - **Must not be rediscovered:**

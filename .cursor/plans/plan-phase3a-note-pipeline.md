@@ -63,6 +63,7 @@ Populate this during plan creation or plan hardening.
   - Recommended next action: resolve as part of decision task D-S1; if 2-way accuracy on real speech is poor after CMN, this is the remedy.
   - Risk if deferred: ux-degradation: a third voice merges into another speaker's label and the clinician corrects attribution on review.
   - Revisit by: D-S1 resolution
+  - [2026-10-09 reconciliation] Superseded in part — the ungated ONNX model is shipped: the WeSpeaker VoxCeleb ResNet34-LM export, SHA-256-pinned like silero (`speaker_embedding.py` `OnnxSpeakerEmbedder`, practitioner-profile plan D-P1, 2026-09-15), used for voice enrolment's practitioner-vs-other attribution before clustering. Still valid — the 2-means clustering of the remaining voices (`transcription.label_speakers`) still uses the CMN'd spectral `_segment_embedding`, and estimated-k is not built; both stay with D-S1, decided from the clinic 1 smoke's measured kept recordings (`plan-clinic-smoke.md` P.6).
 
 - **Config editor UI** — screens for editing keywords, expansions, prefills, and template mappings.
   - Why deferred: practitioner decision — the config shape should settle against real use before a UI is built on it. Phase 3A ships a validating loader plus a read-only viewer.

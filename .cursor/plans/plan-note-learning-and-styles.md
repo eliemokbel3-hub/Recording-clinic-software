@@ -44,6 +44,7 @@ Make the scribe feel like less work than typing: transcribe WHILE the consultati
   - Recommended next action: plan Phase 4 after this plan's Phase 2 closes.
   - Risk if deferred: ux-degradation: review happens in the desktop app until then.
   - Revisit by: this plan's Phase 2 close
+  - [2026-10-09 reconciliation] Superseded — both built: Phase 5 by `plan-cliniko-workflow-safeguards.md` (2026-09-27 → 2026-09-28: the Chrome side panel and page frame, protocol v2 over the named pipe, the pause rule and patient-change block) and Phase 4 by `plan-cliniko-draft-write.md` (COMPLETE for clinic 1 2026-10-01: "Write draft to Cliniko" appends to the open draft after Save; the session completes after the clinician has seen it in Cliniko). Clinic 2 waits on its Cliniko API-key permission.
 - The Phase 3B validation set and completion gate (no unsupported clinical assertion over the set)
   - Why deferred: needs the shared recording set (practitioner-profile Task 6.1), practitioner-owned.
   - Intended future outcome: the prose styles measured over the set; the Task 9.1 gate re-run with `clean` as the default style.

@@ -74,6 +74,7 @@ Local recording and transcription (`PLAN.md` Phase 2): the desktop app records t
 - Streaming/real-time transcription during recording
   - Why excluded: `PLAN.md` transcribes on Finish; streaming adds large complexity with no Phase-2 requirement
   - When to revisit: only if Finish-time latency proves clinically unacceptable in the pilot
+  - [2026-10-09 reconciliation] Superseded — built: live transcription while recording (`LiveTranscriber` / `LiveSegmenter` in `transcription.py`, the tee in `session.py`, the live view in `ui/transcript.py`; `plan-note-learning-and-styles.md` D1–D3, 2026-09-19 → 2026-09-27).
 
 ### Accepted Assumptions — Revalidate Later
 - Python 3.14 has usable wheels for the chosen ML stack (sounddevice, onnxruntime/silero, Whisper backend)
@@ -910,10 +911,12 @@ Primary review baseline: `git merge-base HEAD origin/main` = `e657b6a` (feature-
 (Not applicable while plan is Active.)
 
 ## Follow-Up Continuation Notes
-- Next follow-up: Phase 3 (local note generation) — consumes the encrypted transcript artifact
+- Next follow-up: Phase 3 (local note generation) — consumes the encrypted transcript artifact `[2026-10-09 reconciliation] Superseded — Phase 3A's note pipeline was built (2026-08-04 → 2026-09-03); see AGENTS.md Current Status.`
 - Phase-3-opening structural moves (round 42 LOW-020, lens-B assessed as not worth pre-Phase-3 churn): extract the offline-env + model-cache helpers out of `benchmark.py` into a shared runtime module with re-exports (benchmark.py has become a de-facto foundation layer imported by speech/transcription/app/setup-models); if `transcription.py` (~1.05k lines) grows further, the D8 speaker-embedding/clustering block (`_numpy`..`label_speakers`) is the natural extraction seam
+  - [2026-10-09 reconciliation] Still valid — not done: `assert_offline_env` and `default_models_root` still live in `benchmark.py`, and `transcription.py` has grown to ~2.35k lines (live transcription added); an optional refactor, no plan owns it.
 - Small out-of-stage-scope fixes awaiting the composer (round 42): `scripts/setup-models.py` should route its cache root through `benchmark.default_models_root()` instead of re-deriving it (LOW-014); AGENTS.md status block stale on `small`/Step-13 — end-of-phase `/document` pass fixes it (LOW-018)
-- Design decisions that persist: key-custody pattern (Phase 4 queueing reuses it), pipe topology + hardening notes (Phase 5 builds it — see Deferred), setup-script-only network rule, offline env enforcement, no-sockets-at-runtime bar
+  - [2026-10-09 reconciliation] Superseded — both done: `scripts/setup-models.py` `models_root()` routes through `benchmark.default_models_root()` ("Single-sourced with the runtime (LOW-014)"), and the AGENTS.md status block has been rewritten many times since.
+- Design decisions that persist: key-custody pattern (Phase 4 queueing reuses it — `[2026-10-09 reconciliation]` superseded: drafts are not queued, by the draft-write plan's decision; PLAN.md Phase 4), pipe topology + hardening notes (Phase 5 builds it — see Deferred), setup-script-only network rule, offline env enforcement, no-sockets-at-runtime bar
 - Do not rediscover: Phase-1 executor facts (referenced above) + this plan's executor facts
 
 ---

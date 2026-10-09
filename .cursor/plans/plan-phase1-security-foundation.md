@@ -45,6 +45,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Dependencies / prerequisites: Phase 1 completion gate passed
   - Recommended next action: `/create-plan` for Phase 2 after this plan completes
   - Risk if deferred: minor: intentional staging, not a gap
+  - [2026-10-09 reconciliation] Superseded — each phase got its own plan; Phases 2–6 and Phase 7's installation are COMPLETE and the pilot (`plan-pilot.md`) is in progress (`AGENTS.md`, Current Status).
 - Host↔app named-pipe IPC (the locked Phase-2 topology's relay channel)
   - Why deferred: nothing to relay in Phase 1; the pipe's real requirements (recording commands, state streaming) are Phase 2's — user-confirmed 2026-07-23
   - Intended future outcome: user-ACL'd Windows named pipe between the thin host relay and the long-lived recorder app; still zero network sockets
@@ -52,6 +53,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Dependencies / prerequisites: Phase 2 plan; Design Decision "Process topology" below
   - Recommended next action: first task of the Phase 2 plan
   - Risk if deferred: minor: host is built stateless/thin against this topology, so no rework is expected
+  - [2026-10-09 reconciliation] Superseded — built: the user-only named pipe `pipe_server.py` / `pipe_client.py` with the relay in `native_host.py` (protocol v2, `plan-cliniko-workflow-safeguards.md` Phase 4, 2026-09-28).
 - Runtime clinic-subdomain allowlist (beyond the manifest wildcard)
   - Why deferred: no page UI exists in Phase 1 to enforce it (content scripts arrive in Phase 5); the manifest wildcard `https://*.cliniko.com/*` still bounds the extension — user-confirmed 2026-07-23
   - Intended future outcome: desktop-configured allowlist of the two clinics' subdomains, enforced when page UI lands
@@ -59,6 +61,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Dependencies / prerequisites: real subdomains recorded at install time
   - Recommended next action: fold into the Phase 5 plan
   - Risk if deferred: minor: Phase 1 exchanges no clinical data, so wildcard-wide exposure is nil
+  - [2026-10-09 reconciliation] Superseded — built: the app's `state` message carries the validated clinics' hosts and `extension/src/context.ts` reports a tab only on an allow-listed host (`plan-cliniko-workflow-safeguards.md` Phases 2 and 6).
 - Full `SessionState` enum from `PLAN.md` core types
   - Why deferred: Phase 1's connection state is a deliberate, separate throwaway enum (connecting/connected/disconnected/error); the real `SessionState` (idle→recording→…→expired) belongs to Phase 2's recording lifecycle — user-confirmed 2026-07-23
   - Intended future outcome: `SessionState` defined with its true states when recording exists
@@ -66,6 +69,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Dependencies / prerequisites: Phase 2 plan
   - Recommended next action: define in Phase 2 alongside `RecordingSession`
   - Risk if deferred: minor: nothing consumes it yet
+  - [2026-10-09 reconciliation] Superseded — built in Phase 2: `SessionState` in `desktop/src/scribe_desktop/session.py`.
 - PyInstaller packaging + installer for the desktop app
   - Why deferred: `PLAN.md` Phase 7 handles installation; dev-mode launcher suffices until then
   - Intended future outcome: signed, packaged desktop app installed on both clinic machines — also the real mitigation for the venv/launcher-hijack residual risk in the threat model
@@ -73,6 +77,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Dependencies / prerequisites: Phases 2–6 features stable
   - Recommended next action: fold into the Phase 7 plan
   - Risk if deferred: minor: dev machines run from source meanwhile; residual risk documented in threat model
+  - [2026-10-09 reconciliation] Superseded — built: PyInstaller + Inno Setup per-machine install (`packaging/`, `plan-installation.md`, COMPLETE 2026-10-04). Still valid in part — the build is UNSIGNED for the pilot (attestation and SHA-256 checks are the integrity control); signing is `plan-installation.md`'s retained follow-up.
 - GitHub Actions CI (lint/type/test on push)
   - Why deferred: remote now exists (added 2026-07-23) but CI adds most value once Task 1's QA suites exist
   - Intended future outcome: workflow running both QA suites from Task 1
@@ -81,6 +86,7 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - Recommended next action: add a workflow after Task 1, or before Phase 2 at latest
   - Risk if deferred: minor: repo is now backed up off-machine; only automated checks are missing
   - Revisit by: before Phase 2 begins
+  - [2026-10-09 reconciliation] Superseded — built 2026-07-26 (`.github/workflows/ci.yml`: desktop QA on Windows 3.12 + 3.14, extension QA; actions on Node 24 since 2026-09-05), plus the `Release` workflow (`release.yml`) since the installation plan.
 
 ### Excluded — Revisit Only If Needed
 - Edge/Brave/other Chromium browsers
@@ -88,16 +94,19 @@ Build the security foundation for the Cliniko clinical scribe: a Chrome MV3 exte
   - When to revisit: if a clinic machine standardises on Edge
   - Relevant files / subsystems: `scripts/register-native-host.py`, host manifest
   - Recommended next action (if any): add the Edge registry path alongside Chrome's
+  - [2026-10-09 reconciliation] Still valid — Chrome only; no Edge registration exists.
 - Content-script page UI on Cliniko pages (including the Phase-1 indicator stub)
   - Why excluded: cut in plan hardening (user-confirmed 2026-07-23) — the badge proves connectivity; injecting code into live clinical pages before Phase 5 owns embedded UI adds risk with no gate value
   - When to revisit: Phase 5 (workflow safeguards) introduces content scripts with their real requirements
   - Relevant files / subsystems: `extension/src/`
   - Recommended next action (if any): none now
+  - [2026-10-09 reconciliation] Superseded — built in Phase 5: the page script `extension/src/page.ts` (reads only `location`) and the side panel (`plan-cliniko-workflow-safeguards.md` Phase 6, 2026-09-28).
 - Host→UI live-state plumbing (status file or otherwise)
   - Why excluded: cut in plan hardening (user-confirmed 2026-07-23) — the reviewed status-file design was spoofable, stale-prone, and unneeded by the completion gate
   - When to revisit: Phase 2, via the named-pipe topology (see Deferred)
   - Relevant files / subsystems: `desktop/src/scribe_desktop/app.py`
   - Recommended next action (if any): none now
+  - [2026-10-09 reconciliation] Superseded — built over the named pipe: the app streams `state` to the extension (protocol v2; the badge reflects the app since 2026-09-28).
 - macOS support, Azure/cloud AI providers, org accounts/billing/central admin
   - Why excluded: `PLAN.md` commercial path defers these until the single-user pilot succeeds
   - When to revisit: commercialisation
@@ -468,12 +477,14 @@ The extraction summary remains the single source of truth for the item details;
 this section records only the completion-review disposition to avoid duplication.
 
 Priority order for pickup:
-1. GitHub Actions CI — its `Revisit by: before Phase 2 begins` trigger is NOW DUE (both QA suites exist to run)
+1. GitHub Actions CI — its `Revisit by: before Phase 2 begins` trigger is NOW DUE (both QA suites exist to run) `[2026-10-09 reconciliation] Superseded — CI added 2026-07-26 (.github/workflows/ci.yml).`
 2. Phase 2 plan (`/create-plan`) — first task: named-pipe host↔app IPC per the locked process topology; revalidate ML wheels on Python 3.14 at the benchmark task
 3. Everything else lands with its owning phase (allowlist → 5, packaging → 7, etc.)
 
+`[2026-10-09 reconciliation]` Items 1–3 are all done: Phase 2 built the pipe-ready host and `SessionState`, Phase 5 (`plan-cliniko-workflow-safeguards.md`) the named pipe, the runtime allow-list and the page UI, Phase 7 (`plan-installation.md`) the packaging. The only item here still open is the Edge exclusion (Still valid, revisit only if a clinic computer standardises on Edge).
+
 ## Follow-Up Continuation Notes
-- Next follow-up: Phase 2 (local recording + transcription) via its own `/create-plan` — its first task is the named-pipe host↔app IPC per the locked topology
+- Next follow-up: Phase 2 (local recording + transcription) via its own `/create-plan` — its first task is the named-pipe host↔app IPC per the locked topology `[2026-10-09 reconciliation] Superseded — Phase 2 and its successors are complete; nothing in this plan is next.`
 - Remain out of scope: everything under Deferred / Excluded above
 - Design decisions that persist: all Key Design Decisions — especially the process topology, fixtures-canonical protocol, structural logging, and the no-network-sockets rule
 - Do not rediscover: everything in "Codebase Integration Notes — executor facts"

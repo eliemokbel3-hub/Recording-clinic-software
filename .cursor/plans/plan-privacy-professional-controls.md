@@ -77,6 +77,7 @@ All confirmed by the practitioner in the 2026-10-01 planning session.
   - Recommended next action: add it to the Phase 7 installer plan.
   - Risk if deferred: minor: `%LOCALAPPDATA%` is outside Windows' default backup scope; Windows Backup / VSS may still capture it.
   - Revisit by: PLAN.md Phase 7 planning
+  - [2026-10-09 reconciliation] Superseded — built by the installer (`plan-installation.md`, COMPLETE 2026-10-04; `packaging/scribe.iss`): HKLM `FilesNotToBackup` and `FilesNotToSnapshot` values named `ClinikoScribe`, in the `$UserProfile$` form, for the data folder's `sessions\*` and `logs\*` (the installation plan's scope). Best-effort, as that plan records: whether Windows backup honours `$UserProfile$` is a named residue, not observable on Windows 11 Home.
 
 ### Excluded — Revisit Only If Needed
 - **Chrome's own crash dumps.**
@@ -1311,11 +1312,12 @@ Each /review invocation appends a detailed findings block here, with /fix updati
 - **Independent review of `docs/practice/`** — the README's three remaining open questions (consent for people who cannot consent and others in the room; whether the audit CSV's Cliniko ids make it personal information; per-state wording), the `[Reviewer: …]` / `[Practice: …]` marks, and whether an entry this Windows account cannot read must still be kept 7 years (downtime procedure). The patient information stays `patient-info-v1` until first issued; any change after issue is a new version. `Risk if deferred: correctness: the drafts are unreviewed practice documents` · `Revisit by: before the first patient is given the information sheet`
 - **PR-LOW-033** — a staged-publication spy test for the label read inside `past_sessions.write_entry` (production is bounded; only the proof is missing). `Risk if deferred: minor` · `Revisit by: next change to past_sessions.py`
 - **Residue (t)** — the older readers (pre-plan session files) have no size cap; a same-user denial of service only. `Risk if deferred: minor` · `Revisit by: next hardening pass over session_store.py`
-- **`register-native-host.py` on a locked host exe** — WinError 32 (Chrome holds `scribe-host.exe`) prints a raw traceback; it should say "close Chrome and Clinic Scribe, then run this again" and exit non-zero. Seen in the 2026-10-02 smoke. `Risk if deferred: ux-degradation` · `Revisit by: next change to the register script or PLAN.md Phase 7's installer`
+- **`register-native-host.py` on a locked host exe** — WinError 32 (Chrome holds `scribe-host.exe`) prints a raw traceback; it should say "close Chrome and Clinic Scribe, then run this again" and exit non-zero. Seen in the 2026-10-02 smoke. `Risk if deferred: ux-degradation` · `Revisit by: next change to the register script or PLAN.md Phase 7's installer` `[2026-10-09 reconciliation] Superseded — handled in the installation plan's Phase 3 (2026-10-03): scripts/register-native-host.py recognises ERROR_SHARING_VIOLATION (32), and ERROR_ACCESS_DENIED (5) when deleting, and prints "Close Clinic Scribe and Chrome completely, then run this again." (IN_USE_LINE).`
 - **The consent wording (PR-MED-030 Part B, decided (a))** — fold the qualified local-only wording into the next consent version; do not bump consent for it alone. `Risk if deferred: minor` · `Revisit by: the next consent-text change`
 
 ## Follow-Up Continuation Notes
 - Next after this plan: the deferred Past-sessions backup/restore (before commercialising), and PLAN.md Phase 7 (pilot and installation, carrying the admin-only exclusions).
+  - [2026-10-09 reconciliation] Superseded in part — Phase 7's installation is COMPLETE (2026-10-04, the admin-only exclusions included) and its pilot is in progress (`plan-pilot.md`). Still valid — the Past-sessions backup/restore, the one remaining follow-up here.
 - Still applies: D1/D3 (entry layout and per-entry keys), D7/D8 (audit layout and schema), C1–C3.
 - Do not rediscover: the Ahpra and state-law research (External Findings); why the generated note needs `generated.enc` (D2); why the WER exclusion names `pythonw.exe` (D10, lessons.md:121).
 
