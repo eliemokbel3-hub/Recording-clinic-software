@@ -5,8 +5,8 @@
   "axes": ["noise", "laterality", "uncertain"],
   "lines": [
     {"role": "clinician", "text": "Which side is the sciatica on?"},
-    {"role": "patient", "text": "The right side hurts, I think, down the back of the leg."},
-    {"role": "clinician", "text": "On examination straight leg raise is positive on the right at 50 degrees."},
+    {"role": "patient", "text": "The right side hurts with some tingling, I think, down the back of the leg."},
+    {"role": "clinician", "text": "On examination straight leg raise is positive on the right at 50 degrees with reduced range."},
     {"role": "clinician", "text": "The plan is weekly treatment for four weeks."}
   ],
   "facts": [

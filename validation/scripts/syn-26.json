@@ -9,7 +9,7 @@
     {"role": "clinician", "text": "Any pins and needles in the hands?"},
     {"role": "patient", "text": "No pins and needles."},
     {"role": "clinician", "text": "On examination the thoracic spine is stiff. Is that okay with you if I mobilise it?"},
-    {"role": "patient", "text": "Yes, I give my consent."},
+    {"role": "patient", "text": "Yes, I give my consent and I'm all good for a crack."},
     {"role": "clinician", "text": "Today we did mobilisation."}
   ],
   "facts": [

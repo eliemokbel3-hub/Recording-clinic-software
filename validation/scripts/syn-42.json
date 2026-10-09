@@ -9,7 +9,7 @@
     {"role": "clinician", "text": "Any swelling or locking?"},
     {"role": "patient", "text": "No swelling and no locking."},
     {"role": "clinician", "text": "I explained the risks of dry needling to the quadriceps. Are you happy to proceed?"},
-    {"role": "patient", "text": "Yes, I'm happy to proceed."},
+    {"role": "patient", "text": "Yes, I'm happy to proceed and all good for a crack."},
     {"role": "clinician", "text": "Today we did dry needling and soft tissue work. Review you in two weeks."}
   ],
   "facts": [

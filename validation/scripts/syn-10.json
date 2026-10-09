@@ -9,7 +9,7 @@
     {"role": "clinician", "text": "Any tingling in the hands?"},
     {"role": "patient", "text": "Only in the right hand, sometimes at night."},
     {"role": "clinician", "text": "On examination there is tenderness over the right upper trapezius. I explained the risks of needling."},
-    {"role": "patient", "text": "I understand, and I'm happy to proceed."},
+    {"role": "patient", "text": "I understand, and I'm all good for a crack so happy to proceed."},
     {"role": "clinician", "text": "Thank you. Today we did dry needling."}
   ],
   "facts": [

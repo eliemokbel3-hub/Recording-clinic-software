@@ -7,7 +7,7 @@
     {"role": "clinician", "text": "Since last session, any night pain?"},
     {"role": "patient", "text": "No night pain this week, I think, but mornings are still stiff."},
     {"role": "clinician", "text": "Any pins and needles in the feet?"},
-    {"role": "patient", "text": "Maybe a little, with some pain in my left foot, I'm not sure."},
+    {"role": "patient", "text": "Maybe a little, with some tingling and pain in my left foot, I'm not sure."},
     {"role": "clinician", "text": "On examination the lumbar range of motion is improved. Book in for two weeks."}
   ],
   "facts": [

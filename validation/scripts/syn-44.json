@@ -5,9 +5,9 @@
   "axes": ["noise", "uncertain"],
   "lines": [
     {"role": "clinician", "text": "How is the lower back since I saw you?"},
-    {"role": "patient", "text": "About the same since I saw you, I think the pain in my lower back is worse in the mornings."},
+    {"role": "patient", "text": "About the same since last time but I think the pain in my lower back is worse in the mornings."},
     {"role": "clinician", "text": "Any pain at night or numbness in the legs?"},
-    {"role": "patient", "text": "No numbness, but maybe some night pain, I'm not certain."},
+    {"role": "patient", "text": "No numbness, but maybe some night pain and tingling, I'm not certain."},
     {"role": "clinician", "text": "On examination lumbar range of motion is reduced in flexion. Today we did soft tissue work and mobilisation."},
     {"role": "clinician", "text": "See you in three weeks."}
   ],

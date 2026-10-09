@@ -1,0 +1,64 @@
+{
+  "schema_version": 1,
+  "section_cues": {
+    "presenting_complaint": [
+      "coming in with"
+    ],
+    "history_presenting_complaint": [
+      "did it start"
+    ],
+    "progress_since_last_visit": [
+      "from last time",
+      "since last time"
+    ],
+    "past_medical_history": [
+      "previous surgery",
+      "previous surgeries"
+    ],
+    "red_flags_screening": [
+      "any numbness",
+      "tingling",
+      "going to the toilet"
+    ],
+    "objective_examination": [
+      "have a look"
+    ],
+    "outcome_measures": [],
+    "assessment": [
+      "pretty tight",
+      "reduced range"
+    ],
+    "diagnosis": [
+      "i think you have",
+      "i think what's going on"
+    ],
+    "treatment_performed": [
+      "massage",
+      "needles",
+      "cups"
+    ],
+    "response_to_treatment": [
+      "moving a bit better"
+    ],
+    "advice_home_exercise": [
+      "send you some exercises",
+      "exercises"
+    ],
+    "management_plan": [
+      "going to take"
+    ],
+    "consent": [
+      "for a crack"
+    ],
+    "referrals_investigations": [
+      "see a gp"
+    ],
+    "precautions_contraindications": [
+      "no running",
+      "no lifting"
+    ],
+    "follow_up_review": [
+      "see you next week"
+    ]
+  }
+}

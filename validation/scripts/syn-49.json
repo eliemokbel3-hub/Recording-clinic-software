@@ -5,9 +5,9 @@
   "axes": ["rate", "uncertain", "laterality"],
   "lines": [
     {"role": "clinician", "text": "Which foot did you hurt?"},
-    {"role": "patient", "text": "The right foot, I think, the pain in my right heel started on Monday."},
+    {"role": "patient", "text": "The right foot, I think, I'm coming in with pain in my right heel that started on Monday."},
     {"role": "clinician", "text": "Is it worse first thing in the morning?"},
-    {"role": "patient", "text": "Possibly, it hurts most when I get out of bed, I'm not sure."},
+    {"role": "patient", "text": "Possibly, it hurts most getting out of bed and going to the toilet, I'm not sure."},
     {"role": "clinician", "text": "On examination the right heel is tender to touch at the plantar fascia insertion. The plan is a calf stretch twice a day."}
   ],
   "facts": [

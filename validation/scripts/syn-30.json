@@ -7,7 +7,7 @@
     {"role": "clinician", "text": "Are you still on the tramadol?"},
     {"role": "patient", "text": "Since last time it is tramadol 50 milligrams, I think twice a day, maybe less now."},
     {"role": "clinician", "text": "And your pain score since last visit?"},
-    {"role": "patient", "text": "My pain score is around 5 out of 10, I'm not sure."},
+    {"role": "patient", "text": "Since last time my pain score is around 5 out of 10, I'm not sure."},
     {"role": "clinician", "text": "The plan is to review the medication with your GP. Book in for two weeks."}
   ],
   "facts": [

@@ -10,7 +10,7 @@
     {"role": "patient", "text": "Ibuprofen 400 milligrams three times a day with food."},
     {"role": "clinician", "text": "Scribe, leave the next part out of the note."},
     {"role": "patient", "text": "My boss doesn't know I hurt it at home."},
-    {"role": "clinician", "text": "I've explained the risks of a spinal adjustment, and you are happy to proceed."},
+    {"role": "clinician", "text": "I've explained the risks of a spinal adjustment, and you are happy to proceed and all good for a crack."},
     {"role": "patient", "text": "Yes, go ahead."},
     {"role": "clinician", "text": "Today we did soft tissue work and gentle manipulation. Book in for Friday."}
   ],
