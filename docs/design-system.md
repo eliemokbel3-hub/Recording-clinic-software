@@ -493,9 +493,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   diarizer clusters VAD segments into exactly two voices, so a third person in the room
   (parent, carer, interpreter, student) is silently merged into one of the two labels and
   the clinician fixes attribution at review. Decision D-S1 (estimate the speaker count
-  instead of assuming two) is UNRESOLVED — it is blocked on the practitioner-supplied
-  labelled recordings for Task 2.3 — so this stays two-speaker today; see the retained
-  follow-up in `AGENTS.md`.
+  instead of assuming two) is UNRESOLVED — it is decided from the clinic 1 smoke's
+  measured kept recordings (`.cursor/plans/plan-clinic-smoke.md`, Task 2.3's numbers) —
+  so this stays two-speaker today; see the retained follow-up in `AGENTS.md`.
 
 ## Microcopy
 - Plain clinical English, no jargon, no exclamation marks. Name the artefact the user

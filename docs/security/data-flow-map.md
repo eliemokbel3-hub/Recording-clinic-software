@@ -58,8 +58,9 @@ rendering the language model does (flow 17). Since the pilot plan (PLAN.md
 Phase 7's pilot half) a recording started while "Shadow mode (pilot)" is
 ticked is a SHADOW recording, whose note never leaves the app by Copy or by
 the draft write (flow 25), and the developer build carries an offline
-validation harness that runs the pipeline over invented or mock recordings
-outside the app's own stores (flow 26). Since the development-recordings plan
+validation harness that runs the pipeline over synthetic recordings of
+invented scripts outside the app's own stores (flow 26; the mock role-plays
+first planned for it were retired on 2026-10-09 by the clinic-smoke plan). Since the development-recordings plan
 (0.3.0) a recording the patient consented in writing to keep is kept,
 encrypted, beside its Past-sessions entry, can be deleted alone or exported
 as an unencrypted WAV on this computer, and can be replayed by a
@@ -1174,13 +1175,11 @@ practitioner-run developer tool that prints numbers only (flow 27).
       A script file not named as an encounter id writes nothing and is
       reported without its name; a set folder inside either app data folder
       is refused (round 26).
-      Role-play recordings (mock consultations, Task P.2) are added to the
-      same folder by hand with their own scripts and label tracks — for the
-      run of record the synthetic set is built into the role-plays' one
-      folder (decision 3.6), or any copy of them made for a run is deleted
-      after it; the enrolment WAV stays in a subfolder (only the top level is
-      read), and the synthetic files are deleted from the folder after the
-      run.
+      Since the clinic-smoke plan (2026-10-09, D1, D5) the set folder holds
+      the synthetic set only and is deleted after the run: no recording is
+      added to it by hand. (Until then mock role-play recordings, with their
+      own scripts and label tracks, were to be added to it under decision
+      3.6 — retired before any was recorded.)
     - RUN. `scripts/run-validation.py <set-folder> --config <folder> --rule
       <file>` applies and asserts the offline environment, reads the rule
       file, the explicit config folder (never the app's own) and the models,
@@ -1265,7 +1264,14 @@ practitioner-run developer tool that prints numbers only (flow 27).
       `recover_exports` (before every other Past-sessions start-up step) removes the `.part`
       while it is still the file the app created, or names it for deletion by
       hand. The WAV is the practitioner's to delete; the app never touches it
-      again. A shadow recording asks first.
+      again. A shadow recording asks first. In the clinic 1 smoke (clinic-smoke
+      plan D6, D10, D11, D16; no app change) the WAV goes to a measurement
+      folder outside the user profile, one at a time, is renamed `k-NN.wav`
+      after the success line, opened in Audacity (whose plaintext working copy
+      lands in the folder's `audacity-temp\`; `audacity.exe` excluded from
+      Windows Error Reporting per user), labelled, measured by
+      `measure-speakers.py` and deleted in its cycle — operating rules,
+      threat-model "Kept recordings" residue (19).
     - REPLAY. `scripts/replay-kept-recordings.py <past_sessions folder>`
       (developer build, practitioner-run, app closed): refuses, before
       anything else is read, unless the running interpreter is confirmed
@@ -1443,7 +1449,8 @@ practitioner-run developer tool that prints numbers only (flow 27).
   development-recordings plan's dated reconciliation of Constraint 8 in
   `.cursor/plans/plan-pilot.md`). The harness reads only the set folder it is
   given. That a
-  set folder holds only invented scripts' speech and mock role-plays is an
+  set folder holds only invented scripts' synthetic speech (since 2026-10-09;
+  the mock role-plays were retired by the clinic-smoke plan) is an
   OPERATING RULE the practitioner keeps — the harness cannot tell a mock
   recording from a real one (threat model, "The pilot", harness residue (1)).
   The filled pilot log stays off the repository and the findings register in

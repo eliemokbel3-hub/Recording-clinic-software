@@ -70,9 +70,10 @@ set up and build it, and make releases; the installed app needs none of them.
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
   `<id>.json`, with an `<id>.built` ownership mark (needs three voices in the
   current voice baseline's order — slots 0, 1 and 2 — and PyAV
-  from the `[ml]` extra; the set folder must be outside the repository, and a
-  role-play in it — its `<id>.json`, or its WAV or label track without the
-  mark — is never overwritten); the
+  from the `[ml]` extra; the set folder must be outside the repository and
+  holds synthetic files only since the clinic 1 smoke retired the role-plays;
+  a recorded ("role-play") encounter in it — its `<id>.json`, or its WAV or
+  label track without the mark — is never overwritten); the
   second runs every encounter through the shipped pipeline in a temporary
   encrypted store torn down key-first and prints a text-free report, pass or
   fail against the rule. Developer build only, from a normal terminal; see

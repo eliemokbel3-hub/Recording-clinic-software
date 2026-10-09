@@ -88,3 +88,26 @@ read on this Windows account") is never shown as due: review it with the others
 | Row | Consulted | Reviewed | Outcome | Kept for |
 |---|---|---|---|---|
 | | | | | |
+
+## Clinic 1 smoke — notes
+
+The clinic 1 smoke (README, step 2) adds no table and no column: what it needs
+is written in your own copy as short lines of plain words under this heading,
+beside the review table above, which keeps its 12-month meaning. Never a name,
+a Cliniko or session id, or anything that was said.
+
+- **Measured recordings** — one line per measurement cycle, written when the
+  cycle ends: the measurement name (`k-01`, `k-02` …), the pilot-log row it
+  came from, the speaker aggregate the measurement printed, and "export
+  deleted" once the WAV and its labels are gone and the Recycle Bin is empty.
+  A second export of the same row reuses its number and replaces its earlier
+  line's result; a recording withdrawn after its measurement is marked
+  "withdrawn" and stays counted. The lines are kept until the measured set is
+  frozen.
+- **Accents** — ONE line for the whole measured set: how many of the measured
+  recordings had a speaker whose accent differs from yours, out of how many.
+  Never per recording, and never copied into the repository.
+- **The shipping-gate run** — one line mapping the ten scored shadow
+  consultations, in order, to their pilot-log rows, naming any attempt that
+  was not counted (scored under another writing style), written as each one
+  is scored.

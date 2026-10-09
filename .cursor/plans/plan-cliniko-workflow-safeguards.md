@@ -80,6 +80,7 @@ Source: `/explore` scratch `.cursor/plans/explore-cliniko-integration.md` (2026-
   - Recommended next action: none here.
   - Risk if deferred: ux-degradation: a third voice merges into another speaker label.
   - Revisit by: Phase 3 validation set construction
+  - [2026-10-09 reconciliation] The shared recording set is retired; the measurement and D-S1 come from the clinic 1 smoke's measured kept recordings (`plan-clinic-smoke.md` P.6), which is now the revisit point.
 
 ### Excluded — Revisit Only If Needed
 - **Starting a recording from the calendar or any page other than an open treatment note**

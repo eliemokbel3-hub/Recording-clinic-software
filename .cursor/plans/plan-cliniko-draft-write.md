@@ -89,6 +89,7 @@ Populated 2026-09-29 from the confirmed extraction (anchor: `.cursor/plans/explo
 - **SEC-014's host half** (the native host also requiring the pipe server to be medium integrity or higher and not an AppContainer) — goes to the next Task 4.3 revision in the safeguards plan, not here. Risk if deferred: minor. Revisit by: the next Task 4.3 revision.
 - **SIMP-010** (`hub.ts` message parsing) — Risk if deferred: minor. Revisit by: the next change to `hub.ts`'s message parsing.
 - **Three-or-more-speaker labelling and diarization tuning** — unchanged; blocked on the shared recording set (practitioner-profile plan Task 6.1). Risk if deferred: ux-degradation. Revisit by: the shared recording set.
+  - [2026-10-09 reconciliation] The shared set is retired; the measurement and D-S1 come from the clinic 1 smoke's measured kept recordings (`plan-clinic-smoke.md` P.6). Revisit by: that plan's P.6.
 
 ### Excluded — Revisit Only If Needed
 - **`POST /treatment_notes` (a second note).** Why excluded: Cliniko creates the draft when the practitioner opens treatment notes; filling it gives exactly one note per consultation by construction (practitioner 2026-09-27). When to revisit: if the test write shows the auto-created draft cannot be filled. Files: `cliniko_client.py`.

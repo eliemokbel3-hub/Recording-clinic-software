@@ -106,8 +106,11 @@ REGISTER_CELL_PATTERNS = {
     # would give that day away.
     "Found": _MONTH,
     "Clinic": r"1|2|—",
-    "Stage": r"validation|role-play|shadow|reviewed|everyday|other",
-    "Encounter": r"syn-[0-9]{2,}|rp-[0-9]{2,}|—",
+    # Clinic-smoke plan D8: the role-play set is retired (no role-play stage or
+    # id); a kept recording measured in the smoke is the "smoke" stage, and a
+    # real consultation's encounter is "—".
+    "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
+    "Encounter": r"syn-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"
@@ -276,12 +279,15 @@ class TestFindingsRegister:
             "Closed": "",
         }
         assert all(re.fullmatch(REGISTER_CELL_PATTERNS[k], v) for k, v in good.items())
+        assert re.fullmatch(REGISTER_CELL_PATTERNS["Stage"], "smoke")
         for column, bad in (
             ("Encounter", "Jane Citizen"),
             ("Category", "left knee said as right"),
             ("Encounter", "0123456789abcdef0123456789abcdef"),
             ("Found", "2026-10-20"),
             ("Closed", "2026-11-02"),
+            ("Stage", "role-play"),
+            ("Encounter", "rp-01"),
         ):
             assert not re.fullmatch(REGISTER_CELL_PATTERNS[column], bad), column
         assert _ID_SHAPED.findall("session 0123456789abcdef0123456789abcdef")

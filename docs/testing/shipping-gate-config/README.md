@@ -1,6 +1,14 @@
 # Shipping-gate run config (rubric v1, 2026-09-05)
 
-The clinician config used for the Task 9.1 shipping-gate run: three prefill
+**Not used by the 9.1 run of 2026-10; kept for a future scripted run.** The
+clinic 1 smoke (`.cursor/plans/plan-clinic-smoke.md` D2, D15; 2026-10-09)
+scores real shadow consultations under the practitioner's LIVE config as
+installed, recorded by its file hashes (`docs/testing/shipping-gate.md`, the
+addendum "the clinic 1 smoke's run") — so do NOT copy these files into the
+installed app's config folder for that run: it would replace the live config
+being measured.
+
+The clinician config drafted for a scripted Task 9.1 shipping-gate run: three prefill
 templates (knee, shoulder, lower back — one seed sentence each, per the
 ratified composition) and one autofill rule (trigger phrase "ice pack").
 Boilerplate only — no patient data. The seed and expansion sentences are
@@ -9,11 +17,12 @@ note on its own.
 
 Since the practitioner-profile plan's Phase 4 the cue file `section_cues.json`
 — the phrases that route a transcript utterance into a note section, the
-fourth clinician config file — is part of the run config too. The copy here is
+fourth clinician config file — is part of this config too. The copy here is
 a byte-identical copy of the shipped default (17 sections, 98 phrases): the
 practitioner decided on 2026-09-16 to run the gate on the defaults and let
 their own phrasing accrue through phrase learning (plan Phase 5) rather than
-author it now. Cue phrases never enter a note; they only choose which verbatim
+author it now (for the 2026-10 run that phrasing is simply whatever the live
+config holds). Cue phrases never enter a note; they only choose which verbatim
 transcript line lands in which section.
 
 ## Install (practitioner, from Explorer or a normal terminal — never an agent shell)

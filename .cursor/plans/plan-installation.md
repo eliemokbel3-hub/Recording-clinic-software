@@ -2439,6 +2439,7 @@ Reconciled 2026-10-04 at completion. The pilot plan, the machine allow-list, cod
   - Why retained: belongs with the speaker measurement (practitioner-profile Task 6.1 / Phase 3A Task 2.3) and AGENTS.md's three-or-more-speaker item, which need the shared recording set.
   - Risk if deferred: ux-degradation: the clinician fixes attribution when reviewing.
   - Revisit by: the shared recording set (practitioner-profile Task 6.1)
+  - [2026-10-09 reconciliation] The shared set is retired; the measurement comes from the clinic 1 smoke's measured kept recordings under `--enrolment` (`plan-clinic-smoke.md` P.6). Revisit by: that plan's P.6.
 - **The independent review of `docs/practice/`, now including the VoxCeleb "research purposes" caveat** on the shipped speaker model (Task 0.4, D-I2).
   - Why retained: an outside privacy, legal and clinical review; not code.
   - Risk if deferred: correctness: the practice documents and the model's licence position stay unreviewed drafts.

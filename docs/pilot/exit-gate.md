@@ -14,21 +14,32 @@ beside it — an open item becomes a finding and is resolved or controlled first
 ## Clinic 1
 
 - [ ] **Validation passed.** The validation run (pilot plan Task P.3) passed
-      under rule v1 (`docs/testing/validation-harness.md`, decision 3.5), over at
-      least 50 encounters, from a clean, committed checkout, with the
-      practitioner's own cue file in `validation\config`; its totals, commit
-      and models-manifest hash are recorded under Task P.3.
-- [ ] **Role-play records exist** (Task P.2): the shipping-gate scoring table,
-      the speaker numbers and the speaker-labelling decision are recorded in
-      their plans, with each role-play speaker's accent in broad terms (at
-      least one differing from the practitioner's).
-- [ ] **Role-play recordings reviewed** (decision 3.6's review date): the
-      recordings are deleted, or the reason they are still needed and the next
-      review date are recorded.
+      under rule v1 as amended 2026-10-09 (`docs/testing/validation-harness.md`,
+      decision 3.5), over the synthetic set — at least 50 encounters, three
+      installed voices matching the recorded baseline — from a clean,
+      committed checkout, with the practitioner's own cue file in
+      `validation\config`; its totals, voices, commit and models-manifest hash
+      are recorded under Task P.3.
+- [ ] **Clinic 1 smoke records exist** (pilot plan Tasks P.2 and P.4, the
+      clinic 1 smoke plan's Phase P): the shipping-gate scoring table and its decision line
+      (Phase 3A Task 9.1), the speaker numbers over the frozen measured set
+      (Phase 3A Task 2.3 and practitioner-profile Task 6.2) and the
+      speaker-count decision (D-S1) are recorded in their plans. The accent
+      count stays in the off-repository pilot log only.
+- [ ] **Exported copies deleted and every kept recording reviewed or
+      deleted:** no exported WAV or label file is left in the measurement
+      folder, its Audacity temporary folder is empty and the enrolment WAV is
+      deleted; each recording kept for development is either deleted, still
+      within its 12-month review, or — once that review has come — has its
+      row in the pilot log's "Kept recordings — review" table saying why it is
+      still kept.
 - [ ] **Ten shadow consultations logged** (Task P.4): ten rows with mode
-      `shadow` in the pilot log, each with consent recorded in Cliniko as
+      `shadow` in the pilot log, each scored under the `clean` writing style
+      and each with consent recorded in Cliniko as
       `patient-info-v2` or its successor `patient-info-v3` (0.3.0, approved
-      2026-10-09); the audit record's export shows at least ten `shadow`
+      2026-10-09); P.1's two mock shadow rows, and any attempt scored under
+      another style, are not among the ten scored for Task 9.1. The audit
+      record's export shows at least ten `shadow`
       rows on a 0.2.0 or later build, ten of them on the dates of those log rows (P.1's
       two mock shadow recordings, and any discarded shadow recording, add
       rows of their own); the R4 total over them is recorded.

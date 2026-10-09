@@ -65,6 +65,7 @@ Local recording and transcription (`PLAN.md` Phase 2): the desktop app records t
   - Risk if deferred: ux-degradation: with 3+ people present, a third voice is silently merged into another speaker's label — the clinician must correct attribution when reviewing the draft note
   - Revisit by: Phase 3 validation set construction (same trigger as diarization tuning — do them together)
   - [2026-09-05 reconciliation] Needs re-evaluation — `plan-practitioner-profile.md` (voice enrolment) classifies practitioner-vs-other before clustering, removing the merged-practitioner failure; estimated k for the remaining voices stays deferred (D-S1 in the Phase 3A plan) pending the shared recording set.
+  - [2026-10-09 reconciliation] The shared recording set is retired; D-S1 is decided from the clinic 1 smoke's measured kept recordings (`plan-clinic-smoke.md` P.6 — about ten consented consultations, a three-voice one if the clinic yields it), and estimated k is built, if at all, under its own plan.
 
 ### Excluded — Revisit Only If Needed
 - GPU-specific acceleration work (CUDA/DirectML tuning)

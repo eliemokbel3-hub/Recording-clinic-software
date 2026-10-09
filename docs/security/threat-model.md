@@ -3586,7 +3586,7 @@ outside both app data folders (round 26: no plaintext audio in either, C8 for
 the production one); a script
 file not named as an encounter id is not built and is reported without its
 name (review round 22), and so is an unmatched `--only` name that is not an
-encounter id (peer round 27); it never overwrites a role-play whose script is in the folder, a recording without its
+encounter id (peer round 27); it never overwrites a recorded ("role-play") encounter whose script is in the folder, a recording without its
 script, or a script it cannot load — except a WAV or label track lying beside
 a leftover `<id>.built` from an interrupted build, which it takes as its own
 (delete any leftover mark before a recording uses that id;
@@ -3598,10 +3598,14 @@ wrote audio outside its encrypted stores; since the development-recordings
 plan its Export of a KEPT recording writes one `<session id>.wav` (the
 practitioner's explicit choice, "Kept recordings" below), and Constraint 8
 carries a dated reconciliation: such a file is for speaker labelling in its
-own folder, never a set folder; (2) the set folder, the role-play WAVs and the
-redirected report are outside the app's custody (plaintext audio of invented
-or mock content; the retention schedule's Pilot rows — the role-plays kept in
-one local folder under decision 3.6, with a review date); (3) a leftover temporary store the OS refuses to delete or
+own folder, never a set folder — since the clinic-smoke plan (2026-10-09, D5,
+D10) the smoke's measurement folder, one exported copy at a time, deleted in
+its cycle; (2) the set folder and the redirected report are outside the app's
+custody (plaintext audio of invented content only — the run of record is
+synthetic only since 2026-10-09; the retention schedule's Pilot rows). The mock
+role-play WAVs this residue once also named, kept in one local folder under
+decision 3.6, were never recorded: the clinic-smoke plan retired the set and
+superseded 3.6 on 2026-10-09 (D1); (3) a leftover temporary store the OS refuses to delete or
 inspect is named for removal by hand, never hidden; (4) the own-config refusal
 compares paths as strings (a link, an 8.3 short name, a `subst` drive or a
 `\\?\` form of the same folder is not recognised —
@@ -3985,6 +3989,38 @@ dropped (an unplugged drive, residue (9)) or forgot (a reset ledger) is no
 longer known at all, so the rule's by-hand search of every folder ever
 exported to is ALWAYS part of the gate, not only when a warning shows.
 
+THE LABELLING TOOL (clinic-smoke plan D6, D10, D11, D14, D16; 2026-10-09; no
+app change). The clinic 1 smoke labels each exported recording in Audacity,
+ONE copy at a time, in a measurement folder on the internal drive outside the
+user profile and outside File History and Windows Backup, the WAV renamed
+`k-NN.wav` after the export's success line so the measurement report (which
+prints the file name) never carries a session id. Audacity keeps an unsaved
+working copy of an opened file — the WHOLE consultation, plaintext — in its
+temporary directory (default `%LOCALAPPDATA%\Audacity\SessionData`,
+configurable and read at Audacity's start-up), so the practitioner points it
+at the measurement folder's `audacity-temp\` subfolder, closes Audacity
+without saving a project, confirms that folder is empty every cycle, never
+accepts Audacity's crash recovery for a real recording, and clears Audacity's
+and Explorer's recent files; and the register script excludes `audacity.exe`
+from Windows Error Reporting per user (its fifth `wer :` value, EXCLUSIONS
+above), so Windows Error Reporting does not write a crash report of Audacity
+while it holds the recording. The practitioner's read-aloud enrolment WAV
+(`enrolment\me.wav`) sits in the same folder, plaintext, until the speaker
+numbers and decision D-S1 are recorded. (19) ALL OF THIS IS AN OPERATING
+RULE: nothing in the app or its tools checks Audacity's directory setting,
+that the folder was emptied, that a recovery was discarded or that the
+exclusion is still present (neither build's own check includes it — the
+developer build's requires only the register script's first four values, the
+installed app's only `scribe-app.exe` and `scribe-host.exe` — so the Status
+tab does not warn when `audacity.exe`'s is missing); a
+crash between labelling and closing leaves the plaintext working copy in
+`audacity-temp\` until Audacity's recovery prompt is discarded; a dump written
+by anything other than Windows Error Reporting, and any other program that
+opens or previews the WAV (a media player, a preview pane), are outside the
+exclusion; and the enrolment WAV — the practitioner's own voice — is outside
+the app's custody until it is deleted (the retention schedule's "Audacity
+working copy" and "Enrolment WAV" rows).
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -4044,12 +4080,14 @@ reader of the audit row, the encounter record or the Past-sessions label, a
 rollback below 0.2.0, the shadow setting becoming anything other than a user
 setting, the mode reaching Chrome (a protocol change), or the validation
 harness gaining a store, a network module or an input other than a set
-folder of invented or mock encounters. For the kept recordings: a new reader
+folder of synthetic encounters (invented content only; the mock role-plays
+were retired on 2026-10-09). For the kept recordings: a new reader
 or writer of a kept recording or of plaintext audio (a pin change in
 `tests/test_shadow_exits.py`), a second export destination rule or an
 "export anyway", a copy of a kept recording leaving this computer (excluded
 by the practitioner's decision of 2026-10-07 — it needs a new decision and
 its own consent wording), a change of the development-consent wording (a new
 version), a backup of Past sessions (which would carry the audio), the
-independent review's report on `development-consent-v1`, or a rollback below
-0.3.0.
+independent review's report on `development-consent-v1`, a rollback below
+0.3.0, or a change to how exported copies are labelled (a tool other than
+Audacity, or more than one copy at a time — residue (19)).

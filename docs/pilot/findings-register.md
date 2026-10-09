@@ -1,7 +1,8 @@
 # Findings register
 
-Every finding of the pilot — from the validation run, the role-plays, the shadow
-and reviewed consultations, and everyday use while the pilot runs — with its
+Every finding of the pilot — from the validation run, the clinic 1 smoke's
+measured recordings, the shadow and reviewed consultations, and everyday use
+while the pilot runs — with its
 severity, its status and the control that closes it. The exit gate
 ([exit-gate.md](exit-gate.md)) is read against this register: routine use at a
 clinic opens only when every high-severity finding is `resolved` or `controlled`.
@@ -16,9 +17,9 @@ This register is in the repository, which is public. A row holds **no clinical
 content**: no name, no date of birth, nothing that was said or written in a note,
 no Cliniko id and no session id. Describe what the app did in terms of the app —
 its category, the part of the app and the control — never the patient. An
-encounter is named only by a synthetic id (`syn-01` …) or a neutral role-play id
-(`rp-01` …); a real consultation is `—`, and its own detail stays in Cliniko and
-in your off-repository pilot log.
+encounter is named only by a synthetic id (`syn-01` …); a real consultation —
+shadow, reviewed, everyday, or a kept recording measured in the smoke — is `—`,
+and its own detail stays in Cliniko and in your off-repository pilot log.
 
 ## Columns
 
@@ -26,10 +27,10 @@ in your off-repository pilot log.
 - **Found** — the MONTH the finding was made (YYYY-MM), never the day: a public
   row dated to the day of a shadow or reviewed consultation could let a patient
   recognise their own. The day stays in your off-repository pilot log.
-- **Clinic** — `1`, `2`, or `—` (validation and role-plays).
-- **Stage** — `validation`, `role-play`, `shadow`, `reviewed`, `everyday` or
-  `other`.
-- **Encounter** — a synthetic or role-play id, or `—`.
+- **Clinic** — `1`, `2`, or `—` (validation).
+- **Stage** — `validation`, `smoke` (a kept recording's measurement in the
+  clinic 1 smoke), `shadow`, `reviewed`, `everyday` or `other`.
+- **Encounter** — a synthetic id, or `—`.
 - **Severity** — `high`, `medium` or `low` (below).
 - **Category** — one of:
   - the rubric's R4 kinds: `wrong-side`, `wrong-dose`, `negation-flipped`,
