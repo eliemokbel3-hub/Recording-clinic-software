@@ -179,6 +179,15 @@ def test_the_wer_names_and_key_are_d10s() -> None:
         "scribe-host.exe",
     )
     assert exclusions.WER_PRODUCTION_APPLICATIONS == ("scribe-app.exe", "scribe-host.exe")
+    # Clinic-smoke plan D11 (Task 1.5): the dev register script writes one
+    # more, ``audacity.exe``, from its own superset; the app's own required
+    # lists above stay four (dev) and two (production).
+    assert exclusions.WER_REGISTERED_APPLICATIONS == (
+        *WER_EXCLUDED_APPLICATIONS,
+        "audacity.exe",
+    )
+    assert exclusions.wer_applications("dev") == WER_EXCLUDED_APPLICATIONS
+    assert "audacity.exe" not in exclusions.wer_applications("production")
 
 
 # ---------------------------------------------------------------------------

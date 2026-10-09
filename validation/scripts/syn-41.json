@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-41",
+  "appointment_type": "initial",
+  "axes": ["laterality", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "Good afternoon. What brings you in today?"},
+    {"role": "patient", "text": "I'm here about pain in my left shoulder, I think it started after painting the fence."},
+    {"role": "clinician", "text": "Does it wake you at night?"},
+    {"role": "patient", "text": "Sometimes, maybe twice a week, I'm not really sure."},
+    {"role": "clinician", "text": "On examination the left shoulder is tender to touch over the front. Range of motion is reduced in abduction."},
+    {"role": "clinician", "text": "The plan is weekly treatment with a home exercise sheet. Book in for next week."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "shoulder"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["left", "shoulder"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["tender", "to", "touch"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

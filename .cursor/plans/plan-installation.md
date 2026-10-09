@@ -2465,7 +2465,7 @@ Reconciled 2026-10-04 at completion. The pilot plan, the machine allow-list, cod
   - an UNCERTAINTY-SURFACED tally;
   - the commit and the models-manifest hash.
 
-  The set is about 40 scripts voiced by text-to-speech, with a voice per role, rate variation, mixed noise at fixed signal-to-noise ratios and simulated overlap, plus about 10 practitioner role-plays. The role-plays are the shared recording set, practitioner-profile Task 6.1, which also feeds Task 2.3/6.2, D-S1 and the 9.1 rubric run. A practitioner-RATIFIED pass rule is set before the run.
+  The set is about 40 scripts (50 since `plan-clinic-smoke.md` Phase 1, 2026-10-09, three installed voices) voiced by text-to-speech, with a voice per role, rate variation, mixed noise at fixed signal-to-noise ratios and simulated overlap, plus about 10 practitioner role-plays. The role-plays are the shared recording set, practitioner-profile Task 6.1, which also feeds Task 2.3/6.2, D-S1 and the 9.1 rubric run. A practitioner-RATIFIED pass rule is set before the run.
 - **Governance documents.** A pilot-log template (text-free; the filled copy stays off-repo), a findings register (no session ids; severity, R4-anchored category, status open/resolved/controlled), and an exit gate with routine use opened PER CLINIC (clinic 1 does not wait on clinic 2's Cliniko permission). `incident-process.md` points clinical-safety incidents to the register.
 - **Runs:**
   - validation (at least 50);

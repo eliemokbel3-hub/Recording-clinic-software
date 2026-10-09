@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-46",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Last session today. How is the ankle out of ten?"},
+    {"role": "patient", "text": "About 1 out of 10, only on uneven ground."},
+    {"role": "clinician", "text": "Great. Keep the balance exercises going three times a week. No further sessions are needed. Bye."},
+    {"role": "patient", "text": "Thank you, bye."},
+    {"role": "clinician", "text": "Hi, come through. You're here about your elbow?"},
+    {"role": "patient", "text": "Yes, the pain in my left elbow is 6 out of 10 when I grip."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["1", "out", "of", "10"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["balance", "exercises"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["6", "out", "of", "10"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

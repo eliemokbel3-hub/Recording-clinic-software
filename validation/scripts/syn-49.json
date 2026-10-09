@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-49",
+  "appointment_type": "acute",
+  "axes": ["rate", "uncertain", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Which foot did you hurt?"},
+    {"role": "patient", "text": "The right foot, I think, the pain in my right heel started on Monday."},
+    {"role": "clinician", "text": "Is it worse first thing in the morning?"},
+    {"role": "patient", "text": "Possibly, it hurts most when I get out of bed, I'm not sure."},
+    {"role": "clinician", "text": "On examination the right heel is tender to touch at the plantar fascia insertion. The plan is a calf stretch twice a day."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "heel"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["hurts", "most"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "laterality", "tokens": ["right", "heel"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": -2}
+}

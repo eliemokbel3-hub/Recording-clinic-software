@@ -1054,12 +1054,14 @@ practitioner-run developer tool that prints numbers only (flow 27).
     - EXCLUSIONS. For a source checkout (the developer build),
       `scripts/register-native-host.py` (run from a normal
       terminal) writes and reads back `pythonw.exe`, `python.exe`,
-      `scribe-app.exe` and `scribe-host.exe` = DWORD 1 under
+      `scribe-app.exe`, `scribe-host.exe` and `audacity.exe` = DWORD 1 under
       `HKCU\Software\Microsoft\Windows\Windows Error
       Reporting\ExcludedApplications`; `--unregister` removes them
       (`python.exe` since the development-recordings plan's hardening round
       45: the two tools that read a real consultation run under it and refuse
-      without it — flow 27). For the installed app the installer writes `scribe-app.exe` and
+      without it — flow 27; `audacity.exe` since the clinic-smoke plan's
+      D11, for Audacity labelling an exported kept recording — the app's own
+      start-up check requires only the first four). For the installed app the installer writes `scribe-app.exe` and
       `scribe-host.exe` = DWORD 1 under the same key in HKLM, plus the
       backup and snapshot values for live sessions and logs (flow 23). At
       every start-up, before the window, `app.main` marks the channel's data

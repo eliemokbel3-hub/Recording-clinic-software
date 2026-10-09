@@ -16,5 +16,5 @@
     {"kind": "absent", "tokens": ["holiday", "up", "north"], "line": 2, "material": false},
     {"kind": "absent", "tokens": ["pain", "in", "my", "left", "ankle"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

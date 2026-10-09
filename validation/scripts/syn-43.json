@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-43",
+  "appointment_type": "acute",
+  "axes": ["end_and_new_patient", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Morning. Did you have a good weekend at the beach?"},
+    {"role": "patient", "text": "We did, the kids built a huge sandcastle."},
+    {"role": "clinician", "text": "So what happened to the wrist?"},
+    {"role": "patient", "text": "I fell off my bike on Friday and the pain in my right wrist is worse when I lift things."},
+    {"role": "clinician", "text": "On examination the right wrist is swollen but there is no tenderness over the scaphoid. Today we did taping. Goodbye for now."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "Hello, come in and take a seat. You're here about your neck?"},
+    {"role": "patient", "text": "Yes, my neck has been stiff for a month and I take diclofenac 50 milligrams."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["huge", "sandcastle"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["right", "wrist"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["right", "wrist"], "line": 4, "material": true},
+    {"kind": "negation", "tokens": ["no", "tenderness"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["diclofenac", "50", "milligrams"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

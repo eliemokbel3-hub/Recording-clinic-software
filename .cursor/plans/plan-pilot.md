@@ -35,7 +35,7 @@ Planning sources: `plan-installation.md` "Follow-Up Continuation Notes" (the pra
 - Shadow mode covering EVERY recording started while the setting is on (practitioner, 2026-10-04 — widened from "linked recordings" so a desktop-started recording cannot be copied into Cliniko): Write draft, every Copy of note text and Past sessions' "Copy saved note" refused by name; the note body display-only; no phrase or shorthand learning from a shadow Save (practitioner, 2026-10-04).
 - Audit row v2 (`mode`, `app_version`), encounter record v2 and Past-sessions label v2, each with upgrade-on-read and two-way tests.
 - The app version shown on the Status tab; the build becomes 0.2.0.
-- The validation harness, its metrics, the text-to-speech set builder, about 40 synthetic scripts, and its documentation.
+- The validation harness, its metrics, the text-to-speech set builder, about 40 synthetic scripts (50 since `plan-clinic-smoke.md` Phase 1, 2026-10-09), and its documentation.
 - Governance documents in `docs/pilot/`, the consent sheet's pilot paragraph (`patient-info-v2`), and the security documents updated for all of the above.
 - The role-play recording set (practitioner-profile Task 6.1), which also closes speaker measurement (Phase 3A Task 2.3 / profile 6.2), decision D-S1 and the Task 9.1 quality run.
 - The practitioner runs and the per-clinic exit gates (Phase P), including note-learning Task P.2 and clinic 2's owed safeguards and draft-write smokes.
@@ -83,6 +83,7 @@ Planning sources: `plan-installation.md` "Follow-Up Continuation Notes" (the pra
   - Risk if assumption becomes false: one voice for both roles weakens the speaker-separation part of the synthetic set.
   - Trigger for revisit: Task 2.5's enumeration reports fewer than two.
   - Recommended next action: install a second Windows voice (Settings, Speech), or separate roles by rate and pitch and say so in the report.
+  - [2026-10-09 Revalidated — `plan-clinic-smoke.md` Task 0.3] Three SAPI voices are installed, and the scripts now need all three: the current voice baseline is 0 = Microsoft David Desktop (US), 1 = Microsoft Hazel Desktop (GB, added that day through Language & region with text-to-speech), 2 = Microsoft Zira Desktop (US). Adding Hazel renumbered Zira from 1 to 2, so `syn-01`…`syn-40` were remapped to slots 0 and 2 (voices unchanged) and `syn-41`…`syn-50`'s patient is slot 1 (the synthetic accent coverage, clinic-smoke D4). The builder still refuses fewer than two voices; with fewer than three, a script using slot 2 fails by name. Before every build the practitioner lists the voices and builds only if every used slot's name equals the baseline (`docs/testing/validation-harness.md`, "How to run it").
 
 ### Key Design Decisions
 - See `Design Decisions` (D1–D13); each still applies to follow-up work unless it says otherwise.

@@ -14,5 +14,5 @@
     {"kind": "laterality", "tokens": ["positive", "on", "the", "right"], "line": 2, "material": true},
     {"kind": "present", "tokens": ["50", "degrees"], "line": 2, "material": true, "expect_uncertain": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "snr_db": 0}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "snr_db": 0}
 }

@@ -14,5 +14,5 @@
     {"kind": "present", "tokens": ["calf", "stretch"], "line": 2, "material": true},
     {"kind": "dose", "tokens": ["ibuprofen", "200", "milligrams"], "line": 3, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 3}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 3}
 }

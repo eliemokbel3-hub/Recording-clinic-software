@@ -17,7 +17,7 @@
     {"kind": "present", "tokens": ["refer", "you", "for", "an", "x", "ray"], "line": 4, "material": true}
   ],
   "conditions": {
-    "voice_slots": {"clinician": 0, "patient": 1},
+    "voice_slots": {"clinician": 0, "patient": 2},
     "overlap_seconds": 0.6,
     "overlap_lines": [3]
   }

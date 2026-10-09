@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-42",
+  "appointment_type": "follow_up",
+  "axes": ["negation", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How has the knee been since the last visit?"},
+    {"role": "patient", "text": "Better since the last visit. The pain score is about 3 out of 10 now."},
+    {"role": "clinician", "text": "Any swelling or locking?"},
+    {"role": "patient", "text": "No swelling and no locking."},
+    {"role": "clinician", "text": "I explained the risks of dry needling to the quadriceps. Are you happy to proceed?"},
+    {"role": "patient", "text": "Yes, I'm happy to proceed."},
+    {"role": "clinician", "text": "Today we did dry needling and soft tissue work. Review you in two weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["3", "out", "of", "10"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "swelling"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["happy", "to", "proceed"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

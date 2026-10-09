@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-44",
+  "appointment_type": "chronic",
+  "axes": ["noise", "uncertain"],
+  "lines": [
+    {"role": "clinician", "text": "How is the lower back since I saw you?"},
+    {"role": "patient", "text": "About the same since I saw you, I think the pain in my lower back is worse in the mornings."},
+    {"role": "clinician", "text": "Any pain at night or numbness in the legs?"},
+    {"role": "patient", "text": "No numbness, but maybe some night pain, I'm not certain."},
+    {"role": "clinician", "text": "On examination lumbar range of motion is reduced in flexion. Today we did soft tissue work and mobilisation."},
+    {"role": "clinician", "text": "See you in three weeks."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["worse", "in", "the", "mornings"], "line": 1, "material": true, "expect_uncertain": true},
+    {"kind": "negation", "tokens": ["no", "numbness"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["some", "night", "pain"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["reduced", "in", "flexion"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "snr_db": 12}
+}

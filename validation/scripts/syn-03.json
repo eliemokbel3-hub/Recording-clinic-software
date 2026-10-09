@@ -17,5 +17,5 @@
     {"kind": "present", "tokens": ["neck", "hurts"], "line": 3, "material": true},
     {"kind": "negation", "tokens": ["no", "fever"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

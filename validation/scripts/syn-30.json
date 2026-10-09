@@ -15,5 +15,5 @@
     {"kind": "present", "tokens": ["5", "out", "of", "10"], "line": 3, "material": true, "expect_uncertain": true},
     {"kind": "present", "tokens": ["review", "the", "medication"], "line": 4, "material": false}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "snr_db": 2}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}, "snr_db": 2}
 }

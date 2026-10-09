@@ -16,5 +16,5 @@
     {"kind": "absent", "tokens": ["call", "the", "plumber"], "line": 3, "material": true},
     {"kind": "present", "tokens": ["range", "of", "motion", "is", "full"], "line": 4, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 5}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 5}
 }

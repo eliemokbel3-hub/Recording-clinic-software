@@ -2942,11 +2942,15 @@ the installation plan also `packaging/scribe.iss`, its D6/D10).
     the start-up check reads HKLM, then HKCU, and is satisfied by either;
   - a SOURCE checkout (the developer build): the register script writes, and
     reads back, the per-user values `pythonw.exe`, `python.exe`,
-    `scribe-app.exe` and `scribe-host.exe` = 1 under
+    `scribe-app.exe`, `scribe-host.exe` and — since the clinic-smoke plan's
+    D11 (2026-10-09), for Audacity, which opens an exported kept recording to
+    label its speakers, from the register script's own superset
+    `WER_REGISTERED_APPLICATIONS`; the app's start-up check still requires
+    only the first four — `audacity.exe` = 1 under
     `HKCU\Software\Microsoft\Windows\Windows Error
     Reporting\ExcludedApplications` (what
     `WerAddExcludedApplication(..., FALSE)` writes); `--unregister` removes
-    only those four values. `pythonw.exe` is needed because the venv
+    only those five values. `pythonw.exe` is needed because the venv
     launchers start the BASE `pythonw.exe` as a child; `python.exe` (since the
     development-recordings plan's hardening round 45, practitioner decision
     2026-10-08) because the two tools that read a real consultation — the

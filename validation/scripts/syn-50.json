@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-50",
+  "appointment_type": "post_operative",
+  "axes": ["contradictory", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "How was the drive in? The roadworks are everywhere."},
+    {"role": "patient", "text": "Slow, the roadworks added twenty minutes."},
+    {"role": "clinician", "text": "Anyway, it's three weeks since the left wrist fracture was plated. What are you taking for pain?"},
+    {"role": "patient", "text": "Paracetamol 1000 milligrams twice a day. Sorry, no, it's 500 milligrams twice a day."},
+    {"role": "clinician", "text": "So paracetamol 500 milligrams twice a day. On examination wrist extension is 40 degrees."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["roadworks", "added", "twenty", "minutes"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["left", "wrist", "fracture"], "line": 2, "material": true},
+    {"kind": "dose", "tokens": ["500", "milligrams", "twice", "a", "day"], "line": 3, "material": true},
+    {"kind": "dose", "tokens": ["paracetamol", "500", "milligrams"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["40", "degrees"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

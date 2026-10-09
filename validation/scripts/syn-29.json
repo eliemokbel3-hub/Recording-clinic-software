@@ -16,7 +16,7 @@
     {"kind": "negation", "tokens": ["no", "tenderness", "to", "touch"], "line": 4, "material": true}
   ],
   "conditions": {
-    "voice_slots": {"clinician": 0, "patient": 1},
+    "voice_slots": {"clinician": 0, "patient": 2},
     "rate": 2,
     "overlap_seconds": 0.5,
     "overlap_lines": [1]

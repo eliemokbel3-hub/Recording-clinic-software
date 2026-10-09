@@ -15,5 +15,5 @@
     {"kind": "negation", "tokens": ["no", "calf", "pain"], "line": 1, "material": true},
     {"kind": "absent", "tokens": ["aspirin", "300", "milligrams"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}}
 }

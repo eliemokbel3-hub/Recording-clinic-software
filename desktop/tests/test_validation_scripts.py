@@ -46,6 +46,31 @@ def _scripts() -> list[EncounterScript]:
     return [load_script(path) for path in sorted(SCRIPTS.glob("*.json"))]
 
 
+# Clinic-smoke plan Task 1.2: one fake voice per slot up to the highest any
+# script uses, so a voice's real SAPI index (Task 0.3) never fails the lint.
+FAKE_VOICES: tuple[str, ...] = tuple(
+    f"Voice {index}"
+    for index in range(
+        1
+        + max(
+            slot
+            for script in _scripts()
+            if script.conditions is not None
+            for slot in script.conditions.voice_slots.values()
+        )
+    )
+)
+# Task 0.3's baseline: the third installed voice (Hazel, GB) sits at slot 1
+# and is the patient of exactly syn-41…50 (D4); syn-01…40 use slots 0 and 2.
+THIRD_VOICE_SLOT = 1
+THIRD_VOICE_SCRIPTS = frozenset(f"syn-{number}" for number in range(41, 51))
+# The baseline pinned on its own (peer round 8 PR-LOW-011): FAKE_VOICES grows
+# with the scripts, so it cannot catch a slot drifting past the three
+# installed voices. A deliberate remap changes these in the same commit.
+OLDER_SCRIPT_SLOTS = frozenset({0, 2})
+THIRD_VOICE_SCRIPT_SLOTS = {"clinician": 0, "patient": THIRD_VOICE_SLOT}
+
+
 def _contains(tokens: tuple[str, ...], needle: tuple[str, ...]) -> bool:
     return bool(_occurrences(tokens, needle))
 
@@ -60,8 +85,34 @@ def _short_turn(text: str, voice: int, rate: int) -> bytes:
 class TestScripts:
     def test_every_script_loads(self) -> None:
         scripts = _scripts()
-        assert len(scripts) >= 40
+        assert len(scripts) >= 50
         assert len({script.encounter_id for script in scripts}) == len(scripts)
+
+    def test_every_slot_is_in_range_and_the_third_voice_is_the_new_scripts_patient(
+        self,
+    ) -> None:
+        used: dict[str, dict[str, int]] = {}
+        for script in _scripts():
+            assert script.conditions is not None, script.encounter_id
+            used[script.encounter_id] = script.conditions.voice_slots
+        assert all(
+            slot < len(FAKE_VOICES) for slots in used.values() for slot in slots.values()
+        )
+        third = {
+            encounter_id: [role for role, slot in slots.items() if slot == THIRD_VOICE_SLOT]
+            for encounter_id, slots in used.items()
+            if THIRD_VOICE_SLOT in slots.values()
+        }
+        assert third == {encounter_id: ["patient"] for encounter_id in THIRD_VOICE_SCRIPTS}
+
+    def test_every_script_uses_the_current_voice_baseline(self) -> None:
+        for script in _scripts():
+            assert script.conditions is not None, script.encounter_id
+            slots = script.conditions.voice_slots
+            if script.encounter_id in THIRD_VOICE_SCRIPTS:
+                assert slots == THIRD_VOICE_SCRIPT_SLOTS, script.encounter_id
+            else:
+                assert set(slots.values()) == OLDER_SCRIPT_SLOTS, script.encounter_id
 
     def test_each_axis_appears_at_least_three_times(self) -> None:
         counts = Counter(axis for script in _scripts() for axis in script.axes)
@@ -203,9 +254,9 @@ class TestValidationConfig:
 
 class TestRenderable:
     @pytest.mark.parametrize("path", sorted(SCRIPTS.glob("*.json")), ids=lambda path: path.stem)
-    def test_every_script_renders_with_two_fake_voices(self, path: Path) -> None:
+    def test_every_script_renders_with_fake_voices(self, path: Path) -> None:
         script = load_script(path)
-        pcm, labels, placement = render_encounter(script, ("Voice 0", "Voice 1"), _short_turn)
+        pcm, labels, placement = render_encounter(script, FAKE_VOICES, _short_turn)
         assert len(pcm) == placement.total * 2
         track = parse_audacity_labels(labels)
         assert [span.label for span in track.spans] == [line.role for line in script.lines]

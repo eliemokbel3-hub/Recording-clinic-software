@@ -68,7 +68,8 @@ set up and build it, and make releases; the installed app needs none of them.
   Phase 2) — thin launchers for `scribe_desktop.validation_set` and
   `scribe_desktop.validation`. The first speaks each synthetic script with the
   installed Windows voices into `<id>.wav` + `<id>.txt` plus a copy of
-  `<id>.json`, with an `<id>.built` ownership mark (needs two voices and PyAV
+  `<id>.json`, with an `<id>.built` ownership mark (needs three voices in the
+  current voice baseline's order — slots 0, 1 and 2 — and PyAV
   from the `[ml]` extra; the set folder must be outside the repository, and a
   role-play in it — its `<id>.json`, or its WAV or label track without the
   mark — is never overwritten); the

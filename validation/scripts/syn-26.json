@@ -17,5 +17,5 @@
     {"kind": "negation", "tokens": ["no", "pins", "and", "needles"], "line": 3, "material": true},
     {"kind": "present", "tokens": ["i", "give", "my", "consent"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

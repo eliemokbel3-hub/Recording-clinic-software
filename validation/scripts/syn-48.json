@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-48",
+  "appointment_type": "follow_up",
+  "axes": ["rate", "contradictory"],
+  "lines": [
+    {"role": "clinician", "text": "How is the neck since last session?"},
+    {"role": "patient", "text": "Worse since last session. Actually no, it is better, I mixed up the weeks."},
+    {"role": "clinician", "text": "So it is better. Any headaches?"},
+    {"role": "patient", "text": "No headaches this week."},
+    {"role": "clinician", "text": "On examination cervical rotation is 70 degrees each way. Today we did soft tissue work."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["it", "is", "better"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "headaches"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["70", "degrees"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 2}
+}

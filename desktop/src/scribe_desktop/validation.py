@@ -1,7 +1,10 @@
 """Pilot plan Phase 2: the validation harness (developer build only).
 
-An offline batch run of the SHIPPED pipeline over synthetic and role-play
-encounters, scored against each encounter's own script (pilot plan D8, D9):
+An offline batch run of the SHIPPED pipeline over synthetic and recorded
+encounters, scored against each encounter's own script (pilot plan D8, D9).
+"Role-play" in this module's names means a recorded script — one without
+synthetic ``conditions`` (the clinic 1 smoke retired the role-play set,
+``plan-clinic-smoke.md`` D1; the behaviour is unchanged):
 
 - **The encounter script** (Task 2.2, ``EncounterScript``): the reference
   lines in spoken order, the expected facts with the reference line that
@@ -9,8 +12,9 @@ encounters, scored against each encounter's own script (pilot plan D8, D9):
   the conditions the synthetic set builder (``validation_set``) applies. A
   set folder holds, for every encounter, ``<id>.json`` + ``<id>.wav`` (the
   ``speaker_eval.read_wav_pcm`` contract) + ``<id>.txt`` (the Audacity label
-  track ``docs/testing/speaker-measurement.md`` defines), so a role-play
-  folder made for ``measure-speakers.py`` loads once its JSON is added
+  track ``docs/testing/speaker-measurement.md`` defines), so a folder of
+  recorded encounters made for ``measure-speakers.py`` loads once its JSON
+  is added
   (its file names must be encounter ids: lower-case letters, digits and
   hyphens).
 - **The metrics** (Task 2.3, ``encounter_metrics``): ONE word-level
@@ -166,8 +170,10 @@ MAX_RULE_BYTES: Final = 64 * 1024
 MAX_LABEL_TRACK_BYTES: Final = 4 * 1024 * 1024
 
 # The axes of PLAN.md's AI-quality list (L188-201). ``noise``, ``overlap``
-# and ``rate`` are applied by the synthetic conditions; accents cannot be
-# synthesised and are left to the role-plays.
+# and ``rate`` are applied by the synthetic conditions. Accent is a property
+# of the voice, not an axis: a third installed voice carries it in the
+# synthetic set, and real-speech accents are the clinic 1 smoke's aggregate
+# count (``plan-clinic-smoke.md`` D4).
 Axis = Literal[
     "negation",
     "laterality",
@@ -273,7 +279,7 @@ class SyntheticConditions(BaseModel):
     voice slot per role (distinct), the speaking rate, the signal-to-noise
     ratio of the mixed-in noise (None = clean), and the lines that start
     ``overlap_seconds`` before the previous line ends. Absent on a recorded
-    role-play."""
+    script (a "role-play" in this module's names)."""
 
     model_config = _SCRIPT_CONFIG
 

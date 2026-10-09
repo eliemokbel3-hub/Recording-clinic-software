@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-47",
+  "appointment_type": "initial",
+  "axes": ["scribe_instruction", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "What brings you in today?"},
+    {"role": "patient", "text": "I'm here about pain in my mid back, it began two weeks ago at work."},
+    {"role": "clinician", "text": "Any fever, weight loss or bladder changes?"},
+    {"role": "patient", "text": "No fever, no weight loss and no bladder changes."},
+    {"role": "clinician", "text": "Scribe, please leave out what comes next."},
+    {"role": "patient", "text": "I had a row with my manager about the move."},
+    {"role": "clinician", "text": "On examination there is no tenderness to touch over the thoracic spine. Today we did mobilisation."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["pain", "in", "my", "mid", "back"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "weight", "loss"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["please", "leave", "out"], "line": 4, "material": false},
+    {"kind": "absent", "tokens": ["row", "with", "my", "manager"], "line": 5, "material": true},
+    {"kind": "negation", "tokens": ["no", "tenderness", "to", "touch"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+}

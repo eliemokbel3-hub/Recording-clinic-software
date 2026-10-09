@@ -16,7 +16,7 @@
     {"kind": "present", "tokens": ["worse", "after", "sitting"], "line": 3, "material": true}
   ],
   "conditions": {
-    "voice_slots": {"clinician": 1, "patient": 0},
+    "voice_slots": {"clinician": 2, "patient": 0},
     "overlap_seconds": 0.8,
     "overlap_lines": [2]
   }

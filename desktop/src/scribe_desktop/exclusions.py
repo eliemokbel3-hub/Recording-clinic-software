@@ -91,6 +91,15 @@ WER_EXCLUDED_APPLICATIONS: Final[tuple[str, ...]] = (
     "python.exe",
     *WER_PRODUCTION_APPLICATIONS,
 )
+# Clinic-smoke plan D11 (Task 1.5): what the dev register script writes,
+# reads back and removes — the list above plus ``audacity.exe``, which holds
+# a kept recording's exported copy while the practitioner labels its
+# speakers. Registration-owned: the app's own check (``wer_applications``)
+# still requires only the list above.
+WER_REGISTERED_APPLICATIONS: Final[tuple[str, ...]] = (
+    *WER_EXCLUDED_APPLICATIONS,
+    "audacity.exe",
+)
 WER_EXCLUDED_VALUE: Final = 1
 
 Hive = Literal["HKCU", "HKLM"]

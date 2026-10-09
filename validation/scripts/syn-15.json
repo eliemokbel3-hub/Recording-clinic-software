@@ -17,7 +17,7 @@
     {"kind": "present", "tokens": ["90", "degrees", "of", "elevation"], "line": 4, "material": true}
   ],
   "conditions": {
-    "voice_slots": {"clinician": 0, "patient": 1},
+    "voice_slots": {"clinician": 0, "patient": 2},
     "overlap_seconds": 0.5,
     "overlap_lines": [4]
   }

@@ -17,5 +17,5 @@
     {"kind": "laterality", "tokens": ["right", "knee"], "line": 4, "material": true},
     {"kind": "present", "tokens": ["110", "degrees", "of", "flexion"], "line": 4, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}}
 }

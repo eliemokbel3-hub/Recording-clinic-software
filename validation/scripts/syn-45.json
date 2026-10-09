@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "syn-45",
+  "appointment_type": "post_operative",
+  "axes": ["overlap", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "It's eight weeks since the right knee arthroscopy. How are the stairs?"},
+    {"role": "patient", "text": "Going up is fine, coming down still hurts a little."},
+    {"role": "clinician", "text": "Any clicking or swelling in the right knee?"},
+    {"role": "patient", "text": "A little swelling after long walks, no clicking."},
+    {"role": "clinician", "text": "On examination the right knee flexes to 125 degrees. Home exercise is step downs and squats."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "knee", "arthroscopy"], "line": 0, "material": true},
+    {"kind": "negation", "tokens": ["no", "clicking"], "line": 3, "material": true},
+    {"kind": "laterality", "tokens": ["right", "knee"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["125", "degrees"], "line": 4, "material": true}
+  ],
+  "conditions": {
+    "voice_slots": {"clinician": 0, "patient": 1},
+    "overlap_seconds": 0.5,
+    "overlap_lines": [3]
+  }
+}

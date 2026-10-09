@@ -14,5 +14,5 @@
     {"kind": "present", "tokens": ["pain", "in", "my", "back"], "line": 1, "material": true}
   ],
   "expected_warnings": ["dose_mismatch", "contradiction", "contradiction_low_confidence"],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}}
 }

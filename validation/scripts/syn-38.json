@@ -15,5 +15,5 @@
     {"kind": "present", "tokens": ["3", "out", "of", "10", "in", "the", "morning"], "line": 1, "material": true},
     {"kind": "absent", "tokens": ["prednisolone", "25", "milligrams"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}}
 }

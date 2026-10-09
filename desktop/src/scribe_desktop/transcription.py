@@ -51,7 +51,8 @@ per segment is retained from it, the raw cosine against the enrolled vector),
 and the labels follow D13 as amended 2026-09-16 (Task 2.6): the
 practitioner's cluster is ``speaker_1`` and the WHOLE non-practitioner
 remainder is ``speaker_2`` — a third label returns only when D-S1 estimates
-the speaker count from the shared recording set. The document then carries
+the speaker count, decided from the clinic 1 smoke's measured recordings
+(``plan-clinic-smoke.md``). The document then carries
 ``enrolled_speaker`` / ``enrolment_similarity`` / ``speaker_model_id`` — a
 SEPARATE field the Transcript screen auto-confirms from (D4), never a speaker
 label itself (D1). Without both inputs the path below runs exactly as before,
@@ -872,7 +873,8 @@ def attribute_speakers(
     non-identical segments always yields two clusters and so split one
     other voice into two labels in every ordinary two-person consultation;
     a third label (``SPEAKER_3``) returns only when D-S1 estimates the
-    speaker count, which needs the shared recording set — until then a
+    speaker count, decided from the clinic 1 smoke's measured recordings
+    (``plan-clinic-smoke.md``) — until then a
     second other voice is merged into ``speaker_2``, exactly as the
     no-profile path merges it today. With NO match the ordinary 2-means
     over every segment runs and the cluster with the higher mean

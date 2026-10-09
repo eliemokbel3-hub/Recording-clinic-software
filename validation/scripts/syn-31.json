@@ -18,5 +18,5 @@
     {"kind": "absent", "tokens": ["racing", "my", "brother-in-law"], "line": 5, "material": true},
     {"kind": "laterality", "tokens": ["right", "calf"], "line": 6, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

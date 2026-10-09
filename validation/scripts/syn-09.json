@@ -17,5 +17,5 @@
     {"kind": "negation", "tokens": ["no", "numbness"], "line": 5, "material": true}
   ],
   "expected_warnings": ["contradiction", "contradiction_low_confidence"],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

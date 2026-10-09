@@ -15,5 +15,5 @@
     {"kind": "laterality", "tokens": ["left", "lateral", "epicondyle"], "line": 4, "material": true},
     {"kind": "present", "tokens": ["tender", "to", "touch"], "line": 4, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "rate": -3}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}, "rate": -3}
 }

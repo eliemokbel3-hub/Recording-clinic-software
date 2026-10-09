@@ -15,5 +15,5 @@
     {"kind": "present", "tokens": ["a", "bit", "less"], "line": 3, "material": false},
     {"kind": "negation", "tokens": ["no", "tenderness"], "line": 4, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

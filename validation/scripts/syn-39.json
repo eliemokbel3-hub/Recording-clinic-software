@@ -14,5 +14,5 @@
     {"kind": "dose", "tokens": ["codeine", "15", "milligrams", "at", "night"], "line": 2, "material": true},
     {"kind": "present", "tokens": ["100", "degrees"], "line": 2, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

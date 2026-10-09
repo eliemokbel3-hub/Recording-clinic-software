@@ -17,5 +17,5 @@
     {"kind": "laterality", "tokens": ["left", "knee"], "line": 4, "material": true}
   ],
   "expected_warnings": ["laterality_mismatch"],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
 }

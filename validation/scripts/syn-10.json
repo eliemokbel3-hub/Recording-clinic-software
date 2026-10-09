@@ -18,5 +18,5 @@
     {"kind": "laterality", "tokens": ["right", "upper", "trapezius"], "line": 4, "material": true},
     {"kind": "present", "tokens": ["happy", "to", "proceed"], "line": 5, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 1, "patient": 0}, "snr_db": 20}
+  "conditions": {"voice_slots": {"clinician": 2, "patient": 0}, "snr_db": 20}
 }

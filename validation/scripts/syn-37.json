@@ -15,5 +15,5 @@
     {"kind": "laterality", "tokens": ["right", "side"], "line": 3, "material": true},
     {"kind": "laterality", "tokens": ["right", "side", "of", "the", "lumbar", "spine"], "line": 4, "material": true}
   ],
-  "conditions": {"voice_slots": {"clinician": 0, "patient": 1}, "rate": 4}
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}, "rate": 4}
 }

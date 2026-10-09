@@ -4,8 +4,10 @@ Thin by design: ``ruff`` and ``mypy`` run inside ``desktop/``, so all logic
 lives in ``scribe_desktop.validation_set`` and this file only dispatches
 (pinned by ``desktop/tests/test_validation_set.py``).
 
-Run it YOURSELF from a normal terminal on the developer build, with at least
-two Windows voices installed (Settings, Time & language, Speech):
+Run it YOURSELF from a normal terminal on the developer build, with three
+Windows voices installed in the current voice baseline's order (the scripts
+use voice slots 0, 1 and 2; list them first and compare —
+``docs/testing/validation-harness.md``, "How to run it"):
 
     .venv\\Scripts\\python.exe scripts\\build-validation-set.py validation\\scripts <set-folder>
 
