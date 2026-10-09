@@ -40,6 +40,7 @@ from typing import Literal, NamedTuple
 
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
+    DEFAULT_SECTION_CUES,
     ConfirmationDecision,
     GeneratedNote,
     NoteAssertion,
@@ -50,6 +51,7 @@ from scribe_desktop.note import (
     content_tokens,
     first_matching_section,
     is_interrogative,
+    layered_section,
     reconstruct_span_text,
     spoken_by_confirmed_clinician,
     text_digest,
@@ -415,13 +417,18 @@ def consider_learning(
     proposed = dict(cues)
     proposed[section_key] = (*proposed.get(section_key, ()), tokens)
     text = reconstruct_span_text(segment.transcript_words)
-    winner = first_matching_section(
+    line_tokens = content_tokens(text)
+    question = is_interrogative(text)
+    # The dry-run follows the provider's exact rule (note-routing-omissions
+    # plan D8): the own cues first, then the shipped cues as a fallback.
+    winner = layered_section(
         proposed,
-        content_tokens(text),
+        DEFAULT_SECTION_CUES,
+        line_tokens,
         CANONICAL_SECTION_KEYS,
         speaker=segment.speaker,
         clinician_speaker=draft.clinician_speaker,
-        question=is_interrogative(text),
+        question=question,
     )
     message = (
         f"Will learn '{candidate.phrase}' for {models.section_title(section_key)} "
@@ -431,6 +438,34 @@ def consider_learning(
         # PR-MED-011: noted, never a silent cue deletion — the earlier
         # section's cue keeps first-match routing for lines like this one.
         message += f" Note: a {models.section_title(winner)} cue still routes this line first."
+    elif winner == section_key:
+        # Today's route, when only the shipped layer routes the line: the
+        # learned phrase overrides that built-in cue (D1's precedence).
+        own_today = first_matching_section(
+            cues,
+            line_tokens,
+            CANONICAL_SECTION_KEYS,
+            speaker=segment.speaker,
+            clinician_speaker=draft.clinician_speaker,
+            question=question,
+        )
+        built_in = (
+            None
+            if own_today is not None
+            else first_matching_section(
+                DEFAULT_SECTION_CUES,
+                line_tokens,
+                CANONICAL_SECTION_KEYS,
+                speaker=segment.speaker,
+                clinician_speaker=draft.clinician_speaker,
+                question=question,
+            )
+        )
+        if built_in is not None and built_in != section_key:
+            message += (
+                f" Today a built-in cue sends this line to {models.section_title(built_in)};"
+                f" your phrase will take it to {models.section_title(section_key)}."
+            )
     return PhraseLearningVerdict(queued=(section_key, candidate.phrase), messages=(message,))
 
 

@@ -559,6 +559,73 @@ class TestPhraseLearning:
         assert verdict.messages == (models.LEARNING_OPTED_OUT_HINT,)
 
 
+def _moved(document: TranscriptDocument, segment_index: int, key: NoteSectionKey) -> NoteAssertion:
+    """A whole utterance placed in ``key`` — a move as the learner sees it."""
+    segment = document.transcript_segments[segment_index]
+    assertion = whole_utterance_assertion(
+        provider_assertion_id(segment_index),
+        key,
+        segment_index=segment_index,
+        speaker=segment.speaker,
+        words=segment.transcript_words,
+    )
+    assert assertion is not None
+    return assertion
+
+
+def _with_cues(config: NoteConfig, cues: dict[NoteSectionKey, tuple[str, ...]]) -> NoteConfig:
+    return NoteConfig(
+        template_profiles=config.template_profiles,
+        autofill_rules=config.autofill_rules,
+        prefill_templates=config.prefill_templates,
+        section_cues=cues,
+    )
+
+
+class TestPhraseLearningUnderLayering:
+    """Note-routing-omissions plan D8: the dry-run follows the provider's
+    two-pass rule — the own cues first, the shipped cues as a fallback."""
+
+    def _learn(self, config: NoteConfig, key: NoteSectionKey) -> str:
+        draft, document = _compose(config)
+        verdict = note_review.consider_learning(
+            _moved(document, _DIAGNOSIS_INDEX, key),
+            draft=draft,
+            document=document,
+            config=config,
+            learning_status=_Status(True),
+        )
+        assert verdict.queued is not None and verdict.queued[0] == key
+        [message] = verdict.messages
+        return message
+
+    def test_a_line_only_a_built_in_cue_routes_says_where_it_goes_today(self) -> None:
+        # No own cue routes segment 2; the shipped "the diagnosis is" does.
+        message = self._learn(_config(), "management_plan")
+        assert message.startswith("Will learn '")
+        assert "still routes this line first" not in message
+        assert message.endswith(
+            f" Today a built-in cue sends this line to {models.section_title('diagnosis')};"
+            f" your phrase will take it to {models.section_title('management_plan')}."
+        )
+
+    def test_an_own_cue_routing_it_today_draws_no_built_in_note(self) -> None:
+        # An own cue in a LATER section routes it today; the learned phrase
+        # (an earlier section) wins pass 1 — no built-in cue is involved.
+        config = _with_cues(_config(), {"follow_up_review": ("mild knee sprain",)})
+        message = self._learn(config, "management_plan")
+        assert "built-in" not in message
+        assert "still routes this line first" not in message
+
+    def test_an_earlier_own_cue_still_routes_first(self) -> None:
+        config = _with_cues(_config(), {"diagnosis": ("the diagnosis is",)})
+        message = self._learn(config, "management_plan")
+        assert message.endswith(
+            f" Note: a {models.section_title('diagnosis')} cue still routes this line first."
+        )
+        assert "built-in" not in message
+
+
 # --- (6) + (7): the boundary types -------------------------------------------
 
 _ASSERTION_ID = re.compile(r"[xmt][0-9]{4,}")

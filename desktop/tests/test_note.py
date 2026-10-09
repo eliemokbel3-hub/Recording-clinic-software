@@ -66,6 +66,7 @@ from scribe_desktop.note import (
     digest_bytes,
     first_matching_section,
     is_interrogative,
+    layered_section,
     manual_assertion_id,
     normalise_token,
     provider_assertion_id,
@@ -82,6 +83,7 @@ from scribe_desktop.note_config import (
     TemplateProfile,
     TemplateTarget,
     build_note_request,
+    load_note_config,
 )
 from scribe_desktop.speech import SAMPLE_RATE
 from scribe_desktop.transcription import (
@@ -2088,3 +2090,155 @@ class TestOwnershipRule:
             if warning.severity == "error"
         ]
         assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Layered routing (note-routing-omissions plan D1, Task 1.1): the config's own
+# cues first, the shipped cues only for an utterance the own cues do not route
+# — two passes, never a merged mapping, the ownership rule in both.
+# ---------------------------------------------------------------------------
+
+_OWN_EXERCISES: dict[NoteSectionKey, tuple[tuple[str, ...], ...]] = {
+    "advice_home_exercise": (("exercises",),),
+}
+# An own cue ("exercises") in a LATER section than a shipped cue ("sore",
+# Presenting complaint) in the same clinician line.
+_OWN_BEATS_SHIPPED = "These exercises will settle the sore knee"
+# No own cue; the shipped "hurts" routes it.
+_SHIPPED_ONLY = "My knee hurts on the stairs"
+_LAYER_DIAGNOSIS = "The diagnosis is a calf strain"
+
+
+def _layered(
+    text: str,
+    *,
+    speaker: str = SPEAKER_2,
+    clinician_speaker: str | None = SPEAKER_2,
+    own: dict[NoteSectionKey, tuple[tuple[str, ...], ...]] | None = None,
+) -> NoteSectionKey | None:
+    return layered_section(
+        _OWN_EXERCISES if own is None else own,
+        DEFAULT_SECTION_CUES,
+        content_tokens(text),
+        CANONICAL_SECTION_KEYS,
+        speaker=speaker,
+        clinician_speaker=clinician_speaker,
+        question=is_interrogative(text),
+    )
+
+
+class TestLayeredRouting:
+    def test_an_own_cue_beats_a_shipped_cue_in_an_earlier_section(self) -> None:
+        # A merged per-section list would be ONE pass in section order and
+        # put the clinician's line in Presenting complaint.
+        assert (
+            first_matching_section(
+                DEFAULT_SECTION_CUES,
+                content_tokens(_OWN_BEATS_SHIPPED),
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_2,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            == "presenting_complaint"
+        )
+        assert _layered(_OWN_BEATS_SHIPPED) == "advice_home_exercise"
+
+    def test_an_utterance_no_own_cue_routes_takes_the_shipped_section(self) -> None:
+        assert _layered(_SHIPPED_ONLY, speaker=SPEAKER_1) == "presenting_complaint"
+        assert _layered(_SHIPPED_ONLY, own={}) == "presenting_complaint"
+
+    def test_the_ownership_rule_holds_in_the_shipped_pass(self) -> None:
+        assert _layered(_LAYER_DIAGNOSIS) == "diagnosis"
+        assert _layered(_LAYER_DIAGNOSIS, speaker=SPEAKER_1) is None
+        assert _layered(_LAYER_DIAGNOSIS, clinician_speaker=None) is None
+
+    def test_the_ownership_rule_holds_in_the_own_pass(self) -> None:
+        own: dict[NoteSectionKey, tuple[tuple[str, ...], ...]] = {
+            "diagnosis": (("calf", "strain"),),
+        }
+        assert _layered("A calf strain", own=own) == "diagnosis"
+        # Refused in pass 1, and no shipped cue matches it either.
+        assert _layered("A calf strain", own=own, speaker=SPEAKER_1) is None
+
+    def test_a_question_is_refused_in_the_shipped_pass_as_in_the_own_pass(self) -> None:
+        assert _layered(f"{_LAYER_DIAGNOSIS}?") is None
+        own: dict[NoteSectionKey, tuple[tuple[str, ...], ...]] = {
+            "diagnosis": (("calf", "strain"),),
+        }
+        assert _layered("A calf strain?", own=own) is None
+
+    def test_empty_tokens_route_nowhere_in_either_pass(self) -> None:
+        assert (
+            layered_section(
+                DEFAULT_SECTION_CUES,
+                DEFAULT_SECTION_CUES,
+                (),
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_2,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            is None
+        )
+
+    def test_the_provider_routes_by_both_layers(self) -> None:
+        document = _document(
+            texts=((_SHIPPED_ONLY, SPEAKER_1), (_OWN_BEATS_SHIPPED, SPEAKER_2))
+        )
+        layered = ExtractiveNoteProvider(
+            cues=_OWN_EXERCISES, fallback_cues=DEFAULT_SECTION_CUES
+        ).generate_sections(_request(document=document))
+        routed = {
+            assertion.note_span.source_coords.segment_index: section.section_key
+            for section in layered
+            for assertion in section.note_assertions
+            if assertion.note_span.source_coords is not None
+        }
+        assert routed == {0: "presenting_complaint", 1: "advice_home_exercise"}
+        assert ExtractiveNoteProvider().provider_name == "extractive-v1"
+
+    def test_with_no_user_file_the_output_equals_the_single_layer_provider(
+        self, tmp_path: Path
+    ) -> None:
+        shipped = load_note_config(tmp_path / "no-user-config")
+        # Equal by VALUE, never identity: the config re-derives the cues.
+        assert dict(shipped.normalised_cues()) == dict(DEFAULT_SECTION_CUES)
+        document = _document(
+            texts=(
+                (PATIENT_OPENER, SPEAKER_1),
+                (CLINICIAN_EXAM, SPEAKER_2),
+                (CLINICIAN_DIAGNOSIS, SPEAKER_2),
+                (_SHIPPED_ONLY, SPEAKER_1),
+                (_OWN_BEATS_SHIPPED, SPEAKER_2),
+                ("Lovely weather today", SPEAKER_1),
+            )
+        )
+        request = _request(document=document)
+        layered = ExtractiveNoteProvider(
+            cues=shipped.normalised_cues(), fallback_cues=DEFAULT_SECTION_CUES
+        ).generate_sections(request)
+        # The reference is INDEPENDENT of `layered_section` (peer round 5,
+        # PR-LOW-014): one `first_matching_section` pass per utterance over
+        # the shipped cues, so a defect in the layering cannot move both
+        # sides together.
+        single_pass: dict[int, NoteSectionKey] = {}
+        for utterance in request.transcript_utterances:
+            key = first_matching_section(
+                DEFAULT_SECTION_CUES,
+                content_tokens(utterance.text),
+                request.section_keys,
+                speaker=utterance.speaker,
+                clinician_speaker=request.clinician_speaker,
+                question=is_interrogative(utterance.text),
+            )
+            if key is not None:
+                single_pass[utterance.segment_index] = key
+        routed = {
+            assertion.note_span.source_coords.segment_index: section.section_key
+            for section in layered
+            for assertion in section.note_assertions
+            if assertion.note_span.source_coords is not None
+        }
+        assert routed == single_pass
+        assert routed  # the comparison means something

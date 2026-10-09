@@ -69,6 +69,7 @@ from scribe_desktop.language_model import (
 )
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
+    DEFAULT_SECTION_CUES,
     MAX_ASSERTION_CHARS,
     PREFILLED_MARK,
     SECTION_TITLES,
@@ -2835,12 +2836,17 @@ def learning_status(*, profile_root: Path | None = None) -> LearningStatus:
 
 def extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
     """The shipping provider built FROM the loaded config (practitioner-profile
-    plan Task 4.3): the cues that route utterances are the config's own —
-    the fourth clinician config file, digest-bound (D7) — never the module
-    defaults, so a practitioner's ``section_cues.json`` is what routes.
-    Public since the pilot plan's Task 2.4 (the validation harness builds the
-    same provider); ``_extractive_provider_from_config`` is the same object."""
-    return ExtractiveNoteProvider(cues=config.normalised_cues())
+    plan Task 4.3). Routing is layered (note-routing-omissions plan D1): an
+    utterance tries the config's own resolved cues first — the fourth
+    clinician config file, so a practitioner's ``section_cues.json`` wins
+    wherever its phrase sits — and only then the shipped cues as a fallback.
+    The config digest binds the own layer (D7); the build binds the shipped
+    layer. Public since the pilot plan's Task 2.4 (the validation harness and
+    the replay tool build the same provider);
+    ``_extractive_provider_from_config`` is the same object."""
+    return ExtractiveNoteProvider(
+        cues=config.normalised_cues(), fallback_cues=DEFAULT_SECTION_CUES
+    )
 
 
 # The pre-Task-2.4 private name, kept as an alias of the SAME object.

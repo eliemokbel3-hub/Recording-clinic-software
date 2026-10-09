@@ -1394,6 +1394,37 @@ def first_matching_section(
     return None
 
 
+def layered_section(
+    cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
+    fallback_cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
+    tokens: Sequence[str],
+    section_keys: Sequence[NoteSectionKey],
+    *,
+    speaker: str,
+    clinician_speaker: str | None,
+    question: bool,
+) -> NoteSectionKey | None:
+    """Layered routing (note-routing-omissions plan D1): ``first_matching_section``
+    over ``cues`` (the practitioner's own) and, only when that routes nothing,
+    over ``fallback_cues`` (the shipped cues). Two passes, never a merged
+    mapping, so an own cue in a later section beats a shipped cue in an
+    earlier one; the ownership rule and the question test gate both passes.
+    The provider routes with it; the learner dry-runs a proposed cue set
+    through it, so both compute what will actually route."""
+    for layer in (cues, fallback_cues):
+        key = first_matching_section(
+            layer,
+            tokens,
+            section_keys,
+            speaker=speaker,
+            clinician_speaker=clinician_speaker,
+            question=question,
+        )
+        if key is not None:
+            return key
+    return None
+
+
 def provider_assertion_id(segment_index: int) -> str:
     """The extractive provider's id for the utterance at ``segment_index``."""
     return f"x{segment_index:04d}"
@@ -1603,21 +1634,31 @@ class ExtractiveNoteProvider:
     byte-identically. Clinician-owned sections are populated only from
     utterances spoken by the CONFIRMED clinician cluster and never from a
     question; with no confirmed role they stay blank (Critical Constraint).
+
+    Routing is layered (note-routing-omissions plan D1): ``cues`` first, then
+    ``fallback_cues`` for an utterance ``cues`` do not route — see
+    ``layered_section``. With both left at the shipped default the second
+    pass can add nothing.
     """
 
     def __init__(
         self,
         cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]] = DEFAULT_SECTION_CUES,
+        fallback_cues: Mapping[
+            NoteSectionKey, tuple[tuple[str, ...], ...]
+        ] = DEFAULT_SECTION_CUES,
     ) -> None:
         self._cues = cues
+        self._fallback_cues = fallback_cues
 
     @property
     def provider_name(self) -> str:
         return "extractive-v1"
 
     def _route(self, request: NoteRequest, utterance: NoteUtterance) -> NoteSectionKey | None:
-        return first_matching_section(
+        return layered_section(
             self._cues,
+            self._fallback_cues,
             content_tokens(utterance.text),
             request.section_keys,
             speaker=utterance.speaker,
@@ -2670,6 +2711,7 @@ __all__ = [
     "first_matching_section",
     "is_interrogative",
     "is_prefilled",
+    "layered_section",
     "manual_assertion_id",
     "normalise_token",
     "provenance_label",

@@ -1022,13 +1022,19 @@ class TestProviderFromConfig:
         assert _section_keys(result) == ["advice_home_exercise"]
         assert result.draft.note_sections[0].note_assertions[0].text == CUE_UTTERANCE
 
-    def test_a_user_file_that_drops_the_cue_stops_the_routing(self, tmp_path: Path) -> None:
+    def test_a_user_file_that_drops_the_cue_leaves_the_shipped_fallback(
+        self, tmp_path: Path
+    ) -> None:
+        # Layered routing (note-routing-omissions plan D1): a user file no
+        # longer switches a shipped cue off — an utterance its own cues do
+        # not route still takes the shipped cue's section. The digest binds
+        # the own layer only, so it still differs.
         shipped = _generate(tmp_path, tmp_path / "config")
         root = tmp_path / "user-config"
         _write_cue_file(root, {"presenting_complaint": ["came in because"]})
         result = _generate(tmp_path, root)
-        assert "advice_home_exercise" not in _section_keys(result)
-        assert result.draft.note_sections == ()
+        assert _section_keys(result) == ["advice_home_exercise"]
+        assert result.draft.note_sections[0].note_assertions[0].text == CUE_UTTERANCE
         assert result.config.config_digest() != shipped.config.config_digest()
 
     def test_a_user_file_that_adds_a_cue_reroutes_the_utterance(self, tmp_path: Path) -> None:
