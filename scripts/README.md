@@ -12,8 +12,10 @@ set up and build it, and make releases; the installed app needs none of them.
   Task 3.7) — registers the DEVELOPER build's Chrome link: copies the venv's
   `scribe-host.exe` and writes the host manifest for `com.scribe.cliniko_host_dev`
   (the dev extension's origin only) into `%LOCALAPPDATA%\ClinikoScribe-dev\`,
-  then writes and verifies the HKCU registry entry, plus the three per-user
-  Windows Error Reporting exclusions. `--unregister` reverses it and also
+  then writes and verifies the HKCU registry entry, plus the five per-user
+  Windows Error Reporting exclusions (`pythonw.exe`, `python.exe`,
+  `scribe-app.exe`, `scribe-host.exe` and, since the clinic-smoke plan's D11,
+  `audacity.exe`; the app's own check reads only the first four). `--unregister` reverses it and also
   removes what earlier versions wrote under the PRODUCTION name (the per-user
   `com.scribe.cliniko_host` key and its two files in
   `%LOCALAPPDATA%\ClinikoScribe\` — nothing else there). On a computer whose

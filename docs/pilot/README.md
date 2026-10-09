@@ -41,7 +41,12 @@ result is recorded there as a dated RUN line.
      (`docs/testing/shipping-gate.md`); make a measurement folder on this
      computer's internal drive, outside your user profile and outside File
      History, Windows Backup and any synced folder, with two subfolders,
-     `enrolment` and `audacity-temp`; set Audacity's temporary folder
+     `enrolment` and `audacity-temp` — a folder at the top of the drive may be
+     open to every account, so if anyone else has a Windows account on this
+     computer, check its Security tab and restrict it first, adding your own
+     account before removing anyone else's, as `docs/testing/kept-recordings.md`
+     sets out;
+     set Audacity's temporary folder
      (Preferences, Directories) to `audacity-temp`, restart Audacity and check
      the setting; record yourself reading alone into `enrolment` (the
      reference for `--enrolment`); re-run the register script once
@@ -59,7 +64,8 @@ result is recorded there as a dated RUN line.
      `k-02` …); label its speakers in Audacity and export the labels as
      `k-01.txt`; close Audacity WITHOUT saving a project, check that
      `audacity-temp` is empty, and never accept Audacity's crash recovery for
-     a real recording; from the developer checkout with the installed app
+     a real recording, send its crash report or save it to its cloud; from the
+     developer checkout with the installed app
      closed, run `scripts\measure-speakers.py` on the folder with
      `--enrolment` naming the WAV in `enrolment`
      (`docs/testing/speaker-measurement.md`); note the aggregate in your

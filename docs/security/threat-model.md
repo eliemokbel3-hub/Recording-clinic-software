@@ -4017,8 +4017,20 @@ crash between labelling and closing leaves the plaintext working copy in
 `audacity-temp\` until Audacity's recovery prompt is discarded; a dump written
 by anything other than Windows Error Reporting, and any other program that
 opens or previews the WAV (a media player, a preview pane), are outside the
-exclusion; and the enrolment WAV — the practitioner's own voice — is outside
-the app's custody until it is deleted (the retention schedule's "Audacity
+exclusion; Audacity's own crash-report dialog and its cloud saving and
+sharing are exits of their own, closed only by the rule (never send a report;
+never save or share a real recording to the cloud); the measurement folder,
+made at the top of the C: drive, may inherit access for every account that
+signs in to this computer — the practitioner checks its Security tab and
+restricts it, adding their own account first (`docs/testing/kept-recordings.md`;
+nothing checks that it was done; residue (7)'s other-accounts
+case, made likelier by the folder's place); deleting a file and emptying
+the Recycle Bin removes it from the file system, not from the disk — free
+clusters, a volume shadow copy or an SSD's remapped cells may still hold an
+exported WAV, a working copy or the enrolment WAV (full-disk encryption,
+BitLocker, is the practice's control, as for residue (6)); and the enrolment
+WAV — the practitioner's own voice — is outside the app's custody until it is
+deleted (the retention schedule's "Audacity
 working copy" and "Enrolment WAV" rows).
 
 ## Out of scope (tracked in PLAN.md phases)

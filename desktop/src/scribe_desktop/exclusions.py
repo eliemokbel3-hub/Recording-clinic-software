@@ -19,7 +19,9 @@ At start-up, before the window is built, ``app.main`` runs
   a folder outside ``%USERPROFILE%\AppData\Local`` for any other reason is
   logged (content-free), not shown. The WER check reads the channel's
   ``ExcludedApplications`` values — from a source checkout the four per-user
-  ones ``scripts/register-native-host.py`` writes; in the installed build its
+  ones in ``WER_EXCLUDED_APPLICATIONS`` (``scripts/register-native-host.py``
+  writes those and a fifth, ``audacity.exe``, which no check here reads —
+  clinic-smoke plan D11); in the installed build its
   two executables, HKLM then HKCU (installation plan D10) — and checks the
   RUNNING interpreter's file name against them (D10, round 2 PR-MED-006): in
   the installed build a ``python.exe`` launch is not excluded; from a source
