@@ -20,8 +20,12 @@ synthetic ``conditions`` (the clinic 1 smoke retired the role-play set,
 - **The metrics** (Task 2.3, ``encounter_metrics``): ONE word-level
   alignment between the script's reference tokens and the transcript's words
   — the edit-distance alignment that yields the word error rate — carries
-  every judgement; nothing is decided per segment. Pure functions; outputs
-  are numbers, flags and closed-vocabulary verdicts only.
+  every judgement; nothing is decided per segment. Since the metric
+  amendment of 2026-10-11 both sides are compared after canonical spelling
+  (``canonical_tokens``: "500mg", "500 milligrams" and "five hundred mg"
+  all read "500 mg"); the replay tool's alignment never is. Pure
+  functions; outputs are numbers, flags and closed-vocabulary verdicts
+  only.
 - **The runner** (Task 2.4, ``evaluate_encounter`` / ``main``): per
   encounter, transcription in a temporary encrypted store torn down key-first
   (``speaker_eval.transcribe_in_temporary_store``, reused IN PLACE), the
@@ -90,6 +94,7 @@ from scribe_desktop.note import (
     compose_draft,
     content_tokens,
     finalise_note,
+    strip_token_punctuation,
 )
 from scribe_desktop.note_check import (
     # Package-private by name, shared deliberately (the note.py convention):
@@ -98,8 +103,11 @@ from scribe_desktop.note_check import (
     # disagree about what a side, a dose or a negation is. Since the metric
     # amendment of 2026-10-09 (note-routing-omissions plan D3, decision 0.2
     # (b)) ``warned`` reads Check 4's predicate ``_omission_flag_token``;
-    # ``_is_high_risk_token`` stays for the run-1 comparison column.
+    # ``_is_high_risk_token`` stays for the run-1 comparison column. The
+    # metric amendment of 2026-10-11 (D10) reads the strength-unit table and
+    # the number-with-suffix pattern for its canonical spelling.
     _LATERALITY_TOKENS,
+    _NUMBER_WITH_SUFFIX_RE,
     _STRENGTH_UNITS,
     _dose_quantity,
     _is_high_risk_token,
@@ -510,10 +518,13 @@ def _require_count(value: int, name: str) -> None:
 
 @dataclass(frozen=True)
 class WordErrors:
-    """The word error rate's parts: reference tokens (the script), hypothesis
-    tokens (the transcript) and the edit distance between them over
-    ``note.content_tokens`` normalisation (substitution, insertion and
-    deletion each cost one)."""
+    """The word error rate's parts: reference tokens, hypothesis tokens and
+    the edit distance between them (substitution, insertion and deletion
+    each cost one), counted over the token sequences the caller aligned —
+    canonical spelling for the harness (the script against the transcript,
+    metric amendment 2026-10-11), ``note.content_tokens`` normalisation
+    alone for the kept-recordings replay (the kept transcript against the
+    new one)."""
 
     reference_tokens: int
     hypothesis_tokens: int
@@ -614,9 +625,13 @@ class EncounterMetrics:
     code the script does not list in ``expected_warnings``) and
     ``checker_failure_count`` how many warnings carry them;
     ``expected_warnings_absent`` the listed codes the checker did not raise
-    (reported, never failing)."""
+    (reported, never failing). ``spelling_normalised_words``: the
+    transcript's content tokens that canonical spelling rewrote (metric
+    amendment 2026-10-11 — "500mg" counts 1, "five hundred" 2, "500" 0;
+    the script's rewrites are not counted), reported, never failing."""
 
     words: WordErrors
+    spelling_normalised_words: int
     transcript_lines: int
     config_lines: int
     unsupported_clinical_lines: int
@@ -629,6 +644,7 @@ class EncounterMetrics:
 
     def __post_init__(self) -> None:
         for name in (
+            "spelling_normalised_words",
             "transcript_lines",
             "config_lines",
             "unsupported_clinical_lines",
@@ -676,14 +692,34 @@ class EncounterMetrics:
 
 
 class _WordInfo(NamedTuple):
-    """What one transcript word means to the fact walk — flags only.
+    """What one canonical transcript token means to the fact walk — flags
+    only, over the transcript words it was made from (metric amendment
+    2026-10-11: a joined "five hundred" is one token made from two words).
+    ``covered_any``: one of those words is inside a note line (the walk's
+    "some aligned word in a note line"); ``covered_all``: every one is (its
+    "every aligned word in a note line") — so a note line holding one word
+    of a joined number carries the token in part, never wholly and never
+    not at all (PR-MED-020). ``warned``, ``warned_v1`` and
+    ``low_confidence`` hold when they hold for ANY of the words.
     ``warned_v1`` is ``warned`` under run 1's predicate and clinician-only
     scope (the report's comparison column, metric amendment 2026-10-09)."""
 
-    covered: bool
+    covered_any: bool
+    covered_all: bool
     warned: bool
     warned_v1: bool
     low_confidence: bool
+
+
+def _merged(words: Sequence[_WordInfo]) -> _WordInfo:
+    """One canonical token's flags from the flags of the words it consumed."""
+    return _WordInfo(
+        covered_any=any(word.covered_any for word in words),
+        covered_all=all(word.covered_all for word in words),
+        warned=any(word.warned for word in words),
+        warned_v1=any(word.warned_v1 for word in words),
+        low_confidence=any(word.low_confidence for word in words),
+    )
 
 
 class _Alignment:
@@ -842,8 +878,8 @@ def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState
     return (
         all_matched and matched,
         False,
-        in_any or info.covered,
-        in_all and info.covered,
+        in_any or info.covered_any,
+        in_all and info.covered_all,
         warned or info.warned,
         surfaced or info.low_confidence,
         warned_v1 or info.warned_v1,
@@ -948,14 +984,195 @@ def _severity(judged: _Judged) -> tuple[int, bool, bool, bool, str]:
     )
 
 
-def _reference(script: EncounterScript) -> tuple[list[str], list[int]]:
-    """The reference tokens in spoken order and each line's first index."""
-    tokens: list[str] = []
+# ---------------------------------------------------------------------------
+# Metric amendment 2026-10-11 — canonical spelling (note-routing-omissions
+# plan D10, decision (a)). The harness's OWN comparison only: the provider's
+# cue matching, the checker and the replay tool's alignment never use it.
+# ---------------------------------------------------------------------------
+
+# Spelled CARDINALS only. ``transcription._NUMBER_WORDS`` is a membership set
+# that also holds ordinals, "half", "quarter" and "second", so it is not the
+# source. "hundred" and "thousand" are not here: they are rewritten only
+# after a spelled number ("five hundred" -> "500"), never on their own.
+_UP_TO_TWENTY: Final = (
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen "
+    "fourteen fifteen sixteen seventeen eighteen nineteen twenty"
+).split()
+_TENS: Final = ("twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety")
+_CARDINALS: Final[Mapping[str, int]] = {
+    **{word: value for value, word in enumerate(_UP_TO_TWENTY)},
+    **{word: 20 + 10 * step for step, word in enumerate(_TENS)},
+}
+_MULTIPLIERS: Final[Mapping[str, int]] = {"hundred": 100, "thousand": 1000}
+
+
+def _bounded_tokens(texts: Sequence[str]) -> list[tuple[str, bool, int]]:
+    """``note.content_tokens`` over ``texts`` — one script line (a single
+    text) or one transcript segment (one text per word) — as ``(token,
+    boundary, text index)``. Inclusion and normalisation are
+    ``content_tokens``' own, applied one whitespace word at a time, so the
+    tokens are exactly the content-token sequence the loader and the fact
+    lookup index (PR-MED-023); only the JOIN BOUNDARY flag is added
+    (PR-MED-026). ``boundary`` is True when punctuation stands between the
+    token and the next one kept — on the end of its own word, on a word
+    dropped between them (a lone comma or dash, or a filler carrying a
+    mark) or on the start of the next word, by the ONE punctuation rule
+    (``strip_token_punctuation``) — and on the last token, so a join never
+    crosses a script line or a transcript segment."""
+    flagged: list[tuple[str, bool, int]] = []
+
+    def close_previous() -> None:
+        if flagged:
+            token, _boundary, index = flagged[-1]
+            flagged[-1] = (token, True, index)
+
+    for index, text in enumerate(texts):
+        for raw in text.split():
+            core = strip_token_punctuation(raw)
+            if not core or not raw.startswith(core):
+                close_previous()
+            kept = content_tokens(raw)
+            trailing = not raw.endswith(core)
+            for token in kept:
+                flagged.append((token, trailing, index))
+            if not kept and trailing:
+                close_previous()
+    close_previous()
+    return flagged
+
+
+class CanonicalTokens(NamedTuple):
+    """A content-token sequence after canonical spelling (D10). ``tokens``:
+    the canonical tokens. ``consumed``: per canonical token, the indices of
+    the content tokens it was made from (a split repeats one index, a join
+    holds two), so ``len(tokens) == len(consumed)``. ``content_map``: per
+    content token, the first and last canonical index made from it (a join's
+    two content tokens map to the same one). ``rewritten``: how many content
+    tokens belong to a rewrite whose output differs from its input."""
+
+    tokens: tuple[str, ...]
+    consumed: tuple[tuple[int, ...], ...]
+    content_map: tuple[tuple[int, int], ...]
+    rewritten: int
+
+
+def _rewrite(token: str, following: str | None) -> tuple[tuple[str, ...], int]:
+    """The canonical tokens for ``token`` (and ``following``, the next
+    content token when no join boundary separates them) and how many
+    content tokens they consume."""
+    glued = _NUMBER_WITH_SUFFIX_RE.match(token)
+    if glued is not None and glued.group(2) in _STRENGTH_UNITS:
+        # The RAW digits: "2.50mg" stays "2.50", never ``_dose_quantity``'s
+        # ``format(float)``.
+        return (glued.group(1), _STRENGTH_UNITS[glued.group(2)]), 1
+    if token in _STRENGTH_UNITS:
+        return (_STRENGTH_UNITS[token],), 1
+    value = _CARDINALS.get(token)
+    if value is not None:
+        if following is not None:
+            if following in _MULTIPLIERS:
+                return (str(value * _MULTIPLIERS[following]),), 2
+            if token in _TENS and 1 <= _CARDINALS.get(following, 0) <= 9:
+                return (str(value + _CARDINALS[following]),), 2
+        return (str(value),), 1
+    tens, hyphen, unit_word = token.partition("-")
+    if hyphen and tens in _TENS and 1 <= _CARDINALS.get(unit_word, 0) <= 9:
+        return (str(_CARDINALS[tens] + _CARDINALS[unit_word]),), 1
+    return (token,), 1
+
+
+def canonical_tokens(tokens: Sequence[tuple[str, bool]]) -> CanonicalTokens:
+    """Canonical spelling over a content-token sequence, each token with its
+    join-boundary flag (metric amendment 2026-10-11, D10), left to right:
+
+    - a glued dose SPLITS: "500mg" -> "500" "mg" (a number with a suffix in
+      ``note_check._STRENGTH_UNITS``; the digits kept as written);
+    - a UNIT word reads as its short form through that same table
+      ("milligrams" -> "mg");
+    - a spelled CARDINAL reads as digits ("two" -> "2", "ten" -> "10"), and
+      two shapes join: a tens word with a unit word ("twenty one" and
+      "twenty-one" -> "21") and a spelled number with "hundred" or
+      "thousand" ("five hundred" -> "500"). A join never crosses a boundary
+      (punctuation, a script line or a transcript segment) and never runs
+      through "and".
+
+    Left as they are (the named residue): "hundred" or "thousand" with no
+    spelled number before them ("a hundred"), ordinals, fractions, "half",
+    spelled decimals, years, "N hundred M" and "hundred and N" (only the
+    "N hundred" part joins), "twenty five hundred" (only "twenty five"
+    joins), and units outside the table ("units", "tablets")."""
+    out: list[str] = []
+    consumed: list[tuple[int, ...]] = []
+    content_map: list[tuple[int, int]] = []
+    rewritten = 0
+    index = 0
+    while index < len(tokens):
+        token, boundary = tokens[index]
+        following = None if boundary or index + 1 == len(tokens) else tokens[index + 1][0]
+        group, width = _rewrite(token, following)
+        span = tuple(range(index, index + width))
+        if group != tuple(tokens[i][0] for i in span):
+            rewritten += width
+        first = len(out)
+        for piece in group:
+            out.append(piece)
+            consumed.append(span)
+        content_map.extend([(first, len(out) - 1)] * width)
+        index += width
+    return CanonicalTokens(tuple(out), tuple(consumed), tuple(content_map), rewritten)
+
+
+class _Reference(NamedTuple):
+    """The script side of the alignment: the canonical tokens in spoken
+    order, each line's first CONTENT-token index (the index space a fact's
+    ``_occurrences`` lookup uses, as the loader does) and the content ->
+    canonical map that carries a fact's span across."""
+
+    tokens: tuple[str, ...]
+    line_offsets: tuple[int, ...]
+    content_map: tuple[tuple[int, int], ...]
+
+
+def _reference(script: EncounterScript) -> _Reference:
+    """The reference after canonical spelling (metric amendment 2026-10-11),
+    each line canonicalised on its own."""
+    flagged: list[tuple[str, bool]] = []
     offsets: list[int] = []
     for line in script.lines:
-        offsets.append(len(tokens))
-        tokens.extend(content_tokens(line.text))
-    return tokens, offsets
+        offsets.append(len(flagged))
+        flagged.extend((token, boundary) for token, boundary, _ in _bounded_tokens([line.text]))
+    canonical = canonical_tokens(flagged)
+    return _Reference(canonical.tokens, tuple(offsets), canonical.content_map)
+
+
+class _CanonicalHypothesis(NamedTuple):
+    """The transcript side of the alignment: the canonical tokens in segment
+    order, per token the (segment, word) of every transcript word it was
+    made from (the coordinates note lines and warnings address), and how
+    many content tokens canonical spelling rewrote."""
+
+    tokens: tuple[str, ...]
+    consumed: tuple[tuple[tuple[int, int], ...], ...]
+    rewritten: int
+
+
+def _canonical_hypothesis(document: TranscriptDocument) -> _CanonicalHypothesis:
+    """The transcript after canonical spelling (metric amendment 2026-10-11),
+    each segment canonicalised on its own. ``_hypothesis`` stays the
+    content-token form: the kept-recordings replay aligns that one (C11)."""
+    flagged: list[tuple[str, bool]] = []
+    positions: list[tuple[int, int]] = []
+    for segment_index, segment in enumerate(document.transcript_segments):
+        texts = [word.word_text for word in segment.transcript_words]
+        for token, boundary, word_index in _bounded_tokens(texts):
+            flagged.append((token, boundary))
+            positions.append((segment_index, word_index))
+    canonical = canonical_tokens(flagged)
+    return _CanonicalHypothesis(
+        canonical.tokens,
+        tuple(tuple(positions[i] for i in span) for span in canonical.consumed),
+        canonical.rewritten,
+    )
 
 
 def _hypothesis(document: TranscriptDocument) -> tuple[list[str], list[tuple[int, int]]]:
@@ -973,12 +1190,11 @@ def _hypothesis(document: TranscriptDocument) -> tuple[list[str], list[tuple[int
 
 def word_errors(document: TranscriptDocument, script: EncounterScript) -> WordErrors:
     """The word error rate's parts without a note (a role-unresolved
-    encounter still reports it)."""
-    reference, _ = _reference(script)
-    hypothesis, _ = _hypothesis(document)
+    encounter still reports it), over canonical spelling as
+    ``encounter_metrics`` counts them."""
     # The forward table only: the backward table answers "every optimal
     # alignment" queries this count never asks (review round 30).
-    return transcript_wer(reference, hypothesis)
+    return transcript_wer(_reference(script).tokens, _canonical_hypothesis(document).tokens)
 
 
 def _note_lines(
@@ -1017,7 +1233,14 @@ def encounter_metrics(
     - ONE word-level alignment of the script's reference tokens (spoken
       order) to the transcript's words, the one the word error rate comes
       from; every fact maps to exact (segment, word) positions wherever the
-      segment boundaries fall.
+      segment boundaries fall. Since the metric amendment of 2026-10-11 both
+      sides are aligned after canonical spelling (``canonical_tokens``), so
+      every count and verdict below is over canonical tokens: a canonical
+      token made from two words ("five hundred") is in a note line wholly
+      when both are, in part when one is; it is warned, or low-confidence,
+      when either word is. A fact is found on its line's content tokens as
+      the loader finds it, and its span is carried to canonical tokens,
+      widened to a whole joined token it cuts.
     - An UNSUPPORTED CLINICAL LINE is a transcript note line holding a
       structured-claim word (``is_structured_claim_word``) that the alignment
       marks substituted or inserted — on ANY optimal alignment, so a tie
@@ -1052,9 +1275,9 @@ def encounter_metrics(
       surfaces it, and it counts as a silent omission when any alternative
       omits it unwarned (peer round 14, PR-MED-056).
     """
-    reference, offsets = _reference(script)
-    hypothesis, positions = _hypothesis(document)
-    alignment = _Alignment(reference, hypothesis)
+    reference = _reference(script)
+    hypothesis = _canonical_hypothesis(document)
+    alignment = _Alignment(reference.tokens, hypothesis.tokens)
     segments = document.transcript_segments
 
     lines, config_lines = _note_lines(note, document)
@@ -1075,49 +1298,62 @@ def encounter_metrics(
                 for index in range(coords.first_word_index, coords.last_word_index + 1)
             )
 
-    infos: list[_WordInfo] = []
-    for segment_index, word_index in positions:
-        position = (segment_index, word_index)
+    def word_info(position: tuple[int, int]) -> _WordInfo:
+        """One transcript word's flags, read from its RAW text."""
+        segment_index, word_index = position
         word_text = segments[segment_index].transcript_words[word_index].word_text
         first_in_segment = word_index == 0
         clinician = segments[segment_index].speaker == note.clinician_speaker
         # The note's OWN warning on the segment is required either way, so a
         # provider is never credited for a flag it did not raise.
         flaggable = position not in covered and segment_index in omission_segments
-        infos.append(
-            _WordInfo(
-                covered=position in covered,
-                warned=flaggable
-                and _omission_flag_token(
-                    word_text, first_in_segment=first_in_segment, clinician=clinician
-                ),
-                # Run 1's predicate AND its clinician-only scope (D3).
-                warned_v1=flaggable
-                and clinician
-                and _is_high_risk_token(word_text, first_in_segment=first_in_segment),
-                low_confidence=position in low_confidence,
-            )
+        return _WordInfo(
+            covered_any=position in covered,
+            covered_all=position in covered,
+            warned=flaggable
+            and _omission_flag_token(
+                word_text, first_in_segment=first_in_segment, clinician=clinician
+            ),
+            # Run 1's predicate AND its clinician-only scope (D3).
+            warned_v1=flaggable
+            and clinician
+            and _is_high_risk_token(word_text, first_in_segment=first_in_segment),
+            low_confidence=position in low_confidence,
         )
 
+    # PR-MED-020: any/all over every word a canonical token consumed.
+    infos = [
+        _merged([word_info(position) for position in consumed])
+        for consumed in hypothesis.consumed
+    ]
+
     unsupported = alignment.possibly_unsupported()
-    by_word: dict[tuple[int, int], list[int]] = {}
-    for j, position in enumerate(positions):
-        by_word.setdefault(position, []).append(j)
+    by_word: dict[tuple[int, int], set[int]] = {}
+    for j, consumed in enumerate(hypothesis.consumed):
+        for position in consumed:
+            by_word.setdefault(position, set()).add(j)
     unsupported_lines = 0
     other_words: set[int] = set()
     for line in lines:
-        flagged = [j for position in line for j in by_word.get(position, ()) if unsupported[j]]
-        if any(is_structured_claim_word(hypothesis[j]) for j in flagged):
+        flagged = {j for position in line for j in by_word.get(position, ()) if unsupported[j]}
+        if any(is_structured_claim_word(hypothesis.tokens[j]) for j in flagged):
             unsupported_lines += 1
-        other_words.update(j for j in flagged if not is_structured_claim_word(hypothesis[j]))
+        other_words.update(
+            j for j in flagged if not is_structured_claim_word(hypothesis.tokens[j])
+        )
 
     facts: list[FactOutcome] = []
     for index, fact in enumerate(script.facts):
+        # Found on the line's CONTENT tokens exactly as the loader finds it,
+        # then carried to canonical rows (PR-MED-023) — a span that cuts a
+        # join takes the whole joined token.
         line_tokens = content_tokens(script.lines[fact.line].text)
         judged: set[_Judged] = set()
         for start in _occurrences(line_tokens, fact.tokens):
-            first = offsets[fact.line] + start
-            for state in _fact_end_states(alignment, first, first + len(fact.tokens) - 1, infos):
+            first_content = reference.line_offsets[fact.line] + start
+            first = reference.content_map[first_content][0]
+            last = reference.content_map[first_content + len(fact.tokens) - 1][1]
+            for state in _fact_end_states(alignment, first, last, infos):
                 judged.add(_judge(state, fact.kind, fact.expect_uncertain))
         worst = max(judged, key=_severity)
         # Round 11 LOW-008: surfacing is judged on its own, conservatively —
@@ -1158,7 +1394,8 @@ def encounter_metrics(
         and (NOTE_WARNING_SEVERITY[code] == "error" or code in CONTRADICTION_CODES)
     )
     return EncounterMetrics(
-        words=WordErrors(len(reference), len(hypothesis), alignment.total),
+        words=WordErrors(len(reference.tokens), len(hypothesis.tokens), alignment.total),
+        spelling_normalised_words=hypothesis.rewritten,
         transcript_lines=len(lines),
         config_lines=config_lines,
         unsupported_clinical_lines=unsupported_lines,
@@ -1579,14 +1816,17 @@ def render_report(
         + f"; VAD `{info.vad_model}`; prose stage `{info.prose or 'off'}`; "
         f"commit `{info.commit or 'unknown'}`; models manifest SHA-256 "
         f"`{info.models_manifest_sha256 or 'absent'}`. Encounters: {len(outcomes)}; "
-        f"set-level errors: {errors}.",
+        f"set-level errors: {errors}. Words compared after canonical spelling, metric "
+        "amendment 2026-10-11: Ref words, WER and every fact verdict are over canonical "
+        "tokens (read beside runs 1-2, not compared with them).",
         "",
-        "| Encounter | Status | Segments | Ref words | WER | Unsupported clinical lines "
+        "| Encounter | Status | Segments | Ref words | WER | Spelling-normalised words "
+        "| Unsupported clinical lines "
         "| Other unsupported words | Transcript lines | Config lines | Facts | Correct "
         "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
         "| Warned omissions | Uncertainty missed | Ambiguous facts | Checker failures "
         "| Prose p/f/e | Rule |",
-        "|" + "---|" * 21,
+        "|" + "---|" * 22,
     ]
     totals = Counter[str]()
     for outcome in outcomes:
@@ -1599,10 +1839,11 @@ def render_report(
             totals["ref"] += words.reference_tokens
             totals["distance"] += words.edit_distance
         if metrics is None:
-            cells = ["-"] * 15
+            cells = ["-"] * 16
         else:
             facts = metrics.facts
             counts = {
+                "spelling": metrics.spelling_normalised_words,
                 "unsupported": metrics.unsupported_clinical_lines,
                 "other": metrics.other_unsupported_words,
                 "facts": len(facts),
@@ -1619,6 +1860,7 @@ def render_report(
             totals.update(counts)
             prose = outcome.prose
             cells = [
+                str(counts["spelling"]),
                 str(counts["unsupported"]),
                 str(counts["other"]),
                 str(metrics.transcript_lines),
@@ -1648,7 +1890,8 @@ def render_report(
     total_wer = _rate(totals["distance"] / totals["ref"]) if totals["ref"] else "-"
     lines.append(
         f"| TOTAL | {sum(1 for o in outcomes if o.status == 'measured')} measured | - "
-        f"| {totals['ref']} | {total_wer} | {totals['unsupported']} | {totals['other']} | - | - "
+        f"| {totals['ref']} | {total_wer} | {totals['spelling']} | {totals['unsupported']} "
+        f"| {totals['other']} | - | - "
         f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
         f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
         f"| {totals['ambiguous']} | {totals['checker']} | - | {verdict} |"
@@ -2003,6 +2246,7 @@ __all__ = [
     "ROLE_TIE_SECONDS",
     "SCRIPT_SCHEMA_VERSION",
     "UNNAMED_ENCOUNTER",
+    "CanonicalTokens",
     "EncounterFiles",
     "EncounterMetrics",
     "EncounterOutcome",
@@ -2021,6 +2265,7 @@ __all__ = [
     "ValidationHarnessError",
     "WordErrors",
     "align_transcripts",
+    "canonical_tokens",
     "clinician_speaker",
     "confirm_all",
     "encounter_metrics",

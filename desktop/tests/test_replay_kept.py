@@ -390,6 +390,21 @@ class TestTranscriptWer:
         assert align_transcripts(["a", "b", "a"], ["b", "a", "b"]).pairs == ((0, 1), (1, 2))
         assert transcript_wer(["a", "b"], ["c"]) == WordErrors(2, 1, 2)
 
+    def test_the_replay_aligns_raw_content_tokens_never_canonical_spelling(self) -> None:
+        """Note-routing-omissions plan C11: the harness's canonical spelling
+        (metric amendment 2026-10-11) is the harness's own comparison. The
+        replay keeps ``content_tokens`` normalisation, so its Drift WER stays
+        comparable with every earlier replay — "500mg", "five hundred" and
+        "milligrams" reach the alignment as written (canonical spelling
+        would make them "500", "mg", "500", "mg")."""
+        document = _document("a" * 32, "Take 500mg or five hundred milligrams.")
+        tokens, labels = replay_kept._tokens_and_labels(document)
+        assert tokens == [
+            *content_tokens(CLINICIAN),
+            "take", "500mg", "or", "five", "hundred", "milligrams",
+        ]
+        assert labels == ["speaker_1"] * len(content_tokens(CLINICIAN)) + ["speaker_2"] * 6
+
 
 class TestLabelAgreement:
     def test_the_best_one_to_one_mapping_is_used(self) -> None:

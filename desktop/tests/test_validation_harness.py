@@ -1108,9 +1108,10 @@ class TestReport:
 
     def test_the_run_1_predicate_column_sits_beside_silent_and_rows_align(self) -> None:
         """Metric amendment 2026-10-09 (note-routing-omissions plan D3,
-        PR-LOW-013): one more column after ``Silent omissions``; the header,
-        the separator, a measured row, an unmeasured row and the totals all
-        carry 21 cells."""
+        PR-LOW-013): one more column after ``Silent omissions``; since the
+        metric amendment of 2026-10-11 (D10) one more after ``WER``, so the
+        header, the separator, a measured row, an unmeasured row and the
+        totals all carry 22 cells."""
         fact = validation.FactOutcome(
             fact_index=0,
             kind="present",
@@ -1124,6 +1125,7 @@ class TestReport:
         )
         metrics = validation.EncounterMetrics(
             words=validation.WordErrors(4, 4, 0),
+            spelling_normalised_words=3,
             transcript_lines=0,
             config_lines=0,
             unsupported_clinical_lines=0,
@@ -1146,11 +1148,19 @@ class TestReport:
         table = [line for line in report.splitlines() if line.startswith("|")]
         header, separator, measured, unmeasured, total = table[:5]
         assert "| Silent omissions | Silent (run-1 predicate) | Warned omissions |" in header
+        # Metric amendment 2026-10-11 (D10): one more column right after WER,
+        # and the header line names the amendment — 22 cells in every row.
+        assert "| WER | Spelling-normalised words | Unsupported clinical lines |" in header
+        assert "canonical spelling, metric amendment 2026-10-11" in report
         for row in (header, separator, measured, unmeasured, total):
-            assert len(row.strip().strip("|").split("|")) == 21
+            assert len(row.strip().strip("|").split("|")) == 22
         # Omitted, silent, silent (run-1), warned — in that order.
         assert "| 1 | 0 | 1 | 1 |" in measured
         assert "| 1 | 0 | 1 | 1 |" in total
+        # WER, then the spelling count (a measured cell and its total).
+        assert "| 0.000 | 3 | 0 |" in measured
+        assert "| 0.000 | 3 | 0 |" in total
+        assert "| - | - | - |" in unmeasured
         # The rule reads ``silent_omissions`` only (C1): the run-1 column
         # never fails an encounter.
         assert validation.rule_failures(OPTION_A, outcomes[0]) == ()

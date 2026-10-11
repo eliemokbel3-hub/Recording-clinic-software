@@ -40,6 +40,7 @@ from scribe_desktop.note import (
     NoteWarning,
     SourceCoords,
     compose_draft,
+    content_tokens,
     finalise_note,
     normalise_token,
     reconstruct_span_text,
@@ -435,6 +436,261 @@ class TestDoseChange:
         metrics = encounter_metrics(document, _checked(document, 0), script)
         assert _only_fact(metrics).verdict == "correct"
         assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+
+# ---------------------------------------------------------------------------
+# metric amendment 2026-10-11: canonical spelling (note-routing-omissions D10)
+# ---------------------------------------------------------------------------
+
+
+def _canonical(text: str) -> tuple[str, ...]:
+    """One script line's canonical tokens (the reference side)."""
+    return validation._reference(_script(("clinician", text))).tokens
+
+
+class TestCanonicalTokens:
+    """The canonicaliser by itself: what it rewrites, and the named residue
+    it leaves as it is."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("500mg", ("500", "mg")),
+            ("2.50mg", ("2.50", "mg")),  # the RAW digits, never format(float)
+            ("20min", ("20min",)),  # a suffix outside the unit table
+            ("milligrams grams mcg millilitres", ("mg", "g", "mcg", "ml")),
+            ("two out of ten", ("2", "out", "of", "10")),
+            ("twenty-one twenty one", ("21", "21")),
+            ("five hundred", ("500",)),
+            ("two thousand", ("2000",)),
+            ("fifteen hundred", ("1500",)),
+            # The named residue: left as they are, or joined only in part.
+            ("a hundred", ("a", "hundred")),
+            ("hundred", ("hundred",)),
+            ("two hundred and fifty", ("200", "and", "50")),
+            ("five hundred twenty", ("500", "20")),
+            ("twenty five hundred", ("25", "hundred")),
+            ("the second one is half", ("the", "second", "1", "is", "half")),
+            ("one-third", ("one-third",)),
+            ("two point five", ("2", "point", "5")),
+            ("twenty twenty-five", ("20", "25")),
+            ("three units", ("3", "units")),
+            # A join never crosses punctuation: on the word, as a word of
+            # its own, on a dropped filler, or opening the next word.
+            ("twenty, one", ("20", "1")),
+            ("twenty , one", ("20", "1")),
+            ("twenty um, one", ("20", "1")),
+            ("twenty (one)", ("20", "1")),
+            ("five, hundred", ("5", "hundred")),
+        ],
+    )
+    def test_one_line(self, text: str, expected: tuple[str, ...]) -> None:
+        assert _canonical(text) == expected
+
+    def test_a_join_never_crosses_a_line_or_a_segment(self) -> None:
+        script = _script(("clinician", "take five"), ("clinician", "hundred mg"))
+        assert validation._reference(script).tokens == ("take", "5", "hundred", "mg")
+        document = _doc((SPEAKER_1, "take five"), (SPEAKER_1, "hundred mg"))
+        assert validation._canonical_hypothesis(document).tokens == ("take", "5", "hundred", "mg")
+
+    def test_the_maps_a_split_and_a_join_return(self) -> None:
+        canonical = validation.canonical_tokens(
+            [("take", False), ("500mg", False), ("or", False), ("five", False), ("hundred", True)]
+        )
+        assert canonical.tokens == ("take", "500", "mg", "or", "500")
+        # A split repeats its one content token; a join holds both of its.
+        assert canonical.consumed == ((0,), (1,), (1,), (2,), (3, 4))
+        assert canonical.content_map == ((0, 0), (1, 2), (3, 3), (4, 4), (4, 4))
+        assert canonical.rewritten == 3
+
+    def test_the_transcript_keeps_its_word_positions(self) -> None:
+        document = _doc((SPEAKER_1, "take 500mg or five hundred"))
+        canonical = validation._canonical_hypothesis(document)
+        assert canonical.consumed == (
+            ((0, 0),), ((0, 1),), ((0, 1),), ((0, 2),), ((0, 3), (0, 4))
+        )
+
+    def test_the_content_token_index_space_is_kept(self) -> None:
+        """PR-MED-023 / PR-MED-026: with nothing to rewrite, the canonical
+        tokens ARE the content tokens — fillers and punctuation-only words
+        dropped exactly as ``content_tokens`` drops them — at the (segment,
+        word) positions ``_hypothesis`` reports, and a script line's are its
+        ``content_tokens``."""
+        text = "Um, my LEFT knee - it , hurts."
+        document = _doc((SPEAKER_1, text), (SPEAKER_2, "uh okay then"))
+        tokens, positions = validation._hypothesis(document)
+        canonical = validation._canonical_hypothesis(document)
+        assert canonical.tokens == tuple(tokens)
+        assert canonical.consumed == tuple((position,) for position in positions)
+        assert canonical.rewritten == 0
+        assert _canonical(text) == content_tokens(text)
+
+
+class TestSpellingAmendment:
+    """Metric amendment 2026-10-11 (decision (a), note-routing-omissions plan
+    D10): the script and the transcript are compared after canonical
+    spelling. Pinned BOTH ways through ``encounter_metrics``: a spelling
+    difference is no longer an error, a different value still is
+    (``TestDoseChange`` above is unchanged)."""
+
+    @pytest.mark.parametrize(
+        ("said", "written", "fact"),
+        [
+            ("pain is two out of ten", "pain is 2 out of 10", "2 out of 10"),
+            ("pain is 2 out of 10", "pain is two out of ten", "two out of ten"),
+            ("paracetamol 500mg daily", "paracetamol 500 milligrams daily", "500 milligrams"),
+            ("paracetamol 75 mg daily", "paracetamol 75 milligrams daily", "75 milligrams"),
+            (
+                "paracetamol five hundred milligrams daily",
+                "paracetamol 500 milligrams daily",
+                "500 milligrams",
+            ),
+            ("for twenty-one days", "for 21 days", "21 days"),
+            ("for twenty one days", "for 21 days", "21 days"),
+        ],
+    )
+    def test_a_spelling_difference_is_correct(self, said: str, written: str, fact: str) -> None:
+        script = _script(("clinician", written), facts=[_fact("dose", fact, 0)])
+        document = _doc((SPEAKER_1, said))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        assert metrics.words.edit_distance == 0
+        assert _only_fact(metrics).verdict == "correct"
+        assert metrics.unsupported_clinical_lines == 0
+        assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+    @pytest.mark.parametrize(
+        ("said", "written", "fact"),
+        [
+            ("take 2 tablets", "take 3 tablets", "3 tablets"),
+            ("take two tablets", "take 3 tablets", "3 tablets"),
+            ("paracetamol 50mg daily", "paracetamol 500 mg daily", "500 mg"),
+            ("paracetamol fifty milligrams daily", "paracetamol 500 mg daily", "500 mg"),
+        ],
+    )
+    def test_a_different_value_stays_wrong_and_unsupported(
+        self, said: str, written: str, fact: str
+    ) -> None:
+        script = _script(("clinician", written), facts=[_fact("dose", fact, 0)])
+        document = _doc((SPEAKER_1, said))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        assert metrics.words.edit_distance == 1
+        assert _only_fact(metrics).verdict == "wrong"
+        assert metrics.unsupported_clinical_lines == 1
+        assert rule_failures(OPTION_A, _measured(metrics)) == (
+            "unsupported_clinical_line",
+            "material_wrong",
+        )
+
+    def test_a_comma_between_two_number_words_never_joins_in_the_transcript(self) -> None:
+        """hyp [for, 20, 1, days] against ref [for, 21, days]: one
+        substitution and one insertion, so the fact is wrong."""
+        for said in ("for twenty, one days", "for twenty , one days"):
+            script = _script(("clinician", "for 21 days"), facts=[_fact("present", "21 days", 0)])
+            document = _doc((SPEAKER_1, said))
+            metrics = encounter_metrics(document, _checked(document, 0), script)
+            assert metrics.words == WordErrors(3, 4, 2), said
+            assert _only_fact(metrics).verdict == "wrong", said
+
+    def test_a_comma_between_two_number_words_never_joins_in_the_script(self) -> None:
+        """ref [for, 20, 1, days] against hyp [for, 21, days]: one
+        substitution and one deletion."""
+        for written in ("for twenty, one days", "for twenty , one days"):
+            script = _script(("clinician", written), facts=[_fact("present", "one days", 0)])
+            document = _doc((SPEAKER_1, "for 21 days"))
+            metrics = encounter_metrics(document, _checked(document, 0), script)
+            assert metrics.words == WordErrors(4, 3, 2), written
+            assert _only_fact(metrics).verdict == "wrong", written
+
+    def test_ordinals_and_half_are_untouched(self) -> None:
+        script = _script(
+            ("clinician", "take half a tablet on the second day"),
+            facts=[_fact("dose", "half a tablet", 0)],
+        )
+        document = _doc((SPEAKER_1, "take half a tablet on the second day"))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        assert metrics.spelling_normalised_words == 0
+        assert _only_fact(metrics).verdict == "correct"
+        assert _canonical("take half a tablet on the second day") == content_tokens(
+            "take half a tablet on the second day"
+        )
+
+    @pytest.mark.parametrize("fact", ["five", "hundred mg", "five hundred mg"])
+    def test_a_fact_whose_span_cuts_a_join_still_resolves(self, fact: str) -> None:
+        """The fact is found on the line's content tokens, then widened to
+        the whole joined token its span cuts — never an empty lookup."""
+        script = _script(
+            ("clinician", "take five hundred mg daily"), facts=[_fact("dose", fact, 0)]
+        )
+        document = _doc((SPEAKER_1, "take 500 mg daily"))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        assert _only_fact(metrics).verdict == "correct"
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "i take um five hundred mg daily and the left knee hurts",
+            "i take - five hundred mg daily - and the left knee hurts",
+        ],
+    )
+    def test_a_fact_after_a_dropped_word_and_a_join_finds_its_own_span(self, line: str) -> None:
+        """PR-MED-023: a removed filler or a punctuation-only word AND a join
+        stand before the fact, so its content index, its raw word index and
+        its canonical index all differ. Only the canonical span tells the
+        right side from the wrong one."""
+        script = _script(("clinician", line), facts=[_fact("laterality", "left knee", 0)])
+        for said, verdict in (
+            ("i take 500 mg daily and the left knee hurts", "correct"),
+            ("i take 500 mg daily and the right knee hurts", "wrong"),
+        ):
+            document = _doc((SPEAKER_1, said))
+            fact = _only_fact(encounter_metrics(document, _checked(document, 0), script))
+            assert fact.verdict == verdict, said
+
+    @pytest.mark.parametrize(
+        ("span", "present", "absent"),
+        [
+            ((0, 0, 0), "omitted", "correctly_absent"),  # neither word of "five hundred"
+            ((0, 0, 1), "wrong", "wrongly_present"),  # "five" only
+            ((0, 2, 4), "wrong", "wrongly_present"),  # "hundred" only
+            ((0, 0, 4), "correct", "wrongly_present"),  # both
+        ],
+    )
+    def test_a_note_line_holding_part_of_a_joined_number(
+        self, span: tuple[int, int, int], present: str, absent: str
+    ) -> None:
+        """PR-MED-020: the joined "500" (transcript words 1 and 2) is in a
+        note line wholly, in part or not at all — never read as all-or-
+        nothing by one flag, for a present fact and an absent one."""
+        document = _doc((SPEAKER_1, "take five hundred mg daily"))
+        for kind, expected in (("dose", present), ("absent", absent)):
+            script = _script(("clinician", "take 500 mg daily"), facts=[_fact(kind, "500", 0)])
+            fact = _only_fact(encounter_metrics(document, _note(document, span), script))
+            assert fact.verdict == expected, kind
+
+    def test_a_low_confidence_second_word_of_a_joined_number_surfaces(self) -> None:
+        script = _script(
+            ("clinician", "take 500 mg daily"),
+            facts=[_fact("dose", "500 mg", 0, uncertain=True)],
+        )
+        document = _doc((SPEAKER_1, "take five ?hundred mg daily"))
+        note = _checked(document, 0)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("low_confidence_source", SourceCoords(0, 2, 2))
+        ]
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", True)
+
+    def test_the_spelling_count_is_the_transcripts_rewritten_words(self) -> None:
+        """Counted per transcript word rewritten: "500mg" 1, "five hundred" 2,
+        "milligrams" 1, "500 mg" 0, "500" 0 — the script's own rewrites (its
+        two "milligrams") are not counted."""
+        script = _script(
+            ("clinician", "take 500 milligrams then 500 milligrams then 500 mg then 500")
+        )
+        document = _doc((SPEAKER_1, "take 500mg then five hundred milligrams then 500 mg then 500"))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        assert metrics.words.edit_distance == 0
+        assert metrics.spelling_normalised_words == 4
 
 
 class TestAbsentFact:
@@ -1110,6 +1366,7 @@ class TestTextFreeTypes:
     def _metrics(self, **overrides: Any) -> EncounterMetrics:
         values: dict[str, Any] = {
             "words": WordErrors(1, 1, 0),
+            "spelling_normalised_words": 0,
             "transcript_lines": 0,
             "config_lines": 0,
             "unsupported_clinical_lines": 0,
