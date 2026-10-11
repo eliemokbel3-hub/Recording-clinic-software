@@ -4,8 +4,10 @@ Every Done-when in the plan's Phase 5 tasks 5.1-5.4 is pinned here: exact
 reconstruction and per-word uncertainty (Check 1), the false-positive
 fixtures that must produce ZERO contradiction errors alongside the anchored
 true positives (Check 2), the enumerated provenance codes (Check 3), and
-omission scoped to clinician-attributed high-risk spans with small talk
-silent (Check 4). The adversarial matrix and the eight global properties
+omission (Check 4) — scoped to clinician-attributed high-risk spans by Task
+5.4, widened by the note-routing-omissions plan's D2 to every speaker's
+structured-claim words and medications (names clinician-only), with small
+talk that carries none of them silent. The adversarial matrix and the eight global properties
 live in `test_note_matrix.py` (Task 5.5).
 """
 

@@ -52,8 +52,11 @@ view patterns · tokens · microcopy.
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
   clinician can always see a low-confidence phrase the note omitted; no automated
   check detects low-confidence or materiality omission (Check 4 `omission_warnings`
-  separately flags omitted high-risk TOKENS — numbers, names, medications — in
-  clinician-attributed segments, a different scoped heuristic).
+  separately flags omitted TOKENS, a different scoped heuristic — since 0.3.1 a side,
+  number, dose, strength unit, negation or medication in any speaker's line once the
+  clinician role is confirmed, and a name in the clinician's lines only; until then
+  numbers, names and medications in the clinician's lines only; note-routing-omissions
+  plan D2).
 - GUI-free view logic lives in `ui/models.py` (state→controls maps, list rendering,
   transcript rendering, readiness reports). Widgets stay thin so the logic is testable
   offscreen — every screen has offscreen tests, no real audio or ML in CI.
@@ -145,6 +148,21 @@ view patterns · tokens · microcopy.
   area — a typed line always stands in for a specific line, records what it replaced, and
   carries the clinician's own decision; the transcript panel stays a non-interactive text
   box; edits freeze at Save.
+- **Flagged lines are findable, not reordered (since 0.3.1).** A transcript line whose
+  side, negation, number, dose, name or medication is not in the note (Check 4's
+  `high_risk_omission`) is marked `[flagged]` at the FRONT of its label — in the Line
+  chooser after its transcript number (`<n>. [flagged] <speaker>: …`), on a line-editor
+  row before its section (`[flagged] <section> - …`) — because the closed chooser cuts a
+  label's end and its open list elides the middle (the 2026-10-11 live smoke). The chooser
+  keeps transcript order; a "Show flagged lines only" tick, never pre-ticked and cleared
+  with the note, lists the flagged lines alone; one count line under it says "N lines with
+  a side, negation, number, dose, name or medication are not in the note." and names by
+  transcript number each flagged line the chooser cannot offer (typed over, or only partly
+  in the note — "Line 7 is replaced or partly in the note - see its row below."), and with
+  the tick on and nothing offered flagged it says "No line in the list is flagged -
+  untick 'Show flagged lines only' to see every line." (`ui/models.py`
+  `FLAGGED_LINE_MARK` / `flagged_count_line` / `FLAGGED_FILTER_EMPTY_LINE`;
+  note-routing-omissions plan D4).
 - **Pre-filled lines are marked, counted and ratified by one Save.** A line the
   practitioner's own config pre-filled renders with `[pre-filled by your config - …]` in
   the note body and in the line editor — under a prose style, where the line has become
@@ -306,7 +324,14 @@ view patterns · tokens · microcopy.
   are grouped by code and summarised, and blocking errors are presented distinctly from
   review warnings with each blocking state naming the action it blocks and how to clear it
   — warning fatigue is a real failure mode (`ui/models.py` `summarise_warnings` /
-  `WARNING_COPY` / `complete_block_reason`).
+  `WARNING_COPY` / `complete_block_reason`). Two buttons acknowledge review warnings,
+  and one of them never clears the omission warning (since 0.3.1): "Acknowledge all
+  review warnings" clears every other unacknowledged review group and is hidden when
+  the omission warning is the only one left; the omission warning's own row Acknowledge
+  is the one control that clears it, so the clinician looks at its flagged lines first,
+  and Save, Complete and Copy stay closed until it is clicked (`ui/models.py`
+  `SEPARATELY_ACKNOWLEDGED_CODES` / `acknowledge_all_codes`; note-routing-omissions plan
+  D4).
 - **Guard live custody with a controller lease, not a button flag.** A destructive or
   view-swapping action during a live generation/review is refused through the controller-
   owned `GenerationLease` (`session.py`), which spans the whole compose→review→write — a
@@ -739,6 +764,11 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   the refused wording: "A section is shown as Clean clinical because its prose did not
   pass the fidelity check" / "Read that section as shown (its confirmed lines,
   unchanged), then acknowledge."
+- The omission warning names what was said and where to look, never the words: "A side,
+  negation, number, dose, name or medication someone said is not in the note" / "Check
+  the transcript beside the note (a line you removed can raise this too), tick 'Show
+  flagged lines only' to find them, then acknowledge." (`WARNING_COPY["high_risk_omission"]`,
+  0.3.1).
 - The draft write's lines (`ui/models.py` `WRITE_LINES`, the ONE source; no id,
   patient or practitioner name, answer text or key is ever formatted into one). Each
   refusal gives its next step, and offers Copy where copying the note is the way

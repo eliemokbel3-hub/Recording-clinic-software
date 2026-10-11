@@ -430,7 +430,9 @@ practitioner-run developer tool that prints numbers only (flow 27).
     (canonical-section → Cliniko-template-field mapping), `autofill_rules.json`,
     `prefill_templates.json` and, since the practitioner-profile plan's Phase 4,
     `section_cues.json` (the phrases that route a transcript utterance into a
-    canonical section) — falling back to shipped package defaults per
+    canonical section; since 0.3.1 routing tries a user file's phrases first
+    and the shipped cues for an utterance they route nowhere — the shipped
+    layer is package data bound by the build, not the config digest) — falling back to shipped package defaults per
     filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
     the encrypted session store and the 24 h rule so it survives session
     destruction. Patient data and secrets are prohibited by policy, but the

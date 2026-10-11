@@ -2970,9 +2970,10 @@ def build_note_generator(
     confirmed role). Config load and provider construction happen at call
     time, inside the worker thread, off the GUI thread — mirroring
     ``build_transcriber``; the provider is built FROM the resolved config
-    (``provider_factory(config)``), so the cues it routes by are the ones the
-    draft's ``config_digest`` binds. Returns the draft plus the resolved
-    config."""
+    (``provider_factory(config)``), so the own cues it routes by are the ones
+    the draft's ``config_digest`` binds (the shipped fallback layer is bound
+    by the build — note-routing-omissions plan D1). Returns the draft plus
+    the resolved config."""
 
     def generator(session_dir: Path, crypto: SessionCrypto) -> NoteGenerationResult:
         document = read_transcript(session_dir, crypto)

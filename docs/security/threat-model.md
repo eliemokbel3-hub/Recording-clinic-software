@@ -324,7 +324,11 @@ note inherit exactly that posture.
    ROUTING input, not a content input: its phrases never enter a note, they
    select which verbatim transcript utterance lands in which section, so a
    hand-edited cue file can misplace transcript text but cannot author note
-   text; it is digest-bound like the other three),
+   text; it is digest-bound like the other three; since 0.3.1 routing tries its
+   phrases first and the SHIPPED cues — package data, bound by the build, not
+   the digest — for a line they route nowhere, so what routed a note is the
+   config digest plus the app version (the audit row's `app_version`; the
+   harness report's commit) — note-routing-omissions plan D1),
    deliberately OUTSIDE the encrypted session store and the 24 h rule — they
    are INTENDED as boilerplate, not patient data, and must survive session
    destruction (the loader validates structure only and cannot detect patient
@@ -485,16 +489,35 @@ note inherit exactly that posture.
    `check_typed_text`; a typed line draws `clinician_asserted`). Edits freeze
    at Save like proposal decisions,
    and the transcript panel stays a non-interactive text box.
+   Check 4's warning is one review row with a count (its scope: surface 3
+   below); since 0.3.1 (note-routing-omissions plan D4) "Acknowledge all
+   review warnings" leaves it and only its own Acknowledge clears it, and the
+   Line chooser marks each flagged line `[flagged]` with a "Show flagged lines
+   only" filter — a review aid that adds no text widget and no copy path.
+   NEXT-PATIENT RESIDUE (0.3.1, named): routing now tries the practitioner's
+   cues and then the shipped cues, so a next patient's words recorded before
+   the session stops (the Chrome extension section's residue (5), the greeting
+   at the door) reach the draft whenever they carry a shipped cue, whatever the
+   practitioner's own cues say. The pipeline has no new-patient detection
+   (deferred); the controls are the clinician's review with the
+   speaker-labelled transcript beside the note, Remove line, and in the pilot
+   shadow mode — removing such a line raises Check 4's acknowledgeable warning
+   for its flagged words.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE Note-tab review (`ui/note.py`), longer than the
    Phase-2 transcript-inspection view, because the clinician must be able to see
    a phrase the note omitted on the basis of LOW CONFIDENCE — that path is
    reached by no automated check (Check 4 `omission_warnings` separately flags
-   omitted HIGH-RISK TOKENS — numbers, names, medications — in
-   clinician-attributed segments, but it is a scoped high-risk-token heuristic,
-   not a low-confidence or materiality detector; see the honest limit below).
-   Plaintext transcript and note
+   omitted FLAGGED TOKENS — since the note-routing-omissions plan's D2
+   (0.3.1), `note_check._omission_flag_token`: a side, number, dose, strength
+   unit, negation or medication in ANY speaker's segment once a clinician role
+   is confirmed, and a name-like word in the confirmed clinician's segments
+   only (a mid-segment "I" is name-like); until then numbers, names and
+   medications in the clinician's segments only — but it is a token
+   heuristic, not a low-confidence or materiality detector: an uncued
+   sentence with none of those words stays unflagged; see the honest limit
+   below). Plaintext transcript and note
    therefore coexist in memory for the review duration. This is inside
    boundary 2 (a same-user process can already read process memory); the Note
    tab's transcript panel stays display-only (`NoTextInteraction`) so casual

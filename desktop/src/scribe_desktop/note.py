@@ -1183,7 +1183,9 @@ SECTION_CUES_FILENAME: Final = "section_cues.json"
 # replaces the shipped one whole (D6) and enters the config digest (D7); the
 # provider the app builds takes its cues FROM the loaded config
 # (``ui.models.build_note_generator``), and ``DEFAULT_SECTION_CUES`` is what
-# a bare ``ExtractiveNoteProvider()`` falls back to. The shipped phrases are a
+# a bare ``ExtractiveNoteProvider()`` falls back to — and, since the
+# note-routing-omissions plan's D1, the second routing layer under the own
+# file's cues (``layered_section``). The shipped phrases are a
 # FIRST CUT authored against the fixture matrix and ordinary physiotherapy
 # vocabulary, NOT clinical evidence — the honesty note ``note_check`` shares.
 # Phrases are normalised through ``content_tokens`` at import so cue matching

@@ -36,7 +36,10 @@ depends on):
   filenames, a user file under the config root REPLACES the shipped default
   of the same name entirely. There is no deep merge: merge semantics are
   where "never partially applies" goes to die, and a clinician editing a
-  file owns that whole file.
+  file owns that whole file. (Routing is a separate layer above the FILE:
+  since the note-routing-omissions plan's D1 the provider tries the
+  resolved cue file first and the shipped cues for a line it routes
+  nowhere — see the fourth file below.)
 - **First run:** no config root, or no user file for a name, means the
   shipped default for that name loads. The loader is read-only — it never
   creates the config directory (that is an app/UI concern).
@@ -58,13 +61,20 @@ holds the phrases that route a transcript utterance into a canonical section
 follows the same precedence (whole-file replacement, first-run default, loud
 failure — D6), the same text rule (``_TriggerText``), refuses a phrase with
 no content tokens and any normalised duplicate within or across sections,
-and enters ``config_digest`` like the other three (D7), so every note is
-bound to the cue set that routed it. A key MISSING from the file has no cues
-— nothing is routed to that section from cues — and the shipped default
-carries every key. Cue phrases never enter a note: they select which
+and enters ``config_digest`` like the other three (D7). The FILE is replaced
+whole; ROUTING is layered (note-routing-omissions plan D1, 0.3.1): the
+provider tries this file's cues first and ``note.DEFAULT_SECTION_CUES`` (the
+shipped cues, package data) only for an utterance they route nowhere, so a
+note is bound to the cue set that routed it by ``config_digest`` (the own
+layer) together with the app version (the shipped layer — the digest does
+not cover it). A key MISSING from the file has no own-layer cues, but the
+shipped fallback may still route an utterance to that section — an emptied
+section no longer switches routing off (accepted for 0.3.1); the shipped
+default carries every key. Cue phrases never enter a note: they select which
 VERBATIM transcript utterance lands in which section.
 ``NoteConfig.normalised_cues()`` is the provider-shaped accessor, and the
-app builds its provider from it (``ui.models.build_note_generator``).
+app builds its provider from it with the shipped fallback
+(``ui.models.extractive_provider_from_config``).
 
 Consented phrase learning (practitioner-profile plan Phase 5) makes the cue
 file the ONE config file the app writes itself: ``append_user_cues`` appends
@@ -885,8 +895,9 @@ class NoteConfig(BaseModel):
         """The cue set in ``ExtractiveNoteProvider``'s shape — every phrase
         normalised through ``content_tokens``, the derivation
         ``note.DEFAULT_SECTION_CUES`` applies to the shipped file. A section
-        absent from the file is absent here, and the provider's
-        ``self._cues.get(key, ())`` then routes nothing to it."""
+        absent from the file is absent here, so it has no own-layer cues —
+        but the provider may still route to it through its shipped fallback
+        (``note.layered_section``; note-routing-omissions plan D1)."""
         return {
             key: tuple(content_tokens(phrase) for phrase in phrases)
             for key, phrases in self.section_cues.items()
