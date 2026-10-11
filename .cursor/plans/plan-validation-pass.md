@@ -191,6 +191,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
   - its `line_marks(words)` and the marks rendering (`_clean_lines`, `assertion_label`, `EditableLine.marks`);
   - its Check 4 suspect-word exclusion;
   - its `_first_phrase_match` suspect skip (composes with D3's limit);
+  - its `voice_commands._tokens` suspect exclusion (moved into the leaf module and shared by the boundary, D1/D2);
   - its harness column (22 → 23);
   - its forward-tolerant `NoteWarning` reader (practitioner decision 2026-10-12, confirmed by the guard session): an unknown review-severity code reads as a generic review warning and an unknown error code is still refused. A note carrying this plan's two review codes therefore reads on 0.3.2.
 - **Phase-tag pitfall:** no string constant `"wave"` anywhere in the package (`test_shadow_exits.py:790`).
@@ -225,7 +226,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 ### D1 — One leaf module holds the phrases and the boundary rule
 **Decision.** New `consultation_phrases.py` imports only `note` and `transcription`. It holds:
 - `CLOSING_PHRASES` and `GREETING_PHRASES` (moved from `voice_commands`, which re-exports them so `test_hands_free.py:44-47` keeps importing from there);
-- `phrase_tokens`;
+- `phrase_tokens`, and the word-to-token function `_tokens` (with the guard's suspect-word exclusion as built, D2);
 - one phrase-event helper used by `NewConsultationWatcher` and by `consultation_boundary`;
 - `BOUNDARY_SEGMENTS = 3`, a separate constant: the watcher's `NEW_CONSULTATION_WINDOWS` counts live windows, the boundary counts non-transparent segments.
 
@@ -246,6 +247,8 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 - The returned index is always the FIRST SEGMENT TO WITHHOLD, and it is always a non-transparent segment.
 - When the closing and the greeting sit in the SAME segment, the boundary is the NEXT NON-TRANSPARENT segment, failing toward inclusion; when no such segment follows (the pair is at the end of the document, or only transparent segments follow), the function returns None. (Peer round 1 PR-MED-003.)
 - Transparent segments (no words or empty text) are skipped.
+
+**Suspect words (the guard's D6; peer round 2 PR-MED-006).** The boundary reads its phrase tokens through the SAME token function as the live watcher — `voice_commands._tokens` as the guard builds it (Task 2.4: suspect words excluded), moved into the leaf module with the phrase-event helper — so a suspect word can never supply a closing or a greeting, and the live warning and the boundary cannot disagree on it. The guard marks every word of a suspect segment, so a wholly suspect greeting or closing segment contributes no phrase at all. Suspect segments stay non-transparent (D2's segment counting and the head-case cue rule are unchanged), and the watcher's live behaviour is unchanged (C7). Named residue: if that function drops suspect words rather than breaking the token run, a phrase could in principle straddle a suspect segment; it fails toward a boundary only when a real closing and a real greeting surround it.
 
 **Inputs.** `cues` is the canonical config's own cues (`config.normalised_cues()`); `fallback_cues` is `DEFAULT_SECTION_CUES`. Every consumer computes the boundary from `(document, config)` itself (D3), so all agree. A test pins the agreement.
 
@@ -413,7 +416,7 @@ A marker is never removed once written: the fail-safe direction is "no audio kep
   - rewrite NEXT-PATIENT RESIDUE (`docs/security/threat-model.md:502-512`);
   - update HANDS-FREE AND WARNINGS (`:2575-2625`): the lists now also withhold content, and they changed;
   - cross-reference Chrome residue (5) (`:2734`);
-  - new residues: a false boundary withholds content behind a sticky warning; a boundary inside one segment; a phone call; the window counts segments; a suspect greeting is skipped (the guard's D6) and fails toward inclusion; the unconsented tail is kept unless the clinician removes it; the trim leaves no audit fact; the trim removes an earlier generated note, and a trim that fails after its marker is written still keeps no audio (fail-safe toward privacy); the correction-carry residues; the hedge mark's scope and coarseness.
+  - new residues: a false boundary withholds content behind a sticky warning; a boundary inside one segment; a phone call; the window counts segments; a suspect closing or greeting supplies no phrase (the guard's D6, through the shared token function, D2) and fails toward inclusion; the unconsented tail is kept unless the clinician removes it; the trim leaves no audit fact; the trim removes an earlier generated note, and a trim that fails after its marker is written still keeps no audio (fail-safe toward privacy); the correction-carry residues; the hedge mark's scope and coarseness.
 - **Data-flow map:** flow 7 (the request cut), flow 14 / `:552` (the live lists), the trim on the transcript flow.
 - **Retention schedule:** the transcript row (the clinician may remove a next patient's lines before Complete).
 - **`docs/testing/validation-harness.md`:**
@@ -495,15 +498,16 @@ See the Planning Extraction Summary (the canonical list).
 - Current in-progress step: None.
 - Immediate next action:
   1. The practitioner takes decisions 0.1–0.7. Decision 0.4 goes first if (b) is wanted: tell the guard session before its Task 3.1.
-  2. Task 0.8, the vocabulary commit.
+  2. After the guard plan's hardening commit: Task 0.8, the vocabulary commit.
   3. Task 0.9, a fresh session writes the held-out set.
-  4. After the guard plan's hardening commit (and, under decision 0.7 (a), its run of record), Task 0.10, then `/execute-loop` from Phase 1.
+  4. Under decision 0.7 (a) after the guard's run of record, under (b) straight away: Task 0.10, then `/execute-loop` from Phase 1.
 - Open blockers: the guard plan (0.3.2) must land first (its hardening commit; under decision 0.7 (a) also its run of record); decisions 0.1–0.7.
 - Last plan sync: 2026-10-12.
 
 ## Review History
 - 2026-10-12 `/review-plan`: four parallel read-only lenses (coverage, practicality and risk, simplicity, plus the first-draft design critique), every finding checked against `8e5e571`. Plan-scoped; no code reviewed.
 - 2026-10-12 `/peer-loop` (plan review, codex `gpt-6-astra` medium, read-only): round 1 — 4 build-affecting (2 HIGH, 2 MED), all applied (one HIGH partly invalid: recovery never re-transcribes a transcript-present session, now a pin).
+- 2026-10-12 `/peer-loop` round 2 — 2 build-affecting (2 MED), both applied: Phase 0's decisions may precede the guard's hardening commit while 0.8 onward wait for it; the boundary shares the watcher's suspect-excluding token function.
 
 ## Review Findings Log
 ### Round 1 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 1)
@@ -560,8 +564,49 @@ Unstated assumptions: PR-HIGH-001, PR-MED-003.
 Simpler / safer alternatives: no finding verified.
 Missing verification / rollback / migration: PR-HIGH-002, PR-MED-003, PR-MED-004.
 
+### Round 2 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 2)
+- Source: Codex plan peer-review
+- Peer: codex gpt-6-astra medium, read-only sandbox
+- Scope: the plan file at `f539fae`, the round 1 block as fix notes, and the named code and test ranges (prompt `.cursor/loops/validation-pass-peer-r2-prompt.txt`)
+- Recorded by: the planning session (composer-recorded round; transcribed verbatim from the LAST `### Round 2` header of `.cursor/loops/validation-pass-peer-r2.log`, with dispositions added)
+- Materiality: 2 build-affecting / 0 record-only / 0 invalid
+- Severity: 0 CRIT / 0 HIGH / 2 MED / 0 LOW
+- Round status: Closed (2 fixed)
+
+#### Findings
+
+**PR-MED-005 — The blanket phase prerequisite still blocks the early primer option**
+
+- Severity: MED
+- Materiality: build-affecting
+- Challenges: Tasks preamble; decision 0.4(b); handoff sequencing.
+- Evidence: `.cursor/plans/plan-validation-pass.md:564`, `:585–588`, `:353–357`, `:496–500`.
+- Class: Re-raises round 1’s **option without an executable prerequisite path** class.
+- Defect: The Tasks preamble says **no phase** starts before the guard’s hardening commit, which includes Phase 0. Decision 0.4(b), however, must amend the guard’s Task 1.1 before its Task 3.1 measurement; the handoff correctly puts that decision first, leaving contradictory execution instructions.
+- Concrete amendment: “Phase 0 decisions may precede the guard’s hardening commit. If 0.4(b) is selected, coordinate the guard Task 1.1 amendment before its Task 3.1 measurement. Phase 1 retains C9’s prerequisites, and Task 0.10 retains its decision-0.7-dependent inputs.” Replace the blanket sentence and reconcile its restatements.
+- Verification: Trace the documented 0.4(b) path through decision → guard primer amendment → measurement → hardening → diagnosis → Phase 1, with no circular prerequisite.
+- /fix decision: Applied. Verified VALID: the Tasks preamble blocked every phase, Phase 0 included, while 0.4 (b) must precede the guard's Task 3.1. The preamble now lets decisions 0.1–0.7 be taken at any time (0.4 (b) before the guard's Task 3.1) and holds every task that commits to `main` — 0.8 onward — until the guard's hardening commit (the guard's Task 2.4 edits `voice_commands._tokens`, which 0.8 moves; C9); the handoff's next-action list follows. Traced: decision 0.4 (b) → guard Task 1.1 → guard Task 3.1 → guard hardening → 0.8 → 0.9 → 0.10 → Phase 1, no cycle. Landed + siblings reconciled.
+
+**PR-MED-006 — Suspect phrase exclusion is claimed but absent from the boundary’s operational contract**
+
+- Severity: MED
+- Materiality: build-affecting
+- Challenges: D1–D2; D12; Task 1.1.
+- Evidence: `.cursor/plans/plan-validation-pass.md:225–250`, `:416`, `:627–629`; `.cursor/plans/plan-invented-text-guard.md:124`, `:198`; `desktop/src/scribe_desktop/voice_commands.py:121–129`, `:210–217`.
+- Class: Re-raises round 1’s **contradictory assumptions between decisions** class.
+- Defect: D12 claims a suspect greeting is skipped, but D2’s rule and Task 1.1 never require suspect-word exclusion. The guard’s exclusion belongs to the live watcher’s `_tokens` path; sharing phrase-event detection does not establish that the new document-based boundary uses that filtered evidence, so a literal D2 implementation can withhold real content after a suspect closing or greeting.
+- Concrete amendment: “For boundary detection, closing and greeting matches must contain only non-suspect words; a suspect word breaks a phrase match. This restriction does not make suspect segments transparent or change the head-case cue rule. Preserve the live watcher’s existing semantics under C7.” Add this to D2 and Task 1.1, with tests for suspect closing, suspect greeting, a phrase interrupted by a suspect word, and the corresponding non-suspect positive cases.
+- Verification: Pin that suspect phrase evidence cannot create a boundary or Check 6, and include these fixtures in the request-cut, proposal-limit and Check 6 agreement test.
+- /fix decision: Applied. Verified VALID: D2 never named its token source, while the guard's D6 excludes suspect words only in `voice_commands._tokens` (`:121-129`). Fixed by ONE token function rather than a second rule: the boundary reads phrase tokens through the watcher's `_tokens` as the guard builds it, moved into the leaf module (D1, D2's new "Suspect words" paragraph), so the live warning and the boundary cannot disagree (C7 unchanged); suspect segments stay non-transparent and the head-case cue rule is unchanged; the straddle case is named as a residue. Task 1.1 gains suspect closing/greeting tests with non-suspect twins, Task 1.2's agreement test includes them, D12's residue line and the 0.3.2 rebase list reconciled. Landed + siblings reconciled.
+
+Coverage: PR-MED-006.  
+Practicality / feasibility / sequencing: PR-MED-005.  
+Unstated assumptions: PR-MED-006.  
+Simpler / safer alternatives: no finding verified.  
+Missing verification / rollback / migration: PR-MED-005, PR-MED-006.
+
 ## Tasks
-Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". No phase starts before the guard plan's hardening commit is on `main` (C9).
+Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". The decisions 0.1–0.7 need no code and may be taken at any time (0.4 (b) MUST be, before the guard's Task 3.1, because it lands in the guard's Task 1.1). Every task that commits to `main` — 0.8 onward — waits for the guard plan's hardening commit (C9: one writer on `main`; the guard's Task 2.4 edits `voice_commands._tokens`, which 0.8 moves). Phase 1 additionally waits on C9's decision-0.7 prerequisites, and Task 0.10's input follows decision 0.7 (peer round 2 PR-MED-005).
 
 ### Phase 0 — Decisions, vocabulary, held-out set, diagnosis
 - [ ] 🟥 **0.1 Uncertainty** `[decision]`
@@ -626,11 +671,11 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 ### Phase 1 — The next-patient boundary (`consultation_phrases.py`, `voice_commands.py`, `note.py`, `note_config.py`, `note_fill.py`, `note_check.py`, `ui/models.py`)
 - [ ] 🟥 **1.1 The leaf module and the rule (D1, D2, C5, C6)**
   - Build `consultation_boundary`, with `voice_commands` re-exporting the lists and the watcher using the shared phrase-event helper (its live pins `test_hands_free.py:374-400` unchanged).
-  - Tests: the D2 shapes (head case; same segment; same segment followed only by empty segments, and at the end of the document — None; closing without greeting; greeting without closing; phone call; transparency; first-position rule), the held-out transcript fixtures, an import-cycle test (importing `note_config` does not import `voice_commands`).
+  - Tests: the D2 shapes (head case; same segment; same segment followed only by empty segments, and at the end of the document — None; closing without greeting; greeting without closing; phone call; transparency; first-position rule; a suspect closing, a suspect greeting and their non-suspect twins — the suspect ones give no boundary and no Check 6), the held-out transcript fixtures, an import-cycle test (importing `note_config` does not import `voice_commands`).
   - Done when: green.
 - [ ] 🟥 **1.2 The request cut and the proposals (D3)**
   - `build_note_request` passes `boundary=` to `_assemble_note_request`; the `note_fill` public entry points limit `_first_phrase_match`.
-  - Tests: absolute coords resolve through `words_for_coords` and `_words_for_coords`; proposals ignore a trigger after the boundary; Check 3 stays whole; the AST guard (`test_note_config.py:535-539`) green; one test that the request cut, `note_fill` and Check 6 agree on the boundary for the held-out fixtures.
+  - Tests: absolute coords resolve through `words_for_coords` and `_words_for_coords`; proposals ignore a trigger after the boundary; Check 3 stays whole; the AST guard (`test_note_config.py:535-539`) green; one test that the request cut, `note_fill` and Check 6 agree on the boundary for the held-out fixtures and the suspect-phrase fixtures (D2).
   - Done when: green.
 - [ ] 🟥 **1.3 Check 6 and its copy (D5)**
   - `NOTE_WARNING_SEVERITY` and `WARNING_COPY` in one commit; `check_note` appends; the code joins `SEPARATELY_ACKNOWLEDGED_CODES` (`test_ui_models.py:1551` moves).
