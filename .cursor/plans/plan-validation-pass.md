@@ -503,13 +503,14 @@ See the Planning Extraction Summary (the canonical list).
   3. Task 0.9, a fresh session writes the held-out set.
   4. Under decision 0.7 (a) after the guard's run of record, under (b) straight away: Task 0.10, then `/execute-loop` from Phase 1.
 - Open blockers: the guard plan (0.3.2) must land first (its hardening commit; under decision 0.7 (a) also its run of record); decisions 0.1–0.7.
-- Last plan sync: 2026-10-12.
+- Last plan sync: 2026-10-12 (after the cross-family plan peer pass: `/peer-loop` codex `gpt-6-astra` medium, rounds 1-4, converged; Review Findings Log).
 
 ## Review History
 - 2026-10-12 `/review-plan`: four parallel read-only lenses (coverage, practicality and risk, simplicity, plus the first-draft design critique), every finding checked against `8e5e571`. Plan-scoped; no code reviewed.
 - 2026-10-12 `/peer-loop` (plan review, codex `gpt-6-astra` medium, read-only): round 1 — 4 build-affecting (2 HIGH, 2 MED), all applied (one HIGH partly invalid: recovery never re-transcribes a transcript-present session, now a pin).
 - 2026-10-12 `/peer-loop` round 2 — 2 build-affecting (2 MED), both applied: Phase 0's decisions may precede the guard's hardening commit while 0.8 onward wait for it; the boundary shares the watcher's suspect-excluding token function.
 - 2026-10-12 `/peer-loop` round 3 — 1 build-affecting MED, applied: the hedge mark is rendered through the guard's warning-to-mark mapping and prose summary.
+- 2026-10-12 `/peer-loop` round 4 — 0 findings; the plan-review pass CONVERGED (4 rounds: 4 → 2 → 1 → 0 build-affecting, all applied).
 
 ## Review Findings Log
 ### Round 1 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 1)
@@ -634,6 +635,25 @@ Practicality / feasibility / sequencing: no finding verified.
 Unstated assumptions: PR-MED-007.  
 Simpler / safer alternatives: no finding verified.  
 Missing verification / rollback / migration: PR-MED-007.
+
+### Round 4 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 4)
+- Source: Codex plan peer-review
+- Peer: codex gpt-6-astra medium, read-only sandbox
+- Scope: the plan file at `a9a043b`, the round 1-3 blocks as fix notes, and the named code and test ranges (prompt `.cursor/loops/validation-pass-peer-r4-prompt.txt`)
+- Recorded by: the planning session (composer-recorded round; transcribed verbatim from the LAST `### Round 4` header of `.cursor/loops/validation-pass-peer-r4.log`)
+- Materiality: 0 build-affecting / 0 record-only / 0 invalid
+- Severity: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+- Round status: Closed (converged: a round >= 2 with zero new build-affecting findings)
+
+#### Findings
+
+No new findings this round.
+
+Coverage: no finding verified.  
+Practicality / feasibility / sequencing: no finding verified.  
+Unstated assumptions: no finding verified.  
+Simpler / safer alternatives: no finding verified.  
+Missing verification / rollback / migration: no finding verified.
 
 ## Tasks
 Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". The decisions 0.1–0.7 need no code and may be taken at any time (0.4 (b) MUST be, before the guard's Task 3.1, because it lands in the guard's Task 1.1). Every task that commits to `main` — 0.8 onward — waits for the guard plan's hardening commit (C9: one writer on `main`; the guard's Task 2.4 edits `voice_commands._tokens`, which 0.8 moves). Phase 1 additionally waits on C9's decision-0.7 prerequisites, and Task 0.10's input follows decision 0.7 (peer round 2 PR-MED-005).
