@@ -328,7 +328,8 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 - The guard's `line_marks` gains a keyword `clinician: bool` and the mark "unsure" for a NON-clinician line holding a hedge.
 - Check 1 emits `hedged_source` (review) once per quoted line, with LINE-span coords, the guard's `number_source` convention, after the reconstruction check. An invalid or mismatched line draws none.
 - The editor's `EditableLine.marks` passes `segment.speaker == clinician_speaker`, so it agrees with Check 1 (the editor cannot read warnings).
-- Not in `SEPARATELY_ACKNOWLEDGED_CODES`. Copy omits the mark.
+- The rendered note's marks come from the WARNINGS, not the words: the guard's `line_marks_by_assertion(note)` gains `hedged_source` → "unsure" beside its two codes, and its `section_marks_line` counts unsure lines in the prose section summary ("…; N lines check: unsure"). So a freshly generated note and a note reloaded from `note.enc` show the same `[check: unsure]` in Clean and verbatim and the same count under prose (peer round 3 PR-MED-007).
+- Not in `SEPARATELY_ACKNOWLEDGED_CODES`. Copy omits the mark (the guard's `check_marks=False`), and the Cliniko Write stays bare, as for the guard's marks.
 - A single-cluster transcript (the only speaker is the clinician) gets no mark. This is recorded on decision 0.1.
 
 **Harness side.** Its own commit, dated before this plan's run of record, titled "rule v1 as amended 2026-10-xx (2)", in the call-3 style. It overrides interpretation 7 (`plan-pilot.md:1892`) and answers the guard plan's "widening masks a regression" objection in writing.
@@ -508,6 +509,7 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-12 `/review-plan`: four parallel read-only lenses (coverage, practicality and risk, simplicity, plus the first-draft design critique), every finding checked against `8e5e571`. Plan-scoped; no code reviewed.
 - 2026-10-12 `/peer-loop` (plan review, codex `gpt-6-astra` medium, read-only): round 1 — 4 build-affecting (2 HIGH, 2 MED), all applied (one HIGH partly invalid: recovery never re-transcribes a transcript-present session, now a pin).
 - 2026-10-12 `/peer-loop` round 2 — 2 build-affecting (2 MED), both applied: Phase 0's decisions may precede the guard's hardening commit while 0.8 onward wait for it; the boundary shares the watcher's suspect-excluding token function.
+- 2026-10-12 `/peer-loop` round 3 — 1 build-affecting MED, applied: the hedge mark is rendered through the guard's warning-to-mark mapping and prose summary.
 
 ## Review Findings Log
 ### Round 1 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 1)
@@ -605,6 +607,34 @@ Unstated assumptions: PR-MED-006.
 Simpler / safer alternatives: no finding verified.  
 Missing verification / rollback / migration: PR-MED-005, PR-MED-006.
 
+### Round 3 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 3)
+- Source: Codex plan peer-review
+- Peer: codex gpt-6-astra medium, read-only sandbox
+- Scope: the plan file at `ac71682`, the round 1-2 blocks as fix notes, and the named code and test ranges (prompt `.cursor/loops/validation-pass-peer-r3-prompt.txt`)
+- Recorded by: the planning session (composer-recorded round; transcribed verbatim from the LAST `### Round 3` header of `.cursor/loops/validation-pass-peer-r3.log`, with dispositions added)
+- Materiality: 1 build-affecting / 0 record-only / 0 invalid
+- Severity: 0 CRIT / 0 HIGH / 1 MED / 0 LOW
+- Round status: Closed (1 fixed)
+
+#### Findings
+
+**PR-MED-007 — The hedge mark needs the persisted-warning rendering path extended**
+
+- Severity: MED
+- Materiality: build-affecting
+- Challenges: D7; Task 3.1; inherited guard D5 and Task 2.6.
+- Evidence: `.cursor/plans/plan-validation-pass.md:328–331`, `:700–702`; `.cursor/plans/plan-invented-text-guard.md:123`, `:200`.
+- Defect: The guard’s `line_marks_by_assertion(note)` maps its two warning codes separately from the word-based `line_marks` helper, and its prose section summary enumerates those marks. Task 3.1 extends the word helper, checker and editor but never extends that warning-to-mark mapping or specifies the prose summary for `hedged_source`; its named Clean/verbatim tests cover only part of this inherited rendering contract.
+- Concrete amendment: “Extend `line_marks_by_assertion` with `hedged_source` → `unsure`, and extend `section_marks_line` to include the unsure-line count. Use that canonical mapping for freshly generated and reloaded notes. Pin Clean, verbatim and prose display, including a line carrying multiple marks; Copy and Cliniko Write continue omitting check marks.”
+- Verification: A note carrying persisted `hedged_source` renders the unsure mark after reload in Clean and verbatim styles and includes it in the prose section summary; the editor agrees, and exported note text omits the mark.
+- /fix decision: Applied. Verified VALID against the guard plan's D5 and Task 2.6: rendered marks come from `line_marks_by_assertion(note)` (warnings), not from the word helper, and `section_marks_line` enumerates the guard's codes. D7 now extends both for `hedged_source` → "unsure", and states Copy and the Cliniko Write stay bare; Task 3.1 names the two extensions and adds fresh-versus-reloaded display in Clean, verbatim and prose, a line with both `number` and `unsure`, Copy and the Write body. Landed + siblings reconciled (Flow 3 and P.2 step 3 already name the mark as displayed).
+
+Coverage: PR-MED-007.  
+Practicality / feasibility / sequencing: no finding verified.  
+Unstated assumptions: PR-MED-007.  
+Simpler / safer alternatives: no finding verified.  
+Missing verification / rollback / migration: PR-MED-007.
+
 ## Tasks
 Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". The decisions 0.1–0.7 need no code and may be taken at any time (0.4 (b) MUST be, before the guard's Task 3.1, because it lands in the guard's Task 1.1). Every task that commits to `main` — 0.8 onward — waits for the guard plan's hardening commit (C9: one writer on `main`; the guard's Task 2.4 edits `voice_commands._tokens`, which 0.8 moves). Phase 1 additionally waits on C9's decision-0.7 prerequisites, and Task 0.10's input follows decision 0.7 (peer round 2 PR-MED-005).
 
@@ -698,8 +728,8 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 
 ### Phase 3 — Hedge mark and the amendment (skip if 0.1 = (b))
 - [ ] 🟥 **3.1 App (D7)**
-  - `line_marks(words, *, clinician)` with "unsure"; Check 1 emits `hedged_source`; `WARNING_COPY` row; `EditableLine.marks` passes the role.
-  - Tests: per line; a clinician line is not marked; a single cluster is not marked; an invalid line draws none; the editor agrees with Check 1; Clean and verbatim rendering and Copy without the mark; `test_note_matrix.py` multisets where a patient line hedges (e.g. `:1402`); `test_ui_screens.py:4470` parity.
+  - `line_marks(words, *, clinician)` with "unsure"; Check 1 emits `hedged_source`; `WARNING_COPY` row; `EditableLine.marks` passes the role; `line_marks_by_assertion` maps `hedged_source` → "unsure" and `section_marks_line` counts unsure lines (the guard's D5 and Task 2.6, as built).
+  - Tests: per line; a clinician line is not marked; a single cluster is not marked; an invalid line draws none; the editor agrees with Check 1; Clean, verbatim and prose display of a fresh note AND of the same note reloaded from `note.enc`, including a line carrying both `number` and `unsure`; Copy (no `[check:`) and the Cliniko Write body without the mark; `test_note_matrix.py` multisets where a patient line hedges (e.g. `:1402`); `test_ui_screens.py:4470` parity.
   - Done when: green.
 - [ ] 🟥 **3.2 Harness amendment (D7, C2)** — its own commit, dated before the run of record
   - `_WordInfo.hedged`, the walk flag, `_judge`'s credit rule, the two columns (`render_report` header, separator, unmeasured row, totals).
