@@ -385,6 +385,11 @@ class TestStaleRenderings:
         assert _process_until(qapp, lambda: stage.calls == jobs_before + 1)
         screen._acknowledge_all()  # the practitioner acknowledges the FIRST refusal now
         assert "style_fallback" in screen._acknowledged
+        # The removed clinician line's segment-opening "On" (name-like) is an
+        # omission; since note-routing D4 only its own row clears it — cleared
+        # here so the late refusal below is the ONE thing that closes Save.
+        assert any(w.note_warning_code == "high_risk_omission" for w in screen._note.note_warnings)
+        screen._acknowledge("high_risk_omission")
         stage.release.set()
         _settled(qapp, screen)
         refused_now = {

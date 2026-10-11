@@ -41,6 +41,21 @@ stale acknowledgement cannot survive a change (PR-MED-010). After Save the
 edits are frozen like proposal decisions. The transcript panel itself stays
 a non-interactive text box.
 
+Flagged lines (note-routing-omissions plan D4). Check 4's ``high_risk_omission``
+— one warning per transcript line with a side, negation, number, dose, name or
+medication the note does not carry — is made FINDABLE, never reordered: the
+chooser marks each flagged line in transcript order with
+``models.FLAGGED_LINE_MARK`` at the FRONT of its label, after its number (a
+suffix was unreadable — the closed box cuts a long label's end and the open
+list elides its middle; 2026-10-11 live smoke), "Show flagged lines only"
+filters it, and one count line says how many;
+a flagged line the chooser cannot offer (typed over, or only partly in the
+note) is marked on its row instead and named by number in the count line
+(PR-MED-001), never offered as a duplicate Add. "Acknowledge all review
+warnings" never clears this warning — only its own row's Acknowledge does
+(``models.SEPARATELY_ACKNOWLEDGED_CODES``); what Save, Complete, Copy and Write
+require is unchanged.
+
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
 of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,
 so another speaker's line never reaches the learner — and only while the
@@ -164,6 +179,7 @@ from PySide6.QtCore import QByteArray, QMimeData, Qt, Signal
 from PySide6.QtGui import QAction, QContextMenuEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
@@ -609,6 +625,24 @@ class NoteScreen(QWidget):
         add_row.addWidget(QLabel("to:"))
         add_row.addWidget(self.section_combo, stretch=1)
         add_row.addWidget(self.add_line_button)
+        # Note-routing-omissions D4: Check 4's flagged lines made FINDABLE,
+        # never reordered — a filter on the chooser (never pre-ticked, cleared
+        # with the tab; a view setting, so ticking it changes no content and
+        # no acknowledgement) and one count line (PLAIN TEXT, an integer and
+        # line numbers only), both inside `edit_group`.
+        self.flagged_only_checkbox = QCheckBox("Show flagged lines only")
+        self.flagged_only_checkbox.setToolTip(
+            "List only the transcript lines with a side, negation, number, dose, "
+            "name or medication that is not in the note."
+        )
+        self.flagged_only_checkbox.toggled.connect(lambda *_: self._rebuild_line_chooser())
+        self.flagged_count_label = QLabel()
+        self.flagged_count_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.flagged_count_label.setWordWrap(True)
+        self.flagged_count_label.hide()
+        flagged_row = QHBoxLayout()
+        flagged_row.addWidget(self.flagged_only_checkbox)
+        flagged_row.addWidget(self.flagged_count_label, stretch=1)
         self.lines_header = QLabel("Lines in the note - remove, move, edit or undo:")
         self._lines_box = QVBoxLayout()
         lines_scroll = QScrollArea()
@@ -626,6 +660,7 @@ class NoteScreen(QWidget):
         self.edit_group = QGroupBox("Edit the note")
         edit_layout = QVBoxLayout()
         edit_layout.addLayout(add_row)
+        edit_layout.addLayout(flagged_row)
         edit_layout.addWidget(self.lines_header)
         edit_layout.addWidget(lines_scroll)
         edit_layout.addWidget(self.learning_label)
@@ -660,6 +695,13 @@ class NoteScreen(QWidget):
         self.review_header.hide()
         self._review_box = QVBoxLayout()
         self.acknowledge_all_button = QPushButton("Acknowledge all review warnings")
+        # Note-routing-omissions plan D4: one click never clears the
+        # "not in the note" warning — its own row's Acknowledge does.
+        self.acknowledge_all_button.setToolTip(
+            "Acknowledges every review warning except the one about something said "
+            "that is not in the note - check its flagged lines, then use that "
+            "warning's own Acknowledge."
+        )
         self.acknowledge_all_button.clicked.connect(self._acknowledge_all)
         self.acknowledge_all_button.hide()
 
@@ -897,6 +939,12 @@ class NoteScreen(QWidget):
         self.edit_status_label.setText("")
         self.utterance_combo.clear()
         self.section_combo.clear()
+        # Never carried into the next review (D4): unticked, count line gone.
+        self.flagged_only_checkbox.blockSignals(True)
+        self.flagged_only_checkbox.setChecked(False)
+        self.flagged_only_checkbox.blockSignals(False)
+        self.flagged_count_label.setText("")
+        self.flagged_count_label.hide()
         _clear_layout(self._lines_box)
         self._line_widgets.clear()
         _clear_layout(self._proposals_box)
@@ -1112,12 +1160,13 @@ class NoteScreen(QWidget):
         self._emit_state()
 
     def _acknowledge_all(self) -> None:
+        # Every review code but the separately-acknowledged ones (D4): the
+        # omission warning stays open until its own row's Acknowledge.
         note = self._note
         if note is None:
             return
         summary = models.summarise_warnings(note.note_warnings)
-        for group in summary.review:
-            self._acknowledged.add(group.code)
+        self._acknowledged.update(models.acknowledge_all_codes(summary, self._acknowledged))
         self._refresh_warnings()
         self._update_controls()  # acknowledgement changes copy readiness (PR-MED-002)
         self._emit_state()
@@ -1152,26 +1201,43 @@ class NoteScreen(QWidget):
                 present.add(segment_index)
         return present
 
+    def _flagged_segments(self) -> frozenset[int]:
+        """The transcript lines the current note's Check 4 flags (D4) —
+        none before finalisation."""
+        note = self._note
+        return models.flagged_segments(note.note_warnings) if note is not None else frozenset()
+
     def eligible_utterances(self) -> tuple[models.UtteranceChoice, ...]:
         """The utterances the chooser offers: not already in the working
-        note, with the sections each may enter (the ownership rule)."""
+        note, with the sections each may enter (the ownership rule), each
+        flagged line marked (note-routing-omissions D4) — all of them,
+        whatever the "Show flagged lines only" tick says."""
         draft, document = self._draft, self._document
         if draft is None or document is None:
             return ()
         return models.eligible_utterances(
-            document, clinician_speaker=draft.clinician_speaker, in_note=self._segments_in_note()
+            document,
+            clinician_speaker=draft.clinician_speaker,
+            in_note=self._segments_in_note(),
+            flagged=self._flagged_segments(),
         )
 
     def editable_lines(self) -> tuple[models.EditableLine, ...]:
         """The line-editor rows: the provider's transcript lines with their
-        remove/move state, then the manual additions."""
+        remove/move state, then the manual additions; a row whose line is
+        flagged but not in the chooser is marked (D4, PR-MED-001)."""
         draft, document = self._draft, self._document
         if draft is None or document is None:
             return ()
         additions = {**self._manual, **self._replaced_manual}
         replaced = {target: typed_id for typed_id, target in self._replaced.items()}
         return models.editable_lines(
-            draft, document, removed=self._removed, additions=additions, replaced=replaced
+            draft,
+            document,
+            removed=self._removed,
+            additions=additions,
+            replaced=replaced,
+            flagged=self._flagged_segments(),
         )
 
     def typed_lines(self) -> tuple[models.TypedLine, ...]:
@@ -1680,21 +1746,42 @@ class NoteScreen(QWidget):
 
     # --- the line editor's widgets ------------------------------------------
 
-    def _rebuild_edit_controls(self) -> None:
+    def _rebuild_line_chooser(self) -> None:
         # Round 34 LOW-002: the chooser is rebuilt on every re-finalise (a
         # proposal decision included), so the practitioner's current choice
-        # is carried across by its data, as `refresh_devices` does.
+        # is carried across by its data, as `refresh_devices` does. D4: with
+        # "Show flagged lines only" ticked it lists the flagged lines alone
+        # (transcript order kept); the count line names every flagged line,
+        # and by number each one the chooser does not offer.
+        choices = self.eligible_utterances()
+        flagged = self._flagged_segments()
         selected = self.utterance_combo.currentData()
         self.utterance_combo.blockSignals(True)
         self.utterance_combo.clear()
-        for choice in self.eligible_utterances():
+        only_flagged = self.flagged_only_checkbox.isChecked()
+        for choice in choices:
+            if only_flagged and not choice.flagged:
+                continue
             self.utterance_combo.addItem(choice.label, choice.segment_index)
         if selected is not None:
             index = self.utterance_combo.findData(selected)
             if index >= 0:
                 self.utterance_combo.setCurrentIndex(index)
         self.utterance_combo.blockSignals(False)
+        count_line = models.flagged_count_line(
+            flagged, {choice.segment_index for choice in choices}
+        )
+        if only_flagged and choices and self.utterance_combo.count() == 0:
+            # The tick hides every offerable line: say so (it stays ticked).
+            count_line = f"{count_line} {models.FLAGGED_FILTER_EMPTY_LINE}".lstrip()
+        self.flagged_count_label.setText(count_line)
+        self.flagged_count_label.setVisible(bool(count_line))
         self._refresh_section_combo()
+        # The Add button follows the chooser's count (a filter can empty it).
+        self.add_line_button.setEnabled(self._edits_open and self.utterance_combo.count() > 0)
+
+    def _rebuild_edit_controls(self) -> None:
+        self._rebuild_line_chooser()
         _clear_layout(self._lines_box)
         self._line_widgets.clear()
         # Every row widget dies here, the open editor's field with them; the
@@ -2141,7 +2228,6 @@ class NoteScreen(QWidget):
             item.setWordWrap(True)
             item.setStyleSheet("color: #b00020;")
             self._blocking_box.addWidget(item)
-        unacknowledged = [g for g in summary.review if g.code not in self._acknowledged]
         self.review_header.setVisible(bool(summary.review))
         for group in summary.review:
             acked = group.code in self._acknowledged
@@ -2158,7 +2244,11 @@ class NoteScreen(QWidget):
                 )
                 row_layout.addWidget(button)
             self._review_box.addWidget(row)
-        self.acknowledge_all_button.setVisible(bool(unacknowledged))
+        # Shown only while it has something to clear (D4): an open omission
+        # warning alone leaves it hidden.
+        self.acknowledge_all_button.setVisible(
+            bool(models.acknowledge_all_codes(summary, self._acknowledged))
+        )
 
     # --- save / abandon / copy ---------------------------------------------
 
@@ -2623,6 +2713,7 @@ class NoteScreen(QWidget):
         # (D14) and unavailable with no draft.
         edits_open = self._edits_open
         self.utterance_combo.setEnabled(edits_open)
+        self.flagged_only_checkbox.setEnabled(edits_open)
         self.section_combo.setEnabled(edits_open)
         self.add_line_button.setEnabled(edits_open and self.utterance_combo.count() > 0)
         for widget in self._line_widgets:

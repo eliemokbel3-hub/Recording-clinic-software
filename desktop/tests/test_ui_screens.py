@@ -4,6 +4,7 @@ or ML in CI (mock backends and canned transcripts only)."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import secrets
@@ -5651,9 +5652,282 @@ class TestNoteScreenEdits:
         assert "high_risk_omission" in _warning_codes(screen)
         assert screen.current_review_state().blocking_errors == 0
         assert not screen.save_button.isEnabled()
+        # Note-routing-omissions D4: its own row's Acknowledge clears it.
         screen._acknowledge_all()
+        screen._acknowledge("high_risk_omission")
         assert screen.current_review_state().unacknowledged_reviews == 0
         assert screen.save_button.isEnabled()
+        screen.deleteLater()
+
+    # --- Acknowledge all leaves the omission warning (note-routing D4) ----
+
+    def _remove_the_plan_line(self, screen: Any) -> None:
+        line = _routed_line(screen, _PLAN_INDEX)
+        assert screen.remove_line(line.assertion_id) is True
+        assert "high_risk_omission" in _warning_codes(screen)
+
+    def _review_row_texts(self, screen: Any) -> list[str]:
+        from PySide6.QtWidgets import QLabel
+
+        texts: list[str] = []
+        for position in range(screen._review_box.count()):
+            row = screen._review_box.itemAt(position).widget()
+            texts.extend(label.text() for label in row.findChildren(QLabel))
+        return texts
+
+    def test_acknowledge_all_with_only_an_omission_open_changes_nothing(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, record = self._screen(config_root=tmp_path / "config")
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        self._remove_the_plan_line(screen)
+        # Every OTHER review code acknowledged by its own row first.
+        for group in models.summarise_warnings(screen.current_note().note_warnings).review:
+            if group.code != "high_risk_omission":
+                screen._acknowledge(group.code)
+        assert "high_risk_omission" not in screen._acknowledged
+        assert screen.current_review_state().unacknowledged_reviews == 1
+        assert screen.acknowledge_all_button.isHidden()
+        screen._acknowledge_all()
+        assert "high_risk_omission" not in screen._acknowledged
+        assert screen.current_review_state().unacknowledged_reviews == 1
+        assert not screen.save_button.isEnabled()
+        assert screen.acknowledge_all_button.isHidden()
+        screen.save()
+        assert record["saved"] == []
+        screen.deleteLater()
+
+    def test_acknowledge_all_clears_the_others_and_leaves_the_omission_open(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, record = self._screen(config_root=tmp_path / "config")
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        self._remove_the_plan_line(screen)
+        summary = models.summarise_warnings(screen.current_note().note_warnings)
+        others = {g.code for g in summary.review} - {"high_risk_omission"}
+        assert others, "the fixture must draw a second review code (clinician_asserted)"
+        assert not screen.acknowledge_all_button.isHidden()
+        screen._acknowledge_all()
+        assert others <= screen._acknowledged
+        assert "high_risk_omission" not in screen._acknowledged
+        assert screen.acknowledge_all_button.isHidden()  # nothing left for it to clear
+        assert any(
+            text.startswith(models.WARNING_COPY["high_risk_omission"].title)
+            and "- not acknowledged." in text
+            for text in self._review_row_texts(screen)
+        )
+        state = screen.current_review_state()
+        assert state.unacknowledged_reviews == 1
+        # C6: the open omission still counts where Complete reads it — the
+        # same counts on a saved note name the unacknowledged warning.
+        assert models.complete_block_reason(
+            dataclasses.replace(state, generating=False, note_saved=True)
+        ) == ("Acknowledge the note review warnings before completing.")
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("high_risk_omission")
+        assert screen.current_review_state().unacknowledged_reviews == 0
+        assert screen.save_button.isEnabled()
+        screen.save()
+        assert len(record["saved"]) == 1
+        screen.deleteLater()
+
+    # --- the flagged lines: mark, filter, count (note-routing D4, Task 2.2) ----
+
+    def _chooser_items(self, screen: Any) -> list[tuple[int, str]]:
+        return [
+            (screen.utterance_combo.itemData(position), screen.utterance_combo.itemText(position))
+            for position in range(screen.utterance_combo.count())
+        ]
+
+    def test_a_flagged_line_is_marked_in_place_and_counted(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        from PySide6.QtCore import Qt
+
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        # The fixture flags nothing: no mark, no count line, never pre-ticked.
+        assert not screen.flagged_only_checkbox.isChecked()
+        assert screen.flagged_count_label.isHidden()
+        assert screen.flagged_count_label.text() == ""
+        assert screen.flagged_count_label.textFormat() == Qt.TextFormat.PlainText
+        before = self._chooser_items(screen)
+        assert all(models.FLAGGED_LINE_MARK not in text for _index, text in before)
+
+        self._remove_the_plan_line(screen)
+        after = self._chooser_items(screen)
+        # Transcript order kept; the removed plan line is offered again, marked.
+        assert [index for index, _text in after] == sorted(index for index, _text in after)
+        assert _PLAN_INDEX in [index for index, _text in after]
+        for index, text in after:
+            segment = screen._document.transcript_segments[index]
+            # Round 11 SMOKE-MED-001: the mark at the front, after the number.
+            flag = models.FLAGGED_LINE_MARK if index == _PLAN_INDEX else ""
+            assert text.startswith(f"{index + 1}. {flag}{segment.speaker}: ")
+            assert (models.FLAGGED_LINE_MARK in text) is (index == _PLAN_INDEX)
+        assert _eligible(screen)[_PLAN_INDEX].flagged is True
+        assert not screen.flagged_count_label.isHidden()
+        assert screen.flagged_count_label.text() == (
+            "1 line with a side, negation, number, dose, name or medication is not in the note."
+        )
+        # The removed row itself carries no mark: the chooser is where it is found.
+        assert not _lines_by_id(screen)[_routed_line(screen, _PLAN_INDEX).assertion_id].flagged
+        screen.deleteLater()
+
+    def test_the_tick_filters_the_chooser_and_keeps_the_choice_across_a_rebuild(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        # TWO flagged lines (round 9 PR-LOW-017): the patient's "left" line
+        # and the clinician's "two" line, so the filtered chooser holds two
+        # entries and choosing the SECOND is never Qt's automatic selection.
+        patient_line = _routed_line(screen, 0)
+        assert screen.remove_line(patient_line.assertion_id) is True
+        self._remove_the_plan_line(screen)
+        assert {0, _PLAN_INDEX} <= models.flagged_segments(screen.current_note().note_warnings)
+        everything = self._chooser_items(screen)
+        assert len(everything) > 2
+        screen.flagged_only_checkbox.setChecked(True)
+        assert [index for index, _text in self._chooser_items(screen)] == [0, _PLAN_INDEX]
+        screen.utterance_combo.setCurrentIndex(1)
+        assert screen.utterance_combo.currentData() == _PLAN_INDEX
+        assert screen.add_line_button.isEnabled()
+        # A re-finalise (a proposal decision) rebuilds the chooser: the tick
+        # and the choice survive it, and so does the warning.
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        assert screen.flagged_only_checkbox.isChecked()
+        assert [index for index, _text in self._chooser_items(screen)] == [0, _PLAN_INDEX]
+        assert screen.utterance_combo.currentData() == _PLAN_INDEX
+        # Unticking shows every line again, in transcript order, the choice kept.
+        screen.flagged_only_checkbox.setChecked(False)
+        assert self._chooser_items(screen) == everything
+        assert screen.utterance_combo.currentData() == _PLAN_INDEX
+        # Adding both flagged lines back clears the warning and the count line.
+        for index in (0, _PLAN_INDEX):
+            key = _eligible(screen)[index].allowed_sections[0]
+            assert screen.add_line(index, key) is True
+        assert "high_risk_omission" not in _warning_codes(screen)
+        assert screen.flagged_count_label.isHidden()
+        # Ticked with nothing flagged: an empty chooser is explained, never silent.
+        screen.flagged_only_checkbox.setChecked(True)
+        assert screen.utterance_combo.count() == 0
+        assert not screen.add_line_button.isEnabled()
+        assert not screen.flagged_count_label.isHidden()
+        assert screen.flagged_count_label.text() == models.FLAGGED_FILTER_EMPTY_LINE
+        screen.flagged_only_checkbox.setChecked(False)
+        assert screen.flagged_count_label.isHidden()
+        assert screen.utterance_combo.count() > 0
+        screen.deleteLater()
+
+    def test_clear_unticks_the_filter_and_hides_the_count(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        self._remove_the_plan_line(screen)
+        screen.flagged_only_checkbox.setChecked(True)
+        assert not screen.flagged_count_label.isHidden()
+        screen.clear()
+        assert not screen.flagged_only_checkbox.isChecked()
+        assert screen.flagged_count_label.isHidden()
+        assert screen.flagged_count_label.text() == ""
+        assert screen.utterance_combo.count() == 0
+        # The next review starts unfiltered.
+        screen.begin_review(
+            _edit_result(),
+            on_save=lambda note: None,
+            on_abandon=lambda: None,
+            template_profile_id="clinic-a",
+            mode=SessionMode.NORMAL,
+        )
+        assert not screen.flagged_only_checkbox.isChecked()
+        assert screen.utterance_combo.count() == len(_eligible(screen))
+        screen.deleteLater()
+
+    def test_a_typed_over_flagged_line_is_named_by_number_never_offered_twice(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-001: a typed line covers no transcript word, so the line it
+        replaced can carry the omission while the chooser (rightly) does not
+        offer it — the row is marked and the count line names it by number."""
+        screen, _record = self._screen(config_root=tmp_path / "config")
+        plan = _routed_line(screen, _PLAN_INDEX)
+        assert screen.edit_line(plan.assertion_id, "Review in a fortnight") is True
+        assert "high_risk_omission" in _warning_codes(screen)
+        assert _PLAN_INDEX not in _eligible(screen)
+        row = _lines_by_id(screen)[plan.assertion_id]
+        assert row.state == "replaced"
+        assert row.flagged is True
+        assert row.label.startswith(models.FLAGGED_LINE_MARK)
+        assert screen.flagged_count_label.text() == (
+            "1 line with a side, negation, number, dose, name or medication is not in the "
+            f"note. Line {_PLAN_INDEX + 1} is replaced or partly in the note - see its row below."
+        )
+        # The filter finds nothing else to offer; never a duplicate Add.
+        screen.flagged_only_checkbox.setChecked(True)
+        assert screen.utterance_combo.count() == 0
+        assert not screen.add_line_button.isEnabled()
+        assert screen.flagged_count_label.text().endswith(
+            f"see its row below. {models.FLAGGED_FILTER_EMPTY_LINE}"
+        )
+        assert screen.add_line(_PLAN_INDEX, plan.section_key) is False
+        assert screen.edit_status_label.text() == "That line is already in the note."
+        screen.deleteLater()
+
+    def test_a_partly_quoted_flagged_line_is_marked_on_its_row(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """PR-MED-001, partial coverage: the routed line quotes the plan
+        utterance only up to "review", so its "two" is uncovered."""
+        from scribe_desktop.note import GeneratedSection, whole_utterance_assertion
+
+        class _PartialPlanProvider:
+            provider_name = ExtractiveNoteProvider().provider_name
+
+            def generate_sections(self, request: Any) -> tuple[Any, ...]:
+                words = {
+                    utterance.segment_index: utterance.transcript_words
+                    for utterance in request.transcript_utterances
+                }
+                sections = []
+                for section in ExtractiveNoteProvider().generate_sections(request):
+                    assertions = []
+                    for assertion in section.note_assertions:
+                        coords = assertion.note_span.source_coords
+                        if coords.segment_index == _PLAN_INDEX:
+                            assertion = whole_utterance_assertion(
+                                assertion.assertion_id,
+                                section.section_key,
+                                segment_index=_PLAN_INDEX,
+                                speaker=assertion.speaker,
+                                words=words[_PLAN_INDEX][:5],  # "The plan is to review"
+                            )
+                        assertions.append(assertion)
+                    sections.append(
+                        GeneratedSection(
+                            section_key=section.section_key, note_assertions=tuple(assertions)
+                        )
+                    )
+                return tuple(sections)
+
+        document = _note_document(_EDIT_TURNS)
+        config = _note_config()
+        draft = compose_draft(
+            document, config, _PartialPlanProvider(), clinician_speaker=SPEAKER_2
+        )
+        result = models.NoteGenerationResult(draft=draft, config=config, document=document)
+        screen, _record = self._screen(config_root=tmp_path / "config", result=result)
+        assert "high_risk_omission" in _warning_codes(screen)
+        assert not _warning_codes(screen) & {"reconstruction_mismatch", "source_coords_invalid"}
+        assert _PLAN_INDEX not in _eligible(screen)
+        row = _routed_line(screen, _PLAN_INDEX)
+        assert row.state == "routed"
+        assert row.flagged is True
+        assert row.label.startswith(models.FLAGGED_LINE_MARK)
+        assert f"Line {_PLAN_INDEX + 1} is replaced or partly in the note" in (
+            screen.flagged_count_label.text()
+        )
         screen.deleteLater()
 
     def test_undo_restores_a_removed_line(self, qapp: Any, tmp_path: Path) -> None:
@@ -6719,7 +6993,7 @@ class TestNoteScreenTypedEdits:
         assert not screen.save_button.isEnabled()
         screen.save()
         assert record["saved"] == []
-        screen._acknowledge_all()
+        screen._acknowledge("high_risk_omission")  # note-routing D4: its own row
         assert screen.save_button.isEnabled()
         screen.save()
         [saved] = record["saved"]
@@ -7050,6 +7324,11 @@ class TestNoteScreenTypedEdits:
             screen.edit_status_label.text()
         )
         self._ratify(screen)
+        # The typed line covers no transcript word, so the replaced turn's
+        # segment-opening "Ice" (name-like) is an omission — cleared by its own
+        # row since note-routing D4, never by Acknowledge all.
+        assert "high_risk_omission" in _warning_codes(screen)
+        screen._acknowledge("high_risk_omission")
         screen.save()
         assert len(record["saved"]) == 1
         entry = load_learned_rule_entries(config_root)[rule_id]

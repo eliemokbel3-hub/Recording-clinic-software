@@ -1391,6 +1391,170 @@ class TestReviewEditModels:
         assert "a line you removed" in copy.clear_hint
         assert copy.blocks is None  # review, never a block (D14)
 
+    def test_the_omission_copy_names_every_flagged_class_and_the_filter(self) -> None:
+        """Note-routing-omissions D4 (Task 2.3): Check 4 flags any speaker's
+        sides, negations and doses, so the title names the classes and no
+        speaker, and the hint names the chooser's filter."""
+        copy = models.WARNING_COPY["high_risk_omission"]
+        assert copy.title == (
+            "A side, negation, number, dose, name or medication someone said is not in the note"
+        )
+        assert "clinician" not in copy.title
+        assert "tick 'Show flagged lines only' to find them" in copy.clear_hint
+        assert copy.clear_hint.endswith("then acknowledge.")
+
+    # --- the flagged lines (note-routing-omissions D4, Task 2.2) ------------
+
+    def test_the_chooser_marks_a_flagged_line_and_keeps_transcript_order(
+        self, tmp_path: Path
+    ) -> None:
+        _draft, document = _review_draft(tmp_path)
+        plain = models.eligible_utterances(document, clinician_speaker=SPEAKER_2, in_note={0, 1})
+        marked = models.eligible_utterances(
+            document, clinician_speaker=SPEAKER_2, in_note={0, 1}, flagged={0, 3}
+        )
+        # Order and entries unchanged; segment 0 is in the note, so no entry.
+        assert [c.segment_index for c in marked] == [c.segment_index for c in plain] == [2, 3, 4]
+        for before, after in zip(plain, marked, strict=True):
+            segment = document.transcript_segments[after.segment_index]
+            number = f"{after.segment_index + 1}. "
+            assert after.allowed_sections == before.allowed_sections
+            if after.segment_index == 3:
+                # Round 11 SMOKE-MED-001: the mark sits at the FRONT, after the
+                # number, so neither the closed box's end cut nor the open
+                # list's middle elision can hide it.
+                assert after.flagged is True
+                assert after.label.startswith(
+                    f"{number}{models.FLAGGED_LINE_MARK}{segment.speaker}: "
+                )
+                assert after.label == number + models.FLAGGED_LINE_MARK + (
+                    before.label.removeprefix(number)
+                )
+            else:
+                assert after.flagged is False
+                assert after.label.startswith(f"{number}{segment.speaker}: ")
+                assert after.label == before.label
+                assert models.FLAGGED_LINE_MARK not in after.label
+        assert models.FLAGGED_LINE_MARK == "[flagged] "
+
+    def test_a_line_editor_row_is_marked_where_the_chooser_cannot_offer_it(
+        self, tmp_path: Path
+    ) -> None:
+        """PR-MED-001: a flagged segment the note still holds a row for —
+        routed (partly covered), replaced by a typed line, or added — is
+        marked on that row; a REMOVED row is not (the chooser offers it)."""
+        draft, document = _review_draft(tmp_path)
+        routed = models.editable_lines(draft, document, removed=set(), additions={}, flagged={1})
+        row = next(line for line in routed if line.assertion_id == "x0001")
+        assert row.flagged is True
+        assert row.label.startswith(
+            f"{models.FLAGGED_LINE_MARK}{models.section_title(row.section_key)} - "
+        )
+        assert all(not line.flagged for line in routed if line.segment_index != 1)
+        assert all(
+            not line.label.startswith(models.FLAGGED_LINE_MARK)
+            for line in routed
+            if line.segment_index != 1
+        )
+
+        removed = models.editable_lines(
+            draft, document, removed={"x0001"}, additions={}, flagged={1}
+        )
+        gone = next(line for line in removed if line.assertion_id == "x0001")
+        assert gone.state == "removed"
+        assert gone.flagged is False
+        assert models.FLAGGED_LINE_MARK not in gone.label
+
+        typed_over = models.editable_lines(
+            draft,
+            document,
+            removed={"x0001"},
+            additions={},
+            replaced={"x0001": "t0001"},
+            flagged={1},
+        )
+        replaced_row = next(line for line in typed_over if line.assertion_id == "x0001")
+        assert replaced_row.state == "replaced"
+        assert replaced_row.flagged is True
+        assert replaced_row.label.startswith(models.FLAGGED_LINE_MARK)
+
+        added_leg = _manual_line(document, 2, "presenting_complaint")
+        added = models.editable_lines(
+            draft,
+            document,
+            removed=set(),
+            additions={added_leg.assertion_id: added_leg},
+            flagged={2},
+        )
+        added_row = next(line for line in added if line.assertion_id == "m0002")
+        assert added_row.flagged is True
+        assert added_row.label.startswith(models.FLAGGED_LINE_MARK)
+        # No flagged set: the rows are exactly today's.
+        assert models.editable_lines(draft, document, removed=set(), additions={}) == (
+            models.editable_lines(draft, document, removed=set(), additions={}, flagged=())
+        )
+
+    def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
+        from scribe_desktop.note import NoteWarning, SourceCoords
+
+        warnings = (
+            NoteWarning(
+                note_warning_code="high_risk_omission",
+                severity="review",
+                source_coords=SourceCoords(4, 0, 2),
+            ),
+            NoteWarning(
+                note_warning_code="laterality_mismatch",
+                severity="review",
+                source_coords=SourceCoords(1, 0, 0),
+            ),
+            NoteWarning(
+                note_warning_code="high_risk_omission",
+                severity="review",
+                source_coords=SourceCoords(6, 3, 3),
+            ),
+        )
+        assert models.flagged_segments(warnings) == frozenset({4, 6})
+        assert models.flagged_segments(()) == frozenset()
+
+    def test_the_count_line_counts_and_names_the_lines_the_chooser_cannot_offer(
+        self,
+    ) -> None:
+        classes = "with a side, negation, number, dose, name or medication"
+        assert models.flagged_count_line((), ()) == ""
+        assert models.flagged_count_line({4}, {4, 5}) == (
+            f"1 line {classes} is not in the note."
+        )
+        assert models.flagged_count_line({4, 6}, {4, 6}) == (
+            f"2 lines {classes} are not in the note."
+        )
+        # Segment 6 (line 7) is not offered: named by its transcript line number.
+        assert models.flagged_count_line({4, 6}, {4}) == (
+            f"2 lines {classes} are not in the note. "
+            "Line 7 is replaced or partly in the note - see its row below."
+        )
+        assert models.flagged_count_line({11, 4, 6}, {4}) == (
+            f"3 lines {classes} are not in the note. "
+            "Lines 7, 12 are replaced or partly in the note - see their rows below."
+        )
+
+    def test_acknowledge_all_never_clears_the_omission_warning(self) -> None:
+        """Note-routing-omissions D4: "Acknowledge all" clears every open
+        review code but the omission warning, which only its own row clears."""
+
+        def group(code: str) -> models.WarningGroup:
+            return models.WarningGroup(code, "review", 1, code, None, "hint", ())
+
+        summary = models.WarningSummary(
+            review=(group("clinician_asserted"), group("high_risk_omission"), group("mapping_drop"))
+        )
+        assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset({"high_risk_omission"})
+        assert models.acknowledge_all_codes(summary, ()) == ("clinician_asserted", "mapping_drop")
+        assert models.acknowledge_all_codes(summary, {"mapping_drop"}) == ("clinician_asserted",)
+        # Nothing left for the button: only the omission is open.
+        assert models.acknowledge_all_codes(summary, {"clinician_asserted", "mapping_drop"}) == ()
+        assert models.acknowledge_all_codes(models.WarningSummary(), ()) == ()
+
 
 class TestClipboardFormats:
     """Cliniko workflow safeguards plan Task 8.2: the formats a copied note

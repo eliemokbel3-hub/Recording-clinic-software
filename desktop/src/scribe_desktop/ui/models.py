@@ -2136,12 +2136,16 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     # Practitioner-profile plan Task 5.1b: a line the clinician REMOVED during
     # review raises this too (its words are no longer carried by any
     # assertion) — the copy names that case so the acknowledgement reads
-    # right; review severity, never a block (D14).
+    # right; review severity, never a block (D14). Note-routing-omissions D4:
+    # Check 4 now flags sides, negations, doses and units from EVERY speaker
+    # (names stay the clinician's), so the title names them and no speaker; the
+    # hint names the chooser's filter that finds the flagged lines, and only
+    # this row's own Acknowledge clears the warning (never Acknowledge all).
     "high_risk_omission": WarningCopy(
-        "A number, name or medication the clinician said is not in the note",
+        "A side, negation, number, dose, name or medication someone said is not in the note",
         None,
         "Check the transcript beside the note (a line you removed can raise this too), "
-        "then acknowledge.",
+        "tick 'Show flagged lines only' to find them, then acknowledge.",
     ),
     # Note-learning plan Task 4.2 (D6, C8): the prose the language model
     # wrote for a section did not pass the fidelity check, so that section is
@@ -2222,6 +2226,26 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
         )
         (blocking if found[0].severity == "error" else review).append(group)
     return WarningSummary(blocking=tuple(blocking), review=tuple(review))
+
+
+# Note-routing-omissions plan D4 (C6): review codes that "Acknowledge all
+# review warnings" never clears — only the code's own row's Acknowledge does,
+# after the clinician has checked the lines it flags. It changes WHICH button
+# clears the warning, never what Save, Complete, Copy or Write require.
+SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset({"high_risk_omission"})
+
+
+def acknowledge_all_codes(
+    summary: WarningSummary, acknowledged: Collection[str]
+) -> tuple[str, ...]:
+    """The review codes "Acknowledge all review warnings" would clear now:
+    every unacknowledged review group except ``SEPARATELY_ACKNOWLEDGED_CODES``.
+    Empty means the button has nothing to do (it is hidden)."""
+    return tuple(
+        group.code
+        for group in summary.review
+        if group.code not in acknowledged and group.code not in SEPARATELY_ACKNOWLEDGED_CODES
+    )
 
 
 # --- Complete gating (Flow 2) ----------------------------------------------
@@ -2463,16 +2487,73 @@ def _lead_words(text: str, *, max_chars: int = 60) -> str:
     return text[:max_chars].rstrip() + "..."
 
 
+# Note-routing-omissions plan D4: the mark on a chooser entry or a line-editor
+# row whose transcript line carries a Check 4 omission (``high_risk_omission``).
+# At the FRONT of the label (2026-10-11 live smoke, round 11 SMOKE-MED-001):
+# the closed chooser cuts a long label's END and its open list elides the
+# MIDDLE, so a suffix was never readable. A chooser entry keeps its transcript
+# number first (``"<n>. [flagged] <speaker>: …"``); a row starts with the
+# mark (``"[flagged] <section> - …"``). Plain ASCII — no glyph the Windows UI
+# font may lack.
+FLAGGED_LINE_MARK = "[flagged] "
+
+
+def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
+    """The transcript segments Check 4 flags in ``warnings``: one
+    ``high_risk_omission`` per segment, located by its coordinates."""
+    return frozenset(
+        coords.segment_index
+        for warning in warnings
+        if warning.note_warning_code == "high_risk_omission"
+        and (coords := warning.source_coords) is not None
+    )
+
+
+# Said on the count line while "Show flagged lines only" hides every line the
+# chooser could offer (nothing offered is flagged — the last flagged line was
+# added back, or the flagged ones are typed over or partly in the note), so an
+# empty chooser and a disabled Add never go unexplained (Phase 2 review LOW).
+FLAGGED_FILTER_EMPTY_LINE = (
+    "No line in the list is flagged - untick 'Show flagged lines only' to see every line."
+)
+
+
+def flagged_count_line(flagged: Collection[int], offered: Collection[int]) -> str:
+    """The Note tab's count line (D4): how many transcript lines carry a
+    flagged word the note does not, and — by transcript line number — each
+    flagged line the chooser does NOT offer (replaced by a typed line, or
+    only partly in the note; PR-MED-001), which is found on its row in the
+    line editor instead. Empty when nothing is flagged."""
+    if not flagged:
+        return ""
+    count = len(flagged)
+    text = (
+        f"{count} {'line' if count == 1 else 'lines'} with a side, negation, number, "
+        f"dose, name or medication {'is' if count == 1 else 'are'} not in the note."
+    )
+    elsewhere = sorted(index + 1 for index in flagged if index not in offered)
+    if elsewhere:
+        numbers = ", ".join(str(number) for number in elsewhere)
+        if len(elsewhere) == 1:
+            text += f" Line {numbers} is replaced or partly in the note - see its row below."
+        else:
+            text += f" Lines {numbers} are replaced or partly in the note - see their rows below."
+    return text
+
+
 @dataclass(frozen=True)
 class UtteranceChoice:
     """One entry of the Note tab's utterance chooser (Task 5.1): the
     segment, its display label (index, speaker label, first words — display
     only, like the transcript panel) and the sections it may enter under the
-    ownership rule (``note.admissible_sections``, the router's own rule)."""
+    ownership rule (``note.admissible_sections``, the router's own rule).
+    ``flagged`` (note-routing-omissions D4): the line carries a Check 4
+    omission, and its label carries ``FLAGGED_LINE_MARK`` after its number."""
 
     segment_index: int
     label: str
     allowed_sections: tuple[NoteSectionKey, ...]
+    flagged: bool = False
 
 
 def eligible_utterances(
@@ -2480,10 +2561,13 @@ def eligible_utterances(
     *,
     clinician_speaker: str | None,
     in_note: Collection[int],
+    flagged: Collection[int] = (),
 ) -> tuple[UtteranceChoice, ...]:
     """The utterances the clinician may ADD: every segment with quotable
     text whose index is not already carried by the working note (a line
-    present anywhere in the note is refused — D14), in transcript order."""
+    present anywhere in the note is refused — D14), in transcript order. A
+    segment in ``flagged`` is marked (``FLAGGED_LINE_MARK`` after its number),
+    never moved."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -2497,9 +2581,10 @@ def eligible_utterances(
             clinician_speaker=clinician_speaker,
             text=text,
         )
-        choices.append(
-            UtteranceChoice(index, f"{index + 1}. {segment.speaker}: {_lead_words(text)}", allowed)
-        )
+        mark = index in flagged
+        flag = FLAGGED_LINE_MARK if mark else ""
+        label = f"{index + 1}. {flag}{segment.speaker}: {_lead_words(text)}"
+        choices.append(UtteranceChoice(index, label, allowed, mark))
     return tuple(choices)
 
 
@@ -2515,7 +2600,10 @@ class EditableLine:
     provider counterpart) or ``replaced`` (subtracted in favour of the typed
     line ``replaced_by`` — note-learning plan Task 2.1). ``allowed_sections``
     are the sections a Move may target — the ownership rule, minus the
-    section it is in."""
+    section it is in. ``flagged`` (note-routing-omissions D4, PR-MED-001):
+    the row's transcript line carries a Check 4 omission although the
+    chooser does not offer it (replaced, or only partly in the note), and
+    its label starts with ``FLAGGED_LINE_MARK``."""
 
     assertion_id: str
     segment_index: int
@@ -2525,6 +2613,7 @@ class EditableLine:
     moved_to: NoteSectionKey | None
     allowed_sections: tuple[NoteSectionKey, ...]
     replaced_by: str | None = None
+    flagged: bool = False
 
 
 def editable_lines(
@@ -2534,13 +2623,16 @@ def editable_lines(
     removed: Collection[str],
     additions: Mapping[str, NoteAssertion],
     replaced: Mapping[str, str] = {},
+    flagged: Collection[int] = (),
 ) -> tuple[EditableLine, ...]:
     """The rows of the Note tab's line editor: the provider's transcript
     lines in note order (each carrying its remove/move state) followed by
     the manual additions that are not the re-added leg of a move. A line in
     ``replaced`` (its id -> the typed line's id) renders as ``replaced``
     whether it is a provider line in ``removed`` or a manual addition still
-    listed in ``additions``."""
+    listed in ``additions``. A row whose segment is in ``flagged`` is marked
+    unless it is ``removed`` — a removed line's utterance is back in the
+    chooser, which marks it there (one mark per place the line can be found)."""
     manual_by_segment: dict[int, NoteAssertion] = {}
     for assertion in additions.values():
         coords = assertion.note_span.source_coords
@@ -2585,16 +2677,19 @@ def editable_lines(
                     covered.add(segment_index)
                 else:
                     state = "removed"
+            mark = state != "removed" and segment_index in flagged
+            label = f"{section_title(section.section_key)} - {_lead_words(assertion.text)}"
             lines.append(
                 EditableLine(
                     assertion.assertion_id,
                     segment_index,
                     section.section_key,
-                    f"{section_title(section.section_key)} - {_lead_words(assertion.text)}",
+                    FLAGGED_LINE_MARK + label if mark else label,
                     state,
                     moved_to,
                     allowed_for(segment_index, section.section_key),
                     replaced_by,
+                    mark,
                 )
             )
     for assertion in additions.values():
@@ -2606,16 +2701,19 @@ def editable_lines(
         if coords.segment_index >= len(document.transcript_segments):
             continue
         replaced_by = replaced.get(assertion.assertion_id)
+        mark = coords.segment_index in flagged
+        label = f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}"
         lines.append(
             EditableLine(
                 assertion.assertion_id,
                 coords.segment_index,
                 assertion.section_key,
-                f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}",
+                FLAGGED_LINE_MARK + label if mark else label,
                 "replaced" if replaced_by is not None else "added",
                 None,
                 allowed_for(coords.segment_index, assertion.section_key),
                 replaced_by,
+                mark,
             )
         )
     return tuple(lines)
@@ -4339,6 +4437,9 @@ __all__ = [
     "SAVE_BUTTON_LABEL",
     "speaker_model_missing_reason",
     "UNFINISHED_STORE_WARNING",
+    "FLAGGED_FILTER_EMPTY_LINE",
+    "FLAGGED_LINE_MARK",
+    "SEPARATELY_ACKNOWLEDGED_CODES",
     "WARNING_COPY",
     "AttributionInputs",
     "AttributionReadiness",
@@ -4359,6 +4460,7 @@ __all__ = [
     "WarningCopy",
     "WarningGroup",
     "WarningSummary",
+    "acknowledge_all_codes",
     "assertion_label",
     "attribution_inputs",
     "attribution_readiness",
@@ -4374,6 +4476,8 @@ __all__ = [
     "default_sessions_root",
     "editable_lines",
     "eligible_utterances",
+    "flagged_count_line",
+    "flagged_segments",
     "format_live_segments",
     "format_note_body",
     "format_timestamp",
