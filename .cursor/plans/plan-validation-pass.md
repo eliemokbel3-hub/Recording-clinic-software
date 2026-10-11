@@ -205,7 +205,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 1. **Before Generate.** The Transcript tab shows "A possible next patient starts at line N" when the boundary rule fires. The clinician may press "Remove lines N–end from this recording…" behind a confirmation, which trims the transcript (Phase 4). Or they generate as is.
 2. **Generate.** The note stops before line N. The Note tab shows the review row "The note stops where a new patient may have arrived" with its own Acknowledge; Acknowledge all leaves it.
 3. **Reviewing the withheld tail.** Check 4 still flags withheld claim words, so chooser rows from line N carry " — after possible next patient", flagged or not. Any line that belongs to this patient is added back from the chooser.
-4. **Save and Complete as today.** With the tail removed, the Past-sessions entry, `generated.enc` and any replay hold only lines before N. The kept recording follows decision 0.6.
+4. **Save and Complete as today.** With the tail removed (the trim also removes any earlier `generated.enc`, D9), the Past-sessions entry, its generated note and any replay hold only lines before N. The kept recording follows decision 0.6.
 
 ### Flow 2 — A self-correction split by the recogniser
 - "Worse since last session." is cue-routed. "Actually no, it is better…" is uncued, from the same speaker, and opens with a marker.
@@ -243,7 +243,8 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 3. Some non-transparent segment BEFORE that closing satisfies `any_cue_matches(cues, fallback_cues, content_tokens(text))`. This is the head-case guard: a recording started while the previous patient leaves is never cut.
 
 **Edge cases.**
-- When the closing and the greeting sit in the SAME segment, the boundary is the NEXT segment, failing toward inclusion.
+- The returned index is always the FIRST SEGMENT TO WITHHOLD, and it is always a non-transparent segment.
+- When the closing and the greeting sit in the SAME segment, the boundary is the NEXT NON-TRANSPARENT segment, failing toward inclusion; when no such segment follows (the pair is at the end of the document, or only transparent segments follow), the function returns None. (Peer round 1 PR-MED-003.)
 - Transparent segments (no words or empty text) are skipped.
 
 **Inputs.** `cues` is the canonical config's own cues (`config.normalised_cues()`); `fallback_cues` is `DEFAULT_SECTION_CUES`. Every consumer computes the boundary from `(document, config)` itself (D3), so all agree. A test pins the agreement.
@@ -298,7 +299,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 - broadening `ends_mid_sentence` to full stops (reverses D11).
 
 ### D5 — Check 6 `possible_next_patient`
-**What it is.** A REVIEW-severity warning, once per note, with coords on the whole boundary segment: `SourceCoords(segment, 0, len-1)`, always valid because the segment holds a greeting. `section_key` follows Check 4's convention for a warning with no assertion. It is appended last in `check_note`, and it is role-free: tested with no confirmed clinician, although the app always has one (A2).
+**What it is.** A REVIEW-severity warning, once per note, with coords on the whole boundary segment: `SourceCoords(segment, 0, len-1)`. The boundary segment is the first segment withheld (D2), which need NOT hold the greeting (the same-segment case points at the segment after the pair); it is valid because D2 only ever returns a non-transparent segment, which has at least one word. `section_key` follows Check 4's convention for a warning with no assertion. It is appended last in `check_note`, and it is role-free: tested with no confirmed clinician, although the app always has one (A2).
 
 **Copy.** Static `WARNING_COPY`, landing in ONE commit with `NOTE_WARNING_SEVERITY`. Title: "The note stops where a new patient may have arrived". Hint: "later lines were left out — add back any that belong with Add line, or remove them from the recording on the Transcript tab".
 
@@ -358,12 +359,23 @@ Option (b) is possible ONLY inside the guard plan's Task 1.1, before its Task 3.
 ### D9 — Removing the tail from the recording (Phase 4; Step 3.5 gate: Include in plan; design confirmed 2026-10-12)
 **The action.** An explicit, confirmed clinician action on the Transcript tab: "Remove lines N–end from this recording…". It is shown only when the boundary rule fires, never automatic: a false boundary must never delete real content that is kept for 7 years.
 
-It writes a `TranscriptDocument` holding segments before N through the ONE writer `transcription.write_transcript`. That writer unlinks a stale `note.enc` first, so the saved note, its `transcript_digest`, `generated.enc`, the Past-sessions entry and the replay all stay consistent.
+It writes a `TranscriptDocument` holding segments before N through the ONE writer `transcription.write_transcript`. That writer unlinks a stale `note.enc` first, so the saved note and its `transcript_digest` stay consistent with the transcript.
+
+**`generated.enc` is invalidated too (peer round 1 PR-HIGH-001).** `write_transcript` does NOT touch `generated.enc` (`session_store.py:41-45`; `keep_generated` replaces it only on a later generation, `ui/transcript.py:918-934`), and Complete copies it into the Past-sessions entry (`session_store.py:1390-1395`). An earlier generation that quoted the tail (Generate → Cancel review → trim → Complete with no regeneration) would otherwise archive removed text for 7 years. So the trim removes `generated.enc` fail-closed BEFORE the transcript write, and refuses the trim (nothing changed but any marker, below) when the removal or the check that it is gone fails. After a trim, the Past-sessions entry and any replay hold only lines before N; the entry's generated note is the next generation's, or none.
+
+**Custody and order (peer round 1 PR-HIGH-002).** The trim is ONE controller-owned operation on `SessionController` (never a direct store call from the tab), under the session lock, which re-checks at execution: the same session id the confirmation named, no generation lease, no saved note, and not a session in recovery handling. Its steps, in this order, each durable before the next:
+1. under decision 0.6 (a), write the content-free no-audio marker (atomic write, then confirm it reads back); a write or inspection error refuses the trim with nothing else changed;
+2. remove `generated.enc` and confirm it is gone; a failure refuses the trim, KEEPING the marker;
+3. `write_transcript` with the shortened document; a failure leaves the marker in place and the old transcript.
+
+A marker is never removed once written: the fail-safe direction is "no audio kept", so a failure after step 1 costs the kept recording, never privacy. Under decision 0.6 (b), step 1 is the audio trim's own committed state instead, under the same rule (Task 4.2 specifies it).
+
+**The trimmed transcript is authoritative across restart.** Recovery never re-transcribes a session that already has a transcript (`ui/recovery.py:6-9`, `:207`), so it cannot restore the removed tail from `audio.enc`; Task 4.2 pins this (trim → restart → recovery reads the trimmed transcript and offers no re-transcription). An unreadable trimmed transcript is handled as any unreadable transcript is today (fail closed; no tail restored).
 
 **When it is enabled.** Only when no review is open (no generation lease) and no note has been saved. After Save, it is refused with copy saying to Cancel or Discard. Confirmation copy follows the design system's destructive-confirmation style.
 
 **The kept recording** follows decision 0.6.
-- (a), recommended: a trimmed session keeps NO audio at Complete. A content-free marker in the session directory, written in the same step as the trim, makes `_complete_locked` pass `kept=False`; the audit row then shows "not kept" by its existing facts.
+- (a), recommended: a trimmed session keeps NO audio at Complete. A content-free marker in the session directory, written FIRST in the trim's ordered steps (above), makes `_complete_locked` pass `kept=False` on every Complete path, live and recovered; the audit row then shows "not kept" by its existing facts.
 - (b): trim `audio.enc` to the chunks ending before the boundary's start time.
 
 **What is not recorded.** No audit field records the trim (content-free; it is an edit within an open session). The threat model names this.
@@ -401,7 +413,7 @@ It writes a `TranscriptDocument` holding segments before N through the ONE write
   - rewrite NEXT-PATIENT RESIDUE (`docs/security/threat-model.md:502-512`);
   - update HANDS-FREE AND WARNINGS (`:2575-2625`): the lists now also withhold content, and they changed;
   - cross-reference Chrome residue (5) (`:2734`);
-  - new residues: a false boundary withholds content behind a sticky warning; a boundary inside one segment; a phone call; the window counts segments; a suspect greeting is skipped (the guard's D6) and fails toward inclusion; the unconsented tail is kept unless the clinician removes it; the trim leaves no audit fact; the correction-carry residues; the hedge mark's scope and coarseness.
+  - new residues: a false boundary withholds content behind a sticky warning; a boundary inside one segment; a phone call; the window counts segments; a suspect greeting is skipped (the guard's D6) and fails toward inclusion; the unconsented tail is kept unless the clinician removes it; the trim leaves no audit fact; the trim removes an earlier generated note, and a trim that fails after its marker is written still keeps no audio (fail-safe toward privacy); the correction-carry residues; the hedge mark's scope and coarseness.
 - **Data-flow map:** flow 7 (the request cut), flow 14 / `:552` (the live lists), the trim on the transcript flow.
 - **Retention schedule:** the transcript row (the clinician may remove a next patient's lines before Complete).
 - **`docs/testing/validation-harness.md`:**
@@ -425,8 +437,8 @@ It writes a `TranscriptDocument` holding segments before N through the ONE write
 
 ## Schema / Data Changes
 - **No new stored field.** Two new review warning codes are persisted in `note.enc`'s `note_warnings`; 0.3.2 and later read them, and below that the guard's rollback section applies.
-- **The trim** writes a shorter `TranscriptDocument` through the existing writer, in the same schema.
-- **The marker** (decision 0.6 (a)) is a content-free file inside the session directory. It dies with the directory.
+- **The trim** writes a shorter `TranscriptDocument` through the existing writer, in the same schema, after removing any `generated.enc` (D9).
+- **The marker** (decision 0.6 (a)) is a content-free file inside the session directory, written first in the trim and never removed once written. It dies with the directory.
 
 ## Config / Environment / Deployment Impact
 - No environment variable, network, model or dependency change.
@@ -441,13 +453,13 @@ It writes a `TranscriptDocument` holding segments before N through the ONE write
 4. **C4 — Fail toward inclusion and never silently.**
    - The boundary never deletes content; only the clinician's confirmed action trims.
    - The head-case guard holds.
-   - A same-segment closing and greeting cut at the NEXT segment.
+   - A same-segment closing and greeting cut at the NEXT non-transparent segment, or not at all when none follows.
    - Check 6 is review severity, separately acknowledged, and role-free.
 5. **C5 — One boundary function, computed from `(document, config)` by every consumer.** Agreement pinned by a test; the `_assemble_note_request` call count stays 1; indices stay absolute.
 6. **C6 — No import of `voice_commands` from `note`, `note_config`, `note_fill` or `note_check`.** The phrase module is a leaf.
 7. **C7 — The live warning's behaviour changes only by the vocabulary commit.** Its exact list pins move in that commit, with near-miss cases for every added word.
 8. **C8 — Nothing per consultation enters a tracked file** (clinic-smoke D12). Run records are ids and counts.
-9. **C9 — One `/execute-loop` at a time on `main`.** This plan starts after the guard plan's hardening commit and its run of record. `main`'s version is never lowered.
+9. **C9 — One `/execute-loop` at a time on `main`.** This plan's Phase 1 starts after the guard plan's hardening commit; under decision 0.7 (a) also after the guard's run of record, while under 0.7 (b) the guard's run-of-record acceptance moves to the combined run at this plan's H4 commit and Task 0.10 uses a deterministic rebuild instead (peer round 1 PR-MED-004). `main`'s version is never lowered.
 10. **C10 — Practitioner-run steps run from a normal terminal with the installed app closed.** Nothing checked from an agent shell counts.
 11. **C11 — `test_shadow_exits.py`'s existing counters are unchanged.** No new text widget, clipboard, drag or list outside `ui/lists.py`; no `"wave"` constant.
 
@@ -485,15 +497,68 @@ See the Planning Extraction Summary (the canonical list).
   1. The practitioner takes decisions 0.1–0.7. Decision 0.4 goes first if (b) is wanted: tell the guard session before its Task 3.1.
   2. Task 0.8, the vocabulary commit.
   3. Task 0.9, a fresh session writes the held-out set.
-  4. After the guard plan's hardening commit and run of record, Task 0.10, then `/execute-loop` from Phase 1.
-- Open blockers: the guard plan (0.3.2) must land first; decisions 0.1–0.7.
+  4. After the guard plan's hardening commit (and, under decision 0.7 (a), its run of record), Task 0.10, then `/execute-loop` from Phase 1.
+- Open blockers: the guard plan (0.3.2) must land first (its hardening commit; under decision 0.7 (a) also its run of record); decisions 0.1–0.7.
 - Last plan sync: 2026-10-12.
 
 ## Review History
 - 2026-10-12 `/review-plan`: four parallel read-only lenses (coverage, practicality and risk, simplicity, plus the first-draft design critique), every finding checked against `8e5e571`. Plan-scoped; no code reviewed.
+- 2026-10-12 `/peer-loop` (plan review, codex `gpt-6-astra` medium, read-only): round 1 — 4 build-affecting (2 HIGH, 2 MED), all applied (one HIGH partly invalid: recovery never re-transcribes a transcript-present session, now a pin).
 
 ## Review Findings Log
-- (no code-review rounds yet)
+### Round 1 - 2026-10-12 - validation-pass plan, independent cross-family codex plan peer-review (round 1)
+
+- Source: Codex plan peer-review
+- Peer: codex gpt-6-astra medium, read-only sandbox
+- Scope: the plan file, the guard plan's D3–D6, D9 and Phase 2, and the named code, test and document ranges (prompt `.cursor/loops/validation-pass-peer-r1-prompt.txt`)
+- Recorded by: the planning session (composer-recorded round; the read-only peer printed the block, transcribed verbatim from the LAST `### Round 1` header of `.cursor/loops/validation-pass-peer-r1.log`, with dispositions added)
+- Materiality: 4 build-affecting / 0 record-only / 0 invalid
+- Severity: 0 CRIT / 2 HIGH / 2 MED / 0 LOW
+- Round status: Closed (4 fixed)
+
+#### Findings
+
+**PR-HIGH-001 — Tail removal leaves an earlier generated-note copy eligible for archiving**
+
+- Materiality: build-affecting
+- Challenges: D9; Flow 1 step 4; Task 4.1.
+- Evidence: `.cursor/plans/plan-validation-pass.md:361`; `desktop/src/scribe_desktop/transcription.py:1083–1092`; `desktop/src/scribe_desktop/ui/transcript.py:918–934`; `desktop/src/scribe_desktop/session_store.py:1390–1395`.
+- Defect: `write_transcript` invalidates the saved note but does not invalidate the generated-note copy. If an earlier generation included the tail—for example, before upgrading from 0.3.2—Cancel review → trim → Complete can archive that earlier body alongside the shortened transcript; regeneration also has an explicitly documented best-effort cleanup failure residue.
+- Concrete amendment: "Before committing a trim, invalidate the previous generated-note copy fail-closed under session custody. If invalidation fails, refuse the trim. Add coverage for an earlier generation containing the tail → Cancel → trim → Complete without regeneration, and trim → regeneration with a generated-body write failure; neither path may archive removed text."
+- /fix decision: Applied. Verified VALID: `generated.enc` is documented as replaced only on regeneration (`session_store.py:41-45`) and copied by Complete (`:1390-1395`). D9 gains "`generated.enc` is invalidated too": the trim removes it fail-closed before the transcript write and refuses on failure; Flow 1 step 4, Schema / Data Changes, D12's residues and Task 4.1's tests reconciled. Landed + siblings reconciled.
+
+**PR-HIGH-002 — The trim marker needs an explicit crash-safe transaction and recovery contract**
+
+- Materiality: build-affecting
+- Challenges: D9 option (a); Tasks 4.1–4.2.
+- Evidence: `.cursor/plans/plan-validation-pass.md:366`, `:604`; `desktop/src/scribe_desktop/transcription.py:1061–1081`, `:1091`; `desktop/src/scribe_desktop/session.py:1178–1197`; `desktop/src/scribe_desktop/ui/transcript.py:805–838`.
+- Defect: Writing the marker "in the same step" does not establish ordering between two separate files: committing the shortened transcript before a failed marker write can leave recovered Complete permitted to archive the full audio. The plan also leaves unspecified how recovery treats the retained original audio, although the transcript writer explicitly supports overwriting transcripts during resumed processing.
+- Concrete amendment: "Perform trimming through controller-owned custody, rechecking session identity, review state and recovery state at execution. Durably commit the no-audio marker before changing the transcript; refuse on marker-write or inspection errors and retain the marker if a later operation fails. Define the shortened transcript as authoritative across restart: recovery must not restore its removed tail from original audio. Add failure injection around each durable write and live/recovered Complete, plus a trim → restart → recovery/retry test; unreadable trimmed state must fail closed."
+- /fix decision: Applied, VALID in part. The ordering and custody gap is real: D9 now names ONE `SessionController` operation under the session lock with re-checks, and the order marker → `generated.enc` removal → `write_transcript`, each durable, the marker never removed (fail-safe = no audio kept); Complete treats an undeterminable marker as present (Task 4.2). The recovery-restores-the-tail path is NOT reachable in today's code: recovery never re-transcribes a session that has a transcript (`ui/recovery.py:6-9`, `:207`); that becomes a pin (trim → restart → recovery reads the trimmed transcript, no re-transcription) rather than new logic. Tasks 4.1–4.2 gain the failure-injection and live/recovered Complete tests. Landed + siblings reconciled (Schema / Data Changes, D12 residues).
+
+**PR-MED-003 — Same-segment boundaries contradict Check 6's coordinate assumption**
+
+- Materiality: build-affecting
+- Challenges: D2, D5; Tasks 1.1, 1.3 and 4.1.
+- Evidence: `.cursor/plans/plan-validation-pass.md:240–247`, `:301`, `:601`; `desktop/src/scribe_desktop/note_check.py:442–447`.
+- Defect: D2 moves a same-segment closing/greeting boundary to the next segment, while D5 assumes the returned segment necessarily contains a greeting and therefore valid words. That next segment can be empty or absent; after trimming, the triggering closing/greeting segment remains last, exposing the same undefined end-of-document case.
+- Concrete amendment: "Define the returned boundary as the first actual non-transparent segment to withhold. For a same-segment closing/greeting, use the next non-transparent segment, returning None if none exists. Check 6 points to that withheld segment without assuming it contains the greeting. Pin same-segment pairs followed by empty segments, pairs at end of document, and trim → recompute → Generate with no Check 6."
+- /fix decision: Applied. D2's edge cases now define the return as the first segment to withhold, always non-transparent, with None when no non-transparent segment follows a same-segment pair; D5's coords rationale rewritten; the C4 restatement, Task 1.1's shapes and Task 4.1's tests reconciled. Landed + siblings reconciled.
+
+**PR-MED-004 — The combined-run option cannot follow the stated execution prerequisites**
+
+- Materiality: build-affecting
+- Challenges: Decision 0.7(b), C9, Task 0.10 and handoff sequencing.
+- Evidence: `.cursor/plans/plan-validation-pass.md:450`, `:488`, `:532–547`.
+- Defect: Decision 0.7(b) offers one combined run at this plan's H4 commit, but C9 requires the guard's run of record before this plan starts. Task 0.10 also requires that prior run's set or report figures, so the offered alternative has no executable prerequisite path.
+- Concrete amendment: "Make C9 and Task 0.10 conditional on decision 0.7. Under (a), retain the separate guard-run prerequisite. Under (b), require the guard hardening commit and a separately recorded diagnostic baseline before Phase 1, explicitly define its comparison inputs, and defer both plans' run-of-record acceptances to the combined H4 run."
+- /fix decision: Applied. C9, Task 0.7 (what each option requires; the guard session must agree under (b)), Task 0.10's input and the handoff's next action and open blockers are now conditional on 0.7. Landed + siblings reconciled.
+
+Coverage: PR-HIGH-001.
+Practicality / feasibility / sequencing: PR-HIGH-002, PR-MED-003, PR-MED-004.
+Unstated assumptions: PR-HIGH-001, PR-MED-003.
+Simpler / safer alternatives: no finding verified.
+Missing verification / rollback / migration: PR-HIGH-002, PR-MED-003, PR-MED-004.
 
 ## Tasks
 Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". No phase starts before the guard plan's hardening commit is on `main` (C9).
@@ -532,6 +597,8 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 - [ ] 🟥 **0.7 Runs** `[decision]`
   - Options: (a) the guard's run of record, then this plan's; (b) one combined run at this plan's H4 commit, read against both acceptances.
   - Recommended: (a). Each plan keeps its own acceptance, and Task 0.10 reads the 0.3.2 code's output.
+  - What each option requires (peer round 1 PR-MED-004): under (a), Phase 1 waits for the guard's run of record and Task 0.10 reads its set folder; under (b), Phase 1 waits only for the guard's hardening commit, Task 0.10's baseline is a deterministic rebuild at that commit (no run-of-record figures exist to check it against, so its own Segments and WER are recorded on Task 0.10 as the baseline), and BOTH plans' run-of-record acceptances are read on the one combined run at this plan's H4 commit (the guard's P-phase acceptance then waits for it, which that session must agree to).
+  - Blocks: Task 0.10's input; Phase 1's start (C9).
 - [ ] 🟥 **0.8 Vocabulary commit (C3)**
   - Files: `consultation_phrases.py` lists and constants (D1, D2), `note.py` correction markers (D4), `note_check.HEDGE_PHRASES` (D7; an outside lexicon named in the commit message where used).
   - Also: the moved `test_hands_free.py:331-363` exact pins, and near-miss tests for every added word ("Morning stiffness", "hi-fi", "You're welcome", "how are you going with…").
@@ -543,7 +610,9 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - `validation/README.md` gains the `heldout/` entry.
   - Done when: committed with a date, before Phase 1.
 - [ ] 🟥 **0.10 Diagnosis and predictions** (composer, synthetic only; the practitioner runs it if the agent shell cannot see the developer models — `docs/lessons.md`)
-  - Input: the guard run of record's set folder (kept by agreement with the guard session); or rebuild it deterministically at the guard's hardening commit (`scripts\build-validation-set.py`, `encounter_seed`, `validation_set.py:264-275`), checking that Segments and WER equal the guard run's report.
+  - Input, by decision 0.7:
+    - (a): the guard run of record's set folder (kept by agreement with the guard session); or rebuild it deterministically at the guard's hardening commit (`scripts\build-validation-set.py`, `encounter_seed`, `validation_set.py:264-275`), checking that Segments and WER equal the guard run's report;
+    - (b): the deterministic rebuild at the guard's hardening commit, with its Segments and WER recorded here as the diagnostic baseline (there is no earlier run to compare against).
   - Method: re-transcribe through `evaluate_encounter`'s steps from a scratchpad script, at the guard's hardening commit, with Task 0.8's vocabulary applied text-level.
   - Record (ids and counts only, on this task):
     - per next-patient encounter: the closing and greeting segments, whether D2 fires, and first against last;
@@ -557,7 +626,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 ### Phase 1 — The next-patient boundary (`consultation_phrases.py`, `voice_commands.py`, `note.py`, `note_config.py`, `note_fill.py`, `note_check.py`, `ui/models.py`)
 - [ ] 🟥 **1.1 The leaf module and the rule (D1, D2, C5, C6)**
   - Build `consultation_boundary`, with `voice_commands` re-exporting the lists and the watcher using the shared phrase-event helper (its live pins `test_hands_free.py:374-400` unchanged).
-  - Tests: the D2 shapes (head case; same segment; closing without greeting; greeting without closing; phone call; transparency; first-position rule), the held-out transcript fixtures, an import-cycle test (importing `note_config` does not import `voice_commands`).
+  - Tests: the D2 shapes (head case; same segment; same segment followed only by empty segments, and at the end of the document — None; closing without greeting; greeting without closing; phone call; transparency; first-position rule), the held-out transcript fixtures, an import-cycle test (importing `note_config` does not import `voice_commands`).
   - Done when: green.
 - [ ] 🟥 **1.2 The request cut and the proposals (D3)**
   - `build_note_request` passes `boundary=` to `_assemble_note_request`; the `note_fill` public entry points limit `_first_phrase_match`.
@@ -596,13 +665,15 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 ### Phase 4 — Removing the tail from the recording (`ui/transcript.py`, `ui/models.py`, `transcription.py` caller, `session.py` / `session_store.py` under 0.6)
 - [ ] 🟥 **4.1 The Transcript-tab line and action (D9)**
   - The line "A possible next patient starts at line N" and "Remove lines N–end from this recording…" behind a confirmation. Enabled only with no open review and no saved note; refusal copy otherwise.
-  - Trims through `write_transcript` (stale `note.enc` unlinked first).
+  - Trims through ONE `SessionController` operation under the session lock (D9's custody and order: re-check session id, no lease, no saved note, not in recovery; then marker (0.6 (a)), `generated.enc` removal, `write_transcript` — stale `note.enc` unlinked first).
   - The view, chooser and prefill drop-down refresh.
-  - Tests (screen-level fakes): shown only when the rule fires; the confirmation's cancel changes nothing; trim then Generate gives no Check 6 and a note whose digest matches; refused during review and after Save; a shadow session behaves the same.
+  - Tests (screen-level fakes): shown only when the rule fires; the confirmation's cancel changes nothing; trim then Generate gives no Check 6 and a note whose digest matches; refused during review and after Save; refused when the session changed between confirmation and execution; a shadow session behaves the same.
+  - Tests (controller and store, peer round 1 PR-HIGH-001 / PR-HIGH-002 / PR-MED-003): an earlier generation that quoted the tail → Cancel review → trim → Complete with no regeneration archives no removed text (no generated note in the entry); trim → regeneration with a `generated.enc` write failure archives no removed text; failure injected at each step (marker write, marker read-back, `generated.enc` removal, transcript write) leaves the documented state (refused before the marker: nothing changed; after it: marker kept, old transcript); a same-segment pair followed only by empty segments and a pair at the end of the document give no boundary and no action; trim → recompute → Generate gives no Check 6.
   - Done when: green, with `test_shadow_exits.py` unchanged (C11).
 - [ ] 🟥 **4.2 The kept recording (decision 0.6)**
-  - Under (a): the content-free marker written with the trim; `_complete_locked`'s `kept` is False when it is present (every Complete path, `test_shadow_exits.py` `_CONSENT_KEYWORD` pins unchanged); the audit shows "not kept"; tests on the live and recovered Complete paths.
-  - Under (b): the chunk-level trim with its own verification.
+  - Under (a): the content-free marker written FIRST in the trim and never removed; `_complete_locked`'s `kept` is False when it is present, and when its presence cannot be determined (fail closed; every Complete path, `test_shadow_exits.py` `_CONSENT_KEYWORD` pins unchanged); the audit shows "not kept"; tests on the live and recovered Complete paths, including a marker written but a later trim step failed.
+  - Under (b): the chunk-level trim as the trim's first committed step, with its own verification and failure rule (a failure refuses the trim, or falls back to (a)'s marker).
+  - Both: trim → restart → recovery reads the trimmed transcript and offers no re-transcription (`ui/recovery.py:6-9`, `:207`).
   - Done when: green.
 
 ### Phase 5 — Documents and version
