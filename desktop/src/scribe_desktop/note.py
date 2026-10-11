@@ -1427,6 +1427,49 @@ def layered_section(
     return None
 
 
+# The bounded carry (note-routing-omissions plan D11): what ends a word
+# mid-sentence, and what is peeled off before the mark is read. A hyphen-minus
+# is not a dash here; "." "?" "!" and "…" end a sentence.
+_CONTINUATION_MARKS: Final[frozenset[str]] = frozenset({",", ";", ":", "–", "—"})
+_CLOSING_MARKS: Final = "\"')]}”’»"
+
+
+def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
+    """True when the last word WITH text ends in a comma, semicolon, colon
+    or an en or em dash, once closing quotes and brackets are peeled off —
+    the recogniser cut a sentence there. It classifies a raw trailing mark
+    and normalises nothing, so it is not a second punctuation rule beside
+    ``strip_token_punctuation`` (which would erase the very comma it reads).
+    No trailing mark at all does not count: a bare cut is a named residue."""
+    for word in reversed(words):
+        text = word.word_text.strip()
+        if text:
+            text = text.rstrip(_CLOSING_MARKS)
+            return bool(text) and text[-1] in _CONTINUATION_MARKS
+    return False
+
+
+def any_cue_matches(
+    cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
+    fallback_cues: Mapping[NoteSectionKey, tuple[tuple[str, ...], ...]],
+    tokens: Sequence[str],
+) -> bool:
+    """True when ANY cue of either layer occurs in ``tokens`` — every section
+    of both mappings, whatever the request's template, with the ownership
+    rule and the question test ignored; False on empty tokens. The carry
+    (D11) never takes an utterance that carries a cue: a cue line routing
+    refused (a patient's "the diagnosis is …", a question carrying an owned
+    section's cue) stays dropped, as it was before the carry."""
+    if not tokens:
+        return False
+    return any(
+        _contains_phrase(tokens, phrase)
+        for layer in (cues, fallback_cues)
+        for phrases in layer.values()
+        for phrase in phrases
+    )
+
+
 def provider_assertion_id(segment_index: int) -> str:
     """The extractive provider's id for the utterance at ``segment_index``."""
     return f"x{segment_index:04d}"
@@ -1629,18 +1672,29 @@ def speaker_role(document: TranscriptDocument) -> SpeakerRolePreselection:
 
 
 class ExtractiveNoteProvider:
-    """Cue-matched VERBATIM transcript spans — no generation, no paraphrase.
+    """Cue-matched VERBATIM transcript spans, with one bounded same-speaker
+    continuation — no generation, no paraphrase.
 
     Every emitted assertion is one whole utterance quoted exactly, carrying
     that utterance's contiguous coordinates, so Check 1 reconstructs it
-    byte-identically. Clinician-owned sections are populated only from
-    utterances spoken by the CONFIRMED clinician cluster and never from a
-    question; with no confirmed role they stay blank (Critical Constraint).
+    byte-identically — a carried utterance included. Clinician-owned sections
+    are populated only from utterances spoken by the CONFIRMED clinician
+    cluster and never from a question; with no confirmed role they stay
+    blank (Critical Constraint). The carry never enters one at all.
 
     Routing is layered (note-routing-omissions plan D1): ``cues`` first, then
     ``fallback_cues`` for an utterance ``cues`` do not route — see
     ``layered_section``. With both left at the shipped default the second
     pass can add nothing.
+
+    The bounded carry (D11): an utterance no cue routes FOLLOWS the previous
+    one's section when that previous utterance was routed by a cue itself,
+    was said by the same speaker and ended mid-sentence (``ends_mid_sentence``
+    — the recogniser split a sentence at a comma), the section is not
+    clinician-owned, and the utterance carries no cue of either layer in any
+    section (``any_cue_matches``). One hop: a carried utterance never
+    carries the next. "Previous" skips utterances with nothing to quote; any
+    other dropped utterance breaks the chain. ``_route`` stays cue-only.
     """
 
     def __init__(
@@ -1670,12 +1724,41 @@ class ExtractiveNoteProvider:
 
     def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
         routed: dict[NoteSectionKey, list[NoteAssertion]] = {}
+        # The carry's state (D11): the previous non-transparent utterance's
+        # section, whether a cue routed it, its speaker, and whether it ended
+        # mid-sentence. ``prev_cued`` False means no chain is open.
+        prev_key: NoteSectionKey | None = None
+        prev_cued = False
+        prev_speaker: str | None = None
+        prev_open = False
         for utterance in request.transcript_utterances:
             words = utterance.transcript_words
-            if not words:
+            # (0) Transparent BEFORE routing (``_route`` would read nothing as
+            # "dropped"): nothing to quote, and the state is left untouched,
+            # so a blank utterance never breaks a chain.
+            if not words or not utterance.text:
                 continue
             key = self._route(request, utterance)
-            if key is None:
+            if key is not None:
+                # (1) Cue-routed: emitted, and it may open a chain.
+                prev_key, prev_cued = key, True
+                prev_speaker, prev_open = utterance.speaker, ends_mid_sentence(words)
+            elif (
+                prev_cued
+                and prev_key is not None
+                and utterance.speaker == prev_speaker
+                and prev_open
+                and prev_key not in CLINICIAN_OWNED_SECTIONS
+                and not any_cue_matches(
+                    self._cues, self._fallback_cues, content_tokens(utterance.text)
+                )
+            ):
+                # (2) Carried into the previous section; one hop only.
+                key = prev_key
+                prev_cued = False
+            else:
+                # (3) Dropped: the chain breaks.
+                prev_cued = False
                 continue
             assertion = whole_utterance_assertion(
                 provider_assertion_id(utterance.segment_index),
@@ -1684,7 +1767,7 @@ class ExtractiveNoteProvider:
                 speaker=utterance.speaker,
                 words=words,
             )
-            if assertion is None:
+            if assertion is None:  # unreachable after (0): the same two tests
                 continue
             routed.setdefault(key, []).append(assertion)
         return tuple(
@@ -2705,10 +2788,12 @@ __all__ = [
     "StyleRendering",
     "StyleVerdict",
     "admissible_sections",
+    "any_cue_matches",
     "assertion_label",
     "compose_draft",
     "content_tokens",
     "digest_bytes",
+    "ends_mid_sentence",
     "finalise_note",
     "first_matching_section",
     "is_interrogative",

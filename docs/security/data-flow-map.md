@@ -432,7 +432,11 @@ practitioner-run developer tool that prints numbers only (flow 27).
     `section_cues.json` (the phrases that route a transcript utterance into a
     canonical section; since 0.3.1 routing tries a user file's phrases first
     and the shipped cues for an utterance they route nowhere — the shipped
-    layer is package data bound by the build, not the config digest) — falling back to shipped package defaults per
+    layer is package data bound by the build, not the config digest — and
+    since that plan's D11 an utterance no cue matches may follow the same
+    speaker's cue-routed utterance that ended mid-sentence, one hop, never into
+    a clinician-owned section; the phrases still only select verbatim
+    utterances) — falling back to shipped package defaults per
     filename. It is INTENDED as non-patient boilerplate, deliberately OUTSIDE
     the encrypted session store and the 24 h rule so it survives session
     destruction. Patient data and secrets are prohibited by policy, but the

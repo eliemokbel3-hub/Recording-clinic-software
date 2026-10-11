@@ -62,8 +62,10 @@ from scribe_desktop.note import (
     SpeakerRolePreselection,
     _parse_shipped_section_cues,
     admissible_sections,
+    any_cue_matches,
     content_tokens,
     digest_bytes,
+    ends_mid_sentence,
     first_matching_section,
     is_interrogative,
     layered_section,
@@ -2204,6 +2206,10 @@ class TestLayeredRouting:
         shipped = load_note_config(tmp_path / "no-user-config")
         # Equal by VALUE, never identity: the config re-derives the cues.
         assert dict(shipped.normalised_cues()) == dict(DEFAULT_SECTION_CUES)
+        # No turn below ends in a comma, semicolon, colon or dash, so the
+        # bounded carry's condition 3 (``ends_mid_sentence``, D11) never holds
+        # and the provider is still one cue pass per utterance — which is
+        # why these turns stay comma-free at their ends.
         document = _document(
             texts=(
                 (PATIENT_OPENER, SPEAKER_1),
@@ -2242,3 +2248,244 @@ class TestLayeredRouting:
         }
         assert routed == single_pass
         assert routed  # the comparison means something
+
+
+# ---------------------------------------------------------------------------
+# The bounded carry (note-routing-omissions plan D11, Task 4.2): an uncued
+# utterance follows the previous cue-routed one's section when that one is the
+# same speaker's and ended mid-sentence, the section is not clinician-owned,
+# and the utterance carries no cue in any layer or section. One hop. Invented
+# lines only.
+# ---------------------------------------------------------------------------
+
+# Routed by the shipped "sore" to Presenting complaint, ended at a comma.
+_SPLIT_OPEN = "My left knee is sore,"
+# No cue in any section of either layer.
+_SPLIT_REST = "but not on the right side."
+
+
+def _carry_document(*segments: tuple[tuple[TranscriptWord, ...], str]) -> TranscriptDocument:
+    """A document from explicit word tuples (for blank and whitespace-only
+    utterances ``_document`` cannot express)."""
+    return TranscriptDocument(
+        session_id=SESSION_ID,
+        created_at=datetime(2026, 10, 11, 9, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=float(index * 10),
+                end_seconds=float(index * 10 + 5),
+                speaker=speaker,
+                transcript_words=words,
+            )
+            for index, (words, speaker) in enumerate(segments)
+        ),
+    )
+
+
+def _placed(request: NoteRequest) -> dict[int, NoteSectionKey]:
+    """Segment index -> section, for every assertion the shipped provider
+    emits (both layers at the shipped default)."""
+    return {
+        assertion.note_span.source_coords.segment_index: section.section_key
+        for section in ExtractiveNoteProvider().generate_sections(request)
+        for assertion in section.note_assertions
+        if assertion.note_span.source_coords is not None
+    }
+
+
+def _carry(*texts: tuple[str, str]) -> dict[int, NoteSectionKey]:
+    return _placed(_request(document=_document(texts=texts)))
+
+
+class TestEndsMidSentence:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "sore,",
+            "sore;",
+            "sore:",
+            "sore–",
+            "sore —",
+            'my "sore,"',
+            "(sore,)",
+            "sore,”",
+        ],
+    )
+    def test_a_comma_semicolon_colon_or_dash_ends_mid_sentence(self, text: str) -> None:
+        assert ends_mid_sentence(_words(text))
+
+    @pytest.mark.parametrize(
+        "text", ["sore.", "sore?", "sore!", "sore…", "sore -", "sore-", "sore", '"sore."']
+    )
+    def test_a_sentence_end_a_hyphen_or_no_mark_does_not(self, text: str) -> None:
+        assert not ends_mid_sentence(_words(text))
+
+    def test_the_last_word_with_text_is_read(self) -> None:
+        blank = TranscriptWord(
+            word_text="  ", start_seconds=2.0, end_seconds=2.1, probability=0.9, uncertain=False
+        )
+        assert ends_mid_sentence((*_words("sore,"), blank))
+        assert not ends_mid_sentence((blank,))
+        assert not ends_mid_sentence(())
+
+
+class TestAnyCueMatches:
+    def test_empty_tokens_match_nothing(self) -> None:
+        assert not any_cue_matches(DEFAULT_SECTION_CUES, DEFAULT_SECTION_CUES, ())
+
+    def test_ownership_and_the_question_test_are_ignored(self) -> None:
+        """A patient's diagnosis cue and a clinician's question carrying one
+        both count — routing refuses them, the carry must not take them."""
+        for text in ("and the diagnosis is a strain", "do you have pain at night?"):
+            assert any_cue_matches(DEFAULT_SECTION_CUES, {}, content_tokens(text)), text
+
+    def test_either_layer_and_any_section_counts(self) -> None:
+        tokens = content_tokens("these exercises help")
+        assert not any_cue_matches({}, DEFAULT_SECTION_CUES, tokens)
+        assert any_cue_matches(_OWN_EXERCISES, {}, tokens)
+        assert any_cue_matches({}, _OWN_EXERCISES, tokens)
+        assert not any_cue_matches(
+            DEFAULT_SECTION_CUES, DEFAULT_SECTION_CUES, content_tokens(_SPLIT_REST)
+        )
+
+
+class TestBoundedCarry:
+    def test_a_comma_split_sentence_is_carried(self) -> None:
+        assert _carry((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)) == {
+            0: "presenting_complaint",
+            1: "presenting_complaint",
+        }
+
+    @pytest.mark.parametrize(
+        "opener",
+        [
+            "My left knee is sore;",
+            "My left knee is sore:",
+            "My left knee is sore –",
+            "My left knee is sore—",
+        ],
+    )
+    def test_a_semicolon_colon_or_dash_carries(self, opener: str) -> None:
+        assert _carry((opener, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)) == {
+            0: "presenting_complaint",
+            1: "presenting_complaint",
+        }
+
+    @pytest.mark.parametrize(
+        "opener",
+        [
+            "My left knee is sore.",
+            "My left knee is sore?",
+            "My left knee is sore…",
+            "My left knee is sore -",
+            "My left knee is sore",
+        ],
+    )
+    def test_a_sentence_end_a_hyphen_or_no_mark_does_not_carry(self, opener: str) -> None:
+        assert _carry((opener, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)) == {
+            0: "presenting_complaint"
+        }
+
+    def test_the_other_speaker_is_not_carried(self) -> None:
+        assert _carry((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_2)) == {
+            0: "presenting_complaint"
+        }
+
+    def test_a_clinician_owned_section_is_never_a_target(self) -> None:
+        """The clinician's comma-split diagnosis is NOT carried — the named
+        residue: its second half stays out of the note."""
+        placed = _carry(
+            ("The diagnosis is a calf strain,", SPEAKER_2), (_SPLIT_REST, SPEAKER_2)
+        )
+        assert placed == {0: "diagnosis"}
+
+    def test_one_hop_only(self) -> None:
+        placed = _carry(
+            (_SPLIT_OPEN, SPEAKER_1),
+            ("but not on the right side,", SPEAKER_1),
+            ("and the hip is fine.", SPEAKER_1),
+        )
+        assert placed == {0: "presenting_complaint", 1: "presenting_complaint"}
+
+    def test_an_ownership_refused_cue_line_is_not_carried(self) -> None:
+        """The patient's "the diagnosis is …" routing refuses stays out, as
+        before the carry (the ``ex-spoken-injection`` shape)."""
+        placed = _carry((_SPLIT_OPEN, SPEAKER_1), ("and the diagnosis is a strain.", SPEAKER_1))
+        assert placed == {0: "presenting_complaint"}
+
+    def test_a_question_carrying_an_owned_cue_is_not_carried(self) -> None:
+        placed = _carry(
+            ("On examination the knee is tender,", SPEAKER_2),
+            ("do you have pain at night?", SPEAKER_2),
+        )
+        assert placed == {0: "objective_examination"}
+
+    def test_a_cue_for_a_section_outside_the_template_still_counts(self) -> None:
+        texts = ((_SPLIT_OPEN, SPEAKER_1), ("but I can book in for next week.", SPEAKER_1))
+        request = _request(document=_document(texts=texts))
+        assert _placed(request) == {0: "presenting_complaint", 1: "follow_up_review"}
+        narrowed = request.model_copy(
+            update={
+                "section_keys": tuple(
+                    key for key in CANONICAL_SECTION_KEYS if key != "follow_up_review"
+                )
+            }
+        )
+        assert _placed(narrowed) == {0: "presenting_complaint"}
+
+    def test_a_blank_utterance_is_transparent(self) -> None:
+        blank = TranscriptWord(
+            word_text=" ", start_seconds=0.0, end_seconds=0.1, probability=0.9, uncertain=False
+        )
+        for empty in ((), (blank,)):
+            document = _carry_document(
+                (_words(_SPLIT_OPEN), SPEAKER_1),
+                (empty, SPEAKER_2),
+                (_words(_SPLIT_REST), SPEAKER_1),
+            )
+            assert _placed(_request(document=document)) == {
+                0: "presenting_complaint",
+                2: "presenting_complaint",
+            }
+
+    def test_a_dropped_utterance_breaks_the_chain(self) -> None:
+        placed = _carry(
+            (_SPLIT_OPEN, SPEAKER_1),
+            ("right,", SPEAKER_2),
+            (_SPLIT_REST, SPEAKER_1),
+        )
+        assert placed == {0: "presenting_complaint"}
+
+    def test_a_continuation_that_is_a_question_is_carried(self) -> None:
+        placed = _carry((_SPLIT_OPEN, SPEAKER_1), ("but is that normal?", SPEAKER_1))
+        assert placed == {0: "presenting_complaint", 1: "presenting_complaint"}
+
+    def test_a_carried_line_is_a_whole_utterance_that_reconstructs(self) -> None:
+        document = _document(texts=((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)))
+        sections = ExtractiveNoteProvider().generate_sections(_request(document=document))
+        (section,) = sections
+        first, carried = section.note_assertions
+        words = document.transcript_segments[1].transcript_words
+        assert carried.assertion_id == provider_assertion_id(1)
+        assert carried.speaker == SPEAKER_1
+        assert carried.note_span.source_coords == SourceCoords(1, 0, len(words) - 1)
+        assert carried.text == _SPLIT_REST
+        assert first.note_span.source_coords == SourceCoords(0, 0, 4)
+        errors = [
+            warning
+            for warning in reconstruction_warnings(_note(note_sections=sections), document)
+            if warning.severity == "error"
+        ]
+        assert errors == []
+
+    def test_route_stays_cue_only(self) -> None:
+        """C12: the carried utterance has no route of its own."""
+        request = _request(
+            document=_document(texts=((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_1)))
+        )
+        provider = ExtractiveNoteProvider()
+        first, rest = request.transcript_utterances
+        assert provider._route(request, first) == "presenting_complaint"
+        assert provider._route(request, rest) is None

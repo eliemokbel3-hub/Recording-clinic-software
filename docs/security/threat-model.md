@@ -328,7 +328,12 @@ note inherit exactly that posture.
    phrases first and the SHIPPED cues — package data, bound by the build, not
    the digest — for a line they route nowhere, so what routed a note is the
    config digest plus the app version (the audit row's `app_version`; the
-   harness report's commit) — note-routing-omissions plan D1),
+   harness report's commit) — note-routing-omissions plan D1; and since that
+   plan's D11 an utterance NO cue of either layer matches follows the previous
+   utterance's section when that one was cue-routed, was the same speaker's
+   and ended mid-sentence (a comma, semicolon, colon or dash), one hop and
+   never into a clinician-owned section — still verbatim, whole and with its
+   own coordinates, so a cue file still cannot author note text),
    deliberately OUTSIDE the encrypted session store and the 24 h rule — they
    are INTENDED as boilerplate, not patient data, and must survive session
    destruction (the loader validates structure only and cannot detect patient
@@ -502,7 +507,19 @@ note inherit exactly that posture.
    (deferred); the controls are the clinician's review with the
    speaker-labelled transcript beside the note, Remove line, and in the pilot
    shadow mode — removing such a line raises Check 4's acknowledgeable warning
-   for its flagged words.
+   for its flagged words. The bounded carry (note-routing-omissions plan D11)
+   widens it by one hop: the next patient's uncued second line that continues
+   their own comma-ended cued first line is quoted too. CONTINUATION RESIDUE
+   (named, D11): a patient's spoken-injection or scribe-instruction clause, or
+   the content it fences off, that continues the same patient's comma-ended
+   cued line is quoted into that patient section (the clinician-owned
+   defence is unchanged — the carry never enters one — and the app honours no
+   spoken instruction); a clinician's comma-split diagnosis or plan line is
+   NOT carried (an owned target), so its second half stays out of the note
+   unless Check 4 flags a word in it; and a carried line clears Check 4 even
+   when the section it follows is the wrong one — a second cause of
+   misplacement after the shipped fallback cues. The controls are the same
+   review.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE Note-tab review (`ui/note.py`), longer than the
