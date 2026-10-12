@@ -266,8 +266,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    The decode numbers go with the window; only `suspect` reaches
    `transcript.enc` (written only when true, so a transcript with no suspect
    word is byte-identical to 0.3.1's). Downstream, Check 4, the autofill and
-   pre-fill triggers, phrase learning, the spoken pause (flow 14) and the
-   bounded carry skip suspect words; the router and Check 2 still read them.
+   pre-fill triggers, phrase learning, the spoken pause and the
+   new-consultation warning (flow 14) skip suspect words, and the bounded
+   carry never starts from a segment holding one; the router and Check 2
+   still read them.
 
 8. **Model cache (read-only at runtime).**
    Where it is (installation plan D5, `install_layout.models_root`): for the
@@ -572,7 +574,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     words in memory to pause on "scribe pause" or raise the new-consultation
     warning, change no word, write nothing and log nothing; between windows
     they keep only the last normalised word of the latest window that held
-    words (for a phrase split across two) until the next Resume or Start, the
+    words (since 0.3.2, words not marked suspect; for a phrase split across two) until the next Resume or Start, the
     resume cutoff (a number of seconds) and a window count. Finish seals capture as before and the TAIL DRAIN
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`

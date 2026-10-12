@@ -372,11 +372,15 @@ class TestCheckMarks:
             "Presenting complaint\nthe numbness is worse at night  [check: possibly not speech]\n"
         )
 
-    def test_a_prose_section_counts_its_marks_beside_the_prefilled_count(self) -> None:
+    @staticmethod
+    def _prose_note(*, prefilled: bool = True) -> GeneratedNote:
+        """A ``narrative`` note whose treatment section holds a quoted
+        numbered line (``number_source``) and, with ``prefilled``, a
+        pre-filled line, under a passed prose rendering."""
         numbered = _quoted("q1", "treatment_performed", 2, _NUMBERED_TEXT, SPEAKER_1)
         treatment = GeneratedSection(
             section_key="treatment_performed",
-            note_assertions=(_config_decided(), numbered),
+            note_assertions=(_config_decided(), numbered) if prefilled else (numbered,),
         )
         sections = (_sections()[0], _sections()[1], treatment)
         rendering = StyleRendering(
@@ -385,12 +389,15 @@ class TestCheckMarks:
             input_digest=section_input_digest(treatment),
             verdict="passed",
         )
-        note = _note(
+        return _note(
             style="narrative",
             sections=sections,
             style_renderings=(rendering,),
             warnings=(_line_warning("number_source", "q1"),),
         )
+
+    def test_a_prose_section_counts_its_marks_beside_the_prefilled_count(self) -> None:
+        note = self._prose_note()
         body = render_note(note, "narrative")
         assert body.endswith(
             "Treatment performed\nAn ice pack and two sessions a week.\n"
@@ -414,6 +421,40 @@ class TestCheckMarks:
         assert "[check: number - check: possibly not speech - from transcript]" in (
             models.format_note_body(note)
         )
+
+    def test_a_selection_never_carries_a_mark_in_any_style(self) -> None:
+        """Hardening round 15 LOW-008: the note panel's selection copy
+        (``models.unmarked_selection``) over the REAL renderings — Clean and
+        Verbatim with both marks beside a pre-filled line, a prose section
+        whose marks line holds a check count with and without a pre-filled
+        count: the whole selection is the Copy rendering, and every selection
+        from the start or to the end is a piece of it with no check mark."""
+        cases = [(_note(warnings=_BOTH_MARKS), style) for style in ("clean", "verbatim")]
+        cases += [(self._prose_note(prefilled=p), "narrative") for p in (True, False)]
+        for note, style in cases:
+            shown = render_note(note, style)
+            bare = render_note(note, style, check_marks=False)
+            assert shown != bare, style
+            assert models.unmarked_selection(shown, bare, 0, len(shown)) == bare, style
+            for cut in range(len(shown) + 1):
+                for start, end in ((0, cut), (cut, len(shown))):
+                    text = models.unmarked_selection(shown, bare, start, end)
+                    assert text is not None, (style, start, end)
+                    assert "check:" not in text and text in bare, (style, start, end)
+
+    def test_a_selection_of_only_a_prose_marks_line_copies_nothing(self) -> None:
+        """Hardening round 15 LOW-008: the marks line and its line break hold
+        no note text, so nothing is copied (the panel then says so) — never a
+        bare line break placed in silence."""
+        note = self._prose_note(prefilled=False)
+        shown = render_note(note, "narrative")
+        bare = render_note(note, "narrative", check_marks=False)
+        start = shown.index("[includes 1 line check: number]")
+        end = start + len("[includes 1 line check: number]")
+        assert models.unmarked_selection(shown, bare, start, end) == ""
+        if end < len(shown):  # the line break after it, when one follows
+            assert models.unmarked_selection(shown, bare, start, end + 1) == ""
+        assert models.unmarked_selection(shown, bare, start - 1, end) == ""
 
     def test_the_cliniko_body_is_bare(self) -> None:
         note = _note(warnings=_BOTH_MARKS)

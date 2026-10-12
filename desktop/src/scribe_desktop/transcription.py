@@ -168,9 +168,9 @@ FALLBACK_WHISPER_MODEL = "small"
 #   encodes it: leading space, no special tokens) for 66 words / 602
 #   chars; without its example sentence and the five phrases that were
 #   also shipped routing cues (invented-text-guard plan D1 and decision
-#   1.1a, 2026-10-12) it is 51 words / 504 chars, its real-tokenizer count owed
-#   to ``test_prompt_token_count_exact_with_real_tokenizer`` on the
-#   practitioner's machine (run with ``-s``: it prints the count).
+#   1.1a, 2026-10-12) it is 51 words / 504 chars and 169 tokens (measured by
+#   ``test_prompt_token_count_exact_with_real_tokenizer`` on the
+#   practitioner's machine, 2026-10-12; run it with ``-s`` to print the count).
 #   Clinical latinate terms cost ~3 tokens per
 #   word, so word count is a treacherous proxy — RE-MEASURE with the real
 #   tokenizer before growing this, and stay under ~210 to keep headroom.

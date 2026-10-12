@@ -2027,7 +2027,10 @@ def unmarked_selection(shown: str, bare: str, start: int, end: int) -> str | Non
     check marks are pure insertions into ``bare`` (``format_note_body(note,
     check_marks=False)``), so the selection keeps exactly the characters
     ``bare`` also holds: the result is always a contiguous part of ``bare``,
-    and a selection lying wholly inside a mark gives an empty string. None —
+    and a selection lying wholly inside a mark gives an empty string — as
+    does one holding only a mark and the whitespace around it, such as a
+    prose section's "[includes … check: …]" line and its line break (hardening
+    round 15: a bare line break placed in silence). None —
     the caller places nothing — when ``bare`` is not ``shown`` with
     insertions removed (the panel shows something else). ``bare`` is first
     read the way Qt shows plain text (a carriage return, alone or before a
@@ -2050,7 +2053,10 @@ def unmarked_selection(shown: str, bare: str, start: int, end: int) -> str | Non
             matched += 1
     if matched < len(bare):
         return None
-    return "".join(kept)
+    text = "".join(kept)
+    if not text.strip() and shown[start:end].strip():
+        return ""  # only a mark and whitespace were selected
+    return text
 
 
 def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:

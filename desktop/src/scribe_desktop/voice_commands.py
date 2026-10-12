@@ -123,8 +123,11 @@ def _tokens(segments: Iterable[TranscriptSegment]) -> list[_Token]:
     the captured-audio timeline — except a ``suspect`` word's (invented-text
     guard D6): words the guard marks as possibly not speech never pause the
     recording or raise the new-consultation warning. A suspect word is
-    dropped, not a barrier (unlike ``note_fill``'s trigger match): the phrase
-    either side of it was spoken, and a pause is the safe direction."""
+    dropped, not a barrier (unlike ``note_fill``'s trigger match). The guard
+    marks whole segments, so dropping one joins the words either side of it:
+    a phrase can now match across a suspect segment between two real ones
+    ("scribe" | burst | "pause") — an extra pause or warning, the safe
+    direction (the threat model's surface 5 names it)."""
     return [
         _Token(token, word.start_seconds)
         for segment in segments

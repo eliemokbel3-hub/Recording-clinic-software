@@ -1300,8 +1300,8 @@ class TestClinicalPrompt:
         # 193 tokens for the 66-word / 602-char text of 2026-07-30 (measured
         # density ~3.1 chars per token for this vocabulary); without its
         # example sentence and its five shipped-cue phrases (invented-text-
-        # guard D1, decision 1.1a) it is 51 words / 504 chars, the real count
-        # owed to the exact test below (run with ``-s``; it prints it). ML-free
+        # guard D1, decision 1.1a) it is 51 words / 504 chars and 169 tokens
+        # (the exact test below, 2026-10-12; run with ``-s``, it prints it). ML-free
         # proxies keep a guard runnable on CI: BOTH bounds must hold, and
         # the char bound is the tighter one (650 chars at ~3.1 chars/token
         # ≈ 208 tokens, under the documented 210 headroom bar). Peer round

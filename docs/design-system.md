@@ -184,8 +184,8 @@ view patterns · tokens · microcopy.
   on one line. ONE map renders them all (`note.line_marks_by_assertion`). Copy — the
   button, a selection's keyboard or menu Copy, Past sessions' "Copy saved note" — renders
   WITHOUT the check marks (`check_marks=False`; the selection is cut from that rendering,
-  `models.unmarked_selection`, and a selection holding only a mark copies nothing and
-  says so), keeping the pre-filled mark; the Cliniko draft carries no mark at all.
+  `models.unmarked_selection`, and a selection holding only a mark and whitespace copies
+  nothing and says so), keeping the pre-filled mark; the Cliniko draft carries no mark at all.
 - **A segment the guard suspects is prefixed, never hidden (since 0.3.2).** Wherever a
   transcript segment is quoted — the live and final transcript views, Past sessions'
   transcript, the Line chooser (inside the words part, after `<n>. [flagged] <speaker>: `)

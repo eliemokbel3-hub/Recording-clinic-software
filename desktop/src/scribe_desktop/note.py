@@ -845,7 +845,9 @@ class GeneratedNote(BaseModel):
 # ONE rendering path: ``render_note(note, style)`` is what the Note tab
 # displays, what Copy copies and what a reloaded ``note.enc`` shows again —
 # ``ui.models.format_note_body`` is ``render_note(note, note.style)`` and
-# nothing else renders a note body. Its per-section lines come from
+# nothing else renders a note body; Copy passes ``check_marks=False``
+# (invented-text guard decision 0.5), the same path without the check marks.
+# Its per-section lines come from
 # ``render_section_lines``, which the Cliniko draft write reuses without the
 # review apparatus (cliniko-draft-write plan D7). ``verbatim`` and ``clean`` are
 # deterministic over the assertions (no substitution, no model); the two
@@ -890,14 +892,14 @@ def is_prefilled(assertion: NoteAssertion) -> bool:
     return decision is not None and decision.decided_by == "config"
 
 
-def assertion_label(assertion: NoteAssertion, marks: Sequence[str] = ()) -> str:
+def assertion_label(assertion: NoteAssertion, marks: Sequence[str]) -> str:
     """The bracketed label a rendered line carries: its provenance label,
-    prefixed by its marks — ``marks`` when given (``line_marks_by_assertion``:
-    the pre-filled mark and the check marks, one convention), else
-    ``PREFILLED_MARK`` when the line arrived pre-filled."""
-    label = provenance_label(assertion.provenance)
-    prefix = tuple(marks) or ((PREFILLED_MARK,) if is_prefilled(assertion) else ())
-    return " - ".join((*prefix, label))
+    prefixed by its ``marks`` — the line's entry in
+    ``line_marks_by_assertion`` (the pre-filled mark and the check marks, one
+    convention; that map is the one place a pre-filled line gets
+    ``PREFILLED_MARK``, so the caller always passes it — hardening round 16
+    SIMP-001)."""
+    return " - ".join((*marks, provenance_label(assertion.provenance)))
 
 
 def line_marks_by_assertion(

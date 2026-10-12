@@ -444,7 +444,7 @@ class _NotePanel(QPlainTextEdit):
         (nothing placed) unless the note is ratified, not a shadow
         recording's, and something is selected — and when the shown body is
         not the mark-free body plus marks, or the selection holds nothing
-        but a mark (fail closed). That last refusal is SAID through
+        but a mark and whitespace (fail closed). That last refusal is SAID through
         ``refused`` (review round 6 LOW-002): a silent one would leave an
         older clipboard to be pasted."""
         cursor = self.textCursor()

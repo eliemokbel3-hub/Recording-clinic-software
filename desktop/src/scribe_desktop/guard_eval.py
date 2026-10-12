@@ -9,9 +9,9 @@ assignment and uncertainty marks exactly as a recording gets them — with a
 recording provider wrapper that keeps each window's provider words, whose
 decode numbers the stored transcript never holds. For every VAD segment the
 row is ``transcription.guard_features`` (the rule's own features) plus the
-two decode numbers the rule does not read yet; each candidate constant set
-is swept through ``transcription.suspect_decision``, so the measured rule is
-the shipped rule.
+two decode numbers the rule does not read (decision 0.4 left both out); each
+candidate constant set is swept through ``transcription.suspect_decision``,
+so the measured rule is the shipped rule.
 
 The cases, all synthetic:
 

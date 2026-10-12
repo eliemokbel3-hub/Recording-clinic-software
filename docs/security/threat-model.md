@@ -651,8 +651,9 @@ note inherit exactly that posture.
    Qt renders it": the selection is cut from that mark-free rendering
    (`ui/models.py` `unmarked_selection` — the marks are pure insertions, so
    the copied text is always a contiguous part of what the Copy button would
-   place), and a selection that maps onto nothing (only a mark, or a panel
-   showing something else) places nothing and says so. A DRAG of the panel's
+   place), and a selection that maps onto nothing (only a mark and the
+   whitespace around it, or a panel showing something else) places nothing
+   and says so. A DRAG of the panel's
    selection is still Qt's own and carries what is shown, marks included —
    the drag residue above.
 5. **Invented transcript text (invented-text guard plan, 0.3.2; BUILT
@@ -711,7 +712,8 @@ note inherit exactly that posture.
      out of the omission warning (and the validation harness's `warned`
      follows); no autofill trigger or pre-fill keyword matches it or across
      it; a line holding one teaches no phrase or rule ("Not learned: the line
-     may not be speech."); the spoken pause ignores it; the bounded carry
+     may not be speech."); the spoken pause and the new-consultation warning
+     ignore it; the bounded carry
      never starts from a segment holding one. **Readers that deliberately
      still do** (decision 0.1 — mark, never withhold): the router and
      `whole_utterance_assertion` (a cue still routes a suspect line, marked),
@@ -744,7 +746,13 @@ note inherit exactly that posture.
      the readers above treat it as suspect too: a real side, number or
      medication in a wrongly marked line that the note left out raises no
      omission warning, a real trigger in it proposes nothing, a real "pause"
-     in it does not pause (the hotkey still does), and it teaches nothing.
+     in it does not pause (the hotkey still does), a real goodbye or greeting
+     in it raises no new-consultation warning, and it teaches nothing.
+   - The phrase rules DROP a suspect segment's words rather than stopping at
+     them, so the real words either side of it become neighbours: "scribe"
+     before an invented burst and "pause" after it can pause the recording,
+     and a closing and a greeting can meet the same way — an extra pause or
+     warning, the safe direction (`voice_commands._tokens`).
    - The constants were calibrated on SAPI synthetic voices only (C1 forbids
      calibrating on real consultations), and the measurement's NON-SPEECH side
      is UNMEASURED: none of its synthetic noise, chord or sung-vowel beds
