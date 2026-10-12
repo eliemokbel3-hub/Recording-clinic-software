@@ -308,7 +308,7 @@ remains an accepted residual.
    restart. Availability-only; Complete/Discard custody ordering is
    unaffected.
 
-## Phase 3A: the note pipeline (config input, clinician-asserted content, review-window lifetime, copy)
+## Phase 3A: the note pipeline (config input, clinician-asserted content, review-window lifetime, copy, invented transcript text)
 
 Phase 3A composes a draft note from the transcript, has the clinician confirm
 each non-transcript line, checks the composed note, then writes it under the
@@ -531,7 +531,8 @@ note inherit exactly that posture.
    unit, negation or medication in ANY speaker's segment once a clinician role
    is confirmed, and a name-like word in the confirmed clinician's segments
    only (a mid-segment "I" is name-like); until then numbers, names and
-   medications in the clinician's segments only — but it is a token
+   medications in the clinician's segments only; and since 0.3.2 never a word
+   the transcription guard marked suspect, surface 5 — but it is a token
    heuristic, not a low-confidence or materiality detector: an uncued
    sentence with none of those words stays unflagged; see the honest limit
    below). Plaintext transcript and note
@@ -641,6 +642,130 @@ note inherit exactly that posture.
    "[includes …]" line), so Copy and the write cannot drift apart
    (Constraint 11). No clipboard is involved; the note leaves the machine
    only in the write's request body, inside TLS.
+   **Check marks stay out of every copy (invented-text guard plan, 0.3.2,
+   decision 0.5).** The Copy button and Past sessions' "Copy saved note"
+   render through the same path with `check_marks=False`
+   (`format_note_body(note, check_marks=False)`): the `[check: …]` marks of
+   surface 5 are left out and the pre-filled mark is kept. The ratified
+   panel's keyboard and context-menu Copy no longer copy "the selection as
+   Qt renders it": the selection is cut from that mark-free rendering
+   (`ui/models.py` `unmarked_selection` — the marks are pure insertions, so
+   the copied text is always a contiguous part of what the Copy button would
+   place), and a selection that maps onto nothing (only a mark, or a panel
+   showing something else) places nothing and says so. A DRAG of the panel's
+   selection is still Qt's own and carries what is shown, marks included —
+   the drag residue above.
+5. **Invented transcript text (invented-text guard plan, 0.3.2; BUILT
+   2026-10-12).** During shadow use of 0.3.0 a note quoted a short line with
+   a number that nobody said: Whisper had written it over background sound
+   (music, singing especially, passes the voice detector as speech), shaped
+   by the vocabulary primer's example sentence, and a shipped routing cue
+   placed it in a section any speaker may fill; its only flag was one
+   per-word `low_confidence_source`, cleared with every other review group by
+   one "Acknowledge all". What 0.3.2 enforces:
+   - **The primer is vocabulary only** (`transcription.CLINICAL_INITIAL_PROMPT`,
+     D1): no example sentence, no number token and no shipped cue phrase —
+     a primed sentence is a template Whisper completes over sound, and a
+     primed phrase that is also a routing cue routes its own echo into the
+     note. Pinned by `TestClinicalPrompt` (no number token, no example
+     sentence, no shipped cue phrase; 51 words and 504 characters pinned;
+     169 tokens with the real tokenizer, under that test's bound of 210). It
+     never passes through logging.
+   - **One guard on both paths** (`transcription.mark_segment_words`, D3;
+     pinned by AST in `test_shadow_exits.py` — `mark_words` is called only
+     inside it, and it is called once by `transcribe_session` and once by
+     `LiveTranscriber._transcribe_window`). Each VAD segment of at least 3
+     words and at most 1.5 s is judged on four signals — 4.0 words per
+     second or faster, mean word probability under 0.6, a run of three
+     content words shared with the primer, and the decode window's
+     no-speech probability over 0.6 — and is SUSPECT on two of them, or on
+     one primer-echo or no-speech signal straight after a segment that held
+     no text. Rate alone never flags, and an empty previous segment never
+     pairs with rate or probability alone (C4): the voice detector fires on
+     breaths, coughs and doors, and a brisk short real line is fast. The
+     constants are decision 0.4 (candidate c2), decided once on the
+     practitioner's synthetic measurement before the guard was wired and
+     never tuned after a run of record (C2).
+   - **Nothing is dropped** (C3, D4). Every word of a suspect segment is
+     kept and carries `suspect` in `transcript.enc` — the only new stored
+     field, written only when true, so a transcript with no suspect word is
+     byte-identical to 0.3.1's. The decode numbers the guard reads live on
+     the in-memory provider word only (`TranscribedWord`), are never stored,
+     posted or logged, and `decode_no_speech_prob` is a registered tripwire
+     marker; the guard logs nothing.
+   - **What the clinician sees.** A suspect segment is prefixed
+     `[possibly not speech]` wherever a segment is quoted (the live and final
+     transcript views, Past sessions' transcript, the Line chooser, the role
+     quotation; the two legends name it). Check 1 adds two REVIEW codes, once
+     per quoted line after its reconstruction check (a line that fails it
+     draws the error instead): `suspect_source` for a line holding a suspect
+     word and `number_source` for a line holding a number (the transcript's
+     `is_number_token`, decision 0.2), each marking its line `[check: …]` in
+     the note, inside the verbatim label, at the front of the line editor's
+     row and as a count on a prose section's "[includes …]" line.
+     "Acknowledge all review warnings" never clears either
+     (`ui/models.py` `SEPARATELY_ACKNOWLEDGED_CODES`, beside 0.3.1's
+     `high_risk_omission`), so Save, Complete and Copy wait for each group's
+     own Acknowledge. Copy and the draft write carry no check mark (surface 4).
+   - **Readers that no longer act on a suspect word** (D6): Check 4 leaves it
+     out of the omission warning (and the validation harness's `warned`
+     follows); no autofill trigger or pre-fill keyword matches it or across
+     it; a line holding one teaches no phrase or rule ("Not learned: the line
+     may not be speech."); the spoken pause ignores it; the bounded carry
+     never starts from a segment holding one. **Readers that deliberately
+     still do** (decision 0.1 — mark, never withhold): the router and
+     `whole_utterance_assertion` (a cue still routes a suspect line, marked),
+     the role-evidence counter, the clinician's Add and Move, and **Check 2**
+     — a suspect quoted line that contradicts a confirmed line still raises
+     `contradiction` exactly as any quoted line does; the mark is the clue and
+     Remove line the remedy.
+   - **Rolling back.** Below 0.3.2 a transcript holding a suspect word, and a
+     note holding either new code (most notes — most quote a number), are
+     refused as malformed; `docs/release/pilot-builds.md` ("Rolling back below
+     0.3.2") says what the older build does and the rule before installing it.
+     0.3.2 itself reads a stored note's UNKNOWN review code from a newer build
+     as `unknown_review_warning` (only `GeneratedNote.from_bytes` does; an
+     unknown error code is still refused), so a later rollback to 0.3.2 opens
+     those notes.
+
+   NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
+   filter:
+   - The decode numbers are per decode WINDOW (up to 30 s of packed speech),
+     not per segment, so a burst packed beside real speech in one window is
+     caught only by two of rate, probability and echo, or an echo after an
+     empty segment — the window's no-speech number speaks for the real speech
+     too (plan A2). The live path's forced cut (an open span reaching the live
+     segmenter's maximum segment length, cut unpadded) is the one place the
+     two paths' inputs differ.
+   - An invented segment under every threshold passes unmarked; quoted, it is
+     marked only if it holds a number (`number_source`), and if it is not
+     quoted nothing marks it in the note at all.
+   - A REAL line wrongly marked costs a review glance and never a word — but
+     the readers above treat it as suspect too: a real side, number or
+     medication in a wrongly marked line that the note left out raises no
+     omission warning, a real trigger in it proposes nothing, a real "pause"
+     in it does not pause (the hotkey still does), and it teaches nothing.
+   - The constants were calibrated on SAPI synthetic voices only (C1 forbids
+     calibrating on real consultations), and the measurement's NON-SPEECH side
+     is UNMEASURED: none of its synthetic noise, chord or sung-vowel beds
+     reached the recogniser. The practitioner's music-only recording (the
+     plan's P.2) is the first non-speech test; validation run 4 and the
+     replay tool's suspect column are the regression checks; a result outside
+     expectation is a finding, and a constant change a new dated decision.
+   - Transcripts written before 0.3.2 carry no `suspect` flag, and a kept
+     note from before 0.3.2 carries neither code — Past sessions shows them
+     as they were.
+   - The live view's mark is provisional while recording; the note is drawn
+     from the transcript as it stands at Finish.
+   - faster-whisper's own `hallucination_silence_threshold` is EXCLUDED: it
+     re-seeks and DISCARDS an "anomalous" segment surrounded by silence, and
+     the first and last segment of every VAD-bounded window meet its silence
+     tests, so one short real utterance could vanish with no word, mark or
+     trace — the silent drop decision 0.1 rejected. No provider-level drop
+     option is passed (C3).
+   - The operating rule is the other half of the control: background music
+     off or as low as practical while recording (the clinician review guide),
+     and shadow mode for pilot recordings.
 
 **The checker's honest limit (stated plainly, not implied).** The four checks
 in `note_check.py` do NOT establish that a confirmed assertion is grounded in
@@ -1100,7 +1225,12 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     carry `LIVE_SPEAKER_PENDING`, never a cluster label. LOGGING (C9): the
     worker holds no logger; the ONE new log record is
     `live_transcriber_stop_timeout` with the session id and state only, and
-    the words of a posted window are `word_text` tripwire markers. THE
+    the words of a posted window are `word_text` tripwire markers.
+    [2026-10-12, invented-text guard plan, 0.3.2] The posted words now carry
+    the guard's `suspect` flag, set by `transcription.mark_segment_words`
+    before a window is posted (Phase 3A surface 5); the flag holds no text,
+    and the decode numbers the guard reads are never posted, stored or
+    logged — `decode_no_speech_prob` is a tripwire marker of their carrier. THE
     WARM-UP (installation plan round 35 MED-001): the first recording after
     the 0.1.0 install failed at Start while the worker was making the
     process's FIRST import of the stack beside the microphone stream; the

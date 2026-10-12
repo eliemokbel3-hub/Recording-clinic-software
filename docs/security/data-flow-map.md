@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -64,7 +64,11 @@ first planned for it were retired on 2026-10-09 by the clinic-smoke plan). Since
 (0.3.0) a recording the patient consented in writing to keep is kept,
 encrypted, beside its Past-sessions entry, can be deleted alone or exported
 as an unencrypted WAV on this computer, and can be replayed by a
-practitioner-run developer tool that prints numbers only (flow 27).
+practitioner-run developer tool that prints numbers only (flow 27). Since the
+invented-text guard plan (0.3.2) transcription marks a short segment it judges
+possibly not speech — on both the batch and the live path, in memory, keeping
+every word (flows 7 and 14) — and the developer build carries a
+practitioner-run measurement tool over synthetic audio only (flow 28).
 
 ## Components
 
@@ -109,7 +113,9 @@ practitioner-run developer tool that prints numbers only (flow 27).
    `uncaught_exception error_code=<type name>
    detail_code=main|thread|unraisable` (a thread's `SystemExit` is silent),
    never its message or traceback, and a failing log handler reports `--- Logging error (<type>)
-   ---` on stderr only (flow 22, EXCLUSIONS).
+   ---` on stderr only (flow 22, EXCLUSIONS). The transcription guard of
+   0.3.2 (flow 7) logs nothing; `decode_no_speech_prob` is registered as a
+   tripwire marker, so a rendering of an in-memory provider word is dropped.
 
 3. **Desktop → Windows Credential Manager.** Durable secrets via `keyring`,
    keyed `ClinikoScribe/<clinic_id>` + secret name. Phase 1 stores only the
@@ -248,6 +254,20 @@ practitioner-run developer tool that prints numbers only (flow 27).
    capture and transcription (landed; the manual completion gate passed
    2026-08-02). Env enforcement is the primary proof — socket polling
    alone can miss short-lived telemetry.
+   **The guard against invented text (invented-text guard plan, 0.3.2; BUILT
+   2026-10-12; threat model Phase 3A surface 5).** faster-whisper decodes with
+   a vocabulary-only primer (no example sentence, number or routing cue). Each
+   provider word carries its decode window's `no_speech_prob`, `avg_logprob`
+   and `compression_ratio` IN MEMORY only (`speech.TranscribedWord`); the guard
+   (`transcription.mark_segment_words`, one call per VAD segment, the batch
+   path's only marking step) reads the words, the VAD segment, the primer and
+   the previous segment's emptiness, and sets `suspect` on every word of a
+   segment it judges possibly not speech — no word is dropped or reordered.
+   The decode numbers go with the window; only `suspect` reaches
+   `transcript.enc` (written only when true, so a transcript with no suspect
+   word is byte-identical to 0.3.1's). Downstream, Check 4, the autofill and
+   pre-fill triggers, phrase learning, the spoken pause (flow 14) and the
+   bounded carry skip suspect words; the router and Check 2 still read them.
 
 8. **Model cache (read-only at runtime).**
    Where it is (installation plan D5, `install_layout.models_root`): for the
@@ -587,7 +607,17 @@ practitioner-run developer tool that prints numbers only (flow 27).
     residue).
     A capture failure is logged as `capture_failure` with the exception's
     type name and a fixed detail word (`audio_capture.CAPTURE_DETAIL_CODES`),
-    never its message. Flows 15–16
+    never its message. Since 0.3.2 (invented-text guard plan) each window's
+    VAD segments pass through the SAME guard as flow 7
+    (`transcription.mark_segment_words`, with the worker's accumulated
+    segments as "the previous segment") BEFORE the window is posted, so the
+    posted words carry `suspect` and the live view shows the
+    `[possibly not speech]` prefix; the decode numbers are dropped with the
+    window, never posted. The phrase rules drop suspect words before they
+    look for "scribe pause" or a new-consultation phrase. The tail drain
+    assembles the same marked segments, so the live and batch documents
+    agree (the live forced cut is the one difference in their inputs).
+    Flows 15–16
     and the note-learning non-flows below are likewise BUILT — the Phase 0
     stubs were finalised at that plan's Phase H (task H3, 2026-09-25).
 
@@ -1293,6 +1323,28 @@ practitioner-run developer tool that prints numbers only (flow 27).
       is ciphertext with no key anywhere, named for deletion by hand; prints a
       numbers-only drift table to standard output; writes nothing in the folder
       and no audit row.
+
+28. **The transcription-guard measurement (invented-text guard plan Task 1.5,
+    D7, C12; BUILT 2026-10-12; developer build only, practitioner-run, zero
+    network).** `scripts/measure-transcription-guard.py --set <set-folder>`
+    (thin launcher for `guard_eval.py`), from a normal terminal with the
+    installed app closed: refuses a packaged build, applies and asserts the
+    offline environment, resolves the models by name, and refuses a set
+    holding any script without synthetic conditions — so it never reads a
+    real consultation and never reads a Past-sessions folder. Its non-speech
+    beds (silence, noise, a chord, a sung vowel) are generated in memory; its
+    short lines are spoken through the installed Windows voices into SAPI's
+    temporary WAV under `%TEMP%\scribe-validation-set-*` (flow 26's helper,
+    removed after each line); the set's WAVs and label tracks are read through
+    the harness's own readers. Every case is transcribed by the SHIPPED
+    pipeline (VAD, packing, the primer, the guard of flow 7) in a temporary
+    store under `%TEMP%\scribe-speaker-eval-*` whose key lives in memory only
+    (`persist_key=False`, as the replay of flow 27), torn down after each case;
+    a wrapper keeps each window's provider words and decode numbers in memory
+    for that case. Output: Markdown tables of numbers, yes/no and case ids on
+    standard output — no word, line or primer text; errors by type name only.
+    `guard_eval.py` opens no file itself and logs nothing. Its tables were
+    decision 0.4's evidence (the plan's Task 3.1).
 
 ## Explicit non-flows
 

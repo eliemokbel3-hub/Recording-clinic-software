@@ -61,6 +61,59 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.2
+
+From 0.3.2 (the invented-text guard build) two stored shapes can be new, and a
+build older than 0.3.2 (0.3.1 or earlier) refuses to read a file holding
+either:
+
+- **A transcript holding a word marked "possibly not speech"** (a transcript
+  with no such word is byte-identical to 0.3.1's and reads unchanged).
+- **A saved note holding a line mark**: a quoted line with a number, or with
+  a word marked "possibly not speech", carries a review warning of a kind
+  older builds do not know. Most notes quote a number, so **most notes saved
+  on 0.3.2 carry one**; a note with neither reads unchanged.
+
+The note as first generated, which Past sessions also keeps, is not one of
+them: it is kept as the text the review showed, so an older build reads it —
+`[check: …]` marks and all — whenever the entry's transcript and saved note
+are readable to it.
+
+A build older than 0.3.2 does this with them:
+
+- **An Unreviewed recording**: "Open for review" refuses it — "its transcript
+  could not be read" for such a transcript, or, for such a saved note, "its
+  saved note could not be verified against the transcript … discard the session
+  or contact support". **Do not discard it**: reinstall 0.3.2 and it opens as
+  before. The usual 24-hour expiry still applies to it, so reinstall the same
+  day.
+- **A Past-sessions entry with such a transcript or saved note**: its row
+  still lists the date and name, but the whole entry cannot be opened — the
+  tab says it "cannot be read on this Windows account" (the Windows account is
+  not the cause) and shows no transcript, no saved or generated note and no
+  Copy saved note. **Delete now still works on
+  it: do not press it** — reinstall 0.3.2 and the entry reads as before. On
+  0.3.0 or 0.3.1, a kept recording in such an entry can still be deleted
+  (Delete recording) or exported: neither reads the transcript or the notes
+  (below 0.3.0, "Rolling back below 0.3.0" applies).
+- **The kept-recordings replay tool** reports such an entry as an error
+  (`[error] <session id>: …`) and goes on to the next.
+- **A recording that crashed before it had a transcript** is transcribed by the
+  older build in its own shape, with no guard.
+
+**The rule: before installing any build older than 0.3.2, finish (Complete)
+or Discard every recording** — nothing on the Recovery tab and nothing in the
+Unreviewed list. Nothing enforces this (invented-text guard plan D9). Entries
+already in Past sessions cannot be made readable to the older build; leave
+them, and reinstall 0.3.2 or later to read them. Below 0.3.0, the rules that
+follow apply as well.
+
+0.3.2 also reads a NEWER build's notes: a review warning of a kind it does not
+know is shown as "A review warning from a newer version of the app" and is
+acknowledged like any other review group, so a later rollback to 0.3.2 can
+open them. A warning of an unknown kind that would block saving is still
+refused.
+
 ## Rolling back below 0.3.0
 
 From 0.3.0 (the development-recordings build) a recording the patient

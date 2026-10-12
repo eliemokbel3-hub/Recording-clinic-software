@@ -172,6 +172,26 @@ view patterns · tokens · microcopy.
   and the Save button reads `Save - confirms the N pre-filled lines shown` while any stand
   (plain `Save note` otherwise); Remove is recorded as the clinician's decline at Save and
   demotes a learned rule to proposing (`ui/note.py`, `ui/models.py`; note-learning plan D5).
+- **Check marks follow the pre-filled mark's convention, and never travel (since 0.3.2).**
+  A quoted line holding a number carries `check: number`, one holding a word the
+  transcription marked suspect `check: possibly not speech` (both when both; invented-text
+  guard plan D5) — after the line in `clean` (`  [check: number]`), inside the verbatim
+  bracket before the provenance label, and counted on a prose section's tail
+  (`[includes 1 line check: number; 2 lines check: possibly not speech]`, after any
+  pre-filled count). On a line-editor row the mark is at the FRONT, after any `[flagged] `
+  (`[flagged] [check: number] <section> - …`), for the reason flagged lines are; a
+  removed or replaced row carries none. The pre-filled mark and a check mark never meet
+  on one line. ONE map renders them all (`note.line_marks_by_assertion`). Copy — the
+  button, a selection's keyboard or menu Copy, Past sessions' "Copy saved note" — renders
+  WITHOUT the check marks (`check_marks=False`; the selection is cut from that rendering,
+  `models.unmarked_selection`, and a selection holding only a mark copies nothing and
+  says so), keeping the pre-filled mark; the Cliniko draft carries no mark at all.
+- **A segment the guard suspects is prefixed, never hidden (since 0.3.2).** Wherever a
+  transcript segment is quoted — the live and final transcript views, Past sessions'
+  transcript, the Line chooser (inside the words part, after `<n>. [flagged] <speaker>: `)
+  and the role quotation — a suspect one starts `[possibly not speech] `, and the two
+  legends say "a line marked [possibly not speech] may be music or noise, not speech"
+  (`ui/models.py` `SUSPECT_SEGMENT_MARK` / `suspect_prefix`).
 - **Say what was learned, and what was not, on the spot — and name the control that
   writes it.** After an add or a move the edit group's status line says either "Will
   learn '<phrase>' for <section> when you press Save note on this tab", "Not learned:
@@ -331,7 +351,11 @@ view patterns · tokens · microcopy.
   is the one control that clears it, so the clinician looks at its flagged lines first,
   and Save, Complete and Copy stay closed until it is clicked (`ui/models.py`
   `SEPARATELY_ACKNOWLEDGED_CODES` / `acknowledge_all_codes`; note-routing-omissions plan
-  D4).
+  D4). Since 0.3.2 the same set holds the two per-line check codes, `number_source` ("A
+  quoted line contains a number") and `suspect_source` ("A quoted line may be music or
+  noise, not speech"): "Acknowledge all" leaves them, is hidden when only codes of the set
+  are open, and each group's own Acknowledge is the one control that clears it
+  (invented-text guard plan D5).
 - **Guard live custody with a controller lease, not a button flag.** A destructive or
   view-swapping action during a live generation/review is refused through the controller-
   owned `GenerationLease` (`session.py`), which spans the whole compose→review→write — a

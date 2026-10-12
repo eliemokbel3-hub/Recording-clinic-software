@@ -9,7 +9,10 @@
 Plain-English documents for running Clinic Scribe in a practice. They describe what the
 app does as built on 2026-10-01, updated on 2026-10-07 for the pilot build (version
 0.2.0: shadow mode for comparison appointments) and on 2026-10-08 for version 0.3.0
-(keeping a recording, with the patient's written consent, to help develop the program);
+(keeping a recording, with the patient's written consent, to help develop the program),
+and on 2026-10-12 for version 0.3.2 (background music off while recording; the marks on
+transcript lines that may be music or noise and on note lines holding a number, in the
+clinician review guide only — the patient documents are unchanged);
 where a document and the app disagree, the app's behaviour is what happens, and the
 document must be corrected.
 
@@ -68,8 +71,17 @@ below.
 
 ## What the drafts rely on
 
-The research behind these drafts was done on 2026-10-01. Nothing here goes beyond it;
-where it runs out, the documents say so.
+The research behind these drafts was done on 2026-10-01. Nothing here goes beyond it
+except the practitioner's own finding marked below; where it runs out, the documents say
+so.
+
+- **The practitioner's own finding (pilot comparison appointments, 2026-10; not external
+  research).** Over background sound — music is the likeliest cause — the speech software
+  wrote down a short line with a number that nobody said, and the note quoted it. From version 0.3.2 the app marks lines
+  it suspects may be music or noise and every quoted line holding a number, and the
+  clinician review guide asks for music off or as low as practical while recording. The
+  marks are a review aid: a real line can be marked and an invented one can go unmarked,
+  so reading every line against the transcript stays the control.
 
 - **Ahpra, "Meeting your professional obligations when using AI in healthcare".** It sets
   no retention period for transcripts. It asks practitioners to tell patients about the

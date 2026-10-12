@@ -7,8 +7,9 @@
 
 Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
 approved by the practitioner the same day; the kept-recording line added 2026-10-08 for
-version 0.3.0, awaiting the practitioner's approval). For the practitioner, before saving a note and before finalising it
-in Cliniko.
+version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
+number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval). For
+the practitioner, before saving a note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -27,6 +28,10 @@ note in Cliniko, and what you finalise is your record.
 - If someone else is in the room (a parent, carer, interpreter or student), the
   transcript will still show only two speakers: their words will be labelled as yours or
   the patient's. Check attribution with extra care.
+- **Turn background music off, or as low as practical.** The speech software can mistake
+  music — singing especially — and other background sound for speech, and write down
+  words nobody said. The app marks what it suspects (below), but it cannot catch
+  everything.
 
 ## Reading the transcript
 
@@ -35,6 +40,12 @@ note.
 
 - Words the speech software was unsure of — and numbers and names — are marked like
   `[word?]`. Check every mark that matters clinically against what you remember.
+- A line that starts `[possibly not speech]` holds a short burst of words the app
+  suspects may be music or noise, not speech — for example a few words packed in faster
+  than ordinary talk that the software was also unsure of.
+  Check it against what you remember. A real line can be marked too, and invented words
+  can go unmarked. While you are still recording, the live view is provisional: the
+  note is drawn from the transcript as it stands when you finish.
 - The speaker labels can be wrong, especially when people talk over each other.
 - If the recording was interrupted, the end may be missing.
 - Something said quietly or off-microphone may be missing entirely.
@@ -49,27 +60,41 @@ where each line came from: the transcript, something you typed, or your own pre-
    anything that does not apply to this patient.
 2. **Read every line against the transcript.** Apart from proposals and your own
    pre-filled text (steps 1 and 3), which were not necessarily said, the app only takes
-   words from the transcript — it does not invent findings — but a line can land under the wrong
-   heading, miss context (for example "not" said earlier), or carry a mis-heard word.
-   Move, remove or edit lines until the note says what happened.
+   words from the transcript — it adds no findings of its own — but the transcript itself
+   can hold words nobody said (background sound written down as speech), and a line can
+   land under the wrong heading, miss context (for example "not" said earlier), or carry a
+   mis-heard word. Move, remove or edit lines until the note says what happened.
 3. **Pre-filled lines** from your own settings are marked as pre-filled. Remove any that
    are not true for this appointment; Save confirms the rest.
-4. **Blocking warnings must be fixed** before you can save — for example a symptom the
+4. **Marked lines.** A line quoted from the transcript that holds a number is marked
+   `[check: number]`, and one holding words marked as possibly not speech is marked
+   `[check: possibly not speech]` — after the line in the Clean clinical style, inside its
+   label in Verbatim, and at the front of its row when you edit the note (a prose style
+   says how many of a section's lines are marked). Check each one against the transcript:
+   remove anything that was not said, keep the rest. Each kind has its own review warning
+   ("A quoted line contains a number", "A quoted line may be music or noise, not
+   speech") that **"Acknowledge all review warnings" does not clear** — press its own
+   Acknowledge. Most notes quote a number, so most notes need that click before you can
+   save. The copied note and the draft written to Cliniko leave the check marks out.
+5. **Blocking warnings must be fixed** before you can save — for example a symptom the
    transcript negates, or a dose in clear conflict with it. **Review warnings must be
    read and acknowledged** — for example most other dose differences, a left/right
-   difference, or a number, name or medicine in
-   your part of the transcript that the note left out. The checks are a safety net, not
-   a guarantee: they look for particular kinds of mismatch and cannot tell you the note
-   is complete or correct.
-5. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
+   difference, or a side, number, dose, "not" or medicine someone said (or a name you
+   said) that the note left out; that last warning, too, is cleared only by its own
+   Acknowledge, and it ignores words marked as possibly not speech. The checks are a
+   safety net, not a guarantee: they look for particular kinds of mismatch and cannot
+   tell you the note is complete or correct.
+6. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
    your confirmed lines into sentences on this computer and checks each section against
    them; a section that fails the check is shown as plain lines instead, and you
    acknowledge it. Read the prose as carefully as the lines — the check is not a
    certificate that the meaning survived.
-6. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
+7. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
    own proposals and pre-filled text, it never fills in examination findings, a
-   diagnosis, treatment or advice that was not said.
-7. **Save** only when the note is right. Save is what makes the note copyable and
+   diagnosis, treatment or advice that is not in the transcript — but words the speech
+   software invented over background sound are in the transcript (step 2), so check
+   every line, marked or not.
+8. **Save** only when the note is right. Save is what makes the note copyable and
    writable to Cliniko.
 
 ## Writing it into Cliniko

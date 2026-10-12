@@ -139,3 +139,7 @@ An executor leg run as a background Bash command hit its time limit while stuck 
 ## A Windows path in a non-raw Python string can put a NUL byte in the plan (2026-10-03)
 A plan-record script wrote a path through an ordinary Python string, and a backslash followed by `0` became a NUL character in the plan file. It was caught only after a local commit, which had to be amended (installation plan, Phase P).
 - **Rule:** write paths in record scripts as raw strings (`r"…"`) or with forward slashes, and assert `"\x00" not in text` before every write of a plan or doc.
+
+## A primed example sentence is a hallucination template; a primed cue routes its echo (2026-10-12)
+During shadow use of 0.3.0 Whisper invented a short line with a number over background sound, shaped by the vocabulary primer's example sentence ("Pain seven out of ten."), and the shipped cue "out of ten" routed that echo straight into the note (invented-text guard plan).
+- **Rule:** the primer (`transcription.CLINICAL_INITIAL_PROMPT`) holds vocabulary only — no sentence, no number token, no shipped routing cue phrase; `TestClinicalPrompt` pins all three. A phrase that is also a cue stays out even if it seems worth priming: it is ordinary English, which needs no priming.

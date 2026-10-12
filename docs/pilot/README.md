@@ -116,6 +116,13 @@ result is recorded there as a dated RUN line.
    (`docs/testing/shipping-gate.md`, its 2026-10-09 addendum — which also asks
    for the config hashes before the first and after the tenth); an attempt
    scored under another style, and P.1's two mock rows, are not among the ten.
+   *Amended 2026-10-12 (finding F-086):* paused until version 0.3.2 is installed
+   — during shadow use of 0.3.0 the speech software invented a quoted line over
+   background sound. From then on turn background music off, or as low as
+   practical, before each Start too; on 0.3.2 a quoted line holding a number or
+   a word marked "possibly not speech" carries a `[check: …]` mark with its own
+   Acknowledge (`docs/testing/shipping-gate.md`'s 2026-10-12 clarification says
+   how it is scored).
 5. **Twenty reviewed consultations at clinic 1 (P.5).** Shadow mode off; the
    consultation runs as everyday use does. One log row each.
 6. **The clinic 1 exit gate (P.6).** Read and sign [exit-gate.md](exit-gate.md).
