@@ -1646,6 +1646,18 @@ class HarnessInputs:
     now: Callable[[], datetime] = _default_now
 
 
+def read_label_track(labels: Path) -> LabelTrack:
+    """An encounter's ``<id>.txt`` label track, read whole up to
+    ``MAX_LABEL_TRACK_BYTES`` (round 26) and parsed; the harness's one reader
+    of it, shared with the transcription-guard measurement (invented-text-guard
+    plan Task 1.5)."""
+    with labels.open("rb") as handle:
+        track_bytes = handle.read(MAX_LABEL_TRACK_BYTES + 1)
+    if len(track_bytes) > MAX_LABEL_TRACK_BYTES:
+        raise LabelTrackError(f"larger than {MAX_LABEL_TRACK_BYTES} bytes")  # round 26
+    return parse_audacity_labels(track_bytes.decode("utf-8-sig"))
+
+
 def evaluate_encounter(
     encounter_id: str, script: EncounterScript, wav: Path, labels: Path, inputs: HarnessInputs
 ) -> EncounterOutcome:
@@ -1653,11 +1665,7 @@ def evaluate_encounter(
     ``SpeakerEvalError`` when the temporary store cannot be shown gone
     (custody: the caller stops the run) and any input or pipeline error as
     itself; the label track and WAV are validated BEFORE any store exists."""
-    with labels.open("rb") as handle:
-        track_bytes = handle.read(MAX_LABEL_TRACK_BYTES + 1)
-    if len(track_bytes) > MAX_LABEL_TRACK_BYTES:
-        raise LabelTrackError(f"larger than {MAX_LABEL_TRACK_BYTES} bytes")  # round 26
-    track = parse_audacity_labels(track_bytes.decode("utf-8-sig"))
+    track = read_label_track(labels)
     pcm = read_wav_pcm(wav)
     document, _enrolled = transcribe_in_temporary_store(
         pcm, inputs.provider, inputs.frame_probability
@@ -2279,6 +2287,7 @@ __all__ = [
     "main",
     "models_manifest_sha256",
     "read_commit",
+    "read_label_track",
     "render_report",
     "rule_failures",
     "run_encounters",

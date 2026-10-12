@@ -91,6 +91,23 @@ set up and build it, and make releases; the installed app needs none of them.
   clinician's saved note. Reads the folder and writes nothing there; holds the
   app's single-instance lock for its run (close Clinic Scribe first). Developer
   build only, from a normal terminal; see `docs/testing/kept-recordings.md`.
+- `measure-transcription-guard.py --set <set-folder> [--candidates <set> ...]
+  [--primer shipped|0.3.1] [--allow-small] [--all-rows]` (invented-text-guard
+  plan Task 1.5) — thin launcher for `scribe_desktop.guard_eval`: runs sound
+  that is not speech (digital silence, noise at three levels, a chord bed and a
+  sung-vowel bed, each alone and one second after a spoken line), short lines
+  spoken by up to three installed Windows voices at rates 0, +5 and +10, and
+  the synthetic validation set (a script without synthetic conditions refuses
+  the run) through the shipped pipeline (a temporary encrypted store whose key
+  is never written to disk), and prints Markdown tables of numbers only: the
+  cases run and those the VAD found nothing in, per segment the transcript
+  guard's features and the decode numbers (the set's segments summarised
+  unless `--all-rows`), and per
+  candidate constant set (`min_words,max_seconds,words_per_second,
+  mean_probability,no_speech`) the flagged segments among non-speech and
+  speech. No word, line or primer text is printed. Developer build only, from
+  a normal terminal with the installed app closed; the tables go onto the
+  plan's Task 3.1 (decision 0.4).
 - `speaker-embedding-smoke.py --model <path> <wav> [<wav> ...]` (practitioner-profile
   plan Task 0.3) — loads a speaker-embedding ONNX model from an explicit path (the
   `SileroVad` contract: offline kill-switches asserted before onnxruntime is

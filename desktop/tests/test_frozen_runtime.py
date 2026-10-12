@@ -1222,6 +1222,7 @@ _MODELS_ROOT_CALLERS = frozenset(
         ("ui/microphone.py", "_default_benchmark_runner"),
         ("validation.py", "main"),
         ("replay_kept.py", "_run"),  # development-recordings plan Task 4.1a
+        ("guard_eval.py", "main"),  # invented-text-guard plan Task 1.5 (names it, as validation)
         ("scripts/setup-models.py", "models_root"),
         ("scripts/setup-models.py", "main"),
     }

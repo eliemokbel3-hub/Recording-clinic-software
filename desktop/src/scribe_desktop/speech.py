@@ -114,12 +114,25 @@ class SpeechSegment:
 @dataclass(frozen=True)
 class TranscribedWord:
     """One transcribed word with timing and backend confidence (Step 9 fills
-    uncertainty marking on top of ``probability``)."""
+    uncertainty marking on top of ``probability``).
+
+    The three ``decode_*`` numbers (invented-text-guard plan D2) are the
+    faster-whisper ``Segment`` numbers of the decode the word came from — one
+    decode per packed window, so they are the same for every word of a
+    window and say "this whole window was junk", not "this word was". They
+    live in memory only (the transcript guard reads them; nothing stores
+    them) and default to None for every provider that has none (the mock and
+    the test fakes). Appended LAST with defaults: callers construct this
+    positionally. ``decode_no_speech_prob`` is a registered log-tripwire
+    marker, so a rendering of a word — transcript text — is dropped."""
 
     text: str
     start_seconds: float
     end_seconds: float
     probability: float
+    decode_no_speech_prob: float | None = None
+    decode_avg_logprob: float | None = None
+    decode_compression_ratio: float | None = None
 
 
 class SpeechProvider(Protocol):

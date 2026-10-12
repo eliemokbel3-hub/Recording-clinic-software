@@ -100,6 +100,14 @@ _PAYLOAD_SIGNATURES: Final[tuple[str, ...]] = (
     '"word_text"',
     "'word_text'",
     "word_text=",
+    # Invented-text-guard plan D2 (C9): the marker of ``speech.TranscribedWord``
+    # — the provider's in-memory word, transcript text in its ``text`` field,
+    # which had no distinctive name of its own. Every rendering carries its
+    # ``decode_no_speech_prob`` field (None included), so a repr, ``asdict`` or
+    # JSON of a word, or of a list of words, is dropped.
+    '"decode_no_speech_prob"',
+    "'decode_no_speech_prob'",
+    "decode_no_speech_prob=",
     # Phase 3A Task 1.4: note artifact markers. Every note model in
     # ``note.py`` carries at least one of these field names, so a repr,
     # model_dump or JSON of ANY of them — GeneratedNote, GeneratedSection,

@@ -83,6 +83,47 @@ def test_tripwire_drops_the_cliniko_credential_and_registry_renderings() -> None
         assert dropped_record_count() == before + 1
 
 
+def test_tripwire_drops_every_rendering_of_a_provider_word(
+    logger: logging.Logger, tmp_path: Path
+) -> None:
+    """Invented-text-guard D2 (C9): ``speech.TranscribedWord`` carries
+    transcript text and is marked by ``decode_no_speech_prob`` in its three
+    forms, disjoint from every ``log_event`` key; a repr, ``asdict`` or JSON
+    of a word (with or without decode numbers) and of a list of words is
+    dropped, and the word's text never reaches the log."""
+    from dataclasses import asdict
+
+    from scribe_desktop.logging_setup import _PAYLOAD_SIGNATURES, ALLOWED_KEYS
+    from scribe_desktop.speech import TranscribedWord
+
+    for form in ('"decode_no_speech_prob"', "'decode_no_speech_prob'", "decode_no_speech_prob="):
+        assert form in _PAYLOAD_SIGNATURES
+    for key in ALLOWED_KEYS:
+        assert all(sig not in f"{key}=" for sig in _PAYLOAD_SIGNATURES), key
+
+    marker = "SECRETWORDMARKER"
+    bare = TranscribedWord(marker, 0.0, 0.4, 0.9)
+    decoded = TranscribedWord(marker, 0.0, 0.4, 0.9, 0.7, -1.2, 2.1)
+    renderings = [
+        repr(bare),
+        repr(decoded),
+        repr([bare, decoded]),
+        str(asdict(bare)),
+        json.dumps(asdict(decoded)),
+    ]
+    tripwire = PayloadTripwireFilter()
+    for rendered in renderings:
+        record = logging.LogRecord("test_word", logging.INFO, __file__, 1, rendered, None, None)
+        before = dropped_record_count()
+        assert tripwire.filter(record) is False, rendered
+        assert dropped_record_count() == before + 1
+
+    before = dropped_record_count()
+    logger.info(f"words {[decoded]}")  # noqa: G004 - deliberate misuse under test
+    assert dropped_record_count() == before + 1
+    assert marker not in read_log(tmp_path)
+
+
 def test_tripwire_drops_interpolated_envelope(logger: logging.Logger, tmp_path: Path) -> None:
     """The classic misuse: formatting a whole message into the log line."""
     envelope = {

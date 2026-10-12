@@ -10,7 +10,12 @@ description = "Windows desktop companion for the Cliniko clinical scribe"
 requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.8",
-    "pydantic>=2.7",
+    # >=2.12 for `Field(exclude_if=...)` — the first release known to carry
+    # the field-level option (the venv and the build lock hold 2.13.4); a
+    # pydantic without it would keep the key and break D4's bytes, which
+    # `TestSuspectField` pins: `TranscriptWord.suspect` is omitted from the
+    # stored transcript when False (invented-text-guard plan D4).
+    "pydantic>=2.12",
     "cryptography>=43",
     "keyring>=25",
     "psutil>=6",

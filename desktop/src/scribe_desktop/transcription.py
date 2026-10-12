@@ -62,6 +62,7 @@ byte for byte.
 from __future__ import annotations
 
 import enum
+import functools
 import math
 import queue
 import re
@@ -162,14 +163,19 @@ FALLBACK_WHISPER_MODEL = "small"
 #   = 223 prompt tokens (transcribe.py ``get_prompt``, verified against
 #   the installed 1.2.1 source) and silently drops the HEAD of an
 #   overlong prompt — the first clusters are exactly what would vanish.
-#   This text measures 193 tokens with the model's own tokenizer
-#   (identical count on small and medium, measured 2026-07-30 the way
-#   faster-whisper encodes it: leading space, no special tokens). Clinical
-#   latinate terms cost ~3 tokens per word, so word count is a treacherous
-#   proxy — RE-MEASURE with the real tokenizer before growing this, and
-#   stay under ~210 to keep headroom.
+#   The 2026-07-30 text measured 193 tokens with the model's own tokenizer
+#   (identical count on small and medium, measured the way faster-whisper
+#   encodes it: leading space, no special tokens) for 66 words / 602
+#   chars; without its example sentence and the five phrases that were
+#   also shipped routing cues (invented-text-guard plan D1 and decision
+#   1.1a, 2026-10-12) it is 51 words / 504 chars, its real-tokenizer count owed
+#   to ``test_prompt_token_count_exact_with_real_tokenizer`` on the
+#   practitioner's machine (run with ``-s``: it prints the count).
+#   Clinical latinate terms cost ~3 tokens per
+#   word, so word count is a treacherous proxy — RE-MEASURE with the real
+#   tokenizer before growing this, and stay under ~210 to keep headroom.
 # - NO patient-identifying content, ever. Anatomy, presentations, exam
-#   manoeuvres, techniques, medications, and units only. Never add example
+#   manoeuvres, techniques and medications only. Never add example
 #   patient names: a primed name is exactly what Whisper will hallucinate
 #   into unclear audio, and the name-like uncertainty heuristic cannot
 #   flag what looks contextually plausible.
@@ -177,6 +183,15 @@ FALLBACK_WHISPER_MODEL = "small"
 #   this module logs nothing; keep it that way).
 # - Australian-English clinic-note spellings on purpose (mobilisation,
 #   paraesthesia): priming steers output spelling too.
+# - Vocabulary only: no example sentence, never a number token
+#   (``is_number_token``) and never a shipped routing cue
+#   (``config_defaults/section_cues.json``) — invented-text-guard plan D1.
+#   A primed example sentence is a template Whisper completes over
+#   background sound (music, singing especially), a primed number is one
+#   it can invent with confidence, and a primed cue routes its own echo
+#   straight into the note. "out of ten", "palpation", "range of motion",
+#   "straight leg raise", "manipulation" and "dry needling" are ordinary
+#   English and need no priming (decision 1.1a, 2026-10-12).
 #
 # Why each cluster is here (osteopathic/musculoskeletal scribe domain;
 # only mangle-prone terms earn their tokens — common words Whisper already
@@ -186,18 +201,16 @@ FALLBACK_WHISPER_MODEL = "small"
 # - exam manoeuvres: multiword test names otherwise get fused or split
 # - treatment techniques: osteopathy-specific phrases rare in general text
 # - medications: the mangle-prone analgesic/adjunct names
-# - units/scores: pain scores are spoken "out of ten"
+# (The units/scores cluster is gone — D1 above: no sentence, no number.)
 CLINICAL_INITIAL_PROMPT = (
     "Osteopathic consultation. Cervical, thoracic, lumbar spine, "
     "sacroiliac joint, acromioclavicular, rotator cuff, supraspinatus, "
     "levator scapulae, erector spinae, multifidus, quadratus lumborum, "
     "psoas, piriformis, gastrocnemius, plantar fascia. Low back pain, "
     "sciatica, radiculopathy, paraesthesia, cervicogenic headache, "
-    "tendinopathy, bursitis. Palpation, range of motion, flexion, "
-    "straight leg raise, Spurling's test, dermatomes, myotomes. "
-    "Myofascial release, muscle energy technique, high velocity low "
-    "amplitude manipulation, mobilisation, dry needling. Pain seven out "
-    "of ten. Meloxicam, amitriptyline."
+    "tendinopathy, bursitis. Flexion, Spurling's test, dermatomes, "
+    "myotomes. Myofascial release, muscle energy technique, high velocity "
+    "low amplitude, mobilisation. Meloxicam, amitriptyline."
 )
 
 # Windowed batching (Step 13 speed fix). Whisper's encoder always
@@ -302,7 +315,17 @@ class TranscriptionModelError(TranscriptionError):
 
 
 class TranscriptWord(BaseModel):
-    """One transcribed word with timing, confidence, and uncertainty mark."""
+    """One transcribed word with timing, confidence, and uncertainty mark.
+
+    ``suspect`` (invented-text-guard plan D4): the transcript guard judged
+    the word's VAD segment possibly not speech (music or noise Whisper
+    turned into words). The word is KEPT — never dropped — and marked.
+    Omitted from the stored JSON when False, so a transcript with no suspect
+    word is byte-identical to one written before the field existed and
+    every older build reads it; one WITH a suspect word is refused by a
+    build older than 0.3.2 (an unknown key under ``extra="forbid"``).
+    ``schema_version`` stays 1. Separate from ``uncertain``, which keeps its
+    own probability/number/name rule."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -311,6 +334,7 @@ class TranscriptWord(BaseModel):
     end_seconds: float = Field(ge=0)
     probability: float = Field(ge=0.0, le=1.0)
     uncertain: bool
+    suspect: bool = Field(default=False, exclude_if=lambda value: not value)
 
 
 class TranscriptSegment(BaseModel):
@@ -1033,6 +1057,12 @@ class WhisperSpeechProvider:
         )
         words: list[TranscribedWord] = []
         for segment in segments:
+            # One decode's numbers (D2): faster-whisper builds every Segment
+            # of a decode with the same three, so they ride on each word in
+            # memory for the transcript guard and are never stored.
+            no_speech_prob = _decode_number(segment, "no_speech_prob")
+            avg_logprob = _decode_number(segment, "avg_logprob")
+            compression_ratio = _decode_number(segment, "compression_ratio")
             for word in segment.words or []:
                 text = word.word.strip()
                 if not text:
@@ -1045,9 +1075,25 @@ class WhisperSpeechProvider:
                         start_seconds=start,
                         end_seconds=max(end, start),
                         probability=min(1.0, max(0.0, float(word.probability))),
+                        decode_no_speech_prob=no_speech_prob,
+                        decode_avg_logprob=avg_logprob,
+                        decode_compression_ratio=compression_ratio,
                     )
                 )
         return words
+
+
+def _decode_number(segment: Any, name: str) -> float | None:
+    """One faster-whisper decode number as a finite float, or None when the
+    segment has none or it is not finite (the guard then reads no signal)."""
+    value = getattr(segment, name, None)
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 # ---------------------------------------------------------------------------
@@ -1115,6 +1161,148 @@ def read_transcript(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocum
 
 
 MarkedSegment = tuple[SpeechSegment, tuple[TranscriptWord, ...]]
+
+
+# ---------------------------------------------------------------------------
+# The transcript guard's rule (invented-text-guard plan D3, Phase 1): the
+# features of one VAD segment and the pure decision over them. Built BEFORE
+# the measurement (D12) so the constants are measured on the code that ships;
+# the constants' values arrive with the wiring (Phase 4, decision 0.4), so
+# ``suspect_decision`` takes every constant as a REQUIRED keyword until then.
+# Neither function logs anything or touches a file (C9).
+# ---------------------------------------------------------------------------
+
+# A primer echo is at least this many contiguous content tokens of the
+# segment that also run contiguously in the primer (D3).
+_ECHO_RUN_TOKENS = 3
+
+
+@dataclass(frozen=True)
+class GuardFeatures:
+    """The numbers the guard judges one VAD segment by (D3) — no text.
+
+    ``words_per_second`` is ``word_count`` over the LONGER of the VAD
+    duration and the word span (a hallucination's word stamps are the least
+    reliable thing about it). ``mean_probability`` is None for a segment
+    with no words. ``no_speech_prob`` is the MAXIMUM decode number over the
+    words (an oversized lone segment spans decodes), None when no word
+    carries one — the numbers are per decode WINDOW, so they say something
+    about a burst only when it is (nearly) alone in its window. ``primer_echo``
+    is a run of ``_ECHO_RUN_TOKENS`` content tokens shared with the primer.
+    ``previous_empty`` is whether the segment before it on the same path held
+    no text; no previous segment means NOT empty."""
+
+    word_count: int
+    vad_seconds: float
+    word_span_seconds: float
+    words_per_second: float
+    mean_probability: float | None
+    no_speech_prob: float | None
+    primer_echo: bool
+    previous_empty: bool
+
+
+def guard_features(
+    words: Sequence[TranscribedWord],
+    segment: SpeechSegment,
+    previous: Sequence[MarkedSegment],
+    *,
+    primer: str | None = CLINICAL_INITIAL_PROMPT,
+) -> GuardFeatures:
+    """The guard's features of one VAD segment's provider words (D3).
+
+    ``previous`` is the caller's accumulating list of marked segments — the
+    batch path's ``marked_segments``, the live worker's ``self._marked`` — so
+    both paths read "the previous segment" through this one expression: the
+    emptiness of its LAST element, and an empty list is not empty. ``primer``
+    is the primer the provider decoded with (``None``: no echo is possible).
+    """
+    texts = [word.text.strip() for word in words]
+    spoken = [word for word, text in zip(words, texts, strict=True) if text]
+    count = len(spoken)
+    vad_seconds = segment.duration_seconds
+    span = (
+        max(0.0, max(word.end_seconds for word in spoken) - min(w.start_seconds for w in spoken))
+        if spoken
+        else 0.0
+    )
+    decode_numbers = [
+        word.decode_no_speech_prob for word in spoken if word.decode_no_speech_prob is not None
+    ]
+    return GuardFeatures(
+        word_count=count,
+        vad_seconds=vad_seconds,
+        word_span_seconds=span,
+        words_per_second=count / max(vad_seconds, span),
+        mean_probability=(sum(word.probability for word in spoken) / count) if count else None,
+        no_speech_prob=max(decode_numbers) if decode_numbers else None,
+        primer_echo=_primer_echo(" ".join(texts), primer),
+        previous_empty=bool(previous) and not words_have_text(previous[-1][1]),
+    )
+
+
+def suspect_decision(
+    features: GuardFeatures,
+    *,
+    min_words: int,
+    max_seconds: float,
+    words_per_second: float,
+    mean_probability: float,
+    no_speech_prob: float,
+) -> bool:
+    """Whether a VAD segment is possibly not speech (D3; C4).
+
+    Preconditions first: at least ``min_words`` words AND a VAD segment of
+    at most ``max_seconds`` — anything else is never suspect. Then TWO of
+    four signals flag it: words per second at or above ``words_per_second``;
+    mean word probability below ``mean_probability``; a primer echo; the
+    decode ``no_speech_prob`` above ``no_speech_prob`` (None: no signal). An
+    empty previous segment upgrades ONE echo or no-speech signal to a flag
+    and never pairs with rate or probability alone — the voice detector
+    fires on breaths, coughs and doors all day, and a brisk short real line
+    is fast. Rate alone never flags."""
+    if features.word_count < min_words or features.vad_seconds > max_seconds:
+        return False
+    rate = features.words_per_second >= words_per_second
+    low_probability = (
+        features.mean_probability is not None and features.mean_probability < mean_probability
+    )
+    no_speech = features.no_speech_prob is not None and features.no_speech_prob > no_speech_prob
+    echo = features.primer_echo
+    signals = sum((rate, low_probability, echo, no_speech))
+    if signals >= 2:
+        return True
+    return signals == 1 and features.previous_empty and (echo or no_speech)
+
+
+def _primer_echo(text: str, primer: str | None) -> bool:
+    """Whether ``text`` shares a run of ``_ECHO_RUN_TOKENS`` contiguous
+    content tokens with ``primer`` (``note.content_tokens`` on both sides)."""
+    if not primer:
+        return False
+    runs = _primer_runs(primer)
+    tokens = _content_tokens(text)
+    return any(
+        tokens[index : index + _ECHO_RUN_TOKENS] in runs
+        for index in range(len(tokens) - _ECHO_RUN_TOKENS + 1)
+    )
+
+
+@functools.cache
+def _primer_runs(primer: str) -> frozenset[tuple[str, ...]]:
+    tokens = _content_tokens(primer)
+    return frozenset(
+        tokens[index : index + _ECHO_RUN_TOKENS]
+        for index in range(len(tokens) - _ECHO_RUN_TOKENS + 1)
+    )
+
+
+def _content_tokens(text: str) -> tuple[str, ...]:
+    # Call-time import: ``note`` imports this module (the deferred-import
+    # convention ``speaker_embedding`` and ``session_store`` use).
+    from scribe_desktop.note import content_tokens
+
+    return content_tokens(text)
 
 
 def assemble_transcript(
@@ -2302,6 +2490,7 @@ __all__ = [
     "CLINICAL_INITIAL_PROMPT",
     "DEFAULT_WHISPER_MODEL",
     "FALLBACK_WHISPER_MODEL",
+    "GuardFeatures",
     "LIVE_CUT_SEARCH_SECONDS",
     "LIVE_MAX_QUEUED_WINDOWS",
     "LIVE_MAX_SEGMENT_SECONDS",
@@ -2337,6 +2526,7 @@ __all__ = [
     "default_whisper_model_dir",
     "enrolled_cluster",
     "extract_segment_pcm",
+    "guard_features",
     "is_name_like_token",
     "is_number_token",
     "label_speakers",
@@ -2346,6 +2536,7 @@ __all__ = [
     "recover_session_transcription",
     "resolve_whisper_model",
     "segment_has_text",
+    "suspect_decision",
     "transcribe_session",
     "whisper_model_available",
     "words_have_text",

@@ -642,6 +642,102 @@ class TestTranscriptArtifact:
             logger.handlers.clear()
 
 
+def _fixed_document(*, suspect: bool | None) -> TranscriptDocument:
+    """``_document``'s one word at a fixed ``created_at``; ``suspect=None``
+    leaves the field unset (the shape every caller before 0.3.2 built)."""
+    from datetime import UTC, datetime
+
+    flag: dict[str, bool] = {} if suspect is None else {"suspect": suspect}
+    return TranscriptDocument(
+        session_id="a" * 32,
+        created_at=datetime(2026, 10, 12, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=(
+            TranscriptSegment(
+                start_seconds=1.0,
+                end_seconds=2.0,
+                speaker=SPEAKER_1,
+                transcript_words=(
+                    TranscriptWord(
+                        word_text="seventeen",
+                        start_seconds=1.1,
+                        end_seconds=1.4,
+                        probability=0.9,
+                        uncertain=True,
+                        **flag,
+                    ),
+                ),
+            ),
+        ),
+    )
+
+
+# The 0.3.1 bytes of ``_fixed_document`` — no ``suspect`` key anywhere.
+_BYTES_WITHOUT_SUSPECT = (
+    b'{"schema_version":1,"session_id":"' + b"a" * 32 + b'",'
+    b'"created_at":"2026-10-12T00:00:00Z","model_name":"mock","sample_rate":16000,'
+    b'"transcript_segments":[{"start_seconds":1.0,"end_seconds":2.0,'
+    b'"speaker":"speaker_1","transcript_words":[{"word_text":"seventeen",'
+    b'"start_seconds":1.1,"end_seconds":1.4,"probability":0.9,"uncertain":true}]}],'
+    b'"enrolled_speaker":null,"enrolment_similarity":null,"speaker_model_id":null}'
+)
+
+
+class TestSuspectField:
+    """Invented-text-guard D4 (C11): ``TranscriptWord.suspect`` is omitted
+    from the stored JSON when False, so a transcript with no suspect word is
+    byte-identical to 0.3.1's; a suspect word writes the key."""
+
+    def test_no_suspect_word_writes_the_0_3_1_bytes(self) -> None:
+        unset = _fixed_document(suspect=None).to_bytes()
+        explicit = _fixed_document(suspect=False).to_bytes()
+        assert unset == _BYTES_WITHOUT_SUSPECT
+        assert explicit == _BYTES_WITHOUT_SUSPECT
+        assert b"suspect" not in unset
+
+    def test_a_suspect_word_writes_the_key_and_round_trips(self) -> None:
+        document = _fixed_document(suspect=True)
+        blob = document.to_bytes()
+        assert blob.count(b'"suspect":true') == 1
+        assert blob == _BYTES_WITHOUT_SUSPECT.replace(
+            b'"uncertain":true}', b'"uncertain":true,"suspect":true}'
+        )
+        reread = TranscriptDocument.from_bytes(blob)
+        assert reread == document
+        assert reread.transcript_segments[0].transcript_words[0].suspect is True
+
+    def test_an_older_document_without_the_key_reads_as_not_suspect(self) -> None:
+        document = TranscriptDocument.from_bytes(_BYTES_WITHOUT_SUSPECT)
+        (word,) = document.transcript_segments[0].transcript_words
+        assert word.suspect is False
+        assert document == _fixed_document(suspect=None)
+        assert document.to_bytes() == _BYTES_WITHOUT_SUSPECT
+
+    def test_model_copy_marks_a_frozen_word(self) -> None:
+        (word,) = _fixed_document(suspect=None).transcript_segments[0].transcript_words
+        marked = word.model_copy(update={"suspect": True})
+        assert marked.suspect is True
+        assert word.suspect is False  # the original is untouched
+        assert marked != word
+        assert marked.uncertain is True  # the uncertainty mark is separate
+        assert marked.model_dump() == {
+            "word_text": "seventeen",
+            "start_seconds": 1.1,
+            "end_seconds": 1.4,
+            "probability": 0.9,
+            "uncertain": True,
+            "suspect": True,
+        }
+        assert "suspect" not in word.model_dump()
+
+    def test_suspect_words_still_hold_text(self) -> None:
+        from scribe_desktop.transcription import words_have_text
+
+        (word,) = _fixed_document(suspect=True).transcript_segments[0].transcript_words
+        assert words_have_text([word]) is True
+
+
 class TestStoreHasFooter:
     def test_finished_store(self, tmp_path: Path) -> None:
         session_dir = tmp_path / ("d" * 32)
@@ -1071,8 +1167,11 @@ class TestClinicalPrompt:
     def test_prompt_stays_inside_whisper_token_budget_proxy(self) -> None:
         # faster-whisper keeps only the LAST 223 prompt tokens and silently
         # drops the head of an overlong prompt. The real tokenizer measured
-        # 193 tokens for this 66-word / 602-char text (2026-07-30; measured
-        # density ~3.1 chars per token for this vocabulary). ML-free
+        # 193 tokens for the 66-word / 602-char text of 2026-07-30 (measured
+        # density ~3.1 chars per token for this vocabulary); without its
+        # example sentence and its five shipped-cue phrases (invented-text-
+        # guard D1, decision 1.1a) it is 51 words / 504 chars, the real count
+        # owed to the exact test below (run with ``-s``; it prints it). ML-free
         # proxies keep a guard runnable on CI: BOTH bounds must hold, and
         # the char bound is the tighter one (650 chars at ~3.1 chars/token
         # ≈ 208 tokens, under the documented 210 headroom bar). Peer round
@@ -1106,6 +1205,9 @@ class TestClinicalPrompt:
         ids = tokenizer.encode(
             " " + CLINICAL_INITIAL_PROMPT.strip(), add_special_tokens=False
         ).ids
+        # Invented-text-guard Task 1.1: the count goes on the plan, so the
+        # test prints it (run with ``-s``); a number, never the primer.
+        print(f"primer tokens: {len(ids)}")
         assert len(ids) <= 210, (
             f"CLINICAL_INITIAL_PROMPT measures {len(ids)} tokens - over the "
             "documented 210 headroom bar (hard truncation at 223)"
@@ -1122,7 +1224,8 @@ class TestClinicalPrompt:
 
     def test_prompt_covers_the_documented_clusters(self) -> None:
         # One sentinel per documented cluster: anatomy, presentation, exam
-        # manoeuvre, technique, medication, units/scores.
+        # manoeuvre, technique, medication. The units/scores cluster and its
+        # "out of ten" sentinel went with the example sentence (D1).
         lowered = CLINICAL_INITIAL_PROMPT.lower()
         for sentinel in (
             "supraspinatus",
@@ -1130,9 +1233,65 @@ class TestClinicalPrompt:
             "spurling",
             "mobilisation",
             "meloxicam",
-            "out of ten",
         ):
             assert sentinel in lowered
+
+    def test_prompt_holds_no_number_token(self) -> None:
+        # Invented-text-guard D1: a primed number is one Whisper can invent
+        # over background sound. The transcript's own number rule, over the
+        # primer's whitespace tokens (punctuation is stripped by the rule).
+        tokens = CLINICAL_INITIAL_PROMPT.split()
+        assert len(tokens) == 51
+        assert [token for token in tokens if is_number_token(token)] == []
+
+    def test_prompt_holds_no_example_sentence(self) -> None:
+        # The removed template, by its words (D1): none of them returns.
+        lowered = CLINICAL_INITIAL_PROMPT.lower()
+        for removed in ("pain seven", "out of ten", "seven"):
+            assert removed not in lowered
+        assert len(CLINICAL_INITIAL_PROMPT) == 504
+
+    def test_prompt_holds_no_shipped_cue_phrase(self, tmp_path: Path) -> None:
+        # D1 (decision 1.1a): a primed phrase that is also a routing cue
+        # routes its own echo straight into the note. The shipped cues are
+        # loaded through note_config's loader (an empty config folder: every
+        # file falls back to the shipped default) and matched as a
+        # case-insensitive substring of the primer AND, as the router
+        # matches, as a run of content tokens (so a cue across a comma —
+        # "thoracic, lumbar" — is caught too).
+        from scribe_desktop.guard_eval import PRIMER_0_3_1
+        from scribe_desktop.note import content_tokens
+        from scribe_desktop.note_config import load_note_config
+
+        cues = {
+            phrase.lower()
+            for phrases in load_note_config(tmp_path).section_cues.values()
+            for phrase in phrases
+        }
+        assert len(cues) > 80 and "out of ten" in cues
+
+        def hits(primer: str) -> set[str]:
+            tokens = f" {' '.join(content_tokens(primer))} "
+            return {
+                phrase
+                for phrase in cues
+                if phrase in primer.lower() or f" {' '.join(content_tokens(phrase))} " in tokens
+            }
+
+        # The token form sees across punctuation.
+        assert hits("Cervical, thoracic, lumbar spine.") == set()
+        assert "soft tissue" in hits("Soft, tissue.")
+
+        assert hits(CLINICAL_INITIAL_PROMPT) == set()
+        # The check would have caught 0.3.1's primer, phrase by phrase.
+        assert hits(PRIMER_0_3_1) == {
+            "out of ten",
+            "palpation",
+            "range of motion",
+            "straight leg raise",
+            "dry needling",
+            "manipulation",
+        }
 
 
 class _RecordingWhisperModel:
@@ -1192,6 +1351,119 @@ class TestProviderPromptWiring:
         provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
         (call,) = _RecordingWhisperModel.calls
         assert call["initial_prompt"] == "physiotherapy assessment"
+
+
+class _DecodingWhisperModel:
+    """Stands in for faster_whisper.WhisperModel: yields the test's Segments
+    with their numbers (one per decode — an oversized window spans several),
+    the shape faster-whisper 1.2.1 builds."""
+
+    segments: list[object] = []
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        pass
+
+    def transcribe(self, audio: object, **kwargs: object) -> tuple[list[object], None]:
+        return list(type(self).segments), None
+
+
+def _fake_word(text: str, start: float, end: float, probability: float) -> object:
+    import types
+
+    return types.SimpleNamespace(word=text, start=start, end=end, probability=probability)
+
+
+def _fake_segment(words: list[object], **numbers: object) -> object:
+    import types
+
+    return types.SimpleNamespace(words=words, **numbers)
+
+
+class TestProviderDecodeNumbers:
+    """Invented-text-guard D2: each word carries its decode's three numbers
+    in memory; a segment without them (or with a non-finite one) leaves
+    None — the guard then reads no signal."""
+
+    def _provider(
+        self, monkeypatch: pytest.MonkeyPatch, segments: list[object]
+    ) -> WhisperSpeechProvider:
+        pytest.importorskip("numpy")  # provider's _numpy() is real
+        apply_offline_env()
+        import types
+
+        snapshot = _fake_snapshot("fake-model")
+        fake = types.ModuleType("faster_whisper")
+        fake.WhisperModel = _DecodingWhisperModel  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "faster_whisper", fake)
+        _DecodingWhisperModel.segments = segments
+        return WhisperSpeechProvider(model_dir=snapshot)
+
+    def test_each_word_carries_its_decodes_numbers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        segments = [
+            _fake_segment(
+                [_fake_word(" Four", 0.1, 0.3, 0.42), _fake_word(" out", 0.3, 0.5, 0.38)],
+                no_speech_prob=0.71,
+                avg_logprob=-1.25,
+                compression_ratio=2.4,
+            ),
+            _fake_segment(
+                [_fake_word(" of", 0.5, 0.6, 0.35), _fake_word(" ", 0.6, 0.6, 0.9)],
+                no_speech_prob=0.2,
+                avg_logprob=-0.3,
+                compression_ratio=1.1,
+            ),
+        ]
+        provider = self._provider(monkeypatch, segments)
+        words = provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
+        assert [word.text for word in words] == ["Four", "out", "of"]  # the blank is skipped
+        assert [word.probability for word in words] == [0.42, 0.38, 0.35]
+        # Each word carries ITS decode's numbers, not the first or the last.
+        assert [word.decode_no_speech_prob for word in words] == [0.71, 0.71, 0.2]
+        assert [word.decode_avg_logprob for word in words] == [-1.25, -1.25, -0.3]
+        assert [word.decode_compression_ratio for word in words] == [2.4, 2.4, 1.1]
+
+    def test_missing_or_non_finite_numbers_are_none(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        segments = [
+            _fake_segment([_fake_word(" Yes", 0.0, 0.2, 0.9)]),
+            _fake_segment(
+                [_fake_word(" okay", 0.2, 0.4, 0.8)],
+                no_speech_prob=float("nan"),
+                avg_logprob=float("-inf"),
+                compression_ratio=None,
+            ),
+            _fake_segment(
+                [_fake_word(" fine", 0.4, 0.6, 0.7)],
+                no_speech_prob="x",
+                avg_logprob=float("inf"),
+                compression_ratio=object(),
+            ),
+        ]
+        provider = self._provider(monkeypatch, segments)
+        words = provider.transcribe_segment(b"\x00\x00" * 160, 16_000)
+        assert len(words) == 3
+        for word in words:
+            assert word.decode_no_speech_prob is None
+            assert word.decode_avg_logprob is None
+            assert word.decode_compression_ratio is None
+
+    def test_mock_provider_words_carry_no_decode_numbers(self) -> None:
+        words = MockSpeechProvider(words_per_second=4.0).transcribe_segment(
+            b"\x00\x00" * SAMPLE_RATE, SAMPLE_RATE
+        )
+        assert len(words) == 4
+        assert {word.decode_no_speech_prob for word in words} == {None}
+        assert {word.decode_avg_logprob for word in words} == {None}
+        assert {word.decode_compression_ratio for word in words} == {None}
+
+    def test_positional_construction_still_takes_four_fields(self) -> None:
+        word = TranscribedWord("pain", 0.0, 0.5, 0.8)
+        assert word.decode_no_speech_prob is None
+        assert word.decode_avg_logprob is None
+        assert word.decode_compression_ratio is None
 
 
 # ---------------------------------------------------------------------------
