@@ -686,7 +686,7 @@ The note-routing plan (0.3.1) landed, was installed and closed on 2026-10-12 (`0
 
 ### Phase 3 — Measurement and the constants (practitioner, then the decision)
 - [x] 🟩 **3.1 Run the measurement (practitioner; D7, C10, C12).** Normal terminal, developer build, installed app closed: build a synthetic set into an empty folder outside the repository (as for run 4), then `.venv\Scripts\python.exe scripts\measure-transcription-guard.py --set <folder> --candidates …` with the candidate sets the executor proposes from Task 1.4's table; paste the tables onto this task (numbers only). Done when: the tables are on the task.
-  - **Run 2026-10-12 (practitioner, normal terminal, developer build; set built fresh into a folder outside the repository — 50 built, 0 errors; kept for run 4 and the next plan; default sweep `DEFAULT_CANDIDATES`; `--primer shipped`).** Numbers as printed:
+  - **Run 2026-10-12 (practitioner, normal terminal, developer build; set built fresh into a folder outside the repository — 50 built, 0 errors; a measurement folder only — run 4 builds its own set into an empty folder per P.1, and that one is kept for the next plan; this one may be deleted once run 4 is made; default sweep `DEFAULT_CANDIDATES`; `--primer shipped`).** Numbers as printed:
 
     | whisper model | primer | cases | errors | cases without a segment |
     |---|---|---|---|---|
