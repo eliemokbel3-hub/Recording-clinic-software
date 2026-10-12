@@ -73,7 +73,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from cryptography.exceptions import InvalidTag
 from pydantic import (
@@ -1173,17 +1173,56 @@ MarkedSegment = tuple[SpeechSegment, tuple[TranscriptWord, ...]]
 
 
 # ---------------------------------------------------------------------------
-# The transcript guard's rule (invented-text-guard plan D3, Phase 1): the
-# features of one VAD segment and the pure decision over them. Built BEFORE
-# the measurement (D12) so the constants are measured on the code that ships;
-# the constants' values arrive with the wiring (Phase 4, decision 0.4), so
-# ``suspect_decision`` takes every constant as a REQUIRED keyword until then.
-# Neither function logs anything or touches a file (C9).
+# The transcript guard (invented-text-guard plan D3): the features of one VAD
+# segment, the pure decision over them, and ``mark_segment_words`` — the ONE
+# place both transcription paths mark a segment's words and apply the guard.
+# The rule was built BEFORE the measurement (D12) so the constants below were
+# measured on the code that ships. Nothing here logs anything or touches a
+# file (C9).
 # ---------------------------------------------------------------------------
 
 # A primer echo is at least this many contiguous content tokens of the
 # segment that also run contiguously in the primer (D3).
 _ECHO_RUN_TOKENS = 3
+
+# The guard's constants — decision 0.4 (2026-10-12, practitioner): candidate
+# c2 of the measurement tool's sweep (``guard_eval``, Task 3.1).
+#
+# HARD CONSTRAINTS (all deliberate — keep them when editing):
+# - Decided ONCE, before the guard was wired, and never tuned after a run of
+#   record (plan C2): a different value is a NEW dated decision with the
+#   measurement repeated, never a quiet edit.
+# - D3's composition is unchanged by them: a segment of at least
+#   ``GUARD_MIN_WORDS`` words and at most ``GUARD_MAX_SECONDS`` of VAD time,
+#   flagged by TWO of rate / low mean probability / primer echo / decode
+#   no-speech — or by ONE echo or no-speech signal after an empty segment.
+#   Rate alone never flags; an empty previous segment never pairs with rate
+#   or probability alone (C4). The decode avg-logprob and compression ratio
+#   earned no place (the measurement had no non-speech rows to contrast).
+# - What they were measured on (whisper ``medium``, the shipped primer): the
+#   synthetic set's 421 speech segments — 0 flagged (words/s p95 4.231, p99
+#   5.471, max 5.822; mean probability p5 0.842, min 0.497; decode no-speech
+#   max 0.611) — and 59 short-line segments, 5 flagged, all five the line that
+#   deliberately echoes the primer, spoken at SAPI rate +5 or +10. The observed
+#   invented line (4 words in about 0.9 s = 4.44 words/s, its words marked
+#   uncertain, after an empty segment) meets the rate bound, so with a mean
+#   probability under the probability bound it is two signals — rate alone
+#   never flags it. The wider of the two swept probability bounds (0.6, not
+#   0.45) was taken because that line's exact mean probability is not known.
+# - LIMITS: (1) the voices were SAPI voices, not human ones — the rate and
+#   probability bounds are calibrated on synthetic speech only; (2) the
+#   NON-SPEECH side is UNMEASURED: none of the synthetic noise, chord or
+#   sung-vowel beds reached the recogniser (alone, the voice detector found no
+#   segment; packed after speech, they added nothing to it). The practitioner's
+#   music-only recording (plan Task P.2) is the first non-speech test; run 4
+#   and the replay tool's suspect column are the regression checks. The mark
+#   is a review aid, not a filter: a wrongly flagged real line costs a glance,
+#   never a word (C3).
+GUARD_MIN_WORDS: Final = 3
+GUARD_MAX_SECONDS: Final = 1.5
+GUARD_WORDS_PER_SECOND: Final = 4.0
+GUARD_MEAN_PROBABILITY: Final = 0.6
+GUARD_NO_SPEECH_PROB: Final = 0.6
 
 
 @dataclass(frozen=True)
@@ -1253,13 +1292,14 @@ def guard_features(
 def suspect_decision(
     features: GuardFeatures,
     *,
-    min_words: int,
-    max_seconds: float,
-    words_per_second: float,
-    mean_probability: float,
-    no_speech_prob: float,
+    min_words: int = GUARD_MIN_WORDS,
+    max_seconds: float = GUARD_MAX_SECONDS,
+    words_per_second: float = GUARD_WORDS_PER_SECOND,
+    mean_probability: float = GUARD_MEAN_PROBABILITY,
+    no_speech_prob: float = GUARD_NO_SPEECH_PROB,
 ) -> bool:
-    """Whether a VAD segment is possibly not speech (D3; C4).
+    """Whether a VAD segment is possibly not speech (D3; C4). The constants
+    default to decision 0.4's; the measurement tool passes its candidates.
 
     Preconditions first: at least ``min_words`` words AND a VAD segment of
     at most ``max_seconds`` — anything else is never suspect. Then TWO of
@@ -1282,6 +1322,42 @@ def suspect_decision(
     if signals >= 2:
         return True
     return signals == 1 and features.previous_empty and (echo or no_speech)
+
+
+def mark_segment_words(
+    seg_words: Sequence[TranscribedWord],
+    segment: SpeechSegment,
+    previous: Sequence[MarkedSegment],
+    *,
+    threshold: float,
+    offset_seconds: float,
+) -> tuple[TranscriptWord, ...]:
+    """One VAD segment's words, marked and guarded — the ONE call both paths
+    make (``transcribe_session`` with ``marked_segments``, the live worker's
+    ``_transcribe_window`` with ``self._marked``; pinned by AST in
+    ``test_shadow_exits.py``, so both paths apply the same rule to the same
+    inputs — the one place their inputs differ is the live forced cut).
+
+    ``mark_words`` applies the uncertainty marks and the offset; then, when
+    ``suspect_decision`` (decision 0.4's constants) holds for the segment,
+    EVERY word is returned with ``suspect`` set — kept, never dropped (C3).
+    ``previous`` is the caller's accumulating list BEFORE this segment is
+    appended; its last element is "the previous segment" and an empty list
+    means not empty. Two named cases: a live forced cut (``LiveSegmenter``)
+    splits a span the batch path keeps whole (and over ``GUARD_MAX_SECONDS``,
+    so never suspect), so its second half is judged on the live path alone,
+    with the first half — normally text-bearing — as its previous (flagged
+    only on two signals), and the segment after the cut reads that second
+    half as its previous where the batch path reads the whole span; and the
+    decode numbers are per decode WINDOW, not per segment, so a burst packed
+    beside real speech in one window is caught only by two of rate,
+    probability and echo, or by an echo after an empty segment — the
+    window's no-speech number speaks for the real speech too (plan A2).
+    Logs nothing."""
+    words = mark_words(seg_words, threshold=threshold, offset_seconds=offset_seconds)
+    if not suspect_decision(guard_features(seg_words, segment, previous)):
+        return words
+    return tuple(word.model_copy(update={"suspect": True}) for word in words)
 
 
 def _primer_echo(text: str, primer: str | None) -> bool:
@@ -1478,8 +1554,10 @@ def transcribe_session(
             # per-segment calls were; mid-window segment openers are only
             # capitalized when the model starts a sentence there, which the
             # same exemption list handles (fail-toward-marking preserved).
-            words = mark_words(
+            words = mark_segment_words(
                 seg_words,
+                segment,
+                marked_segments,
                 threshold=uncertainty_threshold,
                 offset_seconds=window.start_seconds,
             )
@@ -1586,7 +1664,7 @@ def recover_session_transcription(
 # ``transcribe_session`` one window at a time — the streaming segmenter
 # below replicates ``speech.segment_probabilities`` frame by frame, the
 # packer replicates ``pack_transcription_windows`` greedily, and the per-
-# window work (provider, ``assign_words_to_segments``, ``mark_words``, the
+# window work (provider, ``assign_words_to_segments``, ``mark_segment_words``, the
 # spectral embedding and the enrolment cosine) is the batch loop's, so the
 # drained ``LiveResult`` assembles through ``assemble_transcript`` into the
 # same document the batch path would produce for the same segments. It never
@@ -2402,8 +2480,10 @@ class LiveTranscriber:
         )
         posted: list[TranscriptSegment] = []
         for segment, seg_words in zip(group, per_segment_words, strict=True):
-            words = mark_words(
+            words = mark_segment_words(
                 seg_words,
+                segment,
+                self._marked,
                 threshold=self._uncertainty_threshold,
                 offset_seconds=window.start_seconds,
             )
@@ -2499,6 +2579,11 @@ __all__ = [
     "CLINICAL_INITIAL_PROMPT",
     "DEFAULT_WHISPER_MODEL",
     "FALLBACK_WHISPER_MODEL",
+    "GUARD_MAX_SECONDS",
+    "GUARD_MEAN_PROBABILITY",
+    "GUARD_MIN_WORDS",
+    "GUARD_NO_SPEECH_PROB",
+    "GUARD_WORDS_PER_SECOND",
     "GuardFeatures",
     "LIVE_CUT_SEARCH_SECONDS",
     "LIVE_MAX_QUEUED_WINDOWS",
@@ -2539,6 +2624,7 @@ __all__ = [
     "is_name_like_token",
     "is_number_token",
     "label_speakers",
+    "mark_segment_words",
     "mark_words",
     "pack_transcription_windows",
     "read_transcript",

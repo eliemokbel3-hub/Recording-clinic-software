@@ -934,7 +934,8 @@ class TestMain:
     ) -> None:
         """Review round 5 LOW-004: the row and the totals carry
         ``suspect_segment_count`` of the transcript the replay made — the
-        guard is not wired before Phase 4, so the count is stood in for."""
+        scripted provider's turns are never suspect, so the count is stood
+        in for."""
         pytest.importorskip("numpy")
         folder = tmp_path / "past_sessions"
         sid = _kept_entry(_store(folder))

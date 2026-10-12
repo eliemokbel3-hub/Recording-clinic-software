@@ -543,6 +543,38 @@ class TestAttributedPipeline:
         assert document.enrolled_speaker == SPEAKER_2
         assert document.enrolment_similarity == pytest.approx(0.0)
 
+    def test_a_suspect_second_segment_is_still_text_for_attribution(
+        self, tmp_path: Path
+    ) -> None:
+        """Invented-text guard Task 4.2 (D3, D4): under attribution, the
+        burst after a textless segment — 4 words in a 0.6 s tone (a VAD
+        segment of about 0.8 s, about 5 words/s) at probability 0.35 — is
+        marked suspect, and its words are KEPT: they still count as text, so
+        that cluster is the one the clinician can confirm."""
+
+        class _SecondSegmentBurst:
+            def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+                # 0.4 s of words ending 0.2 s before the window ends — inside
+                # the last tone whatever the window's start.
+                first = len(pcm) / (BYTES_PER_SAMPLE * sample_rate) - 0.6
+                return [
+                    TranscribedWord(text, first + i * 0.1, first + (i + 1) * 0.1, 0.35)
+                    for i, text in enumerate(("so", "we", "go", "on"))
+                ]
+
+        pcm = silence_pcm(1.0) + tone_pcm(1.5, frequency=220.0) + silence_pcm(1.0)
+        pcm += tone_pcm(0.6, frequency=2600.0) + silence_pcm(1.0)
+        document, _embedder, _dir, _crypto = _attributed_run(
+            tmp_path, "c9", pcm, [E1, E2], provider=_SecondSegmentBurst()
+        )
+        first, second = document.transcript_segments
+        assert [first.speaker, second.speaker] == [SPEAKER_1, SPEAKER_2]
+        assert not segment_has_text(first)
+        assert len(second.transcript_words) == 4
+        assert all(word.suspect for word in second.transcript_words)
+        assert segment_has_text(second)
+        assert document.enrolled_speaker == SPEAKER_2
+
     def test_no_transcribed_text_at_all_carries_no_attribution_fields(
         self, tmp_path: Path
     ) -> None:

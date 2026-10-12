@@ -1,14 +1,19 @@
-"""Invented-text-guard plan Task 1.4 (D3, C4): the transcript guard's rule.
+"""Invented-text-guard plan Tasks 1.4 and 4.1 (D3, C3, C4): the transcript
+guard's rule and the one helper that applies it.
 
 ``guard_features`` (the numbers one VAD segment is judged by) and
-``suspect_decision`` (the pure two-of-four rule) are built before the
-measurement and NOT wired into either path yet (Phase 4). Every case below
-gives its numbers explicitly; the constants are this file's test set, not
-the shipped ones (decision 0.4 picks those)."""
+``suspect_decision`` (the pure two-of-four rule) were built before the
+measurement; ``mark_segment_words`` wires them into both transcription paths
+(Phase 4) under decision 0.4's constants. The decision table below gives its
+numbers explicitly under this file's own test set; the shipped constants are
+pinned in ``TestShippedConstants``. The paths themselves are exercised in
+``test_transcription.py``, ``test_attribution.py``,
+``test_live_transcription.py`` and ``test_live_session.py``."""
 
 from __future__ import annotations
 
 import dataclasses
+import inspect
 from typing import Any
 
 import pytest
@@ -16,10 +21,17 @@ import pytest
 from scribe_desktop.speech import SpeechSegment, TranscribedWord
 from scribe_desktop.transcription import (
     CLINICAL_INITIAL_PROMPT,
+    GUARD_MAX_SECONDS,
+    GUARD_MEAN_PROBABILITY,
+    GUARD_MIN_WORDS,
+    GUARD_NO_SPEECH_PROB,
+    GUARD_WORDS_PER_SECOND,
     GuardFeatures,
     MarkedSegment,
     TranscriptWord,
     guard_features,
+    mark_segment_words,
+    mark_words,
     suspect_decision,
 )
 
@@ -280,3 +292,139 @@ class TestPrimerEcho:
         custom = "Physiotherapy assessment today."
         assert self._echo(["physiotherapy", "assessment", "today"], primer=custom) is True
         assert self._echo(["Cervical,", "thoracic,", "lumbar"], primer="Physiotherapy.") is False
+
+
+class TestShippedConstants:
+    """Task 4.1: decision 0.4 (candidate c2) is what ``suspect_decision``
+    defaults to — and what both paths therefore apply."""
+
+    def test_the_values_are_decision_0_4s(self) -> None:
+        assert GUARD_MIN_WORDS == 3
+        assert GUARD_MAX_SECONDS == 1.5
+        assert GUARD_WORDS_PER_SECOND == 4.0
+        assert GUARD_MEAN_PROBABILITY == 0.6
+        assert GUARD_NO_SPEECH_PROB == 0.6
+
+    def test_they_are_the_rules_keyword_defaults(self) -> None:
+        parameters = inspect.signature(suspect_decision).parameters
+        defaults = {
+            name: parameter.default
+            for name, parameter in parameters.items()
+            if parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        }
+        assert defaults == {
+            "min_words": 3,
+            "max_seconds": 1.5,
+            "words_per_second": 4.0,
+            "mean_probability": 0.6,
+            "no_speech_prob": 0.6,
+        }
+
+    def test_the_observed_shape_flags_under_them(self) -> None:
+        # 4 words in a 0.9 s VAD segment, mean probability 0.35, after a
+        # segment with no words: 4.44 words/s >= 4.0 and 0.35 < 0.6.
+        features = guard_features(
+            _words(["Four", "out", "of", "ten."], probability=0.35),
+            SpeechSegment(5.0, 5.9),
+            [_marked("")],
+        )
+        assert suspect_decision(features) is True
+
+    def test_the_wider_probability_bound_is_the_one_shipped(self) -> None:
+        # Mean probability 0.55 at 4.44 words/s: a signal under 0.6 (c2), none
+        # under 0.45 (c1) — c2 was chosen because the incident's is unknown.
+        features = guard_features(
+            _words(["Four", "out", "of", "ten."], probability=0.55),
+            SpeechSegment(5.0, 5.9),
+            [_marked("x")],
+        )
+        assert suspect_decision(features) is True
+        assert suspect_decision(features, mean_probability=0.45) is False
+
+    def test_the_measured_fast_real_line_is_not_flagged(self) -> None:
+        # The measurement's fastest short line at rate +5: 4 words in 0.68 s
+        # (5.88 words/s), mean probability 0.806 — rate alone, never a flag,
+        # even after an empty segment.
+        features = guard_features(
+            _words(["one", "two", "three", "four"], step=0.15, probability=0.806),
+            SpeechSegment(1.0, 1.68),
+            [_marked("")],
+        )
+        assert features.words_per_second == pytest.approx(4 / 0.68)
+        assert suspect_decision(features) is False
+
+    def test_no_no_no_is_not_flagged_under_them(self) -> None:
+        features = guard_features(
+            _words(["No,", "no,", "no."], step=0.25), SpeechSegment(2.0, 2.8), [_marked("")]
+        )
+        assert suspect_decision(features) is False
+
+
+class TestMarkSegmentWords:
+    """Task 4.1 (D3, D4, C3): the ONE helper both paths call — ``mark_words``
+    then the rule; a suspect segment keeps every word, each marked."""
+
+    _OBSERVED = ("so", "we", "go", "on")
+
+    def _marked_and_guarded(
+        self, probability: float, previous: list[MarkedSegment]
+    ) -> tuple[tuple[TranscriptWord, ...], tuple[TranscriptWord, ...]]:
+        words = _words(list(self._OBSERVED), start=0.05, probability=probability)
+        segment = SpeechSegment(10.0, 10.9)
+        guarded = mark_segment_words(
+            words, segment, previous, threshold=0.6, offset_seconds=10.0
+        )
+        plain = mark_words(words, threshold=0.6, offset_seconds=10.0)
+        return guarded, plain
+
+    def test_a_segment_that_is_not_suspect_is_exactly_mark_words(self) -> None:
+        guarded, plain = self._marked_and_guarded(0.95, [_marked("")])
+        assert guarded == plain
+        assert not any(word.suspect for word in guarded)
+
+    def test_a_suspect_segment_keeps_every_word_each_marked(self) -> None:
+        guarded, plain = self._marked_and_guarded(0.35, [_marked("")])
+        assert len(guarded) == len(plain) == 4  # nothing dropped (C3)
+        assert all(word.suspect for word in guarded)
+        assert [word.model_copy(update={"suspect": False}) for word in guarded] == list(plain)
+        # The offset and the uncertainty marks are mark_words' own.
+        assert guarded[0].start_seconds == pytest.approx(10.05)
+        assert all(word.uncertain for word in guarded)  # probability 0.35 < 0.6
+
+    def test_a_blank_word_in_a_suspect_segment_is_kept_too(self) -> None:
+        words = [
+            *_words(list(self._OBSERVED), probability=0.35),
+            TranscribedWord(" ", 0.8, 0.85, 0.1),
+        ]
+        guarded = mark_segment_words(
+            words, SpeechSegment(0.0, 0.9), [_marked("")], threshold=0.6, offset_seconds=0.0
+        )
+        assert len(guarded) == 5
+        assert all(word.suspect for word in guarded)
+
+    def test_the_previous_list_is_read_not_changed(self) -> None:
+        previous = [_marked("x"), _marked("")]
+        mark_segment_words(
+            _words(list(self._OBSERVED), probability=0.35),
+            SpeechSegment(0.0, 0.9),
+            previous,
+            threshold=0.6,
+            offset_seconds=0.0,
+        )
+        assert previous == [_marked("x"), _marked("")]
+
+    def test_one_echo_flags_only_after_an_empty_segment(self) -> None:
+        # 3 primer words in a 1.4 s segment (2.1 words/s), probability 0.95:
+        # the echo is the one signal, so the previous segment decides.
+        echo = _words(["Cervical,", "thoracic,", "lumbar"], step=0.4, probability=0.95)
+        segment = SpeechSegment(0.0, 1.4)
+
+        def guarded(previous: list[MarkedSegment]) -> bool:
+            words = mark_segment_words(
+                echo, segment, previous, threshold=0.6, offset_seconds=0.0
+            )
+            return all(word.suspect for word in words)
+
+        assert guarded([_marked("")]) is True
+        assert guarded([_marked("x")]) is False
+        assert guarded([]) is False  # no previous segment is not empty

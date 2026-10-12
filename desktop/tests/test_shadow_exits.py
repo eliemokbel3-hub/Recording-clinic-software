@@ -32,7 +32,10 @@ and combo-box tests at the end):
   rule extended to recorded audio) — every reference to ``wave``, to the
   writer and to the kept recording's plaintext readers counted where it is,
   a tripwire against an accidental second exit rather than a sandbox
-  against deliberately obfuscated code (codex rounds 23–26).
+  against deliberately obfuscated code (codex rounds 23–26);
+- (not an exit, kept here for its counting helpers) a transcript segment's
+  words are marked through ONE guard, ``transcription.mark_segment_words``,
+  called once by each transcription path (invented-text-guard plan D3).
 
 Sites are COUNTED, not just located (peer round 9 PR-MED-A01), and each
 count is proven to catch an in-memory added site.
@@ -966,3 +969,63 @@ def test_a_second_writer_reference_fails_the_count(
 ) -> None:
     sources = _with_extra(_package_sources(), relative, function, statement)
     assert _references(sources, _WRITER_NAMES) != _WRITER_REFERENCES
+
+
+# Invented-text-guard plan D3 / C4 (Task 4.1): ONE guard, both paths. A
+# segment's words are marked only through ``mark_segment_words`` — which calls
+# ``mark_words`` and then the rule — and each transcription path calls it
+# exactly once, so both paths apply the same rule to the same inputs (the
+# live forced cut is the one place their inputs differ — the helper's
+# docstring) and no path can mark words without the guard. Counted with
+# ``_references`` (every name, attribute, import and equal string); the
+# ``__all__`` strings are the module-level entries. The same residue as the
+# pins above: a name built at run time is beyond an AST count.
+_MARK_WORDS_REFERENCES: Counter[tuple[str, str]] = Counter(
+    {
+        ("transcription.py", "mark_segment_words"): 1,  # the one call, inside the guard
+        ("transcription.py", ""): 1,  # its ``__all__`` string
+    }
+)
+_GUARD_REFERENCES: Counter[tuple[str, str]] = Counter(
+    {
+        ("transcription.py", "transcribe_session"): 1,  # the batch path
+        ("transcription.py", "LiveTranscriber._transcribe_window"): 1,  # the live path
+        ("transcription.py", ""): 1,  # its ``__all__`` string
+    }
+)
+
+
+def test_words_are_marked_only_through_the_one_guard_on_both_paths() -> None:
+    sources = _package_sources()
+    assert _references(sources, frozenset({"mark_words"})) == _MARK_WORDS_REFERENCES
+    assert _references(sources, frozenset({"mark_segment_words"})) == _GUARD_REFERENCES
+
+
+@pytest.mark.parametrize(
+    ("function", "statement"),
+    [
+        ("transcribe_session", "words = mark_words(seg_words, threshold=0.6)"),
+        ("LiveTranscriber._transcribe_window", "words = mark_words(seg_words)"),
+        ("LiveTranscriber._transcribe_window", "mark = mark_words"),
+        ("assemble_transcript", "from scribe_desktop.transcription import mark_words as m"),
+    ],
+)
+def test_a_third_mark_words_reference_fails_the_count(function: str, statement: str) -> None:
+    sources = _with_extra(_package_sources(), "transcription.py", function, statement)
+    assert _references(sources, frozenset({"mark_words"})) != _MARK_WORDS_REFERENCES
+
+
+@pytest.mark.parametrize(
+    ("function", "statement"),
+    [
+        # A second call on one path, or a stored reference called later.
+        (
+            "transcribe_session",
+            "mark_segment_words(seg_words, segment, [], threshold=0.6, offset_seconds=0.0)",
+        ),
+        ("LiveTranscriber._transcribe_window", "guard = mark_segment_words"),
+    ],
+)
+def test_a_second_guard_call_on_a_path_fails_the_count(function: str, statement: str) -> None:
+    sources = _with_extra(_package_sources(), "transcription.py", function, statement)
+    assert _references(sources, frozenset({"mark_segment_words"})) != _GUARD_REFERENCES

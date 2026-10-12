@@ -9,7 +9,8 @@ models are stubbed at the composition layer (``ui.models``), so a fallback
 proves its routing without loading anything.
 
 Covered: the tee feeds the worker the store's bytes and the drained document
-equals the batch document; Finish seals only and stays under 100 ms with a
+equals the batch document (also with the transcript guard marking a burst
+suspect, invented-text guard Task 4.2); Finish seals only and stays under 100 ms with a
 blocked tail, the last flushed chunk lands in the drained tail; Discard in
 RECORDING / PAUSED / pre-claim PROCESSING / FAILED stops and joins the
 worker and confirms its buffers cleared BEFORE ``discard_session`` destroys
@@ -137,6 +138,19 @@ class _BlockingProvider:
         self.entered.set()
         self._gate.wait()
         return self._inner.transcribe_segment(pcm, sample_rate)
+
+
+class _TailBurst:
+    """The transcript guard's scripted provider (mirrors
+    ``test_transcription.py``): 4 words at probability 0.35 over 0.4 s ending
+    0.2 s before the window's end — inside its last tone."""
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        first = len(pcm) / (BYTES_PER_SAMPLE * sample_rate) - 0.6
+        return [
+            TranscribedWord(text, first + i * 0.1, first + (i + 1) * 0.1, 0.35)
+            for i, text in enumerate(("so", "we", "go", "on"))
+        ]
 
 
 class _StubVad:
@@ -298,6 +312,36 @@ class TestLiveSessionController:
         batch = transcribe_session(directory, crypto, MockSpeechProvider(), amplitude_vad)
         assert _strip_created(batch) == _strip_created(document)
         assert worker.buffers_cleared and not worker.models_loaded
+        controller.discard()
+
+    def test_the_drained_document_equals_the_batch_document_with_a_suspect_word(
+        self, tmp_path: Path, no_batch_models: None
+    ) -> None:
+        """Invented-text guard Task 4.2 (D3): the pin above with the guard
+        firing — a burst of 4 words in a 0.6 s tone (about 5 words/s) at
+        probability 0.35 after a segment with no words is marked on the live
+        path, and the batch path over the same store marks it identically."""
+        pytest.importorskip("numpy")
+        posts: list[tuple[TranscriptSegment, ...]] = []
+        workers = _Workers(provider=_TailBurst(), on_window=posts.append)
+        controller, backend = _controller(tmp_path, workers)
+        start_unlinked(controller)
+        pcm = silence_pcm(1.0) + tone_pcm(1.0) + silence_pcm(1.0) + tone_pcm(0.6)
+        pcm += silence_pcm(1.0)
+        _feed(backend, pcm)
+        controller.finish()
+        statuses: list[str] = []
+        document, directory, crypto = _transcribe(controller, statuses)
+        assert statuses == [models.LIVE_ASSEMBLED_STATUS]
+        first, second = document.transcript_segments
+        assert first.transcript_words == ()
+        assert len(second.transcript_words) == 4
+        assert all(word.suspect for word in second.transcript_words)
+        posted = [word for window in posts for s in window for word in s.transcript_words]
+        assert len(posted) == 4 and all(word.suspect for word in posted)
+        assert read_transcript(directory, crypto) == document
+        batch = transcribe_session(directory, crypto, _TailBurst(), amplitude_vad)
+        assert _strip_created(batch) == _strip_created(document)
         controller.discard()
 
     def test_finish_seals_only_and_the_last_flushed_chunk_is_in_the_tail(

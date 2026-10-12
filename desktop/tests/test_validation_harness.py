@@ -505,7 +505,7 @@ class TestRunner:
         assert _temp_stores() == before  # the temporary store is gone
         assert lines == ["[run ] syn-001"]
         assert outcome.status == "measured" and outcome.segment_count == 2
-        assert outcome.suspect_segments == 0  # the guard is not wired before Phase 4
+        assert outcome.suspect_segments == 0  # each turn is one rate signal at most (D3)
         metrics = outcome.metrics
         assert metrics is not None
         assert metrics.words.edit_distance == 0 and metrics.words.reference_tokens == 12

@@ -1061,6 +1061,136 @@ class TestWindowedPipeline:
 
 
 # ---------------------------------------------------------------------------
+# the transcript guard on the batch path (invented-text-guard plan Task 4.2)
+# ---------------------------------------------------------------------------
+
+
+class _TailBurst:
+    """A scripted provider: ``count`` words spread over ``span`` seconds that
+    end 0.2 s before the window's end — inside the window's LAST tone (VAD
+    pads a segment by 0.1 s), whatever the window's start. The calls in
+    ``silent_calls`` (1-based) return no words."""
+
+    def __init__(
+        self,
+        *,
+        count: int = 4,
+        span: float = 0.4,
+        probability: float = 0.35,
+        no_speech: float | None = None,
+        silent_calls: frozenset[int] = frozenset(),
+    ) -> None:
+        self._count = count
+        self._span = span
+        self._probability = probability
+        self._no_speech = no_speech
+        self._silent = silent_calls
+        self.calls = 0
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        self.calls += 1
+        if self.calls in self._silent:
+            return []
+        first = len(pcm) / (BYTES_PER_SAMPLE * sample_rate) - 0.2 - self._span
+        step = self._span / self._count
+        return [
+            TranscribedWord(
+                ("so", "we", "go", "on")[index % 4],
+                first + index * step,
+                first + (index + 1) * step,
+                self._probability,
+                decode_no_speech_prob=self._no_speech,
+            )
+            for index in range(self._count)
+        ]
+
+
+# One window: a 1.0 s tone the provider gives no words, then a 0.6 s tone
+# (a VAD segment of about 0.8 s) holding the burst — the observed shape.
+_BURST_AFTER_EMPTY = (
+    silence_pcm(1.0) + tone_pcm(1.0) + silence_pcm(1.0) + tone_pcm(0.6) + silence_pcm(1.0)
+)
+
+
+class TestTheGuardOnTheBatchPath:
+    """``transcribe_session`` marks a segment through ``mark_segment_words``
+    (D3) with decision 0.4's constants; a suspect segment's words are kept and
+    marked, and nothing else changes (D4, C3)."""
+
+    def test_the_observed_shape_is_marked_and_only_it(self, tmp_path: Path) -> None:
+        # 4 words in about 0.8 s (about 5 words/s) at probability 0.35, after
+        # a segment with no words: rate plus low probability.
+        session_dir = tmp_path / ("a8" * 16)
+        crypto = _make_store(session_dir, _BURST_AFTER_EMPTY)
+        document = transcribe_session(session_dir, crypto, _TailBurst(), amplitude_vad)
+        first, second = document.transcript_segments
+        assert first.transcript_words == ()
+        assert second.end_seconds - second.start_seconds <= 1.5
+        assert [word.word_text for word in second.transcript_words] == ["so", "we", "go", "on"]
+        assert all(word.suspect for word in second.transcript_words)
+        # Kept, stored with the key, and read back as written.
+        assert document.to_bytes().count(b'"suspect":true') == 4
+        assert read_transcript(session_dir, crypto) == document
+
+    def test_rate_after_an_empty_segment_alone_never_marks(self, tmp_path: Path) -> None:
+        # The same burst at probability 0.95: rate is the one signal, and an
+        # empty previous segment never pairs with rate (C4).
+        session_dir = tmp_path / ("b8" * 16)
+        crypto = _make_store(session_dir, _BURST_AFTER_EMPTY)
+        document = transcribe_session(
+            session_dir, crypto, _TailBurst(probability=0.95), amplitude_vad
+        )
+        words = [w for segment in document.transcript_segments for w in segment.transcript_words]
+        assert len(words) == 4
+        assert not any(word.suspect for word in words)
+        assert b'"suspect"' not in document.to_bytes()  # the 0.3.1 shape (D4)
+
+    def test_an_empty_segment_in_an_earlier_window_counts_as_previous(
+        self, tmp_path: Path
+    ) -> None:
+        # Two windows (a 5 s gap). The first window's call returns nothing;
+        # the second holds 3 slow words (about 2.3 words/s) at probability
+        # 0.95 whose decode no-speech number is 0.8 — one signal, which the
+        # empty previous segment upgrades (D3).
+        pcm = tone_pcm(1.0) + silence_pcm(5.0) + tone_pcm(1.1) + silence_pcm(0.5)
+        session_dir = tmp_path / ("c8" * 16)
+        crypto = _make_store(session_dir, pcm)
+        provider = _TailBurst(
+            count=3, span=0.8, probability=0.95, no_speech=0.8, silent_calls=frozenset({1})
+        )
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        assert provider.calls == 2
+        first, second = document.transcript_segments
+        assert first.transcript_words == ()
+        assert len(second.transcript_words) == 3
+        assert all(word.suspect for word in second.transcript_words)
+
+    def test_the_same_window_after_speech_is_not_marked(self, tmp_path: Path) -> None:
+        # Both windows now hold words: the second's previous held text, so its
+        # one signal stays one; the first has no previous, which is not empty.
+        pcm = tone_pcm(1.0) + silence_pcm(5.0) + tone_pcm(1.1) + silence_pcm(0.5)
+        session_dir = tmp_path / ("d8" * 16)
+        crypto = _make_store(session_dir, pcm)
+        provider = _TailBurst(count=3, span=0.8, probability=0.95, no_speech=0.8)
+        document = transcribe_session(session_dir, crypto, provider, amplitude_vad)
+        words = [w for segment in document.transcript_segments for w in segment.transcript_words]
+        assert len(words) == 6
+        assert not any(word.suspect for word in words)
+
+    def test_a_fast_mock_never_marks(self, tmp_path: Path) -> None:
+        # MockSpeechProvider at 8 words/s, probability 1.0, no decode number:
+        # rate is its only signal in every short segment.
+        session_dir = tmp_path / ("e8" * 16)
+        crypto = _make_store(session_dir, _BURST_AFTER_EMPTY)
+        document = transcribe_session(
+            session_dir, crypto, MockSpeechProvider(words_per_second=8.0), amplitude_vad
+        )
+        words = [w for segment in document.transcript_segments for w in segment.transcript_words]
+        assert len(words) >= 6
+        assert not any(word.suspect for word in words)
+
+
+# ---------------------------------------------------------------------------
 # WhisperSpeechProvider guards (no ML stack needed — guards fire first)
 # ---------------------------------------------------------------------------
 

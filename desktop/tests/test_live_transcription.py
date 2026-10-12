@@ -171,6 +171,46 @@ class _TextlessProvider:
         return self._inner.transcribe_segment(pcm, sample_rate)
 
 
+class _TailBurst:
+    """The transcript guard's scripted provider (mirrors
+    ``test_transcription.py``): ``count`` words over ``span`` seconds ending
+    0.2 s before the window's end — inside its last tone; the calls in
+    ``silent_calls`` (1-based) return no words."""
+
+    def __init__(
+        self,
+        *,
+        count: int,
+        span: float,
+        probability: float,
+        no_speech: float | None = None,
+        silent_calls: frozenset[int] = frozenset(),
+    ) -> None:
+        self._count = count
+        self._span = span
+        self._probability = probability
+        self._no_speech = no_speech
+        self._silent = silent_calls
+        self.calls = 0
+
+    def transcribe_segment(self, pcm: bytes, sample_rate: int) -> list[TranscribedWord]:
+        self.calls += 1
+        if self.calls in self._silent:
+            return []
+        first = len(pcm) / (BYTES_PER_SAMPLE * sample_rate) - 0.2 - self._span
+        step = self._span / self._count
+        return [
+            TranscribedWord(
+                ("so", "we", "go", "on")[index % 4],
+                first + index * step,
+                first + (index + 1) * step,
+                self._probability,
+                decode_no_speech_prob=self._no_speech,
+            )
+            for index in range(self._count)
+        ]
+
+
 class _BlockingProvider:
     """Every ``transcribe_segment`` waits on ``gate`` first."""
 
@@ -637,6 +677,69 @@ class TestLiveParity:
         assert live.transcript_segments[-1].end_seconds == pytest.approx(
             batch.transcript_segments[-1].end_seconds
         )
+
+    # Invented-text guard Task 4.2 (D3): the live worker marks a segment
+    # through the same ``mark_segment_words`` as the batch path, with its own
+    # accumulating ``_marked`` as "the previous segment" — across windows too.
+    _ACROSS_A_WINDOW = tone_pcm(1.0) + silence_pcm(5.0) + tone_pcm(1.1) + silence_pcm(0.5)
+
+    def _burst(self, *, first_window_silent: bool) -> _TailBurst:
+        # 3 slow words (about 2.3 words/s) at probability 0.95, decode
+        # no-speech 0.8: one signal, upgraded only by an empty previous.
+        return _TailBurst(
+            count=3,
+            span=0.8,
+            probability=0.95,
+            no_speech=0.8,
+            silent_calls=frozenset({1}) if first_window_silent else frozenset(),
+        )
+
+    def test_a_burst_after_an_empty_window_is_marked_live_posted_and_in_the_batch(
+        self, tmp_path: Path
+    ) -> None:
+        posts: list[tuple[TranscriptSegment, ...]] = []
+        result = _run_live(
+            self._ACROSS_A_WINDOW,
+            _live(provider=self._burst(first_window_silent=True), on_window=posts.append),
+        )
+        # Two windows, posted in order: the empty segment, then the burst.
+        assert len(posts) == 2
+        (empty,), (burst,) = posts
+        assert empty.transcript_words == ()
+        assert len(burst.transcript_words) == 3
+        assert all(word.suspect for word in burst.transcript_words)
+        live = result.assemble("c" * 32)
+        assert [len(s.transcript_words) for s in live.transcript_segments] == [0, 3]
+        assert all(word.suspect for word in live.transcript_segments[1].transcript_words)
+        # live == batch, with the suspect words on both sides.
+        session_dir = tmp_path / ("c" * 32)
+        crypto = _make_store(session_dir, self._ACROSS_A_WINDOW)
+        batch = transcribe_session(
+            session_dir, crypto, self._burst(first_window_silent=True), amplitude_vad
+        )
+        assert _strip_created(live) == _strip_created(batch)
+        write_transcript(session_dir, crypto, live)
+        assert read_transcript(session_dir, crypto) == live
+
+    def test_the_same_burst_after_speech_is_not_marked_on_either_path(
+        self, tmp_path: Path
+    ) -> None:
+        posts: list[tuple[TranscriptSegment, ...]] = []
+        result = _run_live(
+            self._ACROSS_A_WINDOW,
+            _live(provider=self._burst(first_window_silent=False), on_window=posts.append),
+        )
+        posted = [word for window in posts for s in window for word in s.transcript_words]
+        assert len(posted) == 6
+        assert not any(word.suspect for word in posted)
+        live = result.assemble("d" * 32)
+        session_dir = tmp_path / ("d" * 32)
+        crypto = _make_store(session_dir, self._ACROSS_A_WINDOW)
+        batch = transcribe_session(
+            session_dir, crypto, self._burst(first_window_silent=False), amplitude_vad
+        )
+        assert _strip_created(live) == _strip_created(batch)
+        assert b'"suspect"' not in live.to_bytes()
 
 
 # ---------------------------------------------------------------------------
