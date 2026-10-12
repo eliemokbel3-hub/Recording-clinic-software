@@ -665,6 +665,109 @@ class TestWarningTaxonomy:
         assert NOTE_WARNING_SEVERITY["role_unconfirmed"] == "error"
         assert NOTE_WARNING_SEVERITY["clinician_asserted"] == "review"
         assert NOTE_WARNING_SEVERITY["mapping_drop"] == "review"
+        # Invented-text guard D5 and Task 2.8.
+        assert NOTE_WARNING_SEVERITY["number_source"] == "review"
+        assert NOTE_WARNING_SEVERITY["suspect_source"] == "review"
+        assert NOTE_WARNING_SEVERITY[note_module.UNKNOWN_REVIEW_WARNING] == "review"
+        assert note_module.UNKNOWN_REVIEW_WARNING == "unknown_review_warning"
+
+
+def _stored_with_warning(warning: dict[str, object]) -> bytes:
+    """A stored ``note.enc`` blob carrying ``warning`` as a newer build
+    might have written it."""
+    payload = json.loads(_note().to_bytes())
+    payload["note_warnings"] = [
+        {"note_warning_code": "mapping_drop", "severity": "review"},
+        warning,
+    ]
+    return json.dumps(payload).encode("utf-8")
+
+
+class TestForwardTolerantWarningReader:
+    """Invented-text guard Task 2.8: a stored note read back through
+    ``GeneratedNote.from_bytes`` (the one hook — a validation context only
+    that path sets) turns an unregistered REVIEW code into
+    ``unknown_review_warning``; everything else is refused as before."""
+
+    def test_an_unknown_review_code_reads_as_the_generic_review_code(self) -> None:
+        blob = _stored_with_warning(
+            {
+                "note_warning_code": "a_code_from_0_4_0",
+                "severity": "review",
+                "section_key": "presenting_complaint",
+            }
+        )
+        note = GeneratedNote.from_bytes(blob)
+        assert [w.note_warning_code for w in note.note_warnings] == [
+            "mapping_drop",
+            "unknown_review_warning",
+        ]
+        assert note.note_warnings[1].severity == "review"
+        assert note.blocking_warnings() == ()
+        # The original code text is not kept anywhere in the read note.
+        assert "a_code_from_0_4_0" not in note.to_bytes().decode("utf-8")
+        # Read back again, it is a registered code like any other.
+        assert GeneratedNote.from_bytes(note.to_bytes()) == note
+
+    def test_its_line_coordinates_are_kept(self) -> None:
+        note = _note()
+        aid = note.note_sections[0].note_assertions[0].assertion_id
+        blob = _stored_with_warning(
+            {
+                "note_warning_code": "a_newer_line_code",
+                "severity": "review",
+                "assertion_id": aid,
+                "source_coords": [0, 0, 1],
+            }
+        )
+        read = GeneratedNote.from_bytes(blob).note_warnings[1]
+        assert read.note_warning_code == "unknown_review_warning"
+        assert read.assertion_id == aid
+        assert read.source_coords == SourceCoords(0, 0, 1)
+
+    def test_an_unknown_error_code_is_still_refused(self) -> None:
+        blob = _stored_with_warning({"note_warning_code": "a_code_from_0_4_0", "severity": "error"})
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            GeneratedNote.from_bytes(blob)
+
+    def test_a_registered_code_at_the_wrong_severity_is_still_refused(self) -> None:
+        for code, severity in (("unconfirmed_proposal", "review"), ("number_source", "error")):
+            blob = _stored_with_warning({"note_warning_code": code, "severity": severity})
+            with pytest.raises(ValidationError, match="-severity, not"):
+                GeneratedNote.from_bytes(blob)
+
+    def test_a_non_string_code_is_still_refused(self) -> None:
+        blob = _stored_with_warning({"note_warning_code": 7, "severity": "review"})
+        with pytest.raises(ValidationError):
+            GeneratedNote.from_bytes(blob)
+
+    def test_a_warning_constructed_in_code_is_still_refused(self) -> None:
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            NoteWarning(note_warning_code="a_code_from_0_4_0", severity="review")
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            NoteWarning.model_validate(
+                {"note_warning_code": "a_code_from_0_4_0", "severity": "review"}
+            )
+
+    def test_an_in_memory_round_trip_is_still_strict(self) -> None:
+        """Review round 5 LOW-001: ``attach_style_renderings`` rebuilds a note
+        BUILT in memory, so an unregistered code smuggled in by a
+        validator-skipping construction is refused there, never relabelled."""
+        smuggled = NoteWarning.model_construct(
+            note_warning_code="a_code_from_0_4_0", severity="review"
+        )
+        note = _note().model_copy(update={"note_warnings": (smuggled,)})
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            note_module.attach_style_renderings(note, ())
+
+    def test_a_note_validated_outside_from_bytes_is_still_strict(self) -> None:
+        blob = _stored_with_warning(
+            {"note_warning_code": "a_code_from_0_4_0", "severity": "review"}
+        )
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            GeneratedNote.model_validate_json(blob)
+        with pytest.raises(ValidationError, match="unregistered warning code"):
+            GeneratedNote.model_validate_json(blob, context={"stored_note": False})
 
 
 # ---------------------------------------------------------------------------
@@ -2391,6 +2494,23 @@ class TestBoundedCarry:
     def test_the_other_speaker_is_not_carried(self) -> None:
         assert _carry((_SPLIT_OPEN, SPEAKER_1), (_SPLIT_REST, SPEAKER_2)) == {
             0: "presenting_complaint"
+        }
+
+    def test_a_segment_holding_a_suspect_word_never_opens_a_carry(self) -> None:
+        """Invented-text guard D6 (Task 2.4): the cue-routed line itself is
+        still routed (the router deliberately reads suspect words), but it
+        opens no carry — whichever of its words is suspect."""
+        for marked in (0, 4):
+            opener = tuple(
+                word.model_copy(update={"suspect": index == marked})
+                for index, word in enumerate(_words(_SPLIT_OPEN))
+            )
+            document = _carry_document((opener, SPEAKER_1), (_words(_SPLIT_REST), SPEAKER_1))
+            assert _placed(_request(document=document)) == {0: "presenting_complaint"}, marked
+        clean = _carry_document((_words(_SPLIT_OPEN), SPEAKER_1), (_words(_SPLIT_REST), SPEAKER_1))
+        assert _placed(_request(document=clean)) == {
+            0: "presenting_complaint",
+            1: "presenting_complaint",
         }
 
     def test_a_clinician_owned_section_is_never_a_target(self) -> None:

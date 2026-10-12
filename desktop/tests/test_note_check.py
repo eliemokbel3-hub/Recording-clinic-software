@@ -30,6 +30,7 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteSpan,
     SourceCoords,
+    line_marks,
     reconstruct_span_text,
     text_digest,
     transcript_digest,
@@ -309,11 +310,18 @@ class TestCheck1Reconstruction:
         )
         note = _note(document, (_quoted(document, 0, "objective_examination"),))
         warnings = reconstruction_warnings(note, document)
-        assert _codes(warnings) == ["low_confidence_source", "low_confidence_source"]
-        assert [w.severity for w in warnings] == ["review", "review"]
+        # Invented-text guard D5: the line's "90" also draws its ONE per-line
+        # `number_source`, after the per-word warnings, on the line's span.
+        assert _codes(warnings) == [
+            "low_confidence_source",
+            "low_confidence_source",
+            "number_source",
+        ]
+        assert [w.severity for w in warnings] == ["review", "review", "review"]
         assert [w.source_coords for w in warnings] == [
             SourceCoords(0, 5, 5),
             SourceCoords(0, 6, 6),
+            SourceCoords(0, 0, 7),
         ]
         assert all(w.assertion_id == "t0000" for w in warnings)
 
@@ -1865,6 +1873,163 @@ class TestCheck4Omission:
         warnings = omission_warnings(note, document)
         assert _codes(warnings) == ["high_risk_omission"]
         assert warnings[0].source_coords == SourceCoords(0, 10, 10)
+
+
+# ---------------------------------------------------------------------------
+# Invented-text guard (Tasks 2.3 and 2.4; D5, D6): the per-line codes and the
+# readers that never act on a suspect word.
+# ---------------------------------------------------------------------------
+
+
+def _suspect_document(*turns: Turn, suspect: tuple[int, ...]) -> TranscriptDocument:
+    """``_document(*turns)`` with every word of the ``suspect`` segments
+    marked ``suspect`` (the shape the guard writes: a whole segment)."""
+    document = _document(*turns)
+    return document.model_copy(
+        update={
+            "transcript_segments": tuple(
+                segment.model_copy(
+                    update={
+                        "transcript_words": tuple(
+                            word.model_copy(update={"suspect": True})
+                            for word in segment.transcript_words
+                        )
+                    }
+                )
+                if index in suspect
+                else segment
+                for index, segment in enumerate(document.transcript_segments)
+            )
+        }
+    )
+
+
+def _line_codes(warnings: tuple[object, ...]) -> list[tuple[str, str | None, object]]:
+    return [
+        (w.note_warning_code, w.assertion_id, w.source_coords)  # type: ignore[attr-defined]
+        for w in warnings
+        if w.note_warning_code in ("number_source", "suspect_source")  # type: ignore[attr-defined]
+    ]
+
+
+class TestCheck1LineMarks:
+    def test_a_line_with_a_number_draws_one_number_source_on_its_span(self) -> None:
+        document = _document(("Your pain is four out of ten today, 4 of 10.", SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "outcome_measures", aid="t0"),))
+        warnings = reconstruction_warnings(note, document)
+        # Four number words in the line: still ONE warning, for the line.
+        assert _line_codes(warnings) == [("number_source", "t0", SourceCoords(0, 0, 10))]
+        assert [w.severity for w in warnings] == ["review"]
+        assert warnings[0].section_key == "outcome_measures"
+
+    def test_a_clean_line_draws_neither(self) -> None:
+        document = _document(("My left knee is sore.", SPEAKER_1))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint"),))
+        assert reconstruction_warnings(note, document) == ()
+
+    def test_a_suspect_line_draws_suspect_source_and_a_suspect_number_line_both(self) -> None:
+        document = _suspect_document(
+            ("Pain is worse at night.", SPEAKER_1),
+            ("Pain seven out of ten.", SPEAKER_1),
+            ("My knee is sore.", SPEAKER_1),
+            suspect=(0, 1),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "presenting_complaint", aid="t1"),
+                _quoted(document, 2, "presenting_complaint", aid="t2"),
+            ),
+        )
+        warnings = reconstruction_warnings(note, document)
+        assert _line_codes(warnings) == [
+            ("suspect_source", "t0", SourceCoords(0, 0, 4)),
+            ("number_source", "t1", SourceCoords(1, 0, 4)),
+            ("suspect_source", "t1", SourceCoords(1, 0, 4)),
+        ]
+        assert len(warnings) == 3  # nothing on the clean third line
+
+    def test_an_invalid_or_mismatched_line_draws_neither(self) -> None:
+        document = _suspect_document(("Pain seven out of ten.", SPEAKER_1), suspect=(0,))
+        words = document.transcript_segments[0].transcript_words
+        tampered = NoteAssertion(
+            assertion_id="t0",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text="Pain eight out of ten.",
+                provenance="transcript",
+                source_coords=SourceCoords(0, 0, len(words) - 1),
+            ),
+        )
+        phantom = NoteAssertion(
+            assertion_id="t1",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text="anything", provenance="transcript", source_coords=SourceCoords(0, 0, 99)
+            ),
+        )
+        warnings = reconstruction_warnings(_note(document, (tampered, phantom)), document)
+        assert _codes(warnings) == ["reconstruction_mismatch", "source_coords_invalid"]
+
+    def test_a_partial_span_is_judged_by_its_own_words(self) -> None:
+        document = _document(("The knee is sore after 3 days.", SPEAKER_1))
+        words = document.transcript_segments[0].transcript_words
+        partial = NoteAssertion(
+            assertion_id="t0",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text=reconstruct_span_text(words[0:4]),
+                provenance="transcript",
+                source_coords=SourceCoords(0, 0, 3),
+            ),
+        )
+        assert reconstruction_warnings(_note(document, (partial,)), document) == ()
+
+    def test_line_marks_is_the_one_rule(self) -> None:
+        document = _suspect_document(
+            ("Pain seven out of ten.", SPEAKER_1),
+            ("My knee is sore.", SPEAKER_1),
+            suspect=(0,),
+        )
+        suspect_words = document.transcript_segments[0].transcript_words
+        plain_words = document.transcript_segments[1].transcript_words
+        assert line_marks(suspect_words) == ("number", "possibly not speech")
+        assert line_marks(suspect_words[2:4]) == ("possibly not speech",)
+        assert line_marks(plain_words) == ()
+        assert line_marks(()) == ()
+        assert line_marks(_words("twenty-one sets")) == ("number",)
+
+
+class TestSuspectWordsInTheChecks:
+    def test_a_suspect_line_left_out_draws_no_omission(self) -> None:
+        turns: tuple[Turn, ...] = (
+            ("My knee is sore.", SPEAKER_1),
+            ("Take paracetamol 500 twice daily.", SPEAKER_2),
+        )
+        plain = _document(*turns)
+        suspect = _suspect_document(*turns, suspect=(1,))
+        # Plain: the clinician's dose line, left out, is flagged on words 0..2.
+        plain_warnings = omission_warnings(_note(plain, ()), plain)
+        assert _codes(plain_warnings) == ["high_risk_omission"]
+        assert plain_warnings[0].source_coords == SourceCoords(1, 0, 2)
+        # Suspect: the same line left out draws nothing.
+        assert omission_warnings(_note(suspect, ()), suspect) == ()
+
+    def test_a_suspect_contradicting_line_still_raises_contradiction(self) -> None:
+        """D6's deliberate exception: Check 2 reads a suspect quoted line as
+        it reads any quoted line."""
+        document = _suspect_document(("the numbness is worse at night", SPEAKER_1), suspect=(0,))
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _authored("No numbness reported.", "red_flags_screening", aid="a1"),
+            ),
+        )
+        warnings = contradiction_warnings(note, document)
+        assert _codes(warnings) == ["contradiction"]
+        assert warnings[0].severity == "error"
 
 
 # ---------------------------------------------------------------------------

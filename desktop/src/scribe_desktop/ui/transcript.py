@@ -208,7 +208,10 @@ class TranscriptScreen(QWidget):
             Qt.TextInteractionFlag.NoTextInteraction
         )
 
-        self.legend_label = QLabel("Uncertain words are shown as [word?] - verify them.")
+        self.legend_label = QLabel(
+            "Uncertain words are shown as [word?] - verify them. A line marked "
+            f"{models.SUSPECT_SEGMENT_MARK} may be music or noise, not speech."
+        )
 
         # --- practitioner-profile plan D2: the attribution status line -------
         # OUTSIDE the generation group (peer round 19 PR-HIGH-004): the

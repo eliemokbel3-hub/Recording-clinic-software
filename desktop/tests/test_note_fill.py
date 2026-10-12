@@ -287,6 +287,65 @@ class TestAutofill:
 
 
 # ---------------------------------------------------------------------------
+# Invented-text guard D6 (Task 2.4) — a suspect word triggers nothing.
+# ---------------------------------------------------------------------------
+
+
+def _suspect_document(text: str, suspect: tuple[int, ...]) -> TranscriptDocument:
+    """One clinician segment whose words at ``suspect`` the transcription
+    guard marked as possibly not speech."""
+    words = tuple(
+        word.model_copy(update={"suspect": index in suspect})
+        for index, word in enumerate(_words(text))
+    )
+    return TranscriptDocument(
+        session_id=SESSION_ID,
+        created_at=datetime(2026, 10, 12, 9, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=(
+            TranscriptSegment(
+                start_seconds=0.0, end_seconds=5.0, speaker=SPEAKER_2, transcript_words=words
+            ),
+        ),
+    )
+
+
+class TestSuspectWordsTriggerNothing:
+    def test_a_suspect_trigger_word_proposes_nothing(self) -> None:
+        """Any rule — authored or learned, both are ``AutofillRule`` entries
+        of the config — whose trigger needs a suspect word stays silent."""
+        config = _config(rules=(_rule(),))
+        text = "we reviewed your home exercise programme"
+        assert len(autofill_proposals(_suspect_document(text, ()), config)) == 1
+        for suspect in ((3,), (4,), (3, 4)):
+            assert autofill_proposals(_suspect_document(text, suspect), config) == (), suspect
+
+    def test_a_suspect_word_is_a_barrier_not_a_gap(self) -> None:
+        """Skipping a suspect word must not join the words either side of it
+        into a trigger the speaker never said: a filler between the trigger
+        words is transparent (``test_matching_normalises_case_punctuation_and_fillers``),
+        the same filler marked suspect is not."""
+        config = _config(rules=(_rule(),))
+        text = "your home um exercise plan"
+        assert len(autofill_proposals(_suspect_document(text, ()), config)) == 1
+        assert autofill_proposals(_suspect_document(text, (2,)), config) == ()
+
+    def test_a_suspect_word_elsewhere_leaves_a_clean_trigger(self) -> None:
+        config = _config(rules=(_rule(),))
+        document = _suspect_document("la la your home exercise plan", (0, 1))
+        proposals = autofill_proposals(document, config)
+        assert len(proposals) == 1
+        # "home" is word index 3 -> 3 * 0.3 s.
+        assert proposals[0].trigger_start_seconds == pytest.approx(0.9)
+
+    def test_a_suspect_region_keyword_proposes_no_prefill(self) -> None:
+        config = _config(prefills=(_prefill(),))
+        assert detect_prefill_candidates(_suspect_document("the knee is sore", ()), config)
+        assert detect_prefill_candidates(_suspect_document("the knee is sore", (1,)), config) == ()
+
+
+# ---------------------------------------------------------------------------
 # Phase 1 carried item — the tokenisation pin becomes a call-site pin.
 # ---------------------------------------------------------------------------
 

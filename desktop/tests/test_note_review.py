@@ -559,6 +559,83 @@ class TestPhraseLearning:
         assert verdict.messages == (models.LEARNING_OPTED_OUT_HINT,)
 
 
+def _suspected(document: TranscriptDocument, segment_index: int) -> TranscriptDocument:
+    """``document`` with the LAST word of one segment marked suspect by the
+    transcription guard (invented-text guard D6)."""
+    segments = list(document.transcript_segments)
+    segment = segments[segment_index]
+    words = segment.transcript_words
+    marked = (*words[:-1], words[-1].model_copy(update={"suspect": True}))
+    segments[segment_index] = segment.model_copy(update={"transcript_words": marked})
+    return document.model_copy(update={"transcript_segments": tuple(segments)})
+
+
+class TestSuspectLinesTeachNothing:
+    """Invented-text guard D6 (Task 2.4): a line holding a suspect word is
+    refused AFTER the ownership test and the status read, with its own
+    message — for a phrase and for a shorthand rule alike."""
+
+    def test_phrase_learning_is_refused_after_the_status_read(self) -> None:
+        config = _config()
+        draft, document = _compose(config)
+        added = _added(document, _LEARNABLE_INDEX)
+        status = _Status(True)
+        verdict = note_review.consider_learning(
+            added,
+            draft=draft,
+            document=_suspected(document, _LEARNABLE_INDEX),
+            config=config,
+            learning_status=status,
+        )
+        assert status.calls == 1
+        assert verdict.queued is None
+        assert verdict.messages == (note_review.SUSPECT_LINE_NOT_LEARNED,)
+        assert note_review.SUSPECT_LINE_NOT_LEARNED == "Not learned: the line may not be speech."
+
+    def test_a_disabled_status_still_says_its_own_reason(self) -> None:
+        config = _config()
+        draft, document = _compose(config)
+        status = _Status(False, models.LEARNING_OPTED_OUT_HINT)
+        verdict = note_review.consider_learning(
+            _added(document, _LEARNABLE_INDEX),
+            draft=draft,
+            document=_suspected(document, _LEARNABLE_INDEX),
+            config=config,
+            learning_status=status,
+        )
+        assert verdict.messages == (models.LEARNING_OPTED_OUT_HINT,)
+
+    def test_shorthand_learning_is_refused_after_the_status_read(self) -> None:
+        config = _config()
+        draft, document = _compose(config)
+        status = _Status(True)
+        verdict = note_review.consider_rule_learning(
+            _typed(draft, "Mild knee sprain", replaces=provider_assertion_id(_DIAGNOSIS_INDEX)),
+            draft=draft,
+            document=_suspected(document, _DIAGNOSIS_INDEX),
+            config=config,
+            segment_index=_DIAGNOSIS_INDEX,
+            learning_status=status,
+        )
+        assert status.calls == 1
+        assert (verdict.rule, verdict.replacement) == (None, None)
+        assert verdict.messages == (note_review.SUSPECT_LINE_NOT_LEARNED,)
+
+    def test_another_speakers_suspect_line_says_the_ownership_reason(self) -> None:
+        config = _config()
+        draft, document = _compose(config)
+        status = _Status(True)
+        verdict = note_review.consider_learning(
+            _added(document, 4),
+            draft=draft,
+            document=_suspected(document, 4),
+            config=config,
+            learning_status=status,
+        )
+        assert status.calls == 0
+        assert verdict.messages == (models.LEARNING_NOT_ATTRIBUTED_NOTE,)
+
+
 def _moved(document: TranscriptDocument, segment_index: int, key: NoteSectionKey) -> NoteAssertion:
     """A whole utterance placed in ``key`` — a move as the learner sees it."""
     segment = document.transcript_segments[segment_index]

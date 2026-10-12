@@ -69,7 +69,7 @@ from datetime import UTC, datetime
 from importlib import resources
 from typing import TYPE_CHECKING, Final, Literal, NamedTuple, Protocol, Self, final
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 from scribe_desktop.session_store import SESSION_ID_PATTERN
 from scribe_desktop.transcription import (
@@ -81,6 +81,8 @@ from scribe_desktop.transcription import (
     TranscriptDocument,
     TranscriptWord,
     is_name_like_token,
+    is_number_token,
+    words_hold_suspect,
 )
 
 if TYPE_CHECKING:
@@ -289,11 +291,22 @@ def reconstruct_span_text(words: Sequence[TranscriptWord]) -> str:
 
 NoteWarningSeverity = Literal["error", "review"]
 
+UNKNOWN_REVIEW_WARNING: Final = "unknown_review_warning"
+# The validation-context key ``GeneratedNote.from_bytes`` sets (Task 2.8).
+_STORED_NOTE_CONTEXT: Final = "stored_note"
+
 NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # Check 1 — exact coordinate reconstruction (Task 5.1).
     "source_coords_invalid": "error",  # coordinates address words the transcript does not have
     "reconstruction_mismatch": "error",  # the span text is not what its coordinates say
     "low_confidence_source": "review",  # an INCLUDED source word below UNCERTAINTY_THRESHOLD
+    # Invented-text guard D5: ONE per quoted line, from the words under its
+    # coordinates (``line_marks``, emitted by Check 1) — a line holding a number, and
+    # a line holding a word the transcription guard marked ``suspect``. Each
+    # also marks its line wherever the note is shown (``LINE_MARK_CODES``),
+    # and "Acknowledge all" never clears either (``ui.models``).
+    "number_source": "review",
+    "suspect_source": "review",
     # Check 2 — structured contradictions (Task 5.2). Three codes because
     # severity is a property of the code: a contradiction resting on
     # transcript evidence whose words fall below UNCERTAINTY_THRESHOLD is
@@ -337,7 +350,44 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # error: the fallback IS the safe rendering, and the practitioner
     # acknowledges that the section reads as Clean clinical.
     "style_fallback": "review",
+    # Invented-text guard Task 2.8 (the 2026-10-12 amendment): what a STORED
+    # review warning whose code this build does not know reads as — written
+    # by a newer build, read back by this one after a rollback. Never
+    # emitted by a check; only ``GeneratedNote.from_bytes`` produces it.
+    UNKNOWN_REVIEW_WARNING: "review",
 }
+
+# Invented-text guard D5: the review codes that mark a QUOTED LINE where the
+# note is shown, each with its mark kind, in rendering order. The rendered
+# mark is ``check_mark(kind)`` — ``[check: number]`` in the Clean body, inside
+# the verbatim bracket, on the line editor's row and counted on a prose
+# section's "[includes …]" line.
+NUMBER_LINE_MARK: Final = "number"
+SUSPECT_LINE_MARK: Final = "possibly not speech"
+LINE_MARK_CODES: Final[Mapping[str, str]] = {
+    "number_source": NUMBER_LINE_MARK,
+    "suspect_source": SUSPECT_LINE_MARK,
+}
+
+
+def check_mark(kind: str) -> str:
+    """The mark text for one line-mark ``kind`` (``LINE_MARK_CODES``)."""
+    return f"check: {kind}"
+
+
+def line_marks(words: Sequence[TranscriptWord]) -> tuple[str, ...]:
+    """The line-mark kinds a quoted line's ``words`` earn, in
+    ``LINE_MARK_CODES`` order (invented-text guard D5): ``NUMBER_LINE_MARK``
+    when any word is a number (``is_number_token``, the transcript's own
+    rule), ``SUSPECT_LINE_MARK`` when any word is ``suspect``. THE one rule:
+    Check 1 emits its codes from it and the line editor marks its rows from
+    it (the editor cannot read the warnings). Pure; reads no config."""
+    kinds: list[str] = []
+    if any(is_number_token(word.word_text) for word in words):
+        kinds.append(NUMBER_LINE_MARK)
+    if words_hold_suspect(words):
+        kinds.append(SUSPECT_LINE_MARK)
+    return tuple(kinds)
 
 
 class SourceCoords(NamedTuple):
@@ -596,6 +646,32 @@ class NoteWarning(BaseModel):
     # check that gives it meaning.
     acknowledged: bool = False
 
+    @model_validator(mode="before")
+    @classmethod
+    def _read_stored_unknown_review(cls, data: object, info: ValidationInfo) -> object:
+        """Invented-text guard Task 2.8 (the 2026-10-12 amendment): a STORED
+        warning — validated under ``GeneratedNote.from_bytes``'s context only —
+        whose code this build does not know and whose stored severity is
+        ``review`` reads as ``UNKNOWN_REVIEW_WARNING`` (the original code text
+        is not kept), so a note a newer build wrote stays readable after a
+        rollback and still gates Save as a review group. An unknown code of
+        any other severity, a registered code at the wrong severity, and a
+        warning constructed in code (no context) are refused by
+        ``_check_code`` exactly as before."""
+        context = info.context
+        if not (isinstance(context, Mapping) and context.get(_STORED_NOTE_CONTEXT) is True):
+            return data
+        if not isinstance(data, Mapping):
+            return data
+        code = data.get("note_warning_code")
+        if (
+            data.get("severity") == "review"
+            and isinstance(code, str)
+            and code not in NOTE_WARNING_SEVERITY
+        ):
+            return {**data, "note_warning_code": UNKNOWN_REVIEW_WARNING}
+        return data
+
     @model_validator(mode="after")
     def _check_code(self) -> Self:
         expected = NOTE_WARNING_SEVERITY.get(self.note_warning_code)
@@ -757,7 +833,10 @@ class GeneratedNote(BaseModel):
 
     @classmethod
     def from_bytes(cls, blob: bytes) -> GeneratedNote:
-        return cls.model_validate_json(blob)
+        """A stored note, read back — the ONE path that tolerates a review
+        warning code from a newer build (``NoteWarning``'s
+        ``_read_stored_unknown_review``, invented-text guard Task 2.8)."""
+        return cls.model_validate_json(blob, context={_STORED_NOTE_CONTEXT: True})
 
 
 # ---------------------------------------------------------------------------
@@ -811,11 +890,43 @@ def is_prefilled(assertion: NoteAssertion) -> bool:
     return decision is not None and decision.decided_by == "config"
 
 
-def assertion_label(assertion: NoteAssertion) -> str:
+def assertion_label(assertion: NoteAssertion, marks: Sequence[str] = ()) -> str:
     """The bracketed label a rendered line carries: its provenance label,
-    prefixed by ``PREFILLED_MARK`` when the line arrived pre-filled."""
+    prefixed by its marks — ``marks`` when given (``line_marks_by_assertion``:
+    the pre-filled mark and the check marks, one convention), else
+    ``PREFILLED_MARK`` when the line arrived pre-filled."""
     label = provenance_label(assertion.provenance)
-    return f"{PREFILLED_MARK} - {label}" if is_prefilled(assertion) else label
+    prefix = tuple(marks) or ((PREFILLED_MARK,) if is_prefilled(assertion) else ())
+    return " - ".join((*prefix, label))
+
+
+def line_marks_by_assertion(
+    note: GeneratedNote, *, check_marks: bool = True
+) -> dict[str, tuple[str, ...]]:
+    """Every marked line's marks, by assertion id (invented-text guard D5):
+    ``PREFILLED_MARK`` for a line the practitioner's config pre-filled, then
+    — with ``check_marks`` — ``check_mark(kind)`` for each line-mark review
+    code (``LINE_MARK_CODES``, in that order) the note's warnings hold on
+    the line. ONE map read by every rendering, so the pre-filled mark and
+    the check marks follow one convention; the two never meet on one line
+    (a pre-filled line has no coordinates, a check code sits only on a
+    quoted one). Unmarked lines are absent."""
+    coded: dict[str, set[str]] = {}
+    if check_marks:
+        for warning in note.note_warnings:
+            if warning.note_warning_code in LINE_MARK_CODES and warning.assertion_id is not None:
+                coded.setdefault(warning.assertion_id, set()).add(warning.note_warning_code)
+    marks: dict[str, tuple[str, ...]] = {}
+    for section in note.note_sections:
+        for assertion in section.note_assertions:
+            found: list[str] = [PREFILLED_MARK] if is_prefilled(assertion) else []
+            codes = coded.get(assertion.assertion_id, set())
+            found.extend(
+                check_mark(kind) for code, kind in LINE_MARK_CODES.items() if code in codes
+            )
+            if found:
+                marks[assertion.assertion_id] = tuple(found)
+    return marks
 
 
 def input_texts_digest(texts: Sequence[str]) -> str:
@@ -888,8 +999,9 @@ def attach_style_renderings(
     ``failed`` renderings — one per section — replacing any the note held,
     so the note's warnings and its renderings cannot disagree (Check 5's
     verdict is carried by the failed rendering; ``note_check`` judges, this
-    re-emits the carriage). The result is rebuilt through the full
-    validators (the ``note.enc`` round trip), never an unvalidated copy."""
+    re-emits the carriage). The result is rebuilt through the full STRICT
+    validators — never an unvalidated copy, and never ``from_bytes``, whose
+    stored-note tolerance (Task 2.8) is for notes read back, not built here."""
     sections = {section.section_key: section for section in note.note_sections}
     chosen: dict[NoteSectionKey, StyleRendering] = {}
     for rendering in renderings:
@@ -911,41 +1023,61 @@ def attach_style_renderings(
     updated = note.model_copy(
         update={"style_renderings": kept, "note_warnings": (*others, *fallbacks)}
     )
-    return GeneratedNote.from_bytes(updated.to_bytes())
+    return GeneratedNote.model_validate_json(updated.to_bytes())
 
 
-def _clean_lines(section: GeneratedSection, *, marked: bool) -> list[str]:
+def _clean_lines(
+    section: GeneratedSection, marks: Mapping[str, Sequence[str]], *, marked: bool
+) -> list[str]:
     """One terse line per assertion, in the note's order: the confirmed
     text exactly as confirmed — no substitution, no bullet, no provenance
     tag (the line editor keeps the per-line provenance; the tag is review
-    apparatus, not clinical content). With ``marked`` a pre-filled line
-    keeps its D5 mark."""
+    apparatus, not clinical content). With ``marked`` a line keeps its
+    marks from ``marks`` (``line_marks_by_assertion``), each as
+    ``  [<mark>]`` — the D5 pre-filled mark and the invented-text guard's
+    check marks alike."""
     lines: list[str] = []
     for assertion in section.note_assertions:
         text = assertion.text
-        if marked and is_prefilled(assertion):
-            text = f"{text}  [{PREFILLED_MARK}]"
+        if marked:
+            text += "".join(f"  [{mark}]" for mark in marks.get(assertion.assertion_id, ()))
         lines.append(text)
     return lines
 
 
-def prefilled_section_mark(section: GeneratedSection) -> str | None:
-    """D5's mark for a section rendered as PROSE (codex round 22 PR-MED-035):
-    a pre-filled line no longer exists as a line inside a paragraph, so the
-    prose block carries the mark at SECTION level — how many of its lines
-    the practitioner's own config pre-filled — built from the same
-    ``PREFILLED_MARK`` text; None when the section holds none. The line
-    editor still names the lines themselves, and the counted Save label
-    counts the same lines."""
-    count = sum(1 for assertion in section.note_assertions if is_prefilled(assertion))
-    if count == 0:
+def section_marks_line(
+    section: GeneratedSection, marks: Mapping[str, Sequence[str]]
+) -> str | None:
+    """The marks of a section rendered as PROSE (codex round 22 PR-MED-035;
+    invented-text guard D5): a marked line no longer exists as a line inside
+    a paragraph, so the prose block carries its marks at SECTION level — how
+    many of its lines carry each mark, in ``line_marks_by_assertion``'s
+    order — or None when none is marked. With only pre-filled lines it is
+    exactly the earlier "[includes N line(s) pre-filled by your config]";
+    otherwise the counts are joined with "; ". The line editor still names
+    the lines themselves."""
+    order = (PREFILLED_MARK, *(check_mark(kind) for kind in LINE_MARK_CODES.values()))
+    parts: list[str] = []
+    for mark in order:
+        count = sum(
+            1
+            for assertion in section.note_assertions
+            if mark in marks.get(assertion.assertion_id, ())
+        )
+        if count:
+            parts.append(f"{count} {'line' if count == 1 else 'lines'} {mark}")
+    if not parts:
         return None
-    noun = "line" if count == 1 else "lines"
-    return f"[includes {count} {noun} {PREFILLED_MARK}]"
+    return f"[includes {'; '.join(parts)}]"
 
 
 def render_section_lines(
-    note: GeneratedNote, section: GeneratedSection, style: NoteStyle, *, apparatus: bool
+    note: GeneratedNote,
+    section: GeneratedSection,
+    style: NoteStyle,
+    *,
+    apparatus: bool,
+    check_marks: bool = True,
 ) -> list[str]:
     """One section's body lines under ``style``, WITHOUT its title — the
     one per-section renderer behind both Copy (``render_note``) and the
@@ -954,35 +1086,45 @@ def render_section_lines(
     newline gives several lines.
 
     With ``apparatus`` the lines are exactly what the Note tab shows:
-    ``verbatim`` — each assertion as ONE bullet with its provenance tag
-    (never assembled prose — assertions render on hard boundaries);
-    ``clean`` — the confirmed text exactly as confirmed, one line per
-    assertion, a pre-filled line keeping its D5 mark; the prose styles —
-    the usable rendering (``usable_rendering``) followed by the section-level
-    pre-filled mark, or else the section's ``clean`` lines.
+    ``verbatim`` — each assertion as ONE bullet with its provenance tag,
+    its marks before the tag inside the bracket (never assembled prose —
+    assertions render on hard boundaries); ``clean`` — the confirmed text
+    exactly as confirmed, one line per assertion, a marked line keeping its
+    marks after it (the D5 pre-filled mark, the check marks); the prose
+    styles — the usable rendering (``usable_rendering``) followed by the
+    section's "[includes …]" marks line (``section_marks_line``), or else
+    the section's ``clean`` lines.
 
     Without ``apparatus`` the lines are the bare clinical text: no bullet,
     tag or mark and no "[includes …]" line — ``verbatim`` renders as
     ``clean`` lines, and a prose style still falls back to ``clean`` per
-    section exactly as above. Display text only, never logged here."""
+    section exactly as above. Display text only, never logged here.
+
+    The marks are ``line_marks_by_assertion`` (invented-text guard D5),
+    computed once here: with ``check_marks`` False (Copy — decision 0.5) the
+    check marks are left out and the pre-filled mark stays."""
+    marks = line_marks_by_assertion(note, check_marks=check_marks) if apparatus else {}
     if style == "verbatim" and apparatus:
         return [
-            f"  - {assertion.text}  [{assertion_label(assertion)}]"
+            f"  - {assertion.text}  "
+            f"[{assertion_label(assertion, marks.get(assertion.assertion_id, ()))}]"
             for assertion in section.note_assertions
         ]
     if style in ("own_voice", "narrative"):
         rendering = usable_rendering(note, section)
         if rendering is not None:
             lines = rendering.prose_text.split("\n")
-            mark = prefilled_section_mark(section) if apparatus else None
+            mark = section_marks_line(section, marks) if apparatus else None
             if mark is not None:
                 lines.append(mark)
             return lines
-    return _clean_lines(section, marked=apparatus)
+    return _clean_lines(section, marks, marked=apparatus)
 
 
-def render_note(note: GeneratedNote, style: NoteStyle) -> str:
+def render_note(note: GeneratedNote, style: NoteStyle, *, check_marks: bool = True) -> str:
     """The note body under ``style`` — display text only, never logged here.
+    ``check_marks`` False is Copy's rendering (invented-text guard decision
+    0.5): the check marks left out, the pre-filled mark kept.
 
     Each section is its title — with a colon under ``verbatim``, without one
     otherwise — followed by ``render_section_lines(..., apparatus=True)``:
@@ -997,7 +1139,9 @@ def render_note(note: GeneratedNote, style: NoteStyle) -> str:
     for section in note.note_sections:
         title = SECTION_TITLES[section.section_key]
         heading = f"{title}:" if style == "verbatim" else title
-        lines = render_section_lines(note, section, style, apparatus=True)
+        lines = render_section_lines(
+            note, section, style, apparatus=True, check_marks=check_marks
+        )
         blocks.append("\n".join([heading, *lines]))
     if not blocks:
         return NO_NOTE_CONTENT
@@ -1694,7 +1838,14 @@ class ExtractiveNoteProvider:
     clinician-owned, and the utterance carries no cue of either layer in any
     section (``any_cue_matches``). One hop: a carried utterance never
     carries the next. "Previous" skips utterances with nothing to quote; any
-    other dropped utterance breaks the chain. ``_route`` stays cue-only.
+    other dropped utterance breaks the chain. ``_route`` stays cue-only. A
+    segment holding a ``suspect`` word never opens a carry (invented-text
+    guard D6).
+
+    Deliberately NOT excluded (invented-text guard decision 0.1, D6): the
+    router reads a suspect word like any other, so a cue in a suspect line
+    still routes it — into the note with its ``[check: possibly not
+    speech]`` mark and its own review warning, never dropped silently.
     """
 
     def __init__(
@@ -1740,9 +1891,12 @@ class ExtractiveNoteProvider:
                 continue
             key = self._route(request, utterance)
             if key is not None:
-                # (1) Cue-routed: emitted, and it may open a chain.
+                # (1) Cue-routed: emitted, and it may open a chain — never
+                # from a segment holding a word the transcription guard
+                # marked as possibly not speech (invented-text guard D6).
                 prev_key, prev_cued = key, True
-                prev_speaker, prev_open = utterance.speaker, ends_mid_sentence(words)
+                prev_speaker = utterance.speaker
+                prev_open = ends_mid_sentence(words) and not words_hold_suspect(words)
             elif (
                 prev_cued
                 and prev_key is not None
@@ -2746,17 +2900,21 @@ __all__ = [
     "DIGEST_ALGORITHM",
     "DIGEST_PATTERN",
     "DRAFT_BASE_PROVENANCES",
+    "LINE_MARK_CODES",
     "MAX_ASSERTION_CHARS",
     "MAX_SECTION_PROSE_CHARS",
     "MOCK_BEHAVIOURS",
     "NOTE_SCHEMA_VERSION",
     "NOTE_WARNING_SEVERITY",
     "NO_NOTE_CONTENT",
+    "NUMBER_LINE_MARK",
     "PREFILLED_MARK",
     "PROVENANCE_LABELS",
     "SECTION_CUES_FILENAME",
     "SECTION_INDEX",
     "SECTION_TITLES",
+    "SUSPECT_LINE_MARK",
+    "UNKNOWN_REVIEW_WARNING",
     "CanonicalSection",
     "ConfirmationDecision",
     "DecidedBy",
@@ -2790,6 +2948,7 @@ __all__ = [
     "admissible_sections",
     "any_cue_matches",
     "assertion_label",
+    "check_mark",
     "compose_draft",
     "content_tokens",
     "digest_bytes",
@@ -2799,6 +2958,8 @@ __all__ = [
     "is_interrogative",
     "is_prefilled",
     "layered_section",
+    "line_marks",
+    "line_marks_by_assertion",
     "manual_assertion_id",
     "normalise_token",
     "provenance_label",
@@ -2807,6 +2968,7 @@ __all__ = [
     "render_note",
     "section_admits_utterance",
     "section_input_digest",
+    "section_marks_line",
     "speaker_role",
     "spoken_by_confirmed_clinician",
     "strip_token_punctuation",

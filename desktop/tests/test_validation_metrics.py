@@ -438,6 +438,76 @@ class TestDoseChange:
         assert rule_failures(OPTION_A, _measured(metrics)) == ()
 
 
+def _all_suspect(document: TranscriptDocument) -> TranscriptDocument:
+    """``document`` with every word marked ``suspect`` (invented-text guard)."""
+    return document.model_copy(
+        update={
+            "transcript_segments": tuple(
+                segment.model_copy(
+                    update={
+                        "transcript_words": tuple(
+                            word.model_copy(update={"suspect": True})
+                            for word in segment.transcript_words
+                        )
+                    }
+                )
+                for segment in document.transcript_segments
+            )
+        }
+    )
+
+
+class TestSuspectWordsAreNeverWarned:
+    """Invented-text guard D6 (Task 2.4): Check 4 never flags a suspect word,
+    and BOTH harness word-level predicates (``warned`` and run 1's
+    ``warned_v1``) mirror it — so a suspect line left out counts as a silent
+    omission under both, never a warned one."""
+
+    _LINE = "paracetamol 500 mg for the left knee"
+
+    def _script(self) -> EncounterScript:
+        return _script(
+            ("clinician", self._LINE),
+            facts=[_fact("dose", "paracetamol 500 mg", 0), _fact("laterality", "left knee", 0)],
+        )
+
+    def test_a_plain_line_left_out_is_warned_under_both_predicates(self) -> None:
+        document = _doc((SPEAKER_1, self._LINE))
+        metrics = encounter_metrics(document, _checked(document), self._script())
+        assert [w.note_warning_code for w in _checked(document).note_warnings] == [
+            "high_risk_omission"
+        ]
+        assert [(f.verdict, f.warned) for f in metrics.facts] == [
+            ("omitted", True),
+            ("omitted", True),
+        ]
+        # Run 1's predicate warns the dose (a number, a medication), not the side.
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
+
+    def test_the_same_line_suspect_draws_no_omission_and_is_silent_under_both(self) -> None:
+        document = _all_suspect(_doc((SPEAKER_1, self._LINE)))
+        assert omission_warnings(_note(document), document) == ()
+        metrics = encounter_metrics(document, _checked(document), self._script())
+        assert [(f.verdict, f.warned) for f in metrics.facts] == [
+            ("omitted", False),
+            ("omitted", False),
+        ]
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (2, 2)
+
+    def test_both_predicates_ignore_a_suspect_word_even_under_a_warning(self) -> None:
+        """The harness re-derives ``warned`` per word: a hand-made omission
+        warning on the segment still credits no suspect word."""
+        document = _all_suspect(_doc((SPEAKER_1, self._LINE)))
+        warning = NoteWarning(
+            note_warning_code="high_risk_omission",
+            severity="review",
+            source_coords=SourceCoords(0, 0, 6),
+        )
+        metrics = encounter_metrics(document, _note(document, warnings=(warning,)), self._script())
+        assert [f.warned for f in metrics.facts] == [False, False]
+        assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (2, 2)
+
+
 # ---------------------------------------------------------------------------
 # metric amendment 2026-10-11: canonical spelling (note-routing-omissions D10)
 # ---------------------------------------------------------------------------
@@ -674,8 +744,11 @@ class TestSpellingAmendment:
         )
         document = _doc((SPEAKER_1, "take five ?hundred mg daily"))
         note = _checked(document, 0)
+        # Invented-text guard D5: the quoted line also draws ONE per-line
+        # `number_source`, which never counts as surfacing (below).
         assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
-            ("low_confidence_source", SourceCoords(0, 2, 2))
+            ("low_confidence_source", SourceCoords(0, 2, 2)),
+            ("number_source", SourceCoords(0, 0, 4)),
         ]
         fact = _only_fact(encounter_metrics(document, note, script))
         assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", True)
@@ -1006,7 +1079,8 @@ class TestUncertainty:
         document = _doc((SPEAKER_1, "paracetamol ?500 mg daily"))
         note = _checked(document, 0)
         assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
-            ("low_confidence_source", SourceCoords(0, 1, 1))
+            ("low_confidence_source", SourceCoords(0, 1, 1)),
+            ("number_source", SourceCoords(0, 0, 3)),  # invented-text guard D5
         ]
         fact = _only_fact(encounter_metrics(document, note, self._script()))
         assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", True)
@@ -1017,6 +1091,27 @@ class TestUncertainty:
         assert _only_fact(metrics).uncertainty_surfaced is False
         assert metrics.uncertainty_missed == 1
         assert rule_failures(OPTION_A, _measured(metrics)) == ("uncertainty_not_surfaced",)
+
+    def test_a_per_line_check_code_never_surfaces_it(self) -> None:
+        """Invented-text guard Phase 2 (leg ex2): rule v1's surfacing reads
+        `low_confidence_source` only. A `number_source` or `suspect_source`
+        spans the whole quoted line — the fact's own words included — and
+        must not surface its uncertainty, or the metric would move silently
+        (pilot plan Constraint 12)."""
+        document = _doc((SPEAKER_1, "paracetamol 500 mg daily"))
+        clean = _checked(document, 0)
+        assert [w.note_warning_code for w in clean.note_warnings] == ["number_source"]
+        line_wide = NoteWarning(
+            note_warning_code="suspect_source",
+            severity="review",
+            section_key=clean.note_warnings[0].section_key,
+            assertion_id=clean.note_warnings[0].assertion_id,
+            source_coords=SourceCoords(0, 0, 3),
+        )
+        marked = clean.model_copy(update={"note_warnings": (*clean.note_warnings, line_wide)})
+        for note in (clean, marked):
+            fact = _only_fact(encounter_metrics(document, note, self._script()))
+            assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
 
     def test_every_repeated_statement_must_surface_it(self) -> None:
         """ref = hyp (one optimal alignment, cost 0) with the fact stated twice

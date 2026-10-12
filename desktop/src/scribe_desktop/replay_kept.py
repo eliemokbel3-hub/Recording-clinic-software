@@ -148,6 +148,7 @@ from scribe_desktop.validation import (
     align_transcripts,
     confirm_all,
     first_detected_prefill,
+    suspect_segment_count,
 )
 
 _SESSION_ID_RE: Final = re.compile(SESSION_ID_PATTERN)
@@ -277,7 +278,9 @@ class ReplayRow:
     """One replayed entry: the session id (pattern-checked by the store),
     seconds of audio, the kept and new model names (shape-checked when
     printed), the word error parts kept -> new, label agreement and the note
-    leg. Numbers and ids only."""
+    leg, and how many of the NEW transcript's segments hold a suspect word
+    (invented-text guard D8 — the one number the guard gives on real audio).
+    Numbers and ids only."""
 
     session_id: str
     seconds: float
@@ -288,6 +291,7 @@ class ReplayRow:
     edit_distance: int
     agreement: float | None
     note: NoteDrift
+    suspect_segments: int
 
     @property
     def drift(self) -> float | None:
@@ -375,6 +379,7 @@ def _replay_entry(
         edit_distance=alignment.words.edit_distance,
         agreement=agreement,
         note=note,
+        suspect_segments=suspect_segment_count(document),
     )
 
 
@@ -422,15 +427,17 @@ def render_report(
         "- Note config: shipped defaults - drift includes your learned cues",
         "",
         "| Session | Seconds | Kept model | New model | Kept words | New words | Edit distance "
-        "| Drift WER | Label agreement | Sections missing | Check errors | Check reviews |",
-        "|---|---|---|---|---|---|---|---|---|---|---|---|",
+        "| Drift WER | Label agreement | Sections missing | Check errors | Check reviews "
+        "| Suspect segments |",
+        "|---|---|---|---|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         lines.append(
             f"| {row.session_id} | {row.seconds:.1f} | {_model(row.kept_model)} "
             f"| {_model(row.new_model)} | {row.kept_words} | {row.new_words} "
             f"| {row.edit_distance} | {_fraction(row.drift)} | {_fraction(row.agreement)} "
-            f"| {_count(row.note.sections_missing)} | {row.note.errors} | {row.note.reviews} |"
+            f"| {_count(row.note.sections_missing)} | {row.note.errors} | {row.note.reviews} "
+            f"| {row.suspect_segments} |"
         )
     kept_words = sum(row.kept_words for row in rows)
     edits = sum(row.edit_distance for row in rows)
@@ -439,7 +446,9 @@ def render_report(
         "",
         f"Totals: {len(rows)} replayed, {errors} error(s), {skipped} skipped; "
         f"{sum(row.seconds for row in rows):.1f} s of audio; pooled drift WER "
-        f"{_fraction(pooled)} ({edits} edits over {kept_words} kept words).",
+        f"{_fraction(pooled)} ({edits} edits over {kept_words} kept words). "
+        f"Suspect segments in the new transcripts: "
+        f"{sum(row.suspect_segments for row in rows)}.",
     ]
     return "\n".join(lines)
 

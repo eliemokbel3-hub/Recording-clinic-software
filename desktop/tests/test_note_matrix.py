@@ -417,7 +417,8 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
             ),
             ExpectedAssertion("diagnosis", 3, "You have a patellofemoral irritation."),
         ),
-        expected_reviews=(),
+        # Invented-text guard D5: a quoted line with a number ("three").
+        expected_reviews=("number_source",),
         material_segments=(2, 3),
         expected_mapped=(
             ("t-presenting", (0, 1)),
@@ -473,7 +474,14 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         # clinician-spoken content, dropped -> flagged, not silently lost.
         # Since the note-routing-omissions plan D2 the patient's uncued
         # "paracetamol 500" (segment 1) is flagged too: a second warning.
-        expected_reviews=("high_risk_omission", "high_risk_omission"),
+        # Invented-text guard D5: each quoted "four out of ten" line draws
+        # one `number_source`.
+        expected_reviews=(
+            "high_risk_omission",
+            "high_risk_omission",
+            "number_source",
+            "number_source",
+        ),
         material_segments=(2, 3),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
     ),
@@ -505,7 +513,9 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
                 "objective_examination", 1, "On examination the knee flexion is 90 degrees."
             ),
         ),
-        expected_reviews=("low_confidence_source",),
+        # Invented-text guard D5: the "90 degrees" line also draws its one
+        # per-line `number_source`, beside the per-word low confidence.
+        expected_reviews=("low_confidence_source", "number_source"),
         material_segments=(1,),
         expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
     ),
@@ -559,7 +569,7 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
             ),
             ExpectedAssertion("follow_up_review", 1, "See you in two weeks then."),
         ),
-        expected_reviews=(),
+        expected_reviews=("number_source",),  # "two" (invented-text guard D5)
         material_segments=(1,),
         expected_mapped=(("t-presenting", (0,)), ("t-management", (1,))),
     ),
@@ -813,14 +823,20 @@ class MockCell(NamedTuple):
     expected_statements: tuple[MockStatement, ...]
 
 
+# Invented-text guard D5: Check 1 adds ONE `number_source` per quoted line
+# that reconstructs exactly and holds a number — AB's segments 0 ("3 out of
+# ten") and 2 ("500"), AB2's segment 1 ("20"). A mutated line draws none.
+_N1 = ("number_source",)
+_N2 = ("number_source", "number_source")
+
 MOCK_CELLS: tuple[MockCell, ...] = (
-    MockCell("ab-faithful", AB_TURNS, "faithful", (), (), _AB_FAITHFUL),
+    MockCell("ab-faithful", AB_TURNS, "faithful", (), _N2, _AB_FAITHFUL),
     MockCell(
         "ab-fabricated",
         AB_TURNS,
         "fabricated_fact",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(
             _AB_FAITHFUL, 0, "The patient reported a fall from a ladder last Tuesday"
         ),
@@ -830,7 +846,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "laterality_flip",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(
             _AB_FAITHFUL,
             0,
@@ -845,7 +861,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "dose_change",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(_AB_FAITHFUL, 3, "Take paracetamol 1000 twice daily."),
     ),
     MockCell(
@@ -853,7 +869,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "negation_flip",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(
             _AB_FAITHFUL, 0, "Margaret says her left knee is sore, about 3 out of ten."
         ),
@@ -863,7 +879,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "name_substitution",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(
             _AB_FAITHFUL, 0, "Wilson says her left knee is not sore, about 3 out of ten."
         ),
@@ -876,7 +892,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "invented_diagnosis",
         ("reconstruction_mismatch", "role_unconfirmed"),
-        (),
+        _N2,
         (
             *_AB_FAITHFUL,
             MockStatement(
@@ -889,7 +905,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "invented_plan",
         ("reconstruction_mismatch", "role_unconfirmed"),
-        (),
+        _N2,
         (
             *_AB_FAITHFUL,
             MockStatement(
@@ -902,7 +918,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "invented_referral",
         ("reconstruction_mismatch",),
-        (),
+        _N2,
         (
             *_AB_FAITHFUL,
             MockStatement(
@@ -915,7 +931,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "invented_investigation",
         ("reconstruction_mismatch",),
-        (),
+        _N2,
         (
             *_AB_FAITHFUL,
             MockStatement(
@@ -932,7 +948,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "over_omission",
         (),
-        ("high_risk_omission", "high_risk_omission"),
+        ("high_risk_omission", "high_risk_omission", "number_source"),
         _AB_FAITHFUL[:1],
     ),
     # THE injection cell: the quote is byte-exact (grounded by design), so
@@ -943,7 +959,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "obeys_injection",
         ("role_unconfirmed",),
-        (),
+        _N2,
         (
             *_AB_FAITHFUL,
             _whole_segment(AB_TURNS, "management_plan", 3, AB_TURNS[3][0], SPEAKER_1),
@@ -970,16 +986,16 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB_TURNS,
         "speaker_misattribution",
         (),
-        (),
+        _N2,
         (_AB_FAITHFUL[0]._replace(speaker=SPEAKER_2), *_AB_FAITHFUL[1:]),
     ),
-    MockCell("ab2-faithful", AB2_TURNS, "faithful", (), (), _AB2_FAITHFUL),
+    MockCell("ab2-faithful", AB2_TURNS, "faithful", (), _N1, _AB2_FAITHFUL),
     MockCell(
         "ab2-laterality",
         AB2_TURNS,
         "laterality_flip",
         ("reconstruction_mismatch",),
-        (),
+        _N1,
         _retexted(_AB2_FAITHFUL, 0, "The left ankle swelling is much better."),
     ),
     MockCell(
@@ -1011,7 +1027,7 @@ MOCK_CELLS: tuple[MockCell, ...] = (
         AB2_TURNS,
         "speaker_misattribution",
         (),
-        (),
+        _N1,
         (_AB2_FAITHFUL[0]._replace(speaker=SPEAKER_2), *_AB2_FAITHFUL[1:]),
     ),
 )
@@ -1202,6 +1218,9 @@ class CleanCompositionCell(NamedTuple):
     # Round 22 PR-MED-002: clean cells carry the same full expected-output
     # oracle as every other non-raising cell — no auxiliary-cell exemption.
     expected_statements: tuple[MockStatement, ...]
+    # Invented-text guard D5: quoted lines holding a number, each drawing one
+    # `number_source` review beside the authored lines' `clinician_asserted`.
+    quoted_number_lines: int = 0
 
 
 # Every clean cell holds >= 1 SAME-VALUED matched authored/quoted anchor
@@ -1262,6 +1281,7 @@ CLEAN_COMPOSITION_CELLS: tuple[CleanCompositionCell, ...] = (
             _authored_statement("management_plan", "Paracetamol 500 mg discussed."),
             _authored_statement("management_plan", "Ibuprofen 400 mg discussed."),
         ),
+        quoted_number_lines=1,  # "500 mg ... 400 mg"
     ),
     CleanCompositionCell(
         "clean-multi-measurement",
@@ -1275,6 +1295,7 @@ CLEAN_COMPOSITION_CELLS: tuple[CleanCompositionCell, ...] = (
             ),
             _authored_statement("outcome_measures", "Left knee flexion measured."),
         ),
+        quoted_number_lines=1,  # "90 degrees ... 10 degrees"
     ),
     CleanCompositionCell(
         "clean-negation-anchors",
@@ -1341,7 +1362,10 @@ class TestCleanCompositionCells:
         )
         errors, reviews = _split_codes(warnings)
         assert errors == []
-        assert reviews == ["clinician_asserted"] * len(cell.authored)
+        assert reviews == (
+            ["clinician_asserted"] * len(cell.authored)
+            + ["number_source"] * cell.quoted_number_lines
+        )
         # Round 22 PR-MED-002: the witness measures the MATCHED population —
         # at least one same-valued authored/quoted anchor pair per cell, so
         # zero-false-positive is proven over a comparison that happened.

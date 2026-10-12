@@ -152,6 +152,7 @@ from scribe_desktop.transcription import (
     is_number_token,
     resolve_whisper_model,
     whisper_model_available,
+    words_hold_suspect,
 )
 from scribe_desktop.ui.models import (
     ProseStage,
@@ -1301,12 +1302,17 @@ def encounter_metrics(
     def word_info(position: tuple[int, int]) -> _WordInfo:
         """One transcript word's flags, read from its RAW text."""
         segment_index, word_index = position
-        word_text = segments[segment_index].transcript_words[word_index].word_text
+        word = segments[segment_index].transcript_words[word_index]
+        word_text = word.word_text
         first_in_segment = word_index == 0
         clinician = segments[segment_index].speaker == note.clinician_speaker
         # The note's OWN warning on the segment is required either way, so a
-        # provider is never credited for a flag it did not raise.
-        flaggable = position not in covered and segment_index in omission_segments
+        # provider is never credited for a flag it did not raise. A suspect
+        # word is never flaggable — Check 4 excludes it (invented-text guard
+        # D6), so both predicates mirror the checker.
+        flaggable = (
+            position not in covered and segment_index in omission_segments and not word.suspect
+        )
         return _WordInfo(
             covered_any=position in covered,
             covered_all=position in covered,
@@ -1502,6 +1508,10 @@ class EncounterOutcome:
     words: WordErrors | None = None
     metrics: EncounterMetrics | None = None
     prose: ProseCounts | None = None
+    # Invented-text guard D8: the transcript's segments holding a suspect
+    # word (``suspect_segment_count``); None when no transcript was made. A
+    # count only — no rule reads it.
+    suspect_segments: int | None = None
 
     def __post_init__(self) -> None:
         if not _ENCOUNTER_ID_RE.fullmatch(self.encounter_id):
@@ -1510,6 +1520,8 @@ class EncounterOutcome:
         if self.error_type is not None and not _ERROR_TYPE_RE.fullmatch(self.error_type):
             raise ValueError("error_type must be an exception type name")
         _require_count(self.segment_count, "segment_count")
+        if self.suspect_segments is not None:
+            _require_count(self.suspect_segments, "suspect_segments")
         # Round 12 LOW-002 (Constraint 7 at run time, as round 11 LOW-012
         # did for ``EncounterMetrics``): what the rule and the report read
         # is the validated type, never a string.
@@ -1658,6 +1670,17 @@ def read_label_track(labels: Path) -> LabelTrack:
     return parse_audacity_labels(track_bytes.decode("utf-8-sig"))
 
 
+def suspect_segment_count(document: TranscriptDocument) -> int:
+    """How many of ``document``'s segments hold a ``suspect`` word — the
+    invented-text guard's ONE count (D8), shared with the kept-recordings
+    replay. A number only; it reads no word text."""
+    return sum(
+        1
+        for segment in document.transcript_segments
+        if words_hold_suspect(segment.transcript_words)
+    )
+
+
 def evaluate_encounter(
     encounter_id: str, script: EncounterScript, wav: Path, labels: Path, inputs: HarnessInputs
 ) -> EncounterOutcome:
@@ -1672,6 +1695,7 @@ def evaluate_encounter(
     )
     del pcm
     segment_count = len(document.transcript_segments)
+    suspect_segments = suspect_segment_count(document)
     clinician = clinician_speaker(document, track)
     if clinician is None:
         return EncounterOutcome(
@@ -1679,6 +1703,7 @@ def evaluate_encounter(
             "role_unresolved",
             segment_count=segment_count,
             words=word_errors(document, script),
+            suspect_segments=suspect_segments,
         )
     config = inputs.config
     now = inputs.now()
@@ -1711,6 +1736,7 @@ def evaluate_encounter(
         words=metrics.words,
         metrics=metrics,
         prose=prose,
+        suspect_segments=suspect_segments,
     )
 
 
@@ -1833,8 +1859,8 @@ def render_report(
         "| Other unsupported words | Transcript lines | Config lines | Facts | Correct "
         "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
         "| Warned omissions | Uncertainty missed | Ambiguous facts | Checker failures "
-        "| Prose p/f/e | Rule |",
-        "|" + "---|" * 22,
+        "| Suspect segments | Prose p/f/e | Rule |",
+        "|" + "---|" * 23,
     ]
     totals = Counter[str]()
     for outcome in outcomes:
@@ -1889,6 +1915,13 @@ def render_report(
                 if prose.unavailable
                 else f"{prose.passed}/{prose.failed}/{prose.errored}",
             ]
+        # Invented-text guard D8: the count sits before the prose cell and is
+        # shown whenever a transcript was made (a role-unresolved encounter
+        # too), so the total covers every transcribed encounter.
+        suspect = outcome.suspect_segments
+        if suspect is not None:
+            totals["suspect"] += suspect
+        cells.insert(15, "-" if suspect is None else str(suspect))
         status = outcome.status + (f" ({outcome.error_type})" if outcome.error_type else "")
         lines.append(
             f"| {outcome.encounter_id} | {status} | {outcome.segment_count} | {ref} | {wer} | "
@@ -1902,7 +1935,7 @@ def render_report(
         f"| {totals['other']} | - | - "
         f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
         f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
-        f"| {totals['ambiguous']} | {totals['checker']} | - | {verdict} |"
+        f"| {totals['ambiguous']} | {totals['checker']} | {totals['suspect']} | - | {verdict} |"
     )
 
     lines += ["", "### Checker warnings (code = count)", ""]
@@ -2292,6 +2325,7 @@ __all__ = [
     "rule_failures",
     "run_encounters",
     "run_passed",
+    "suspect_segment_count",
     "transcript_wer",
     "word_errors",
 ]

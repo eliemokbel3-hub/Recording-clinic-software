@@ -36,6 +36,7 @@ from scribe_desktop.note import (
     NoteSectionKey,
     NoteSpan,
     NoteStyle,
+    NoteWarning,
     SourceCoords,
     StyleRendering,
     StyleVerdict,
@@ -173,6 +174,7 @@ def _note(
     style: NoteStyle = "verbatim",
     style_renderings: tuple[StyleRendering, ...] = (),
     sections: tuple[GeneratedSection, ...] | None = None,
+    warnings: tuple[NoteWarning, ...] = (),
 ) -> GeneratedNote:
     """The fixture note: three populated sections in canonical order, one
     line each — quoted, typed, pre-filled by config."""
@@ -187,6 +189,7 @@ def _note(
         note_sections=_sections() if sections is None else sections,
         style=style,
         style_renderings=style_renderings,
+        note_warnings=warnings,
     )
 
 
@@ -321,10 +324,121 @@ class TestPrefilledMarkInProse:
         assert body.count(PREFILLED_MARK) == 1
         reloaded = GeneratedNote.from_bytes(note.to_bytes())
         assert models.format_note_body(reloaded) == body
-        assert note_module.prefilled_section_mark(note.note_sections[1]) is None
-        assert note_module.prefilled_section_mark(note.note_sections[2]) == (
+        # Invented-text guard D5: `section_marks_line` replaced
+        # `prefilled_section_mark`, the same text for pre-filled lines alone.
+        marks = note_module.line_marks_by_assertion(note)
+        assert note_module.section_marks_line(note.note_sections[1], marks) is None
+        assert note_module.section_marks_line(note.note_sections[2], marks) == (
             f"[includes 1 line {PREFILLED_MARK}]"
         )
+
+
+def _line_warning(code: str, aid: str = "q0") -> NoteWarning:
+    """A per-line check code (invented-text guard D5) on ``aid``."""
+    return NoteWarning(note_warning_code=code, severity="review", assertion_id=aid)
+
+
+_BOTH_MARKS = (_line_warning("number_source"), _line_warning("suspect_source"))
+_NUMBERED_TEXT = "two sessions a week"
+
+
+class TestCheckMarks:
+    """Invented-text guard D5 and decision 0.5: a quoted line carrying
+    ``number_source`` / ``suspect_source`` renders its check marks by the
+    pre-filled mark's convention; Copy (``check_marks=False``) leaves them
+    out and keeps the pre-filled mark; the Cliniko body stays bare."""
+
+    def test_clean_puts_each_mark_after_the_line_in_code_order(self) -> None:
+        body = render_note(_note(warnings=_BOTH_MARKS), "clean")
+        assert body.split("\n\n")[0] == (
+            "Presenting complaint\n"
+            "the numbness is worse at night  [check: number]  [check: possibly not speech]"
+        )
+        # The pre-filled line beside it is byte-identical.
+        assert body.split("\n\n")[1:] == CLEAN_BODY.split("\n\n")[1:]
+
+    def test_verbatim_prefixes_the_marks_to_the_provenance_label(self) -> None:
+        body = render_note(_note(warnings=_BOTH_MARKS), "verbatim")
+        assert body.split("\n\n")[0] == (
+            "Presenting complaint:\n"
+            "  - the numbness is worse at night  "
+            "[check: number - check: possibly not speech - from transcript]"
+        )
+        assert body.split("\n\n")[1:] == VERBATIM_BODY.split("\n\n")[1:]
+
+    def test_one_mark_alone(self) -> None:
+        note = _note(warnings=(_line_warning("suspect_source"),))
+        assert render_note(note, "clean").startswith(
+            "Presenting complaint\nthe numbness is worse at night  [check: possibly not speech]\n"
+        )
+
+    def test_a_prose_section_counts_its_marks_beside_the_prefilled_count(self) -> None:
+        numbered = _quoted("q1", "treatment_performed", 2, _NUMBERED_TEXT, SPEAKER_1)
+        treatment = GeneratedSection(
+            section_key="treatment_performed",
+            note_assertions=(_config_decided(), numbered),
+        )
+        sections = (_sections()[0], _sections()[1], treatment)
+        rendering = StyleRendering(
+            section_key="treatment_performed",
+            prose_text="An ice pack and two sessions a week.",
+            input_digest=section_input_digest(treatment),
+            verdict="passed",
+        )
+        note = _note(
+            style="narrative",
+            sections=sections,
+            style_renderings=(rendering,),
+            warnings=(_line_warning("number_source", "q1"),),
+        )
+        body = render_note(note, "narrative")
+        assert body.endswith(
+            "Treatment performed\nAn ice pack and two sessions a week.\n"
+            f"[includes 1 line {PREFILLED_MARK}; 1 line check: number]"
+        )
+        # Copy keeps the pre-filled count and drops the check count.
+        assert render_note(note, "narrative", check_marks=False).endswith(
+            f"two sessions a week.\n[includes 1 line {PREFILLED_MARK}]"
+        )
+
+    def test_copy_leaves_out_the_check_marks_and_keeps_the_prefilled_mark(self) -> None:
+        note = _note(warnings=_BOTH_MARKS)
+        assert render_note(note, "verbatim", check_marks=False) == VERBATIM_BODY
+        assert render_note(note, "clean", check_marks=False) == CLEAN_BODY
+        # The fixture note's own style is verbatim: there the marks prefix the
+        # provenance label inside ONE bracket (D5 — the pre-filled mark's
+        # convention); Clean gives each its own bracket (above).
+        copied = models.format_note_body(note, check_marks=False)
+        assert "check:" not in copied
+        assert PREFILLED_MARK in copied
+        assert "[check: number - check: possibly not speech - from transcript]" in (
+            models.format_note_body(note)
+        )
+
+    def test_the_cliniko_body_is_bare(self) -> None:
+        note = _note(warnings=_BOTH_MARKS)
+        lines = note_module.render_section_lines(
+            note, note.note_sections[0], "verbatim", apparatus=False
+        )
+        assert lines == [PATIENT_SYMPTOM]
+
+    def test_the_marks_survive_a_reload_and_reach_the_rendered_assertion(self) -> None:
+        note = _note(warnings=_BOTH_MARKS)
+        reloaded = GeneratedNote.from_bytes(note.to_bytes())
+        assert render_note(reloaded, "clean") == render_note(note, "clean")
+        rendered = models.render_note_sections(note)
+        quoted = rendered[0].assertions[0]
+        assert quoted.marks == ("check: number", "check: possibly not speech")
+        assert quoted.provenance_label == (
+            "check: number - check: possibly not speech - from transcript"
+        )
+        prefilled = rendered[2].assertions[0]
+        assert prefilled.marks == (PREFILLED_MARK,)
+        assert prefilled.prefilled is True
+
+    def test_a_note_without_check_codes_renders_exactly_as_before(self) -> None:
+        assert note_module.line_marks_by_assertion(_note()) == {"autofill-1": (PREFILLED_MARK,)}
+        assert render_note(_note(), "verbatim") == VERBATIM_BODY
 
 
 class TestSectionInputDigest:
@@ -359,55 +473,70 @@ class TestSectionInputDigest:
 # with ``style_renderings`` present (passed, failed and absent sections).
 # What this oracle pins is the COMPOSITION (the blocks, their order and their
 # joins); the reference still calls the live helpers ``assertion_label``,
-# ``is_prefilled``, ``usable_rendering`` and ``prefilled_section_mark``, which
+# ``is_prefilled``, ``usable_rendering`` and ``section_marks_line``, which
 # are pinned literally elsewhere — ``VERBATIM_BODY`` / ``CLEAN_BODY`` above and
-# the prose-stage tests.
+# the prose-stage tests. [2026-10-12, invented-text guard D5: the reference
+# learned the marks — each line's marks come from ``line_marks_by_assertion``
+# (the pre-filled mark, unchanged for a note with no check code, and the
+# check marks), and ``section_marks_line`` replaced ``prefilled_section_mark``.
+# The composition is unchanged; the check marks are pinned literally in
+# ``TestCheckMarks`` above.]
 # ---------------------------------------------------------------------------
 
 
-def _reference_verbatim_block(section: GeneratedSection) -> str:
+def _reference_verbatim_block(
+    section: GeneratedSection, marks: dict[str, tuple[str, ...]]
+) -> str:
     lines = [f"{note_module.SECTION_TITLES[section.section_key]}:"]
     for assertion in section.note_assertions:
-        lines.append(f"  - {assertion.text}  [{note_module.assertion_label(assertion)}]")
+        label = note_module.assertion_label(assertion, marks.get(assertion.assertion_id, ()))
+        lines.append(f"  - {assertion.text}  [{label}]")
     return "\n".join(lines)
 
 
-def _reference_clean_lines(section: GeneratedSection) -> list[str]:
+def _reference_clean_lines(
+    section: GeneratedSection, marks: dict[str, tuple[str, ...]]
+) -> list[str]:
     lines: list[str] = []
     for assertion in section.note_assertions:
         text = assertion.text
-        if note_module.is_prefilled(assertion):
-            text = f"{text}  [{PREFILLED_MARK}]"
+        for mark in marks.get(assertion.assertion_id, ()):
+            text = f"{text}  [{mark}]"
         lines.append(text)
     return lines
 
 
-def _reference_clean_block(section: GeneratedSection) -> str:
+def _reference_clean_block(
+    section: GeneratedSection, marks: dict[str, tuple[str, ...]]
+) -> str:
     return "\n".join(
-        [note_module.SECTION_TITLES[section.section_key], *_reference_clean_lines(section)]
+        [note_module.SECTION_TITLES[section.section_key], *_reference_clean_lines(section, marks)]
     )
 
 
-def _reference_prose_block(note: GeneratedNote, section: GeneratedSection) -> str:
+def _reference_prose_block(
+    note: GeneratedNote, section: GeneratedSection, marks: dict[str, tuple[str, ...]]
+) -> str:
     rendering = usable_rendering(note, section)
     if rendering is None:
-        return _reference_clean_block(section)
+        return _reference_clean_block(section, marks)
     lines = [note_module.SECTION_TITLES[section.section_key], rendering.prose_text]
-    mark = note_module.prefilled_section_mark(section)
+    mark = note_module.section_marks_line(section, marks)
     if mark is not None:
         lines.append(mark)
     return "\n".join(lines)
 
 
 def _reference_render_note(note: GeneratedNote, style: NoteStyle) -> str:
+    marks = note_module.line_marks_by_assertion(note)
     blocks: list[str] = []
     for section in note.note_sections:
         if style == "verbatim":
-            blocks.append(_reference_verbatim_block(section))
+            blocks.append(_reference_verbatim_block(section, marks))
         elif style == "clean":
-            blocks.append(_reference_clean_block(section))
+            blocks.append(_reference_clean_block(section, marks))
         else:
-            blocks.append(_reference_prose_block(note, section))
+            blocks.append(_reference_prose_block(note, section, marks))
     if not blocks:
         return NO_NOTE_CONTENT
     return "\n\n".join(blocks)

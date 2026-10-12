@@ -84,6 +84,17 @@ def _say(text: str, start: float, step: float = 0.4) -> TranscriptSegment:
     )
 
 
+def _suspect_say(text: str, start: float, suspect: tuple[int, ...]) -> TranscriptSegment:
+    """``_say`` with the words at ``suspect`` marked as possibly not speech
+    (invented-text guard D6)."""
+    segment = _say(text, start)
+    words = tuple(
+        word.model_copy(update={"suspect": index in suspect})
+        for index, word in enumerate(segment.transcript_words)
+    )
+    return segment.model_copy(update={"transcript_words": words})
+
+
 def _window(*parts: tuple[str, float]) -> tuple[TranscriptSegment, ...]:
     return tuple(_say(text, start) for text, start in parts)
 
@@ -296,6 +307,15 @@ class TestSpokenPauseMatcher:
         assert not close.feed(_window(("ask the scribe", 20.0)))
         assert close.feed(_window(("pause", 23.5)))  # 2.7 s later
 
+    def test_a_suspect_phrase_does_not_pause(self) -> None:
+        """Invented-text guard D6 (Task 2.4): words the transcription guard
+        marked as possibly not speech never pause the recording."""
+        for marked in ((0,), (1,), (0, 1)):
+            assert not SpokenPauseDetector().feed((_suspect_say("scribe pause", 3.0, marked),))
+        assert SpokenPauseDetector().feed((_suspect_say("scribe pause", 3.0, ()),))
+        # Dropped, not a barrier: a suspect word between the two is skipped.
+        assert SpokenPauseDetector().feed((_suspect_say("scribe la pause", 3.0, (1,)),))
+
     def test_the_cutoff_never_moves_back_and_reset_clears_it(self) -> None:
         detector = SpokenPauseDetector()
         detector.note_resume(30.0)
@@ -398,6 +418,21 @@ class TestNewConsultationRule:
     def test_near_misses_do_not_warn(self, parts: list[tuple[str, float]]) -> None:
         watcher = NewConsultationWatcher()
         assert not any(watcher.feed(_window(part)) for part in parts)
+
+    def test_a_suspect_closing_or_greeting_does_not_warn(self) -> None:
+        """Invented-text guard D6 (Task 2.4)."""
+        closing = NewConsultationWatcher()
+        assert not closing.feed(
+            (_suspect_say("see you next week", 1.0, (3,)), _say("good morning", 9.0))
+        )
+        greeting = NewConsultationWatcher()
+        assert not greeting.feed(
+            (_say("see you next week", 1.0), _suspect_say("good morning", 9.0, (0,)))
+        )
+        control = NewConsultationWatcher()
+        assert control.feed(
+            (_suspect_say("see you next week", 1.0, ()), _say("good morning", 9.0))
+        )
 
 
 # --- the main window's wiring ---------------------------------------------------------

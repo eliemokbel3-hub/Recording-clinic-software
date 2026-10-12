@@ -36,7 +36,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, NamedTuple
+from typing import Final, Literal, NamedTuple
 
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
@@ -68,7 +68,7 @@ from scribe_desktop.note_config import (
     refuse_learning_candidate,
     refuse_typed_wording,
 )
-from scribe_desktop.transcription import TranscriptDocument
+from scribe_desktop.transcription import TranscriptDocument, words_hold_suspect
 from scribe_desktop.ui import models
 
 ProposalDecision = Literal["confirmed", "declined"]
@@ -222,6 +222,12 @@ def learned_rule_outcomes(
 
 # --- shorthand learning (note-learning plan Task 2.3; D5, D11) -----------------
 
+# Invented-text guard D6: nothing is learned from a line holding a word the
+# transcription guard marked as possibly not speech. Checked after the
+# ownership test and the status read, so a disabled status still says its
+# own reason.
+SUSPECT_LINE_NOT_LEARNED: Final = "Not learned: the line may not be speech."
+
 
 def consider_rule_learning(
     typed: NoteAssertion,
@@ -296,6 +302,8 @@ def consider_rule_learning(
     status = learning_status()
     if not status.enabled:
         return RuleLearningVerdict(messages=(status.reason or "",))
+    if words_hold_suspect(segment.transcript_words):
+        return RuleLearningVerdict(messages=(SUSPECT_LINE_NOT_LEARNED,))
     words = [word.word_text for word in segment.transcript_words]
     candidate = propose_rule_trigger(words)
     if candidate is None:
@@ -385,6 +393,8 @@ def consider_learning(
     status = learning_status()
     if not status.enabled:
         return PhraseLearningVerdict(messages=(status.reason or "",))
+    if words_hold_suspect(segment.transcript_words):
+        return PhraseLearningVerdict(messages=(SUSPECT_LINE_NOT_LEARNED,))
     words = [word.word_text for word in segment.transcript_words]
     candidate = propose_learning_phrase(words)
     if candidate is None:

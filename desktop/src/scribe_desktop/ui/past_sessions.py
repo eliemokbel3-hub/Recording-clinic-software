@@ -586,8 +586,10 @@ class PastSessionsScreen(QWidget):
         if reason is not None or entry is None or entry.saved_note is None:
             self._show_message(reason or view.COPY_NOTHING_OPEN)
             return
+        # Invented-text guard decision 0.5: a copy carries no check mark.
         if _place_note_text(
-            models.format_note_body(entry.saved_note), shadow=entry.label.shadow
+            models.format_note_body(entry.saved_note, check_marks=False),
+            shadow=entry.label.shadow,
         ):
             self._show_message(view.COPY_DONE)
 

@@ -505,6 +505,7 @@ class TestRunner:
         assert _temp_stores() == before  # the temporary store is gone
         assert lines == ["[run ] syn-001"]
         assert outcome.status == "measured" and outcome.segment_count == 2
+        assert outcome.suspect_segments == 0  # the guard is not wired before Phase 4
         metrics = outcome.metrics
         assert metrics is not None
         assert metrics.words.edit_distance == 0 and metrics.words.reference_tokens == 12
@@ -518,6 +519,28 @@ class TestRunner:
         assert "| syn-001 | 0 | laterality | yes | correct | no | - | no | no |" in report
         for text in ("examination", "tender", "hurts", "walk", "knee"):
             assert text not in report  # no transcript or script text
+
+    def test_the_suspect_count_is_the_transcripts_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review round 5 LOW-004: the outcome and its report cell carry
+        ``suspect_segment_count`` of the transcript the run made — the guard
+        is not wired before Phase 4, so the count is stood in for."""
+        pytest.importorskip("numpy")
+        counted: list[int] = []
+
+        def count(document: Any) -> int:
+            counted.append(len(document.transcript_segments))
+            return 7
+
+        monkeypatch.setattr(validation, "suspect_segment_count", count)
+        encounters, _ = find_encounters(_set_folder(tmp_path / "set"))
+        (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lambda line: None)
+        assert outcome.suspect_segments == 7 and counted == [2]
+        info = validation.RunInfo("medium", False, "silero", None, "a" * 40, "b" * 64)
+        report = render_report([outcome], OPTION_A, info)
+        row = next(line for line in report.splitlines() if line.startswith("| syn-001 | measured"))
+        assert row.endswith("| 7 | - | PASS |")
 
     def test_the_prose_stage_counts_are_reported(self, tmp_path: Path) -> None:
         pytest.importorskip("numpy")
@@ -566,6 +589,8 @@ class TestRunner:
         (outcome,) = run_encounters(encounters, _inputs(tmp_path), progress=lambda line: None)
         assert outcome.status == "role_unresolved"
         assert outcome.metrics is None and outcome.words is not None
+        # Invented-text guard D8: a transcript was made, so it is counted.
+        assert outcome.suspect_segments == 0
         assert validation.rule_failures(OPTION_A, outcome) == ("role_unresolved",)
         assert not validation.run_passed(OPTION_A, [outcome])
 
@@ -1109,9 +1134,10 @@ class TestReport:
     def test_the_run_1_predicate_column_sits_beside_silent_and_rows_align(self) -> None:
         """Metric amendment 2026-10-09 (note-routing-omissions plan D3,
         PR-LOW-013): one more column after ``Silent omissions``; since the
-        metric amendment of 2026-10-11 (D10) one more after ``WER``, so the
-        header, the separator, a measured row, an unmeasured row and the
-        totals all carry 22 cells."""
+        metric amendment of 2026-10-11 (D10) one more after ``WER``; since the
+        invented-text guard (D8) one more, ``Suspect segments``, before the
+        prose cell — so the header, the separator, a measured row, an
+        unmeasured row and the totals all carry 23 cells."""
         fact = validation.FactOutcome(
             fact_index=0,
             kind="present",
@@ -1139,7 +1165,12 @@ class TestReport:
         assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
         outcomes = [
             EncounterOutcome(
-                "syn-001", "measured", segment_count=1, words=metrics.words, metrics=metrics
+                "syn-001",
+                "measured",
+                segment_count=1,
+                words=metrics.words,
+                metrics=metrics,
+                suspect_segments=2,
             ),
             EncounterOutcome("syn-002", "error", "OSError"),
         ]
@@ -1149,11 +1180,17 @@ class TestReport:
         header, separator, measured, unmeasured, total = table[:5]
         assert "| Silent omissions | Silent (run-1 predicate) | Warned omissions |" in header
         # Metric amendment 2026-10-11 (D10): one more column right after WER,
-        # and the header line names the amendment — 22 cells in every row.
+        # and the header line names the amendment.
         assert "| WER | Spelling-normalised words | Unsupported clinical lines |" in header
         assert "canonical spelling, metric amendment 2026-10-11" in report
+        # Invented-text guard D8: the suspect-segment count before the prose
+        # cell — 23 cells in every row.
+        assert "| Checker failures | Suspect segments | Prose p/f/e | Rule |" in header
         for row in (header, separator, measured, unmeasured, total):
-            assert len(row.strip().strip("|").split("|")) == 22
+            assert len(row.strip().strip("|").split("|")) == 23
+        assert measured.endswith("| 0 | 2 | - | PASS |")  # checker, suspect, prose, rule
+        assert unmeasured.endswith("| - | - | - | FAIL: harness_error |")
+        assert total.endswith("| 0 | 2 | - | FAIL |")  # the run fails on syn-002's error
         # Omitted, silent, silent (run-1), warned — in that order.
         assert "| 1 | 0 | 1 | 1 |" in measured
         assert "| 1 | 0 | 1 | 1 |" in total
@@ -1171,3 +1208,11 @@ class TestReport:
         rule and the report read a result is refused at construction."""
         with pytest.raises(ValueError, match=f"{slot} must be a"):
             EncounterOutcome("syn-001", "error", "OSError", **{slot: "said out loud"})
+
+    @pytest.mark.parametrize("value", [-1, True, 1.5, "2"])
+    def test_the_suspect_count_is_a_non_negative_count(self, value: Any) -> None:
+        """Invented-text guard D8: the outcome holds a count, or None."""
+        with pytest.raises(ValueError, match="suspect_segments must be a non-negative count"):
+            EncounterOutcome("syn-001", "measured", suspect_segments=value)
+        assert EncounterOutcome("syn-001", "measured", suspect_segments=0).suspect_segments == 0
+        assert EncounterOutcome("syn-001", "error", "OSError").suspect_segments is None

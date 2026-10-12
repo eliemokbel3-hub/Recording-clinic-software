@@ -357,6 +357,15 @@ def words_have_text(words: Iterable[TranscriptWord]) -> bool:
     return any(word.word_text.strip() for word in words)
 
 
+def words_hold_suspect(words: Iterable[TranscriptWord]) -> bool:
+    """Whether any word is ``suspect`` — the ONE test of "this line may not
+    be speech" (invented-text guard D4–D8): the quoting prefix, the line
+    mark, the bounded carry, learning and the suspect-segment count all ask
+    it (review round 5 LOW-007). The per-WORD readers (Check 4, the trigger
+    match, the spoken pause, the harness's ``warned``) read the field."""
+    return any(word.suspect for word in words)
+
+
 def segment_has_text(segment: TranscriptSegment) -> bool:
     """``words_have_text`` over a built segment's words."""
     return words_have_text(segment.transcript_words)
@@ -2540,5 +2549,6 @@ __all__ = [
     "transcribe_session",
     "whisper_model_available",
     "words_have_text",
+    "words_hold_suspect",
     "write_transcript",
 ]

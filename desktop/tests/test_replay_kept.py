@@ -66,6 +66,7 @@ from scribe_desktop.validation import (
     WordErrors,
     align_transcripts,
     confirm_all,
+    suspect_segment_count,
     transcript_wer,
 )
 from speaker_fakes import (
@@ -642,6 +643,7 @@ class TestReport:
             "edit_distance": 1,
             "agreement": 1.0,
             "note": replay_kept.NoteDrift(0, 2, None),
+            "suspect_segments": 0,
         }
         values.update(overrides)
         return replay_kept.ReplayRow(**values)
@@ -654,9 +656,53 @@ class TestReport:
         assert "DRIFT, not accuracy" in report
         assert "shipped defaults - drift includes your learned cues" in report
         assert "unresolved (no --enrolment" in report
-        row = f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 |"
+        row = f"| {'a' * 32} | 6.0 | small | medium | 10 | 9 | 1 | 0.100 | 1.000 | - | 0 | 2 | 0 |"
         assert row in report
         assert "pooled drift WER 0.100 (1 edits over 10 kept words)" in report
+
+    def test_the_suspect_segment_column_and_its_total(self) -> None:
+        """Invented-text guard D8 (Task 2.2): one more column, last, and its
+        total on the totals line; header, separator and rows align."""
+        report = replay_kept.render_report(
+            [self._row(suspect_segments=3), self._row(session_id="b" * 32, suspect_segments=0)],
+            folder=Path("X:/f"), model_name="medium", enrolled=False, errors=0, skipped=0,
+        )
+        table = [line for line in report.splitlines() if line.startswith("|")]
+        assert table[0].endswith("| Check reviews | Suspect segments |")
+        for line in table:
+            assert len(line.strip().strip("|").split("|")) == 13
+        assert table[2].endswith("| 0 | 2 | 3 |")
+        assert table[3].endswith("| 0 | 2 | 0 |")
+        assert "Suspect segments in the new transcripts: 3." in report
+
+    def test_the_count_reads_the_new_transcripts_suspect_segments(self) -> None:
+        def word(text: str, *, suspect: bool = False) -> TranscriptWord:
+            made = TranscriptWord(
+                word_text=text, start_seconds=0.0, end_seconds=0.4, probability=0.9,
+                uncertain=False,
+            )
+            return made.model_copy(update={"suspect": True}) if suspect else made
+
+        def segment(*words: TranscriptWord) -> TranscriptSegment:
+            return TranscriptSegment(
+                start_seconds=0.0, end_seconds=1.0, speaker="speaker_1", transcript_words=words
+            )
+
+        document = TranscriptDocument(
+            session_id="c" * 32,
+            created_at=datetime(2026, 10, 12, tzinfo=UTC),
+            model_name="small",
+            sample_rate=16_000,
+            transcript_segments=(
+                segment(word("one"), word("two", suspect=True)),
+                segment(word("three")),
+                segment(),
+                segment(word("four", suspect=True), word("five", suspect=True)),
+            ),
+        )
+        assert suspect_segment_count(document) == 2
+        # The replay counts through the harness's ONE helper.
+        assert replay_kept.suspect_segment_count is suspect_segment_count
 
     def test_the_totals_pool_edits_over_kept_words(self) -> None:
         """Round 30 LOW: pooled over the rows' words, not the mean of rates
@@ -830,7 +876,9 @@ class TestMain:
         out = _output(capsys)
         assert "the practitioner-attributed label (--enrolment)" in out
         line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
-        assert line.endswith("| 1.000 | 0 | 0 | 0 |")  # nothing missing from the saved note
+        # Nothing missing from the saved note; the last cell is the suspect
+        # count (invented-text guard D8).
+        assert line.endswith("| 1.000 | 0 | 0 | 0 | 0 |")
         _no_content(out)
         # Round 31 MED-003: the note is made from the ENROLLED document (the
         # plain one names no enrolled speaker), its clinician that speaker.
@@ -879,7 +927,31 @@ class TestMain:
         line = next(
             line for line in _output(capsys).splitlines() if line.startswith(f"| {sid} |")
         )
-        assert line.endswith("| - | 0 | 0 |")
+        assert line.endswith("| - | 0 | 0 | 0 |")  # the last cell: suspect segments (D8)
+
+    def test_the_suspect_count_is_the_new_transcripts_own(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Review round 5 LOW-004: the row and the totals carry
+        ``suspect_segment_count`` of the transcript the replay made — the
+        guard is not wired before Phase 4, so the count is stood in for."""
+        pytest.importorskip("numpy")
+        folder = tmp_path / "past_sessions"
+        sid = _kept_entry(_store(folder))
+        _Seams(monkeypatch)
+        counted: list[int] = []
+
+        def count(document: TranscriptDocument) -> int:
+            counted.append(len(document.transcript_segments))
+            return 7
+
+        monkeypatch.setattr(replay_kept, "suspect_segment_count", count)
+        assert replay_kept.main([str(folder)]) == 0
+        out = _output(capsys)
+        line = next(line for line in out.splitlines() if line.startswith(f"| {sid} |"))
+        assert line.endswith("| 7 |")
+        assert "Suspect segments in the new transcripts: 7." in out
+        assert len(counted) == 1
 
     def test_only_naming_no_kept_recording_replays_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]

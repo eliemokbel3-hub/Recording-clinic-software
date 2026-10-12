@@ -558,6 +558,9 @@ def test_save_freezes_every_editor_control_and_refuses_a_new_editor(
         if proposal.proposal_id in screen._rendered_excerpt:  # pre-filled lines have no row
             screen.confirm_proposal(proposal.proposal_id)
     screen._acknowledge_all()
+    # Invented-text guard D5: "two weeks" draws a `number_source`, which
+    # Acknowledge all leaves open (`SEPARATELY_ACKNOWLEDGED_CODES`).
+    screen._acknowledge("number_source")
     routed = _first_routed(screen)
     screen.open_editor(routed.assertion_id, _working_text(screen, routed.assertion_id))
     assert screen._editor is not None

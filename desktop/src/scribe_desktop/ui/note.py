@@ -56,6 +56,13 @@ warnings" never clears this warning — only its own row's Acknowledge does
 (``models.SEPARATELY_ACKNOWLEDGED_CODES``); what Save, Complete, Copy and Write
 require is unchanged.
 
+Check marks (invented-text guard D5). A quoted line holding a number or a
+word the transcription guard marked ``suspect`` carries ``[check: number]`` /
+``[check: possibly not speech]`` in the note body and at the FRONT of its
+editor row (after ``[flagged] ``); its review group — ``number_source`` /
+``suspect_source`` — is in the same separately-acknowledged set. Copy renders
+the note WITHOUT the check marks (decision 0.5; the pre-filled mark stays).
+
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
 of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,
 so another speaker's line never reaches the learner — and only while the
@@ -402,8 +409,12 @@ class _NotePanel(QPlainTextEdit):
     selectable (``_apply_copy_binding``), and a copy of the selection — the
     keyboard's Copy (Ctrl+C, Ctrl+Insert) or this panel's own context menu —
     goes through ``_place_note_text``, so it carries the same formats as the
-    Copy button. The text is the selection as Qt's own copy renders it
-    (``QTextCursor.selection().toPlainText()``). Both routes re-check
+    Copy button. The text is the selection as Copy renders the note
+    (invented-text guard decision 0.5; review round 5 MED-001): the
+    selected characters of the shown body that the mark-free body
+    (``unmarked``) also holds — ``models.unmarked_selection`` — so no
+    ``[check: …]`` mark rides along; with no check mark shown that is the
+    selection exactly as Qt's own copy renders it. Both routes re-check
     ``copy_ready`` (the screen's ``_copy_allowed``, below) at the moment of
     copying, so nothing reaches the clipboard before ratification. Qt's own context menu
     is replaced (its Copy would bypass the formats); Cut and Paste do nothing
@@ -415,19 +426,46 @@ class _NotePanel(QPlainTextEdit):
     the panel stays display-only — nothing to select, so nothing to drag —
     and both copy routes refuse; ``shadow`` reaches the placement too."""
 
-    def __init__(self, copy_ready: Callable[[], bool], shadow: Callable[[], bool]) -> None:
+    def __init__(
+        self,
+        copy_ready: Callable[[], bool],
+        shadow: Callable[[], bool],
+        unmarked: Callable[[], str | None],
+        refused: Callable[[], None],
+    ) -> None:
         super().__init__()
         self._copy_ready = copy_ready
         self._shadow = shadow
+        self._unmarked = unmarked
+        self._refused = refused
 
     def copy_selection(self) -> bool:
-        """Copy the selection with the formats; False (nothing placed) unless
-        the note is ratified, not a shadow recording's, and something is
-        selected."""
+        """Copy the selection with the formats, without check marks; False
+        (nothing placed) unless the note is ratified, not a shadow
+        recording's, and something is selected — and when the shown body is
+        not the mark-free body plus marks, or the selection holds nothing
+        but a mark (fail closed). That last refusal is SAID through
+        ``refused`` (review round 6 LOW-002): a silent one would leave an
+        older clipboard to be pasted."""
         cursor = self.textCursor()
         if not self._copy_ready() or not cursor.hasSelection():
             return False
-        return _place_note_text(cursor.selection().toPlainText(), shadow=self._shadow())
+        unmarked = self._unmarked()
+        shown = self.toPlainText()
+        text = (
+            None
+            if unmarked is None
+            else models.unmarked_selection(
+                shown,
+                unmarked,
+                models.utf16_to_index(shown, cursor.selectionStart()),
+                models.utf16_to_index(shown, cursor.selectionEnd()),
+            )
+        )
+        if not text:
+            self._refused()
+            return False
+        return _place_note_text(text, shadow=self._shadow())
 
     def keyPressEvent(self, event: QKeyEvent, /) -> None:
         if event.matches(QKeySequence.StandardKey.Copy):
@@ -605,7 +643,10 @@ class NoteScreen(QWidget):
         transcript_panel = QWidget()
         transcript_layout = QVBoxLayout(transcript_panel)
         transcript_layout.addWidget(
-            QLabel("Full transcript (uncertain words shown as [word?]):")
+            QLabel(
+                "Full transcript (uncertain words shown as [word?]; a line marked "
+                f"{models.SUSPECT_SEGMENT_MARK} may be music or noise, not speech):"
+            )
         )
         transcript_layout.addWidget(self.transcript_view)
 
@@ -695,17 +736,24 @@ class NoteScreen(QWidget):
         self.review_header.hide()
         self._review_box = QVBoxLayout()
         self.acknowledge_all_button = QPushButton("Acknowledge all review warnings")
-        # Note-routing-omissions plan D4: one click never clears the
-        # "not in the note" warning — its own row's Acknowledge does.
+        # Note-routing-omissions plan D4 and invented-text guard D5: one click
+        # never clears a warning in `models.SEPARATELY_ACKNOWLEDGED_CODES` —
+        # each row's own Acknowledge does, after its lines are checked.
         self.acknowledge_all_button.setToolTip(
-            "Acknowledges every review warning except the one about something said "
-            "that is not in the note - check its flagged lines, then use that "
-            "warning's own Acknowledge."
+            "Acknowledges every review warning except those that each need their own "
+            "Acknowledge: something said that is not in the note (check its flagged "
+            "lines), a quoted line with a number and a quoted line that may not be "
+            "speech (check each line marked [check: ...])."
         )
         self.acknowledge_all_button.clicked.connect(self._acknowledge_all)
         self.acknowledge_all_button.hide()
 
-        self.note_body = _NotePanel(self._copy_allowed, lambda: self._shadow)
+        self.note_body = _NotePanel(
+            self._copy_allowed,
+            lambda: self._shadow,
+            self._unmarked_body,
+            lambda: self.message_label.setText(models.SELECTION_NOT_COPIED),
+        )
         self.note_body.setReadOnly(True)
         self.note_body.setPlaceholderText("No note generated.")
         # The style line (Task 4.4, C8): rendering in flight, what landed,
@@ -2447,8 +2495,19 @@ class NoteScreen(QWidget):
             return
         if not self._copy_allowed() or note is None:  # click-time re-check (fail closed)
             return
-        if _place_note_text(models.format_note_body(note), shadow=self._shadow):
+        # Invented-text guard decision 0.5: Copy carries no check mark (they
+        # have done their job — Copy needs every review group acknowledged).
+        if _place_note_text(
+            models.format_note_body(note, check_marks=False), shadow=self._shadow
+        ):
             self.message_label.setText("Note copied.")
+
+    def _unmarked_body(self) -> str | None:
+        """The note body as Copy renders it — the same note ``_copy_note``
+        copies, without the check marks (decision 0.5) — which the note
+        panel's selection copy is cut from; None with no note."""
+        note = self._note if self._note is not None else self._saved
+        return None if note is None else models.format_note_body(note, check_marks=False)
 
     def _copy_allowed(self) -> bool:
         """Pilot plan D5: what a COPY of note text needs — ``_copy_ready``

@@ -5073,6 +5073,20 @@ def _warning_codes(screen: Any) -> set[str]:
     return {warning.note_warning_code for warning in note.note_warnings}
 
 
+def _acknowledge_everything(screen: Any) -> None:
+    """``_acknowledge_all`` and then, each by its own row, every open
+    line-mark code (invented-text guard D5: the per-line codes "Acknowledge
+    all" never clears, ``note.LINE_MARK_CODES``) — what a Save-opening review
+    does over a transcript that quotes a number (`_EDIT_TURNS`' plan line
+    carries "two")."""
+    from scribe_desktop.note import LINE_MARK_CODES
+
+    screen._acknowledge_all()
+    for code in LINE_MARK_CODES:
+        if code in _warning_codes(screen):
+            screen._acknowledge(code)
+
+
 def _eligible(screen: Any) -> dict[int, Any]:
     return {choice.segment_index: choice for choice in screen.eligible_utterances()}
 
@@ -5478,7 +5492,7 @@ class TestNoteScreenEdits:
     def _ratify(self, screen: Any) -> None:
         for proposal in screen._draft.note_proposals:
             screen.confirm_proposal(proposal.proposal_id)
-        screen._acknowledge_all()
+        _acknowledge_everything(screen)
 
     # --- the chooser and the add path (Task 5.1) --------------------------
 
@@ -6622,7 +6636,7 @@ class TestNoteScreenTypedEdits:
         for proposal in screen._draft.note_proposals:
             if proposal.proposal_id not in screen._prefilled_ids():
                 screen.confirm_proposal(proposal.proposal_id)
-        screen._acknowledge_all()
+        _acknowledge_everything(screen)
 
     # --- Task 2.1: the typed line end to end ------------------------------------
 
@@ -7022,6 +7036,9 @@ class TestNoteScreenTypedEdits:
         assert "Confirm every proposed line" in screen.message_label.text()
         screen.confirm_proposal(pending.proposal_id)
         screen._acknowledge_all()
+        # Invented-text guard D5: the plan line quotes "two" — its own row.
+        assert not screen.save_button.isEnabled()
+        screen._acknowledge("number_source")
         assert screen.save_button.isEnabled()
         screen.save()
         assert len(record["saved"]) == 1
@@ -9307,8 +9324,10 @@ class TestNoteWiring:
         note = note_screen.current_note()
         assert note is not None
         assert note.style == "clean"  # the shipped default reached the note
-        expected = models.format_note_body(note)
-        assert expected == render_note(note, "clean")
+        # Invented-text guard decision 0.5: Copy renders without check marks
+        # (this fixture quotes no number, so the two renderings agree here).
+        expected = models.format_note_body(note, check_marks=False)
+        assert expected == models.format_note_body(note) == render_note(note, "clean")
         assert payloads == [expected]
         assert "Ice pack use explained." in expected  # the ratified proposal
         titles = set(SECTION_TITLES.values())
@@ -9349,7 +9368,7 @@ class TestNoteWiring:
         note = note_screen.current_note()
         assert note is not None
         (mime,) = mimes
-        assert mime.text() == models.format_note_body(note)
+        assert mime.text() == models.format_note_body(note, check_marks=False)
         zero = b"\x00\x00\x00\x00"
         names = (
             "ExcludeClipboardContentFromMonitorProcessing",
@@ -9473,6 +9492,75 @@ class TestNoteWiring:
         )
         assert opened == [QPoint(5, 5), "deleted"]
         window.close()
+
+    def test_every_copy_route_leaves_the_check_marks_out(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Invented-text guard decision 0.5 (review round 5 MED-001 and
+        MED-002): over a note whose plan line quotes "two", the body SHOWS
+        ``check: number``; the Copy button and the keyboard and context-menu
+        Copy of the whole selection all place the note WITHOUT it, a selected
+        line places that line without its mark, and a selection lying wholly
+        inside the mark places nothing."""
+        from PySide6.QtGui import QTextCursor
+
+        from scribe_desktop.ui.note import NoteScreen
+
+        monkeypatch.setattr(models, "COPY_TO_CLINIKO_ENABLED", True)
+        payloads = self._fake_clipboard(monkeypatch)
+        saved: list[Any] = []
+        screen = NoteScreen(config_root=tmp_path / "config")
+        screen.begin_review(
+            _edit_result(),
+            copy_enabled=True,
+            on_save=saved.append,
+            on_abandon=lambda: None,
+            template_profile_id="clinic-a",
+            mode=SessionMode.NORMAL,
+        )
+        for proposal in screen._draft.note_proposals:
+            screen.confirm_proposal(proposal.proposal_id)
+        _acknowledge_everything(screen)
+        for code in _warning_codes(screen):  # any other open group, by its own row
+            screen._acknowledge(code)
+        screen.save()
+        assert len(saved) == 1
+        note = screen.current_note()
+        assert note is not None
+        body = screen.note_body
+        shown = body.toPlainText()
+        bare = models.format_note_body(note, check_marks=False)
+        assert shown == models.format_note_body(note)
+        assert "check: number" in shown
+        assert "check:" not in bare
+        screen.copy_button.click()
+        body.selectAll()
+        body.keyPressEvent(self._copy_key_event())
+        self._menu_copy_action(body).trigger()
+        assert payloads == [bare, bare, bare]
+        # The marked line alone: placed as the mark-free rendering's line.
+        at = shown.index("check: number")
+        line_start = shown.rfind("\n", 0, at) + 1
+        line_end = shown.find("\n", at)
+        line_end = len(shown) if line_end < 0 else line_end
+        line_number = shown.count("\n", 0, line_start)
+        cursor = body.textCursor()
+        cursor.setPosition(line_start)
+        cursor.setPosition(line_end, QTextCursor.MoveMode.KeepAnchor)
+        body.setTextCursor(cursor)
+        assert body.copy_selection() is True
+        assert payloads[-1] == bare.split("\n")[line_number]
+        assert "two weeks" in payloads[-1] and "check:" not in payloads[-1]
+        # Wholly inside the mark: nothing to place.
+        cursor.setPosition(at)
+        cursor.setPosition(at + len("check: number"), QTextCursor.MoveMode.KeepAnchor)
+        body.setTextCursor(cursor)
+        assert body.copy_selection() is False
+        assert len(payloads) == 4
+        # Said, never silent (review round 6 LOW-002): an older clipboard
+        # would otherwise be pasted.
+        assert screen.message_label.text() == models.SELECTION_NOT_COPIED
+        screen.deleteLater()
 
     def test_an_unratified_panel_places_nothing_even_with_a_selection(
         self, qapp: Any, tmp_path: Path, monkeypatch: Any
@@ -9944,12 +10032,23 @@ def _ps_entry(
     generated: bool = True,
     shadow: bool = False,
     audio: bool = False,
+    numbered: bool = False,
 ) -> tuple[str, GeneratedNote | None]:
     """One committed Past-sessions entry: a transcript, a saved note and a
     generated note (each optional but the transcript), written through the
     store's own verified path — a shadow recording's with ``shadow``, one
-    holding a kept recording with ``audio`` (development-recordings Task 2.2)."""
-    from scribe_desktop.note import digest_bytes
+    holding a kept recording with ``audio`` (development-recordings Task 2.2),
+    and with ``numbered`` a saved note holding one quoted line with a number
+    and its ``number_source`` (invented-text guard D5; review round 5
+    MED-002)."""
+    from scribe_desktop.note import (
+        GeneratedSection,
+        NoteAssertion,
+        NoteSpan,
+        NoteWarning,
+        SourceCoords,
+        digest_bytes,
+    )
     from scribe_desktop.past_sessions import keep_label
     from scribe_desktop.session_store import ArchiveSource, GeneratedRecord
 
@@ -9962,6 +10061,28 @@ def _ps_entry(
         sample_rate=16_000,
         transcript_segments=_document().transcript_segments,
     ).to_bytes()
+    sections: tuple[GeneratedSection, ...] = ()
+    warnings: tuple[NoteWarning, ...] = ()
+    if numbered:
+        coords = SourceCoords(0, 0, 3)
+        line = NoteAssertion(
+            assertion_id="q0",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text="sore for 2 weeks", provenance="transcript", source_coords=coords
+            ),
+            speaker=SPEAKER_1,
+        )
+        sections = (GeneratedSection(section_key="presenting_complaint", note_assertions=(line,)),)
+        warnings = (
+            NoteWarning(
+                note_warning_code="number_source",
+                severity="review",
+                section_key="presenting_complaint",
+                assertion_id="q0",
+                source_coords=coords,
+            ),
+        )
     saved = (
         GeneratedNote(
             session_id=sid,
@@ -9970,6 +10091,8 @@ def _ps_entry(
             provider_name="extractive-v1",
             transcript_digest=digest_bytes(transcript),
             config_digest=digest_bytes(b"config"),
+            note_sections=sections,
+            note_warnings=warnings,
         )
         if note
         else None
@@ -10404,11 +10527,33 @@ class TestPastSessionsTab:
         self._select(screen, sid)
         assert screen.copy_button.isEnabled()
         screen.on_copy()
-        assert payloads == [models.format_note_body(saved)]  # the SAVED note only
+        # The SAVED note only, without check marks (invented-text guard 0.5).
+        assert payloads == [models.format_note_body(saved, check_marks=False)]
         assert screen.message_label.text() == view.COPY_DONE
         [mime] = mimes
         for name in models.clipboard_mime_formats():
             assert mime.hasFormat(models.windows_clipboard_mime_type(name))
+        screen.deleteLater()
+
+    def test_copy_leaves_the_check_marks_out(
+        self, qapp: Any, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        """Invented-text guard decision 0.5 (review round 5 MED-002): a saved
+        note whose quoted line carries ``number_source`` shows its check mark,
+        and "Copy saved note" places it WITHOUT the mark."""
+        payloads = TestNoteWiring()._fake_clipboard(monkeypatch)
+        store = _ps_store(tmp_path / "past_sessions")
+        sid, saved = _ps_entry(store, numbered=True)
+        assert saved is not None
+        marked = models.format_note_body(saved)
+        bare = models.format_note_body(saved, check_marks=False)
+        assert "check: number" in marked
+        assert "check:" not in bare and "sore for 2 weeks" in bare
+        screen = self._screen(tmp_path, store=store)
+        screen.refresh()
+        self._select(screen, sid)
+        screen.on_copy()
+        assert payloads == [bare]
         screen.deleteLater()
 
     def test_a_shadow_entry_is_marked_and_its_copy_refused_by_name(
@@ -10438,7 +10583,7 @@ class TestPastSessionsTab:
         self._select(screen, normal_id)
         assert screen.copy_button.isEnabled()
         screen.on_copy()
-        assert payloads == [models.format_note_body(normal_saved)]
+        assert payloads == [models.format_note_body(normal_saved, check_marks=False)]
         screen.deleteLater()
 
     # --- Delete now -------------------------------------------------------------

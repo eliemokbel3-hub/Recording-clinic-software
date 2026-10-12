@@ -149,13 +149,19 @@ def _first_phrase_match(
 ) -> _PhraseMatch | None:
     """First contiguous occurrence of ``phrase_tokens`` in transcript order,
     or None. Content tokens only, per word, within one segment (module
-    docstring records why); an empty phrase never matches."""
+    docstring records why); an empty phrase never matches. A ``suspect``
+    word (invented-text guard D6) is skipped BEFORE tokenising and stands as
+    a barrier no phrase spans, so nothing the guard marks as possibly not
+    speech proposes or pre-fills a line — the safe direction."""
     if not phrase_tokens:
         return None
     span = len(phrase_tokens)
     for segment_index, segment in enumerate(document.transcript_segments):
-        indexed: list[tuple[str, int]] = []
+        indexed: list[tuple[str | None, int]] = []
         for word_index, word in enumerate(segment.transcript_words):
+            if word.suspect:
+                indexed.append((None, word_index))  # never equal to a phrase token
+                continue
             for token in content_tokens(word.word_text):
                 indexed.append((token, word_index))
         if len(indexed) < span:

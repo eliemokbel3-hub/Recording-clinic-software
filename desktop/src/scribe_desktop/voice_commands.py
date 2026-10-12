@@ -120,11 +120,16 @@ class _Token:
 
 def _tokens(segments: Iterable[TranscriptSegment]) -> list[_Token]:
     """Every word's tokens in order, each carrying its word's start time on
-    the captured-audio timeline."""
+    the captured-audio timeline — except a ``suspect`` word's (invented-text
+    guard D6): words the guard marks as possibly not speech never pause the
+    recording or raise the new-consultation warning. A suspect word is
+    dropped, not a barrier (unlike ``note_fill``'s trigger match): the phrase
+    either side of it was spoken, and a pause is the safe direction."""
     return [
         _Token(token, word.start_seconds)
         for segment in segments
         for word in segment.transcript_words
+        if not word.suspect
         for token in phrase_tokens(word.word_text)
     ]
 

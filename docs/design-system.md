@@ -167,7 +167,7 @@ view patterns · tokens · microcopy.
   practitioner's own config pre-filled renders with `[pre-filled by your config - …]` in
   the note body and in the line editor — under a prose style, where the line has become
   part of a paragraph, the section's prose block ends with `[includes N lines pre-filled
-  by your config]` instead (`note.prefilled_section_mark`; the editor rows still name the
+  by your config]` instead (`note.section_marks_line` since 0.3.2; the editor rows still name the
   lines) — has no confirm/decline row, offers Remove and Edit,
   and the Save button reads `Save - confirms the N pre-filled lines shown` while any stand
   (plain `Save note` otherwise); Remove is recorded as the clinician's decline at Save and

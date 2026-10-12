@@ -174,6 +174,93 @@ class TestFormatTranscript:
         assert models.format_timestamp(-1.0) == "00:00"
 
 
+def _suspect(text: str, *, uncertain: bool = False) -> TranscriptWord:
+    return _word(text, uncertain=uncertain).model_copy(update={"suspect": True})
+
+
+class TestSuspectPrefix:
+    """Invented-text guard D4 (Task 2.1): a segment holding a ``suspect`` word
+    is quoted with ``[possibly not speech]`` in front of its words at every
+    quoting site; its words are all still shown."""
+
+    def _segments(self) -> tuple[TranscriptSegment, ...]:
+        return (
+            TranscriptSegment(
+                start_seconds=0.0,
+                end_seconds=3.0,
+                speaker=SPEAKER_1,
+                transcript_words=(_word("Hello"), _word("there")),
+            ),
+            TranscriptSegment(
+                start_seconds=4.0,
+                end_seconds=5.0,
+                speaker=SPEAKER_2,
+                transcript_words=(
+                    _suspect("Pain"),
+                    _suspect("four", uncertain=True),
+                    _suspect("out"),
+                    _suspect("of"),
+                    _suspect("ten."),
+                ),
+            ),
+        )
+
+    def test_the_mark_and_the_prefix(self) -> None:
+        plain, suspect = self._segments()
+        assert models.SUSPECT_SEGMENT_MARK == "[possibly not speech]"
+        assert models.suspect_prefix(plain) == ""
+        assert models.suspect_prefix(suspect) == "[possibly not speech] "
+        # ONE suspect word is enough.
+        one = suspect.model_copy(
+            update={"transcript_words": (_word("Pain"), _suspect("four"))}
+        )
+        assert models.suspect_prefix(one) == "[possibly not speech] "
+
+    def test_the_final_view_prefixes_the_suspect_segment_only(self) -> None:
+        lines = models.format_transcript_text(_document(self._segments())).splitlines()
+        assert lines == [
+            "[00:00-00:03] speaker_1: Hello there",
+            "[00:04-00:05] speaker_2: [possibly not speech] Pain [four?] out of ten.",
+        ]
+
+    def test_the_live_view_prefixes_the_suspect_segment_only(self) -> None:
+        assert models.format_live_segments(self._segments()) == [
+            "[00:00-00:03] Hello there",
+            "[00:04-00:05] [possibly not speech] Pain [four?] out of ten.",
+        ]
+
+    def test_the_chooser_label_keeps_its_number_and_speaker_first(self) -> None:
+        document = _document(self._segments())
+        choices = models.eligible_utterances(document, clinician_speaker=SPEAKER_1, in_note=())
+        assert [choice.label for choice in choices] == [
+            "1. speaker_1: Hello there",
+            "2. speaker_2: [possibly not speech] Pain four out of ten.",
+        ]
+        flagged = models.eligible_utterances(
+            document, clinician_speaker=SPEAKER_1, in_note=(), flagged={1}
+        )
+        assert flagged[1].label == (
+            "2. [flagged] speaker_2: [possibly not speech] Pain four out of ten."
+        )
+        # The `startswith` pins hold.
+        assert flagged[1].label.startswith(f"2. {models.FLAGGED_LINE_MARK}speaker_2: ")
+        assert choices[1].label.startswith("2. speaker_2: ")
+
+    def test_the_role_quotation_prefixes_the_suspect_quote(self) -> None:
+        quotes = models.speaker_quotations(_document(self._segments()))
+        assert quotes == {
+            SPEAKER_1: "Hello there",
+            SPEAKER_2: "[possibly not speech] Pain four out of ten.",
+        }
+        # The 90-character cut applies to the words; the prefix is never cut.
+        long_words = tuple(_suspect("word") for _ in range(40))
+        long = self._segments()[1].model_copy(update={"transcript_words": long_words})
+        quote = models.speaker_quotations(_document((long,)))[SPEAKER_2]
+        assert quote.startswith("[possibly not speech] word word")
+        assert quote.endswith("...")
+        assert len(quote) == len("[possibly not speech] ") + 90 + len("...") - 1
+
+
 def _make_session_dir(root: Path, *, finished: bool, with_audio: bool = True) -> str:
     session_id = uuid.uuid4().hex
     directory = root / session_id
@@ -1494,6 +1581,139 @@ class TestReviewEditModels:
             models.editable_lines(draft, document, removed=set(), additions={}, flagged=())
         )
 
+    def test_a_row_carries_its_check_marks_at_the_front_after_flagged(
+        self, tmp_path: Path
+    ) -> None:
+        """Invented-text guard D5 (Task 2.6): a row whose line is in the note
+        carries ``[check: <kind>] `` at the FRONT of its label, after
+        ``[flagged] ``; a removed or replaced row carries none (Check 1 raises
+        no code on a line that is not in the note)."""
+        turns = (
+            ("My left knee is sore after 3 weeks", SPEAKER_1),
+            ("On examination the range of motion is limited", SPEAKER_2),
+            # Unrouted, with a number: the added-row positive control.
+            ("I walked to the shop 2 times this morning", SPEAKER_1),
+        )
+        plain = _document(
+            tuple(
+                TranscriptSegment(
+                    start_seconds=float(index * 10),
+                    end_seconds=float(index * 10 + 5),
+                    speaker=speaker,
+                    transcript_words=_review_words(text),
+                )
+                for index, (text, speaker) in enumerate(turns)
+            )
+        )
+        exam = plain.transcript_segments[1]
+        document = plain.model_copy(
+            update={
+                "transcript_segments": (
+                    plain.transcript_segments[0],
+                    exam.model_copy(
+                        update={
+                            "transcript_words": tuple(
+                                w.model_copy(update={"suspect": True})
+                                for w in exam.transcript_words
+                            )
+                        }
+                    ),
+                    plain.transcript_segments[2],
+                )
+            }
+        )
+        config = load_note_config(tmp_path / "config")
+        draft = compose_draft(
+            document,
+            config,
+            ExtractiveNoteProvider(cues=config.normalised_cues()),
+            "template-a",
+            clinician_speaker=SPEAKER_2,
+        )
+        rows = {
+            row.segment_index: row
+            for row in models.editable_lines(draft, document, removed=set(), additions={})
+        }
+        assert set(rows) == {0, 1}, "the shipped cues must route both lines"
+        number, suspect = rows[0], rows[1]
+        assert number.marks == ("number",)
+        assert number.label == "[check: number] " + (
+            f"{models.section_title(number.section_key)} - My left knee is sore after 3 weeks"
+        )
+        assert suspect.marks == ("possibly not speech",)
+        assert suspect.label.startswith(
+            f"[check: possibly not speech] {models.section_title(suspect.section_key)} - "
+        )
+        # Flagged first, then the check mark.
+        flagged = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed=set(), additions={}, flagged={0}
+            )
+        }
+        title = models.section_title(number.section_key)
+        assert flagged[0].label.startswith(f"[flagged] [check: number] {title} - ")
+        both = models.row_label(
+            "Section - text", flagged=True, marks=("number", "possibly not speech")
+        )
+        assert both == "[flagged] [check: number] [check: possibly not speech] Section - text"
+        assert models.row_label("Section - text", flagged=False, marks=()) == "Section - text"
+        # Removed: not in the note, so no mark; replaced likewise.
+        removed = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed={number.assertion_id}, additions={}
+            )
+        }
+        assert removed[0].state == "removed" and removed[0].marks == ()
+        assert not removed[0].label.startswith("[check:")
+        replaced = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft,
+                document,
+                removed={number.assertion_id},
+                additions={},
+                replaced={number.assertion_id: "t0001"},
+            )
+        }
+        assert replaced[0].state == "replaced" and replaced[0].marks == ()
+        # Moved: the line is in the note as its manual leg — marked.
+        leg = _manual_line(document, 0, "history_presenting_complaint")
+        moved = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed={number.assertion_id}, additions={leg.assertion_id: leg}
+            )
+        }
+        assert moved[0].state == "moved" and moved[0].marks == ("number",)
+        # Added: a manual line of an unrouted segment is judged by its own words.
+        added_leg = _manual_line(document, 2, "presenting_complaint")
+        added = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed=set(), additions={added_leg.assertion_id: added_leg}
+            )
+        }
+        assert added[2].state == "added" and added[2].marks == ("number",)
+        assert added[2].label.startswith("[check: number] ")
+        # Review round 5 LOW-002: a line whose words do not rebuild its text
+        # draws no mark from Check 1 (its error blocks), so neither does its row.
+        mismatched = added_leg.model_copy(
+            update={
+                "note_span": added_leg.note_span.model_copy(
+                    update={"span_text": "I walked to the shop 3 times"}
+                )
+            }
+        )
+        unmatched = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed=set(), additions={mismatched.assertion_id: mismatched}
+            )
+        }
+        assert unmatched[2].state == "added" and unmatched[2].marks == ()
+
     def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
         from scribe_desktop.note import NoteWarning, SourceCoords
 
@@ -1548,12 +1768,143 @@ class TestReviewEditModels:
         summary = models.WarningSummary(
             review=(group("clinician_asserted"), group("high_risk_omission"), group("mapping_drop"))
         )
-        assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset({"high_risk_omission"})
+        # Invented-text guard D5: the two per-line codes joined the set.
+        assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset(
+            {"high_risk_omission", "number_source", "suspect_source"}
+        )
         assert models.acknowledge_all_codes(summary, ()) == ("clinician_asserted", "mapping_drop")
         assert models.acknowledge_all_codes(summary, {"mapping_drop"}) == ("clinician_asserted",)
         # Nothing left for the button: only the omission is open.
         assert models.acknowledge_all_codes(summary, {"clinician_asserted", "mapping_drop"}) == ()
         assert models.acknowledge_all_codes(models.WarningSummary(), ()) == ()
+
+    def test_acknowledge_all_never_clears_the_line_mark_codes(self) -> None:
+        """Invented-text guard D5 (Task 2.5): a mixed set clears every other
+        review code; with only the per-line codes open the button has nothing
+        to do; the unknown-version code (Task 2.8) is NOT sticky."""
+
+        def group(code: str) -> models.WarningGroup:
+            return models.WarningGroup(code, "review", 1, code, None, "hint", ())
+
+        mixed = models.WarningSummary(
+            review=(
+                group("number_source"),
+                group("clinician_asserted"),
+                group("suspect_source"),
+                group("unknown_review_warning"),
+            )
+        )
+        assert models.acknowledge_all_codes(mixed, ()) == (
+            "clinician_asserted",
+            "unknown_review_warning",
+        )
+        only_marks = models.WarningSummary(
+            review=(group("number_source"), group("suspect_source"))
+        )
+        assert models.acknowledge_all_codes(only_marks, ()) == ()
+        assert "unknown_review_warning" not in models.SEPARATELY_ACKNOWLEDGED_CODES
+
+    def test_complete_names_an_open_line_mark_group(self) -> None:
+        """Task 2.5: the per-line groups count where Complete reads them —
+        after "Acknowledge all" an open per-line group keeps Complete refused
+        with the acknowledgement reason, and its own Acknowledge releases it.
+        (``complete_block_reason`` is generic by design: it names the open
+        KIND of block, never one code — review round 5 LOW-003.)"""
+        from scribe_desktop.note import NoteWarning
+
+        summary = models.summarise_warnings(
+            (
+                NoteWarning(note_warning_code="clinician_asserted", severity="review"),
+                NoteWarning(note_warning_code="number_source", severity="review"),
+            )
+        )
+        acknowledged = set(models.acknowledge_all_codes(summary, ()))
+        assert acknowledged == {"clinician_asserted"}
+
+        def state(acked: set[str]) -> models.NoteReviewState:
+            open_groups = sum(1 for group in summary.review if group.code not in acked)
+            return models.NoteReviewState(
+                has_note=True, note_saved=True, unacknowledged_reviews=open_groups
+            )
+
+        assert models.complete_block_reason(state(acknowledged)) == (
+            "Acknowledge the note review warnings before completing."
+        )
+        assert models.complete_block_reason(state(acknowledged | {"number_source"})) is None
+
+
+class TestUnmarkedSelection:
+    """Invented-text guard decision 0.5 (review round 5 MED-001): the note
+    panel's selection is copied from the mark-free rendering."""
+
+    _BARE = "Plan\nReview in two weeks\nIce pack advised  [pre-filled by your config]"
+    _CLEAN = (
+        "Plan\nReview in two weeks  [check: number]\nIce pack advised  [pre-filled by your config]"
+    )
+    _VERBATIM_BARE = "Plan:\n  - Review in two weeks  [from transcript]"
+    _VERBATIM = "Plan:\n  - Review in two weeks  [check: number - from transcript]"
+
+    def test_the_whole_selection_is_the_mark_free_rendering(self) -> None:
+        for shown, bare in ((self._CLEAN, self._BARE), (self._VERBATIM, self._VERBATIM_BARE)):
+            assert models.unmarked_selection(shown, bare, 0, len(shown)) == bare
+
+    def test_a_part_keeps_the_text_around_a_mark_and_drops_the_mark(self) -> None:
+        start = self._CLEAN.index("Review")
+        end = self._CLEAN.index("\nIce")
+        assert models.unmarked_selection(self._CLEAN, self._BARE, start, end) == (
+            "Review in two weeks"
+        )
+        start = self._VERBATIM.index("two")
+        assert models.unmarked_selection(
+            self._VERBATIM, self._VERBATIM_BARE, start, len(self._VERBATIM)
+        ) == "two weeks  [from transcript]"
+
+    def test_a_selection_inside_a_mark_is_empty(self) -> None:
+        start = self._CLEAN.index("check: number")
+        end = start + len("check: number")
+        assert models.unmarked_selection(self._CLEAN, self._BARE, start, end) == ""
+
+    def test_no_mark_is_the_selection_as_shown(self) -> None:
+        assert models.unmarked_selection(self._BARE, self._BARE, 5, 11) == self._BARE[5:11]
+
+    def test_the_bare_text_is_read_as_qt_shows_it(self) -> None:
+        """A no-break space (and a line or paragraph separator) reads as
+        Qt's ``toPlainText`` shows it, so such a note still copies."""
+        shown = "Plan\nReview in two weeks"
+        marked = "Plan\nReview in two weeks  [check: number]"
+        for bare in (
+            "Plan\nReview in" + chr(0x00A0) + "two weeks",  # a no-break space
+            "Plan" + chr(0x2029) + "Review in two weeks",  # a paragraph separator
+            "Plan" + chr(0x2028) + "Review in two weeks",  # a line separator
+            "Plan\r\nReview in two weeks",  # review round 6 LOW-001
+            "Plan\rReview in two weeks",
+        ):
+            assert models.unmarked_selection(shown, bare, 0, len(shown)) == shown, repr(bare)
+            assert models.unmarked_selection(marked, bare, 0, len(marked)) == shown, repr(bare)
+
+    def test_the_walk_finds_an_embedding_wherever_one_exists(self) -> None:
+        """Review round 6 LOW-003: a mark that repeats a character of the
+        text after it still aligns — the walk never fails where an embedding
+        exists — and the prose marks line, inserted as a whole line, drops."""
+        shown = "Plan\nA line\n[includes 1 line check: number]\n\nNext"
+        bare = "Plan\nA line\n\nNext"
+        assert models.unmarked_selection(shown, bare, 0, len(shown)) == bare
+        shown = "x  [check: number]  [check: possibly not speech]\ny"
+        assert models.unmarked_selection(shown, "x\ny", 0, len(shown)) == "x\ny"
+
+    def test_a_panel_showing_something_else_places_nothing(self) -> None:
+        """Not insertions only (a word the bare text has and the panel does
+        not): None, so the caller places nothing — fail closed."""
+        assert models.unmarked_selection("Plan\nReview soon", self._BARE, 0, 10) is None
+
+    def test_qt_positions_are_utf16_code_units(self) -> None:
+        text = "a\U0001f600b"  # one character outside the BMP: two UTF-16 units
+        assert models.utf16_to_index(text, 0) == 0
+        assert models.utf16_to_index(text, 1) == 1
+        assert models.utf16_to_index(text, 3) == 2
+        assert models.utf16_to_index(text, 4) == 3
+        assert models.utf16_to_index("plain", 3) == 3
+        assert models.utf16_to_index("plain", 99) == len("plain")
 
 
 class TestClipboardFormats:

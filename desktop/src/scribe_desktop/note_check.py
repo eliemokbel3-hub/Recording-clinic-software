@@ -224,6 +224,7 @@ from scribe_desktop.note import (
     _NEGATIONS,
     CANONICAL_SECTION_KEYS,
     CLINICIAN_OWNED_SECTIONS,
+    LINE_MARK_CODES,
     GeneratedNote,
     NoteAssertion,
     NoteProposal,
@@ -232,6 +233,7 @@ from scribe_desktop.note import (
     SourceCoords,
     content_tokens,
     is_interrogative,
+    line_marks,
     normalise_token,
     reconstruct_span_text,
     transcript_digest,
@@ -491,13 +493,17 @@ def reconstruction_warnings(
     note: GeneratedNote, document: TranscriptDocument
 ) -> tuple[NoteWarning, ...]:
     """Errors for every ``transcript`` assertion that is not exactly what its
-    coordinates say; review warnings for included low-confidence words.
+    coordinates say; review warnings for included low-confidence words; and
+    (invented-text guard D5) ONE ``number_source`` / ``suspect_source`` per
+    line whose words earn that mark (``note.line_marks``), on the line's
+    span.
 
-    Uncertainty warnings are emitted only for assertions that reconstruct
-    exactly: when reconstruction fails, the cited words are NOT the note's
-    content, so flagging their probabilities would annotate text the note
-    does not carry — the error already blocks.
+    Uncertainty warnings and line marks are emitted only for assertions that
+    reconstruct exactly: when reconstruction fails, the cited words are NOT
+    the note's content, so flagging them would annotate text the note does
+    not carry — the error already blocks.
     """
+    mark_codes = {kind: code for code, kind in LINE_MARK_CODES.items()}
     warnings: list[NoteWarning] = []
     for section in note.note_sections:
         for assertion in section.note_assertions:
@@ -541,6 +547,16 @@ def reconstruction_warnings(
                             source_coords=SourceCoords(coords.segment_index, index, index),
                         )
                     )
+            for kind in line_marks(words):
+                warnings.append(
+                    NoteWarning(
+                        note_warning_code=mark_codes[kind],
+                        severity="review",
+                        section_key=section.section_key,
+                        assertion_id=assertion.assertion_id,
+                        source_coords=coords,
+                    )
+                )
     return tuple(warnings)
 
 
@@ -748,7 +764,11 @@ def _tokens_from_words(
     """Clauses of a quoted transcript span, per word through
     ``content_tokens`` — the same rule ``note_fill._first_phrase_match``
     indexes by, so the structure parser and the trigger matcher can never
-    disagree about what a word says."""
+    disagree about what a word says. Deliberately reads a ``suspect`` word
+    too (invented-text guard decision 0.1, D6): a quoted suspect line that
+    contradicts a confirmed line still raises ``contradiction`` — the line's
+    ``[check: possibly not speech]`` mark is the clue and Remove line the
+    remedy, and a real line wrongly marked still deserves the check."""
     return _clause_tokens(
         (word.word_text, word.probability, first_word_index + offset)
         for offset, word in enumerate(words)
@@ -1535,10 +1555,14 @@ def omission_warnings(
     warnings: list[NoteWarning] = []
     for segment_index, segment in enumerate(document.transcript_segments):
         clinician = segment.speaker == note.clinician_speaker
+        # Invented-text guard D6: a suspect word is never an omission — a
+        # line the guard marks as possibly not speech, left out, draws no
+        # "… is not in the note" warning (the harness's `warned` mirrors it).
         uncovered = [
             word_index
             for word_index, word in enumerate(segment.transcript_words)
             if (segment_index, word_index) not in covered
+            and not word.suspect
             and _omission_flag_token(
                 word.word_text, first_in_segment=word_index == 0, clinician=clinician
             )

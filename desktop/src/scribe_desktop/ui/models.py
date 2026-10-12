@@ -73,6 +73,7 @@ from scribe_desktop.note import (
     MAX_ASSERTION_CHARS,
     PREFILLED_MARK,
     SECTION_TITLES,
+    UNKNOWN_REVIEW_WARNING,
     ExtractiveNoteProvider,
     GeneratedNote,
     GeneratedSection,
@@ -88,8 +89,11 @@ from scribe_desktop.note import (
     assertion_label,
     attach_style_renderings,
     bound_rendering,
+    check_mark,
     compose_draft,
     is_prefilled,
+    line_marks,
+    line_marks_by_assertion,
     note_input_digest,
     provenance_label,
     reconstruct_span_text,
@@ -190,6 +194,7 @@ from scribe_desktop.transcription import (
     resolve_whisper_model,
     transcribe_session,
     whisper_model_available,
+    words_hold_suspect,
     write_transcript,
 )
 
@@ -1742,10 +1747,27 @@ def _segment_span(segment: TranscriptSegment) -> str:
     )
 
 
+# Invented-text guard D4: the prefix a segment holding a ``suspect`` word
+# carries wherever a segment is QUOTED — the final and live transcript views,
+# Past sessions, the line chooser and the role quotation. Its words are kept
+# and shown (never dropped, decision 0.1); the prefix is the reading cue.
+# Plain ASCII, like ``FLAGGED_LINE_MARK``.
+SUSPECT_SEGMENT_MARK: Final = "[possibly not speech]"
+
+
+def suspect_prefix(segment: TranscriptSegment) -> str:
+    """``SUSPECT_SEGMENT_MARK`` and one space when any of the segment's
+    words is ``suspect`` (``transcription.words_hold_suspect``), else empty —
+    the one prefix every quoting site uses."""
+    if words_hold_suspect(segment.transcript_words):
+        return f"{SUSPECT_SEGMENT_MARK} "
+    return ""
+
+
 def _segment_words(segment: TranscriptSegment) -> str:
-    """The segment's words with the ``[word?]`` uncertainty marks — the same
-    one implementation for both renderings."""
-    return " ".join(
+    """The segment's words with the ``[word?]`` uncertainty marks, after
+    ``suspect_prefix`` — the same one implementation for both renderings."""
+    return suspect_prefix(segment) + " ".join(
         f"[{word.word_text}?]" if word.uncertain else word.word_text
         for word in segment.transcript_words
     )
@@ -1789,7 +1811,7 @@ def speaker_quotations(document: TranscriptDocument, *, max_chars: int = 90) -> 
             continue
         if len(text) > max_chars:
             text = text[:max_chars].rstrip() + "..."
-        quotes[segment.speaker] = text
+        quotes[segment.speaker] = suspect_prefix(segment) + text
     return quotes
 
 
@@ -1940,14 +1962,16 @@ CONSENT_MANUAL_REMINDER: Final[str] = (
 class RenderedAssertion:
     """One assertion rendered as ONE bullet — never assembled prose (plan
     Critical Constraint: assertions render on hard boundaries).
-    ``provenance_label`` already carries the pre-filled mark when
-    ``prefilled`` is True (``assertion_label``)."""
+    ``provenance_label`` already carries the line's ``marks``
+    (``assertion_label``): the pre-filled mark when ``prefilled`` is True,
+    and the invented-text guard's check marks (D5)."""
 
     assertion_id: str
     provenance: str
     provenance_label: str
     text: str
     prefilled: bool = False
+    marks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1957,15 +1981,76 @@ class RenderedSection:
     assertions: tuple[RenderedAssertion, ...]
 
 
-def format_note_body(note: GeneratedNote) -> str:
+def format_note_body(note: GeneratedNote, *, check_marks: bool = True) -> str:
     """The composed note as display text under the note's OWN ``style`` —
     ``note.render_note(note, note.style)``, THE one rendering path (D7):
     the Note tab's body, a reloaded ``note.enc`` and Copy all read this, so
     display, reload and Copy cannot disagree. This is the copyable surface
     (gated on the recorded copy flag and full ratification — ``ui/note.py``
     ``_copy_ready``); it is display text only, never
-    persisted or logged here."""
-    return render_note(note, note.style)
+    persisted or logged here. Copy passes ``check_marks=False``
+    (invented-text guard decision 0.5): the same rendering without the
+    ``[check: …]`` marks, the pre-filled mark kept."""
+    return render_note(note, note.style, check_marks=check_marks)
+
+
+def utf16_to_index(text: str, position: int) -> int:
+    """The Python index in ``text`` of a Qt text position — Qt counts UTF-16
+    code units, so a character outside the Basic Multilingual Plane counts
+    two there and one here."""
+    units = 0
+    for index, char in enumerate(text):
+        if units >= position:
+            return index
+        units += 2 if ord(char) > 0xFFFF else 1
+    return len(text)
+
+
+# What ``QTextDocument.toPlainText`` turns these characters into: a no-break
+# space (U+00A0) into a space, a line or paragraph separator (U+2028 /
+# U+2029) into a line break.
+_QT_PLAIN_TEXT: Final = str.maketrans({0x00A0: " ", 0x2028: "\n", 0x2029: "\n"})
+
+
+# Said when the note panel's selection copy places nothing although the note
+# is ratified and something is selected (review round 6 LOW-002): the
+# selection held only a check mark, or the panel showed something else.
+SELECTION_NOT_COPIED: Final = (
+    "Nothing was copied from that selection - select the note's text, or use the Copy button."
+)
+
+
+def unmarked_selection(shown: str, bare: str, start: int, end: int) -> str | None:
+    """The part of ``shown`` (the note panel's text, check marks included)
+    from index ``start`` to ``end``, as Copy renders it — without the check
+    marks (invented-text guard decision 0.5; review round 5 MED-001). The
+    check marks are pure insertions into ``bare`` (``format_note_body(note,
+    check_marks=False)``), so the selection keeps exactly the characters
+    ``bare`` also holds: the result is always a contiguous part of ``bare``,
+    and a selection lying wholly inside a mark gives an empty string. None —
+    the caller places nothing — when ``bare`` is not ``shown`` with
+    insertions removed (the panel shows something else). ``bare`` is first
+    read the way Qt shows plain text (a carriage return, alone or before a
+    line feed, as one line break; a no-break space as a space; a line or
+    paragraph separator as a line break), so a note holding one still
+    copies — as Qt's own copy of it did. ONE linear walk (review round 6
+    LOW-003): each character of ``bare`` is matched to the first equal
+    character of ``shown`` after the last match — an embedding exists
+    exactly when ``bare`` is ``shown`` minus insertions, and this walk finds
+    one when it exists. Display text only, never logged."""
+    bare = bare.replace("\r\n", "\n").replace("\r", "\n").translate(_QT_PLAIN_TEXT)
+    if shown == bare:
+        return shown[start:end]
+    kept: list[str] = []
+    matched = 0
+    for index, char in enumerate(shown):
+        if matched < len(bare) and char == bare[matched]:
+            if start <= index < end:
+                kept.append(char)
+            matched += 1
+    if matched < len(bare):
+        return None
+    return "".join(kept)
 
 
 def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
@@ -1973,6 +2058,7 @@ def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
     bullet with its provenance. ``note.note_sections`` is already unique and
     canonically ordered (GeneratedNote validator), so this is presentation
     only — no reordering, no joining."""
+    marks = line_marks_by_assertion(note)
     rendered: list[RenderedSection] = []
     for section in note.note_sections:
         rendered.append(
@@ -1983,9 +2069,12 @@ def render_note_sections(note: GeneratedNote) -> tuple[RenderedSection, ...]:
                     RenderedAssertion(
                         assertion_id=assertion.assertion_id,
                         provenance=assertion.provenance,
-                        provenance_label=assertion_label(assertion),
+                        provenance_label=assertion_label(
+                            assertion, marks.get(assertion.assertion_id, ())
+                        ),
                         text=assertion.text,
                         prefilled=is_prefilled(assertion),
+                        marks=marks.get(assertion.assertion_id, ()),
                     )
                     for assertion in section.note_assertions
                 ),
@@ -2091,6 +2180,21 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Check it against the transcript beside the note, then acknowledge.",
     ),
+    # Invented-text guard D5: one per quoted line, each marking its line in
+    # the note ("[check: number]" / "[check: possibly not speech]"); only the
+    # row's own Acknowledge clears them (``SEPARATELY_ACKNOWLEDGED_CODES``).
+    "number_source": WarningCopy(
+        "A quoted line contains a number",
+        None,
+        "Check each line marked [check: number] against the transcript beside the note, "
+        "remove or keep it, then acknowledge.",
+    ),
+    "suspect_source": WarningCopy(
+        "A quoted line may be music or noise, not speech",
+        None,
+        "Check each line marked [check: possibly not speech] against the transcript beside "
+        "the note, remove or keep it, then acknowledge.",
+    ),
     "contradiction_low_confidence": WarningCopy(
         "A possible contradiction rests on an uncertain transcript word",
         None,
@@ -2157,6 +2261,15 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "the fidelity check",
         None,
         "Read that section as shown (its confirmed lines, unchanged), then acknowledge.",
+    ),
+    # Invented-text guard Task 2.8: a stored review warning written by a newer
+    # version of the app, read back after a rollback (``note.from_bytes``).
+    # Acknowledged like any review group — and by "Acknowledge all".
+    UNKNOWN_REVIEW_WARNING: WarningCopy(
+        "A review warning from a newer version of the app",
+        None,
+        "This version cannot say what it is - review the note against the transcript, "
+        "then acknowledge.",
     ),
 }
 
@@ -2231,8 +2344,12 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
 # Note-routing-omissions plan D4 (C6): review codes that "Acknowledge all
 # review warnings" never clears — only the code's own row's Acknowledge does,
 # after the clinician has checked the lines it flags. It changes WHICH button
-# clears the warning, never what Save, Complete, Copy or Write require.
-SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset({"high_risk_omission"})
+# clears the warning, never what Save, Complete, Copy or Write require. The
+# invented-text guard (D5) adds its two per-line codes: each marks lines in
+# the note that must be looked at, which one click must not wave through.
+SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset(
+    {"high_risk_omission", "number_source", "suspect_source"}
+)
 
 
 def acknowledge_all_codes(
@@ -2567,7 +2684,8 @@ def eligible_utterances(
     text whose index is not already carried by the working note (a line
     present anywhere in the note is refused — D14), in transcript order. A
     segment in ``flagged`` is marked (``FLAGGED_LINE_MARK`` after its number),
-    never moved."""
+    never moved; a segment holding a suspect word carries ``suspect_prefix``
+    before its words (invented-text guard D4)."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -2583,7 +2701,10 @@ def eligible_utterances(
         )
         mark = index in flagged
         flag = FLAGGED_LINE_MARK if mark else ""
-        label = f"{index + 1}. {flag}{segment.speaker}: {_lead_words(text)}"
+        label = (
+            f"{index + 1}. {flag}{segment.speaker}: "
+            f"{suspect_prefix(segment)}{_lead_words(text)}"
+        )
         choices.append(UtteranceChoice(index, label, allowed, mark))
     return tuple(choices)
 
@@ -2603,7 +2724,10 @@ class EditableLine:
     section it is in. ``flagged`` (note-routing-omissions D4, PR-MED-001):
     the row's transcript line carries a Check 4 omission although the
     chooser does not offer it (replaced, or only partly in the note), and
-    its label starts with ``FLAGGED_LINE_MARK``."""
+    its label starts with ``FLAGGED_LINE_MARK``. ``marks`` (invented-text
+    guard D5): the line-mark kinds (``note.line_marks``) of a row whose line
+    IS in the note (routed, moved or added), shown at the front of its label
+    after any ``FLAGGED_LINE_MARK`` as ``[check: <kind>] ``."""
 
     assertion_id: str
     segment_index: int
@@ -2614,6 +2738,7 @@ class EditableLine:
     allowed_sections: tuple[NoteSectionKey, ...]
     replaced_by: str | None = None
     flagged: bool = False
+    marks: tuple[str, ...] = ()
 
 
 def editable_lines(
@@ -2632,7 +2757,10 @@ def editable_lines(
     whether it is a provider line in ``removed`` or a manual addition still
     listed in ``additions``. A row whose segment is in ``flagged`` is marked
     unless it is ``removed`` — a removed line's utterance is back in the
-    chooser, which marks it there (one mark per place the line can be found)."""
+    chooser, which marks it there (one mark per place the line can be found).
+    A row whose line is in the note (``routed``, ``moved``, ``added``)
+    carries its check marks (``row_label``); a removed or replaced line is
+    not in the note, so Check 1 raises no code on it and its row has none."""
     manual_by_segment: dict[int, NoteAssertion] = {}
     for assertion in additions.values():
         coords = assertion.note_span.source_coords
@@ -2678,18 +2806,21 @@ def editable_lines(
                 else:
                     state = "removed"
             mark = state != "removed" and segment_index in flagged
+            # A moved row's line is in the note as its re-added manual leg.
+            kinds = _row_marks(document, manual if state == "moved" else assertion, state)
             label = f"{section_title(section.section_key)} - {_lead_words(assertion.text)}"
             lines.append(
                 EditableLine(
                     assertion.assertion_id,
                     segment_index,
                     section.section_key,
-                    FLAGGED_LINE_MARK + label if mark else label,
+                    row_label(label, flagged=mark, marks=kinds),
                     state,
                     moved_to,
                     allowed_for(segment_index, section.section_key),
                     replaced_by,
                     mark,
+                    kinds,
                 )
             )
     for assertion in additions.values():
@@ -2702,21 +2833,57 @@ def editable_lines(
             continue
         replaced_by = replaced.get(assertion.assertion_id)
         mark = coords.segment_index in flagged
+        added_state: LineState = "replaced" if replaced_by is not None else "added"
+        kinds = _row_marks(document, assertion, added_state)
         label = f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}"
         lines.append(
             EditableLine(
                 assertion.assertion_id,
                 coords.segment_index,
                 assertion.section_key,
-                FLAGGED_LINE_MARK + label if mark else label,
-                "replaced" if replaced_by is not None else "added",
+                row_label(label, flagged=mark, marks=kinds),
+                added_state,
                 None,
                 allowed_for(coords.segment_index, assertion.section_key),
                 replaced_by,
                 mark,
+                kinds,
             )
         )
     return tuple(lines)
+
+
+def row_label(label: str, *, flagged: bool, marks: Sequence[str]) -> str:
+    """A line-editor row's label with its front marks: ``FLAGGED_LINE_MARK``
+    first (note-routing D4), then one ``[check: <kind>] `` per mark kind
+    (invented-text guard D5, at the FRONT — an end mark is cut off, the
+    routing smoke's SMOKE-MED-001)."""
+    front = FLAGGED_LINE_MARK if flagged else ""
+    front += "".join(f"[{check_mark(kind)}] " for kind in marks)
+    return front + label
+
+
+def _row_marks(
+    document: TranscriptDocument, assertion: NoteAssertion | None, state: LineState
+) -> tuple[str, ...]:
+    """The mark kinds of a row whose line is in the note — ``line_marks``
+    over the words under ``assertion``'s coordinates (the editor reads the
+    document, never the warnings, which it cannot see); none for a removed
+    or replaced line, or a line Check 1 raises no mark on either —
+    coordinates the transcript does not have, or words that do not rebuild
+    the line's text (its error owns those; review round 5 LOW-002)."""
+    if assertion is None or state in ("removed", "replaced"):
+        return ()
+    coords = assertion.note_span.source_coords
+    if coords is None or coords.segment_index >= len(document.transcript_segments):
+        return ()
+    words = document.transcript_segments[coords.segment_index].transcript_words
+    if coords.last_word_index >= len(words):
+        return ()
+    span = words[coords.first_word_index : coords.last_word_index + 1]
+    if reconstruct_span_text(span) != assertion.text:
+        return ()
+    return line_marks(span)
 
 
 @dataclass(frozen=True)
@@ -4443,7 +4610,9 @@ __all__ = [
     "UNFINISHED_STORE_WARNING",
     "FLAGGED_FILTER_EMPTY_LINE",
     "FLAGGED_LINE_MARK",
+    "SELECTION_NOT_COPIED",
     "SEPARATELY_ACKNOWLEDGED_CODES",
+    "SUSPECT_SEGMENT_MARK",
     "WARNING_COPY",
     "AttributionInputs",
     "AttributionReadiness",
@@ -4498,6 +4667,7 @@ __all__ = [
     "provenance_label",
     "render_note_sections",
     "render_proposal",
+    "row_label",
     "save_button_label",
     "section_title",
     # Re-exported (like ``default_sessions_root``): the microphone screen reads
@@ -4506,9 +4676,12 @@ __all__ = [
     "speaker_embedder_available",
     "speaker_model_report_line",
     "speaker_quotations",
+    "suspect_prefix",
     "summarise_warnings",
     "typed_lines",
     "unlearned_on_exit_line",
+    "unmarked_selection",
+    "utf16_to_index",
     "voice_profile_report_line",
     "working_draft",
 ]
