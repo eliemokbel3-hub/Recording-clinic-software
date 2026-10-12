@@ -946,7 +946,7 @@ class TestShippedSectionCues:
 
     def test_a_complete_packaged_default_is_accepted_whatever_its_counts(self) -> None:
         """Completeness, not a count pin: a maintainer adding a phrase must not
-        break import (the 17/98 pin lives in the next test, not the reader)."""
+        break import (the 17/99 pin lives in the next test, not the reader)."""
         cues = _cues_with("consent", ["one phrase", "another phrase"])
         parsed = _parse_shipped_section_cues(_packaged_payload(cues))
         assert tuple(key for key, _ in parsed) == CANONICAL_SECTION_KEYS
@@ -956,9 +956,10 @@ class TestShippedSectionCues:
         resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
         assert _parse_shipped_section_cues(json.loads(resource.read_bytes())) == _RAW_SECTION_CUES
 
-    def test_seventeen_sections_and_ninety_eight_phrases_in_canonical_order(self) -> None:
+    def test_seventeen_sections_and_ninety_nine_phrases_in_canonical_order(self) -> None:
+        # 98 → 99 with "out of 10" (invented-text guard plan Task 6.1).
         assert len(_RAW_SECTION_CUES) == 17
-        assert sum(len(phrases) for _, phrases in _RAW_SECTION_CUES) == 98
+        assert sum(len(phrases) for _, phrases in _RAW_SECTION_CUES) == 99
         assert tuple(key for key, _ in _RAW_SECTION_CUES) == CANONICAL_SECTION_KEYS
 
     def test_defaults_are_derived_from_the_packaged_file(self) -> None:
@@ -980,7 +981,7 @@ class TestShippedSectionCues:
             content_tokens(phrase) for _, phrases in _RAW_SECTION_CUES for phrase in phrases
         ]
         assert all(tokens for tokens in normalised)
-        assert len(set(normalised)) == 98
+        assert len(set(normalised)) == 99
 
 
 SPEAKER_3 = "speaker_3"
@@ -2351,6 +2352,142 @@ class TestLayeredRouting:
         }
         assert routed == single_pass
         assert routed  # the comparison means something
+
+
+# ---------------------------------------------------------------------------
+# The digit-form pain-score cue (invented-text guard plan Task 6.1): without
+# the primer's example sentence (D1) the recogniser writes a pain score as
+# digits, and cue matching never canonicalises, so the shipped "out of ten"
+# alone left that line routed nowhere (run 4's diagnosis). Proven through the
+# REAL shipped cues as the app loads them — the config loader's result as the
+# own layer, ``DEFAULT_SECTION_CUES`` as the fallback, the factory's pairing
+# (``ui.models.extractive_provider_from_config``) — never a hand-built dict.
+# ---------------------------------------------------------------------------
+
+# An unprimed-style patient line: the score as the recogniser now writes it.
+_DIGIT_SCORE = "About 2 out of 10 now."
+_DIGIT_CUE = ("out", "of", "10")
+
+
+def _shipped_cue_payload() -> dict[str, list[str]]:
+    resource = resources.files("scribe_desktop") / "config_defaults" / SECTION_CUES_FILENAME
+    cues: dict[str, list[str]] = json.loads(resource.read_bytes())["section_cues"]
+    return cues
+
+
+def _own_cue_config(root: Path, cues: dict[str, list[str]]) -> NoteConfig:
+    """``load_note_config`` over a practitioner ``section_cues.json``."""
+    root.mkdir(parents=True)
+    (root / SECTION_CUES_FILENAME).write_text(
+        json.dumps({"schema_version": 1, "section_cues": cues}), encoding="utf-8"
+    )
+    return load_note_config(root)
+
+
+def _digit_score_routes(
+    config: NoteConfig,
+) -> tuple[NoteSectionKey | None, dict[int, NoteSectionKey]]:
+    """The patient's digit-score line under ``config``: the layered section
+    (own cues, then the shipped cues) and what the provider routed."""
+    layered = layered_section(
+        config.normalised_cues(),
+        DEFAULT_SECTION_CUES,
+        content_tokens(_DIGIT_SCORE),
+        CANONICAL_SECTION_KEYS,
+        speaker=SPEAKER_1,
+        clinician_speaker=SPEAKER_2,
+        question=is_interrogative(_DIGIT_SCORE),
+    )
+    sections = ExtractiveNoteProvider(
+        cues=config.normalised_cues(), fallback_cues=DEFAULT_SECTION_CUES
+    ).generate_sections(_request(document=_document(texts=((_DIGIT_SCORE, SPEAKER_1),))))
+    routed = {
+        assertion.note_span.source_coords.segment_index: section.section_key
+        for section in sections
+        for assertion in section.note_assertions
+        if assertion.note_span.source_coords is not None
+    }
+    return layered, routed
+
+
+class TestTheDigitScoreCue:
+    def test_the_shipped_outcome_measures_carry_both_forms(self) -> None:
+        raw = dict(_RAW_SECTION_CUES)["outcome_measures"]
+        assert raw[:2] == ("out of ten", "out of 10")
+        assert DEFAULT_SECTION_CUES["outcome_measures"][:2] == (("out", "of", "ten"), _DIGIT_CUE)
+        # Only there: no other section carries either form.
+        for key, phrases in DEFAULT_SECTION_CUES.items():
+            if key != "outcome_measures":
+                assert _DIGIT_CUE not in phrases and ("out", "of", "ten") not in phrases
+
+    def test_the_line_routes_to_outcome_measures_through_the_shipped_cues(
+        self, tmp_path: Path
+    ) -> None:
+        shipped = load_note_config(tmp_path / "no-user-config")
+        assert dict(shipped.normalised_cues()) == dict(DEFAULT_SECTION_CUES)
+        tokens = content_tokens(_DIGIT_SCORE)
+        assert tokens == ("about", "2", "out", "of", "10", "now")
+        assert _digit_score_routes(shipped) == ("outcome_measures", {0: "outcome_measures"})
+        # Not a clinician-owned section: no confirmed clinician needed.
+        assert (
+            first_matching_section(
+                shipped.normalised_cues(),
+                tokens,
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_1,
+                clinician_speaker=None,
+                question=False,
+            )
+            == "outcome_measures"
+        )
+        # The new cue is what routes it: without it nothing does (run 4's
+        # omission) — cue matching never reads "10" as "ten".
+        without = {
+            key: tuple(phrase for phrase in phrases if phrase != _DIGIT_CUE)
+            for key, phrases in DEFAULT_SECTION_CUES.items()
+        }
+        assert (
+            first_matching_section(
+                without,
+                tokens,
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_1,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            is None
+        )
+
+    def test_a_practitioner_file_that_routes_it_nowhere_falls_through_to_the_shipped_cue(
+        self, tmp_path: Path
+    ) -> None:
+        # The realistic case: a practitioner file made before 0.3.2 (the
+        # shipped default copied in when a phrase was first learned) has
+        # "out of ten" but not "out of 10".
+        cues = _shipped_cue_payload()
+        cues["outcome_measures"].remove("out of 10")
+        own = _own_cue_config(tmp_path / "config", cues)
+        assert (
+            first_matching_section(
+                own.normalised_cues(),
+                content_tokens(_DIGIT_SCORE),
+                CANONICAL_SECTION_KEYS,
+                speaker=SPEAKER_1,
+                clinician_speaker=SPEAKER_2,
+                question=False,
+            )
+            is None
+        )
+        assert _digit_score_routes(own) == ("outcome_measures", {0: "outcome_measures"})
+
+    def test_a_practitioner_file_that_routes_it_elsewhere_wins(self, tmp_path: Path) -> None:
+        # A LATER section than Outcome measures, so a merged per-section list
+        # would have lost to the shipped cue.
+        own = _own_cue_config(tmp_path / "config", {"response_to_treatment": ["out of 10"]})
+        assert _digit_score_routes(own) == (
+            "response_to_treatment",
+            {0: "response_to_treatment"},
+        )
 
 
 # ---------------------------------------------------------------------------

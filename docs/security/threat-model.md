@@ -671,7 +671,14 @@ note inherit exactly that posture.
      note. Pinned by `TestClinicalPrompt` (no number token, no example
      sentence, no shipped cue phrase; 51 words and 504 characters pinned;
      169 tokens with the real tokenizer, under that test's bound of 210). It
-     never passes through logging.
+     never passes through logging. _2026-10-12 (the plan's Phase 6, after
+     validation run 4):_ without the example sentence the recogniser writes a
+     pain score in digits ("2 out of 10"), which the shipped cue "out of ten"
+     never matched (cue matching never canonicalises), so such a line went
+     unrouted and drew only the omission warning; the shipped Outcome
+     measures cues now carry both "out of ten" and "out of 10". The new cue holds a
+     number token, which the primer never does, so the two rules cannot meet
+     (`TestClinicalPrompt` unchanged).
    - **One guard on both paths** (`transcription.mark_segment_words`, D3;
      pinned by AST in `test_shadow_exits.py` — `mark_words` is called only
      inside it, and it is called once by `transcribe_session` and once by

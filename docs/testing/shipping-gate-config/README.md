@@ -17,8 +17,11 @@ note on its own.
 
 Since the practitioner-profile plan's Phase 4 the cue file `section_cues.json`
 — the phrases that route a transcript utterance into a note section, the
-fourth clinician config file — is part of this config too. The copy here is
-a byte-identical copy of the shipped default (17 sections, 98 phrases): the
+fourth clinician config file — is part of this config too. The copy here was
+a byte-identical copy of the shipped default (17 sections, 98 phrases) when it
+was made; since 0.3.2 the shipped default also carries "out of 10" in Outcome
+measures (99 phrases; invented-text guard plan Task 6.1) and this frozen copy
+was deliberately left unchanged. The
 practitioner decided on 2026-09-16 to run the gate on the defaults and let
 their own phrasing accrue through phrase learning (plan Phase 5) rather than
 author it now (for the 2026-10 run that phrasing is simply whatever the live
