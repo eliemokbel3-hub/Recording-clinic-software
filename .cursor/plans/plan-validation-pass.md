@@ -252,7 +252,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 
 **Inputs.** `cues` is the canonical config's own cues (`config.normalised_cues()`); `fallback_cues` is `DEFAULT_SECTION_CUES`. Every consumer computes the boundary from `(document, config)` itself (D3), so all agree. A test pins the agreement.
 
-**Vocabulary.** Decision 0.2 adds the practitioner's own phrases, frozen in Task 0.8. No bare time-of-day word, no "welcome", no "how are you going".
+**Vocabulary.** Decision 0.2 adds the practitioner's own phrases, frozen in Task 0.8. No bare time-of-day word, no "welcome", no "how are you going". `[2026-10-13]` Decision 0.2 is (a): the existing lists only, frozen unchanged in Task 0.8; the practitioner's own phrases, once heard in the shadow consultations, are a later dated amendment.
 
 **Why.**
 - The existing lists (workflow-safeguards D8, 2026-09-28) predate the scripts (2026-10-07), so they are script-blind.
@@ -496,13 +496,13 @@ See the Planning Extraction Summary (the canonical list).
   - Four lenses ran.
   - The Step 3.5 gate decided: undo tick Defer, tail privacy Include in plan, divider Defer, corrected mark Defer.
   - The practitioner confirmed: clinician-initiated removal; kept audio left as decision 0.6; decisions 0.1–0.7 left open with recommendations.
-- Decisions 0.1–0.7 taken 2026-10-13: all seven recommendations ((a), (b), (a), (a), (a), (a), (a)); recorded on each task. Phases 2 and 3 are therefore built; 0.4 sends nothing to the guard session.
+- Decisions 0.1–0.7 taken 2026-10-13: all seven recommendations ((a), (b), (a), (a), (a), (a), (a)); recorded on each task. Later the same day 0.2 was changed to (a), the existing lists only (recorded on the task with the practitioner's words). Phases 2 and 3 are therefore built; 0.4 sends nothing to the guard session.
 - Current in-progress step: None.
 - Immediate next action:
-  1. After the guard plan's hardening commit: Task 0.8, the vocabulary commit — the practitioner names their own greetings and closings there (decision 0.2 (b)).
+  1. After the guard plan's hardening commit: Task 0.8, the vocabulary commit (decision 0.2 (a): the existing lists unchanged; no practitioner phrases).
   2. Task 0.9, a fresh session writes the held-out set.
   3. After the guard's run of record (decision 0.7 (a)): Task 0.10 on its set folder, then `/execute-loop` from Phase 1.
-- Open blockers: the guard plan (0.3.2) must land first (its hardening commit, then its run of record — decision 0.7 (a)); the practitioner's own greeting and closing words (Task 0.8).
+- Open blockers: the guard plan (0.3.2) must land first (its hardening commit, then its run of record — decision 0.7 (a)).
 - Last plan sync: 2026-10-12 (after the cross-family plan peer pass: `/peer-loop` codex `gpt-6-astra` medium, rounds 1-4, converged; Review Findings Log).
 
 ## Review History
@@ -668,6 +668,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - Decide after: nothing. Blocks: Phase 3; Task 0.8's hedge list.
   - Record: `Chosen: … (date); rationale: …`, plus the single-cluster rule (recommended: no mark).
 - [x] 🟩 **0.2 Next-patient vocabulary** `[decision]` — Chosen: (b) (2026-10-13); rationale: the practitioner's own greetings and closings, as with the cue file, with the D2 first-position rule and without bare time-of-day words, "welcome" or "how are you going". The words themselves are still owed: the practitioner names them at Task 0.8 (the overfit on `syn-38` / `-46` recorded there).
+  - **Changed to (a) the same day (2026-10-13, later; the practitioner's words, relayed: "I'll do (a) [the built-in list] and then give my own phrases later", and "typically I'll swap the treatment notes myself anyway and press Start").** Rationale: they cannot name their own greetings and closings now — their wording varies; they will listen for their own phrases during the coming shadow consultations, and any they find become a LATER dated vocabulary amendment (a new commit; never a change to rule v1, the cue file or the scripts). In real use each patient's recording starts from that patient's own Cliniko treatment note with Start pressed per patient (the note switch and the patient-change block apply), so next-patient detection is a safety net for a forgotten switch; the scripts' unbroken two-patient recordings are the case it guards. Consequences: Task 0.8 adds no practitioner phrases (the near-miss tests and the A3 note still apply); `syn-38` and `-46` are predicted residues (D11); the live warning's lists are unchanged (C7).
   - Options: (a) the existing D8 lists only; (b) add the practitioner's OWN greetings and closings (their words, as with the cue file).
   - Recommended: (b), with the D2 first-position rule for single words, and without bare time-of-day words, "welcome" or "how are you going".
   - Record the overfit honestly: `syn-38` and `-46` depend on it, and the held-out set tests the mechanism.
@@ -698,6 +699,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - Files: `consultation_phrases.py` lists and constants (D1, D2), `note.py` correction markers (D4), `note_check.HEDGE_PHRASES` (D7; an outside lexicon named in the commit message where used).
   - Also: the moved `test_hands_free.py:331-363` exact pins, and near-miss tests for every added word ("Morning stiffness", "hi-fi", "You're welcome", "how are you going with…").
   - Dated commit, with a contamination note (A3).
+  - `[2026-10-13]` Under decision 0.2 (a) the phrase lists move unchanged (no practitioner phrases); the near-miss tests cover the existing words.
   - Done when: green.
 - [ ] 🟥 **0.9 Held-out set (D10)**
   - A fresh session started with only the behaviour spec (D2's and D4's behaviours stated in words, never their vocabulary) writes `validation/heldout/hld-*.json`, plus transcript-level fixtures in `desktop/tests/fixtures/heldout_transcripts.py` (or the matrix's shape).
@@ -810,7 +812,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 Not yet applicable — the plan is Active.
 
 ## Follow-Up Continuation Notes
-- **First:** the guard plan's landing (decisions 0.1–0.7 were taken 2026-10-13), then Task 0.8 with the practitioner's own phrases.
+- **First:** the guard plan's landing (decisions 0.1–0.7 were taken 2026-10-13; 0.2 changed to (a) the same day), then Task 0.8 with the existing lists.
 - **Still applies:**
   - D2: role-free, first pair, head case, next-segment rule;
   - D3: one function, every consumer, absolute indices;
