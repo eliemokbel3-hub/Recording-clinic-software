@@ -7,7 +7,7 @@
 - the `syn-28` decision;
 - a held-out synthetic set and a repeated validation run as the acceptance check.
 
-**Overall Progress:** `0%` (0 of 30 tasks)
+**Overall Progress:** `23%` (7 of 30 tasks)
 
 ## Lifecycle State
 - Active
@@ -73,8 +73,8 @@ Every finding was checked against the code at `8e5e571`, which equals `main` at 
   - Check 6 `possible_next_patient` (review, separately acknowledged).
   - Chooser rows after the boundary marked.
   - A fixture lint.
-- **Phase 2:** the self-correction carry, if decision 0.3 is taken.
-- **Phase 3:** the `hedged_source` mark and the third metric amendment, if decision 0.1 (a).
+- **Phase 2:** the self-correction carry (decision 0.3 (a), 2026-10-13).
+- **Phase 3:** the `hedged_source` mark and the third metric amendment (decision 0.1 (a), 2026-10-13).
 - **Phase 4:** the clinician's "Remove lines N–end from this recording" on the Transcript tab, through `write_transcript`, with the kept-recording rule from decision 0.6.
 - **Phase 5:** documents, the rollback line, version 0.3.3; hardening H1–H5.
 - **Phase P:** this plan's run of record plus the held-out run, the install, the smoke, the register.
@@ -282,7 +282,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 - threading `limit` from `compose_draft` (more call sites);
 - the "prose stage sees no tail" claim (the prose stage never reads the transcript).
 
-### D4 — The self-correction carry (if decision 0.3)
+### D4 — The self-correction carry (decision 0.3: (a), 2026-10-13)
 **Rule.** D11's carry condition at `note.py:1746-1755` becomes `(prev_open or opens_with_correction(words))`. Every other conjunct is unchanged: previous cue-routed, same speaker, not `CLINICIAN_OWNED_SECTIONS`, no cue in any layer, one hop.
 
 `opens_with_correction`: the utterance's content tokens START with a marker, optionally after a leading "well". The markers (frozen in Task 0.8; recommendation) are "actually", "i mean", "i meant" and "correction".
@@ -322,7 +322,7 @@ All references are at `8e5e571`, under `desktop/src/scribe_desktop/` unless pref
 
 **Alternative (b).** Exclude segments at or after the boundary from Check 4. This is quieter, but a false boundary then has only Check 6. It is also a harness-reading change (`warned` needs the warning), so it would need its own dated line.
 
-### D7 — The hedge mark and the third metric amendment (if decision 0.1 (a))
+### D7 — The hedge mark and the third metric amendment (decision 0.1: (a), 2026-10-13)
 **App side.**
 - `note_check.HEDGE_PHRASES` is a closed tuple, frozen in Task 0.8 from an outside hedging lexicon where possible; contamination is disclosed (A3). Typographic apostrophes are folded first, as Check 5 does (`note_check.py:1570-1571`).
 - The guard's `line_marks` gains a keyword `clinician: bool` and the mark "unsure" for a NON-clinician line holding a hedge.
@@ -496,13 +496,13 @@ See the Planning Extraction Summary (the canonical list).
   - Four lenses ran.
   - The Step 3.5 gate decided: undo tick Defer, tail privacy Include in plan, divider Defer, corrected mark Defer.
   - The practitioner confirmed: clinician-initiated removal; kept audio left as decision 0.6; decisions 0.1–0.7 left open with recommendations.
+- Decisions 0.1–0.7 taken 2026-10-13: all seven recommendations ((a), (b), (a), (a), (a), (a), (a)); recorded on each task. Phases 2 and 3 are therefore built; 0.4 sends nothing to the guard session.
 - Current in-progress step: None.
 - Immediate next action:
-  1. The practitioner takes decisions 0.1–0.7. Decision 0.4 goes first if (b) is wanted: tell the guard session before its Task 3.1.
-  2. After the guard plan's hardening commit: Task 0.8, the vocabulary commit.
-  3. Task 0.9, a fresh session writes the held-out set.
-  4. Under decision 0.7 (a) after the guard's run of record, under (b) straight away: Task 0.10, then `/execute-loop` from Phase 1.
-- Open blockers: the guard plan (0.3.2) must land first (its hardening commit; under decision 0.7 (a) also its run of record); decisions 0.1–0.7.
+  1. After the guard plan's hardening commit: Task 0.8, the vocabulary commit — the practitioner names their own greetings and closings there (decision 0.2 (b)).
+  2. Task 0.9, a fresh session writes the held-out set.
+  3. After the guard's run of record (decision 0.7 (a)): Task 0.10 on its set folder, then `/execute-loop` from Phase 1.
+- Open blockers: the guard plan (0.3.2) must land first (its hardening commit, then its run of record — decision 0.7 (a)); the practitioner's own greeting and closing words (Task 0.8).
 - Last plan sync: 2026-10-12 (after the cross-family plan peer pass: `/peer-loop` codex `gpt-6-astra` medium, rounds 1-4, converged; Review Findings Log).
 
 ## Review History
@@ -659,7 +659,7 @@ Missing verification / rollback / migration: no finding verified.
 Phased for `/execute-loop` (one phase = one review boundary). The practitioner's steps carry "(practitioner)". The decisions 0.1–0.7 need no code and may be taken at any time (0.4 (b) MUST be, before the guard's Task 3.1, because it lands in the guard's Task 1.1). Every task that commits to `main` — 0.8 onward — waits for the guard plan's hardening commit (C9: one writer on `main`; the guard's Task 2.4 edits `voice_commands._tokens`, which 0.8 moves). Phase 1 additionally waits on C9's decision-0.7 prerequisites, and Task 0.10's input follows decision 0.7 (peer round 2 PR-MED-005).
 
 ### Phase 0 — Decisions, vocabulary, held-out set, diagnosis
-- [ ] 🟥 **0.1 Uncertainty** `[decision]`
+- [x] 🟩 **0.1 Uncertainty** `[decision]` — Chosen: (a) (2026-10-13, "take all seven recommendations"); rationale: spoken uncertainty is presented for review as PLAN.md asks, the override of interpretation 7 stated openly as a dated amendment; the single-cluster rule: no mark (recommended).
   - Options:
     - (a) the `hedged_source` mark plus the third metric amendment (D7);
     - (b) record the 9 hedged facts as a ratified residue (F-013, F-033, F-047, F-051, F-057 and the hedged part of F-038 stay `controlled`).
@@ -667,29 +667,29 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - Recommended: (a). It surfaces spoken uncertainty for review, which PLAN.md asks for ("presenting uncertain potentially clinical content for review"). The override of interpretation 7 is stated openly.
   - Decide after: nothing. Blocks: Phase 3; Task 0.8's hedge list.
   - Record: `Chosen: … (date); rationale: …`, plus the single-cluster rule (recommended: no mark).
-- [ ] 🟥 **0.2 Next-patient vocabulary** `[decision]`
+- [x] 🟩 **0.2 Next-patient vocabulary** `[decision]` — Chosen: (b) (2026-10-13); rationale: the practitioner's own greetings and closings, as with the cue file, with the D2 first-position rule and without bare time-of-day words, "welcome" or "how are you going". The words themselves are still owed: the practitioner names them at Task 0.8 (the overfit on `syn-38` / `-46` recorded there).
   - Options: (a) the existing D8 lists only; (b) add the practitioner's OWN greetings and closings (their words, as with the cue file).
   - Recommended: (b), with the D2 first-position rule for single words, and without bare time-of-day words, "welcome" or "how are you going".
   - Record the overfit honestly: `syn-38` and `-46` depend on it, and the held-out set tests the mechanism.
   - The live new-consultation warning gains the same words (C7).
   - Blocks: Task 0.8.
-- [ ] 🟥 **0.3 Self-correction carry** `[decision]`
+- [x] 🟩 **0.3 Self-correction carry** `[decision]` — Chosen: (a) (2026-10-13); rationale: D4's marker carry inside D11's conjuncts, one hop, never into a clinician-owned section.
   - Options: (a) D4's marker carry with the markers "actually", "i mean", "i meant", "correction", optionally after "well"; (b) accept `syn-48` as the named residue (F-055 stays controlled).
   - Recommended: (a).
   - Blocks: Phase 2; Task 0.8's marker list.
-- [ ] 🟥 **0.4 `syn-28`** `[decision]`
+- [x] 🟩 **0.4 `syn-28`** `[decision]` — Chosen: (a) (2026-10-13); rationale: one noisy sample; the guard's number mark and review are the control; no primer change, so nothing goes to the guard session. F-071 and F-072 stay `controlled`.
   - Options: D8's (a) and (b).
   - Recommended: (a).
   - (b) must be decided and sent to the guard session BEFORE that plan's Task 3.1 (it lands in guard Task 1.1).
   - Record also: F-071 and F-072 stay `controlled` under (a).
-- [ ] 🟥 **0.5 Check 4 over the withheld tail** `[decision]`
+- [x] 🟩 **0.5 Check 4 over the withheld tail** `[decision]` — Chosen: (a) (2026-10-13); rationale: fail-safe — withheld claim words still draw the omission warning, labelled " — after possible next patient" in the chooser.
   - Options: D6's (a) unchanged plus chooser labels; (b) exclude the tail.
   - Recommended: (a).
-- [ ] 🟥 **0.6 The kept recording after a trim** `[decision]`
+- [x] 🟩 **0.6 The kept recording after a trim** `[decision]` — Chosen: (a) (2026-10-13); rationale: the development consent covers the first patient only; no audio is kept after a trim, and no encrypted-store code is added.
   - Options: D9's (a) no audio kept (content-free marker); (b) trim `audio.enc` to the chunks before the boundary.
   - Recommended: (a). Development consent was given for the first patient only, and (a) adds no encrypted-store code.
   - Blocks: Task 4.2.
-- [ ] 🟥 **0.7 Runs** `[decision]`
+- [x] 🟩 **0.7 Runs** `[decision]` — Chosen: (a) (2026-10-13); rationale: each plan keeps its own acceptance; Task 0.10 reads the guard's run-of-record set folder.
   - Options: (a) the guard's run of record, then this plan's; (b) one combined run at this plan's H4 commit, read against both acceptances.
   - Recommended: (a). Each plan keeps its own acceptance, and Task 0.10 reads the 0.3.2 code's output.
   - What each option requires (peer round 1 PR-MED-004): under (a), Phase 1 waits for the guard's run of record and Task 0.10 reads its set folder; under (b), Phase 1 waits only for the guard's hardening commit, Task 0.10's baseline is a deterministic rebuild at that commit (no run-of-record figures exist to check it against, so its own Segments and WER are recorded on Task 0.10 as the baseline), and BOTH plans' run-of-record acceptances are read on the one combined run at this plan's H4 commit (the guard's P-phase acceptance then waits for it, which that session must agree to).
@@ -731,7 +731,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - `NOTE_WARNING_SEVERITY` and `WARNING_COPY` in one commit; `check_note` appends; the code joins `SEPARATELY_ACKNOWLEDGED_CODES` (`test_ui_models.py:1551` moves).
   - Tests: once per note; with no confirmed clinician; Acknowledge all leaves it and the per-code click clears it; `complete_block_reason` names it; `test_ui_screens.py:4470` parity.
   - Done when: green.
-- [ ] 🟥 **1.4 Chooser labels (D6 (a); skip if 0.5 = (b), then add the Check 4 exclusion with its dated harness line instead)**
+- [ ] 🟥 **1.4 Chooser labels (D6 (a); decision 0.5 = (a), 2026-10-13)**
   - `eligible_utterances` labels rows at or after the boundary " — after possible next patient", in the documented order with the routing plan's `[flagged]` front mark and the guard's suffixes.
   - Tests: label order; `startswith` pins (`test_ui_models.py:1318-1321`, `test_ui_screens.py:5515`) hold.
   - Done when: green.
@@ -739,14 +739,14 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
   - `test_note_matrix.py` runs `consultation_boundary` over every `EXTRACTIVE_CELLS` document and the UI turn fixtures (`_EDIT_TURNS` and siblings), asserting None except in declared boundary cells; add one declared cell per failure mode (positive, head case, same segment).
   - Done when: green, with no current cell moved.
 
-### Phase 2 — Self-correction carry (`note.py`; skip if 0.3 = (b))
+### Phase 2 — Self-correction carry (`note.py`; built — decision 0.3 = (a), 2026-10-13)
 - [ ] 🟥 **2.1 `opens_with_correction` and the carry disjunct (D4)**
   - Tests in `TestBoundedCarry` (`test_note.py:2354`): the `syn-48` shape; the other speaker; an owned section; a second hop; "well, actually"; "Yes actually…" not carried; the fenced residue pinned; held-out negatives.
   - The matrix carry lint (`test_note_matrix.py:694-721`) declares a correction cell, and its opener check is extended.
   - Docstring updated.
   - Done when: green.
 
-### Phase 3 — Hedge mark and the amendment (skip if 0.1 = (b))
+### Phase 3 — Hedge mark and the amendment (built — decision 0.1 = (a), 2026-10-13)
 - [ ] 🟥 **3.1 App (D7)**
   - `line_marks(words, *, clinician)` with "unsure"; Check 1 emits `hedged_source`; `WARNING_COPY` row; `EditableLine.marks` passes the role; `line_marks_by_assertion` maps `hedged_source` → "unsure" and `section_marks_line` counts unsure lines (the guard's D5 and Task 2.6, as built).
   - Tests: per line; a clinician line is not marked; a single cluster is not marked; an invalid line draws none; the editor agrees with Check 1; Clean, verbatim and prose display of a fresh note AND of the same note reloaded from `note.enc`, including a line carrying both `number` and `unsure`; Copy (no `[check:`) and the Cliniko Write body without the mark; `test_note_matrix.py` multisets where a patient line hedges (e.g. `:1402`); `test_ui_screens.py:4470` parity.
@@ -810,7 +810,7 @@ Phased for `/execute-loop` (one phase = one review boundary). The practitioner's
 Not yet applicable — the plan is Active.
 
 ## Follow-Up Continuation Notes
-- **First:** the open Phase 0 decisions, then the guard plan's landing.
+- **First:** the guard plan's landing (decisions 0.1–0.7 were taken 2026-10-13), then Task 0.8 with the practitioner's own phrases.
 - **Still applies:**
   - D2: role-free, first pair, head case, next-segment rule;
   - D3: one function, every consumer, absolute indices;
