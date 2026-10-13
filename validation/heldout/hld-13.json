@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-13",
+  "appointment_type": "post_operative",
+  "axes": ["end_and_new_patient", "negation", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the shoulder since the surgery, any tingling down the arm?"},
+    {"role": "patient", "text": "No tingling, just stiffness lifting the right arm overhead."},
+    {"role": "clinician", "text": "There's reduced range into flexion, so I'll do some massage and gentle mobilisation."},
+    {"role": "clinician", "text": "That's us, see you next week."},
+    {"role": "patient", "text": "Cheers, bye."},
+    {"role": "clinician", "text": "Good afternoon, how are you going?"},
+    {"role": "next_patient", "text": "Not bad. My neck has been playing up since the long drive."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["right", "arm"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["reduced", "range"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["neck"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-06",
+  "appointment_type": "post_operative",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the right knee going since the surgery?"},
+    {"role": "patient", "text": "Since last time the swelling has gone down a lot."},
+    {"role": "clinician", "text": "I'll do some massage around the scar and then we'll progress the exercises."},
+    {"role": "clinician", "text": "That's it for today, see you next week."},
+    {"role": "patient", "text": "Thanks so much for that."},
+    {"role": "clinician", "text": "You're welcome."},
+    {"role": "clinician", "text": "Note for the file, right total knee replacement six weeks ago, reduced range into flexion but improving."},
+    {"role": "clinician", "text": "Plan is to progress the exercises again next week."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["swelling"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["scar"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["right", "total", "knee", "replacement"], "line": 6, "material": true},
+    {"kind": "present", "tokens": ["reduced", "range"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

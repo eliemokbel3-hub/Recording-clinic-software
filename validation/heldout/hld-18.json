@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-18",
+  "appointment_type": "follow_up",
+  "axes": ["contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "How has the knee been since last time, pain out of ten?"},
+    {"role": "patient", "text": "Since last time it has been sitting at four out of ten."},
+    {"role": "patient", "text": "Make that a six, it flared up on the stairs yesterday."},
+    {"role": "clinician", "text": "Okay. Any swelling since last time?"},
+    {"role": "patient", "text": "Since last time there has been a little swelling at the end of the day."},
+    {"role": "patient", "text": "Yeah, it was actually worse on Sunday after the barbecue."},
+    {"role": "clinician", "text": "I'll do some massage around the quads and send you some exercises."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["four"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["six"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["swelling"], "line": 4, "material": true},
+    {"kind": "absent", "tokens": ["barbecue"], "line": 5, "material": false}
+  ],
+  "expected_warnings": ["contradiction"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

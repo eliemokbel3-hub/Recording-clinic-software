@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-03",
+  "appointment_type": "initial",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "So what are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with pain in my left knee when I go down stairs."},
+    {"role": "clinician", "text": "When did it start?"},
+    {"role": "patient", "text": "It started after netball three weeks ago."},
+    {"role": "partner", "text": "Hi, sorry I'm late, the parking was a nightmare."},
+    {"role": "clinician", "text": "Hi, come on in and grab a seat."},
+    {"role": "clinician", "text": "Let me have a look at that left knee now."},
+    {"role": "clinician", "text": "There's reduced range into bending and it's pretty tight through the quads."},
+    {"role": "clinician", "text": "I'll send you some exercises for the quads to start with."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["reduced", "range"], "line": 7, "material": true},
+    {"kind": "present", "tokens": ["exercises"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "partner": 1}}
+}

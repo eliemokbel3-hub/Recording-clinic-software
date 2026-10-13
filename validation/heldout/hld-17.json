@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-17",
+  "appointment_type": "chronic",
+  "axes": ["scribe_instruction", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Since last time, how is the low back?"},
+    {"role": "patient", "text": "Since last time it has been sore after long shifts at work."},
+    {"role": "patient", "text": "Sorry, don't write this down, but my manager has been a nightmare lately."},
+    {"role": "clinician", "text": "Of course. Any tingling down the legs?"},
+    {"role": "patient", "text": "Some tingling in the left calf when I stand too long."},
+    {"role": "patient", "text": "Wait, I need to sit down, my back is locking up."},
+    {"role": "clinician", "text": "Take your time. When you're ready I'll do some massage through the lower back."},
+    {"role": "clinician", "text": "And I'll send you some exercises for the calf."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["long", "shifts"], "line": 1, "material": true},
+    {"kind": "absent", "tokens": ["manager"], "line": 2, "material": true},
+    {"kind": "laterality", "tokens": ["left", "calf"], "line": 4, "material": true},
+    {"kind": "present", "tokens": ["massage"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

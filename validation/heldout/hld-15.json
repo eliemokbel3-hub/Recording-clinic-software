@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-15",
+  "appointment_type": "initial",
+  "axes": ["contradictory", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with heel pain that started two weeks ago."},
+    {"role": "patient", "text": "Well, I tell a lie, it was three weeks ago, just after the fun run."},
+    {"role": "patient", "text": "Correction, it was the Sunday before the fun run."},
+    {"role": "clinician", "text": "Did it start gradually or all at once?"},
+    {"role": "patient", "text": "All at once, on the first step out of bed."},
+    {"role": "clinician", "text": "It's pretty tight through the calf and plantar fascia, so I'll do some massage there."},
+    {"role": "clinician", "text": "I'll send you some exercises for the calf as well."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["two", "weeks"], "line": 1, "material": false},
+    {"kind": "present", "tokens": ["three", "weeks"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["plantar", "fascia"], "line": 6, "material": true}
+  ],
+  "expected_warnings": ["contradiction"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

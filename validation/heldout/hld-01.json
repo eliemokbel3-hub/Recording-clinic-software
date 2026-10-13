@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-01",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "So how has the lower back been since last time?"},
+    {"role": "patient", "text": "Since last time the right hip has been better, but it's really stiff in the morning."},
+    {"role": "clinician", "text": "Okay, I'll do some massage through the right glute today and we'll recheck."},
+    {"role": "clinician", "text": "Good, that's us for today, see you next week."},
+    {"role": "patient", "text": "Morning appointments suit me better if you've got one."},
+    {"role": "clinician", "text": "No worries, I'll pop you in for Tuesday morning."},
+    {"role": "patient", "text": "Oh, and the tingling in my right foot is worst first thing in the morning."},
+    {"role": "clinician", "text": "Thanks for telling me, we'll keep an eye on that next time."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "hip"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["massage"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["tingling"], "line": 6, "material": true},
+    {"kind": "laterality", "tokens": ["right", "foot"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

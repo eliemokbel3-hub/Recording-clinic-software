@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-04",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "small_talk"],
+  "lines": [
+    {"role": "clinician", "text": "Since last time, how have the headaches been?"},
+    {"role": "patient", "text": "Since last time they have dropped to two a week instead of five."},
+    {"role": "clinician", "text": "Good. I'll put some needles into the upper traps today."},
+    {"role": "receptionist", "text": "Hi, sorry to interrupt, your next patient is here early."},
+    {"role": "clinician", "text": "Thanks Jo, let them know I'll be about ten minutes."},
+    {"role": "receptionist", "text": "Will do, see you soon, bye."},
+    {"role": "clinician", "text": "Right, where were we?"},
+    {"role": "patient", "text": "You were about to do the needles."},
+    {"role": "clinician", "text": "Yep, and after that I'll send you some exercises for your neck posture."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["two"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["needles"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["next", "patient"], "line": 3, "material": false},
+    {"kind": "present", "tokens": ["neck", "posture"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "receptionist": 1}}
+}

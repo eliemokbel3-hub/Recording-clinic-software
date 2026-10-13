@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-22",
+  "appointment_type": "acute",
+  "axes": ["contradictory", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with a sore left knee from netball on Saturday."},
+    {"role": "patient", "text": "Um, I mean the right knee, not the left one."},
+    {"role": "patient", "text": "I tell a lie, it was at netball on Sunday, not Saturday."},
+    {"role": "clinician", "text": "Did it start with a twist or a knock?"},
+    {"role": "patient", "text": "A twist, landing from a jump."},
+    {"role": "clinician", "text": "Let me have a look at the right knee now."},
+    {"role": "clinician", "text": "It's pretty tight around the kneecap, so I'll do some massage there today."},
+    {"role": "clinician", "text": "I'll send you some exercises for the quads as well."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "knee"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["right", "knee"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["kneecap"], "line": 7, "material": true}
+  ],
+  "expected_warnings": ["laterality_mismatch"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

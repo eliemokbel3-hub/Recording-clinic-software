@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-21",
+  "appointment_type": "chronic",
+  "axes": ["uncertain", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Since last time, how is the hip?"},
+    {"role": "patient", "text": "Since last time it's a vague, dull ache deep in the left hip."},
+    {"role": "clinician", "text": "Any tingling down the leg?"},
+    {"role": "patient", "text": "Not too sure, there's some tingling in the foot now and then."},
+    {"role": "clinician", "text": "And how are you sleeping since last time?"},
+    {"role": "patient", "text": "I dunno, since last time the hip wakes me twice a night."},
+    {"role": "clinician", "text": "It's pretty tight through the glutes, so I'll do some needles there today."},
+    {"role": "clinician", "text": "Book in for next week and we'll recheck it then."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "hip"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["tingling"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["twice"], "line": 5, "material": false, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["glutes"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

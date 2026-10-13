@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-19",
+  "appointment_type": "follow_up",
+  "axes": ["uncertain", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the elbow since last time?"},
+    {"role": "patient", "text": "Since last time the right elbow is a bit less sore."},
+    {"role": "clinician", "text": "Any tingling in the hand?"},
+    {"role": "patient", "text": "I reckon there's a bit of tingling in the fingers at night."},
+    {"role": "clinician", "text": "And how is your grip since last time?"},
+    {"role": "patient", "text": "Hard to say, since last time some days are good and some are bad."},
+    {"role": "clinician", "text": "I reckon it's a tendon problem, so I'll do some massage and send you some exercises."},
+    {"role": "clinician", "text": "See you next week."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "elbow"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["tingling"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["bad"], "line": 5, "material": false, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["tendon", "problem"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

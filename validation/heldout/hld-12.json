@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-12",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "negation", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Last session today. How has the hamstring been since last time?"},
+    {"role": "patient", "text": "Since last time there has been no pain at all, even sprinting."},
+    {"role": "clinician", "text": "Great, I'll send you some exercises to keep going on your own."},
+    {"role": "patient", "text": "Thanks heaps for everything, see you round."},
+    {"role": "clinician", "text": "Take care."},
+    {"role": "clinician", "text": "Afternoon."},
+    {"role": "next_patient", "text": "How are ya? It's my right wrist this time."}
+  ],
+  "facts": [
+    {"kind": "negation", "tokens": ["no", "pain"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["exercises"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["right", "wrist"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

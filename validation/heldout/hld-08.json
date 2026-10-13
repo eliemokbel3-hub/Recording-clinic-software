@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-08",
+  "appointment_type": "initial",
+  "axes": ["end_and_new_patient", "negation"],
+  "lines": [
+    {"role": "previous_patient", "text": "Thanks again, see you next Friday."},
+    {"role": "clinician", "text": "No worries, take care, bye."},
+    {"role": "clinician", "text": "Hi, come on through and take a seat."},
+    {"role": "patient", "text": "Hi, thanks. I'm coming in with a really sore lower back."},
+    {"role": "clinician", "text": "Any numbness or tingling in the legs?"},
+    {"role": "patient", "text": "No tingling at all, just the ache."},
+    {"role": "clinician", "text": "It's pretty tight through the lumbar muscles, so I'll do some massage today."},
+    {"role": "clinician", "text": "I'll see you next week to check on it."}
+  ],
+  "facts": [
+    {"kind": "absent", "tokens": ["friday"], "line": 0, "material": false},
+    {"kind": "present", "tokens": ["lower", "back"], "line": 3, "material": true},
+    {"kind": "negation", "tokens": ["no", "tingling"], "line": 5, "material": true},
+    {"kind": "present", "tokens": ["lumbar", "muscles"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "previous_patient": 1}}
+}

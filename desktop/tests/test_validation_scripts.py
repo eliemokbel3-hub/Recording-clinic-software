@@ -7,24 +7,47 @@ times; every script is synthetic and renders through the set builder with a
 fake voice (no real speech engine); and the validation config's autofill
 triggers are spoken only in the scripts that list the warnings they are
 written to provoke. The scripts are invented consultations.
+
+Validation-pass plan Task 0.9: the HELD-OUT scripts (``validation/heldout/``)
+get their own lint — each loads, is synthetic with ``hld-`` ids and renders
+with a fake voice — and so do their transcript fixtures
+(``fixtures/heldout_transcripts.py``): one case per script, every expected
+index in range and pointing at a segment with words. Since review round 8
+the held-out scripts also get the fact-edge, routed-clause and trigger
+checks, and each correction and hedge expectation its routing preconditions.
+The axis, kind and voice-baseline lints above stay on ``validation/scripts``
+only.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter
+from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
 
+from fixtures.heldout_transcripts import (
+    EDGE_CASE_PREFIX,
+    HELD_OUT_CASES,
+    SCRIPT_CASE_PREFIX,
+    HeldOutCase,
+)
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
+    CLINICIAN_OWNED_SECTIONS,
+    DEFAULT_SECTION_CUES,
+    NoteSectionKey,
+    any_cue_matches,
     content_tokens,
     first_matching_section,
     is_interrogative,
+    layered_section,
 )
 from scribe_desktop.note_config import load_note_config
 from scribe_desktop.speaker_eval import CLINICIAN_LABEL, parse_audacity_labels
+from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.validation import (
     AXES,
     FACT_KINDS,
@@ -36,7 +59,9 @@ from scribe_desktop.validation_set import render_encounter, to_pcm16
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPTS = REPO / "validation" / "scripts"
+HELDOUT = REPO / "validation" / "heldout"
 CONFIG = REPO / "validation" / "config"
+MIN_HELDOUT = 16
 MIN_PER_AXIS = 3
 MIN_PER_KIND = 3
 _CLAUSE_END = re.compile(r"(?<=[.?!,;])\s+")
@@ -73,6 +98,63 @@ THIRD_VOICE_SCRIPT_SLOTS = {"clinician": 0, "patient": THIRD_VOICE_SLOT}
 
 def _contains(tokens: tuple[str, ...], needle: tuple[str, ...]) -> bool:
     return bool(_occurrences(tokens, needle))
+
+
+def _facts_bordering_their_edge_word(
+    scripts: Iterable[EncounterScript],
+) -> list[tuple[str, int]]:
+    """(encounter, fact index) for each fact whose neighbouring reference
+    token repeats its own first or last token (round 11 MED-001)."""
+    offending = []
+    for script in scripts:
+        stream: list[str] = []
+        starts: list[int] = []
+        for line in script.lines:
+            starts.append(len(stream))
+            stream.extend(content_tokens(line.text))
+        for index, fact in enumerate(script.facts):
+            line_tokens = content_tokens(script.lines[fact.line].text)
+            for start in _occurrences(line_tokens, fact.tokens):
+                first = starts[fact.line] + start
+                after = first + len(fact.tokens)
+                if first > 0 and stream[first - 1] == fact.tokens[0]:
+                    offending.append((script.encounter_id, index))
+                if after < len(stream) and stream[after] == fact.tokens[-1]:
+                    offending.append((script.encounter_id, index))
+    return offending
+
+
+def _uncertain_facts_in_unrouted_clauses(
+    scripts: Iterable[EncounterScript],
+) -> list[tuple[str, int]]:
+    """(encounter, fact index) for each ``expect_uncertain`` fact with no
+    clause holding it that routes (round 11 MED-003, round 12 LOW-016)."""
+    cues = load_note_config(CONFIG).normalised_cues()
+    unrouted = []
+    for script in scripts:
+        for index, fact in enumerate(script.facts):
+            if not fact.expect_uncertain:
+                continue
+            line = script.lines[fact.line]
+            routed = [
+                first_matching_section(
+                    cues,
+                    content_tokens(clause),
+                    CANONICAL_SECTION_KEYS,
+                    speaker=line.role,
+                    clinician_speaker=CLINICIAN_LABEL,
+                    # The provider tests the whole utterance; the line
+                    # may reach it as one segment, so a clause counts as
+                    # a question if either it or its line is one (round
+                    # 13 LOW-007) — routing holds under both splits.
+                    question=is_interrogative(clause) or is_interrogative(line.text),
+                )
+                for clause in _CLAUSE_END.split(line.text)
+                if _contains(content_tokens(clause), fact.tokens)
+            ]
+            if not any(key is not None for key in routed):
+                unrouted.append((script.encounter_id, index))
+    return unrouted
 
 
 def _short_turn(text: str, voice: int, rate: int) -> bytes:
@@ -142,23 +224,7 @@ class TestScripts:
         (and the mirror case reads as an inserted negation). The reference
         token just before a fact must differ from its first token, and the
         one just after from its last, across line boundaries too."""
-        offending = []
-        for script in _scripts():
-            stream: list[str] = []
-            starts: list[int] = []
-            for line in script.lines:
-                starts.append(len(stream))
-                stream.extend(content_tokens(line.text))
-            for index, fact in enumerate(script.facts):
-                line_tokens = content_tokens(script.lines[fact.line].text)
-                for start in _occurrences(line_tokens, fact.tokens):
-                    first = starts[fact.line] + start
-                    after = first + len(fact.tokens)
-                    if first > 0 and stream[first - 1] == fact.tokens[0]:
-                        offending.append((script.encounter_id, index))
-                    if after < len(stream) and stream[after] == fact.tokens[-1]:
-                        offending.append((script.encounter_id, index))
-        assert offending == []
+        assert _facts_bordering_their_edge_word(_scripts()) == []
 
     def test_every_uncertain_fact_sits_in_a_routed_clause(self) -> None:
         """Round 11 MED-003: Check 1's ``low_confidence_source`` reaches
@@ -171,32 +237,7 @@ class TestScripts:
         with the validation config's cues, its speaker's role and the
         question test — so a patient clause whose only cue is in a
         clinician-owned section does not count (round 12 LOW-016)."""
-        cues = load_note_config(CONFIG).normalised_cues()
-        unrouted = []
-        for script in _scripts():
-            for index, fact in enumerate(script.facts):
-                if not fact.expect_uncertain:
-                    continue
-                line = script.lines[fact.line]
-                routed = [
-                    first_matching_section(
-                        cues,
-                        content_tokens(clause),
-                        CANONICAL_SECTION_KEYS,
-                        speaker=line.role,
-                        clinician_speaker=CLINICIAN_LABEL,
-                        # The provider tests the whole utterance; the line
-                        # may reach it as one segment, so a clause counts as
-                        # a question if either it or its line is one (round
-                        # 13 LOW-007) — routing holds under both splits.
-                        question=is_interrogative(clause) or is_interrogative(line.text),
-                    )
-                    for clause in _CLAUSE_END.split(line.text)
-                    if _contains(content_tokens(clause), fact.tokens)
-                ]
-                if not any(key is not None for key in routed):
-                    unrouted.append((script.encounter_id, index))
-        assert unrouted == []
+        assert _uncertain_facts_in_unrouted_clauses(_scripts()) == []
 
     def test_consent_is_spoken_and_routed_in_at_least_three_scripts(self) -> None:
         """Peer round 14 (PR-MED-058): PLAN.md's validation set covers
@@ -260,3 +301,174 @@ class TestRenderable:
         assert len(pcm) == placement.total * 2
         track = parse_audacity_labels(labels)
         assert [span.label for span in track.spans] == [line.role for line in script.lines]
+
+
+def _heldout_paths() -> list[Path]:
+    return sorted(HELDOUT.glob("*.json"))
+
+
+def _heldout_scripts() -> list[EncounterScript]:
+    return [load_script(path) for path in _heldout_paths()]
+
+
+# Review round 8 LOW-005 (routed to the held-out author, not edited here —
+# C3): an uncertain fact whose clause has no cue of its own, so a recogniser
+# split at the comma leaves it unquoted. Pinned exactly, so a revision of
+# the script fails this lint until the entry is removed. Empty since the
+# author's revision (stage-2 leg vy3): ``hld-21`` line 5's fact now sits in
+# its routed clause.
+_HELD_OUT_UNROUTED_PENDING: list[tuple[str, int]] = []
+
+
+class TestHeldOutScripts:
+    """Validation-pass plan Task 0.9: the held-out set is never tuned to, so
+    its lint checks only that it is usable — not its axis or kind counts,
+    and the same alignment, routing and trigger checks as the run-of-record
+    set (review round 8 LOW-004)."""
+
+    def test_no_held_out_fact_borders_a_repeat_of_its_own_edge_word(self) -> None:
+        assert _facts_bordering_their_edge_word(_heldout_scripts()) == []
+
+    def test_every_held_out_uncertain_fact_sits_in_a_routed_clause(self) -> None:
+        unrouted = _uncertain_facts_in_unrouted_clauses(_heldout_scripts())
+        assert unrouted == _HELD_OUT_UNROUTED_PENDING
+
+    def test_no_held_out_script_speaks_an_autofill_trigger(self) -> None:
+        # No held-out scenario is about autofill, so a trigger would only
+        # add a warning its script does not list.
+        triggers = [
+            content_tokens(rule.trigger_phrase) for rule in load_note_config(CONFIG).autofill_rules
+        ]
+        spoken = [
+            (script.encounter_id, index)
+            for script in _heldout_scripts()
+            for index, line in enumerate(script.lines)
+            if any(_contains(content_tokens(line.text), trigger) for trigger in triggers)
+        ]
+        assert spoken == []
+
+    def test_every_held_out_script_loads_with_a_held_out_id(self) -> None:
+        ids = [load_script(path).encounter_id for path in _heldout_paths()]
+        assert len(ids) >= MIN_HELDOUT
+        assert len(set(ids)) == len(ids)
+        assert [i for i in ids if not i.startswith(SCRIPT_CASE_PREFIX)] == []
+        assert not set(ids) & {path.stem for path in SCRIPTS.glob("*.json")}
+
+    def test_every_held_out_script_is_synthetic_with_material_facts(self) -> None:
+        for path in _heldout_paths():
+            script = load_script(path)
+            assert script.conditions is not None, script.encounter_id
+            slots = script.conditions.voice_slots.values()
+            assert all(slot < len(FAKE_VOICES) for slot in slots), script.encounter_id
+            assert any(fact.material for fact in script.facts), script.encounter_id
+
+    @pytest.mark.parametrize("path", _heldout_paths(), ids=lambda path: path.stem)
+    def test_every_held_out_script_renders_with_fake_voices(self, path: Path) -> None:
+        script = load_script(path)
+        pcm, labels, placement = render_encounter(script, FAKE_VOICES, _short_turn)
+        assert len(pcm) == placement.total * 2
+        track = parse_audacity_labels(labels)
+        assert [span.label for span in track.spans] == [line.role for line in script.lines]
+
+
+def _case_id(case: HeldOutCase) -> str:
+    return case.case_id
+
+
+class TestHeldOutTranscripts:
+    """The held-out transcript fixtures: one case per held-out script (its
+    turns are the script's lines) plus ``edge-`` cases, and every expected
+    index well-formed."""
+
+    def test_one_case_per_held_out_script_and_the_rest_are_edge_cases(self) -> None:
+        ids = [case.case_id for case in HELD_OUT_CASES]
+        assert len(set(ids)) == len(ids)
+        scripted = {i for i in ids if i.startswith(SCRIPT_CASE_PREFIX)}
+        assert scripted == {path.stem for path in _heldout_paths()}
+        assert [i for i in ids if not i.startswith((SCRIPT_CASE_PREFIX, EDGE_CASE_PREFIX))] == []
+        for case in HELD_OUT_CASES:
+            # A scripted case reads its script's lines; an edge case has its own.
+            assert bool(case.explicit_turns) == case.case_id.startswith(EDGE_CASE_PREFIX)
+
+    @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
+    def test_the_case_builds_its_transcript(self, case: HeldOutCase) -> None:
+        turns = case.turns()
+        document = case.document()
+        segments = document.transcript_segments
+        assert len(segments) == len(turns)
+        for turn, segment in zip(turns, segments, strict=True):
+            assert segment.speaker == turn.speaker
+            assert [word.word_text for word in segment.transcript_words] == turn.text.split()
+        assert any(turn.speaker == case.clinician_speaker for turn in turns)
+        assert TranscriptDocument.from_bytes(document.to_bytes()) == document
+
+    @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
+    def test_the_expectations_are_well_formed(self, case: HeldOutCase) -> None:
+        turns = case.turns()
+
+        def spoken(index: int) -> bool:
+            return 0 <= index < len(turns) and bool(turns[index].text.split())
+
+        if case.boundary is not None:
+            # A cut needs clinical content before it, so it is never segment 0.
+            assert case.boundary > 0 and spoken(case.boundary)
+        for indices in (case.corrections, case.unsure):
+            assert list(indices) == sorted(set(indices))
+            assert all(spoken(index) for index in indices)
+            assert all(turns[index].speaker != case.clinician_speaker for index in indices)
+            # Nothing at or after the cut reaches the note to be marked or carried.
+            assert case.boundary is None or all(index < case.boundary for index in indices)
+        for index in case.corrections:
+            # The same speaker's routed line is the segment just before.
+            assert index > 0 and turns[index - 1].speaker == turns[index].speaker
+        for reason in (case.boundary_reason, case.corrections_reason, case.unsure_reason):
+            assert reason.strip() and "\n" not in reason
+
+    @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
+    def test_corrections_and_hedges_can_reach_the_note(self, case: HeldOutCase) -> None:
+        """Review round 8: the routing preconditions D4 and D7 state, with the
+        validation config's cues over the shipped ones (the app's two
+        layers) — never the phrase lists the features read. A correction
+        holds no cue of either layer and follows its speaker's cue-routed
+        line in a section the clinician does not own (one hop); a hedged
+        line is quoted: it routes, or it is a correction."""
+        cues = load_note_config(CONFIG).normalised_cues()
+        turns = case.turns()
+
+        def route(index: int) -> NoteSectionKey | None:
+            turn = turns[index]
+            return layered_section(
+                cues,
+                DEFAULT_SECTION_CUES,
+                content_tokens(turn.text),
+                CANONICAL_SECTION_KEYS,
+                speaker=turn.speaker,
+                clinician_speaker=case.clinician_speaker,
+                question=is_interrogative(turn.text),
+            )
+
+        for index in case.corrections:
+            tokens = content_tokens(turns[index].text)
+            assert not any_cue_matches(cues, DEFAULT_SECTION_CUES, tokens), (case.case_id, index)
+            assert index - 1 not in case.corrections, (case.case_id, index)
+            previous = route(index - 1)
+            assert previous is not None, (case.case_id, index)
+            assert previous not in CLINICIAN_OWNED_SECTIONS, (case.case_id, index)
+        for index in case.unsure:
+            assert index in case.corrections or route(index) is not None, (case.case_id, index)
+
+    def test_the_next_patients_lines_are_never_facts_of_the_first(self) -> None:
+        for case in HELD_OUT_CASES:
+            if case.boundary is None or not case.case_id.startswith(SCRIPT_CASE_PREFIX):
+                continue
+            script = load_script(HELDOUT / f"{case.case_id}.json")
+            withheld = [fact.kind for fact in script.facts if fact.line >= case.boundary]
+            assert set(withheld) <= {"absent"}, case.case_id
+
+    def test_each_expectation_is_exercised_both_ways(self) -> None:
+        for expected in (
+            [case.boundary is not None for case in HELD_OUT_CASES],
+            [bool(case.corrections) for case in HELD_OUT_CASES],
+            [bool(case.unsure) for case in HELD_OUT_CASES],
+        ):
+            assert sum(expected) >= 3 and expected.count(False) >= 3

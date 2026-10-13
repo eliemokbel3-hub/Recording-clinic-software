@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-11",
+  "appointment_type": "chronic",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "Any tingling in the hands since last time?"},
+    {"role": "patient", "text": "A little tingling in the right thumb, mostly at night."},
+    {"role": "clinician", "text": "Okay, I'll do some needles through the forearm today."},
+    {"role": "clinician", "text": "Righto, you're all done, see you Thursday. Morning, come on in and grab a seat."},
+    {"role": "next_patient", "text": "Thanks. The left hip has been aching all week."},
+    {"role": "clinician", "text": "No worries, let's have a look."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "thumb"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["forearm"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["left", "hip"], "line": 4, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

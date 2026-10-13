@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-09",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the left shoulder since last time?"},
+    {"role": "patient", "text": "Since last time the left shoulder has been much better reaching overhead."},
+    {"role": "clinician", "text": "Good, I'll pop some cups on the upper back today."},
+    {"role": "clinician", "text": "All done, see you in two weeks."},
+    {"role": "patient", "text": "Thanks, see ya."},
+    {"role": "clinician", "text": "G'day, come on through Chris."},
+    {"role": "next_patient", "text": "The right ankle is still swollen from the weekend."},
+    {"role": "clinician", "text": "Righto, let me have a look at it."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["left", "shoulder"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["cups"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["right", "ankle"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

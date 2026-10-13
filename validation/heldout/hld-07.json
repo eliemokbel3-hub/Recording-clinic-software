@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-07",
+  "appointment_type": "discharge",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "So since last time, any more ankle pain?"},
+    {"role": "patient", "text": "Since last time it has been fine, I ran five kilometres on Saturday."},
+    {"role": "clinician", "text": "Brilliant, I'm happy to discharge you then."},
+    {"role": "clinician", "text": "Take care, and bye for now."},
+    {"role": "patient", "text": "Thanks, bye."},
+    {"role": "clinician", "text": "How are you going with your balance exercises, by the way?"},
+    {"role": "patient", "text": "Most days, mainly standing on the left leg."},
+    {"role": "clinician", "text": "Keep the balance exercises going on the left leg twice a day."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["five", "kilometres"], "line": 1, "material": true},
+    {"kind": "laterality", "tokens": ["left", "leg"], "line": 7, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

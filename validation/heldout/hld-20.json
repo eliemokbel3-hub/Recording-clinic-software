@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-20",
+  "appointment_type": "acute",
+  "axes": ["uncertain", "negation"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with a headache, and my vision goes a bit blurry when I stand up."},
+    {"role": "clinician", "text": "Any numbness or tingling in the face or arms?"},
+    {"role": "patient", "text": "No numbness, but if I had to guess, there's a little tingling in my left hand."},
+    {"role": "clinician", "text": "Did it start suddenly?"},
+    {"role": "patient", "text": "I suppose the tingling came on gradually this morning."},
+    {"role": "clinician", "text": "With the blurry vision I want you to see a GP today before we do any treatment."},
+    {"role": "patient", "text": "Okay, I'll go this afternoon."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["blurry"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["no", "numbness"], "line": 3, "material": true},
+    {"kind": "present", "tokens": ["tingling"], "line": 3, "material": true, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["gradually"], "line": 5, "material": false, "expect_uncertain": true},
+    {"kind": "present", "tokens": ["gp"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

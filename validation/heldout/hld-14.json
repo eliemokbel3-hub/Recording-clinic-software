@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-14",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "How is the lower back since last time?"},
+    {"role": "patient", "text": "Since last time it is moving a bit better, but sitting for long still hurts."},
+    {"role": "clinician", "text": "I'll do some needles into the glutes and send you some exercises."},
+    {"role": "patient", "text": "Thanks, see you next week."},
+    {"role": "clinician", "text": "See you."},
+    {"role": "clinician", "text": "How are you going? Come on through."},
+    {"role": "next_patient", "text": "Good thanks. It's the left shin that's sore from running."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["sitting"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["glutes"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["left", "shin"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-05",
+  "appointment_type": "follow_up",
+  "axes": ["end_and_new_patient"],
+  "lines": [
+    {"role": "clinician", "text": "How has the shoulder been since last time?"},
+    {"role": "patient", "text": "Since last time I can reach the top shelf again."},
+    {"role": "clinician", "text": "Great, it's moving a bit better today too."},
+    {"role": "clinician", "text": "Keep going with the exercises and I'll see you next week."},
+    {"role": "patient", "text": "Hey, that's good, I was worried you'd sign me off."},
+    {"role": "clinician", "text": "Not yet, but we're close. Keep the band exercises going three times a week."},
+    {"role": "patient", "text": "Will do, thanks, bye."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["top", "shelf"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["band", "exercises"], "line": 5, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

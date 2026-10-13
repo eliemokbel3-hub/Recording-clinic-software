@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-02",
+  "appointment_type": "acute",
+  "axes": ["end_and_new_patient", "small_talk", "negation", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with a sore neck after sleeping funny on Saturday."},
+    {"role": "clinician", "text": "Any numbness or pins and needles down the arms?"},
+    {"role": "patient", "text": "Nope, I have not had any numbness at all."},
+    {"role": "clinician", "text": "Sorry, I'll just grab the phone. Hello, Wattle Street Physio."},
+    {"role": "clinician", "text": "Yep, Thursday at ten is fine. No worries, see you then, bye."},
+    {"role": "clinician", "text": "Sorry about that. Let me have a look at how far you can turn your head."},
+    {"role": "patient", "text": "Turning to the left is the worst bit."},
+    {"role": "clinician", "text": "It's pretty tight on the left side, so I'll do some massage there today."},
+    {"role": "clinician", "text": "I'll send you some exercises for the neck as well."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["sore", "neck"], "line": 1, "material": true},
+    {"kind": "negation", "tokens": ["not", "had", "any", "numbness"], "line": 3, "material": true},
+    {"kind": "absent", "tokens": ["thursday"], "line": 5, "material": false},
+    {"kind": "laterality", "tokens": ["left", "side"], "line": 8, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}

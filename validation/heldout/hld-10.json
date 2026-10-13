@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-10",
+  "appointment_type": "acute",
+  "axes": ["end_and_new_patient", "numbers"],
+  "lines": [
+    {"role": "clinician", "text": "Since last time, how is the pain out of ten?"},
+    {"role": "patient", "text": "Since last time it has dropped from a seven to a three."},
+    {"role": "clinician", "text": "Great, I'll do some massage through the calf and then we're done."},
+    {"role": "clinician", "text": "Book in for next week at the front desk, see you then."},
+    {"role": "next_patient", "text": "Hiya, I'm the eleven thirty, is it okay to come in?"},
+    {"role": "clinician", "text": "Yep, come on in, just give me one second."},
+    {"role": "next_patient", "text": "It's my lower back again, it went on Monday."}
+  ],
+  "facts": [
+    {"kind": "present", "tokens": ["three"], "line": 1, "material": true},
+    {"kind": "present", "tokens": ["calf"], "line": 2, "material": true},
+    {"kind": "absent", "tokens": ["lower", "back"], "line": 6, "material": true}
+  ],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2, "next_patient": 1}}
+}

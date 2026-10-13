@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "encounter_id": "hld-16",
+  "appointment_type": "acute",
+  "axes": ["contradictory", "laterality"],
+  "lines": [
+    {"role": "clinician", "text": "What are you coming in with today?"},
+    {"role": "patient", "text": "I'm coming in with a sore right wrist after a fall on Sunday."},
+    {"role": "patient", "text": "Scratch that, it's the left wrist, I always mix them up."},
+    {"role": "clinician", "text": "No worries. Any numbness or tingling in the fingers?"},
+    {"role": "patient", "text": "A bit of tingling in the thumb and first finger."},
+    {"role": "clinician", "text": "I mean, is that in the index finger as well?"},
+    {"role": "patient", "text": "Yes, the index finger too."},
+    {"role": "clinician", "text": "Let me have a look at the wrist, and then we'll work out a plan."}
+  ],
+  "facts": [
+    {"kind": "laterality", "tokens": ["right", "wrist"], "line": 1, "material": false},
+    {"kind": "laterality", "tokens": ["left", "wrist"], "line": 2, "material": true},
+    {"kind": "present", "tokens": ["thumb"], "line": 4, "material": true}
+  ],
+  "expected_warnings": ["laterality_mismatch"],
+  "conditions": {"voice_slots": {"clinician": 0, "patient": 2}}
+}
