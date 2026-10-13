@@ -3170,7 +3170,9 @@ def extractive_provider_from_config(config: NoteConfig) -> NoteModelProvider:
     The config digest binds the own layer (D7); the build binds the shipped
     layer. Since that plan's D11 the provider also carries one uncued
     utterance into the previous same-speaker, cue-routed, mid-sentence one's
-    section (never a clinician-owned one) — under any config, own or shipped.
+    section (never a clinician-owned one) — under any config, own or shipped;
+    since the validation-pass plan's D4 also one that opens with a correction
+    marker ("Actually no, …") after a line that ended a sentence.
     Public since the pilot plan's Task 2.4 (the validation harness and
     the replay tool build the same provider);
     ``_extractive_provider_from_config`` is the same object."""

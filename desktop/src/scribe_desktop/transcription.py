@@ -362,7 +362,9 @@ def words_hold_suspect(words: Iterable[TranscriptWord]) -> bool:
     be speech" (invented-text guard D4–D8): the quoting prefix, the line
     mark, the bounded carry, learning and the suspect-segment count all ask
     it (review round 5 LOW-007). The per-WORD readers (Check 4, the trigger
-    match, the spoken pause, the harness's ``warned``) read the field."""
+    match, the spoken pause, the harness's ``warned``, the next-patient
+    boundary's phrases and the self-correction opener
+    ``note.opens_with_correction``) read the field."""
     return any(word.suspect for word in words)
 
 

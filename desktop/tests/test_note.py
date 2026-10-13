@@ -23,6 +23,7 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
 from scribe_desktop import note as note_module
 from scribe_desktop.logging_setup import PayloadTripwireFilter, dropped_record_count
 from scribe_desktop.note import (
@@ -71,6 +72,7 @@ from scribe_desktop.note import (
     layered_section,
     manual_assertion_id,
     normalise_token,
+    opens_with_correction,
     provider_assertion_id,
     reconstruct_span_text,
     section_admits_utterance,
@@ -2502,6 +2504,10 @@ class TestTheDigitScoreCue:
 _SPLIT_OPEN = "My left knee is sore,"
 # No cue in any section of either layer.
 _SPLIT_REST = "but not on the right side."
+# The ``syn-48`` shape (validation-pass plan D4): a cue-routed line ending a
+# sentence ("worse since" routes it to Progress), and its uncued correction.
+_RETRACTED = "It is worse since last session."
+_CORRECTION = "Actually no, it is better."
 
 
 def _carry_document(*segments: tuple[tuple[TranscriptWord, ...], str]) -> TranscriptDocument:
@@ -2746,3 +2752,272 @@ class TestBoundedCarry:
         first, rest = request.transcript_utterances
         assert provider._route(request, first) == "presenting_complaint"
         assert provider._route(request, rest) is None
+
+    # --- The self-correction carry (validation-pass plan D4, Task 2.1) -----------------
+
+    def test_a_correction_after_a_full_stop_is_carried(self) -> None:
+        """The ``syn-48`` shape: the retracted line is cue-routed and ends a
+        sentence; the correction is its own uncued segment opening with a
+        marker, so it follows into the same section — both quoted, in order."""
+        assert _carry((_RETRACTED, SPEAKER_1), (_CORRECTION, SPEAKER_1)) == {
+            0: "progress_since_last_visit",
+            1: "progress_since_last_visit",
+        }
+
+    def test_a_comma_and_a_marker_together_are_one_carry(self) -> None:
+        """D4 adds a disjunct, never a second rule: when the previous line
+        ended mid-sentence AND this one opens with a marker, it is carried
+        once, the same way, and the hop after it is still refused."""
+        assert _carry(
+            (_SPLIT_OPEN, SPEAKER_1),
+            ("Actually, not on the right side.", SPEAKER_1),
+            ("I mean, not at all.", SPEAKER_1),
+        ) == {0: "presenting_complaint", 1: "presenting_complaint"}
+
+    def test_without_a_marker_a_full_stop_still_ends_the_chain(self) -> None:
+        assert _carry((_RETRACTED, SPEAKER_1), ("No, it is better.", SPEAKER_1)) == {
+            0: "progress_since_last_visit"
+        }
+
+    @pytest.mark.parametrize(
+        "correction",
+        [
+            "Well, actually, it is better.",
+            "Well, I mean it is better.",
+            "I meant better, not worse.",
+            "Correction: it is better.",
+            "Um, actually it is better.",
+        ],
+    )
+    def test_every_marker_and_the_lead_in_carry(self, correction: str) -> None:
+        assert _carry((_RETRACTED, SPEAKER_1), (correction, SPEAKER_1)) == {
+            0: "progress_since_last_visit",
+            1: "progress_since_last_visit",
+        }
+
+    @pytest.mark.parametrize(
+        "line",
+        [
+            "Yes actually it is better.",
+            "It is actually better.",
+            "Sorry, no, don't write this down.",
+            "No wait, it is better.",
+            "Wait, I need to sit down.",
+        ],
+    )
+    def test_a_marker_that_does_not_open_the_line_is_not_carried(self, line: str) -> None:
+        assert _carry((_RETRACTED, SPEAKER_1), (line, SPEAKER_1)) == {
+            0: "progress_since_last_visit"
+        }
+
+    def test_a_correction_from_the_other_speaker_is_not_carried(self) -> None:
+        assert _carry((_RETRACTED, SPEAKER_1), (_CORRECTION, SPEAKER_2)) == {
+            0: "progress_since_last_visit"
+        }
+
+    def test_a_correction_never_enters_a_clinician_owned_section(self) -> None:
+        placed = _carry(
+            ("The diagnosis is a calf strain.", SPEAKER_2),
+            ("Actually, not on the right side.", SPEAKER_2),
+        )
+        assert placed == {0: "diagnosis"}
+
+    def test_a_correction_after_a_carried_line_is_a_second_hop(self) -> None:
+        """One hop (D4 keeps D11's): after a carried correction, and after a
+        comma-carried line, the next correction stays out."""
+        assert _carry(
+            (_RETRACTED, SPEAKER_1),
+            (_CORRECTION, SPEAKER_1),
+            ("I mean, a lot better.", SPEAKER_1),
+        ) == {0: "progress_since_last_visit", 1: "progress_since_last_visit"}
+        assert _carry(
+            (_SPLIT_OPEN, SPEAKER_1),
+            (_SPLIT_REST, SPEAKER_1),
+            ("Actually, not on the left side either.", SPEAKER_1),
+        ) == {0: "presenting_complaint", 1: "presenting_complaint"}
+
+    def test_a_dropped_utterance_breaks_a_correction_chain(self) -> None:
+        placed = _carry((_RETRACTED, SPEAKER_1), ("right,", SPEAKER_2), (_CORRECTION, SPEAKER_1))
+        assert placed == {0: "progress_since_last_visit"}
+
+    def test_a_correction_holding_a_cue_routes_by_its_own_cue(self) -> None:
+        """A correction with a cue of its own is routed, never carried: to its
+        cue's section, or — when routing refuses it — nowhere, as before."""
+        cued = ("Actually it started two weeks ago.", SPEAKER_1)
+        assert _carry((_RETRACTED, SPEAKER_1), cued) == {
+            0: "progress_since_last_visit",
+            1: "history_presenting_complaint",
+        }
+        assert _carry(
+            (_RETRACTED, SPEAKER_1), ("Actually the diagnosis is a strain.", SPEAKER_1)
+        ) == {0: "progress_since_last_visit"}
+
+    def test_a_fenced_clause_after_a_marker_is_quoted(self) -> None:
+        """The named residue (D4), pinned as behaviour: what follows a marker
+        is quoted whole into the patient's section, as after a comma (D11's
+        ``ex-comma-then-instruction``) — the app honours no instruction."""
+        placed = _carry(
+            (_RETRACTED, SPEAKER_1),
+            ("Actually, scribe, please leave this next part out.", SPEAKER_1),
+        )
+        assert placed == {0: "progress_since_last_visit", 1: "progress_since_last_visit"}
+
+    def test_a_suspect_previous_line_opens_no_correction(self) -> None:
+        """Invented-text guard D6, as the reconciliation applies it to D4: a
+        cue-routed line holding a suspect word opens no carry of either kind."""
+        retracted = tuple(
+            word.model_copy(update={"suspect": index == 1})
+            for index, word in enumerate(_words(_RETRACTED))
+        )
+        document = _carry_document((retracted, SPEAKER_1), (_words(_CORRECTION), SPEAKER_1))
+        assert _placed(_request(document=document)) == {0: "progress_since_last_visit"}
+
+    def test_a_suspect_marker_opens_nothing(self) -> None:
+        clean = _words(_CORRECTION)
+        marker_only = tuple(
+            word.model_copy(update={"suspect": index == 0}) for index, word in enumerate(clean)
+        )
+        whole = tuple(word.model_copy(update={"suspect": True}) for word in clean)
+        for correction in (marker_only, whole):
+            document = _carry_document((_words(_RETRACTED), SPEAKER_1), (correction, SPEAKER_1))
+            assert _placed(_request(document=document)) == {0: "progress_since_last_visit"}
+        twin = _carry_document((_words(_RETRACTED), SPEAKER_1), (clean, SPEAKER_1))
+        assert _placed(_request(document=twin)) == {
+            0: "progress_since_last_visit",
+            1: "progress_since_last_visit",
+        }
+
+    def test_a_correction_never_crosses_a_possible_next_patient(self) -> None:
+        """The request stops at the boundary (D3), so a correction there is
+        never seen; the twin without the greeting carries it."""
+        content = ("My left knee is sore.", SPEAKER_1)
+        correction = ("Actually, not on the right side.", SPEAKER_1)
+        closing_and_greeting = ("My back is sore, see you next week, come on in.", SPEAKER_1)
+        cut = _request(document=_document(texts=(content, closing_and_greeting, correction)))
+        assert [u.segment_index for u in cut.transcript_utterances] == [0, 1]
+        assert _placed(cut) == {0: "presenting_complaint", 1: "presenting_complaint"}
+        twin = _carry(content, ("My back is sore, see you next week.", SPEAKER_1), correction)
+        assert twin == {
+            0: "presenting_complaint",
+            1: "presenting_complaint",
+            2: "presenting_complaint",
+        }
+
+    def test_a_correction_is_carried_whole_and_reconstructs(self) -> None:
+        document = _document(texts=((_RETRACTED, SPEAKER_1), (_CORRECTION, SPEAKER_1)))
+        sections = ExtractiveNoteProvider().generate_sections(_request(document=document))
+        (section,) = sections
+        retracted, carried = section.note_assertions
+        assert (retracted.text, carried.text) == (_RETRACTED, _CORRECTION)
+        assert carried.assertion_id == provider_assertion_id(1)
+        assert carried.note_span.source_coords == SourceCoords(
+            1, 0, len(document.transcript_segments[1].transcript_words) - 1
+        )
+        errors = [
+            warning
+            for warning in reconstruction_warnings(_note(note_sections=sections), document)
+            if warning.severity == "error"
+        ]
+        assert errors == []
+
+    @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=lambda case: case.case_id)
+    def test_the_held_out_corrections(self, case: HeldOutCase) -> None:
+        """Validation-pass Task 0.9's reading rule: every case's carried
+        corrections equal its expectation, except Task 0.10's predicted
+        divergences under the frozen markers, asserted to DIVERGE with both
+        values named (C3: no expectation is edited to pass)."""
+        got = _held_out_corrections(case)
+        if case.case_id in _PREDICTED_CORRECTION_DIVERGENCES:
+            expected, predicted = _PREDICTED_CORRECTION_DIVERGENCES[case.case_id]
+            assert case.corrections == expected, case.case_id
+            assert got == predicted != expected, case.case_id
+        else:
+            assert got == case.corrections, case.case_id
+
+    def test_every_predicted_correction_divergence_is_a_held_out_case(self) -> None:
+        assert set(_PREDICTED_CORRECTION_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+
+
+_VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
+
+# Task 0.10's predicted correction divergences under the frozen markers (C3):
+# case id -> (the case's expected corrections, the frozen-marker result).
+_PREDICTED_CORRECTION_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
+    "hld-16": ((2,), ()),  # its opener is not a frozen marker
+    "hld-18": ((2,), ()),  # its opener is not a frozen marker
+}
+
+
+def _held_out_corrections(case: HeldOutCase) -> tuple[int, ...]:
+    """The segments the shipped provider CARRIES (no cue routes them) that
+    open with a correction — the validation config over the shipped cues, as
+    the held-out fixtures' routing preconditions are written (Task 0.9), with
+    the request's own next-patient cut."""
+    config = load_note_config(_VALIDATION_CONFIG_DIR)
+    request = build_note_request(
+        case.document(),
+        config,
+        config.template_profiles[0].template_profile_id,
+        clinician_speaker=case.clinician_speaker,
+    )
+    provider = ExtractiveNoteProvider(cues=config.normalised_cues())
+    utterances = {u.segment_index: u for u in request.transcript_utterances}
+    placed = {
+        assertion.note_span.source_coords.segment_index
+        for section in provider.generate_sections(request)
+        for assertion in section.note_assertions
+        if assertion.note_span.source_coords is not None
+    }
+    return tuple(
+        sorted(
+            index
+            for index in placed
+            if provider._route(request, utterances[index]) is None
+            and opens_with_correction(utterances[index].transcript_words)
+        )
+    )
+
+
+class TestOpensWithCorrection:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Actually no, it is better.",
+            "ACTUALLY.",
+            "I mean the left one.",
+            "I meant the left one.",
+            "Correction: the left one.",
+            "Well, actually, it is better.",
+            "well I mean the left one",
+            "Um, I mean the right knee.",
+        ],
+    )
+    def test_a_line_opening_with_a_marker(self, text: str) -> None:
+        assert opens_with_correction(_words(text))
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Yes actually it is better.",
+            "It is actually better.",
+            "Well well, actually it is better.",
+            "Sorry, no, don't write this.",
+            "No wait, the left one.",
+            "Actual pain is less.",
+            "Meaning the left one.",
+            "Well.",
+            "",
+        ],
+    )
+    def test_a_line_that_does_not(self, text: str) -> None:
+        assert not opens_with_correction(_words(text))
+
+    def test_a_suspect_word_supplies_no_marker(self) -> None:
+        words = _words("Actually no, it is better.")
+        assert not opens_with_correction(
+            tuple(word.model_copy(update={"suspect": True}) for word in words)
+        )
+        assert not opens_with_correction(
+            tuple(w.model_copy(update={"suspect": i == 0}) for i, w in enumerate(words))
+        )
+        assert opens_with_correction(words)

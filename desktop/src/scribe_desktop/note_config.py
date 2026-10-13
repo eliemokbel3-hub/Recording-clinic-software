@@ -73,8 +73,10 @@ section no longer switches routing off (accepted for 0.3.1); the shipped
 default carries every key. Cue phrases never enter a note: they select which
 VERBATIM transcript utterance lands in which section — and, since the bounded
 carry (note-routing-omissions plan D11), which section an uncued utterance
-continuing the same speaker's cue-routed, mid-sentence line follows (one hop,
-never a clinician-owned section; a line any cue matches is never carried).
+continuing the same speaker's cue-routed, mid-sentence line follows — or,
+since the self-correction carry (validation-pass plan D4), opening with a
+correction marker after that line (one hop, never a clinician-owned section;
+a line any cue matches is never carried).
 ``NoteConfig.normalised_cues()`` is the provider-shaped accessor, and the
 app builds its provider from it with the shipped fallback
 (``ui.models.extractive_provider_from_config``).

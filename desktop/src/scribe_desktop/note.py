@@ -1596,15 +1596,34 @@ _CONTINUATION_MARKS: Final[frozenset[str]] = frozenset({",", ";", ":", "–", "�
 _CLOSING_MARKS: Final = "\"')]}”’»"
 
 # The self-correction carry's vocabulary (validation-pass plan D4, frozen in
-# its Task 0.8 — C3; nothing reads it until the carry's Task 2.1): an
-# utterance whose content tokens START with one of these markers, optionally
-# after ``CORRECTION_LEAD_IN``, will open a correction.
+# its Task 0.8 — C3; read by ``opens_with_correction``): an utterance whose
+# content tokens START with one of these markers, optionally after
+# ``CORRECTION_LEAD_IN``, opens a correction.
 # Lower-case, in ``content_tokens`` form; none is a filler token, so
 # ``content_tokens`` keeps every one. "sorry no" and "no wait" are left out on
 # purpose (they would carry "Sorry, no, don't write this"). A change is a new
 # dated decision with a repeated validation run.
 CORRECTION_MARKERS: Final[tuple[str, ...]] = ("actually", "i mean", "i meant", "correction")
 CORRECTION_LEAD_IN: Final = "well"
+_CORRECTION_MARKER_TOKENS: Final = tuple(content_tokens(marker) for marker in CORRECTION_MARKERS)
+
+
+def opens_with_correction(words: Sequence[TranscriptWord]) -> bool:
+    """True when the utterance's content tokens START with a correction
+    marker (``CORRECTION_MARKERS``), optionally after the one lead-in
+    ``CORRECTION_LEAD_IN`` — "Actually no, it is better", "Well, I mean the
+    left one" (validation-pass plan D4). Fillers are not content, so "Um, I
+    mean …" opens one too; "Yes actually …" does not (the marker must come
+    first). Only words the transcription guard did NOT mark ``suspect`` are
+    read (invented-text guard D6): a suspect word supplies no marker. It is
+    skipped, not a barrier (as in ``consultation_phrases.word_tokens``); the
+    guard marks every word of a segment or none, so a transcript line is
+    wholly read or wholly skipped. It reads tokens only and returns a bool —
+    no text leaves it."""
+    tokens = content_tokens(" ".join(word.word_text for word in words if not word.suspect))
+    if tokens[:1] == (CORRECTION_LEAD_IN,):
+        tokens = tokens[1:]
+    return any(tokens[: len(marker)] == marker for marker in _CORRECTION_MARKER_TOKENS)
 
 
 def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
@@ -1871,6 +1890,19 @@ class ExtractiveNoteProvider:
     segment holding a ``suspect`` word never opens a carry (invented-text
     guard D6).
 
+    The self-correction carry (validation-pass plan D4): under every other
+    condition above, the utterance is also carried when the previous one
+    ended a sentence but this one OPENS with a correction marker
+    (``opens_with_correction`` — "Actually no, it is better" after "Worse
+    since last session."), so a retracted statement never stays in the note
+    while its correction is dropped. Still one hop (a correction after a
+    carried line is not carried), never into a clinician-owned section, never
+    after a suspect line, and a suspect word supplies no marker. It never
+    crosses a possible next patient: the request already stops there
+    (``note_config.build_note_request``, D3). Named residues: an "Actually,
+    …" opener of unrelated content is carried (misplaced, not lost), and a
+    fenced-off clause after a marker is quoted, as after a comma.
+
     Deliberately NOT excluded (invented-text guard decision 0.1, D6): the
     router reads a suspect word like any other, so a cue in a suspect line
     still routes it — into the note with its ``[check: possibly not
@@ -1905,11 +1937,13 @@ class ExtractiveNoteProvider:
     def generate_sections(self, request: NoteRequest) -> tuple[GeneratedSection, ...]:
         routed: dict[NoteSectionKey, list[NoteAssertion]] = {}
         # The carry's state (D11): the previous non-transparent utterance's
-        # section, whether a cue routed it, its speaker, and whether it ended
-        # mid-sentence. ``prev_cued`` False means no chain is open.
+        # section, whether a cue routed it, its speaker, whether it may open a
+        # chain at all (no suspect word) and whether it ended mid-sentence.
+        # ``prev_cued`` False means no chain is open.
         prev_key: NoteSectionKey | None = None
         prev_cued = False
         prev_speaker: str | None = None
+        prev_clean = False
         prev_open = False
         for utterance in request.transcript_utterances:
             words = utterance.transcript_words
@@ -1925,12 +1959,17 @@ class ExtractiveNoteProvider:
                 # marked as possibly not speech (invented-text guard D6).
                 prev_key, prev_cued = key, True
                 prev_speaker = utterance.speaker
-                prev_open = ends_mid_sentence(words) and not words_hold_suspect(words)
+                prev_clean = not words_hold_suspect(words)
+                prev_open = ends_mid_sentence(words)
             elif (
                 prev_cued
                 and prev_key is not None
                 and utterance.speaker == prev_speaker
-                and prev_open
+                and prev_clean
+                # The comma carry (D11) or the self-correction carry
+                # (validation-pass plan D4): the previous line ended
+                # mid-sentence, or this one opens with a correction marker.
+                and (prev_open or opens_with_correction(words))
                 and prev_key not in CLINICIAN_OWNED_SECTIONS
                 and not any_cue_matches(
                     self._cues, self._fallback_cues, content_tokens(utterance.text)
@@ -2993,6 +3032,7 @@ __all__ = [
     "line_marks_by_assertion",
     "manual_assertion_id",
     "normalise_token",
+    "opens_with_correction",
     "provenance_label",
     "provider_assertion_id",
     "reconstruct_span_text",

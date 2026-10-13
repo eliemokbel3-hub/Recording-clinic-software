@@ -21,7 +21,8 @@ PR-MED-003). Axis coverage:
   shape: merged turns, low-`probability` words — never audio), uncertainty,
   spoken prompt injection, greetings and end-of-consultation, and a
   sentence the recogniser split at a comma (the bounded carry, with its
-  instruction residue pinned as behaviour).
+  instruction residue pinned as behaviour), and a self-correction split off
+  after a full stop (the self-correction carry, validation-pass plan D4).
 - **Axis B (provider behaviour):** every `MockNoteModelProvider` behaviour,
   on fixtures that can express its class AND on fixtures that cannot (the
   latter must raise, never silently test the wrong class).
@@ -69,6 +70,7 @@ from scribe_desktop.note import (
     any_cue_matches,
     content_tokens,
     ends_mid_sentence,
+    opens_with_correction,
     reconstruct_span_text,
     text_digest,
     transcript_digest,
@@ -654,6 +656,27 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         expected_mapped=(("t-presenting", (0, 1)),),
         carries=(1,),
     ),
+    ExtractiveCell(
+        fixture_id="ex-self-correction-carried",
+        turns=(
+            ("It is worse since last session.", SPEAKER_1),
+            ("Actually no, it is better.", SPEAKER_1),
+            ("On examination the knee is stable.", SPEAKER_2),
+        ),
+        clinician_speaker=SPEAKER_2,
+        # Validation-pass plan D4 (Task 2.1): the patient's retracted line ends
+        # a sentence, and their uncued correction opens with a marker, so it
+        # follows into Progress — the retraction is never left standing alone.
+        expected=(
+            ExpectedAssertion("progress_since_last_visit", 0, "It is worse since last session."),
+            ExpectedAssertion("progress_since_last_visit", 1, "Actually no, it is better."),
+            ExpectedAssertion("objective_examination", 2, "On examination the knee is stable."),
+        ),
+        expected_reviews=(),
+        material_segments=(1, 2),
+        expected_mapped=(("t-presenting", (0, 1)), ("t-assessment", (2,))),
+        carries=(1,),
+    ),
     # Validation-pass plan Task 1.5: one declared cell per boundary failure
     # mode. The withheld lines are NOT in the note (D3), Check 6 says so once
     # (D5), and a withheld claim word still draws Check 4 (decision 0.5 (a)).
@@ -774,16 +797,23 @@ class TestExtractiveCells:
     def test_only_a_declared_carry_follows_a_turn_ending_mid_sentence(
         self, cell: ExtractiveCell
     ) -> None:
-        """The fixture lint (D11): a turn ends mid-sentence exactly where the
-        cell declares the next one carried — read by the provider's own
-        ``ends_mid_sentence``, never a full-stop rule — so no other cell's
+        """The fixture lint (D11): a turn ends mid-sentence, or the turn after
+        it opens with a correction marker (validation-pass plan D4), exactly
+        where the cell declares that next turn carried — read by the
+        provider's own ``ends_mid_sentence`` and ``opens_with_correction``,
+        never a full-stop or word rule of the test's own — so no other cell's
         oracle can start carrying by accident. Each declared carry has no cue
         of its own and lands in the section of the turn before it."""
         document = _document(*cell.turns)
+        segments = document.transcript_segments
         open_turns = {
             index
-            for index, segment in enumerate(document.transcript_segments)
+            for index, segment in enumerate(segments)
             if ends_mid_sentence(segment.transcript_words)
+            or (
+                index + 1 < len(segments)
+                and opens_with_correction(segments[index + 1].transcript_words)
+            )
         }
         assert open_turns == {carried - 1 for carried in cell.carries}, cell.fixture_id
         section_of = {e.segment_index: e.section_key for e in cell.expected}
@@ -794,10 +824,11 @@ class TestExtractiveCells:
             ), cell.fixture_id
             assert section_of[carried] == section_of[carried - 1], cell.fixture_id
 
-    def test_both_carry_cells_are_registered(self) -> None:
+    def test_every_carry_cell_is_registered(self) -> None:
         assert {cell.fixture_id for cell in EXTRACTIVE_CELLS if cell.carries} == {
             "ex-split-sentence-carried",
             "ex-comma-then-instruction",
+            "ex-self-correction-carried",
         }
 
     @pytest.mark.parametrize("cell", EXTRACTIVE_CELLS, ids=lambda cell: cell.fixture_id)
