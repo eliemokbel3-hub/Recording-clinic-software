@@ -46,6 +46,8 @@ from dataclasses import dataclass
 from typing import Final, Literal
 
 from scribe_desktop.audio_capture import CHANNELS, CHUNK_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
+from scribe_desktop.consultation_phrases import CLOSING_PHRASES as CLOSING_PHRASES
+from scribe_desktop.consultation_phrases import GREETING_PHRASES as GREETING_PHRASES
 from scribe_desktop.note import normalise_token
 from scribe_desktop.session import CAPTURING_STATES, SessionState
 from scribe_desktop.transcription import (
@@ -64,36 +66,9 @@ CARRY_MAX_GAP_SECONDS: Final = TRANSCRIBE_WINDOW_MAX_GAP_SECONDS
 
 NEW_CONSULTATION_WARNING: Final = "new_consultation"
 NEW_CONSULTATION_WINDOWS: Final = 3
-CLOSING_PHRASES: Final[tuple[str, ...]] = (
-    "see you next week",
-    "see you next time",
-    "see you soon",
-    "see you then",
-    "take care",
-    "all the best",
-    "goodbye",
-    "bye",
-    "thanks for coming in",
-    "thank you for coming in",
-    "have a good day",
-    "have a nice day",
-    "have a great day",
-    "have a good weekend",
-)
-GREETING_PHRASES: Final[tuple[str, ...]] = (
-    "hello",
-    "hi there",
-    "good morning",
-    "good afternoon",
-    "good evening",
-    "nice to meet you",
-    "come on in",
-    "take a seat",
-    "have a seat",
-    "what brings you in",
-    "what brings you here",
-    "how have you been",
-)
+# ``CLOSING_PHRASES`` and ``GREETING_PHRASES`` live in the leaf module
+# ``consultation_phrases`` (validation-pass plan D1) and are re-exported from
+# the import above, so the watcher and the offline boundary read ONE list.
 
 SpokenPauseState = Literal["idle", "on", "unavailable"]
 # Splits a word into parts only; each part is then normalised by THE one

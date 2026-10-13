@@ -1579,6 +1579,17 @@ def layered_section(
 _CONTINUATION_MARKS: Final[frozenset[str]] = frozenset({",", ";", ":", "–", "—"})
 _CLOSING_MARKS: Final = "\"')]}”’»"
 
+# The self-correction carry's vocabulary (validation-pass plan D4, frozen in
+# its Task 0.8 — C3; nothing reads it until the carry's Task 2.1): an
+# utterance whose content tokens START with one of these markers, optionally
+# after ``CORRECTION_LEAD_IN``, will open a correction.
+# Lower-case, in ``content_tokens`` form; none is a filler token, so
+# ``content_tokens`` keeps every one. "sorry no" and "no wait" are left out on
+# purpose (they would carry "Sorry, no, don't write this"). A change is a new
+# dated decision with a repeated validation run.
+CORRECTION_MARKERS: Final[tuple[str, ...]] = ("actually", "i mean", "i meant", "correction")
+CORRECTION_LEAD_IN: Final = "well"
+
 
 def ends_mid_sentence(words: Sequence[TranscriptWord]) -> bool:
     """True when the last word WITH text ends in a comma, semicolon, colon
@@ -2898,6 +2909,8 @@ __all__ = [
     "CANONICAL_SECTIONS",
     "CANONICAL_SECTION_KEYS",
     "CLINICIAN_OWNED_SECTIONS",
+    "CORRECTION_LEAD_IN",
+    "CORRECTION_MARKERS",
     "DEFAULT_SECTION_CUES",
     "DIGEST_ALGORITHM",
     "DIGEST_PATTERN",

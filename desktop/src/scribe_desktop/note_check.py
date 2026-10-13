@@ -484,6 +484,44 @@ def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
     return coords
 
 
+# The spoken hedges (validation-pass plan D7, frozen in its Task 0.8 — C3;
+# nothing reads them until the hedge mark's Task 3.1): a quoted line from a
+# speaker who is not the clinician that holds one of these phrases (whole
+# tokens, in a row, typographic apostrophes folded first) will be the
+# "unsure" line mark's evidence. A CLOSED tuple taken from two published
+# hedging lists, never from the validation scripts — Prince, Frader & Bosk
+# (1982), "On hedging in physician-physician discourse", plausibility
+# shields; and Hyland (2005), "Metadiscourse", appendix list of hedges —
+# keeping only what a speaker says about their OWN certainty: no entry that
+# IS a modal verb ("may" is also a month; a fixed phrase holding one, "as far
+# as i can tell", is not), no word with a common plain sense in a
+# consultation (frequency, sensation, a description such as "unclear",
+# quantity, a preposition), no attribution to someone else's knowledge and no
+# degree word ("sort of", "a bit"). Lower-case, in ``content_tokens`` form. The plan's Task 0.8
+# records the source, the rule and the contamination note (A3). A change is
+# a new dated decision with a repeated validation run.
+HEDGE_PHRASES: Final[tuple[str, ...]] = (
+    # Prince, Frader & Bosk (1982), plausibility shields.
+    "i think",
+    "as far as i can tell",
+    "probably",
+    # Hyland (2005), hedges.
+    "maybe",
+    "perhaps",
+    "possibly",
+    "likely",
+    "unlikely",
+    "seems",
+    "seemed",
+    "i guess",
+    "i suppose",
+    "i suspect",
+    "i doubt",
+    "uncertain",
+    "to my knowledge",
+)
+
+
 # ---------------------------------------------------------------------------
 # Check 1 — exact coordinate reconstruction (Task 5.1).
 # ---------------------------------------------------------------------------
@@ -1781,6 +1819,7 @@ def check_note(
 
 
 __all__ = [
+    "HEDGE_PHRASES",
     "CheckTargetMismatchError",
     "FidelityRule",
     "FidelityVerdict",

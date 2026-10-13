@@ -18,6 +18,7 @@ import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from scribe_desktop import consultation_phrases  # noqa: E402
 from scribe_desktop import hotkey as hotkey_module  # noqa: E402
 from scribe_desktop.context_rules import PauseReason  # noqa: E402
 from scribe_desktop.encounter import unlinked_consent  # noqa: E402
@@ -349,38 +350,15 @@ class TestSpokenPauseState:
 
 class TestNewConsultationRule:
     def test_the_lists_and_the_window_budget_are_pinned(self) -> None:
+        """The lists' exact pins moved with them to ``test_vocabulary.py``
+        (validation-pass plan Task 0.8); here the watcher's module re-exports
+        the SAME objects, so the live warning reads the one list (C7)."""
         assert NEW_CONSULTATION_WARNING == "new_consultation"
         assert NEW_CONSULTATION_WINDOWS == 3
-        assert CLOSING_PHRASES == (
-            "see you next week",
-            "see you next time",
-            "see you soon",
-            "see you then",
-            "take care",
-            "all the best",
-            "goodbye",
-            "bye",
-            "thanks for coming in",
-            "thank you for coming in",
-            "have a good day",
-            "have a nice day",
-            "have a great day",
-            "have a good weekend",
-        )
-        assert GREETING_PHRASES == (
-            "hello",
-            "hi there",
-            "good morning",
-            "good afternoon",
-            "good evening",
-            "nice to meet you",
-            "come on in",
-            "take a seat",
-            "have a seat",
-            "what brings you in",
-            "what brings you here",
-            "how have you been",
-        )
+        assert CLOSING_PHRASES is consultation_phrases.CLOSING_PHRASES
+        assert GREETING_PHRASES is consultation_phrases.GREETING_PHRASES
+        assert len(CLOSING_PHRASES) == 14
+        assert len(GREETING_PHRASES) == 12
 
     def test_a_goodbye_then_a_greeting_warns_once(self) -> None:
         watcher = NewConsultationWatcher()
@@ -413,6 +391,12 @@ class TestNewConsultationRule:
             [("hello there. Take care", 1.0)],  # the greeting came FIRST
             [("I'd take the care plan", 1.0), ("hello", 5.0)],  # not the phrase
             [("goodbyes are hard", 1.0), ("good morning", 5.0)],  # not a whole word
+            # Validation-pass plan Task 0.8: near misses of the existing words
+            # after a REAL closing, so only the greeting side is under test.
+            [("see you next week", 1.0), ("Morning stiffness is worse", 5.0)],
+            [("take care", 1.0), ("hi-fi", 5.0)],
+            [("bye", 1.0), ("You're welcome", 5.0)],
+            [("take care", 1.0), ("how are you going with the exercises", 5.0)],
         ],
     )
     def test_near_misses_do_not_warn(self, parts: list[tuple[str, float]]) -> None:
