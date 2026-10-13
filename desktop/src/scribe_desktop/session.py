@@ -88,6 +88,7 @@ from scribe_desktop.secure_storage import SessionCrypto
 from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.session_store import (
     AUDIO_FILENAME,
+    NOTE_FILENAME,
     SESSION_ID_PATTERN,
     TRANSCRIPT_FILENAME,
     ArchiveWriteError,
@@ -101,17 +102,28 @@ from scribe_desktop.session_store import (
     # THE single definition custody verification uses, or the two could
     # disagree about which session a directory is.
     _resolve_session_identity,
+    artifact_state,
     audit_created_at,
     complete_session,
     default_sessions_root,
     discard_session,
+    no_audio_marker_state,
     read_write_record,
+    remove_generated,
     saved_note_identity,
     unwrap_key_from_file,
     wrap_key_to_file,
+    write_no_audio_marker,
     write_write_record,
 )
-from scribe_desktop.transcription import LiveFailure, LiveTranscriber
+from scribe_desktop.transcription import (
+    LiveFailure,
+    LiveTranscriber,
+    TranscriptDocument,
+    read_transcript,
+    transcript_before,
+    write_transcript,
+)
 
 if TYPE_CHECKING:
     # audit.py imports THIS module (``AuditWriteError`` subclasses
@@ -1187,8 +1199,15 @@ class SessionController:
         was started under written development consent — a live path's from
         its own ``development_consent``, a recovered one's from the
         checkout's one decrypt — so its audio joins the entry; the ACTUAL
-        outcome is ``last_completion_kept()``."""
+        outcome is ``last_completion_kept()``. Validation-pass plan Task 4.2
+        (decision 0.6 (a)): a session whose transcript was trimmed
+        (``trim_transcript``) keeps NO audio — ``kept`` is overridden to
+        False while its no-audio marker is present, AND when its presence
+        cannot be told (fail closed), on all five paths alike; the audit row
+        then reads "not kept" from the facts it already records."""
         created_at = self._audit_created_at(directory)
+        if kept and no_audio_marker_state(directory) is not False:
+            kept = False
         label = keep_label_for_mode(label, mode)
         keeper = self._past_sessions.keeper(label) if self._past_sessions is not None else None
         self._last_completion_kept = False
@@ -1924,6 +1943,98 @@ class SessionController:
             directory = live.directory
             crypto = live.crypto
         return action(directory, crypto)
+
+    # --- removing the tail from a recording (validation-pass plan D9) -------
+
+    def trim_transcript(
+        self,
+        session_id: str,
+        *,
+        boundary: int,
+        boundary_of: Callable[[TranscriptDocument], int | None],
+    ) -> TranscriptDocument:
+        """The clinician's confirmed "Remove lines N-end from this recording"
+        (validation-pass plan D9, decision 0.6 (a)): rewrite the QUEUED live
+        session's transcript to hold only the segments before ``boundary``
+        (line N is ``boundary + 1``) and return it.
+
+        ONE operation under the lock, never a store call from the screen. At
+        execution it re-checks: no generation lease (so no review is open),
+        no draft write and no discard in flight, the live session QUEUED and
+        still the ``session_id`` the confirmation named, no saved
+        ``note.enc`` (an undeterminable one refuses too), and the transcript
+        on disk still giving ``boundary`` through ``boundary_of`` — the one
+        boundary accessor the screen showed it from. The live QUEUED session
+        is never one the recovery flow handles (``custody_protected_ids``
+        keeps it out of the recovery list), and the screen refuses while a
+        recovery runs. Any refusal, or a transcript that cannot be read,
+        raises with nothing changed.
+
+        Then, in this order, each durable before the next:
+
+        1. the content-free no-audio marker, written atomically and read back
+           (``write_no_audio_marker``) — a failure refuses the trim; the
+           marker is never removed, so a later failure costs the kept
+           recording, never privacy (``_complete_locked`` keeps no audio while
+           it is present or its presence is in doubt);
+        2. ``generated.enc`` removed and its absence confirmed
+           (``remove_generated``) — an earlier generation may quote the tail,
+           and Complete would archive it (peer round 1 PR-HIGH-001); a failure
+           refuses the trim, the marker kept;
+        3. any UNFINISHED Past-sessions entry and staging copy for this id
+           removed, key first (``remove_pending_entry`` — the C1 hook every
+           non-Complete destroyer calls; True only when both keys are gone).
+           A Complete that published its entry and then failed to delete the
+           session key leaves the session QUEUED with that entry holding the
+           untrimmed transcript, the generated note and any kept audio (peer
+           Round 22 PR-MED-001); while the source key exists no entry for the
+           id can be a finished one, so it goes, and the next Complete
+           publishes from the trimmed source. A failure refuses the trim, the
+           marker kept and the old transcript in place;
+        4. ``write_transcript`` with the shortened document (it unlinks a
+           stale ``note.enc`` first, and none exists here) — a failure leaves
+           the marker and the old transcript.
+
+        No audit fact records the trim, and nothing here logs (D9). Recovery
+        never re-transcribes a session that has a transcript, so the trimmed
+        transcript is the session's from here on."""
+        with self._lock:
+            self._refuse_while_generating("remove lines")
+            self._refuse_while_writing("remove lines")
+            if self._custody_reservations:
+                raise SessionActivityError(
+                    "a discard is completing; lines cannot be removed from the recording"
+                )
+            live = self._require_state(SessionState.QUEUED)
+            if live.session.session_id != session_id:
+                raise SessionActivityError(
+                    "remove lines refused: that session is not the live one"
+                )
+            directory = live.directory
+            crypto = live.crypto
+            if artifact_state(directory, NOTE_FILENAME) is not False:
+                raise SessionActivityError(
+                    "remove lines refused: a note is saved for this recording"
+                )
+            document = read_transcript(directory, crypto)
+            if boundary_of(document) != boundary:
+                raise SessionActivityError(
+                    "remove lines refused: the transcript no longer shows a possible "
+                    "next patient at that line"
+                )
+            trimmed = transcript_before(document, boundary)
+            write_no_audio_marker(directory)
+            remove_generated(directory)
+            # Keyed by the DIRECTORY, like every other destroyer (C1).
+            if self._past_sessions is not None and not self._past_sessions.remove_pending_entry(
+                directory.name
+            ):
+                raise SessionActivityError(
+                    "remove lines refused: an unfinished Past-sessions copy of this recording "
+                    "could not be removed - try again"
+                )
+            write_transcript(directory, crypto, trimmed)
+            return trimmed
 
     # --- Cliniko draft-write custody (cliniko-draft-write plan D9) ----------
 

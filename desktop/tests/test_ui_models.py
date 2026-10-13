@@ -1959,9 +1959,12 @@ class TestPossibleNextPatient:
         copy = models.WARNING_COPY["possible_next_patient"]
         assert copy.title == "The note stops where a new patient may have arrived"
         assert copy.blocks is None  # review, never a block
+        # Validation-pass Task 4.1: the hint names the Transcript tab's
+        # "Remove lines" now that it exists (D5), and the way there.
         assert copy.clear_hint == (
             "Later lines were left out - add back any that belong with Add line to section, "
-            "then acknowledge."
+            "then acknowledge. If they are another patient's, use Cancel review and "
+            "regenerate, then remove them from the recording on the Transcript tab."
         )
 
     def test_the_acknowledge_all_tooltip_names_every_separately_acknowledged_code(

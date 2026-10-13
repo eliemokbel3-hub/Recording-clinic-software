@@ -32,6 +32,15 @@ plus a status line — OUTSIDE the generation group, so it shows on the
 recovered view and beside a failed note config too (peer round 19
 PR-HIGH-004) — naming the D2 fallback when a voice profile exists but was
 not applied.
+
+A possible next patient (validation-pass plan D9, Task 4.1): when the
+boundary rule fires on a live session's transcript
+(``note_config.next_patient_boundary``, the one accessor), the generation group
+shows "A possible next patient starts at line N" and "Remove lines N-end from
+this recording...", which asks first and then trims through the controller's
+one operation (``trim_transcript``) — never automatic, refused while a review
+holds the lease, after Save, during a recovery or a draft write. The shortened
+transcript is then shown afresh.
 """
 
 from __future__ import annotations
@@ -48,6 +57,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLayout,
+    QMessageBox,
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
@@ -58,7 +68,12 @@ from PySide6.QtWidgets import (
 
 from scribe_desktop.draft_write import WriteRecordStatus
 from scribe_desktop.note import GeneratedNote, speaker_role
-from scribe_desktop.note_config import NoteConfig, NoteConfigError, load_note_config
+from scribe_desktop.note_config import (
+    NoteConfig,
+    NoteConfigError,
+    load_note_config,
+    next_patient_boundary,
+)
 from scribe_desktop.note_fill import detect_prefill_candidates
 from scribe_desktop.past_sessions import KeepLabel
 from scribe_desktop.secure_storage import SessionCrypto
@@ -129,10 +144,28 @@ class TranscriptScreen(QWidget):
         attribution_readiness_provider: Callable[[], models.AttributionReadiness] = (
             models.attribution_readiness
         ),
+        confirm_remove: Callable[[str], bool] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._controller = controller
+        # Validation-pass plan D9 (Task 4.1): the "Remove lines" confirmation —
+        # the real dialog in production, injected by tests. Given the question,
+        # True only when the clinician chose to remove.
+        self._confirm_remove: Callable[[str], bool] = (
+            confirm_remove if confirm_remove is not None else self._ask_remove
+        )
+        # The boundary segment the shown document's possible next patient
+        # starts at (``next_patient_boundary`` over the loaded config), its
+        # line count, and whether its store was finished (re-shown after a
+        # trim). None: no line, no action. The shown document's own session id
+        # is the one a trim names (review round 20 LOW-001), and whether it
+        # carried a voice attribution (round 20 LOW-002).
+        self._boundary: int | None = None
+        self._line_count = 0
+        self._store_finished = True
+        self._shown_session_id: str | None = None
+        self._shown_attributed = False
         self._note_generator_factory = note_generator_factory
         self._config_loader = config_loader
         # D2: consulted only for a document WITHOUT attribution, to name the
@@ -242,6 +275,22 @@ class TranscriptScreen(QWidget):
         # --- Task 7.5: pre-generation role + template controls -------------
         self.generate_box = QGroupBox("Generate note")
         generate_layout = QVBoxLayout(self.generate_box)
+        # Validation-pass plan D9 (Task 4.1): where a possible next patient
+        # starts, and the clinician's confirmed removal of those lines from
+        # the recording — before generating, so shown only when the boundary
+        # rule fires on a live session's document; never automatic.
+        next_patient_row = QHBoxLayout()
+        self.next_patient_label = QLabel()
+        self.next_patient_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.next_patient_label.setWordWrap(True)
+        self.next_patient_label.hide()
+        self.remove_tail_button = QPushButton()
+        self.remove_tail_button.setToolTip(models.REMOVE_TAIL_TOOLTIP)
+        self.remove_tail_button.clicked.connect(self.remove_tail)
+        self.remove_tail_button.hide()
+        next_patient_row.addWidget(self.next_patient_label, 1)
+        next_patient_row.addWidget(self.remove_tail_button)
+        generate_layout.addLayout(next_patient_row)
         generate_layout.addWidget(
             QLabel("Confirm the clinician and template before generating a note:")
         )
@@ -462,6 +511,10 @@ class TranscriptScreen(QWidget):
         self._note_review_state = models.NoteReviewState()
         self.transcript_view.setPlainText(models.format_transcript_text(document))
         self.message_label.setText("")
+        self._store_finished = store_finished
+        self._line_count = len(document.transcript_segments)
+        self._shown_session_id = document.session_id
+        self._shown_attributed = document.enrolled_speaker is not None
         if store_finished:
             self.warning_label.hide()
         else:
@@ -559,6 +612,9 @@ class TranscriptScreen(QWidget):
             self._can_generate = False
             return
         self._config = config
+        # D9 / C5: the one boundary accessor, the same the note request,
+        # proposals and Check 6 read — never a second computation.
+        self._boundary = next_patient_boundary(document, config)
         self.profile_combo.addItem("- choose template profile -", None)
         for profile in config.template_profiles:
             self.profile_combo.addItem(profile.display_name, profile.template_profile_id)
@@ -606,6 +662,7 @@ class TranscriptScreen(QWidget):
         self._release_lease()
         self._generation_result = None
         self._config = None
+        self._boundary = None
         self._clear_auto_confirm()
         self._note_review_state = models.NoteReviewState()
         # Reset the committed-note flag ONLY on a new session (show_document)
@@ -650,6 +707,16 @@ class TranscriptScreen(QWidget):
             and not self._write_blocked
         )
         self.generate_button.setEnabled(can_generate_now and both_confirmed)
+        # D9: the next-patient line and its action, live sessions only.
+        boundary = self._boundary if self._can_generate else None
+        self.next_patient_label.setVisible(boundary is not None)
+        self.remove_tail_button.setVisible(boundary is not None)
+        if boundary is not None:
+            block = self._remove_tail_block()
+            self.next_patient_label.setText(models.next_patient_transcript_line(boundary))
+            self.remove_tail_button.setText(models.remove_tail_label(boundary))
+            self.remove_tail_button.setEnabled(block is None)
+            self.remove_tail_button.setToolTip(block or models.REMOVE_TAIL_TOOLTIP)
         self.profile_combo.setEnabled(can_generate_now)
         self.prefill_combo.setEnabled(can_generate_now)
         self.change_role_button.setEnabled(can_generate_now)
@@ -878,6 +945,102 @@ class TranscriptScreen(QWidget):
             self._lease = None
             self.generation_active_changed.emit(False)
             self._update_controls()
+
+    # --- validation-pass plan D9: removing the tail from the recording ------
+
+    def _remove_tail_block(self) -> str | None:
+        """Why "Remove lines" cannot act now, or None: a generation or review
+        holds the lease, a note is saved, a recovery or a draft write is in
+        flight. The controller re-checks all but the recovery at the click."""
+        if self._lease is not None:
+            return models.REMOVE_TAIL_REVIEW_OPEN
+        if self._note_committed:
+            return models.REMOVE_TAIL_NOTE_SAVED
+        if self._recovery_in_flight():
+            return models.REMOVE_TAIL_RECOVERY
+        if self._write_blocked:
+            return models.write_line("write_in_flight")
+        return None
+
+    def remove_tail(self) -> None:
+        """The clinician's "Remove lines N-end from this recording..." (D9):
+        asks first, then trims through the controller's ONE operation, which
+        re-checks the session the confirmation named (the SHOWN document's
+        own id, read BEFORE the question — never whichever session the
+        controller holds by then; review round 20 LOW-001), the lease, the
+        saved note and the boundary on disk. On success the shortened
+        transcript is shown afresh — the view, the role radios and the prefill
+        drop-down — with no line (its boundary is gone); when no line of the
+        voice-attributed speaker is left the attribution went with them
+        (``transcript_before``), so the clinician is told to choose by hand
+        rather than shown the "attribution did not run" fallback (round 20
+        LOW-002). A cancelled question changes nothing; a refusal or failure
+        says so and leaves the transcript as shown."""
+        controller = self._controller
+        boundary = self._boundary
+        config = self._config
+        session_id = (
+            self._shown_session_id if self._bound_live_session_id() is not None else None
+        )
+        attributed = self._shown_attributed
+        on_complete, on_discard = self._on_complete, self._on_discard
+        if (
+            controller is None
+            or not self._can_generate
+            or boundary is None
+            or config is None
+            or session_id is None
+            or on_complete is None
+            or on_discard is None
+        ):
+            return
+        block = self._remove_tail_block()
+        if block is not None:
+            self.message_label.setText(block)
+            return
+        line_count = self._line_count
+        if not self._confirm_remove(models.remove_tail_question(boundary, line_count)):
+            return
+        block = self._remove_tail_block()  # the state may have moved while it asked
+        if block is not None:
+            self.message_label.setText(block)
+            return
+        try:
+            trimmed = controller.trim_transcript(
+                session_id,
+                boundary=boundary,
+                boundary_of=lambda document: next_patient_boundary(document, config),
+            )
+        except Exception as exc:  # noqa: BLE001 - surfaced; the transcript is unchanged
+            self.message_label.setText(models.remove_tail_failed_line(exc))
+            return
+        self.show_document(
+            trimmed,
+            on_complete=on_complete,
+            on_discard=on_discard,
+            store_finished=self._store_finished,
+            can_generate=True,
+        )
+        done = models.remove_tail_done_line(boundary, line_count)
+        if attributed and trimmed.enrolled_speaker is None:
+            self.attribution_status_label.hide()
+            done = f"{done} {models.REMOVE_TAIL_ATTRIBUTION_DROPPED}"
+        self.message_label.setText(done)
+
+    def _ask_remove(self, question: str) -> bool:
+        """The real confirmation (production only; tests inject one): its
+        buttons named for what they do, the safe one the default (the design
+        system's destructive confirmations)."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("Remove lines from this recording")
+        box.setText(question)
+        go = box.addButton(models.REMOVE_TAIL_ACTION, QMessageBox.ButtonRole.DestructiveRole)
+        keep = box.addButton(models.REMOVE_TAIL_CANCEL, QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(keep)
+        box.setEscapeButton(keep)
+        box.exec()
+        return box.clickedButton() is go
 
     # --- driven by the Note tab (relayed through the main window) ----------
 

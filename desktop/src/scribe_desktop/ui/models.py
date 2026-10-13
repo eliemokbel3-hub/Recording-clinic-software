@@ -1298,6 +1298,17 @@ class SessionControllerLike(Protocol):
         self, lease: GenerationLease, action: Callable[[Path, SessionCrypto], T]
     ) -> T: ...
 
+    # Validation-pass plan D9 (Task 4.1): the clinician's confirmed "Remove
+    # lines N-end from this recording" — ONE controller operation that
+    # re-checks the session, the lease, the saved note and the boundary.
+    def trim_transcript(
+        self,
+        session_id: str,
+        *,
+        boundary: int,
+        boundary_of: Callable[[TranscriptDocument], int | None],
+    ) -> TranscriptDocument: ...
+
     # Cliniko draft-write plan D9 (Task 4.1): the write's own reservation,
     # taken before its first worker and released by its result handler, its
     # scoped custody accessor, and the id it holds (None when no write is in
@@ -2283,13 +2294,14 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     # patient; the lines from there on are marked in the chooser
     # (``NEXT_PATIENT_LINE_MARK``) and only this row's own Acknowledge clears
     # it (``SEPARATELY_ACKNOWLEDGED_CODES``). The hint names only controls that
-    # exist: "remove them from the recording on the Transcript tab" joins it
-    # with that action (the plan's Task 4.1).
+    # exist (Task 4.1 added the Transcript tab's "Remove lines N-end from this
+    # recording", which needs no review open — hence Cancel review first).
     "possible_next_patient": WarningCopy(
         "The note stops where a new patient may have arrived",
         None,
         "Later lines were left out - add back any that belong with Add line to section, "
-        "then acknowledge.",
+        "then acknowledge. If they are another patient's, use Cancel review and "
+        "regenerate, then remove them from the recording on the Transcript tab.",
     ),
     # Invented-text guard Task 2.8: a stored review warning written by a newer
     # version of the app, read back after a rollback (``note.from_bytes``).
@@ -2693,6 +2705,77 @@ def next_patient_segment(warnings: Sequence[NoteWarning]) -> int | None:
         if warning.note_warning_code == "possible_next_patient" and coords is not None:
             return coords.segment_index
     return None
+
+
+# Validation-pass plan D9 (Task 4.1): the Transcript tab's line and action for
+# a possible next patient — shown only when the boundary rule fires
+# (``note_config.next_patient_boundary``), never acting on its own; line N is
+# the boundary segment's transcript line (index + 1), as the chooser numbers.
+# Plain ASCII, as the other marks.
+REMOVE_TAIL_ACTION: Final = "Remove lines"
+REMOVE_TAIL_CANCEL: Final = "Keep the whole transcript"
+REMOVE_TAIL_TOOLTIP: Final = (
+    "Take the possible next patient's lines out of this recording's transcript before "
+    "you generate a note. Available while no note review is open and no note is saved."
+)
+REMOVE_TAIL_REVIEW_OPEN: Final = (
+    "Lines cannot be removed while a note is being generated or reviewed - use Cancel "
+    "review and regenerate on the Note tab first."
+)
+REMOVE_TAIL_NOTE_SAVED: Final = (
+    "Lines cannot be removed once a note is saved - Discard the recording to start again, "
+    "or complete it as it is."
+)
+REMOVE_TAIL_RECOVERY: Final = (
+    "A recovery is in progress - wait for it to finish before removing lines."
+)
+# Review round 20 LOW-002: the removed lines held every line of the speaker
+# the voice profile matched, so the shortened transcript carries no voice
+# attribution (``transcription.transcript_before``) — said instead of the
+# "attribution did not run" fallback, which would send the clinician to the
+# speaker model for nothing.
+REMOVE_TAIL_ATTRIBUTION_DROPPED: Final = (
+    "None of the lines left were matched to your voice, so choose the clinician "
+    "speaker before you generate."
+)
+
+
+def next_patient_transcript_line(boundary: int) -> str:
+    """The Transcript tab's line naming where a possible next patient starts."""
+    return f"A possible next patient starts at line {boundary + 1}."
+
+
+def remove_tail_label(boundary: int) -> str:
+    """The action's button text ("..." — it asks before it acts)."""
+    return f"Remove lines {boundary + 1}-end from this recording..."
+
+
+def remove_tail_question(boundary: int, line_count: int) -> str:
+    """The confirmation: what goes, that it cannot be undone, and that the
+    recording's audio is then never kept (decision 0.6 (a))."""
+    return (
+        f"Remove lines {boundary + 1}-{line_count} from this recording? Use this only when "
+        "they belong to another patient. They are taken out of the transcript for good: "
+        "no note, Past-sessions copy or replay will hold them, and this recording's audio "
+        "will not be kept for development. This cannot be undone."
+    )
+
+
+def remove_tail_done_line(boundary: int, line_count: int) -> str:
+    """The status line after a trim."""
+    return (
+        f"Lines {boundary + 1}-{line_count} were removed from this recording. "
+        "Generate the note from what is left."
+    )
+
+
+def remove_tail_failed_line(exc: BaseException) -> str:
+    """The status line after a refused or failed trim (the transcript on disk
+    is the one shown: every failure leaves it unchanged)."""
+    return (
+        f"Lines were not removed: {custody_refusal_text(exc)}. "
+        "The transcript is unchanged."
+    )
 
 
 # Said on the count line while "Show flagged lines only" hides every line the
@@ -4704,6 +4787,13 @@ __all__ = [
     "FLAGGED_FILTER_EMPTY_LINE",
     "FLAGGED_LINE_MARK",
     "NEXT_PATIENT_LINE_MARK",
+    "REMOVE_TAIL_ACTION",
+    "REMOVE_TAIL_ATTRIBUTION_DROPPED",
+    "REMOVE_TAIL_CANCEL",
+    "REMOVE_TAIL_NOTE_SAVED",
+    "REMOVE_TAIL_RECOVERY",
+    "REMOVE_TAIL_REVIEW_OPEN",
+    "REMOVE_TAIL_TOOLTIP",
     "SELECTION_NOT_COPIED",
     "SEPARATELY_ACKNOWLEDGED_CODES",
     "SEPARATELY_ACKNOWLEDGED_NAMES",
@@ -4760,7 +4850,12 @@ __all__ = [
     "model_report_lines",
     "models_ready",
     "next_patient_segment",
+    "next_patient_transcript_line",
     "prefilled_lines",
+    "remove_tail_done_line",
+    "remove_tail_failed_line",
+    "remove_tail_label",
+    "remove_tail_question",
     "provenance_label",
     "render_note_sections",
     "render_proposal",

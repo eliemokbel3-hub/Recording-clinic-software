@@ -43,6 +43,10 @@ from a source checkout — ``install_layout``):
   under the SAME key with the associated data ``generated:<session id>``;
   replaced on regeneration. Complete copies it into the Past-sessions entry;
   it dies with the session.
+- ``no-audio-kept`` — the content-free marker (fixed bytes, no key) the
+  clinician's "Remove lines N-end from this recording" writes first
+  (validation-pass plan D9, decision 0.6 (a)); never removed, so a trimmed
+  session keeps no audio at Complete. It dies with the session.
 
 Durability ordering (BINDING, plan key-custody decision):
 - ``key.dpapi`` is written atomically (temp + fsync + ``os.replace``)
@@ -128,6 +132,12 @@ WRITE_RECORD_FILENAME: Final = "write.enc"
 # Privacy-professional-controls plan D2: the first note body the review showed,
 # under the SAME key with the associated data ``generated:<session id>``.
 GENERATED_FILENAME: Final = "generated.enc"
+# Validation-pass plan D9 / decision 0.6 (a): the content-free marker the
+# clinician's "Remove lines N-end from this recording" writes FIRST and never
+# removes. Its presence — or any doubt about it — means this session's audio
+# is never kept at Complete (``no_audio_marker_state``). Fixed bytes, no key.
+NO_AUDIO_MARKER_FILENAME: Final = "no-audio-kept"
+_NO_AUDIO_MARKER: Final = b"no audio kept: lines were removed from this transcript\n"
 
 _MAGIC: Final = b"CSS2"
 _FORMAT_VERSION: Final = 1
@@ -1033,6 +1043,62 @@ def read_generated(
     be read."""
     kept = _read_generated(session_dir, crypto, session_id)
     return kept.record if kept is not None else None
+
+
+# --------------------------------------------------------------------------
+# Removing the tail from a recording (validation-pass plan D9, decision 0.6
+# (a)): the primitives ``SessionController.trim_transcript`` orders.
+# --------------------------------------------------------------------------
+
+
+def artifact_state(session_dir: Path, filename: str) -> bool | None:
+    """Whether ``session_dir/filename`` exists, from ONE ``os.lstat``: True,
+    False — only when the answer is "not found" — or None when it cannot be
+    told (``docs/lessons.md``: ``Path.exists`` / ``is_file`` swallow an
+    access error and answer False). Every caller decides None in its own
+    safe direction."""
+    try:
+        os.lstat(session_dir / filename)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    return True
+
+
+def write_no_audio_marker(session_dir: Path) -> None:
+    """Write the no-audio marker ATOMICALLY, then confirm it reads back as
+    written. ``StoreWriteError`` (content-free) on any failure — the marker
+    may then exist or not, and either way is never removed by the app: a
+    failure toward "no audio kept" costs a kept recording, never privacy."""
+    path = session_dir / NO_AUDIO_MARKER_FILENAME
+    atomic_write_bytes(path, _NO_AUDIO_MARKER, error_label="no-audio marker")
+    try:
+        written = path.read_bytes()
+    except OSError:
+        written = None
+    if written != _NO_AUDIO_MARKER:
+        raise StoreWriteError("no-audio marker did not read back as written")
+
+
+def no_audio_marker_state(session_dir: Path) -> bool | None:
+    """Whether the no-audio marker is present (``artifact_state``): any file
+    of that name counts, whatever it holds."""
+    return artifact_state(session_dir, NO_AUDIO_MARKER_FILENAME)
+
+
+def remove_generated(session_dir: Path) -> None:
+    """Remove ``generated.enc`` and confirm it is gone (``artifact_state``
+    False). ``StoreWriteError`` (content-free) when it cannot be removed or
+    its absence cannot be confirmed — the trim then stops before the
+    transcript is written."""
+    path = session_dir / GENERATED_FILENAME
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        raise StoreWriteError("generated note not removable") from None
+    if artifact_state(session_dir, GENERATED_FILENAME) is not False:
+        raise StoreWriteError("generated note removal not confirmed")
 
 
 def is_mock_identity(name: str) -> bool:

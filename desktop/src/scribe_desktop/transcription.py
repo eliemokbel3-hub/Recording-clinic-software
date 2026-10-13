@@ -1136,7 +1136,10 @@ def write_transcript(
     loss is bounded and the direction is still safe: the key is retained, the
     transcript is intact, and the note is regenerable by generating again.
     Reachable only on the resume-processing path, since a queued session
-    holding a saved note cannot transition back to processing.
+    holding a saved note cannot transition back to processing — and by the
+    clinician's "Remove lines N-end" (validation-pass plan D9,
+    ``SessionController.trim_transcript``), which refuses while a note is
+    saved, so it never unlinks one.
     """
     try:
         (session_dir / NOTE_FILENAME).unlink(missing_ok=True)
@@ -1165,6 +1168,32 @@ def read_transcript(session_dir: Path, crypto: SessionCrypto) -> TranscriptDocum
         return TranscriptDocument.from_bytes(plain)
     except ValidationError as exc:
         raise StoreCorruptError("transcript artifact is malformed") from exc
+
+
+def transcript_before(document: TranscriptDocument, boundary: int) -> TranscriptDocument:
+    """``document`` holding only the segments before ``boundary`` — the
+    transcript the clinician's "Remove lines N-end from this recording"
+    writes (validation-pass plan D9; ``SessionController.trim_transcript``
+    is its one caller). Every other field is unchanged, except that the voice
+    attribution (``enrolled_speaker`` and its two companions) is dropped,
+    all three together, when no segment that is left carries that speaker's
+    text — the document's own construction rule. Fully re-validated.
+    ``ValueError`` (terse: a pydantic message would echo transcript text)
+    for a boundary that leaves no segment, or removes none."""
+    segments = document.transcript_segments
+    if not 0 < boundary < len(segments):
+        raise ValueError("the boundary is not inside the transcript")
+    kept = segments[:boundary]
+    update: dict[str, object] = {"transcript_segments": kept}
+    speaker = document.enrolled_speaker
+    if speaker is not None and not any(
+        segment.speaker == speaker and segment_has_text(segment) for segment in kept
+    ):
+        update |= {"enrolled_speaker": None, "enrolment_similarity": None, "speaker_model_id": None}
+    try:
+        return TranscriptDocument.model_validate({**document.model_dump(), **update})
+    except ValidationError:
+        raise ValueError("the shortened transcript is not a valid document") from None
 
 
 # ---------------------------------------------------------------------------
@@ -2636,6 +2665,7 @@ __all__ = [
     "segment_has_text",
     "suspect_decision",
     "transcribe_session",
+    "transcript_before",
     "whisper_model_available",
     "words_have_text",
     "words_hold_suspect",
