@@ -137,8 +137,8 @@ An executor leg run as a background Bash command hit its time limit while stuck 
 - **Rule:** before re-spawning a leg, list live executors (`Get-CimInstance Win32_Process` filtered on the CommandLine) and stop any survivor. Launch long legs detached (`Start-Process bash.exe -WindowStyle Hidden`, output to a file) and wait on their done marker, not on the tool's time limit.
 
 ## A Windows path in a non-raw Python string can put a NUL byte in the plan (2026-10-03)
-A plan-record script wrote a path through an ordinary Python string, and a backslash followed by `0` became a NUL character in the plan file. It was caught only after a local commit, which had to be amended (installation plan, Phase P).
-- **Rule:** write paths in record scripts as raw strings (`r"…"`) or with forward slashes, and assert `"\x00" not in text` before every write of a plan or doc.
+A plan-record script wrote a path through an ordinary Python string, and a backslash followed by `0` became a NUL character in the plan file. It was caught only after a local commit, which had to be amended (installation plan, Phase P). The same happened with `\r` on 2026-10-13. A folder path beginning `C:\run…` was written into the validation-pass plan, and its `\r` became a carriage return. A later text-mode rewrite turned that into a line break in the middle of a sentence. It was fixed by a byte edit before the commit.
+- **Rule:** write paths in record scripts as raw strings (`r"…"`) or with forward slashes. Before every write of a plan or doc, assert both `"\x00" not in text` and that no bare carriage return is left: `"\r" not in text` after reading with universal newlines.
 
 ## A primed example sentence is a hallucination template; a primed cue routes its echo (2026-10-12)
 During shadow use of 0.3.0 Whisper invented a short line with a number over background sound, shaped by the vocabulary primer's example sentence ("Pain seven out of ten."), and the shipped cue "out of ten" routed that echo straight into the note (invented-text guard plan).
