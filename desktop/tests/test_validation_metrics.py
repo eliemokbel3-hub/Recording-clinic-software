@@ -1142,6 +1142,216 @@ class TestUncertainty:
         ).uncertainty_surfaced is None
 
 
+def _hedge_mark(document: TranscriptDocument, segment: int, aid: str) -> NoteWarning:
+    """A ``hedged_source`` warning on the whole of ``segment`` (quoted as
+    ``aid``), whatever its words — a stub provider's mark."""
+    last = len(document.transcript_segments[segment].transcript_words) - 1
+    return NoteWarning(
+        note_warning_code="hedged_source",
+        severity="review",
+        section_key="presenting_complaint",
+        assertion_id=aid,
+        source_coords=SourceCoords(segment, 0, last),
+    )
+
+
+# A script needs a clinician line: a patient-only test ends with this one,
+# spoken in the transcript as its last SPEAKER_1 segment — no hedge, no
+# structured word, no fact and unquoted, so it adds no mark, no warning, no
+# word error and no outcome.
+_CLINICIAN_CLOSE = "okay let us have a look"
+
+
+class TestHedgeCreditAmendment:
+    """Metric amendment 2026-10-13 (validation-pass plan D7, decision 0.1
+    (a)): an ``expect_uncertain`` fact is also surfaced when it is
+    ``correct``, its SCRIPT line holds a spoken hedge, and one of its aligned
+    words sits under a ``hedged_source`` mark whose OWN words hold one. Every
+    pin both ways; the acoustic-only reading is kept beside it. The clinician
+    is SPEAKER_1, so SPEAKER_2's lines are the patient's; a patient-only case
+    ends with ``_CLINICIAN_CLOSE``."""
+
+    def test_a_hedged_correct_fact_under_the_checkers_mark_is_surfaced(self) -> None:
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "i think my left knee hurts"), (SPEAKER_1, _CLINICIAN_CLOSE)
+        )
+        note = _checked(document, 0)
+        assert [(w.note_warning_code, w.source_coords) for w in note.note_warnings] == [
+            ("hedged_source", SourceCoords(0, 0, 5))
+        ]
+        metrics = encounter_metrics(document, note, script)
+        assert metrics.words.edit_distance == 0
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced, fact.uncertainty_surfaced_acoustic) == (
+            "correct",
+            True,
+            False,
+        )
+        assert (metrics.uncertainty_missed, metrics.uncertainty_surfaced_acoustic) == (0, 0)
+        assert metrics.hedge_marks_unhedged == 0
+        assert rule_failures(OPTION_A, _measured(metrics)) == ()
+
+    def test_an_unhedged_script_line_gains_no_credit_from_a_mark(self) -> None:
+        """The recogniser added a hedge the script never said: the line is
+        marked (a real hedge in its words) but the fact is not surfaced."""
+        script = _script(
+            ("patient", "my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "i think my left knee hurts"), (SPEAKER_1, _CLINICIAN_CLOSE)
+        )
+        note = _checked(document, 0)
+        assert [w.note_warning_code for w in note.note_warnings] == ["hedged_source"]
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
+        assert metrics.hedge_marks_unhedged == 0  # the marked words DO hedge
+        assert rule_failures(OPTION_A, _measured(metrics)) == ("uncertainty_not_surfaced",)
+
+    def test_a_mark_on_words_without_a_hedge_credits_nothing_and_is_counted(self) -> None:
+        """The script hedged but the recogniser dropped the hedge; a stub mark
+        on the line is re-derived, finds no hedge, and is counted."""
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc((SPEAKER_2, "my left knee hurts"), (SPEAKER_1, _CLINICIAN_CLOSE))
+        assert [w.note_warning_code for w in _checked(document, 0).note_warnings] == []
+        note = _note(document, 0, warnings=[_hedge_mark(document, 0, "a0")])
+        metrics = encounter_metrics(document, note, script)
+        fact = _only_fact(metrics)
+        assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
+        assert metrics.hedge_marks_unhedged == 1
+
+    def test_a_hedged_fact_with_no_mark_is_not_surfaced(self) -> None:
+        """No mark: the clinician's own hedged line (Check 1 marks only
+        someone else's), and the same line with no warnings at all."""
+        script = _script(
+            ("clinician", "i think the left knee is sprained"),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc((SPEAKER_1, "i think the left knee is sprained"))
+        for note in (_checked(document, 0), _note(document, 0)):
+            assert note.note_warnings == ()
+            fact = _only_fact(encounter_metrics(document, note, script))
+            assert (fact.verdict, fact.uncertainty_surfaced) == ("correct", False)
+
+    def test_a_wrong_fact_under_a_mark_is_not_surfaced(self) -> None:
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[_fact("laterality", "left knee", 0, uncertain=True)],
+        )
+        document = _doc(
+            (SPEAKER_2, "i think my right knee hurts"), (SPEAKER_1, _CLINICIAN_CLOSE)
+        )
+        note = _checked(document, 0)
+        assert "hedged_source" in [w.note_warning_code for w in note.note_warnings]
+        fact = _only_fact(encounter_metrics(document, note, script))
+        assert (fact.verdict, fact.uncertainty_surfaced) == ("wrong", False)
+
+    def test_a_stub_marking_every_line_is_credited_only_where_both_hedge(self) -> None:
+        """Lines 0 and 1 hedge in the script; the recogniser kept line 0's
+        hedge and dropped line 1's; line 2 never hedged. A stub marks all
+        three: only fact 0 is credited, and the two marks on unhedged words
+        are counted."""
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("patient", "maybe the right hip is stiff"),
+            ("patient", "the left ankle is fine"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[
+                _fact("laterality", "left knee", 0, uncertain=True),
+                _fact("laterality", "right hip", 1, uncertain=True),
+                _fact("laterality", "left ankle", 2, uncertain=True),
+            ],
+        )
+        document = _doc(
+            (SPEAKER_2, "i think my left knee hurts"),
+            (SPEAKER_2, "the right hip is stiff"),
+            (SPEAKER_2, "the left ankle is fine"),
+            (SPEAKER_1, _CLINICIAN_CLOSE),
+        )
+        marks = [_hedge_mark(document, index, f"a{index}") for index in range(3)]
+        metrics = encounter_metrics(document, _note(document, 0, 1, 2, warnings=marks), script)
+        assert [f.verdict for f in metrics.facts] == ["correct", "correct", "correct"]
+        assert [f.uncertainty_surfaced for f in metrics.facts] == [True, False, False]
+        assert metrics.hedge_marks_unhedged == 2
+        assert metrics.uncertainty_missed == 2
+
+    def test_low_confidence_alone_still_surfaces_and_is_the_acoustic_reading(self) -> None:
+        script = _script(
+            ("clinician", "paracetamol 500 mg daily"),
+            facts=[_fact("dose", "paracetamol 500 mg", 0, uncertain=True)],
+        )
+        document = _doc((SPEAKER_1, "paracetamol ?500 mg daily"))
+        metrics = encounter_metrics(document, _checked(document, 0), script)
+        fact = _only_fact(metrics)
+        assert (fact.uncertainty_surfaced, fact.uncertainty_surfaced_acoustic) == (True, True)
+        assert (metrics.uncertainty_missed, metrics.uncertainty_surfaced_acoustic) == (0, 1)
+
+    def test_the_acoustic_reading_is_runs_1_to_4s_predicate(self) -> None:
+        """Both readings over one hedged patient fact: the recogniser's
+        low-confidence word alone surfaces it acoustically; the hedge mark
+        alone surfaces it only under the amendment; a fact not expected
+        uncertain reads None in both."""
+        script = _script(
+            ("patient", "i think my left knee hurts"),
+            ("clinician", _CLINICIAN_CLOSE),
+            facts=[
+                _fact("laterality", "left knee", 0, uncertain=True),
+                _fact("present", "hurts", 0),
+            ],
+        )
+        for text, acoustic in (
+            ("i think my ?left knee hurts", True),
+            ("i think my left knee hurts", False),
+        ):
+            document = _doc((SPEAKER_2, text), (SPEAKER_1, _CLINICIAN_CLOSE))
+            metrics = encounter_metrics(document, _checked(document, 0), script)
+            first, second = metrics.facts
+            assert (first.uncertainty_surfaced, first.uncertainty_surfaced_acoustic) == (
+                True,
+                acoustic,
+            ), text
+            assert (second.uncertainty_surfaced, second.uncertainty_surfaced_acoustic) == (
+                None,
+                None,
+            ), text
+            assert metrics.uncertainty_surfaced_acoustic == int(acoustic), text
+
+    def test_the_new_counts_are_validated(self) -> None:
+        with pytest.raises(ValueError, match="hedge_marks_unhedged must be"):
+            dataclasses.replace(
+                encounter_metrics(
+                    _doc((SPEAKER_1, "knee")),
+                    _note(_doc((SPEAKER_1, "knee"))),
+                    _script(("clinician", "knee")),
+                ),
+                hedge_marks_unhedged=-1,
+            )
+        with pytest.raises(ValueError, match="uncertainty_surfaced_acoustic must be a flag"):
+            FactOutcome(
+                fact_index=0,
+                kind="present",
+                material=True,
+                verdict="correct",
+                warned=False,
+                uncertainty_surfaced=True,
+                not_transcribed=False,
+                ambiguous=False,
+                uncertainty_surfaced_acoustic="yes",  # type: ignore[arg-type]
+            )
+
+
 class TestAmbiguity:
     def test_equal_cost_alternatives_take_the_worse_outcome(self) -> None:
         """ref [the, left, knee], hyp [the, right]: two optimal alignments of

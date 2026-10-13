@@ -91,10 +91,13 @@ from scribe_desktop.note import (
     NoteDraft,
     NoteModelProvider,
     ProposalResolution,
+    SourceCoords,
     compose_draft,
     content_tokens,
     finalise_note,
     strip_token_punctuation,
+    text_holds_hedge,
+    words_hold_hedge,
 )
 from scribe_desktop.note_check import (
     # Package-private by name, shared deliberately (the note.py convention):
@@ -148,6 +151,7 @@ from scribe_desktop.speech import (
 from scribe_desktop.transcription import (
     DEFAULT_WHISPER_MODEL,
     TranscriptDocument,
+    TranscriptWord,
     WhisperSpeechProvider,
     is_number_token,
     resolve_whisper_model,
@@ -557,7 +561,11 @@ class FactOutcome:
     as ``silently_omitted_somewhere`` under run 1's omission predicate and
     clinician-only scope — the report's comparison column only, never read
     by a rule (metric amendment 2026-10-09, note-routing-omissions plan
-    D3)."""
+    D3). ``uncertainty_surfaced_acoustic``: ``uncertainty_surfaced`` under
+    runs 1-4's predicate alone (a ``low_confidence_source`` warning on an
+    aligned word, with no hedge credit) — the report's comparison column
+    only, never read by a rule (metric amendment 2026-10-13, validation-pass
+    plan D7); None as ``uncertainty_surfaced`` is."""
 
     fact_index: int
     kind: FactKind
@@ -569,6 +577,7 @@ class FactOutcome:
     ambiguous: bool
     silently_omitted_somewhere: bool = False
     silently_omitted_v1: bool = False
+    uncertainty_surfaced_acoustic: bool | None = None
 
     def __post_init__(self) -> None:
         _require_count(self.fact_index, "fact_index")
@@ -584,10 +593,10 @@ class FactOutcome:
         ):
             if not isinstance(getattr(self, name), bool):
                 raise ValueError(f"{name} must be a flag")
-        if self.uncertainty_surfaced is not None and not isinstance(
-            self.uncertainty_surfaced, bool
-        ):
-            raise ValueError("uncertainty_surfaced must be a flag or None")
+        for name in ("uncertainty_surfaced", "uncertainty_surfaced_acoustic"):
+            value = getattr(self, name)
+            if value is not None and not isinstance(value, bool):
+                raise ValueError(f"{name} must be a flag or None")
 
     @property
     def silent_omission(self) -> bool:
@@ -629,7 +638,11 @@ class EncounterMetrics:
     (reported, never failing). ``spelling_normalised_words``: the
     transcript's content tokens that canonical spelling rewrote (metric
     amendment 2026-10-11 — "500mg" counts 1, "five hundred" 2, "500" 0;
-    the script's rewrites are not counted), reported, never failing."""
+    the script's rewrites are not counted), reported, never failing.
+    ``hedge_marks_unhedged`` (metric amendment 2026-10-13, validation-pass
+    plan D7): the note's ``hedged_source`` warnings whose marked words hold
+    no spoken hedge (``note.words_hold_hedge``, re-derived) — expected 0 from
+    the shipped checker; reported, never failing, and never credited."""
 
     words: WordErrors
     spelling_normalised_words: int
@@ -642,6 +655,7 @@ class EncounterMetrics:
     checker_failure_count: int
     expected_warnings_absent: tuple[str, ...]
     facts: tuple[FactOutcome, ...]
+    hedge_marks_unhedged: int = 0
 
     def __post_init__(self) -> None:
         for name in (
@@ -651,6 +665,7 @@ class EncounterMetrics:
             "unsupported_clinical_lines",
             "other_unsupported_words",
             "checker_failure_count",
+            "hedge_marks_unhedged",
         ):
             _require_count(getattr(self, name), name)
         for code, count in self.checker_tally:
@@ -688,6 +703,13 @@ class EncounterMetrics:
         return sum(1 for fact in self.facts if fact.uncertainty_surfaced is False)
 
     @property
+    def uncertainty_surfaced_acoustic(self) -> int:
+        """How many ``expect_uncertain`` facts runs 1-4's predicate alone
+        surfaces (the report's "Surfaced (acoustic only)" column; no rule
+        reads it — metric amendment 2026-10-13)."""
+        return sum(1 for fact in self.facts if fact.uncertainty_surfaced_acoustic)
+
+    @property
     def ambiguous_facts(self) -> int:
         return sum(1 for fact in self.facts if fact.ambiguous)
 
@@ -700,16 +722,19 @@ class _WordInfo(NamedTuple):
     "some aligned word in a note line"); ``covered_all``: every one is (its
     "every aligned word in a note line") — so a note line holding one word
     of a joined number carries the token in part, never wholly and never
-    not at all (PR-MED-020). ``warned``, ``warned_v1`` and
-    ``low_confidence`` hold when they hold for ANY of the words.
-    ``warned_v1`` is ``warned`` under run 1's predicate and clinician-only
-    scope (the report's comparison column, metric amendment 2026-10-09)."""
+    not at all (PR-MED-020). ``warned``, ``warned_v1``,
+    ``low_confidence`` and ``hedged`` hold when they hold for ANY of the
+    words. ``warned_v1`` is ``warned`` under run 1's predicate and
+    clinician-only scope (the report's comparison column, metric amendment
+    2026-10-09). ``hedged`` (metric amendment 2026-10-13): the word sits
+    under a ``hedged_source`` mark whose marked words hold a spoken hedge."""
 
     covered_any: bool
     covered_all: bool
     warned: bool
     warned_v1: bool
     low_confidence: bool
+    hedged: bool
 
 
 def _merged(words: Sequence[_WordInfo]) -> _WordInfo:
@@ -720,6 +745,7 @@ def _merged(words: Sequence[_WordInfo]) -> _WordInfo:
         warned=any(word.warned for word in words),
         warned_v1=any(word.warned_v1 for word in words),
         low_confidence=any(word.low_confidence for word in words),
+        hedged=any(word.hedged for word in words),
     )
 
 
@@ -868,14 +894,15 @@ def transcript_wer(reference_words: Sequence[str], hypothesis_words: Sequence[st
 
 # The fact walk's state: (every token matched, every token deleted, some
 # aligned word in a note line, every aligned word in a note line, warned,
-# uncertainty surfaced, warned under run 1's predicate). Seven flags, so at
-# most 128 states per cell.
-_FactState = tuple[bool, bool, bool, bool, bool, bool, bool]
-_INITIAL_STATE: Final[_FactState] = (True, True, False, True, False, False, False)
+# uncertainty surfaced by the recogniser, warned under run 1's predicate, some
+# aligned word under a hedge mark — metric amendment 2026-10-13). Eight
+# flags, so at most 256 states per cell.
+_FactState = tuple[bool, bool, bool, bool, bool, bool, bool, bool]
+_INITIAL_STATE: Final[_FactState] = (True, True, False, True, False, False, False, False)
 
 
 def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState:
-    all_matched, _deleted, in_any, in_all, warned, surfaced, warned_v1 = state
+    all_matched, _deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
     return (
         all_matched and matched,
         False,
@@ -884,12 +911,13 @@ def _after_word(state: _FactState, matched: bool, info: _WordInfo) -> _FactState
         warned or info.warned,
         surfaced or info.low_confidence,
         warned_v1 or info.warned_v1,
+        hedged or info.hedged,
     )
 
 
 def _after_deletion(state: _FactState) -> _FactState:
-    _matched, deleted, in_any, in_all, warned, surfaced, warned_v1 = state
-    return (False, deleted, in_any, in_all, warned, surfaced, warned_v1)
+    _matched, deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
+    return (False, deleted, in_any, in_all, warned, surfaced, warned_v1, hedged)
 
 
 def _fact_end_states(
@@ -931,10 +959,20 @@ class _Judged(NamedTuple):
     surfaced: bool | None
     not_transcribed: bool
     warned_v1: bool
+    surfaced_acoustic: bool | None
 
 
-def _judge(state: _FactState, kind: FactKind, expect_uncertain: bool) -> _Judged:
-    all_matched, all_deleted, in_any, in_all, warned, surfaced, warned_v1 = state
+def _judge(
+    state: _FactState, kind: FactKind, expect_uncertain: bool, *, script_hedged: bool
+) -> _Judged:
+    """One alternative's outcome. Its uncertainty is surfaced by the
+    recogniser (``low_confidence_source`` on an aligned word — runs 1-4's
+    predicate, kept as ``surfaced_acoustic``) or, since the metric amendment
+    of 2026-10-13 (validation-pass plan D7), by the hedge credit: the
+    verdict is ``correct``, the fact's SCRIPT line holds a spoken hedge
+    (``script_hedged``) AND an aligned word sits under a ``hedged_source``
+    mark whose own words hold one (``_WordInfo.hedged``)."""
+    all_matched, all_deleted, in_any, in_all, warned, surfaced, warned_v1, hedged = state
     verdict: FactVerdict
     if kind == "absent":
         verdict = "wrongly_present" if in_any else "correctly_absent"
@@ -946,9 +984,10 @@ def _judge(state: _FactState, kind: FactKind, expect_uncertain: bool) -> _Judged
         # Some of the fact's words are in a note line, but not all of them
         # matched and carried: the note states something other than the fact.
         verdict = "wrong"
-    return _Judged(
-        verdict, warned, surfaced if expect_uncertain else None, all_deleted, warned_v1
-    )
+    if not expect_uncertain:
+        return _Judged(verdict, warned, None, all_deleted, warned_v1, None)
+    credited = hedged and script_hedged and verdict == "correct"
+    return _Judged(verdict, warned, surfaced or credited, all_deleted, warned_v1, surfaced)
 
 
 # Outcomes from best to worst. A warned omission is better than a silent one
@@ -1267,11 +1306,20 @@ def encounter_metrics(
       ``silent (run-1 predicate)`` column, which no rule reads.
       ``uncertainty_surfaced`` (for ``expect_uncertain`` facts): a
       ``low_confidence_source`` warning sits on one of the fact's aligned
-      words.
+      words, or (the metric amendment of 2026-10-13, validation-pass plan
+      D7) the fact is ``correct``, its script line holds a spoken hedge
+      (``note.text_holds_hedge``) and one of its aligned words sits under a
+      ``hedged_source`` warning whose marked words hold one too
+      (``note.words_hold_hedge``, re-derived as ``warned`` re-derives its
+      predicate). The first reading alone is kept as
+      ``uncertainty_surfaced_acoustic`` for the report's "Surfaced (acoustic
+      only)" column, which no rule reads; a ``hedged_source`` warning whose
+      words hold no hedge credits nothing and is counted
+      (``hedge_marks_unhedged``).
     - Ambiguity is conservative: across equal-cost alignments, and across
       repeated occurrences of the tokens inside the fact's line, the fact
       takes the worse outcome (``ambiguous`` says alternatives differed in
-      a reported outcome — never in the run-1 comparison flag alone),
+      a reported outcome — never in a comparison flag alone),
       and its uncertainty counts as surfaced only when every alternative
       surfaces it, and it counts as a silent omission when any alternative
       omits it unwarned (peer round 14, PR-MED-056).
@@ -1298,6 +1346,23 @@ def encounter_metrics(
                 (coords.segment_index, index)
                 for index in range(coords.first_word_index, coords.last_word_index + 1)
             )
+    # Metric amendment 2026-10-13 (D7): a hedge mark credits only the words
+    # under it, and only when those words hold a hedge (re-derived, never
+    # trusted from the warning); any other mark is counted, never credited.
+    hedged: set[tuple[int, int]] = set()
+    hedge_marks_unhedged = 0
+    for warning in note.note_warnings:
+        coords = warning.source_coords
+        if warning.note_warning_code != "hedged_source" or coords is None:
+            continue
+        marked = _marked_words(document, coords)
+        if marked and words_hold_hedge(marked):
+            hedged.update(
+                (coords.segment_index, index)
+                for index in range(coords.first_word_index, coords.last_word_index + 1)
+            )
+        else:
+            hedge_marks_unhedged += 1
 
     def word_info(position: tuple[int, int]) -> _WordInfo:
         """One transcript word's flags, read from its RAW text."""
@@ -1325,6 +1390,7 @@ def encounter_metrics(
             and clinician
             and _is_high_risk_token(word_text, first_in_segment=first_in_segment),
             low_confidence=position in low_confidence,
+            hedged=position in hedged,
         )
 
     # PR-MED-020: any/all over every word a canonical token consumed.
@@ -1354,22 +1420,30 @@ def encounter_metrics(
         # then carried to canonical rows (PR-MED-023) — a span that cuts a
         # join takes the whole joined token.
         line_tokens = content_tokens(script.lines[fact.line].text)
+        # D7: the SCRIPT line's own hedge, one of the credit's three terms.
+        script_hedged = text_holds_hedge(script.lines[fact.line].text)
         judged: set[_Judged] = set()
         for start in _occurrences(line_tokens, fact.tokens):
             first_content = reference.line_offsets[fact.line] + start
             first = reference.content_map[first_content][0]
             last = reference.content_map[first_content + len(fact.tokens) - 1][1]
             for state in _fact_end_states(alignment, first, last, infos):
-                judged.add(_judge(state, fact.kind, fact.expect_uncertain))
+                judged.add(
+                    _judge(state, fact.kind, fact.expect_uncertain, script_hedged=script_hedged)
+                )
         worst = max(judged, key=_severity)
         # Round 11 LOW-008: surfacing is judged on its own, conservatively —
         # the worst verdict's alternative may surface the uncertainty while
         # an equal-cost alternative does not; it is surfaced only if every
-        # alternative surfaces it.
+        # alternative surfaces it. The acoustic-only comparison likewise.
         surfaced = all(j.surfaced for j in judged) if fact.expect_uncertain else None
+        surfaced_acoustic = (
+            all(j.surfaced_acoustic for j in judged) if fact.expect_uncertain else None
+        )
         # Ambiguity is judged on the reported metric only: alternatives that
-        # differ in nothing but the run-1 comparison flag are not ambiguous.
-        outcomes = {j._replace(warned_v1=False) for j in judged}
+        # differ in nothing but a comparison flag (run 1's omission predicate,
+        # the acoustic-only surfacing) are not ambiguous.
+        outcomes = {j._replace(warned_v1=False, surfaced_acoustic=None) for j in judged}
         facts.append(
             FactOutcome(
                 fact_index=index,
@@ -1388,6 +1462,7 @@ def encounter_metrics(
                 silently_omitted_v1=any(
                     j.verdict == "omitted" and not j.warned_v1 for j in judged
                 ),
+                uncertainty_surfaced_acoustic=surfaced_acoustic,
             )
         )
 
@@ -1411,7 +1486,22 @@ def encounter_metrics(
         checker_failure_count=sum(tally[code] for code in failing),
         expected_warnings_absent=tuple(sorted(expected - set(tally))),
         facts=tuple(facts),
+        hedge_marks_unhedged=hedge_marks_unhedged,
     )
+
+
+def _marked_words(
+    document: TranscriptDocument, coords: SourceCoords
+) -> tuple[TranscriptWord, ...]:
+    """The words a warning's ``coords`` address, or () when the transcript
+    has no such words (a mark the checker could not have raised)."""
+    segments = document.transcript_segments
+    if coords.segment_index >= len(segments):
+        return ()
+    words = segments[coords.segment_index].transcript_words
+    if coords.last_word_index >= len(words):
+        return ()
+    return words[coords.first_word_index : coords.last_word_index + 1]
 
 
 # ---------------------------------------------------------------------------
@@ -1852,15 +1942,18 @@ def render_report(
         f"`{info.models_manifest_sha256 or 'absent'}`. Encounters: {len(outcomes)}; "
         f"set-level errors: {errors}. Words compared after canonical spelling, metric "
         "amendment 2026-10-11: Ref words, WER and every fact verdict are over canonical "
-        "tokens (read beside runs 1-2, not compared with them).",
+        "tokens (read beside runs 1-2, not compared with them). Uncertainty is also "
+        "surfaced by a hedge mark on a correct, hedged line, metric amendment 2026-10-13 "
+        "(the recogniser's alone: Surfaced (acoustic only)).",
         "",
         "| Encounter | Status | Segments | Ref words | WER | Spelling-normalised words "
         "| Unsupported clinical lines "
         "| Other unsupported words | Transcript lines | Config lines | Facts | Correct "
         "| Wrong (material) | Omitted | Silent omissions | Silent (run-1 predicate) "
-        "| Warned omissions | Uncertainty missed | Ambiguous facts | Checker failures "
+        "| Warned omissions | Uncertainty missed | Surfaced (acoustic only) "
+        "| Hedge marks on unhedged segments | Ambiguous facts | Checker failures "
         "| Suspect segments | Prose p/f/e | Rule |",
-        "|" + "---|" * 23,
+        "|" + "---|" * 25,
     ]
     totals = Counter[str]()
     for outcome in outcomes:
@@ -1873,7 +1966,7 @@ def render_report(
             totals["ref"] += words.reference_tokens
             totals["distance"] += words.edit_distance
         if metrics is None:
-            cells = ["-"] * 16
+            cells = ["-"] * 18
         else:
             facts = metrics.facts
             counts = {
@@ -1888,6 +1981,8 @@ def render_report(
                 "silent_v1": metrics.silent_omissions_v1,
                 "warned": metrics.warned_omissions,
                 "missed": metrics.uncertainty_missed,
+                "acoustic": metrics.uncertainty_surfaced_acoustic,
+                "unhedged": metrics.hedge_marks_unhedged,
                 "ambiguous": metrics.ambiguous_facts,
                 "checker": metrics.checker_failure_count,
             }
@@ -1907,6 +2002,9 @@ def render_report(
                 str(counts["silent_v1"]),
                 str(counts["warned"]),
                 str(counts["missed"]),
+                # Metric amendment 2026-10-13 (D7): the comparison columns.
+                str(counts["acoustic"]),
+                str(counts["unhedged"]),
                 str(counts["ambiguous"]),
                 str(counts["checker"]),
                 "-"
@@ -1921,7 +2019,7 @@ def render_report(
         suspect = outcome.suspect_segments
         if suspect is not None:
             totals["suspect"] += suspect
-        cells.insert(15, "-" if suspect is None else str(suspect))
+        cells.insert(17, "-" if suspect is None else str(suspect))
         status = outcome.status + (f" ({outcome.error_type})" if outcome.error_type else "")
         lines.append(
             f"| {outcome.encounter_id} | {status} | {outcome.segment_count} | {ref} | {wer} | "
@@ -1935,6 +2033,7 @@ def render_report(
         f"| {totals['other']} | - | - "
         f"| {totals['facts']} | {totals['correct']} | {totals['wrong']} | {totals['omitted']} "
         f"| {totals['silent']} | {totals['silent_v1']} | {totals['warned']} | {totals['missed']} "
+        f"| {totals['acoustic']} | {totals['unhedged']} "
         f"| {totals['ambiguous']} | {totals['checker']} | {totals['suspect']} | - | {verdict} |"
     )
 

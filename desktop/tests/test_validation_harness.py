@@ -1136,8 +1136,10 @@ class TestReport:
         PR-LOW-013): one more column after ``Silent omissions``; since the
         metric amendment of 2026-10-11 (D10) one more after ``WER``; since the
         invented-text guard (D8) one more, ``Suspect segments``, before the
-        prose cell — so the header, the separator, a measured row, an
-        unmeasured row and the totals all carry 23 cells."""
+        prose cell; since the metric amendment of 2026-10-13 (validation-pass
+        plan D7) two more after ``Uncertainty missed`` — so the header, the
+        separator, a measured row, an unmeasured row and the totals all carry
+        25 cells."""
         fact = validation.FactOutcome(
             fact_index=0,
             kind="present",
@@ -1161,6 +1163,7 @@ class TestReport:
             checker_failure_count=0,
             expected_warnings_absent=(),
             facts=(fact,),
+            hedge_marks_unhedged=3,
         )
         assert (metrics.silent_omissions, metrics.silent_omissions_v1) == (0, 1)
         outcomes = [
@@ -1184,13 +1187,23 @@ class TestReport:
         assert "| WER | Spelling-normalised words | Unsupported clinical lines |" in header
         assert "canonical spelling, metric amendment 2026-10-11" in report
         # Invented-text guard D8: the suspect-segment count before the prose
-        # cell — 23 cells in every row.
+        # cell; metric amendment 2026-10-13 (D7): the acoustic-only surfacing
+        # and the unhedged-mark count after "Uncertainty missed" — 25 cells in
+        # every row, and the header line names the amendment.
         assert "| Checker failures | Suspect segments | Prose p/f/e | Rule |" in header
+        assert (
+            "| Uncertainty missed | Surfaced (acoustic only) "
+            "| Hedge marks on unhedged segments | Ambiguous facts |"
+        ) in header
+        assert "metric amendment 2026-10-13" in report
+        assert separator == "|" + "---|" * 25
         for row in (header, separator, measured, unmeasured, total):
-            assert len(row.strip().strip("|").split("|")) == 23
-        assert measured.endswith("| 0 | 2 | - | PASS |")  # checker, suspect, prose, rule
-        assert unmeasured.endswith("| - | - | - | FAIL: harness_error |")
-        assert total.endswith("| 0 | 2 | - | FAIL |")  # the run fails on syn-002's error
+            assert len(row.strip().strip("|").split("|")) == 25
+        # Missed, acoustic, unhedged, ambiguous, checker, suspect, prose, rule.
+        assert measured.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | - | PASS |")
+        assert unmeasured.endswith("| - | - | - | - | - | - | - | FAIL: harness_error |")
+        # The run fails on syn-002's error.
+        assert total.endswith("| 0 | 0 | 3 | 0 | 0 | 2 | - | FAIL |")
         # Omitted, silent, silent (run-1), warned — in that order.
         assert "| 1 | 0 | 1 | 1 |" in measured
         assert "| 1 | 0 | 1 | 1 |" in total
@@ -1199,7 +1212,7 @@ class TestReport:
         assert "| 0.000 | 3 | 0 |" in total
         assert "| - | - | - |" in unmeasured
         # The rule reads ``silent_omissions`` only (C1): the run-1 column
-        # never fails an encounter.
+        # never fails an encounter, and neither does an unhedged hedge mark.
         assert validation.rule_failures(OPTION_A, outcomes[0]) == ()
 
     @pytest.mark.parametrize("slot", ["words", "metrics", "prose"])
