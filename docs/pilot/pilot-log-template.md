@@ -23,6 +23,10 @@ count it in this row's last column.
 - **App version** — as the Status tab shows it ("Clinic Scribe version …").
 - **Kept** — `yes` when Complete said "The recording was kept for development."
   (the patient consented in writing, `development-consent-v1`), else `no`.
+  From 0.3.3 a consented recording you removed a next patient's lines from
+  ("Remove lines N-end from this recording...") is never kept, and Complete
+  does not say it was: write `no`. Its audit record still shows the consent
+  version, with no kept time — read it as consented, lines removed, not kept.
 - **R1 – R5** — the shipping-gate rubric (`docs/testing/shipping-gate.md`, rubric
   v1), scored at its one scoring point: after every proposal is decided and
   every warning acknowledged, before Save. Write each ratio as `n/m`:

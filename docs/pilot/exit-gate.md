@@ -14,8 +14,11 @@ beside it — an open item becomes a finding and is resolved or controlled first
 ## Clinic 1
 
 - [ ] **Validation passed.** The validation run (pilot plan Task P.3) passed
-      under rule v1 as amended 2026-10-09 (`docs/testing/validation-harness.md`,
-      decision 3.5), over the synthetic set — at least 50 encounters, three
+      under rule v1 as amended 2026-10-09 — from run 5 on, as amended
+      2026-10-13 (2), under which a correct fact the speaker hedged, quoted
+      under the note's `[check: unsure]` mark, also counts as surfaced
+      uncertainty (validation-pass plan, decision 0.1 (a)) —
+      (`docs/testing/validation-harness.md`, decision 3.5), over the synthetic set — at least 50 encounters, three
       installed voices matching the recorded baseline — from a clean,
       committed checkout, with the practitioner's own cue file in
       `validation\config`; its totals, voices, commit and models-manifest hash

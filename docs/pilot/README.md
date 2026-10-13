@@ -82,7 +82,11 @@ result is recorded there as a dated RUN line.
      D-S1, then delete the enrolment WAV and empty the Recycle Bin.
 3. **The validation run (P.3).** Under rule v1 (decision 3.5, recorded in
    `docs/testing/validation-harness.md` and never adjusted after a run; its
-   accent call amended on 2026-10-09), on the developer build from a clean,
+   accent call amended on 2026-10-09, and — from run 5, before it was run —
+   its uncertainty reading on 2026-10-13, "rule v1 as amended 2026-10-13 (2)":
+   a correct fact the speaker hedged, quoted under the note's
+   `[check: unsure]` mark, also counts as surfaced uncertainty —
+   validation-pass plan decision 0.1 (a)), on the developer build from a clean,
    committed checkout with the installed app closed: the synthetic set only —
    the 50 scripts, `syn-41`…`syn-50` (added first, with a third installed
    voice as their patient) included — with `--rule

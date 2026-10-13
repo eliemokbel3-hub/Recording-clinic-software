@@ -499,16 +499,97 @@ note inherit exactly that posture.
    review warnings" leaves it and only its own Acknowledge clears it, and the
    Line chooser marks each flagged line `[flagged]` with a "Show flagged lines
    only" filter — a review aid that adds no text widget and no copy path.
-   NEXT-PATIENT RESIDUE (0.3.1, named): routing now tries the practitioner's
-   cues and then the shipped cues, so a next patient's words recorded before
-   the session stops (the Chrome extension section's residue (5), the greeting
-   at the door) reach the draft whenever they carry a shipped cue, whatever the
-   practitioner's own cues say. The pipeline has no new-patient detection
-   (deferred); the controls are the clinician's review with the
-   speaker-labelled transcript beside the note, Remove line, and in the pilot
-   shadow mode — removing such a line raises Check 4's acknowledgeable warning
-   for its flagged words. The bounded carry (note-routing-omissions plan D11)
-   widens it by one hop: the next patient's uncued second line that continues
+   NEXT PATIENT (0.3.3, validation-pass plan D1–D6 and D9; until 0.3.3 the
+   NEXT-PATIENT RESIDUE of 0.3.1): routing tries the practitioner's cues and
+   then the shipped cues, so a next patient's words recorded before the
+   session stops (the Chrome extension section's residue (5), the greeting at
+   the door) reach the draft whenever they carry a shipped cue — and before
+   0.3.3 nothing stopped them. Since 0.3.3 ONE role-free rule finds a POSSIBLE
+   NEXT PATIENT (`consultation_phrases.consultation_boundary`, reached by every
+   consumer through the one accessor `note_config.next_patient_boundary`): the
+   first spoken segment holding a greeting, with a closing earlier in it or in
+   one of the three spoken segments before it, where some segment before that
+   closing matched a section cue (the head-case guard: a recording started
+   while the previous patient leaves is never cut). The one one-word greeting,
+   "hello", counts only at the start of its segment or of a sentence and when
+   punctuation or the segment's end follows it; a closing BEFORE a greeting in
+   ONE segment cuts at the next spoken segment, or nowhere when none follows;
+   the FIRST such pair wins. The phrase lists are the live new-consultation
+   warning's (14 closings, 12 greetings; HANDS-FREE AND WARNINGS below), moved
+   unchanged into one dated commit and pinned exactly (decision 0.2 (a)), and
+   a word the transcription guard marked suspect supplies no phrase (surface
+   5). Where the boundary is found: the provider's request holds only the
+   segments before it (indices stay absolute; the transcript digest stays the
+   whole document's), so every provider stops there; autofill and pre-fill
+   ignore triggers and keywords after it; and Check 6 `possible_next_patient`
+   — a REVIEW warning, once per note, on the first withheld segment,
+   role-free — says "The note stops where a new patient may have arrived".
+   "Acknowledge all review warnings" never clears it
+   (`ui/models.py` `SEPARATELY_ACKNOWLEDGED_CODES`). Check 4 still flags the
+   withheld lines' side, number, dose, negation and medication words (decision
+   0.5 (a)), Check 3 and the role preselection still read the whole
+   transcript, and the Line chooser marks every line it offers from the
+   boundary on `[after possible next patient]` (after any `[flagged]`), so a
+   withheld line that belongs to this patient is added back by hand. The
+   boundary NEVER deletes anything: only the clinician's confirmed trim does
+   (THE TRIM, below). NAMED RESIDUES (next patient): (a) it is a phrase
+   heuristic over two short lists — a next patient greeted, or a consultation
+   closed, in other words gives no boundary, and the lines reach the draft as
+   before 0.3.3 (validation run 4's `syn-38` and `syn-46` are two; the
+   practitioner's own phrases are a later dated amendment); (b) a FALSE
+   boundary — a goodbye then a greeting inside one consultation, such as a
+   phone call or someone arriving at the door — withholds real content behind
+   a review warning only its own Acknowledge clears: the withheld lines are
+   marked in the chooser and their flagged words still raise Check 4, but an
+   uncued line with no flagged word is named by nothing but Check 6's row (a
+   one-click undo is deferred); (c) when the recogniser puts the end of one
+   consultation and the start of the next in ONE segment, the cut falls at the
+   next segment, so that segment's next-patient words stay in the note; (d)
+   the look-back counts recognised segments, not seconds or lines; (e) a real
+   greeting or closing the guard wrongly marked suspect gives no boundary
+   (toward inclusion); (f) Check 6's coordinates mark the first WITHHELD
+   segment, which need not hold the greeting; (g) unless the clinician trims
+   them, the next patient's lines stay in this patient's transcript — so in
+   its Past-sessions entry for its retention and in any replay.
+   THE TRIM (validation-pass plan D9, decision 0.6 (a); 0.3.3). Where the
+   boundary fires on a live session's transcript, the Transcript tab shows "A
+   possible next patient starts at line N." and "Remove lines N-end from this
+   recording...", disabled with its reason while a note is being generated or
+   reviewed, after Save, during a recovery and during a draft write. The click
+   asks ("Remove lines" / "Keep the whole transcript", the safe one the
+   default), then ONE controller operation under the session lock
+   (`SessionController.trim_transcript`) re-checks: no generation lease, no
+   draft write or discard in flight, the live QUEUED session still the one the
+   question named, no saved note (an undeterminable `note.enc` refuses too),
+   and the transcript on disk still giving the same boundary. Then, each step
+   durable before the next: (1) the content-free `no-audio-kept` marker,
+   written atomically and read back; (2) `generated.enc` removed and its
+   absence confirmed — an earlier generation may quote the tail, and Complete
+   would archive it; (3) any unfinished Past-sessions entry and staging copy
+   an interrupted Complete left for the session removed key first
+   (`remove_pending_entry`, the destroyer hook of "Privacy and professional
+   controls" below); (4) the shortened transcript written through the one
+   writer. Any refusal or failure leaves the old transcript ("Lines were not
+   removed: … The transcript is unchanged."); a failure after (1) keeps the
+   marker, which is never removed, so it costs the kept recording, never
+   privacy. Every Complete path keeps no audio while the marker is present or
+   its presence cannot be determined (`_complete_locked`; "Kept recordings"
+   below). Recovery never re-transcribes a session that has a transcript, so
+   the trimmed transcript is the session's for good. NAMED RESIDUES (trim):
+   (h) no audit fact records a trim — the row shows only that no audio was
+   kept; (i) the session's own audio still holds the removed lines until its
+   key goes (Complete, Discard or the 24-hour expiry); (j)
+   after Save the trim is refused ("Discard the recording to start again, or
+   complete it as it is"), while Check 6's hint still names it; (k) a trim
+   whose removed lines held every line of the voice-matched speaker drops the
+   voice attribution — the tab says so at the trim ("None of the lines left
+   were matched to your voice, so choose the clinician speaker before you
+   generate."), but the shortened transcript keeps no trace of it, so the same
+   transcript reopened later shows the general "Voice attribution did not
+   run" fallback while a profile exists (practitioner-profile surface 6).
+   The bounded carry (note-routing-omissions plan D11)
+   widens the next patient's reach by one hop where no boundary is found: the
+   next patient's uncued second line that continues
    their own comma-ended cued first line is quoted too. CONTINUATION RESIDUE
    (named, D11): a patient's spoken-injection or scribe-instruction clause, or
    the content it fences off, that continues the same patient's comma-ended
@@ -520,6 +601,38 @@ note inherit exactly that posture.
    when the section it follows is the wrong one — a second cause of
    misplacement after the shipped fallback cues. The controls are the same
    review.
+   THE CORRECTION CARRY (0.3.3, validation-pass plan D4): the bounded carry
+   has a second opener — an uncued line from the same speaker that STARTS
+   with a correction marker ("actually", "i mean", "i meant" or
+   "correction", optionally after "well"; fillers skipped; frozen with the
+   phrase lists, `note.CORRECTION_MARKERS`) follows the previous cue-routed
+   line into its section, every other condition unchanged: the same speaker,
+   a previous line clean of suspect words, no cue of its own in either layer,
+   one hop, never into a clinician-owned section; a suspect word supplies no
+   marker, and the carry never crosses the next-patient cut (the request ends
+   there). NAMED RESIDUES (correction carry): an "Actually, …" opener of
+   unrelated content is carried, misplaced but not lost (the validation
+   harness does not measure placement); a fenced-off clause after a marker
+   (a spoken request to leave something out) is quoted, like the comma carry's
+   CONTINUATION RESIDUE; and the retracted statement stays in the note beside
+   its correction (a mark pairing the two is deferred), so the clinician
+   removes the retracted line.
+   THE UNSURE MARK (0.3.3, validation-pass plan D7, decision 0.1 (a)): Check 1
+   adds a REVIEW code, `hedged_source`, once per quoted line spoken by anyone
+   but the confirmed clinician that holds one of 16 frozen hedge phrases
+   (`note_check.HEDGE_PHRASES` — "i think", "probably", "maybe", "i guess" …),
+   after its reconstruction check; it marks the line `[check: unsure]` the
+   way surface 5's marks are shown (after a Clean line, inside the verbatim
+   label, at the front of the line editor's row, counted on a prose section's
+   "[includes …]" line). "Acknowledge all review warnings" clears it, and no
+   copy or Cliniko draft carries it (surface 4). SCOPE AND COARSENESS (named):
+   a hedge outside the list ("not sure", "I don't know", "I reckon") marks
+   nothing; the mark is per LINE, so a hedge about one clause, or about the
+   cause rather than the clinical fact, marks the whole line; the clinician's
+   own hedges are never marked; a suspect word supplies no hedge; and with no
+   confirmed clinician every speaker's hedged line is marked (the app's
+   Generate always has one). It is a review aid for spoken uncertainty, not a
+   detector of it.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
    note through the WHOLE Note-tab review (`ui/note.py`), longer than the
@@ -713,15 +826,20 @@ note inherit exactly that posture.
      row and as a count on a prose section's "[includes …]" line.
      "Acknowledge all review warnings" never clears either
      (`ui/models.py` `SEPARATELY_ACKNOWLEDGED_CODES`, beside 0.3.1's
-     `high_risk_omission`), so Save, Complete and Copy wait for each group's
-     own Acknowledge. Copy and the draft write carry no check mark (surface 4).
+     `high_risk_omission` and, since 0.3.3, Check 6's `possible_next_patient`
+     — surface 2's NEXT PATIENT; the button's tooltip names all four from the
+     same mapping, `SEPARATELY_ACKNOWLEDGED_NAMES`), so Save, Complete and
+     Copy wait for each group's own Acknowledge. 0.3.3's `[check: unsure]`
+     (surface 2's THE UNSURE MARK) is shown the same way but IS cleared by
+     "Acknowledge all". Copy and the draft write carry no check mark (surface 4).
    - **Readers that no longer act on a suspect word** (D6): Check 4 leaves it
      out of the omission warning (and the validation harness's `warned`
      follows); no autofill trigger or pre-fill keyword matches it or across
      it; a line holding one teaches no phrase or rule ("Not learned: the line
      may not be speech."); the spoken pause and the new-consultation warning
      ignore it; the bounded carry
-     never starts from a segment holding one. **Readers that deliberately
+     never starts from a segment holding one; and since 0.3.3 it supplies no
+     next-patient phrase, no correction marker and no hedge (surface 2). **Readers that deliberately
      still do** (decision 0.1 — mark, never withhold): the router and
      `whole_utterance_assertion` (a cue still routes a suspect line, marked),
      the role-evidence counter, the clinician's Add and Move, and **Check 2**
@@ -735,7 +853,9 @@ note inherit exactly that posture.
      0.3.2 itself reads a stored note's UNKNOWN review code from a newer build
      as `unknown_review_warning` (only `GeneratedNote.from_bytes` does; an
      unknown error code is still refused), so a later rollback to 0.3.2 opens
-     those notes.
+     those notes — 0.3.3's `possible_next_patient` and `hedged_source`
+     included, which 0.3.2's "Acknowledge all" then clears
+     (`docs/release/pilot-builds.md`, "Rolling back below 0.3.3").
 
    NAMED RESIDUES — the guard is a heuristic and the mark a review aid, not a
    filter:
@@ -754,7 +874,8 @@ note inherit exactly that posture.
      medication in a wrongly marked line that the note left out raises no
      omission warning, a real trigger in it proposes nothing, a real "pause"
      in it does not pause (the hotkey still does), a real goodbye or greeting
-     in it raises no new-consultation warning, and it teaches nothing.
+     in it raises no new-consultation warning and (since 0.3.3) gives no
+     next-patient boundary, and it teaches nothing.
    - The phrase rules DROP a suspect segment's words rather than stopping at
      them, so the real words either side of it become neighbours: "scribe"
      before an invented burst and "pause" after it can pause the recording,
@@ -989,7 +1110,16 @@ boundary 2: the defended adversary is outside the user's Windows session.
    on the GUI thread. Residual: the readiness probe compares a stored profile
    against the PIN, not against bytes; a present-but-wrong model file is
    discovered by the worker at load and the screen then says only that
-   attribution did not run, not why.
+   attribution did not run, not why. Residual (validation-pass plan, 0.3.3):
+   the screen reads that fallback off the DOCUMENT, so a transcript the
+   clinician trimmed ("Remove lines N-end from this recording...", Phase 3A
+   surface 2, THE TRIM) whose removed lines held every line of the
+   voice-matched speaker — which drops all three attribution fields together
+   (`transcription.transcript_before`) — says so only at the trim; reopened
+   later (Open for review after a restart), it shows the general "Voice
+   attribution did not run … the speaker model could not be loaded" line
+   while a usable profile exists. The speaker model is not at fault: the
+   clinician chooses the clinician speaker by hand.
 7. **The confirmed role stays a UI selection; the attribution field is a
    pre-check, not a label (D1).** `enrolled_speaker` never reaches
    `compose_draft`'s `clinician_speaker` from the document: the Transcript
@@ -2744,11 +2874,19 @@ since a window can span a Pause and a Resume. It can only PAUSE, through
 transcript. Whether it works for the recording (a live transcriber attached
 and not failed) is shown on the Session screen and in `state.spoken_pause`.
 THE WARNING — a closing phrase followed, in the same window or within three
-windows, by a greeting (the lists and the count are constants in
-`voice_commands.py`, pinned by tests) raises `new_consultation` once per
+windows, by a greeting (the count is a constant in `voice_commands.py`; the
+lists, since 0.3.3, live in `consultation_phrases.py`, which `voice_commands`
+re-exports, pinned exactly by `tests/test_vocabulary.py`) raises
+`new_consultation` once per
 recording: a desktop line, a taskbar flash and `state.warnings` while that
 recording is live. It never pauses, blocks, finishes or changes a session.
-The panel shows only warning codes it knows, as text.
+The panel shows only warning codes it knows, as text. Since 0.3.3 (the
+validation-pass plan, D1, C7) the SAME lists also decide where a note stops
+(Phase 3A surface 2, NEXT PATIENT): they moved unchanged in one dated commit,
+and a change to them now changes what a note withholds, so it is a new dated
+decision with a repeated validation run (C3). The live warning's behaviour
+is unchanged: live, a greeting counts wherever it sits in a window, while
+the note's boundary applies the one-word position rule and counts segments.
 RESIDUE: (1) the hotkey is a GLOBAL input: anyone at this Windows session's
 keyboard can press it from any window, and any program of this user can
 send the app's window a `WM_HOTKEY`; either does exactly what the Pause and
@@ -2769,7 +2907,8 @@ Whisper's word times are estimates. (3) The warning is a phrase heuristic: it mi
 consultations that end or begin in other words and can fire on a goodbye
 then a greeting within one consultation — a cue, never a control; the pause
 rule's patient-change reasons and the practitioner's Finish are the
-controls.
+controls. The same lists' offline use, the note's next-patient boundary,
+has its own named residues there (Phase 3A surface 2).
 
 ## The Chrome extension: service worker, page script and side panel (Cliniko workflow safeguards plan D1/D2/D13; BUILT at Tasks 6.0–6.5, 2026-09-28)
 
@@ -2882,7 +3021,11 @@ is opened (the greeting at the door), and during the report-to-pause latency
 thread; for a navigation Chrome's events miss, up to the page script's 500 ms
 heartbeat more — is recorded into the session the tab was bound to. The
 latency is not measured (Task P.2 observes it). Write-back still needs a
-verified note, and no session is ever re-bound to another patient.
+verified note, and no session is ever re-bound to another patient. Since
+0.3.3 (validation-pass plan) the note stops at a possible next patient when
+a closing and a greeting are recognised, and the clinician can remove those
+lines from the recording's transcript (Phase 3A surface 2, NEXT PATIENT and
+THE TRIM); the session's audio still holds them until its key goes.
 (6) THE LOGIN PAGE is recognised by the path `/users/sign_in` — UNVERIFIED on a
 live account. Any other sign-in path reads as "another Cliniko page": the
 recording's own tab leaving its note still pauses, but another tab brought
@@ -2987,7 +3130,17 @@ THE PAST-SESSIONS ARCHIVE (`past_sessions.py`; D1, D3, D6; C1, C4).
   sweep's `before_destroy` for the sweep); a failed removal keeps the source
   key (Discard is refused: "discard refused: an unfinished Past-sessions copy
   of this session could not be removed. Nothing was deleted - try again."; the
-  sweep keeps a dead key that tick). An entry path whose link status cannot
+  sweep keeps a dead key that tick). Since 0.3.3 the clinician's trim
+  ("Remove lines N-end from this recording...", Phase 3A surface 2, THE
+  TRIM) calls the same hook before it writes the shortened transcript: a
+  Complete that published its entry and then failed to delete the session
+  key leaves the session waiting with an unfinished entry holding the
+  untrimmed transcript, generated note and any kept audio, and the trim
+  removes it and its staging copy key first — or refuses ("remove lines
+  refused: an unfinished Past-sessions copy of this recording could not be
+  removed - try again"), the old transcript kept — so an unfinished entry
+  never outlives a trim and the next Complete publishes from the trimmed
+  source. An entry path whose link status cannot
   be read counts as a FAILED removal, never as "a link, nothing to remove"
   (H1 round 32 LOW-001). So a `pending` entry whose source key is gone
   can only follow a Complete that reached its key deletion: the Complete's own
@@ -4218,6 +4371,26 @@ WAV — the practitioner's own voice — is outside the app's custody until it i
 deleted (the retention schedule's "Audacity
 working copy" and "Enrolment WAV" rows).
 
+A TRIMMED RECORDING KEEPS NO AUDIO (validation-pass plan D9, decision 0.6
+(a); 0.3.3). The development consent covers the patient it was given for
+only. When the clinician removes a possible next patient's lines from a
+recording ("Remove lines N-end from this recording...", Phase 3A surface 2,
+THE TRIM), the trim's FIRST step writes the content-free session file
+`no-audio-kept` (fixed bytes, no key, never removed; it dies with the session
+folder), and `_complete_locked` keeps no audio while that file is present or
+its presence cannot be determined — on all five Complete paths, recovered
+included, with every `kept=` keyword unchanged (`_CONSENT_KEYWORD`). The
+audit row of such a recording shows its `development_consent_version` and no
+`recording.kept_at`, and Past sessions shows no "(recording kept)": read it
+as consented, lines removed, not kept. The trim writes no audit fact of its
+own. RESIDUE (20) — THE ROLLBACK: a build older than 0.3.3 does not know the
+marker, so a trimmed, consented recording completed on it keeps its audio —
+the removed next patient's speech included — under the first patient's
+consent. The control is the rule in `docs/release/pilot-builds.md`
+("Rolling back below 0.3.3": Complete or Discard every recording lines were
+removed from before installing an older build); nothing enforces it. A
+Past-sessions entry already written kept no audio and is unaffected.
+
 ## Out of scope (tracked in PLAN.md phases)
 
 Transcript prompt-injection resistance of the local ML note model (Phase 3B —
@@ -4287,4 +4460,9 @@ its own consent wording), a change of the development-consent wording (a new
 version), a backup of Past sessions (which would carry the audio), the
 independent review's report on `development-consent-v1`, a rollback below
 0.3.0, or a change to how exported copies are labelled (a tool other than
-Audacity, or more than one copy at a time — residue (19)).
+Audacity, or more than one copy at a time — residue (19)). For the
+validation pass (0.3.3): a change to the closing or greeting phrases, the
+correction markers or the hedge phrases (each a new dated decision with a
+repeated validation run), a boundary the note acts on without the
+clinician (an automatic trim), a second writer of the shortened transcript,
+an audit fact for the trim, or a rollback below 0.3.3 (residue (20)).

@@ -474,7 +474,7 @@ The desktop Start button still works, labelled "Not linked to a Cliniko note", a
   - The phrase stays in the transcript.
   - "Spoken pause unavailable for this recording" comes from a new controller accessor over the live transcriber's failure state.
   - The latency is documented.
-- **D8 — New-consultation warning.** Phrase rules over live windows (a closing phrase followed within N windows by a greeting), with the lists and N as constants in `voice_commands.py`, pinned by tests. It is a warning only.
+- **D8 — New-consultation warning.** Phrase rules over live windows (a closing phrase followed within N windows by a greeting), with the lists and N as constants in `voice_commands.py`, pinned by tests. It is a warning only. `[2026-10-13 reconciliation, validation-pass plan]` The two lists moved UNCHANGED into the leaf module `consultation_phrases.py` (that plan's D1, Task 0.8; `voice_commands` re-exports the same objects, N stays here), frozen in one dated commit and pinned exactly in `tests/test_vocabulary.py`; the live warning's behaviour is unchanged (its C7). The same lists now also decide where a note stops at a possible next patient (that plan's D2, 0.3.3), so a change to them is a new dated decision with a repeated validation run (its C3).
 - **D9 — Cliniko client contract** (`cliniko_client.py`).
   - Uses `http.client.HTTPSConnection` with an explicit `ssl` context (TLS 1.2 minimum, default Windows store). The host is built only from a validated shard (`api.<shard>.cliniko.com`, shard ∈ the documented set); an unknown or missing suffix is REFUSED, never defaulted.
   - No redirects, no proxy, timeouts, and `set_debuglevel(0)` pinned. The body is read up to a cap + 1 and anything over the cap is refused.

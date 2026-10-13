@@ -62,6 +62,33 @@ the repository's visibility may have changed. If no attestation can be made, the
 check above can never pass, and the build of record needs a decision — never an
 install without that check.
 
+## Rolling back below 0.3.3
+
+From 0.3.3 (the validation-pass build) two things can be new:
+
+- **A saved note can carry two new kinds of review warning**: "The note
+  stops where a new patient may have arrived" and "A quoted line says the
+  speaker was unsure". 0.3.2 shows each as "A review warning from a newer
+  version of the app" (below), which its "Acknowledge all review warnings"
+  clears, and the saved note's lines show no `[check: unsure]` mark there.
+  Below 0.3.2 such a note is refused, as "Rolling back below 0.3.2" says.
+- **A recording you removed lines from** ("Remove lines N-end from this
+  recording..." on the Transcript tab): its transcript is an ordinary, shorter
+  transcript — the removal adds nothing an older build cannot read (a word
+  marked possibly not speech is still refused below 0.3.2, as "Rolling back
+  below 0.3.2" says). But its folder also holds the marker that
+  stops its audio from being kept, and a build older than 0.3.3 does not know
+  it: if the patient consented to the recording being kept for development, a
+  Complete on the older build KEEPS its audio in the Past-sessions entry — the
+  removed lines' speech included.
+
+**The rule: before installing any build older than 0.3.3, finish (Complete)
+or Discard every recording you removed lines from** — none may be left on the
+Recovery tab or in the Unreviewed list. Nothing enforces this
+(validation-pass plan D11; threat model, "Kept recordings", residue (20)). A
+Past-sessions entry already written kept no audio and is unaffected. Below
+0.3.2, the rules that follow apply as well.
+
 ## Rolling back below 0.3.2
 
 From 0.3.2 (the invented-text guard build) two stored shapes can be new, and a

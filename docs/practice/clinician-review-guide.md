@@ -8,8 +8,10 @@
 Draft 1 (2026-10-01; the shadow-recording lines added 2026-10-07 for the pilot build,
 approved by the practitioner the same day; the kept-recording line added 2026-10-08 for
 version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
-number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval). For
-the practitioner, before saving a note and before finalising it in Cliniko.
+number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
+next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
+version 0.3.3, awaiting the practitioner's approval). For the practitioner, before saving a
+note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
 obligations when using AI in healthcare") makes you responsible for checking the accuracy
@@ -47,6 +49,21 @@ note.
   can go unmarked. While you are still recording, the live view is provisional: the
   note is drawn from the transcript as it stands when you finish.
 - The speaker labels can be wrong, especially when people talk over each other.
+- **"A possible next patient starts at line N."** If the recording heard a goodbye and
+  then a greeting, the Transcript tab says where a new patient may have arrived, and the
+  note will stop before that line (below). If those lines really are the next patient's —
+  you forgot to stop or switch the recording — press **Remove lines N-end from this
+  recording...** before you generate the note, and confirm. They are taken out of this
+  recording's transcript for good, so no note, Past-sessions copy or replay holds them,
+  and the recording's audio will not be kept for development even if the patient agreed
+  to that. It cannot be undone, so check the line number first; if the goodbye and
+  greeting were part of this consultation (a phone call, someone at the door), choose
+  **Keep the whole transcript**. You can only remove lines while no note is open for
+  review and none is saved: if a note is open, use **Cancel review and regenerate** on
+  the Note tab first. If the removed lines held every line matched to your voice, the
+  app says so; choose the clinician speaker yourself before you generate (opened again
+  later, that transcript may say voice attribution "did not run" — the speaker model is
+  not at fault).
 - If the recording was interrupted, the end may be missing.
 - Something said quietly or off-microphone may be missing entirely.
 
@@ -63,7 +80,13 @@ where each line came from: the transcript, something you typed, or your own pre-
    words from the transcript — it adds no findings of its own — but the transcript itself
    can hold words nobody said (background sound written down as speech), and a line can
    land under the wrong heading, miss context (for example "not" said earlier), or carry a
-   mis-heard word. Move, remove or edit lines until the note says what happened.
+   mis-heard word. Move, remove or edit lines until the note says what happened. When
+   someone corrects themselves straight after a line the app placed, starting with
+   "actually", "I mean" or "correction" ("Actually, it's better"), the correction is
+   usually placed with that line, so both are in the note, in order: remove the one that
+   was taken back. It is not placed there under the assessment, diagnosis, advice or
+   management plan headings, and a correction said any other way may be left out — the
+   transcript shows it.
 3. **Pre-filled lines** from your own settings are marked as pre-filled. Remove any that
    are not true for this appointment; Save confirms the rest.
 4. **Marked lines.** A line quoted from the transcript that holds a number is marked
@@ -75,8 +98,23 @@ where each line came from: the transcript, something you typed, or your own pre-
    ("A quoted line contains a number", "A quoted line may be music or noise, not
    speech") that **"Acknowledge all review warnings" does not clear** — press its own
    Acknowledge. Most notes quote a number, so most notes need that click before you can
-   save. The copied note and the draft written to Cliniko leave the check marks out.
-5. **Blocking warnings must be fixed** before you can save — for example a symptom the
+   save. A line someone other than you said with words of doubt ("I think", "probably",
+   "maybe", "I guess" and a few others) is marked `[check: unsure]` the same way, with
+   the review warning "A quoted line says the speaker was unsure": check that the note
+   does not state as fact what they were unsure of. "Acknowledge all review warnings"
+   does clear that one, and doubt said in other words ("not sure", "I don't know") is
+   not marked. The copied note and the draft written to Cliniko leave the check marks out.
+5. **The note stops where a new patient may have arrived.** When the Transcript tab
+   named a possible next patient (above) and you generated anyway, the note leaves out
+   every line from there on, and the review warning "The note stops where a new patient
+   may have arrived" is shown. In the line list under **Edit the note**, those lines are
+   marked `[after possible next patient]`. If any of them belongs to this patient — the
+   goodbye and greeting were part of this consultation — add it back with **Add line to
+   section**. If they are another patient's, use **Cancel review and regenerate**, then
+   remove them on the Transcript tab. This warning, too, is cleared only by its own
+   Acknowledge. The app recognises only a few common goodbyes and greetings, so a next
+   patient greeted in other words is not caught: check the end of every transcript.
+6. **Blocking warnings must be fixed** before you can save — for example a symptom the
    transcript negates, or a dose in clear conflict with it. **Review warnings must be
    read and acknowledged** — for example most other dose differences, a left/right
    difference, or a side, number, dose, "not" or medicine someone said (or a name you
@@ -84,17 +122,17 @@ where each line came from: the transcript, something you typed, or your own pre-
    Acknowledge, and it ignores words marked as possibly not speech. The checks are a
    safety net, not a guarantee: they look for particular kinds of mismatch and cannot
    tell you the note is complete or correct.
-6. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
+7. **Writing styles.** If you use a prose style (Narrative or Own voice), the app turns
    your confirmed lines into sentences on this computer and checks each section against
    them; a section that fails the check is shown as plain lines instead, and you
    acknowledge it. Read the prose as carefully as the lines — the check is not a
    certificate that the meaning survived.
-7. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
+8. **Fill the gaps yourself.** Headings the app had nothing for stay empty. Beyond your
    own proposals and pre-filled text, it never fills in examination findings, a
    diagnosis, treatment or advice that is not in the transcript — but words the speech
    software invented over background sound are in the transcript (step 2), so check
    every line, marked or not.
-8. **Save** only when the note is right. Save is what makes the note copyable and
+9. **Save** only when the note is right. Save is what makes the note copyable and
    writable to Cliniko.
 
 ## Writing it into Cliniko

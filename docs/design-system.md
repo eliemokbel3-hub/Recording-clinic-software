@@ -28,10 +28,12 @@ view patterns · tokens · microcopy.
   `ui/models.py` `INTENDED_USE_LINE`) and show the start-up exclusion warnings
   (`exclusions.py`) when there are any. No secondary
   windows beyond short confirmations: the Practitioner tab's delete questions, the
-  learned-style review dialogs, and the Past sessions tab's two confirmations — lowering
-  the retention setting and "Start a new audit record" — which name their buttons for
-  what they do ("Delete older sessions" / "Start a new audit record" against "Keep
-  things as they are", the safe one the default) — plus two file dialogs (the
+  learned-style review dialogs, the Past sessions tab's two confirmations — lowering
+  the retention setting and "Start a new audit record" — and, since 0.3.3, the
+  Transcript tab's "Remove lines N-end from this recording..." question, all of which
+  name their buttons for what they do ("Delete older sessions" / "Start a new audit
+  record" against "Keep things as they are"; "Remove lines" against "Keep the whole
+  transcript"), the safe one the default — plus two file dialogs (the
   Practitioner tab's sample-note picker and Export's save dialog, which opens in
   Documents) and the start-up boxes shown before the window exists ("already
   running" and "cannot start", `app.py`; and, in the installed app only,
@@ -163,6 +165,38 @@ view patterns · tokens · microcopy.
   untick 'Show flagged lines only' to see every line." (`ui/models.py`
   `FLAGGED_LINE_MARK` / `flagged_count_line` / `FLAGGED_FILTER_EMPTY_LINE`;
   note-routing-omissions plan D4).
+- **Lines after a possible next patient are marked, not hidden (since 0.3.3).** When
+  the note stops at a possible next patient (Check 6, `possible_next_patient`), every
+  Line chooser entry from that line on carries `[after possible next patient]` at the
+  FRONT, after any `[flagged]` and before the speaker
+  (`<n>. [flagged] [after possible next patient] <speaker>: …`), flagged or not, for
+  the reason flagged lines are marked there — so a line that belongs to this patient
+  can be added back knowingly (`ui/models.py` `NEXT_PATIENT_LINE_MARK`; validation-pass
+  plan D6, the practitioner's front-mark choice of 2026-10-13).
+- **The next patient's lines are removed only by the clinician, from the Transcript
+  tab (since 0.3.3).** When a live recording's transcript shows a possible next
+  patient, the "Generate note" group shows the plain-text line "A possible next patient
+  starts at line N." and a button "Remove lines N-end from this recording..." (the
+  "..." because it asks first). It is never automatic. It is disabled, with its reason
+  as the tooltip, while a note is being generated or reviewed ("Lines cannot be
+  removed while a note is being generated or reviewed - use Cancel review and
+  regenerate on the Note tab first."), after Save ("Lines cannot be removed once a note
+  is saved - Discard the recording to start again, or complete it as it is."), during
+  a recovery ("A recovery is in progress - wait for it to finish before removing
+  lines.") and during a draft write. The question says what goes and what follows:
+  "Remove lines N-M from this recording? Use this only when they belong to another
+  patient. They are taken out of the transcript for good: no note, Past-sessions copy
+  or replay will hold them, and this recording's audio will not be kept for
+  development. This cannot be undone." — "Remove lines" / "Keep the whole transcript",
+  the safe one the default. After it the status line says "Lines N-M were removed from
+  this recording. Generate the note from what is left.", adding "None of the lines left
+  were matched to your voice, so choose the clinician speaker before you generate."
+  when the removed lines held every line the voice profile matched; a refusal or
+  failure says "Lines were not removed: <reason>. The transcript is unchanged."
+  (`ui/models.py` `REMOVE_TAIL_*` and `remove_tail_*`; validation-pass plan D9). That
+  voice line is said at the trim only: the same transcript reopened later shows the
+  general "Voice attribution did not run …" line instead (a named residue, threat model
+  practitioner-profile surface 6).
 - **Pre-filled lines are marked, counted and ratified by one Save.** A line the
   practitioner's own config pre-filled renders with `[pre-filled by your config - …]` in
   the note body and in the line editor — under a prose style, where the line has become
@@ -180,7 +214,12 @@ view patterns · tokens · microcopy.
   (`[includes 1 line check: number; 2 lines check: possibly not speech]`, after any
   pre-filled count). On a line-editor row the mark is at the FRONT, after any `[flagged] `
   (`[flagged] [check: number] <section> - …`), for the reason flagged lines are; a
-  removed or replaced row carries none. The pre-filled mark and a check mark never meet
+  removed or replaced row carries none. Since 0.3.3 a third mark, `check: unsure`,
+  follows the same convention (after `number` and `possibly not speech`): a quoted line
+  spoken by someone other than the confirmed clinician that holds a listed hedge ("I
+  think", "probably", "maybe" …; Check 1's `hedged_source`, validation-pass plan D7) —
+  its review row reads "A quoted line says the speaker was unsure", and unlike the other
+  two it IS cleared by "Acknowledge all". The pre-filled mark and a check mark never meet
   on one line. ONE map renders them all (`note.line_marks_by_assertion`). Copy — the
   button, a selection's keyboard or menu Copy, Past sessions' "Copy saved note" — renders
   WITHOUT the check marks (`check_marks=False`; the selection is cut from that rendering,
@@ -355,7 +394,19 @@ view patterns · tokens · microcopy.
   quoted line contains a number") and `suspect_source` ("A quoted line may be music or
   noise, not speech"): "Acknowledge all" leaves them, is hidden when only codes of the set
   are open, and each group's own Acknowledge is the one control that clears it
-  (invented-text guard plan D5).
+  (invented-text guard plan D5). Since 0.3.3 the set also holds Check 6,
+  `possible_next_patient` ("The note stops where a new patient may have arrived"; its
+  hint: "Later lines were left out - add back any that belong with Add line to section,
+  then acknowledge. If they are another patient's, use Cancel review and regenerate,
+  then remove them from the recording on the Transcript tab."), because it withholds
+  content (validation-pass plan D5). The button's tooltip names every code of the set
+  from the same mapping, so the two cannot drift apart: "Acknowledges every review
+  warning except those that each need their own Acknowledge: something said that is not
+  in the note (check its flagged lines), a quoted line with a number (check each line
+  marked [check: number]), a quoted line that may not be speech (check each line marked
+  [check: possibly not speech]) and a note that stops where a new patient may have
+  arrived (check the lines marked [after possible next patient])." (`ui/models.py`
+  `SEPARATELY_ACKNOWLEDGED_NAMES` / `ACKNOWLEDGE_ALL_TOOLTIP`).
 - **Guard live custody with a controller lease, not a button flag.** A destructive or
   view-swapping action during a live generation/review is refused through the controller-
   owned `GenerationLease` (`session.py`), which spans the whole compose→review→write — a
@@ -552,7 +603,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   the internal cause (a missing store footer).
 - Destructive actions are named for what they do — Complete and Discard, not OK/Cancel;
   Delete now / Confirm delete, and the confirmations' "Delete older sessions" / "Start a
-  new audit record" against "Keep things as they are" (`ui/past_sessions_view.py`).
+  new audit record" against "Keep things as they are" (`ui/past_sessions_view.py`), and
+  "Remove lines" against "Keep the whole transcript" (`ui/models.py`
+  `REMOVE_TAIL_ACTION` / `REMOVE_TAIL_CANCEL`).
 - Complete names where the session went, without claiming what one Complete kept (the
   screen does not know: a test-provider session keeps nothing, and a delete-note path
   never keeps the saved note): the tooltip "Verify the encrypted transcript, keep the

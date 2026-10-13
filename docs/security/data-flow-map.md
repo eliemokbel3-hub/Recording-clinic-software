@@ -1,4 +1,4 @@
-# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard)
+# Data-Flow Map (Phases 1–3A, practitioner profile, note learning, Cliniko workflow safeguards, Cliniko draft write, privacy and professional controls, installation, pilot, kept recordings, invented-text guard, validation pass)
 
 Every place data lives or moves in the implemented system. Since Phase 2 the
 desktop app carries **clinical data**: consultation audio, transcripts, and —
@@ -270,6 +270,22 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    new-consultation warning (flow 14) skip suspect words, and the bounded
    carry never starts from a segment holding one; the router and Check 2
    still read them.
+   **The trim — a second, clinician-confirmed writer of `transcript.enc`
+   (validation-pass plan D9, decision 0.6 (a); 0.3.3; threat model Phase 3A
+   surface 2, THE TRIM).** When a live session's transcript shows a possible
+   next patient (flow 10), the Transcript tab's "Remove lines N-end from this
+   recording..." — after its confirmation, with no review open and no note
+   saved — rewrites the transcript to hold only the lines before N, in one
+   controller operation under the session lock: (1) the content-free
+   `sessions\<id>\no-audio-kept` marker (fixed bytes, no key) written and read
+   back; (2) `generated.enc` removed; (3) any unfinished Past-sessions entry
+   and staging copy for the id removed key first (flow 22); (4) the shortened
+   document written through the same `write_transcript` (same key, same
+   schema; it unlinks a stale `note.enc` first). The removed lines' audio
+   stays in `audio.enc` until the session key goes, and the marker means no
+   Complete keeps that audio (flow 27). Nothing is logged and no audit fact
+   records the trim; recovery never re-transcribes a session that has a
+   transcript, so the shortened transcript is the session's from then on.
 
 8. **Model cache (read-only at runtime).**
    Where it is (installation plan D5, `install_layout.models_root`): for the
@@ -400,6 +416,18 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     no text) and the review writes `generated.enc` (the first body shown,
     replaced by each regeneration) under
     the session key (flow 22).
+    **The next-patient cut (validation-pass plan D2–D6; 0.3.3).** Since 0.3.3
+    the composed note reads the transcript only up to a possible next patient,
+    found by one role-free, in-memory rule over the transcript and the config's
+    cues (`note_config.next_patient_boundary`; the phrase lists are flow 14's):
+    the provider's request holds only the segments before it, autofill and
+    pre-fill ignore everything after it, and Check 6, a review check, says
+    the note stops there; Check 4 still reads the withheld lines, and
+    nothing is deleted — the stored transcript is unchanged unless the
+    clinician trims it (flow 7). The boundary is one index, computed again by
+    each reader and never logged or sent; Check 6's warning, which names its
+    segment by position (no text), is saved with the note's other warnings in
+    `note.enc`.
     Inside the app, the plaintext note and the full transcript coexist in memory
     only for the review window (threat model, Phase 3A §3) and, since the
     privacy-professional-controls plan, while an opened Past-sessions entry is
@@ -575,7 +603,12 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     warning, change no word, write nothing and log nothing; between windows
     they keep only the last normalised word of the latest window that held
     words (since 0.3.2, words not marked suspect; for a phrase split across two) until the next Resume or Start, the
-    resume cutoff (a number of seconds) and a window count. Finish seals capture as before and the TAIL DRAIN
+    resume cutoff (a number of seconds) and a window count. Since 0.3.3
+    (validation-pass plan D1) the closing and greeting lists the warning
+    reads live in `consultation_phrases.py` (re-exported by
+    `voice_commands`), unchanged, and the note's next-patient boundary reads
+    the same lists over the final transcript (flow 10); neither changes what
+    this flow holds. Finish seals capture as before and the TAIL DRAIN
     (the last open span and any queued windows) runs on the processing
     `TaskThread` inside the transcriber callable (`ui/models._live_transcript`
     via `claim_live_transcriber`), never on the GUI thread, and writes
@@ -1066,7 +1099,10 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       `orphan_gc` and a mock Complete (which keeps nothing) remove any
       unfinished entry for the id, key first, BEFORE the source key goes — a
       removal that fails, or an entry path that cannot be inspected, keeps the
-      source key; reconciliation (start-up and every sweep tick) commits
+      source key; since 0.3.3 the clinician's trim (flow 7) removes it the
+      same way before it writes the shortened transcript, and refuses (the old
+      transcript kept) when it cannot, so an unfinished entry holding the
+      removed lines never outlives a trim; reconciliation (start-up and every sweep tick) commits
       a `pending` entry once its source key is confirmed absent, and staging
       leftovers are cleaned at every start-up and tick. A linked FOLDER
       (symlink or junction) where a session, an entry, a staging copy or an
@@ -1271,7 +1307,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       audit row's `recording.kept_at` is set in the completion write (or
       repaired at start-up from the committed files, when the entry's label
       can be read — `kept_at` is its completion time). Discard, expiry, a mock
-      session or no consent: no audio is kept.
+      session or no consent: no audio is kept. Since 0.3.3 (validation-pass
+      plan decision 0.6 (a)) neither is it for a session whose lines the
+      clinician removed (flow 7): the trim's `no-audio-kept` marker, present
+      or undeterminable, turns every Complete path's `kept` off, so the audit
+      row carries the consent version and no `kept_at`. A build older than
+      0.3.3 ignores the marker (threat model, "Kept recordings", residue (20);
+      `docs/release/pilot-builds.md`, "Rolling back below 0.3.3").
     - PAST SESSIONS. The row says "(recording kept)" from two files'
       existence and a zero-check of the key file (nothing decrypted). DELETE
       RECORDING zeroes `audio-key.enc` in place, syncs and reads it back,
