@@ -856,8 +856,31 @@ class TestTheTrimSurvivesARestart:
         assert opening.document == trimmed
         assert next_patient_boundary(opening.document, config) is None
 
+    def test_an_undeterminable_transcript_is_still_listed_for_review(
+        self, tmp_path: Path, config: NoteConfig, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Stage-9 review round 28 LOW-002: the listing asks ONE lstat
+        (``artifact_state``), and an answer it cannot get counts as a
+        transcript — so a trimmed session an access error hides is offered
+        for review, never re-transcription from ``audio.enc``."""
+        harness = _Harness(tmp_path)
+        _directory, session_id = harness.adopt()
+        harness.trim(session_id, config)
+        real = models.artifact_state
 
-# --- the Transcript tab (Task 4.1) ---------------------------------------------------
+        def unreadable_transcript(session_dir: Path, filename: str) -> bool | None:
+            return None if filename == TRANSCRIPT_FILENAME else real(session_dir, filename)
+
+        monkeypatch.setattr(models, "artifact_state", unreadable_transcript)
+        restarted = SessionController(MockCaptureBackend(), sessions_root=harness.root)
+        [info] = models.list_recoverable_sessions(
+            harness.root, restarted.custody_protected_ids()
+        )
+        assert info.session_id == session_id
+        assert info.has_transcript
+
+
+# --- the Transcript tab (Task 4.1)---------------------------------------------------
 
 
 @pytest.fixture(scope="module")
@@ -955,7 +978,12 @@ class TestTranscriptTab:
         controller = _TrimController(_document("a" * 32))
         screen = _screen(controller, config)
         assert _shown(screen)
-        assert screen.next_patient_label.text() == "A possible next patient starts at line 4."
+        assert screen.next_patient_label.text() == models.next_patient_transcript_line(
+            controller.document, _BOUNDARY
+        )
+        assert screen.next_patient_label.text().startswith(
+            "A possible next patient starts at line 4 ["
+        )
         assert screen.remove_tail_button.text() == "Remove lines 4-end from this recording..."
         assert screen.remove_tail_button.isEnabled()
         assert screen.remove_tail_button.toolTip() == models.REMOVE_TAIL_TOOLTIP
@@ -1192,7 +1220,14 @@ class TestTranscriptTab:
 
 class TestCopy:
     def test_the_question_and_lines(self) -> None:
-        assert models.next_patient_transcript_line(3) == "A possible next patient starts at line 4."
+        # Stage-9 round 28 LOW-001: the view numbers no line, so the line also
+        # names line N's span exactly as the view prints it.
+        document = _document("a" * 32)
+        span = models.format_transcript_text(document).splitlines()[3].split(" ", 1)[0]
+        assert span.startswith("[") and span.endswith("]")
+        assert models.next_patient_transcript_line(document, 3) == (
+            f"A possible next patient starts at line 4 {span}."
+        )
         assert models.remove_tail_label(3) == "Remove lines 4-end from this recording..."
         assert models.remove_tail_question(3, 5) == (
             "Remove lines 4-5 from this recording? Use this only when they belong to another "

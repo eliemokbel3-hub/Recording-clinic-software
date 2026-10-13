@@ -36,7 +36,8 @@ not applied.
 A possible next patient (validation-pass plan D9, Task 4.1): when the
 boundary rule fires on a live session's transcript
 (``note_config.next_patient_boundary``, the one accessor), the generation group
-shows "A possible next patient starts at line N" and "Remove lines N-end from
+shows "A possible next patient starts at line N [mm:ss-mm:ss]" (the span as the
+view prints it, since the view numbers no line) and "Remove lines N-end from
 this recording...", which asks first and then trims through the controller's
 one operation (``trim_transcript``) — never automatic, refused while a review
 holds the lease, after Save, during a recovery or a draft write. The shortened
@@ -160,8 +161,10 @@ class TranscriptScreen(QWidget):
         # line count, and whether its store was finished (re-shown after a
         # trim). None: no line, no action. The shown document's own session id
         # is the one a trim names (review round 20 LOW-001), and whether it
-        # carried a voice attribution (round 20 LOW-002).
+        # carried a voice attribution (round 20 LOW-002). ``_boundary_line``:
+        # the line naming it, with its span (stage-9 round 28 LOW-001).
         self._boundary: int | None = None
+        self._boundary_line = ""
         self._line_count = 0
         self._store_finished = True
         self._shown_session_id: str | None = None
@@ -615,6 +618,11 @@ class TranscriptScreen(QWidget):
         # D9 / C5: the one boundary accessor, the same the note request,
         # proposals and Check 6 read — never a second computation.
         self._boundary = next_patient_boundary(document, config)
+        self._boundary_line = (
+            models.next_patient_transcript_line(document, self._boundary)
+            if self._boundary is not None
+            else ""
+        )
         self.profile_combo.addItem("- choose template profile -", None)
         for profile in config.template_profiles:
             self.profile_combo.addItem(profile.display_name, profile.template_profile_id)
@@ -663,6 +671,7 @@ class TranscriptScreen(QWidget):
         self._generation_result = None
         self._config = None
         self._boundary = None
+        self._boundary_line = ""
         self._clear_auto_confirm()
         self._note_review_state = models.NoteReviewState()
         # Reset the committed-note flag ONLY on a new session (show_document)
@@ -713,7 +722,7 @@ class TranscriptScreen(QWidget):
         self.remove_tail_button.setVisible(boundary is not None)
         if boundary is not None:
             block = self._remove_tail_block()
-            self.next_patient_label.setText(models.next_patient_transcript_line(boundary))
+            self.next_patient_label.setText(self._boundary_line)
             self.remove_tail_button.setText(models.remove_tail_label(boundary))
             self.remove_tail_button.setEnabled(block is None)
             self.remove_tail_button.setToolTip(block or models.REMOVE_TAIL_TOOLTIP)

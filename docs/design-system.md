@@ -176,7 +176,8 @@ view patterns · tokens · microcopy.
 - **The next patient's lines are removed only by the clinician, from the Transcript
   tab (since 0.3.3).** When a live recording's transcript shows a possible next
   patient, the "Generate note" group shows the plain-text line "A possible next patient
-  starts at line N." and a button "Remove lines N-end from this recording..." (the
+  starts at line N [mm:ss-mm:ss]." (line N's span exactly as the transcript view prints
+  it, because the view numbers no line) and a button "Remove lines N-end from this recording..." (the
   "..." because it asks first). It is never automatic. It is disabled, with its reason
   as the tooltip, while a note is being generated or reviewed ("Lines cannot be
   removed while a note is being generated or reviewed - use Cancel review and

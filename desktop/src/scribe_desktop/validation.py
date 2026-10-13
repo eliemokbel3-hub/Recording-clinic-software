@@ -91,7 +91,6 @@ from scribe_desktop.note import (
     NoteDraft,
     NoteModelProvider,
     ProposalResolution,
-    SourceCoords,
     compose_draft,
     content_tokens,
     finalise_note,
@@ -108,7 +107,9 @@ from scribe_desktop.note_check import (
     # (b)) ``warned`` reads Check 4's predicate ``_omission_flag_token``;
     # ``_is_high_risk_token`` stays for the run-1 comparison column. The
     # metric amendment of 2026-10-11 (D10) reads the strength-unit table and
-    # the number-with-suffix pattern for its canonical spelling.
+    # the number-with-suffix pattern for its canonical spelling. The metric
+    # amendment of 2026-10-13 (D7) reads a hedge mark's words through the
+    # checker's own coordinate resolver (stage-9 simplify round 29 SIMP-001).
     _LATERALITY_TOKENS,
     _NUMBER_WITH_SUFFIX_RE,
     _STRENGTH_UNITS,
@@ -116,6 +117,7 @@ from scribe_desktop.note_check import (
     _is_high_risk_token,
     _omission_flag_token,
     _polarity_mark,
+    _words_for_coords,
 )
 from scribe_desktop.note_config import (
     CONFIG_DIRNAME,
@@ -151,7 +153,6 @@ from scribe_desktop.speech import (
 from scribe_desktop.transcription import (
     DEFAULT_WHISPER_MODEL,
     TranscriptDocument,
-    TranscriptWord,
     WhisperSpeechProvider,
     is_number_token,
     resolve_whisper_model,
@@ -1355,7 +1356,7 @@ def encounter_metrics(
         coords = warning.source_coords
         if warning.note_warning_code != "hedged_source" or coords is None:
             continue
-        marked = _marked_words(document, coords)
+        marked = _words_for_coords(document, coords)
         if marked and words_hold_hedge(marked):
             hedged.update(
                 (coords.segment_index, index)
@@ -1488,20 +1489,6 @@ def encounter_metrics(
         facts=tuple(facts),
         hedge_marks_unhedged=hedge_marks_unhedged,
     )
-
-
-def _marked_words(
-    document: TranscriptDocument, coords: SourceCoords
-) -> tuple[TranscriptWord, ...]:
-    """The words a warning's ``coords`` address, or () when the transcript
-    has no such words (a mark the checker could not have raised)."""
-    segments = document.transcript_segments
-    if coords.segment_index >= len(segments):
-        return ()
-    words = segments[coords.segment_index].transcript_words
-    if coords.last_word_index >= len(words):
-        return ()
-    return words[coords.first_word_index : coords.last_word_index + 1]
 
 
 # ---------------------------------------------------------------------------

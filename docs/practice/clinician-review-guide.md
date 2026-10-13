@@ -49,8 +49,9 @@ note.
   can go unmarked. While you are still recording, the live view is provisional: the
   note is drawn from the transcript as it stands when you finish.
 - The speaker labels can be wrong, especially when people talk over each other.
-- **"A possible next patient starts at line N."** If the recording heard a goodbye and
-  then a greeting, the Transcript tab says where a new patient may have arrived, and the
+- **"A possible next patient starts at line N [time]."** If the recording heard a goodbye
+  and then a greeting, the Transcript tab says where a new patient may have arrived — the
+  line's number, and the time shown at the start of that line in the transcript — and the
   note will stop before that line (below). If those lines really are the next patient's —
   you forgot to stop or switch the recording — press **Remove lines N-end from this
   recording...** before you generate the note, and confirm. They are taken out of this
@@ -82,7 +83,8 @@ where each line came from: the transcript, something you typed, or your own pre-
    land under the wrong heading, miss context (for example "not" said earlier), or carry a
    mis-heard word. Move, remove or edit lines until the note says what happened. When
    someone corrects themselves straight after a line the app placed, starting with
-   "actually", "I mean" or "correction" ("Actually, it's better"), the correction is
+   "actually", "I mean", "I meant" or "correction", perhaps after "well" ("Actually,
+   it's better"), the correction is
    usually placed with that line, so both are in the note, in order: remove the one that
    was taken back. It is not placed there under the assessment, diagnosis, advice or
    management plan headings, and a correction said any other way may be left out — the

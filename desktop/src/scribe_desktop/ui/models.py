@@ -158,6 +158,7 @@ from scribe_desktop.session_store import (
     SESSION_ID_PATTERN,
     TRANSCRIPT_FILENAME,
     SessionStoreError,
+    artifact_state,
     default_sessions_root,
     earliest_trusted_timestamp,
     key_blob_is_dead,
@@ -1516,7 +1517,13 @@ def list_recoverable_sessions(
                 created_at=created_at,
                 store_finished=store_finished,
                 has_audio=has_audio,
-                has_transcript=(child / TRANSCRIPT_FILENAME).is_file(),
+                # Stage-9 review round 28 LOW-002: one lstat, an undeterminable
+                # answer counting as present, so a transcript an access error
+                # hides is offered for review, never re-transcribed — a trimmed
+                # recording's audio still holds the removed lines
+                # (validation-pass plan D9; ``Path.is_file`` answers False on
+                # an access error, docs/lessons.md).
+                has_transcript=artifact_state(child, TRANSCRIPT_FILENAME) is not False,
                 has_note=(child / NOTE_FILENAME).is_file(),
                 has_encounter=(child / ENCOUNTER_FILENAME).is_file(),
                 expires_at=session_expires_at(child, now),
@@ -2740,9 +2747,13 @@ REMOVE_TAIL_ATTRIBUTION_DROPPED: Final = (
 )
 
 
-def next_patient_transcript_line(boundary: int) -> str:
-    """The Transcript tab's line naming where a possible next patient starts."""
-    return f"A possible next patient starts at line {boundary + 1}."
+def next_patient_transcript_line(document: TranscriptDocument, boundary: int) -> str:
+    """The Transcript tab's line naming where a possible next patient starts:
+    the line's number and its span exactly as the transcript view prints it
+    (``_segment_span``), since the view numbers no line (stage-9 review round
+    28 LOW-001)."""
+    span = _segment_span(document.transcript_segments[boundary])
+    return f"A possible next patient starts at line {boundary + 1} {span}."
 
 
 def remove_tail_label(boundary: int) -> str:

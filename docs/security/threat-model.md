@@ -553,7 +553,8 @@ note inherit exactly that posture.
    its Past-sessions entry for its retention and in any replay.
    THE TRIM (validation-pass plan D9, decision 0.6 (a); 0.3.3). Where the
    boundary fires on a live session's transcript, the Transcript tab shows "A
-   possible next patient starts at line N." and "Remove lines N-end from this
+   possible next patient starts at line N [mm:ss-mm:ss]." (the span as its
+   view prints it) and "Remove lines N-end from this
    recording...", disabled with its reason while a note is being generated or
    reviewed, after Save, during a recovery and during a draft write. The click
    asks ("Remove lines" / "Keep the whole transcript", the safe one the
@@ -574,8 +575,9 @@ note inherit exactly that posture.
    marker, which is never removed, so it costs the kept recording, never
    privacy. Every Complete path keeps no audio while the marker is present or
    its presence cannot be determined (`_complete_locked`; "Kept recordings"
-   below). Recovery never re-transcribes a session that has a transcript, so
-   the trimmed transcript is the session's for good. NAMED RESIDUES (trim):
+   below). Recovery never re-transcribes a session that has a transcript (a
+   transcript whose presence cannot be determined counts as present), so the
+   trimmed transcript is the session's for good. NAMED RESIDUES (trim):
    (h) no audit fact records a trim — the row shows only that no audio was
    kept; (i) the session's own audio still holds the removed lines until its
    key goes (Complete, Discard or the 24-hour expiry); (j)
@@ -903,7 +905,7 @@ note inherit exactly that posture.
      off or as low as practical while recording (the clinician review guide),
      and shadow mode for pilot recordings.
 
-**The checker's honest limit (stated plainly, not implied).** The four checks
+**The checker's honest limit (stated plainly, not implied).** The checks
 in `note_check.py` do NOT establish that a confirmed assertion is grounded in
 the transcript. Specifically:
 

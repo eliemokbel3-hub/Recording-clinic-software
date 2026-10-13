@@ -2160,6 +2160,38 @@ class TestCheck1HedgeMark:
         warnings = reconstruction_warnings(_note(document, (tampered, phantom)), document)
         assert _codes(warnings) == ["reconstruction_mismatch", "source_coords_invalid"]
 
+    def test_a_carried_correction_keeps_its_hedge_mark(self) -> None:
+        """Stage-9 review round 28 LOW-003, Phase 2 against Phase 3: a
+        patient's self-correction the provider carries into its opener's
+        section (D4) is an ordinary quoted line, so the hedge in it still draws
+        ONE ``hedged_source`` on its own span (D7), and the opener draws none."""
+        document = _document(
+            ("It is worse since last session.", SPEAKER_1),
+            ("Actually, I think it is better.", SPEAKER_1),
+        )
+        request = build_note_request(
+            document,
+            _CHECK_CONFIG,
+            _CHECK_CONFIG.template_profiles[0].template_profile_id,
+            clinician_speaker=SPEAKER_2,
+        )
+        provider = ExtractiveNoteProvider(cues=_CHECK_CONFIG.normalised_cues())
+        assertions = tuple(
+            assertion
+            for section in provider.generate_sections(request)
+            for assertion in section.note_assertions
+        )
+        placed = {
+            assertion.note_span.source_coords.segment_index: assertion.section_key
+            for assertion in assertions
+            if assertion.note_span.source_coords is not None
+        }
+        assert set(placed) == {0, 1}
+        assert placed[1] == placed[0]  # carried, not dropped
+        note = _note(document, assertions)
+        warnings = reconstruction_warnings(note, document)
+        assert [coords for _aid, coords in _hedged_codes(warnings)] == [SourceCoords(1, 0, 5)]
+
     def test_a_suspect_hedged_line_draws_suspect_source_only(self) -> None:
         document = _suspect_document(("I think my knee is sore.", SPEAKER_1), suspect=(0,))
         note = _note(document, (_quoted(document, 0, "presenting_complaint"),))
