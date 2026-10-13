@@ -63,6 +63,15 @@ editor row (after ``[flagged] ``); its review group — ``number_source`` /
 ``suspect_source`` — is in the same separately-acknowledged set. Copy renders
 the note WITHOUT the check marks (decision 0.5; the pre-filled mark stays).
 
+The next-patient boundary (validation-pass plan D5, D6). Check 6's
+``possible_next_patient`` — one warning when the note stops where a new patient
+may have arrived — is in the same separately-acknowledged set: "Acknowledge
+all review warnings" never clears it, only its own row's Acknowledge does. The
+chooser marks every line from that point on with
+``models.NEXT_PATIENT_LINE_MARK`` at the front of its label, after any
+``[flagged]``. The "Acknowledge all" tooltip names every code of the set
+(``models.ACKNOWLEDGE_ALL_TOOLTIP``).
+
 Phrase learning (D9 as amended 2026-09-16, Task 5.2). After an add or a move
 of one of the practitioner's OWN lines — ``note.spoken_by_confirmed_clinician``,
 so another speaker's line never reaches the learner — and only while the
@@ -736,15 +745,12 @@ class NoteScreen(QWidget):
         self.review_header.hide()
         self._review_box = QVBoxLayout()
         self.acknowledge_all_button = QPushButton("Acknowledge all review warnings")
-        # Note-routing-omissions plan D4 and invented-text guard D5: one click
-        # never clears a warning in `models.SEPARATELY_ACKNOWLEDGED_CODES` —
-        # each row's own Acknowledge does, after its lines are checked.
-        self.acknowledge_all_button.setToolTip(
-            "Acknowledges every review warning except those that each need their own "
-            "Acknowledge: something said that is not in the note (check its flagged "
-            "lines), a quoted line with a number and a quoted line that may not be "
-            "speech (check each line marked [check: ...])."
-        )
+        # Note-routing-omissions plan D4, invented-text guard D5 and the
+        # validation-pass plan's Check 6 (D5): one click never clears a warning
+        # in `models.SEPARATELY_ACKNOWLEDGED_CODES` — each row's own
+        # Acknowledge does, after its lines are checked. The tooltip names every
+        # code of that set from the same source (`SEPARATELY_ACKNOWLEDGED_NAMES`).
+        self.acknowledge_all_button.setToolTip(models.ACKNOWLEDGE_ALL_TOOLTIP)
         self.acknowledge_all_button.clicked.connect(self._acknowledge_all)
         self.acknowledge_all_button.hide()
 
@@ -1258,16 +1264,22 @@ class NoteScreen(QWidget):
     def eligible_utterances(self) -> tuple[models.UtteranceChoice, ...]:
         """The utterances the chooser offers: not already in the working
         note, with the sections each may enter (the ownership rule), each
-        flagged line marked (note-routing-omissions D4) — all of them,
-        whatever the "Show flagged lines only" tick says."""
+        flagged line marked (note-routing-omissions D4) and each line from a
+        possible next patient on marked (validation-pass plan D6, read from
+        the current note's Check 6 — none before finalisation) — all of
+        them, whatever the "Show flagged lines only" tick says."""
         draft, document = self._draft, self._document
         if draft is None or document is None:
             return ()
+        note = self._note
         return models.eligible_utterances(
             document,
             clinician_speaker=draft.clinician_speaker,
             in_note=self._segments_in_note(),
             flagged=self._flagged_segments(),
+            boundary=(
+                models.next_patient_segment(note.note_warnings) if note is not None else None
+            ),
         )
 
     def editable_lines(self) -> tuple[models.EditableLine, ...]:

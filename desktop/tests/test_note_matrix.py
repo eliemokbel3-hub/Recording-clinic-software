@@ -95,6 +95,7 @@ from scribe_desktop.note_config import (
     TemplateTarget,
     bind_template_profile,
     build_note_request,
+    next_patient_boundary,
 )
 from scribe_desktop.note_fill import (
     PrefillSelectionAmbiguousError,
@@ -393,6 +394,10 @@ class ExtractiveCell(NamedTuple):
     # follows segment ``c - 1``, which ended mid-sentence. Every other cell's
     # turns end a sentence, so the carry never moves their oracle (linted).
     carries: tuple[int, ...] = ()
+    # The next-patient boundary (validation-pass plan D2, Task 1.5): the first
+    # withheld segment. Every other cell's transcript has none (linted), so the
+    # boundary never moves their oracle.
+    boundary: int | None = None
 
 
 EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
@@ -649,6 +654,71 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         expected_mapped=(("t-presenting", (0, 1)),),
         carries=(1,),
     ),
+    # Validation-pass plan Task 1.5: one declared cell per boundary failure
+    # mode. The withheld lines are NOT in the note (D3), Check 6 says so once
+    # (D5), and a withheld claim word still draws Check 4 (decision 0.5 (a)).
+    ExtractiveCell(
+        fixture_id="ex-next-patient-greeting",
+        turns=(
+            ("My left knee is sore.", SPEAKER_1),
+            ("On examination the knee is tender to touch.", SPEAKER_2),
+            # "Okay" opens it: a capitalised non-starter on a clinician line
+            # would be name-like and draw Check 4 (`is_name_like_token`).
+            ("Okay, see you next week.", SPEAKER_2),
+            ("Hello, come on in.", SPEAKER_1),
+            ("My right shoulder hurts.", SPEAKER_1),
+        ),
+        clinician_speaker=SPEAKER_2,
+        expected=(
+            ExpectedAssertion("presenting_complaint", 0, "My left knee is sore."),
+            ExpectedAssertion(
+                "objective_examination", 1, "On examination the knee is tender to touch."
+            ),
+        ),
+        # Segment 4's "right" is withheld, so Check 4 flags it.
+        expected_reviews=("high_risk_omission", "possible_next_patient"),
+        material_segments=(1, 4),
+        expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
+        boundary=3,
+    ),
+    ExtractiveCell(
+        fixture_id="ex-head-of-recording-greeting",
+        turns=(
+            ("Thanks for coming in, see you next week.", SPEAKER_1),
+            ("Okay, come on in.", SPEAKER_2),
+            ("My left knee is sore.", SPEAKER_1),
+        ),
+        clinician_speaker=SPEAKER_2,
+        # The previous patient leaving as the recording starts: no clinical
+        # content before the closing, so nothing is cut (D2's head case).
+        expected=(ExpectedAssertion("presenting_complaint", 2, "My left knee is sore."),),
+        expected_reviews=(),
+        material_segments=(2,),
+        expected_mapped=(("t-presenting", (0,)),),
+    ),
+    ExtractiveCell(
+        fixture_id="ex-close-and-greet-one-segment",
+        turns=(
+            ("My left knee is sore.", SPEAKER_1),
+            ("On examination the knee is tender to touch.", SPEAKER_2),
+            ("Okay, see you next week, come on in.", SPEAKER_2),
+            ("My right shoulder hurts.", SPEAKER_1),
+        ),
+        clinician_speaker=SPEAKER_2,
+        # The closing and the greeting share segment 2, so the cut is the
+        # NEXT segment (C4: toward inclusion); segment 2 itself stays in the
+        # request and, uncued, is dropped as it always was.
+        expected=(
+            ExpectedAssertion("presenting_complaint", 0, "My left knee is sore."),
+            ExpectedAssertion(
+                "objective_examination", 1, "On examination the knee is tender to touch."
+            ),
+        ),
+        expected_reviews=("high_risk_omission", "possible_next_patient"),
+        material_segments=(1, 3),
+        expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
+        boundary=3,
+    ),
 )
 
 
@@ -729,6 +799,77 @@ class TestExtractiveCells:
             "ex-split-sentence-carried",
             "ex-comma-then-instruction",
         }
+
+    @pytest.mark.parametrize("cell", EXTRACTIVE_CELLS, ids=lambda cell: cell.fixture_id)
+    def test_only_a_declared_boundary_cell_cuts(self, cell: ExtractiveCell) -> None:
+        """The fixture lint (validation-pass plan Task 1.5): the next-patient
+        boundary — the ONE accessor every consumer reads — fires exactly where
+        a cell declares it, and Check 6 points there, so no other cell's
+        oracle can start losing lines to it by accident."""
+        document = _document(*cell.turns)
+        assert next_patient_boundary(document, _MATRIX_CONFIG) == cell.boundary, cell.fixture_id
+        _note_, warnings, _document_ = _run_extractive(cell)
+        located = [
+            w.source_coords.segment_index
+            for w in warnings
+            if w.note_warning_code == "possible_next_patient" and w.source_coords is not None
+        ]
+        assert located == ([] if cell.boundary is None else [cell.boundary]), cell.fixture_id
+
+    def test_the_boundary_cells_are_registered(self) -> None:
+        """One declared cell per failure mode: a closing then a greeting, the
+        head of a recording (no cut), a closing and a greeting in one
+        segment (the cut is the segment after it)."""
+        declared = {
+            cell.fixture_id: cell.boundary
+            for cell in EXTRACTIVE_CELLS
+            if cell.fixture_id.startswith(("ex-next-patient", "ex-head-of", "ex-close-and"))
+        }
+        assert declared == {
+            "ex-next-patient-greeting": 3,
+            "ex-head-of-recording-greeting": None,
+            "ex-close-and-greet-one-segment": 3,
+        }
+        assert {cell.fixture_id for cell in EXTRACTIVE_CELLS if cell.boundary is not None} == {
+            "ex-next-patient-greeting",
+            "ex-close-and-greet-one-segment",
+        }
+
+    def test_no_other_fixture_transcript_has_a_boundary(self) -> None:
+        """Task 1.5's lint over the suite's other turn fixtures — this
+        matrix's own (Axis B, raise and clean cells) and the UI and note-level
+        ones (``_EDIT_TURNS`` and siblings): none holds a closing followed by
+        a greeting, so the boundary moves none of their oracles."""
+        import test_note_pipeline
+        import test_note_review
+        import test_save_as_ratification
+        import test_ui_models
+        import test_ui_note_editor
+        import test_ui_screens
+
+        fixtures: dict[str, tuple[Turn, ...]] = {
+            "AB_TURNS": AB_TURNS,
+            "AB2_TURNS": AB2_TURNS,
+            "BLAND_TURNS": BLAND_TURNS,
+            **{f"mock:{cell.fixture_id}": cell.turns for cell in MOCK_CELLS},
+            **{f"raise:{cell.fixture_id}": cell.turns for cell in RAISE_CELLS},
+            **{f"clean:{cell.fixture_id}": cell.turns for cell in CLEAN_COMPOSITION_CELLS},
+            "test_ui_screens._NOTE_TURNS": test_ui_screens._NOTE_TURNS,
+            "test_ui_screens._EDIT_TURNS": test_ui_screens._EDIT_TURNS,
+            "test_ui_screens._QUESTION_TURNS": test_ui_screens._QUESTION_TURNS,
+            "test_ui_screens._REFUSED_TURNS": test_ui_screens._REFUSED_TURNS,
+            "test_ui_note_editor._EDIT_TURNS": test_ui_note_editor._EDIT_TURNS,
+            "test_ui_models._REVIEW_TURNS": test_ui_models._REVIEW_TURNS,
+            "test_note_review._TURNS": test_note_review._TURNS,
+            "test_note_pipeline._TURNS": test_note_pipeline._TURNS,
+            "test_save_as_ratification._TURNS": test_save_as_ratification._TURNS,
+        }
+        cutting = [
+            name
+            for name, turns in fixtures.items()
+            if next_patient_boundary(_document(*turns), _MATRIX_CONFIG) is not None
+        ]
+        assert cutting == []
 
 
 # ---------------------------------------------------------------------------

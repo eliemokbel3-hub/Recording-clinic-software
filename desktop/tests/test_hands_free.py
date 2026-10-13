@@ -218,16 +218,16 @@ class TestNormalise:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Task 1.2's pin (`test_note.py`): no second normaliser in src/ —
-        the phrase rules call ``note.normalise_token`` for every part."""
-        from scribe_desktop import voice_commands
-
+        the phrase rules call ``note.normalise_token`` for every part. Since
+        the validation-pass plan's Task 1.1 the word-to-token function lives
+        in ``consultation_phrases`` (D1), re-exported here."""
         seen: list[str] = []
 
         def spy(token: str) -> str:
             seen.append(token)
             return token.lower()
 
-        monkeypatch.setattr(voice_commands, "normalise_token", spy)
+        monkeypatch.setattr(consultation_phrases, "normalise_token", spy)
         assert phrase_tokens("Scribe-pause now") == ["scribe", "pause", "now"]
         assert seen == ["Scribe", "pause", "now"]
 

@@ -5789,6 +5789,43 @@ class TestNoteScreenEdits:
         assert not _lines_by_id(screen)[_routed_line(screen, _PLAN_INDEX).assertion_id].flagged
         screen.deleteLater()
 
+    def test_lines_from_a_possible_next_patient_are_marked_in_the_chooser(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Validation-pass plan D6 (Task 1.4; review round 13 LOW-001): the
+        Note tab passes Check 6's segment to the chooser, so every offered
+        line from the boundary on carries the front mark after any
+        ``[flagged]``, and no line before it does; "Acknowledge all" leaves
+        Check 6 open and its own Acknowledge clears it (D5)."""
+        turns = (
+            *_NOTE_TURNS,
+            ("Okay, see you next week.", SPEAKER_2),  # 4: the closing
+            ("Hello, come on in.", SPEAKER_1),  # 5: the greeting - the boundary
+            ("My right shoulder hurts.", SPEAKER_1),  # 6: withheld
+        )
+        boundary = 5
+        screen, _record = self._screen(config_root=tmp_path / "config", result=_edit_result(turns))
+        note = screen.current_note()
+        assert note is not None
+        assert models.next_patient_segment(note.note_warnings) == boundary
+        items = self._chooser_items(screen)
+        offered = [index for index, _text in items]
+        assert boundary in offered and 6 in offered
+        eligible = _eligible(screen)
+        for index, text in items:
+            segment = screen._document.transcript_segments[index]
+            flag = models.FLAGGED_LINE_MARK if eligible[index].flagged else ""
+            after = models.NEXT_PATIENT_LINE_MARK if index >= boundary else ""
+            assert text.startswith(f"{index + 1}. {flag}{after}{segment.speaker}: ")
+            assert (models.NEXT_PATIENT_LINE_MARK in text) is (index >= boundary)
+        # Peer round 14 PR-LOW-001: the button's tooltip names Check 6 too.
+        assert screen.acknowledge_all_button.toolTip() == models.ACKNOWLEDGE_ALL_TOOLTIP
+        screen._acknowledge_all()
+        assert "possible_next_patient" not in screen._acknowledged
+        screen._acknowledge("possible_next_patient")
+        assert "possible_next_patient" in screen._acknowledged
+        screen.deleteLater()
+
     def test_the_tick_filters_the_chooser_and_keeps_the_choice_across_a_rebuild(
         self, qapp: Any, tmp_path: Path
     ) -> None:

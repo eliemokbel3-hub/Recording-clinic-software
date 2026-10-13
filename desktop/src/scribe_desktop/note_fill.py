@@ -68,6 +68,12 @@ Matching semantics, recorded because each is a decision:
   occurrence's start time. Later repetitions add nothing: the rule is
   already a candidate, and duplicate proposals for identical text would be
   confirmation fatigue with no additional evidence.
+- Matching stops at a possible next patient (validation-pass plan D3): the
+  three public entry points compute ``note_config.next_patient_boundary``
+  from the document and config they are given and match only segments
+  before it, so the next patient's trigger or region keyword neither
+  proposes nor pre-fills a line. Check 3's ``autofill_trigger_absent``
+  still re-verifies against the WHOLE transcript (the safe direction).
 
 Config custody: both entry points canonicalise the incoming config
 (``note_config._canonical_config`` — the round-12 boundary lesson), so the
@@ -99,6 +105,7 @@ from scribe_desktop.note_config import (
     PrefillTemplate,
     _canonical_config,
     is_learned_rule_id,
+    next_patient_boundary,
 )
 from scribe_desktop.transcription import TranscriptDocument
 
@@ -145,18 +152,25 @@ class PrefillCandidate(NamedTuple):
 
 
 def _first_phrase_match(
-    document: TranscriptDocument, phrase_tokens: tuple[str, ...]
+    document: TranscriptDocument,
+    phrase_tokens: tuple[str, ...],
+    *,
+    limit: int | None = None,
 ) -> _PhraseMatch | None:
     """First contiguous occurrence of ``phrase_tokens`` in transcript order,
     or None. Content tokens only, per word, within one segment (module
     docstring records why); an empty phrase never matches. A ``suspect``
     word (invented-text guard D6) is skipped BEFORE tokenising and stands as
     a barrier no phrase spans, so nothing the guard marks as possibly not
-    speech proposes or pre-fills a line — the safe direction."""
+    speech proposes or pre-fills a line — the safe direction. ``limit``
+    (validation-pass plan D3): only segments with an index below it are
+    searched; None searches the whole transcript."""
     if not phrase_tokens:
         return None
     span = len(phrase_tokens)
     for segment_index, segment in enumerate(document.transcript_segments):
+        if limit is not None and segment_index >= limit:
+            break
         indexed: list[tuple[str | None, int]] = []
         for word_index, word in enumerate(segment.transcript_words):
             if word.suspect:
@@ -204,15 +218,19 @@ def autofill_proposals(
     one ``NoteProposal`` PER ATOMIC ASSERTION in the matched rule's
     expansion — a three-assertion expansion is three proposals.
 
-    A rule whose trigger is absent cannot fire. Matching is speaker-agnostic
-    and the output is proposals only — never an assertion, never an
-    insertion (module docstring; both pinned by test).
+    A rule whose trigger is absent cannot fire — and neither can one whose
+    trigger occurs only after a possible next patient (D3). Matching is
+    speaker-agnostic and the output is proposals only — never an assertion,
+    never an insertion (module docstring; both pinned by test).
     """
     resolved = _canonical_config(config)
     config_digest = resolved.config_digest()
+    boundary = next_patient_boundary(document, resolved)
     proposals: list[NoteProposal] = []
     for rule in resolved.autofill_rules:
-        match = _first_phrase_match(document, content_tokens(rule.trigger_phrase))
+        match = _first_phrase_match(
+            document, content_tokens(rule.trigger_phrase), limit=boundary
+        )
         if match is None:
             continue
         for entry_index, assertion_text in enumerate(rule.expansion_texts()):
@@ -237,12 +255,13 @@ def autofill_proposals(
 
 
 def _earliest_keyword_match(
-    document: TranscriptDocument, prefill: PrefillTemplate
+    document: TranscriptDocument, prefill: PrefillTemplate, *, limit: int | None
 ) -> _PhraseMatch | None:
-    """The earliest match among a prefill's region keywords, or None."""
+    """The earliest match among a prefill's region keywords before ``limit``
+    (the next-patient boundary, D3), or None."""
     best: _PhraseMatch | None = None
     for keyword in prefill.region_keywords:
-        match = _first_phrase_match(document, content_tokens(keyword))
+        match = _first_phrase_match(document, content_tokens(keyword), limit=limit)
         if match is None:
             continue
         if best is None or (match.segment_index, match.first_word_index) < (
@@ -263,11 +282,13 @@ def detect_prefill_candidates(
 
     Deliberately does NOT canonicalise: detection emits ids and times only —
     no digest is stamped and no proposal text leaves here. The two proposal
-    emitters canonicalise before stamping anything.
+    emitters canonicalise before stamping anything. A region keyword heard
+    only after a possible next patient detects nothing (D3).
     """
+    boundary = next_patient_boundary(document, config)
     matched: list[tuple[tuple[int, int, int], PrefillCandidate]] = []
     for config_index, prefill in enumerate(config.prefill_templates):
-        match = _earliest_keyword_match(document, prefill)
+        match = _earliest_keyword_match(document, prefill, limit=boundary)
         if match is None:
             continue
         order = (match.segment_index, match.first_word_index, config_index)
@@ -324,7 +345,9 @@ def prefill_proposals(
             raise AssertionError(
                 "unreachable: candidates derive from resolved.prefill_templates"
             )
-    match = _earliest_keyword_match(document, selected)
+    match = _earliest_keyword_match(
+        document, selected, limit=next_patient_boundary(document, resolved)
+    )
     trigger_start = match.start_seconds if match is not None else None
     return tuple(
         NoteProposal(

@@ -40,15 +40,19 @@ only: it never pauses, blocks or changes a session.
 
 from __future__ import annotations
 
-import re
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Final, Literal
 
 from scribe_desktop.audio_capture import CHANNELS, CHUNK_BYTES, SAMPLE_RATE, SAMPLE_WIDTH
 from scribe_desktop.consultation_phrases import CLOSING_PHRASES as CLOSING_PHRASES
 from scribe_desktop.consultation_phrases import GREETING_PHRASES as GREETING_PHRASES
-from scribe_desktop.note import normalise_token
+from scribe_desktop.consultation_phrases import (
+    PhraseToken,
+    phrase_events,
+    phrase_starts,
+    word_tokens,
+)
+from scribe_desktop.consultation_phrases import phrase_tokens as phrase_tokens
 from scribe_desktop.session import CAPTURING_STATES, SessionState
 from scribe_desktop.transcription import (
     TRANSCRIBE_WINDOW_MAX_GAP_SECONDS,
@@ -66,57 +70,15 @@ CARRY_MAX_GAP_SECONDS: Final = TRANSCRIBE_WINDOW_MAX_GAP_SECONDS
 
 NEW_CONSULTATION_WARNING: Final = "new_consultation"
 NEW_CONSULTATION_WINDOWS: Final = 3
-# ``CLOSING_PHRASES`` and ``GREETING_PHRASES`` live in the leaf module
-# ``consultation_phrases`` (validation-pass plan D1) and are re-exported from
-# the import above, so the watcher and the offline boundary read ONE list.
+# ``CLOSING_PHRASES``, ``GREETING_PHRASES`` and ``phrase_tokens`` live in the
+# leaf module ``consultation_phrases`` (validation-pass plan D1) and are
+# re-exported from the imports above; both rules here read words through its
+# ``word_tokens`` (a ``suspect`` word dropped — invented-text guard D6) and
+# the watcher reads phrases through its ``phrase_events``, so the live
+# warning and the offline next-patient boundary share one list, one token
+# function and one event helper.
 
 SpokenPauseState = Literal["idle", "on", "unavailable"]
-# Splits a word into parts only; each part is then normalised by THE one
-# normaliser, ``note.normalise_token`` (Task 1.2's single-implementation pin).
-_PART_SPLIT_RE: Final = re.compile(r"[\s/\-‐-―]+")
-
-
-def phrase_tokens(text: str) -> list[str]:
-    """``text`` as whole-word tokens: split on whitespace, hyphens and
-    slashes, each part normalised by ``note.normalise_token`` (its outer
-    punctuation stripped, lower-cased); empty parts dropped."""
-    return [token for token in map(normalise_token, _PART_SPLIT_RE.split(text)) if token]
-
-
-def _phrase(text: str) -> tuple[str, ...]:
-    return tuple(phrase_tokens(text))
-
-
-@dataclass(frozen=True)
-class _Token:
-    text: str
-    start_seconds: float
-
-
-def _tokens(segments: Iterable[TranscriptSegment]) -> list[_Token]:
-    """Every word's tokens in order, each carrying its word's start time on
-    the captured-audio timeline — except a ``suspect`` word's (invented-text
-    guard D6): words the guard marks as possibly not speech never pause the
-    recording or raise the new-consultation warning. A suspect word is
-    dropped, not a barrier (unlike ``note_fill``'s trigger match). The guard
-    marks whole segments, so dropping one joins the words either side of it:
-    a phrase can now match across a suspect segment between two real ones
-    ("scribe" | burst | "pause") — an extra pause or warning, the safe
-    direction (the threat model's surface 5 names it)."""
-    return [
-        _Token(token, word.start_seconds)
-        for segment in segments
-        for word in segment.transcript_words
-        if not word.suspect
-        for token in phrase_tokens(word.word_text)
-    ]
-
-
-def _starts(tokens: Sequence[_Token], phrase: tuple[str, ...]) -> list[int]:
-    """Where ``phrase`` starts in ``tokens`` (whole tokens, in a row)."""
-    size = len(phrase)
-    texts = [token.text for token in tokens]
-    return [i for i in range(len(texts) - size + 1) if tuple(texts[i : i + size]) == phrase]
 
 
 def spoken_pause_state(
@@ -135,7 +97,7 @@ class SpokenPauseDetector:
 
     def __init__(self) -> None:
         self._cutoff = 0.0
-        self._carry: _Token | None = None
+        self._carry: PhraseToken | None = None
 
     @property
     def cutoff_seconds(self) -> float:
@@ -153,7 +115,7 @@ class SpokenPauseDetector:
 
     def feed(self, segments: Iterable[TranscriptSegment]) -> bool:
         """True when this window holds the phrase spoken after the cutoff."""
-        tokens = _tokens(segments)
+        tokens = word_tokens(segments)
         carry = self._carry
         if (
             carry is not None
@@ -166,7 +128,7 @@ class SpokenPauseDetector:
             self._carry = tokens[-1]
         return any(
             stream[i].start_seconds >= self._cutoff
-            for i in _starts(stream, SPOKEN_PAUSE_PHRASE)
+            for i in phrase_starts(stream, SPOKEN_PAUSE_PHRASE)
         )
 
 
@@ -175,8 +137,6 @@ class NewConsultationWatcher:
 
     def __init__(self, windows: int = NEW_CONSULTATION_WINDOWS) -> None:
         self._windows = windows
-        self._closings = tuple(_phrase(p) for p in CLOSING_PHRASES)
-        self._greetings = tuple(_phrase(p) for p in GREETING_PHRASES)
         self._index = 0
         self._closing_at: int | None = None
         self._raised = False
@@ -193,15 +153,13 @@ class NewConsultationWatcher:
     def feed(self, segments: Iterable[TranscriptSegment]) -> bool:
         """True exactly once: when a greeting follows a closing phrase within
         the window budget."""
-        tokens = _tokens(segments)
-        events = sorted(
-            [(i, 0) for phrase in self._closings for i in _starts(tokens, phrase)]
-            + [(i, 1) for phrase in self._greetings for i in _starts(tokens, phrase)]
-        )
+        # Every greeting counts here, wherever it sits: D2's one-word position
+        # rule is the boundary's alone (C7 — the live warning is unchanged).
+        events = phrase_events(word_tokens(segments), positional=False)
         index = self._index
         self._index += 1
         for _position, kind in events:
-            if kind == 0:
+            if kind == "closing":
                 self._closing_at = index
             elif (
                 not self._raised

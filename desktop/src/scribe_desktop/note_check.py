@@ -188,6 +188,14 @@ What each check claims — and, recorded with equal care, what it does NOT:
   comparison passes; the practitioner's reading is the control for all of
   these, and the laterality-parser lesson (rounds 48–58) is why no binding
   parser is attempted here.
+- **Check 6, ``next_patient_warnings``** (validation-pass plan D5) — one
+  ``possible_next_patient`` review warning, role-free, when the transcript
+  runs into a possible next patient: ``note_config.next_patient_boundary``,
+  the same boundary the provider request and the proposals stop at, so the
+  note held nothing from that segment on unless the clinician added it back.
+  It says the boundary FIRED, never that a next patient arrived: the rule is
+  a phrase heuristic (``consultation_phrases``) that can fire falsely or
+  miss, and the clinician's review is the control for both.
 
 ``check_note`` is the stage entry point. It REFUSES (typed
 ``CheckTargetMismatchError``) to check a note against a transcript or
@@ -255,6 +263,7 @@ from scribe_desktop.note_config import (
     _is_medication_shaped,
     bind_template_profile,
     mapping_drop_warnings,
+    next_patient_boundary,
 )
 from scribe_desktop.note_fill import _first_phrase_match, _proposal_id
 from scribe_desktop.transcription import (
@@ -1475,6 +1484,9 @@ def provenance_warnings(
             if assertion.provenance != "autofill":
                 continue
             rule = _rule_for_assertion(resolved, assertion, note.session_id)
+            # The WHOLE transcript, no next-patient limit (validation-pass plan
+            # D3): proposals only fire before the boundary, so a trigger found
+            # there is found here too — the safe direction.
             if rule is None or (
                 _first_phrase_match(document, content_tokens(rule.trigger_phrase)) is None
             ):
@@ -1774,6 +1786,37 @@ def fidelity_warnings(
 
 
 # ---------------------------------------------------------------------------
+# Check 6 — the next-patient boundary (validation-pass plan D5).
+# ---------------------------------------------------------------------------
+
+
+def next_patient_warnings(
+    document: TranscriptDocument, config: NoteConfig
+) -> tuple[NoteWarning, ...]:
+    """ONE ``possible_next_patient`` review warning when the transcript runs
+    into a possible next patient (``note_config.next_patient_boundary``, the
+    boundary the request cut and the proposals read), its coordinates
+    spanning the whole first withheld segment — which need not hold the
+    greeting (a closing and a greeting in one segment cut at the segment
+    after them) and always has a word (D2 returns only a non-transparent
+    segment). No section and no assertion: the warning points at the
+    transcript. Role-free: it fires with no confirmed clinician too. Check 4
+    is unchanged over the withheld lines (decision 0.5 (a)): their claim
+    words still draw ``high_risk_omission``."""
+    boundary = next_patient_boundary(document, config)
+    if boundary is None:
+        return ()
+    words = document.transcript_segments[boundary].transcript_words
+    return (
+        NoteWarning(
+            note_warning_code="possible_next_patient",
+            severity="review",
+            source_coords=SourceCoords(boundary, 0, len(words) - 1),
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # The stage entry point.
 # ---------------------------------------------------------------------------
 
@@ -1785,9 +1828,9 @@ def check_note(
     *,
     pending_proposals: Sequence[NoteProposal] = (),
 ) -> tuple[NoteWarning, ...]:
-    """Run all four checks over a composed note (pipeline order: compose ->
-    confirm -> CHECK -> write) and return their warnings, check by check in
-    a deterministic order.
+    """Run Checks 1-4 and Check 6 over a composed note (pipeline order:
+    compose -> confirm -> CHECK -> write) and return their warnings, check by
+    check in a deterministic order, Check 6 last (validation-pass plan D5).
 
     Refuses — rather than silently mis-checks — when the note's recorded
     ``transcript_digest`` or ``config_digest`` does not match the presented
@@ -1815,6 +1858,7 @@ def check_note(
             note, document, resolved, pending_proposals=pending_proposals
         ),
         *omission_warnings(note, document),
+        *next_patient_warnings(document, resolved),
     )
 
 
@@ -1829,6 +1873,7 @@ __all__ = [
     "fidelity_verdict",
     "fidelity_verdicts",
     "fidelity_warnings",
+    "next_patient_warnings",
     "omission_warnings",
     "provenance_warnings",
     "reconstruction_warnings",

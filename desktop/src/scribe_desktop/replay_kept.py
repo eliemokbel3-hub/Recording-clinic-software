@@ -311,7 +311,9 @@ def note_drift(
     steps): ``compose_draft`` with the extractive provider built from
     ``config`` and its only template profile, the earliest detected prefill,
     every proposal confirmed (``confirm_all``), ``finalise_note``, then
-    ``check_note`` (Checks 1–4) — and section coverage against ``saved``."""
+    ``check_note`` (Checks 1–4 and, since the validation-pass plan, Check 6's
+    ``possible_next_patient``, counted among the reviews) — and section
+    coverage against ``saved``."""
     draft = compose_draft(
         document,
         config,

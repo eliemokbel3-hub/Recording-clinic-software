@@ -114,7 +114,8 @@ class TestConsultationPhrases:
 
     def test_the_leaf_module_imports_only_note_and_transcription(self) -> None:
         """C6 / D1: the leaf may import ``note`` and ``transcription`` and
-        nothing else of the package (today it needs neither)."""
+        nothing else of the package (since Task 1.1 it imports both: the
+        boundary's cue test and the transcript types)."""
         tree = ast.parse(_LEAF.read_text(encoding="utf-8"))
         package_imports: list[str] = []
         for node in ast.walk(tree):

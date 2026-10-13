@@ -350,6 +350,13 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # error: the fallback IS the safe rendering, and the practitioner
     # acknowledges that the section reads as Clean clinical.
     "style_fallback": "review",
+    # Check 6 — the next-patient boundary (validation-pass plan D5): ONE per
+    # note when the transcript runs into a possible next patient, its
+    # coordinates on the first withheld segment. Review, never error: an error
+    # would deadlock Complete on a false boundary, and the clinician may add
+    # any withheld line back. Only its own Acknowledge clears it
+    # (``ui.models.SEPARATELY_ACKNOWLEDGED_CODES``).
+    "possible_next_patient": "review",
     # Invented-text guard Task 2.8 (the 2026-10-12 amendment): what a STORED
     # review warning whose code this build does not know reads as — written
     # by a newer build, read back by this one after a rollback. Never
@@ -1257,6 +1264,7 @@ def _assemble_note_request(
     config_digest: str,
     clinician_speaker: str | None = None,
     section_keys: tuple[NoteSectionKey, ...] = CANONICAL_SECTION_KEYS,
+    boundary: int | None = None,
 ) -> NoteRequest:
     """RAW assembly of the provider request from a transcript artifact.
 
@@ -1272,6 +1280,13 @@ def _assemble_note_request(
     Transcript content lands ONLY in ``transcript_utterances``. Nothing a
     speaker said can reach an instruction position, because the request
     type has none.
+
+    ``boundary`` (validation-pass plan D3): the next-patient boundary the
+    caller computed (``note_config.next_patient_boundary``) — only segments
+    BEFORE it enter the request, each keeping its ABSOLUTE index, so every
+    coordinate still addresses the whole transcript (``words_for_coords``)
+    and ``transcript_digest`` stays the whole document's. None keeps every
+    segment.
     """
     utterances = tuple(
         NoteUtterance(
@@ -1282,6 +1297,7 @@ def _assemble_note_request(
             transcript_words=segment.transcript_words,
         )
         for index, segment in enumerate(document.transcript_segments)
+        if boundary is None or index < boundary
     )
     return NoteRequest(
         session_id=document.session_id,

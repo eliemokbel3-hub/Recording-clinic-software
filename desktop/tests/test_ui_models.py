@@ -1768,9 +1768,10 @@ class TestReviewEditModels:
         summary = models.WarningSummary(
             review=(group("clinician_asserted"), group("high_risk_omission"), group("mapping_drop"))
         )
-        # Invented-text guard D5: the two per-line codes joined the set.
+        # Invented-text guard D5: the two per-line codes joined the set;
+        # validation-pass plan D5 (Task 1.3): Check 6 joined it.
         assert models.SEPARATELY_ACKNOWLEDGED_CODES == frozenset(
-            {"high_risk_omission", "number_source", "suspect_source"}
+            {"high_risk_omission", "number_source", "suspect_source", "possible_next_patient"}
         )
         assert models.acknowledge_all_codes(summary, ()) == ("clinician_asserted", "mapping_drop")
         assert models.acknowledge_all_codes(summary, {"mapping_drop"}) == ("clinician_asserted",)
@@ -1831,6 +1832,155 @@ class TestReviewEditModels:
             "Acknowledge the note review warnings before completing."
         )
         assert models.complete_block_reason(state(acknowledged | {"number_source"})) is None
+
+
+class TestPossibleNextPatient:
+    """Validation-pass plan D5 / D6 (Tasks 1.3 and 1.4): Check 6's copy, its
+    acknowledgement and the chooser's front mark."""
+
+    @staticmethod
+    def _warning(segment_index: int) -> Any:
+        from scribe_desktop.note import NoteWarning, SourceCoords
+
+        return NoteWarning(
+            note_warning_code="possible_next_patient",
+            severity="review",
+            source_coords=SourceCoords(segment_index, 0, 0),
+        )
+
+    def test_the_copy(self) -> None:
+        copy = models.WARNING_COPY["possible_next_patient"]
+        assert copy.title == "The note stops where a new patient may have arrived"
+        assert copy.blocks is None  # review, never a block
+        assert copy.clear_hint == (
+            "Later lines were left out - add back any that belong with Add line to section, "
+            "then acknowledge."
+        )
+
+    def test_the_acknowledge_all_tooltip_names_every_separately_acknowledged_code(
+        self,
+    ) -> None:
+        """Peer round 14 PR-LOW-001: the tooltip lists exactly the codes the
+        button skips, from the one source both read — a fifth code changes
+        the exact text pinned here, and a code without words cannot exist."""
+        names = models.SEPARATELY_ACKNOWLEDGED_NAMES
+        assert frozenset(names) == models.SEPARATELY_ACKNOWLEDGED_CODES
+        assert all(name in models.ACKNOWLEDGE_ALL_TOOLTIP for name in names.values())
+        assert models.ACKNOWLEDGE_ALL_TOOLTIP == (
+            "Acknowledges every review warning except those that each need their own "
+            "Acknowledge: something said that is not in the note (check its flagged lines), "
+            "a quoted line with a number (check each line marked [check: number]), "
+            "a quoted line that may not be speech (check each line marked "
+            "[check: possibly not speech]) and a note that stops where a new patient may "
+            "have arrived (check the lines marked [after possible next patient])."
+        )
+
+    def test_acknowledge_all_leaves_it_and_its_own_acknowledge_clears_it(self) -> None:
+        from scribe_desktop.note import NoteWarning
+
+        summary = models.summarise_warnings(
+            (
+                NoteWarning(note_warning_code="clinician_asserted", severity="review"),
+                self._warning(5),
+            )
+        )
+        acknowledged = set(models.acknowledge_all_codes(summary, ()))
+        assert acknowledged == {"clinician_asserted"}
+
+        def state(acked: set[str]) -> models.NoteReviewState:
+            open_groups = sum(1 for group in summary.review if group.code not in acked)
+            return models.NoteReviewState(
+                has_note=True, note_saved=True, unacknowledged_reviews=open_groups
+            )
+
+        assert models.complete_block_reason(state(acknowledged)) == (
+            "Acknowledge the note review warnings before completing."
+        )
+        assert models.complete_block_reason(state(acknowledged | {"possible_next_patient"})) is None
+
+    def test_the_chooser_reads_the_boundary_from_check_6(self) -> None:
+        from scribe_desktop.note import NoteWarning, SourceCoords
+
+        assert models.next_patient_segment(()) is None
+        omission = NoteWarning(
+            note_warning_code="high_risk_omission",
+            severity="review",
+            source_coords=SourceCoords(2, 0, 0),
+        )
+        assert models.next_patient_segment((omission,)) is None
+        assert models.next_patient_segment((omission, self._warning(4))) == 4
+
+    def test_the_front_mark_order(self) -> None:
+        """The practitioner's front-mark decision (2026-10-13): ``N.``, then
+        ``[flagged]``, then ``[after possible next patient]``, then the
+        speaker, then the guard's ``[possibly not speech]`` before the
+        words — and a line before the boundary carries no new mark."""
+        document = _boundary_document()
+        choices = {
+            choice.segment_index: choice
+            for choice in models.eligible_utterances(
+                document,
+                clinician_speaker=SPEAKER_2,
+                in_note={0},
+                flagged={1, 3, 4},
+                boundary=3,
+            )
+        }
+        assert models.NEXT_PATIENT_LINE_MARK == "[after possible next patient] "
+        assert choices[1].label == "2. [flagged] speaker_2: See you next week."
+        assert choices[2].label == "3. speaker_1: Hello, come in."
+        assert choices[3].label == (
+            "4. [flagged] [after possible next patient] speaker_1: My left hip is sore."
+        )
+        assert choices[4].label == (
+            "5. [flagged] [after possible next patient] speaker_1: "
+            "[possibly not speech] Left knee two."
+        )
+        assert choices[3].flagged is True
+        # Not flagged, after the boundary: the mark alone after the number.
+        unflagged = models.eligible_utterances(
+            document, clinician_speaker=SPEAKER_2, in_note={0}, boundary=3
+        )
+        assert unflagged[2].label == (
+            "4. [after possible next patient] speaker_1: My left hip is sore."
+        )
+        # No boundary: today's labels, unchanged.
+        plain = models.eligible_utterances(document, clinician_speaker=SPEAKER_2, in_note={0})
+        assert [c.label for c in plain] == [
+            "2. speaker_2: See you next week.",
+            "3. speaker_1: Hello, come in.",
+            "4. speaker_1: My left hip is sore.",
+            "5. speaker_1: [possibly not speech] Left knee two.",
+        ]
+
+
+def _boundary_document() -> TranscriptDocument:
+    """Five invented lines; the last is marked suspect by the guard."""
+    turns = (
+        ("My right knee is sore.", SPEAKER_1, False),
+        ("See you next week.", SPEAKER_2, False),
+        ("Hello, come in.", SPEAKER_1, False),
+        ("My left hip is sore.", SPEAKER_1, False),
+        ("Left knee two.", SPEAKER_1, True),
+    )
+    return TranscriptDocument(
+        session_id="f" * 32,
+        created_at=datetime(2026, 10, 13, 12, 0, tzinfo=UTC),
+        model_name="mock",
+        sample_rate=SAMPLE_RATE,
+        transcript_segments=tuple(
+            TranscriptSegment(
+                start_seconds=float(index * 10),
+                end_seconds=float(index * 10 + 5),
+                speaker=speaker,
+                transcript_words=tuple(
+                    word.model_copy(update={"suspect": suspect})
+                    for word in _review_words(text)
+                ),
+            )
+            for index, (text, speaker, suspect) in enumerate(turns)
+        ),
+    )
 
 
 class TestUnmarkedSelection:

@@ -151,6 +151,7 @@ from pydantic import (
 from pydantic_core import PydanticSerializationError
 
 from scribe_desktop import install_layout
+from scribe_desktop.consultation_phrases import consultation_boundary
 from scribe_desktop.note import (
     # Package-private by name, shared deliberately (the note.py convention):
     # one id grammar, one digest primitive, and one raw request assembler
@@ -2894,7 +2895,25 @@ def build_note_request(
         config_digest=binding.source_config.config_digest(),
         clinician_speaker=clinician_speaker,
         section_keys=section_keys,
+        # Validation-pass plan D3: the request stops at a possible next
+        # patient, so every provider — a future one included — sees only the
+        # lines before it; indices stay absolute.
+        boundary=next_patient_boundary(document, binding.source_config),
     )
+
+
+def next_patient_boundary(document: TranscriptDocument, config: NoteConfig) -> int | None:
+    """THE next-patient boundary every consumer reads (validation-pass plan
+    D2, D3, C5): the absolute index of the first segment to withhold, or
+    None — ``consultation_phrases.consultation_boundary`` over the config's
+    own cues (``normalised_cues()``) with the shipped cues as the fallback,
+    the same two layers the app's provider routes with
+    (``ui.models.extractive_provider_from_config``). The request cut
+    (``build_note_request``), autofill and prefill (``note_fill``) and Check 6
+    (``note_check``) each call this with the document and config they already
+    hold, so all agree; the Note tab's chooser reads Check 6's warning.
+    Pure: reads no file and holds no text."""
+    return consultation_boundary(document, config.normalised_cues(), DEFAULT_SECTION_CUES)
 
 
 def mapping_drop_warnings(

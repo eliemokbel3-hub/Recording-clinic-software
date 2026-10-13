@@ -2268,6 +2268,18 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Read that section as shown (its confirmed lines, unchanged), then acknowledge.",
     ),
+    # Validation-pass plan D5 (Check 6): the note stops before a possible next
+    # patient; the lines from there on are marked in the chooser
+    # (``NEXT_PATIENT_LINE_MARK``) and only this row's own Acknowledge clears
+    # it (``SEPARATELY_ACKNOWLEDGED_CODES``). The hint names only controls that
+    # exist: "remove them from the recording on the Transcript tab" joins it
+    # with that action (the plan's Task 4.1).
+    "possible_next_patient": WarningCopy(
+        "The note stops where a new patient may have arrived",
+        None,
+        "Later lines were left out - add back any that belong with Add line to section, "
+        "then acknowledge.",
+    ),
     # Invented-text guard Task 2.8: a stored review warning written by a newer
     # version of the app, read back after a rollback (``note.from_bytes``).
     # Acknowledged like any review group — and by "Acknowledge all".
@@ -2352,9 +2364,29 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
 # after the clinician has checked the lines it flags. It changes WHICH button
 # clears the warning, never what Save, Complete, Copy or Write require. The
 # invented-text guard (D5) adds its two per-line codes: each marks lines in
-# the note that must be looked at, which one click must not wave through.
-SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset(
-    {"high_risk_omission", "number_source", "suspect_source"}
+# the note that must be looked at, which one click must not wave through. The
+# validation-pass plan (D5) adds Check 6: rare, and it withholds content.
+# ONE source (peer round 14 PR-LOW-001): each code with the plain words the
+# button's tooltip names it by, so the set the button skips and the list its
+# tooltip gives cannot drift apart.
+SEPARATELY_ACKNOWLEDGED_NAMES: Final[Mapping[str, str]] = {
+    "high_risk_omission": "something said that is not in the note (check its flagged lines)",
+    "number_source": "a quoted line with a number (check each line marked [check: number])",
+    "suspect_source": (
+        "a quoted line that may not be speech "
+        "(check each line marked [check: possibly not speech])"
+    ),
+    "possible_next_patient": (
+        "a note that stops where a new patient may have arrived "
+        "(check the lines marked [after possible next patient])"
+    ),
+}
+SEPARATELY_ACKNOWLEDGED_CODES: frozenset[str] = frozenset(SEPARATELY_ACKNOWLEDGED_NAMES)
+_SEPARATE_NAMES: Final = tuple(SEPARATELY_ACKNOWLEDGED_NAMES.values())
+# The "Acknowledge all review warnings" button's tooltip (``ui/note.py``).
+ACKNOWLEDGE_ALL_TOOLTIP: Final = (
+    "Acknowledges every review warning except those that each need their own "
+    f"Acknowledge: {', '.join(_SEPARATE_NAMES[:-1])} and {_SEPARATE_NAMES[-1]}."
 )
 
 
@@ -2619,6 +2651,12 @@ def _lead_words(text: str, *, max_chars: int = 60) -> str:
 # mark (``"[flagged] <section> - …"``). Plain ASCII — no glyph the Windows UI
 # font may lack.
 FLAGGED_LINE_MARK = "[flagged] "
+# Validation-pass plan D6 (decision 0.5 (a); the practitioner's front-mark
+# choice, 2026-10-13): the mark on a chooser entry at or after a possible next
+# patient, after any ``FLAGGED_LINE_MARK`` and before the speaker, for the
+# same reason the flagged mark is at the front — a clinician adding a line
+# back is never steered blindly to the other person's lines.
+NEXT_PATIENT_LINE_MARK = "[after possible next patient] "
 
 
 def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
@@ -2630,6 +2668,18 @@ def flagged_segments(warnings: Sequence[NoteWarning]) -> frozenset[int]:
         if warning.note_warning_code == "high_risk_omission"
         and (coords := warning.source_coords) is not None
     )
+
+
+def next_patient_segment(warnings: Sequence[NoteWarning]) -> int | None:
+    """The first segment Check 6 withheld (``possible_next_patient``, one per
+    note, located by its coordinates), or None — the chooser reads the
+    boundary from the warning, so it agrees with the request cut by
+    construction (validation-pass plan D2's one result)."""
+    for warning in warnings:
+        coords = warning.source_coords
+        if warning.note_warning_code == "possible_next_patient" and coords is not None:
+            return coords.segment_index
+    return None
 
 
 # Said on the count line while "Show flagged lines only" hides every line the
@@ -2685,13 +2735,18 @@ def eligible_utterances(
     clinician_speaker: str | None,
     in_note: Collection[int],
     flagged: Collection[int] = (),
+    boundary: int | None = None,
 ) -> tuple[UtteranceChoice, ...]:
     """The utterances the clinician may ADD: every segment with quotable
     text whose index is not already carried by the working note (a line
     present anywhere in the note is refused — D14), in transcript order. A
     segment in ``flagged`` is marked (``FLAGGED_LINE_MARK`` after its number),
-    never moved; a segment holding a suspect word carries ``suspect_prefix``
-    before its words (invented-text guard D4)."""
+    never moved; a segment at or after ``boundary`` (Check 6's withheld
+    segment, ``next_patient_segment``) carries ``NEXT_PATIENT_LINE_MARK``
+    after that, flagged or not (validation-pass plan D6); a segment holding a
+    suspect word carries ``suspect_prefix`` before its words (invented-text
+    guard D4). So a label reads
+    ``"<n>. [flagged] [after possible next patient] <speaker>: …"``."""
     choices: list[UtteranceChoice] = []
     for index, segment in enumerate(document.transcript_segments):
         if index in in_note:
@@ -2707,8 +2762,9 @@ def eligible_utterances(
         )
         mark = index in flagged
         flag = FLAGGED_LINE_MARK if mark else ""
+        after = NEXT_PATIENT_LINE_MARK if boundary is not None and index >= boundary else ""
         label = (
-            f"{index + 1}. {flag}{segment.speaker}: "
+            f"{index + 1}. {flag}{after}{segment.speaker}: "
             f"{suspect_prefix(segment)}{_lead_words(text)}"
         )
         choices.append(UtteranceChoice(index, label, allowed, mark))
@@ -4616,8 +4672,11 @@ __all__ = [
     "UNFINISHED_STORE_WARNING",
     "FLAGGED_FILTER_EMPTY_LINE",
     "FLAGGED_LINE_MARK",
+    "NEXT_PATIENT_LINE_MARK",
     "SELECTION_NOT_COPIED",
     "SEPARATELY_ACKNOWLEDGED_CODES",
+    "SEPARATELY_ACKNOWLEDGED_NAMES",
+    "ACKNOWLEDGE_ALL_TOOLTIP",
     "SUSPECT_SEGMENT_MARK",
     "WARNING_COPY",
     "AttributionInputs",
@@ -4669,6 +4728,7 @@ __all__ = [
     "model_file_report_lines",
     "model_report_lines",
     "models_ready",
+    "next_patient_segment",
     "prefilled_lines",
     "provenance_label",
     "render_note_sections",
