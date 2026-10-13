@@ -482,6 +482,102 @@ class TestCheckMarks:
         assert render_note(_note(), "verbatim") == VERBATIM_BODY
 
 
+_NUMBER_AND_UNSURE = (_line_warning("number_source"), _line_warning("hedged_source"))
+
+
+class TestUnsureMark:
+    """Validation-pass plan D7 (Task 3.1): ``hedged_source`` marks its line
+    ``[check: unsure]`` by the guard's convention, LAST after the guard's two
+    kinds — in Clean, verbatim and a prose section's count, the same from a
+    note reloaded from its bytes; Copy and the Cliniko body never carry it."""
+
+    def test_the_code_maps_to_the_unsure_mark_last(self) -> None:
+        assert note_module.LINE_MARK_CODES == {
+            "number_source": "number",
+            "suspect_source": "possibly not speech",
+            "hedged_source": "unsure",
+        }
+        assert note_module.UNSURE_LINE_MARK == "unsure"
+
+    def test_clean_and_verbatim_show_number_then_unsure(self) -> None:
+        note = _note(warnings=_NUMBER_AND_UNSURE)
+        assert render_note(note, "clean").split("\n\n")[0] == (
+            "Presenting complaint\n"
+            "the numbness is worse at night  [check: number]  [check: unsure]"
+        )
+        assert render_note(note, "verbatim").split("\n\n")[0] == (
+            "Presenting complaint:\n"
+            "  - the numbness is worse at night  "
+            "[check: number - check: unsure - from transcript]"
+        )
+        alone = _note(warnings=(_line_warning("hedged_source"),))
+        assert render_note(alone, "clean").startswith(
+            "Presenting complaint\nthe numbness is worse at night  [check: unsure]\n"
+        )
+
+    def test_a_prose_section_counts_its_unsure_lines(self) -> None:
+        numbered = _quoted("q1", "treatment_performed", 2, _NUMBERED_TEXT, SPEAKER_1)
+        treatment = GeneratedSection(
+            section_key="treatment_performed", note_assertions=(_config_decided(), numbered)
+        )
+        rendering = StyleRendering(
+            section_key="treatment_performed",
+            prose_text="An ice pack and two sessions a week.",
+            input_digest=section_input_digest(treatment),
+            verdict="passed",
+        )
+        note = _note(
+            style="narrative",
+            sections=(_sections()[0], _sections()[1], treatment),
+            style_renderings=(rendering,),
+            warnings=(_line_warning("number_source", "q1"), _line_warning("hedged_source", "q1")),
+        )
+        body = render_note(note, "narrative")
+        assert body.endswith(
+            "Treatment performed\nAn ice pack and two sessions a week.\n"
+            f"[includes 1 line {PREFILLED_MARK}; 1 line check: number; 1 line check: unsure]"
+        )
+        reloaded = GeneratedNote.from_bytes(note.to_bytes())
+        assert render_note(reloaded, "narrative") == body
+        assert render_note(note, "narrative", check_marks=False).endswith(
+            f"two sessions a week.\n[includes 1 line {PREFILLED_MARK}]"
+        )
+
+    def test_a_reloaded_note_shows_the_same_marks(self) -> None:
+        note = _note(warnings=_NUMBER_AND_UNSURE)
+        reloaded = GeneratedNote.from_bytes(note.to_bytes())
+        assert [w.note_warning_code for w in reloaded.note_warnings] == [
+            "number_source",
+            "hedged_source",
+        ]
+        for style in ("clean", "verbatim"):
+            assert render_note(reloaded, style) == render_note(note, style), style
+        quoted = models.render_note_sections(reloaded)[0].assertions[0]
+        assert quoted.marks == ("check: number", "check: unsure")
+
+    def test_copy_and_the_cliniko_body_never_carry_it(self) -> None:
+        from scribe_desktop.draft_write import render_targets
+
+        note = _note(warnings=_NUMBER_AND_UNSURE)
+        assert render_note(note, "clean", check_marks=False) == CLEAN_BODY
+        assert render_note(note, "verbatim", check_marks=False) == VERBATIM_BODY
+        copied = models.format_note_body(note, check_marks=False)
+        assert "[check:" not in copied and "unsure" not in copied
+        for style in ("clean", "verbatim"):
+            lines = note_module.render_section_lines(
+                note, note.note_sections[0], style, apparatus=False
+            )
+            assert lines == [PATIENT_SYMPTOM], style
+            # The Cliniko Write's own grouping over those lines (draft-write D7).
+            written = [
+                line
+                for _target, target_lines in render_targets(note, _profile(), style).values()
+                for line in target_lines
+            ]
+            assert PATIENT_SYMPTOM in written, style
+            assert not any("check:" in line or "unsure" in line for line in written), style
+
+
 class TestSectionInputDigest:
     def _section(self, *texts: str) -> GeneratedSection:
         return GeneratedSection(

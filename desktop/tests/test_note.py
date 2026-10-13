@@ -672,6 +672,8 @@ class TestWarningTaxonomy:
         assert NOTE_WARNING_SEVERITY["suspect_source"] == "review"
         assert NOTE_WARNING_SEVERITY[note_module.UNKNOWN_REVIEW_WARNING] == "review"
         assert note_module.UNKNOWN_REVIEW_WARNING == "unknown_review_warning"
+        # Validation-pass plan D7: the hedge mark's code.
+        assert NOTE_WARNING_SEVERITY["hedged_source"] == "review"
 
 
 def _stored_with_warning(warning: dict[str, object]) -> bytes:

@@ -677,6 +677,26 @@ EXTRACTIVE_CELLS: tuple[ExtractiveCell, ...] = (
         expected_mapped=(("t-presenting", (0, 1)), ("t-assessment", (2,))),
         carries=(1,),
     ),
+    # Validation-pass plan D7 (Task 3.1): the patient's hedged line is quoted
+    # and draws ONE `hedged_source`; the clinician's own hedged line is quoted
+    # and draws none.
+    ExtractiveCell(
+        fixture_id="ex-patient-hedge",
+        turns=(
+            ("I think my left knee is sore.", SPEAKER_1),
+            ("On examination the knee is probably stable.", SPEAKER_2),
+        ),
+        clinician_speaker=SPEAKER_2,
+        expected=(
+            ExpectedAssertion("presenting_complaint", 0, "I think my left knee is sore."),
+            ExpectedAssertion(
+                "objective_examination", 1, "On examination the knee is probably stable."
+            ),
+        ),
+        expected_reviews=("hedged_source",),
+        material_segments=(1,),
+        expected_mapped=(("t-presenting", (0,)), ("t-assessment", (1,))),
+    ),
     # Validation-pass plan Task 1.5: one declared cell per boundary failure
     # mode. The withheld lines are NOT in the note (D3), Check 6 says so once
     # (D5), and a withheld claim word still draws Check 4 (decision 0.5 (a)).

@@ -244,6 +244,7 @@ from scribe_desktop.note import (
     line_marks,
     normalise_token,
     reconstruct_span_text,
+    spoken_by_confirmed_clinician,
     transcript_digest,
 )
 from scribe_desktop.note_config import (
@@ -494,12 +495,12 @@ def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
 
 
 # The spoken hedges (validation-pass plan D7, frozen in its Task 0.8 — C3;
-# nothing reads them until the hedge mark's Task 3.1): a quoted line from a
-# speaker who is not the clinician that holds one of these phrases (whole
-# tokens, in a row, typographic apostrophes folded first) will be the
-# "unsure" line mark's evidence. A CLOSED tuple taken from two published
-# hedging lists, never from the validation scripts — Prince, Frader & Bosk
-# (1982), "On hedging in physician-physician discourse", plausibility
+# read by ``note.text_holds_hedge`` since the hedge mark's Task 3.1): a quoted
+# line from a speaker who is not the clinician that holds one of these phrases
+# (whole tokens, in a row, typographic apostrophes folded first) is the
+# "unsure" line mark's evidence (Check 1's ``hedged_source``). A CLOSED tuple
+# taken from two published hedging lists, never from the validation scripts
+# — Prince, Frader & Bosk (1982), "On hedging in physician-physician discourse", plausibility
 # shields; and Hyland (2005), "Metadiscourse", appendix list of hedges —
 # keeping only what a speaker says about their OWN certainty: no entry that
 # IS a modal verb ("may" is also a month; a fixed phrase holding one, "as far
@@ -543,7 +544,10 @@ def reconstruction_warnings(
     coordinates say; review warnings for included low-confidence words; and
     (invented-text guard D5) ONE ``number_source`` / ``suspect_source`` per
     line whose words earn that mark (``note.line_marks``), on the line's
-    span.
+    span — and (validation-pass plan D7) ONE ``hedged_source`` the same way,
+    for a line its segment's speaker said who is not the note's confirmed
+    clinician (``note.spoken_by_confirmed_clinician``; with no confirmed
+    clinician, nobody is).
 
     Uncertainty warnings and line marks are emitted only for assertions that
     reconstruct exactly: when reconstruction fails, the cited words are NOT
@@ -594,7 +598,9 @@ def reconstruction_warnings(
                             source_coords=SourceCoords(coords.segment_index, index, index),
                         )
                     )
-            for kind in line_marks(words):
+            speaker = document.transcript_segments[coords.segment_index].speaker
+            clinician = spoken_by_confirmed_clinician(speaker, note.clinician_speaker)
+            for kind in line_marks(words, clinician=clinician):
                 warnings.append(
                     NoteWarning(
                         note_warning_code=mark_codes[kind],

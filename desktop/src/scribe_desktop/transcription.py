@@ -363,8 +363,9 @@ def words_hold_suspect(words: Iterable[TranscriptWord]) -> bool:
     mark, the bounded carry, learning and the suspect-segment count all ask
     it (review round 5 LOW-007). The per-WORD readers (Check 4, the trigger
     match, the spoken pause, the harness's ``warned``, the next-patient
-    boundary's phrases and the self-correction opener
-    ``note.opens_with_correction``) read the field."""
+    boundary's phrases, the self-correction opener
+    ``note.opens_with_correction`` and the hedge test ``note.words_hold_hedge``)
+    read the field."""
     return any(word.suspect for word in words)
 
 

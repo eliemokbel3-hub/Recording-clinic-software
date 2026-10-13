@@ -5076,9 +5076,10 @@ def _warning_codes(screen: Any) -> set[str]:
 def _acknowledge_everything(screen: Any) -> None:
     """``_acknowledge_all`` and then, each by its own row, every open
     line-mark code (invented-text guard D5: the per-line codes "Acknowledge
-    all" never clears, ``note.LINE_MARK_CODES``) — what a Save-opening review
-    does over a transcript that quotes a number (`_EDIT_TURNS`' plan line
-    carries "two")."""
+    all" never clears, ``note.LINE_MARK_CODES``; the validation-pass hedge
+    mark's code is among them but already cleared, and acknowledging it again
+    changes nothing) — what a Save-opening review does over a transcript that
+    quotes a number (`_EDIT_TURNS`' plan line carries "two")."""
     from scribe_desktop.note import LINE_MARK_CODES
 
     screen._acknowledge_all()

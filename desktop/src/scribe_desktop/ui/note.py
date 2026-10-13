@@ -62,6 +62,10 @@ word the transcription guard marked ``suspect`` carries ``[check: number]`` /
 editor row (after ``[flagged] ``); its review group — ``number_source`` /
 ``suspect_source`` — is in the same separately-acknowledged set. Copy renders
 the note WITHOUT the check marks (decision 0.5; the pre-filled mark stays).
+The validation-pass plan's D7 adds a third, ``[check: unsure]`` (a quoted line
+someone other than the confirmed clinician said with a spoken hedge,
+``hedged_source``), shown and left out of Copy the same way — but "Acknowledge
+all review warnings" clears its group.
 
 The next-patient boundary (validation-pass plan D5, D6). Check 6's
 ``possible_next_patient`` — one warning when the note stops where a new patient

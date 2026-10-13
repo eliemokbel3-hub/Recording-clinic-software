@@ -1714,6 +1714,85 @@ class TestReviewEditModels:
         }
         assert unmatched[2].state == "added" and unmatched[2].marks == ()
 
+    def test_a_row_carries_the_unsure_mark_exactly_where_check_1_does(
+        self, tmp_path: Path
+    ) -> None:
+        """Validation-pass plan D7 (Task 3.1): the editor reads the draft's
+        confirmed clinician into ``line_marks``, so a hedged line someone else
+        said is marked ``[check: unsure]`` at the front of its row and the
+        clinician's own hedged line is not — the same lines Check 1 marks."""
+        from scribe_desktop.note import GeneratedNote, transcript_digest
+        from scribe_desktop.note_check import reconstruction_warnings
+
+        turns = (
+            ("I think my left knee is sore", SPEAKER_1),
+            ("On examination the knee is probably stable", SPEAKER_2),
+            # Unrouted, with a hedge: the added-row positive control.
+            ("Maybe I walked to the shop this morning", SPEAKER_1),
+        )
+        document = _document(
+            tuple(
+                TranscriptSegment(
+                    start_seconds=float(index * 10),
+                    end_seconds=float(index * 10 + 5),
+                    speaker=speaker,
+                    transcript_words=_review_words(text),
+                )
+                for index, (text, speaker) in enumerate(turns)
+            )
+        )
+        config = load_note_config(tmp_path / "config")
+        draft = compose_draft(
+            document,
+            config,
+            ExtractiveNoteProvider(cues=config.normalised_cues()),
+            "template-a",
+            clinician_speaker=SPEAKER_2,
+        )
+        rows = {
+            row.segment_index: row
+            for row in models.editable_lines(draft, document, removed=set(), additions={})
+        }
+        assert set(rows) == {0, 1}, "the shipped cues must route both lines"
+        assert rows[0].marks == ("unsure",)
+        assert rows[0].label.startswith(
+            f"[check: unsure] {models.section_title(rows[0].section_key)} - "
+        )
+        assert rows[1].marks == ()  # the clinician's own hedge
+        # The same lines Check 1 marks over the same sections and clinician.
+        digest = transcript_digest(document)
+        note = GeneratedNote(
+            session_id=draft.session_id,
+            created_at=datetime(2026, 10, 13, tzinfo=UTC),
+            template_profile_id=draft.template_profile_id,
+            provider_name="extractive-v1",
+            clinician_speaker=draft.clinician_speaker,
+            transcript_digest=digest,
+            config_digest=digest,
+            note_sections=draft.note_sections,
+        )
+        checked = {
+            warning.assertion_id
+            for warning in reconstruction_warnings(note, document)
+            if warning.note_warning_code == "hedged_source"
+        }
+        assert checked == {row.assertion_id for row in rows.values() if "unsure" in row.marks}
+        # An added row of the patient's unrouted hedged line is judged the same.
+        added_leg = _manual_line(document, 2, "presenting_complaint")
+        added = {
+            row.segment_index: row
+            for row in models.editable_lines(
+                draft, document, removed=set(), additions={added_leg.assertion_id: added_leg}
+            )
+        }
+        assert added[2].state == "added" and added[2].marks == ("unsure",)
+        # With no confirmed clinician nobody is the clinician: both rows marked.
+        unconfirmed = draft.model_copy(update={"clinician_speaker": None})
+        assert {
+            row.segment_index: row.marks
+            for row in models.editable_lines(unconfirmed, document, removed=set(), additions={})
+        } == {0: ("unsure",), 1: ("unsure",)}
+
     def test_flagged_segments_reads_only_the_omission_warnings(self) -> None:
         from scribe_desktop.note import NoteWarning, SourceCoords
 
@@ -1804,6 +1883,34 @@ class TestReviewEditModels:
         )
         assert models.acknowledge_all_codes(only_marks, ()) == ()
         assert "unknown_review_warning" not in models.SEPARATELY_ACKNOWLEDGED_CODES
+
+    def test_acknowledge_all_clears_the_unsure_mark(self) -> None:
+        """Validation-pass plan D7: ``hedged_source`` marks its lines like the
+        guard's two codes but is NOT separately acknowledged — "Acknowledge
+        all" clears it, and its copy names the mark it puts on a line."""
+        from scribe_desktop.note import NoteWarning
+
+        assert "hedged_source" not in models.SEPARATELY_ACKNOWLEDGED_CODES
+        summary = models.summarise_warnings(
+            (
+                NoteWarning(note_warning_code="number_source", severity="review"),
+                NoteWarning(note_warning_code="hedged_source", severity="review"),
+                NoteWarning(note_warning_code="hedged_source", severity="review"),
+            )
+        )
+        assert [(group.code, group.count) for group in summary.review] == [
+            ("number_source", 1),
+            ("hedged_source", 2),
+        ]
+        assert models.acknowledge_all_codes(summary, ()) == ("hedged_source",)
+        copy = models.WARNING_COPY["hedged_source"]
+        assert copy.title == "A quoted line says the speaker was unsure"
+        assert copy.blocks is None  # review, never a block
+        assert copy.clear_hint == (
+            "Check each line marked [check: unsure] against the transcript beside the note, "
+            "then acknowledge."
+        )
+        assert "unsure" not in models.ACKNOWLEDGE_ALL_TOOLTIP
 
     def test_complete_names_an_open_line_mark_group(self) -> None:
         """Task 2.5: the per-line groups count where Complete reads them —

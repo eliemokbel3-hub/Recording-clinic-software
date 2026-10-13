@@ -307,6 +307,11 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
     # and "Acknowledge all" never clears either (``ui.models``).
     "number_source": "review",
     "suspect_source": "review",
+    # Validation-pass plan D7 (decision 0.1 (a)): ONE per quoted line spoken by
+    # someone other than the confirmed clinician that holds a spoken hedge
+    # (``note_check.HEDGE_PHRASES``), from the same ``line_marks`` rule. It
+    # marks its line as the two above do, but "Acknowledge all" clears it.
+    "hedged_source": "review",
     # Check 2 — structured contradictions (Task 5.2). Three codes because
     # severity is a property of the code: a contradiction resting on
     # transcript evidence whose words fall below UNCERTAINTY_THRESHOLD is
@@ -371,10 +376,16 @@ NOTE_WARNING_SEVERITY: Final[Mapping[str, NoteWarningSeverity]] = {
 # section's "[includes …]" line.
 NUMBER_LINE_MARK: Final = "number"
 SUSPECT_LINE_MARK: Final = "possibly not speech"
+# Validation-pass plan D7: the third kind, last in rendering order.
+UNSURE_LINE_MARK: Final = "unsure"
 LINE_MARK_CODES: Final[Mapping[str, str]] = {
     "number_source": NUMBER_LINE_MARK,
     "suspect_source": SUSPECT_LINE_MARK,
+    "hedged_source": UNSURE_LINE_MARK,
 }
+# Folded to a plain apostrophe before a hedge is looked for, as Check 5 folds
+# it (``note_check._polarity_mark``).
+_TYPOGRAPHIC_APOSTROPHE: Final = "’"
 
 
 def check_mark(kind: str) -> str:
@@ -382,11 +393,45 @@ def check_mark(kind: str) -> str:
     return f"check: {kind}"
 
 
-def line_marks(words: Sequence[TranscriptWord]) -> tuple[str, ...]:
+def text_holds_hedge(text: str) -> bool:
+    """True when ``text``'s content tokens — typographic apostrophes folded
+    first — hold a spoken hedge (``note_check.HEDGE_PHRASES``, frozen by the
+    validation-pass plan's Task 0.8) as whole tokens in a row. THE one hedge
+    test: the line mark reads it through ``words_hold_hedge`` and the
+    validation harness reads it over a script line (D7). Returns a bool; no
+    text leaves it."""
+    # Read here, not imported at the top: ``note_check`` imports this module
+    # (as ``finalise_note`` reads ``check_note``).
+    from scribe_desktop.note_check import HEDGE_PHRASES
+
+    tokens = content_tokens(text.replace(_TYPOGRAPHIC_APOSTROPHE, "'"))
+    for phrase in HEDGE_PHRASES:
+        wanted = tuple(phrase.split())
+        if any(
+            tokens[start : start + len(wanted)] == wanted
+            for start in range(len(tokens) - len(wanted) + 1)
+        ):
+            return True
+    return False
+
+
+def words_hold_hedge(words: Sequence[TranscriptWord]) -> bool:
+    """``text_holds_hedge`` over the words the transcription guard did NOT
+    mark ``suspect`` (invented-text guard D6: a suspect word supplies no
+    phrase; it is skipped, as in ``opens_with_correction``)."""
+    return text_holds_hedge(" ".join(word.word_text for word in words if not word.suspect))
+
+
+def line_marks(words: Sequence[TranscriptWord], *, clinician: bool) -> tuple[str, ...]:
     """The line-mark kinds a quoted line's ``words`` earn, in
     ``LINE_MARK_CODES`` order (invented-text guard D5): ``NUMBER_LINE_MARK``
     when any word is a number (``is_number_token``, the transcript's own
-    rule), ``SUSPECT_LINE_MARK`` when any word is ``suspect``. THE one rule:
+    rule), ``SUSPECT_LINE_MARK`` when any word is ``suspect``, and
+    (validation-pass plan D7) ``UNSURE_LINE_MARK`` when the line is NOT the
+    confirmed clinician's (``clinician`` — the caller's
+    ``spoken_by_confirmed_clinician`` for the line's segment) and its words
+    hold a spoken hedge (``words_hold_hedge``). So a transcript whose only
+    speaker is the confirmed clinician is never marked unsure. THE one rule:
     Check 1 emits its codes from it and the line editor marks its rows from
     it (the editor cannot read the warnings). Pure; reads no config."""
     kinds: list[str] = []
@@ -394,6 +439,8 @@ def line_marks(words: Sequence[TranscriptWord]) -> tuple[str, ...]:
         kinds.append(NUMBER_LINE_MARK)
     if words_hold_suspect(words):
         kinds.append(SUSPECT_LINE_MARK)
+    if not clinician and words_hold_hedge(words):
+        kinds.append(UNSURE_LINE_MARK)
     return tuple(kinds)
 
 
@@ -2985,6 +3032,7 @@ __all__ = [
     "SECTION_TITLES",
     "SUSPECT_LINE_MARK",
     "UNKNOWN_REVIEW_WARNING",
+    "UNSURE_LINE_MARK",
     "CanonicalSection",
     "ConfirmationDecision",
     "DecidedBy",
@@ -3044,7 +3092,9 @@ __all__ = [
     "spoken_by_confirmed_clinician",
     "strip_token_punctuation",
     "text_digest",
+    "text_holds_hedge",
     "transcript_digest",
     "usable_rendering",
     "whole_utterance_assertion",
+    "words_hold_hedge",
 ]

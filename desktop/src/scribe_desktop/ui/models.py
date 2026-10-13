@@ -98,6 +98,7 @@ from scribe_desktop.note import (
     provenance_label,
     reconstruct_span_text,
     render_note,
+    spoken_by_confirmed_clinician,
 )
 from scribe_desktop.note_config import (
     # ``_no_control_chars`` is package-private by name, shared deliberately
@@ -2201,6 +2202,16 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         "Check each line marked [check: possibly not speech] against the transcript beside "
         "the note, remove or keep it, then acknowledge.",
     ),
+    # Validation-pass plan D7: one per quoted line someone other than the
+    # clinician said with a spoken hedge, marking it "[check: unsure]". Unlike
+    # the two above, "Acknowledge all" clears it (not in
+    # ``SEPARATELY_ACKNOWLEDGED_CODES``).
+    "hedged_source": WarningCopy(
+        "A quoted line says the speaker was unsure",
+        None,
+        "Check each line marked [check: unsure] against the transcript beside the note, "
+        "then acknowledge.",
+    ),
     "contradiction_low_confidence": WarningCopy(
         "A possible contradiction rests on an uncertain transcript word",
         None,
@@ -2365,7 +2376,9 @@ def summarise_warnings(warnings: Sequence[NoteWarning]) -> WarningSummary:
 # clears the warning, never what Save, Complete, Copy or Write require. The
 # invented-text guard (D5) adds its two per-line codes: each marks lines in
 # the note that must be looked at, which one click must not wave through. The
-# validation-pass plan (D5) adds Check 6: rare, and it withholds content.
+# validation-pass plan (D5) adds Check 6: rare, and it withholds content. Its
+# hedge mark (D7, ``hedged_source``) is deliberately NOT here: "Acknowledge
+# all" clears it.
 # ONE source (peer round 14 PR-LOW-001): each code with the plain words the
 # button's tooltip names it by, so the set the button skips and the list its
 # tooltip gives cannot drift apart.
@@ -2869,7 +2882,12 @@ def editable_lines(
                     state = "removed"
             mark = state != "removed" and segment_index in flagged
             # A moved row's line is in the note as its re-added manual leg.
-            kinds = _row_marks(document, manual if state == "moved" else assertion, state)
+            kinds = _row_marks(
+                document,
+                manual if state == "moved" else assertion,
+                state,
+                clinician_speaker=draft.clinician_speaker,
+            )
             label = f"{section_title(section.section_key)} - {_lead_words(assertion.text)}"
             lines.append(
                 EditableLine(
@@ -2896,7 +2914,9 @@ def editable_lines(
         replaced_by = replaced.get(assertion.assertion_id)
         mark = coords.segment_index in flagged
         added_state: LineState = "replaced" if replaced_by is not None else "added"
-        kinds = _row_marks(document, assertion, added_state)
+        kinds = _row_marks(
+            document, assertion, added_state, clinician_speaker=draft.clinician_speaker
+        )
         label = f"{section_title(assertion.section_key)} - {_lead_words(assertion.text)}"
         lines.append(
             EditableLine(
@@ -2926,11 +2946,18 @@ def row_label(label: str, *, flagged: bool, marks: Sequence[str]) -> str:
 
 
 def _row_marks(
-    document: TranscriptDocument, assertion: NoteAssertion | None, state: LineState
+    document: TranscriptDocument,
+    assertion: NoteAssertion | None,
+    state: LineState,
+    *,
+    clinician_speaker: str | None,
 ) -> tuple[str, ...]:
     """The mark kinds of a row whose line is in the note — ``line_marks``
     over the words under ``assertion``'s coordinates (the editor reads the
-    document, never the warnings, which it cannot see); none for a removed
+    document, never the warnings, which it cannot see), its ``clinician``
+    the same test Check 1 makes against the draft's confirmed clinician
+    (validation-pass plan D7: ``spoken_by_confirmed_clinician`` for the
+    line's segment); none for a removed
     or replaced line, or a line Check 1 raises no mark on either —
     coordinates the transcript does not have, or words that do not rebuild
     the line's text (its error owns those; review round 5 LOW-002)."""
@@ -2939,13 +2966,15 @@ def _row_marks(
     coords = assertion.note_span.source_coords
     if coords is None or coords.segment_index >= len(document.transcript_segments):
         return ()
-    words = document.transcript_segments[coords.segment_index].transcript_words
+    segment = document.transcript_segments[coords.segment_index]
+    words = segment.transcript_words
     if coords.last_word_index >= len(words):
         return ()
     span = words[coords.first_word_index : coords.last_word_index + 1]
     if reconstruct_span_text(span) != assertion.text:
         return ()
-    return line_marks(span)
+    clinician = spoken_by_confirmed_clinician(segment.speaker, clinician_speaker)
+    return line_marks(span, clinician=clinician)
 
 
 @dataclass(frozen=True)

@@ -18,11 +18,13 @@ from pathlib import Path
 
 import pytest
 
+from fixtures.heldout_transcripts import HELD_OUT_CASES, HeldOutCase
 from scribe_desktop import note_check as note_check_module
 from scribe_desktop.note import (
     CANONICAL_SECTION_KEYS,
     SECTION_INDEX,
     ConfirmationDecision,
+    ExtractiveNoteProvider,
     GeneratedNote,
     GeneratedSection,
     NoteAssertion,
@@ -32,10 +34,14 @@ from scribe_desktop.note import (
     SourceCoords,
     line_marks,
     reconstruct_span_text,
+    render_note,
     text_digest,
+    text_holds_hedge,
     transcript_digest,
+    words_hold_hedge,
 )
 from scribe_desktop.note_check import (
+    HEDGE_PHRASES,
     CheckTargetMismatchError,
     NoteCheckError,
     _is_high_risk_token,
@@ -55,6 +61,8 @@ from scribe_desktop.note_config import (
     SectionMapping,
     TemplateProfile,
     TemplateTarget,
+    build_note_request,
+    load_note_config,
 )
 from scribe_desktop.note_fill import autofill_proposals, prefill_proposals
 from scribe_desktop.speech import SAMPLE_RATE
@@ -1994,11 +2002,248 @@ class TestCheck1LineMarks:
         )
         suspect_words = document.transcript_segments[0].transcript_words
         plain_words = document.transcript_segments[1].transcript_words
-        assert line_marks(suspect_words) == ("number", "possibly not speech")
-        assert line_marks(suspect_words[2:4]) == ("possibly not speech",)
-        assert line_marks(plain_words) == ()
-        assert line_marks(()) == ()
-        assert line_marks(_words("twenty-one sets")) == ("number",)
+        for clinician in (False, True):
+            assert line_marks(suspect_words, clinician=clinician) == (
+                "number",
+                "possibly not speech",
+            )
+            assert line_marks(suspect_words[2:4], clinician=clinician) == (
+                "possibly not speech",
+            )
+            assert line_marks(plain_words, clinician=clinician) == ()
+            assert line_marks((), clinician=clinician) == ()
+            assert line_marks(_words("twenty-one sets"), clinician=clinician) == ("number",)
+
+
+def _hedged_codes(warnings: tuple[object, ...]) -> list[tuple[str | None, object]]:
+    return [
+        (w.assertion_id, w.source_coords)  # type: ignore[attr-defined]
+        for w in warnings
+        if w.note_warning_code == "hedged_source"  # type: ignore[attr-defined]
+    ]
+
+
+class TestHedgeTest:
+    """Validation-pass plan D7: THE hedge test over a line's text — a frozen
+    ``HEDGE_PHRASES`` entry as whole content tokens in a row."""
+
+    @pytest.mark.parametrize("phrase", HEDGE_PHRASES)
+    def test_every_frozen_hedge_is_found_in_a_sentence(self, phrase: str) -> None:
+        assert text_holds_hedge(f"Well, {phrase.capitalize()}, the knee is sore.")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Possible cauda equina signs need urgent review.",  # "possible", not "possibly"
+            "I thought it was the left knee.",
+            "Think about the exercises.",
+            "I don't think so.",  # not "i think" in a row
+            "No doubt it is the knee.",  # "doubt" alone is a booster here
+            "It seem sore.",
+            "If I had to guess, the left.",  # "guess" alone, not "i guess"
+            "",
+        ],
+    )
+    def test_a_near_miss_is_not_a_hedge(self, text: str) -> None:
+        assert not text_holds_hedge(text)
+
+    def test_case_punctuation_fillers_and_typographic_apostrophes_are_read_through(
+        self,
+    ) -> None:
+        assert text_holds_hedge("PROBABLY.")
+        assert text_holds_hedge("I, um, think it's sore")  # a filler is not content
+        assert text_holds_hedge("It’s ‘probably’ the right side")
+        assert text_holds_hedge("It seems… better")
+
+    def test_a_suspect_word_supplies_no_hedge(self) -> None:
+        words = _words("I think it is sore")
+        assert words_hold_hedge(words)
+        guarded = tuple(word.model_copy(update={"suspect": True}) for word in words)
+        assert not words_hold_hedge(guarded)
+        half = (guarded[0], *words[1:])  # "i" suspect: "think" alone is no hedge
+        assert not words_hold_hedge(half)
+
+    def test_the_line_mark_needs_a_hedge_and_a_speaker_other_than_the_clinician(self) -> None:
+        hedged = _words("I think my knee is sore")
+        assert line_marks(hedged, clinician=False) == ("unsure",)
+        assert line_marks(hedged, clinician=True) == ()
+        both = _words("Maybe 3 times a week")
+        assert line_marks(both, clinician=False) == ("number", "unsure")
+        assert line_marks(both, clinician=True) == ("number",)
+
+
+class TestCheck1HedgeMark:
+    """Validation-pass plan D7 (Task 3.1): Check 1 emits ONE
+    ``hedged_source`` (review) per quoted line someone other than the
+    confirmed clinician said with a spoken hedge, on the line's span, after
+    the guard's two codes; never for the clinician's own line or a line
+    that does not reconstruct."""
+
+    def test_a_patient_hedged_line_draws_one_on_its_span(self) -> None:
+        document = _document(("I think my knee is probably sore.", SPEAKER_1))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = reconstruction_warnings(note, document)
+        # Two hedges in the line: still ONE warning, for the line.
+        assert _hedged_codes(warnings) == [("t0", SourceCoords(0, 0, 6))]
+        assert [(w.severity, w.section_key) for w in warnings] == [
+            ("review", "presenting_complaint")
+        ]
+
+    def test_the_clinicians_own_hedged_line_draws_none(self) -> None:
+        document = _document(("On examination the knee is probably sprained.", SPEAKER_2))
+        note = _note(document, (_quoted(document, 0, "objective_examination"),))
+        assert reconstruction_warnings(note, document) == ()
+
+    def test_with_no_confirmed_clinician_nobody_is_the_clinician(self) -> None:
+        """``spoken_by_confirmed_clinician``: with no confirmed role, every
+        speaker's hedged line is marked (the app always has one, A2)."""
+        document = _document(
+            ("I think my knee is sore.", SPEAKER_1),
+            ("The knee is probably sprained.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint", aid="t0"),
+                _quoted(document, 1, "presenting_complaint", aid="t1"),
+            ),
+            clinician_speaker=None,
+        )
+        assert [aid for aid, _coords in _hedged_codes(reconstruction_warnings(note, document))] == [
+            "t0",
+            "t1",
+        ]
+
+    def test_a_single_cluster_transcript_is_never_marked(self) -> None:
+        """Decision 0.1's single-cluster rule: the only speaker is the
+        confirmed clinician, so no line is marked unsure."""
+        document = _document(
+            ("I think the knee is sore.", SPEAKER_2),
+            ("Maybe it is the meniscus.", SPEAKER_2),
+        )
+        note = _note(
+            document,
+            (
+                _quoted(document, 0, "presenting_complaint"),
+                _quoted(document, 1, "presenting_complaint"),
+            ),
+        )
+        assert _hedged_codes(reconstruction_warnings(note, document)) == []
+
+    def test_number_and_hedge_on_one_line_in_code_order(self) -> None:
+        document = _document(("Maybe 3 times a week.", SPEAKER_1))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        assert [w.note_warning_code for w in reconstruction_warnings(note, document)] == [
+            "number_source",
+            "hedged_source",
+        ]
+
+    def test_an_invalid_or_mismatched_line_draws_none(self) -> None:
+        document = _document(("I think my knee is sore.", SPEAKER_1))
+        words = document.transcript_segments[0].transcript_words
+        tampered = NoteAssertion(
+            assertion_id="t0",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text="I think my hip is sore.",
+                provenance="transcript",
+                source_coords=SourceCoords(0, 0, len(words) - 1),
+            ),
+        )
+        phantom = NoteAssertion(
+            assertion_id="t1",
+            section_key="presenting_complaint",
+            note_span=NoteSpan(
+                span_text="anything", provenance="transcript", source_coords=SourceCoords(0, 0, 99)
+            ),
+        )
+        warnings = reconstruction_warnings(_note(document, (tampered, phantom)), document)
+        assert _codes(warnings) == ["reconstruction_mismatch", "source_coords_invalid"]
+
+    def test_a_suspect_hedged_line_draws_suspect_source_only(self) -> None:
+        document = _suspect_document(("I think my knee is sore.", SPEAKER_1), suspect=(0,))
+        note = _note(document, (_quoted(document, 0, "presenting_complaint"),))
+        assert _codes(reconstruction_warnings(note, document)) == ["suspect_source"]
+
+    def test_a_fresh_note_and_its_reload_show_the_mark_and_copy_drops_it(self) -> None:
+        """The whole path: ``check_note`` emits the code, the note carries it,
+        Clean and verbatim show ``[check: unsure]`` the same before and after
+        a reload from the note's bytes, and the Copy rendering leaves it out."""
+        document = _document(("I think my knee is sore.", SPEAKER_1))
+        bare = _note(document, (_quoted(document, 0, "presenting_complaint", aid="t0"),))
+        warnings = check_note(bare, document, _CHECK_CONFIG)
+        assert _codes(warnings) == ["hedged_source"]
+        note = GeneratedNote.model_validate(
+            {**bare.model_dump(), "note_warnings": [w.model_dump() for w in warnings]}
+        )
+        reloaded = GeneratedNote.from_bytes(note.to_bytes())
+        assert render_note(note, "clean") == (
+            "Presenting complaint\nI think my knee is sore.  [check: unsure]"
+        )
+        assert "[check: unsure - from transcript]" in render_note(note, "verbatim")
+        for style in ("clean", "verbatim"):
+            assert render_note(reloaded, style) == render_note(note, style), style
+            assert "[check:" not in render_note(reloaded, style, check_marks=False), style
+
+    @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=lambda case: case.case_id)
+    def test_the_held_out_unsure_lines(self, case: HeldOutCase) -> None:
+        """Validation-pass Task 0.9's reading rule: every case's unsure lines
+        equal its expectation, except Task 0.10's predicted divergences under
+        the frozen hedges, asserted to DIVERGE with both values named (C3: no
+        expectation is edited to pass)."""
+        got = _held_out_unsure(case)
+        if case.case_id in _PREDICTED_UNSURE_DIVERGENCES:
+            expected, predicted = _PREDICTED_UNSURE_DIVERGENCES[case.case_id]
+            assert case.unsure == expected, case.case_id
+            assert got == predicted != expected, case.case_id
+        else:
+            assert got == case.unsure, case.case_id
+
+    def test_every_predicted_unsure_divergence_is_a_held_out_case(self) -> None:
+        assert set(_PREDICTED_UNSURE_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+
+
+_VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
+
+# Task 0.10's predicted unsure divergences under the frozen hedges (C3):
+# case id -> (the case's expected unsure lines, the frozen-hedge result).
+_PREDICTED_UNSURE_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
+    "hld-19": ((3, 5), ()),  # both hedges are outside the frozen list
+    "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
+    "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
+}
+
+
+def _held_out_unsure(case: HeldOutCase) -> tuple[int, ...]:
+    """The segments whose quoted line Check 1 marks ``hedged_source`` — the
+    shipped provider's note under the validation config over the shipped
+    cues, as the held-out fixtures' routing preconditions are written (Task
+    0.9), with the request's own next-patient cut and the case's clinician."""
+    config = load_note_config(_VALIDATION_CONFIG_DIR)
+    document = case.document()
+    request = build_note_request(
+        document,
+        config,
+        config.template_profiles[0].template_profile_id,
+        clinician_speaker=case.clinician_speaker,
+    )
+    provider = ExtractiveNoteProvider(cues=config.normalised_cues())
+    assertions = tuple(
+        assertion
+        for section in provider.generate_sections(request)
+        for assertion in section.note_assertions
+    )
+    note = _note(document, assertions, clinician_speaker=case.clinician_speaker)
+    return tuple(
+        sorted(
+            {
+                warning.source_coords.segment_index
+                for warning in reconstruction_warnings(note, document)
+                if warning.note_warning_code == "hedged_source"
+                and warning.source_coords is not None
+            }
+        )
+    )
 
 
 class TestSuspectWordsInTheChecks:
