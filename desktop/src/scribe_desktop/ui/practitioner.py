@@ -201,6 +201,7 @@ from scribe_desktop.ui.style_review import (
     run_style_review,
 )
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_role
 
 _AVAILABILITY_POLL_MS: Final = 5000
 DEVICE_NAME_MAX_CHARS: Final = 200  # PractitionerProfile.device_name's bound
@@ -393,7 +394,7 @@ class PractitionerScreen(QWidget):
         self.banner_label = QLabel()
         self.banner_label.setTextFormat(Qt.TextFormat.PlainText)
         self.banner_label.setWordWrap(True)
-        self.banner_label.setStyleSheet("font-weight: bold;")
+        set_role(self.banner_label, "strong")
         self.banner_label.hide()
 
         # --- profile state --------------------------------------------------
@@ -412,7 +413,7 @@ class PractitionerScreen(QWidget):
         self.consent_notice_label = QLabel(models.CONSENT_STALE_NOTICE)
         self.consent_notice_label.setTextFormat(Qt.TextFormat.PlainText)
         self.consent_notice_label.setWordWrap(True)
-        self.consent_notice_label.setStyleSheet("font-weight: bold;")
+        set_role(self.consent_notice_label, "strong")
         self.consent_notice_label.hide()
         self.consent_checkbox = QCheckBox(models.CONSENT_CHECKBOX_LABEL)
         self.consent_checkbox.setChecked(False)
@@ -455,7 +456,7 @@ class PractitionerScreen(QWidget):
         self.availability_label = QLabel()
         self.availability_label.setTextFormat(Qt.TextFormat.PlainText)
         self.availability_label.setWordWrap(True)
-        self.availability_label.setStyleSheet("color: #b00020;")
+        set_role(self.availability_label, "error")
         self.availability_label.hide()
 
         self.record_button = QPushButton("Record my voice (about a minute)")

@@ -845,9 +845,10 @@ class TestEveryRaisedModelLineFollowsTheBuild:
         from PySide6.QtWidgets import QApplication
 
         from scribe_desktop.status import RegistrationStatus
-        from scribe_desktop.ui import main_window
+        from scribe_desktop.ui import main_window, theme
 
         qapp = QApplication.instance() or QApplication([])
+        theme.ensure_applied(qapp)
         use_frozen(monkeypatch, frozen)
         # Never the real registry (C6).
         monkeypatch.setattr(

@@ -48,6 +48,7 @@ from scribe_desktop.clinics import (
 from scribe_desktop.ui import models
 from scribe_desktop.ui.lists import NoCopyListWidget
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_role
 
 
 def _plain_label(text: str = "") -> QLabel:
@@ -90,7 +91,7 @@ class ClinicsScreen(QWidget):
         self.clinic_list = NoCopyListWidget()
         self.clinic_list.currentItemChanged.connect(lambda *_: self._on_selection_changed())
         self.load_problem_label = _plain_label()
-        self.load_problem_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.load_problem_label, "danger")
         self.load_problem_label.hide()
 
         self.name_field = QLineEdit()

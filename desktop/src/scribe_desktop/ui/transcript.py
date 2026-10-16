@@ -93,6 +93,7 @@ from scribe_desktop.transcription import (
 from scribe_desktop.ui import models
 from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_role, set_variant
 
 
 def _clear_layout(layout: QLayout) -> None:
@@ -224,7 +225,7 @@ class TranscriptScreen(QWidget):
         self.live_window.connect(self._on_live_window)
 
         self.warning_label = QLabel()
-        self.warning_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.warning_label, "danger")
         self.warning_label.setWordWrap(True)
         self.warning_label.hide()
 
@@ -308,10 +309,7 @@ class TranscriptScreen(QWidget):
         self.change_role_button = QPushButton("change")
         self.change_role_button.setFlat(True)
         self.change_role_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.change_role_button.setStyleSheet(
-            "QPushButton { border: none; color: #0645ad; text-decoration: underline; "
-            "padding: 0px; }"
-        )
+        set_variant(self.change_role_button, "link")
         self.change_role_button.setToolTip(
             "Choose the clinician yourself instead of the voice-profile match."
         )

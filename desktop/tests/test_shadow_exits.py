@@ -580,9 +580,11 @@ def test_the_list_copy_shortcut_reaches_no_clipboard(plain: bool) -> None:
     from PySide6.QtGui import QGuiApplication, QKeyEvent
     from PySide6.QtWidgets import QApplication, QListWidget
 
+    from scribe_desktop.ui import theme
     from scribe_desktop.ui.lists import NoCopyListWidget
 
     QApplication.instance() or QApplication([])
+    theme.ensure_applied(QApplication.instance())
     assert QGuiApplication.platformName() == "offscreen"
     clipboard = QGuiApplication.clipboard()
     widget = QListWidget() if plain else NoCopyListWidget()
@@ -608,9 +610,11 @@ def test_a_combo_boxs_popup_copy_reaches_no_clipboard(plain: bool) -> None:
     from PySide6.QtGui import QGuiApplication, QKeyEvent
     from PySide6.QtWidgets import QApplication, QComboBox
 
+    from scribe_desktop.ui import theme
     from scribe_desktop.ui.lists import NoCopyComboBox
 
     app = QApplication.instance() or QApplication([])
+    theme.ensure_applied(app)
     assert QGuiApplication.platformName() == "offscreen"
     clipboard = QGuiApplication.clipboard()
     combo = QComboBox() if plain else NoCopyComboBox()

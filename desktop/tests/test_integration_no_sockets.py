@@ -383,6 +383,10 @@ def test_scribe_app_process_has_no_sockets(tmp_path: Path) -> None:
         "from scribe_desktop.exclusions import install_exception_hooks, startup_exclusions\n"
         "install_exception_hooks(logging.getLogger('no-sockets-child'))\n"
         "app = QApplication([])\n"
+        # Ui-refresh plan D2: as app.main, the theme on the line after the
+        # application exists, under the socket guard too.
+        "from scribe_desktop.ui import theme\n"
+        "theme.ensure_applied(app)\n"
         # Installation plan round 35 MED-001: as app.main, the transcription
         # stack's import warm-up starts after the guard, under the socket
         # guard too (the real importer: this child is outside the conftest
@@ -513,8 +517,10 @@ from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
 from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.protocol import PROTOCOL_VERSION
 from scribe_desktop.session import SessionController
+from scribe_desktop.ui import theme
 from scribe_desktop.ui.main_window import MainWindow
 app = QApplication([])
+theme.ensure_applied(app)  # ui-refresh plan D2: as app.main
 base = Path(tempfile.mkdtemp())
 root = base / 'sessions'
 backend = MockCaptureBackend()
@@ -525,7 +531,7 @@ w = MainWindow(controller, backend, sessions_root=root,
                clinic_registry=ClinicRegistry(base / 'clinics.json'),
                past_sessions=PastSessionStore(base / 'past_sessions'))
 bridge = w.attach_chrome_link()
-name = '\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
+name ='\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
 server = PipeServer(name, bridge, sddl=pipe_sddl(current_user_sid()))
 bridge.attach(server)
 server.start()
@@ -617,8 +623,10 @@ from scribe_desktop.clinics import ClinicRegistry
 from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, current_user_sid, pipe_sddl
 from scribe_desktop.session import SessionController
+from scribe_desktop.ui import theme
 from scribe_desktop.ui.main_window import MainWindow
 app = QApplication([])
+theme.ensure_applied(app)  # ui-refresh plan D2: as app.main
 base = Path(tempfile.mkdtemp())
 root = base / 'sessions'
 backend = MockCaptureBackend()

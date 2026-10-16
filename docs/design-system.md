@@ -48,7 +48,8 @@ view patterns · tokens · microcopy.
   following the window (no horizontal bar — long labels word-wrap); the Practitioner tab
   is the one that needs it today (nine groups; the Phase 4 live smoke found its lists
   collapsed to slivers at 1920×1200), the other tabs hold a handful of widgets or an
-  expanding text view and do not.
+  expanding text view and do not. Every group box is a card (the "Tokens" section
+  below).
 - The **Note review tab** shows the generated note and the full uncertainty-marked
   transcript SIDE BY SIDE through the whole review, until copy, write or Complete —
   `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
@@ -597,6 +598,56 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   instead of assuming two) is UNRESOLVED — it is decided from the clinic 1 smoke's
   measured kept recordings (`.cursor/plans/plan-clinic-smoke.md`, Task 2.3's numbers) —
   so this stays two-speaker today; see the retained follow-up in `AGENTS.md`.
+
+## Tokens
+Ui-refresh plan D1–D3, since 0.4.0's Phase 1. **Values live in
+`desktop/src/scribe_desktop/ui/theme.py` (`LIGHT` and `DARK`); this page names roles,
+never values.** Anywhere else in the package, a `#rrggbb` colour, a font weight, an
+import of Qt's colour, font, palette or style classes, or a stylesheet, palette, font,
+style or background setter fails `desktop/tests/test_ui_theme.py`.
+- **The base.** Qt's Fusion style, a `QPalette` built from the tokens (so what Qt paints
+  itself — menus, message boxes, scroll bars, disabled text — matches, the disabled
+  group included) and ONE generated stylesheet (`theme.render_qss`). It is applied in
+  `app.main()` on the line after the application exists — before the single-instance
+  guard, so the "already running" and "cannot start" boxes are themed too — and by the
+  test suite's autouse fixture; never from a screen.
+- **Light and dark follow Windows.** The scheme is Windows' app mode as Qt reports it
+  (dark only when Qt says dark), followed live: a change re-applies the palette and the
+  stylesheet and Qt restyles every widget in place — no widget is re-created, and no
+  text, enabled state or interaction flag changes. Tests choose the scheme only through
+  `theme.force_scheme`, never the platform's own setting.
+- **Colour roles:** `canvas` (the window), `surface` (cards, inputs, lists, menus),
+  `surface_alt` (disabled fields, the progress trough), `border`, `text`, `text_muted`,
+  `text_disabled`, `accent` / `accent_hover` / `on_accent` (primary buttons, selection,
+  the selected tab), `focus` (the focus border), `link`, `danger`, `success`, `hover` /
+  `pressed` (control states), `rec` (the rail's recording cue); `warning` and `paused`
+  are defined in both schemes and not yet drawn.
+- **Type:** one family list (Segoe UI Variable Text, then Segoe UI, then Arial — the
+  application font) and four sizes: `size_body` (the application font), `size_caption`
+  (the rail cue), `size_title` (a title label, the app title), `size_heading` (defined,
+  not yet drawn). **Spacing** `space_1`–`space_5`, **radii** `radius_control` and
+  `radius_card`, and the `rail_width`.
+- **Emphasis is a role, never rich text.** Every message label stays `PlainText`
+  (user-written text is never read as markup); its colour and weight come from
+  `theme.set_role(label, role)`: `danger` (red and bold — a warning that must be read),
+  `error` (red — a failed or refused line), `strong` (bold), `muted`, `title`,
+  `success`.
+- **Button variants** (`theme.set_variant`): `primary`, `danger` (outlined in red) and
+  `link` (flat and underlined, with the hand cursor — the Transcript tab's "change").
+- **Cards:** every group box is a card; a plain frame becomes one through
+  `theme.mark_card` (the note's proposal rows).
+- **The shell's object ids** (`#rail`, `#railButton`, `#railCue`, `#header`,
+  `#appTitle`, `#settingsStrip`, `#settingsTabs`) have their rules already; the widgets
+  arrive with the ui-refresh plan's Phase 3.
+- **Disabled reads as disabled.** Every control class the stylesheet colours has a
+  disabled rule (buttons and their variants, inputs, lists, group-box titles, menu
+  items, tabs, the progress bar, the rail buttons), and check and radio indicators get
+  a size only, so Fusion still draws the tick from the palette; a disabled control's
+  selected text or selected list row loses its enabled selection colours too. Every
+  control that takes keyboard focus (buttons and all three variants, inputs, lists, the
+  rail buttons) shows it as a border whose colour differs from its unfocused border: the
+  `focus` colour, or `text` on the primary button (whose border is already the accent). Lists keep a minimum height, so a
+  short window shows a usable list, never a sliver.
 
 ## Microcopy
 - Plain clinical English, no jargon, no exclamation marks. Name the artefact the user

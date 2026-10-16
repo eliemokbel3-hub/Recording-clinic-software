@@ -32,6 +32,7 @@ from scribe_desktop.ui import models
 from scribe_desktop.ui.hardware_check import run_prose_benchmark
 from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_role
 
 _LEVEL_POLL_MS = 100
 # Smoke round 21: while a session records/pauses, the CaptureWorker owns the
@@ -131,7 +132,7 @@ class MicrophoneScreen(QWidget):
         self._failed_device_id: int | None = None
         self._silent_polls = 0
         self.level_status_label = QLabel()
-        self.level_status_label.setStyleSheet("color: #b00020;")
+        set_role(self.level_status_label, "error")
         self.level_status_label.setWordWrap(True)
         self.level_status_label.hide()
 
@@ -146,7 +147,7 @@ class MicrophoneScreen(QWidget):
             "there is no cloud fallback."
         )
         self.benchmark_warning_label = QLabel()
-        self.benchmark_warning_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.benchmark_warning_label, "danger")
         self.benchmark_warning_label.setWordWrap(True)
         self.benchmark_warning_label.hide()
 

@@ -49,10 +49,12 @@ def test_window_offscreen_smoke(tmp_path) -> None:
     from scribe_desktop.clinics import ClinicRegistry
     from scribe_desktop.past_sessions import PastSessionStore
     from scribe_desktop.session import SessionController
-    from scribe_desktop.ui import models
+    from scribe_desktop.ui import models, theme
     from scribe_desktop.ui.main_window import MainWindow
 
     app = QApplication.instance() or QApplication([])
+    theme.ensure_applied(app)
+    assert app.property(theme.SCHEME_PROPERTY) in ("light", "dark")
     backend = MockCaptureBackend()
     controller = SessionController(backend, sessions_root=tmp_path / "sessions")
     window = MainWindow(

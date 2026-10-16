@@ -42,6 +42,7 @@ from scribe_desktop.transcription import RecoveryOutcome
 from scribe_desktop.ui import models
 from scribe_desktop.ui.lists import NoCopyListWidget
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_role
 
 
 def _describe(info: models.RecoverableSessionInfo) -> str:
@@ -126,7 +127,7 @@ class RecoveryScreen(QWidget):
         self.session_list = NoCopyListWidget()
         self.session_list.currentItemChanged.connect(lambda *_: self._update_controls())
         self.warning_label = QLabel()
-        self.warning_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.warning_label, "danger")
         self.warning_label.setWordWrap(True)
         self.warning_label.hide()
         self.message_label = QLabel()
@@ -160,7 +161,7 @@ class RecoveryScreen(QWidget):
         self.open_button.clicked.connect(self.on_open_for_review)
         self.unreviewed_discard_button.clicked.connect(self.on_discard_unreviewed)
         self.expiry_label = QLabel()
-        self.expiry_label.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.expiry_label, "danger")
         self.expiry_label.setTextFormat(Qt.TextFormat.PlainText)
         self.expiry_label.setWordWrap(True)
         self.expiry_label.hide()

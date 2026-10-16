@@ -3,14 +3,16 @@ tests build and read native-messaging frames and protocol dicts — the
 consent-bearing Start (Cliniko workflow safeguards plan Task 3.3), the
 privacy-professional-controls C6 sentinel for the Windows layer and the
 exception hooks (Task 4.1), the installation plan's models-root pin
-(Task H.6) and inert ML warm-up importer (round 35 MED-001), and the pilot
-plan's speech-engine sentinel for the validation-set builder."""
+(Task H.6) and inert ML warm-up importer (round 35 MED-001), the pilot
+plan's speech-engine sentinel for the validation-set builder, and the
+ui-refresh plan's theme on every test's ``QApplication`` (D2)."""
 
 import io
 import itertools
 import json
 import os
 import struct
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -362,6 +364,26 @@ def _no_real_speech_engine(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[str
     yield reached
     if reached:
         pytest.fail(f"a test reached the real speech engine: {', '.join(reached)} (Constraint 9)")
+
+
+@pytest.fixture(autouse=True)
+def _themed_qapp() -> None:
+    """Ui-refresh plan D2, for EVERY test: the app's theme is the suite's
+    rule, as it is the app's. Whenever a ``QApplication`` exists — a module's
+    ``qapp`` fixture is module-scoped, so pytest has already set it up — it
+    is themed once (``theme.ensure_applied`` is idempotent), so every screen
+    a test builds, standalone screens included, renders under the theme. A
+    test that creates its application in its own body calls
+    ``ensure_applied`` itself (this fixture ran before it existed). With Qt's
+    widgets never imported, no application can exist and nothing is
+    imported here."""
+    if "PySide6.QtWidgets" not in sys.modules:
+        return
+    from PySide6.QtWidgets import QApplication
+
+    from scribe_desktop.ui import theme
+
+    theme.ensure_applied(QApplication.instance())
 
 
 class InertWarmup:

@@ -54,6 +54,7 @@ from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user_sid
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import SweepResult, default_sessions_root, sweep_sessions
+from scribe_desktop.ui import theme
 from scribe_desktop.ui.main_window import MainWindow
 from scribe_desktop.ui.past_sessions_view import audit_moment, unattended_write
 from scribe_desktop.ui.past_sessions_view import export_recovery_lines as export_recovery_lines_for
@@ -745,6 +746,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     log_event(logger, "app_start", state="starting")
 
     app = QApplication([])
+    # Ui-refresh plan D2: themed before the guard, so its two refusal boxes
+    # are themed too. The theme sets only this app's style, palette, font and
+    # stylesheet — no shared data, so the guard's invariant below holds.
+    theme.ensure_applied(app)
     # The guard runs BEFORE any controller or sweep exists: a refused second
     # instance must never touch the shared sessions root.
     # The handles stay open until the process exits (rounds 69-70: the

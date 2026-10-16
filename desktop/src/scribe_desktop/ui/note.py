@@ -252,6 +252,7 @@ from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models, note_review
 from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import mark_card, set_role
 
 
 def _refused_sections(note: GeneratedNote) -> frozenset[NoteSectionKey]:
@@ -737,15 +738,15 @@ class NoteScreen(QWidget):
         # readable on an empty tab as well as beside a note.
         self.consent_reminder_label = QLabel(models.CONSENT_MANUAL_REMINDER)
         self.consent_reminder_label.setWordWrap(True)
-        self.consent_reminder_label.setStyleSheet("font-weight: bold;")
+        set_role(self.consent_reminder_label, "strong")
 
         self.blocking_header = QLabel("Cannot save the note yet:")
-        self.blocking_header.setStyleSheet("color: #b00020; font-weight: bold;")
+        set_role(self.blocking_header, "danger")
         self.blocking_header.hide()
         self._blocking_box = QVBoxLayout()
 
         self.review_header = QLabel("Review before completing:")
-        self.review_header.setStyleSheet("font-weight: bold;")
+        set_role(self.review_header, "strong")
         self.review_header.hide()
         self._review_box = QVBoxLayout()
         self.acknowledge_all_button = QPushButton("Acknowledge all review warnings")
@@ -1126,10 +1127,11 @@ class NoteScreen(QWidget):
                 continue  # a pre-filled line: in the note, marked; Remove/Edit below
             rendered = models.render_proposal(proposal)
             row = QFrame()
-            row.setFrameShape(QFrame.Shape.StyledPanel)
+            row.setFrameShape(QFrame.Shape.NoFrame)
+            mark_card(row)
             row_layout = QVBoxLayout(row)
             heading = QLabel(f"{rendered.section_title} - {rendered.provenance_label}")
-            heading.setStyleSheet("font-weight: bold;")
+            set_role(heading, "strong")
             row_layout.addWidget(heading)
             # PLAIN TEXT so the label shows the excerpt literally and reads
             # back byte-identically for the shown-text digest.
@@ -2290,7 +2292,7 @@ class NoteScreen(QWidget):
             text = f"{group.title} ({group.count}). Blocks {group.blocks}. {group.clear_hint}"
             item = QLabel(text)
             item.setWordWrap(True)
-            item.setStyleSheet("color: #b00020;")
+            set_role(item, "error")
             self._blocking_box.addWidget(item)
         self.review_header.setVisible(bool(summary.review))
         for group in summary.review:
