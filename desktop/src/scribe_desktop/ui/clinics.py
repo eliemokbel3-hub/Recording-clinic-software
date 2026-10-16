@@ -48,7 +48,7 @@ from scribe_desktop.clinics import (
 from scribe_desktop.ui import models
 from scribe_desktop.ui.lists import NoCopyListWidget
 from scribe_desktop.ui.tasks import TaskThread
-from scribe_desktop.ui.theme import set_role
+from scribe_desktop.ui.theme import set_role, set_variant
 
 
 def _plain_label(text: str = "") -> QLabel:
@@ -112,6 +112,7 @@ class ClinicsScreen(QWidget):
         form.addRow("Clinic web address", self.address_field)
 
         self.validate_button = QPushButton("Validate")
+        set_variant(self.validate_button, "primary")  # UI refresh plan Task 2.4
         self.replace_button = QPushButton("Replace key")
         self.remove_button = QPushButton(models.CLINIC_REMOVE_LABEL)
         self.validate_button.clicked.connect(self.on_validate)

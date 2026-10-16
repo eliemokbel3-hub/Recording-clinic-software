@@ -1394,7 +1394,7 @@ _CONTROLS: dict[SessionState, ControlSet] = {
     # flight: everything stays disabled until it queues or fails
     # (PR-HIGH-006: never race Discard against an in-flight transcribe).
     SessionState.PROCESSING: ControlSet(),
-    # Complete/Discard for a queued session live on the transcript view.
+    # Complete/Discard for a queued session live on the Review screen.
     # Cliniko workflow safeguards plan D6 (Task 5.3): Start for the NEXT
     # patient is offered here — it retires this session to the Unreviewed
     # section — unless its note review holds the generation lease, which the

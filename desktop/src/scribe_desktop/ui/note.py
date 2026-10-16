@@ -252,7 +252,7 @@ from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models, note_review
 from scribe_desktop.ui.lists import NoCopyComboBox
 from scribe_desktop.ui.tasks import TaskThread
-from scribe_desktop.ui.theme import mark_card, set_role
+from scribe_desktop.ui.theme import mark_card, set_role, set_variant
 
 
 def _refused_sections(note: GeneratedNote) -> frozenset[NoteSectionKey]:
@@ -655,6 +655,9 @@ class NoteScreen(QWidget):
         self.transcript_view.setPlaceholderText("No transcript loaded.")
         self.transcript_view.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
         transcript_panel = QWidget()
+        # UI refresh plan D6: the Review screen hides this pane (its own
+        # transcript sits beside the note there) and adopts `edit_group`.
+        self.transcript_pane = transcript_panel
         transcript_layout = QVBoxLayout(transcript_panel)
         transcript_layout.addWidget(
             QLabel(
@@ -787,6 +790,7 @@ class NoteScreen(QWidget):
             "Phrases and shorthand rules queued for learning are written here and "
             "nowhere else."
         )
+        set_variant(self.save_button, "primary")  # UI refresh plan Task 2.4
         self.save_button.clicked.connect(self.save)
         self.cancel_button = QPushButton("Cancel review and regenerate")
         self.cancel_button.setToolTip(

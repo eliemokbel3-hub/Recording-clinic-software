@@ -238,7 +238,7 @@ class TestRecoveredCheckout:
         # Until Cliniko answers, the session does not count as linked.
         _settled(qapp, window)
         # Round 20 LOW-014: the line is on the screen the checkout lands on.
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         assert window.transcript_screen.link_label.text() == models.CHECKOUT_VERIFIED_LINE
         assert [call[2] for call in transport.calls][0].startswith("/v1/treatment_notes/")
         target = window.recovered_writeback_target()

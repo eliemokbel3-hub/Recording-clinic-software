@@ -349,6 +349,7 @@ class TranscriptScreen(QWidget):
         self.complete_button = QPushButton("Complete")
         self.complete_button.setToolTip(models.COMPLETE_TOOLTIP)
         self.discard_button = QPushButton("Discard")
+        set_variant(self.discard_button, "danger")  # UI refresh plan Task 2.4
         self.complete_button.clicked.connect(self.on_complete)
         self.discard_button.clicked.connect(self.on_discard)
 

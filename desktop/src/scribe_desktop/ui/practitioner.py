@@ -201,7 +201,7 @@ from scribe_desktop.ui.style_review import (
     run_style_review,
 )
 from scribe_desktop.ui.tasks import TaskThread
-from scribe_desktop.ui.theme import set_role
+from scribe_desktop.ui.theme import set_role, set_variant
 
 _AVAILABILITY_POLL_MS: Final = 5000
 DEVICE_NAME_MAX_CHARS: Final = 200  # PractitionerProfile.device_name's bound
@@ -491,6 +491,7 @@ class PractitionerScreen(QWidget):
 
         # --- deletion ---------------------------------------------------------
         self.delete_button = QPushButton("Delete voice profile")
+        set_variant(self.delete_button, "danger")  # UI refresh plan Task 2.4
         self.delete_button.clicked.connect(self.on_delete)
 
         # --- writing style (note-learning plan Task 3.1) ---------------------
@@ -639,6 +640,7 @@ class PractitionerScreen(QWidget):
         self.remove_shorthand_button = QPushButton("Remove selected shorthand")
         self.remove_shorthand_button.clicked.connect(self._remove_selected_shorthand)
         self.delete_style_button = QPushButton("Delete learned style")
+        set_variant(self.delete_style_button, "danger")
         self.delete_style_button.clicked.connect(self.on_delete_style)
         self.learned_style_note_label = QLabel(NO_LEARNED_STYLE_TEXT)
         self.learned_style_note_label.setTextFormat(Qt.TextFormat.PlainText)

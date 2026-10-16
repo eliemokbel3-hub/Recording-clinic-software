@@ -101,6 +101,7 @@ from scribe_desktop.ui import models
 from scribe_desktop.ui import past_sessions_view as view
 from scribe_desktop.ui.lists import NoCopyComboBox, NoCopyListWidget
 from scribe_desktop.ui.note import _place_note_text
+from scribe_desktop.ui.theme import set_variant
 
 # How often the tab re-checks what changes without a click: the Delete now
 # arming's expiry and the audit's in-memory failure count (no disk, no key).
@@ -241,6 +242,7 @@ class PastSessionsScreen(QWidget):
         self.entry_list = NoCopyListWidget()
         self.entry_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.delete_button = QPushButton(view.DELETE_LABEL)
+        set_variant(self.delete_button, "danger")  # UI refresh plan Task 2.4
         self.delete_button.clicked.connect(self.on_delete_clicked)
         self.delete_help_label = _plain_label(view.DELETE_HELP)
         list_box = QGroupBox(view.LIST_GROUP_TITLE)
@@ -302,6 +304,7 @@ class PastSessionsScreen(QWidget):
         # unreadable: the recording can still be deleted).
         self.recording_line_label = _plain_label()
         self.delete_recording_button = QPushButton(view.DELETE_RECORDING_LABEL)
+        set_variant(self.delete_recording_button, "danger")
         self.delete_recording_button.clicked.connect(self.on_delete_recording_clicked)
         self.export_recording_button = QPushButton(view.EXPORT_RECORDING_LABEL)
         self.export_recording_button.clicked.connect(self.on_export_recording)

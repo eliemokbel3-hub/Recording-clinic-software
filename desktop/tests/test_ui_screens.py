@@ -3515,14 +3515,13 @@ class TestTranscriptScreen:
 class TestMainWindow:
     def test_constructs_all_screens(self, qapp: Any, tmp_path: Path) -> None:
         window = _main_window(tmp_path)
-        assert window.tabs.count() == 9
+        assert window.tabs.count() == 8
         titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
         assert titles == [
             "Microphone",
             "Session",
             "Recovery",
-            "Transcript",
-            "Note",
+            "Review",  # UI refresh plan Task 2.1: Transcript and Note as one page
             "Past sessions",  # privacy-professional-controls Task 3.1
             "Practitioner",
             "Clinics",
@@ -3538,7 +3537,7 @@ class TestMainWindow:
         window = _main_window(tmp_path, controller)
         window.session_screen.transcript_ready.emit(_document())
         qapp.processEvents()
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         assert "[Margaret?]" in window.transcript_screen.transcript_view.toPlainText()
         # Complete routes to the controller (live custody path).
         window.transcript_screen.on_complete()
@@ -4111,7 +4110,7 @@ class TestMainWindow:
         )
         window.recovery_screen.recovered.emit((tmp_path / uuid.uuid4().hex, outcome))
         qapp.processEvents()
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         assert window.transcript_screen.warning_label.isVisibleTo(
             window.transcript_screen
         )
@@ -8560,7 +8559,7 @@ class TestNoteWiring:
         window = self._window(tmp_path, controller)
         window._on_draft_ready(_note_result())
         assert window.note_screen.current_note() is not None
-        assert window.tabs.currentWidget() is window.note_screen
+        assert window.tabs.currentWidget() is window.review_screen
         window.close()
 
     def test_the_config_root_reaches_both_tabs_and_the_learning_provider(
@@ -8775,7 +8774,7 @@ class TestNoteWiring:
         window.transcript_screen.generate()
         assert window.transcript_screen.is_busy  # the lease generate() holds
         assert _process_until(qapp, lambda: window.note_screen.current_note() is not None)
-        assert window.tabs.currentWidget() is window.note_screen
+        assert window.tabs.currentWidget() is window.review_screen
         return window, controller
 
     def _rooted_review_with_queue(self, qapp: Any, tmp_path: Path) -> tuple[Any, Any]:
@@ -8822,7 +8821,7 @@ class TestNoteWiring:
         learned and names Save note."""
         window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
         window.note_screen.cancel_review()
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         message = window.transcript_screen.message_label.text()
         # Round 42 LOW-001: Cancel's own line first, never the stale
         # "Note generated" line under the appended sentence.
@@ -8844,7 +8843,7 @@ class TestNoteWiring:
         window.note_screen.abandon()
         # Peer round 44 PR-MED-026: the sentence is VISIBLE — the window stays
         # on the Transcript screen instead of moving to the Session screen.
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         assert window.transcript_screen.message_label.text() == (
             "Session completed without a note: transcript verified and the session key "
             "destroyed. Past sessions shows what was kept - never the saved note. "
@@ -8861,7 +8860,7 @@ class TestNoteWiring:
         folded it in) — the sentence follows the discard message."""
         window, _choice = self._rooted_review_with_queue(qapp, tmp_path)
         window.transcript_screen.on_discard()
-        assert window.tabs.currentWidget() is window.transcript_screen  # round 44 PR-MED-026
+        assert window.tabs.currentWidget() is window.review_screen  # round 44 PR-MED-026
         assert window.transcript_screen.message_label.text() == (
             "Session discarded (audio cryptographically deleted). "
             + models.unlearned_on_exit_line(1)

@@ -137,6 +137,7 @@ from scribe_desktop.ui.past_sessions import PastSessionsScreen
 from scribe_desktop.ui.past_sessions_view import PAST_SESSIONS_TAB_TITLE
 from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
+from scribe_desktop.ui.review import ReviewScreen
 from scribe_desktop.ui.session_screen import SessionScreen
 from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.transcript import TranscriptScreen
@@ -608,6 +609,11 @@ class MainWindow(QMainWindow):
             # record through the controller's content-free accessor only.
             write_status_provider=controller.write_record_status,
         )
+        # UI refresh plan D6: the Review page holds both engines — the
+        # transcript on the left, the note on the right, one button row. Built
+        # here, before the window is shown (C15); every route to either engine
+        # goes through `show_page`.
+        self.review_screen = ReviewScreen(self.transcript_screen, self.note_screen)
         # Practitioner-profile plan Phase 3: the voice-profile tab. It reads
         # the profile store at construction (a stat and one profile read, no
         # model loaded) — `profile_root` is the test seam for the store, and
@@ -739,8 +745,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.microphone_screen, "Microphone")
         self.tabs.addTab(self.session_screen, "Session")
         self.tabs.addTab(self.recovery_screen, "Recovery")
-        self.tabs.addTab(self.transcript_screen, "Transcript")
-        self.tabs.addTab(self.note_screen, "Note")
+        self.tabs.addTab(self.review_screen, "Review")
         self.tabs.addTab(self.past_sessions_screen, PAST_SESSIONS_TAB_TITLE)
         self.tabs.addTab(self.practitioner_screen, "Practitioner")
         self.tabs.addTab(self.clinics_screen, "Clinics")
@@ -1055,6 +1060,17 @@ class MainWindow(QMainWindow):
         # synchronously by `SessionScreen._start`, called by the adopt path).
         self.recovery_screen.refresh()
 
+    def show_page(self, widget: QWidget) -> None:
+        """UI refresh plan D4/D6: show the page that holds ``widget`` — the
+        widget itself when it is a page, or the page it sits in (the Review
+        page for either engine). Every navigation goes through
+        ``setCurrentWidget``, so ``_on_tab_changed``'s identity rule runs."""
+        page: QWidget | None = widget
+        while page is not None and self.tabs.indexOf(page) < 0:
+            page = page.parentWidget()
+        if page is not None:
+            self.tabs.setCurrentWidget(page)
+
     def _on_tab_changed(self, index: int) -> None:
         widget = self.tabs.widget(index)
         if widget is self.recovery_screen:
@@ -1278,7 +1294,7 @@ class MainWindow(QMainWindow):
         self.session_screen.refresh()
         note = opening.note
         if note is None:
-            self.tabs.setCurrentWidget(self.transcript_screen)
+            self.show_page(self.transcript_screen)
             return
         self.note_screen.show_saved_note(
             note,
@@ -1290,7 +1306,7 @@ class MainWindow(QMainWindow):
             write_binding=self._live_write_binding(),
             mode=session.mode,  # pilot plan D5: as it was started (v1: normal)
         )
-        self.tabs.setCurrentWidget(self.note_screen)
+        self.show_page(self.note_screen)
 
     def _load_note_config(self) -> NoteConfig:
         return load_note_config(self._config_root)
@@ -1543,7 +1559,7 @@ class MainWindow(QMainWindow):
             self.recovery_screen.release_checkout(source)
             self._index_released(entry, source)
         self._transcript_source = "live"
-        self.tabs.setCurrentWidget(self.transcript_screen)
+        self.show_page(self.transcript_screen)
 
     def _on_session_started(self) -> None:
         """A successful Start (note-learning plan Task 1.4) opens the live
@@ -1656,7 +1672,7 @@ class MainWindow(QMainWindow):
         self._recovered_crypto = crypto
         self._transcript_source = directory.name
         self._open_checkout_encounter(directory, crypto)
-        self.tabs.setCurrentWidget(self.transcript_screen)
+        self.show_page(self.transcript_screen)
 
     # --- the recovered checkout's Cliniko link (Task 3.4) --------------------
 
@@ -2016,7 +2032,7 @@ class MainWindow(QMainWindow):
             # its Save teaches nothing.
             mode=self._live_mode(),
         )
-        self.tabs.setCurrentWidget(self.note_screen)
+        self.show_page(self.note_screen)
 
     def _on_note_save(self, note: object) -> None:
         # write_note runs on THIS (GUI) thread via the scoped op; raises on
@@ -2043,7 +2059,7 @@ class MainWindow(QMainWindow):
         rules = self.note_screen.queued_rule_count()
         self.transcript_screen.cancel_note_review()
         self.transcript_screen.report_unlearned_phrases(queued, rules)
-        self.tabs.setCurrentWidget(self.transcript_screen)
+        self.show_page(self.transcript_screen)
 
     def _on_generation_active(self, active: object) -> None:
         active_bool = bool(active)
@@ -2108,8 +2124,8 @@ class MainWindow(QMainWindow):
         # phrases stays on the Transcript screen so the appended sentence is
         # actually seen; every other close (ordinary Complete, Complete after
         # Save, an empty queue) lands on the Session screen as before.
-        landing = self.transcript_screen if queued + rules > 0 else self.session_screen
-        self.tabs.setCurrentWidget(landing)
+        landing: QWidget = self.transcript_screen if queued + rules > 0 else self.session_screen
+        self.show_page(landing)
 
     # --- the Cliniko draft write (draft-write Task 5.2; D2, D3, D5, D6, D9) ----
 

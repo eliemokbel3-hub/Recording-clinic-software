@@ -609,8 +609,9 @@ class TestOpenForReview:
         session = controller.session
         assert session is not None and session.session_id == directory.name
         assert session.state is SessionState.QUEUED
-        assert window.tabs.currentWidget() is window.transcript_screen
-        assert window.transcript_screen.generate_box.isVisibleTo(window.transcript_screen)
+        assert window.tabs.currentWidget() is window.review_screen
+        # UI refresh plan D14: the group is adopted into the Review page.
+        assert window.transcript_screen.generate_box.isVisibleTo(window.review_screen)
         assert window.transcript_screen.generate_button.text() == models.GENERATE_NOTE_LABEL
         assert window._transcript_source == "live"
         assert window.recovery_screen.unreviewed_list.count() == 0  # live now, not listed
@@ -628,7 +629,7 @@ class TestOpenForReview:
         window = _main_window(tmp_path, controller)
         _open_row(window, directory.name)
         note_screen = window.note_screen
-        assert window.tabs.currentWidget() is note_screen
+        assert window.tabs.currentWidget() is window.review_screen
         assert note_screen.showing_saved_note
         assert note_screen.note_body.toPlainText() == models.format_note_body(
             _saved_note(directory.name)
@@ -997,7 +998,7 @@ class TestReconstruction:
         assert window.open_unreviewed(first.name) is None
         assert controller.session is not None and controller.session.session_id == first.name
         assert first.name not in window.reminders and second.name in window.reminders
-        assert window.tabs.currentWidget() is window.transcript_screen
+        assert window.tabs.currentWidget() is window.review_screen
         _close(window)
 
     def test_the_chrome_route_keeps_the_unfinished_store_warning(

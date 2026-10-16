@@ -41,6 +41,7 @@ from scribe_desktop.session_mode import SessionMode
 from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.ui import models
 from scribe_desktop.ui.tasks import TaskThread
+from scribe_desktop.ui.theme import set_variant
 
 # The second Discard click must come within this long of the first, for the
 # same session; otherwise the first click is asked for again.
@@ -191,6 +192,9 @@ class SessionScreen(QWidget):
         self.resume_button = QPushButton("Resume")
         self.finish_button = QPushButton("Finish")
         self.discard_button = QPushButton("Discard")
+        # UI refresh plan Task 2.4: the everyday action and the destructive one.
+        set_variant(self.start_button, "primary")
+        set_variant(self.discard_button, "danger")
         self.start_button.clicked.connect(self.on_start)
         self.pause_button.clicked.connect(self.on_pause)
         self.resume_button.clicked.connect(self.on_resume)
