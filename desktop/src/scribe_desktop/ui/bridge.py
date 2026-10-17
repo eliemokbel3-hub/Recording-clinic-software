@@ -1388,4 +1388,7 @@ class ChromeBridge(QObject):
         return "refused", outcome.reason
 
     def _refresh_view(self) -> None:
-        self._screen.set_chrome_view(models.chrome_view_text(self.view()))
+        view = self.view()
+        self._screen.set_chrome_view(models.chrome_view_text(view))
+        # UI refresh plan D4: the window header's Chrome line, from the same view.
+        self._screen.set_header_view(view)

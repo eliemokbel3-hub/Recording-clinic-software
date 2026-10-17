@@ -1111,20 +1111,30 @@ def _live_line(who: str, clinic: str, phase: str | None) -> str:
     return f"Recording for {who} - {clinic}."
 
 
+def _link_line(view: ChromeView) -> str:
+    return {
+        "waiting": CHROME_WAITING_LINE,
+        "connected": CHROME_CONNECTED_LINE,
+        "unavailable": CHROME_UNAVAILABLE_LINE,
+    }.get(view.link, CHROME_WAITING_LINE)
+
+
+def _view_live_line(view: ChromeView) -> str | None:
+    """The live session's line — only while a clinic is set on the view."""
+    if view.clinic is None:
+        return None
+    who = view.patient if view.patient is not None else "a patient (name not verified)"
+    return _live_line(who, view.clinic, view.phase)
+
+
 def chrome_view_text(view: ChromeView) -> str:
     """The Session screen's Chrome lines; empty when there is no bridge."""
     if view.link == "off":
         return ""
-    lines = [
-        {
-            "waiting": CHROME_WAITING_LINE,
-            "connected": CHROME_CONNECTED_LINE,
-            "unavailable": CHROME_UNAVAILABLE_LINE,
-        }.get(view.link, CHROME_WAITING_LINE)
-    ]
-    if view.clinic is not None:
-        who = view.patient if view.patient is not None else "a patient (name not verified)"
-        lines.append(_live_line(who, view.clinic, view.phase))
+    lines = [_link_line(view)]
+    live = _view_live_line(view)
+    if live is not None:
+        lines.append(live)
     if view.blocked:
         lines.append(BLOCK_DESKTOP_LINE)
     if view.recheck is not None:
@@ -1141,6 +1151,34 @@ def chrome_view_text(view: ChromeView) -> str:
     if view.refusal is not None:
         lines.append(f"Refused from Chrome: {view.refusal}")
     return "\n".join(lines)
+
+
+def header_link_text(view: ChromeView, *, live: bool = True) -> str:
+    """UI refresh plan D4 / C8: the window header's Chrome text, built from the
+    view's own fields — the link line, then the live line only while a clinic
+    is set on the view (and ``live`` is True: the header withholds it on the
+    Past sessions page). Never a block, recheck, hands-free, warning or
+    refusal line (those stay on the Record page); empty with no bridge."""
+    if view.link == "off":
+        return ""
+    lines = [_link_line(view)]
+    live_line = _view_live_line(view) if live else None
+    if live_line is not None:
+        lines.append(live_line)
+    return "\n".join(lines)
+
+
+# UI refresh plan D4: the rail's cue under Record, from the session state the
+# Session screen shows (nothing else is a source, C8).
+RAIL_CUES: Final[Mapping[SessionState, str]] = {
+    SessionState.RECORDING: "REC",
+    SessionState.PAUSED: "PAUSED",
+}
+
+
+def rail_cue_text(state: SessionState) -> str:
+    """The rail's cue for ``state``: "REC", "PAUSED", or empty (hidden)."""
+    return RAIL_CUES.get(state, "")
 
 
 class SessionControllerLike(Protocol):
@@ -4723,6 +4761,9 @@ __all__ = [
     "chrome_refusal_message",
     "ChromeView",
     "chrome_view_text",
+    "header_link_text",
+    "RAIL_CUES",
+    "rail_cue_text",
     "DISCARD_CONFIRM_MESSAGE",
     "DISCARD_STOPPING_LIVE_LINE",
     "DISCARD_KEPT_LIVE_STOPPING_MESSAGE",

@@ -28,7 +28,7 @@ from ``set_role``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from functools import cache
 from typing import Final, Literal
 
@@ -177,6 +177,15 @@ DARK: Final = Tokens(
 
 def tokens_for(scheme: Scheme) -> Tokens:
     return DARK if scheme == "dark" else LIGHT
+
+
+# Every colour value either token set holds (``colour`` accepts no other).
+_TOKEN_COLOURS: Final = frozenset(
+    value
+    for tokens in (LIGHT, DARK)
+    for field in fields(Tokens)
+    if isinstance(value := getattr(tokens, field.name), str)
+)
 
 
 def _rule(selector: str, *declarations: str) -> str:
@@ -501,6 +510,8 @@ def render_qss(t: Tokens) -> str:
             "border: 1px solid transparent",
             f"border-radius: {r}px",
             f"padding: {s1}px",
+            # The caption size keeps "Past sessions" inside the rail's width.
+            f"font-size: {t.size_caption}pt",
         ),
         _rule("QToolButton#railButton:hover", f"color: {t.text}", f"background-color: {t.hover}"),
         _rule(
@@ -581,6 +592,7 @@ class ThemeBus(QObject):
 
 _bus: ThemeBus | None = None
 _forced: Scheme | None = None
+_current: Tokens | None = None
 
 
 def theme_bus() -> ThemeBus:
@@ -588,6 +600,24 @@ def theme_bus() -> ThemeBus:
     if _bus is None:
         _bus = ThemeBus()
     return _bus
+
+
+def current_tokens() -> Tokens:
+    """The token set ``apply_theme`` last applied (``LIGHT`` before any) —
+    what a widget built later draws with until ``theme_bus().changed``
+    announces the next one."""
+    return _current if _current is not None else LIGHT
+
+
+def colour(value: str) -> QColor:
+    """A token's colour as Qt's value (the code-drawn icons' pen and brush,
+    ui-refresh plan D12) — so no other module builds a colour itself. Only a
+    value one of the two token sets holds is accepted (review round 11): a
+    named colour or any other string would bring a value in from outside
+    this module."""
+    if value not in _TOKEN_COLOURS:
+        raise ValueError(f"not a token colour: {value}")
+    return QColor(value)
 
 
 def force_scheme(scheme: Scheme | None) -> None:
@@ -618,8 +648,10 @@ def apply_theme(app: QApplication, scheme: Scheme | None = None) -> Tokens:
     already has: every one of them restyles EVERY live widget, so a repeat
     of the same scheme costs nothing (a scheme change still sets the
     palette and the stylesheet; the font never changes between schemes)."""
+    global _current
     chosen: Scheme = scheme or _forced or detect_scheme(app)
     tokens = tokens_for(chosen)
+    _current = tokens
     if app.property(SCHEME_PROPERTY) is None:
         style = QStyleFactory.create("Fusion")
         if style is not None:

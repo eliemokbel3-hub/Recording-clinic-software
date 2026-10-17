@@ -17,6 +17,7 @@ from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QPushButton,
@@ -128,7 +129,7 @@ from scribe_desktop.transcription import (
     RecoveryOutcome,
     TranscriptDocument,
 )
-from scribe_desktop.ui import models
+from scribe_desktop.ui import icons, models
 from scribe_desktop.ui.bridge import ChromeBridge
 from scribe_desktop.ui.clinics import ClinicsScreen
 from scribe_desktop.ui.microphone import MicrophoneScreen
@@ -139,6 +140,13 @@ from scribe_desktop.ui.practitioner import PractitionerScreen
 from scribe_desktop.ui.recovery import RecoveryScreen
 from scribe_desktop.ui.review import ReviewScreen
 from scribe_desktop.ui.session_screen import SessionScreen
+from scribe_desktop.ui.shell import (
+    SETTINGS_LABEL,
+    HeaderStrip,
+    NavigationRail,
+    SettingsStrip,
+    opening_size_for,
+)
 from scribe_desktop.ui.tasks import TaskThread
 from scribe_desktop.ui.transcript import TranscriptScreen
 from scribe_desktop.voice_commands import NewConsultationWatcher, SpokenPauseDetector
@@ -253,6 +261,10 @@ DEVELOPMENT_UNREADABLE: Final = (
 DEVELOPMENT_SAVE_FAILED: Final = (
     "The keep-recordings setting could not be saved; the box shows the setting in use."
 )
+# UI refresh plan D4/D5: the indices in `MainWindow.tabs` of the four setup
+# pages (Microphone, Practitioner, Clinics, Status) behind the rail's gear —
+# after the four everyday pages (Record, Review, Past sessions, Recovery).
+SETTINGS_PAGES: Final = (4, 5, 6, 7)
 
 
 def version_line(version: str) -> str:
@@ -494,6 +506,12 @@ class MainWindow(QMainWindow):
     ) -> None:
         super().__init__()
         self.setWindowTitle("Clinic Scribe")
+        # UI refresh plan D4/D12: the code-drawn app mark, and room for the
+        # rail beside the Review screen's two panes — opening with the whole
+        # decorated window inside the screen's work area (review rounds 11, 13).
+        self.setWindowIcon(icons.app_icon())
+        self.setMinimumSize(960, 640)
+        self.resize(*opening_size_for(self.screen()))
         self._controller = controller
         # Installation plan round 35 MED-001: whether the transcription
         # stack's imports have finished warming (``ml_warmup.ImportWarmup``,
@@ -741,16 +759,22 @@ class MainWindow(QMainWindow):
             export_recovery_lines=export_recovery_lines,
         )
 
+        # UI refresh plan D4/D5: every screen stays a DIRECT page of this one
+        # container — the everyday pages first, the four setup pages last
+        # (`SETTINGS_PAGES`) — with its own tab bar hidden; the rail, the
+        # header and the Settings strip around it drive it.
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.microphone_screen, "Microphone")
-        self.tabs.addTab(self.session_screen, "Session")
-        self.tabs.addTab(self.recovery_screen, "Recovery")
+        self.tabs.addTab(self.session_screen, "Record")
         self.tabs.addTab(self.review_screen, "Review")
         self.tabs.addTab(self.past_sessions_screen, PAST_SESSIONS_TAB_TITLE)
+        self.tabs.addTab(self.recovery_screen, "Recovery")
+        self.tabs.addTab(self.microphone_screen, "Microphone")
         self.tabs.addTab(self.practitioner_screen, "Practitioner")
         self.tabs.addTab(self.clinics_screen, "Clinics")
         self.tabs.addTab(self.status_panel, "Status")
-        self.setCentralWidget(self.tabs)
+        self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().hide()
+        self._build_shell()
         # Smoke S1: opening the Recovery tab re-lists it (stat-only, nothing
         # decrypted), so the tab never opens on a list gone stale while hidden.
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -1060,6 +1084,63 @@ class MainWindow(QMainWindow):
         # synchronously by `SessionScreen._start`, called by the adopt path).
         self.recovery_screen.refresh()
 
+    def _build_shell(self) -> None:
+        """UI refresh plan D4/D5: the rail (the four everyday pages and the
+        Settings gear, which opens the first setup page), the header strip and
+        the Settings strip around ``self.tabs``. Each asks for a page through
+        ``show_page`` and is told the current one by ``_sync_shell``."""
+        everyday: list[tuple[str, str, QWidget]] = [
+            (self.tabs.tabText(self.tabs.indexOf(page)), icon_name, page)
+            for page, icon_name in (
+                (self.session_screen, "record"),
+                (self.review_screen, "review"),
+                (self.past_sessions_screen, "past_sessions"),
+                (self.recovery_screen, "recovery"),
+            )
+        ]
+        settings = [
+            (self.tabs.tabText(index), page)
+            for index in SETTINGS_PAGES
+            if (page := self.tabs.widget(index)) is not None
+        ]
+        self.rail = NavigationRail(everyday, (SETTINGS_LABEL, "settings", settings[0][1]))
+        self.header_strip = HeaderStrip(self.past_sessions_screen)
+        self.settings_strip = SettingsStrip(settings)
+        self.rail.page_requested.connect(self.show_page)
+        self.settings_strip.page_requested.connect(self.show_page)
+        # The rail's REC / PAUSED cue follows the state the Record page shows
+        # (C8: the session state machine, the existing 500 ms watch).
+        self.rail.set_cue(models.rail_cue_text(self._controller.state))
+        self.session_screen.state_shown.connect(self._on_state_shown)
+        # The header's Chrome line, from the bridge's view (C8).
+        self.session_screen.chrome_view_changed.connect(self.header_strip.set_chrome_text)
+        column = QWidget()
+        column_layout = QVBoxLayout(column)
+        column_layout.setContentsMargins(0, 0, 0, 0)
+        column_layout.setSpacing(0)
+        column_layout.addWidget(self.header_strip)
+        column_layout.addWidget(self.settings_strip)
+        column_layout.addWidget(self.tabs, 1)
+        central = QWidget()
+        central_layout = QHBoxLayout(central)
+        central_layout.setContentsMargins(0, 0, 0, 0)
+        central_layout.setSpacing(0)
+        central_layout.addWidget(self.rail)
+        central_layout.addWidget(column, 1)
+        self.setCentralWidget(central)
+        self._sync_shell(self.tabs.currentWidget())
+
+    def _sync_shell(self, page: QWidget | None) -> None:
+        """Tell the rail, the Settings strip and the header the current page
+        (none of them emits while told)."""
+        self.rail.set_current(page)
+        self.settings_strip.set_current(page)
+        self.header_strip.set_current(page)
+
+    def _on_state_shown(self, state: object) -> None:
+        if isinstance(state, SessionState):
+            self.rail.set_cue(models.rail_cue_text(state))
+
     def show_page(self, widget: QWidget) -> None:
         """UI refresh plan D4/D6: show the page that holds ``widget`` — the
         widget itself when it is a page, or the page it sits in (the Review
@@ -1082,6 +1163,7 @@ class MainWindow(QMainWindow):
             self.past_sessions_screen.refresh()
         else:
             self.past_sessions_screen.on_left()
+        self._sync_shell(widget)
 
     def _released_checkout_entry(self) -> ReminderEntry | None:
         """H1 round 53 LOW-040's sibling: the index entry of a RECOVERED

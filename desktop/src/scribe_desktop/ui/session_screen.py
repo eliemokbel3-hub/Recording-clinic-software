@@ -79,6 +79,15 @@ class SessionScreen(QWidget):
     # (the RecordingSession as it was, e.g. QUEUED) — the main window adds a
     # linked, reviewable one to the Unreviewed reminder index.
     session_retired = Signal(object)
+    # UI refresh plan D4: the SessionState this screen now shows, emitted by
+    # `refresh` only when it differs from the last one emitted (the rail's
+    # REC / PAUSED cue reads it — the existing 500 ms watch, no new source).
+    state_shown = Signal(object)
+    # UI refresh plan D4 / C8: the window header's Chrome text, built from the
+    # bridge's view (`models.header_link_text`) — the text with the live line,
+    # then the same text without it (the header withholds the live line on
+    # the Past sessions page, so it never splits a composed text).
+    chrome_view_changed = Signal(str, str)
 
     def __init__(
         self,
@@ -127,6 +136,9 @@ class SessionScreen(QWidget):
         self._discarding = False
         self._discard_on_refused: Callable[[], None] | None = None
         self._last_state = controller.state
+        # UI refresh plan D4: the state `state_shown` last announced — apart
+        # from `_last_state`, which `_watch_state` reads for its FAILED line.
+        self._last_shown: SessionState | None = None
         self._last_generating = controller.generating
         self._last_writing = controller.writing_session_id() is not None
         self._live_status: str | None = None
@@ -290,6 +302,9 @@ class SessionScreen(QWidget):
     def refresh(self) -> None:
         state = self._controller.state
         self._last_state = state
+        if state != self._last_shown:
+            self._last_shown = state
+            self.state_shown.emit(state)
         self.state_label.setText(f"Session state: {state.value}")
         self.link_label.setText(models.session_link_line(self._controller.session))
         self._refresh_shadow_line()
@@ -464,6 +479,14 @@ class SessionScreen(QWidget):
         """Task 4.5: the bridge's Chrome lines (hidden when empty)."""
         self.chrome_label.setText(text)
         self.chrome_label.setVisible(bool(text))
+
+    def set_header_view(self, view: models.ChromeView) -> None:
+        """UI refresh plan D4 / C8: announce the header's Chrome text for
+        ``view`` — the link line and, with a clinic on the view, the live line;
+        then the same without the live line (``chrome_view_changed``)."""
+        self.chrome_view_changed.emit(
+            models.header_link_text(view), models.header_link_text(view, live=False)
+        )
 
     def has_input_device(self) -> bool:
         """Whether Start has a microphone (the bridge names a missing one

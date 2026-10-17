@@ -3517,12 +3517,14 @@ class TestMainWindow:
         window = _main_window(tmp_path)
         assert window.tabs.count() == 8
         titles = [window.tabs.tabText(i) for i in range(window.tabs.count())]
+        # UI refresh plan Task 3.5 (D4): the everyday pages first, then the
+        # four setup pages behind the rail's Settings gear.
         assert titles == [
-            "Microphone",
-            "Session",
-            "Recovery",
+            "Record",  # the Session screen
             "Review",  # UI refresh plan Task 2.1: Transcript and Note as one page
             "Past sessions",  # privacy-professional-controls Task 3.1
+            "Recovery",
+            "Microphone",
             "Practitioner",
             "Clinics",
             "Status",
@@ -4134,7 +4136,7 @@ class TestMainWindow:
         window.close()
 
     @windows_only
-    def test_startup_with_a_profile_stays_on_the_microphone_tab(
+    def test_startup_with_a_profile_opens_on_record(
         self, qapp: Any, tmp_path: Path
     ) -> None:
         from scribe_desktop.practitioner_profile import (
@@ -4164,7 +4166,9 @@ class TestMainWindow:
         )
         window = _main_window(tmp_path)
         screen = window.practitioner_screen
-        assert window.tabs.currentWidget() is window.microphone_screen
+        # UI refresh plan Task 3.5 (PR-MED-002): Record is page 0, so a window
+        # with a profile opens on it (the landing rule itself is unchanged).
+        assert window.tabs.currentWidget() is window.session_screen
         assert not screen.banner_label.isVisibleTo(screen)
         assert screen.profile_present
         # With the speaker model file absent on this host the D2 fallback line

@@ -2486,3 +2486,85 @@ class TestChromeView:
                 assert "{" not in message and "\n" not in message
                 assert len(message) <= LIMITS["max_message_chars"]
         assert models.chrome_refusal_message("no-such-code") == models.CHROME_REFUSALS["failed"]
+
+
+class TestHeaderAndRailCue:
+    """UI refresh plan Task 3.4 (D4, C8): the window header's Chrome text is
+    built from the view's own fields — the link line, then the live line only
+    with a clinic — and the rail's cue comes from the session state alone."""
+
+    def test_no_bridge_shows_nothing(self) -> None:
+        assert models.header_link_text(models.ChromeView()) == ""
+        assert models.header_link_text(models.ChromeView(), live=False) == ""
+
+    @pytest.mark.parametrize(
+        "link, line",
+        [
+            ("waiting", models.CHROME_WAITING_LINE),
+            ("connected", models.CHROME_CONNECTED_LINE),
+            ("unavailable", models.CHROME_UNAVAILABLE_LINE),
+            ("unknown", models.CHROME_WAITING_LINE),
+        ],
+    )
+    def test_without_a_clinic_only_the_link_line(self, link: str, line: str) -> None:
+        """The hotkey, recheck, block, warning and refusal lines the Record
+        page shows never reach the header."""
+        from scribe_desktop.encounter import NoteRefusal
+
+        view = models.ChromeView(
+            link=link,
+            hotkey="not_set_up",
+            recheck="refused",
+            recheck_reason=NoteRefusal.NOTE_NOT_FOUND,
+            refusal="Open the patient's treatment note in Cliniko first.",
+            spoken_pause="unavailable",
+            new_consultation=True,
+            blocked=True,
+            system_pause_failed=("suspend", "lock"),
+        )
+        assert models.header_link_text(view) == line
+        assert models.header_link_text(view, live=False) == line
+        assert len(models.chrome_view_text(view).split("\n")) > 1  # the Record page's own
+
+    @pytest.mark.parametrize(
+        "phase, live_line",
+        [
+            ("recording", "Recording for Jan Citizen - Northside."),
+            ("paused", "Recording for Jan Citizen - Northside."),
+            ("finishing", "Finishing Jan Citizen - Northside..."),
+            ("queued", "Ready for review: Jan Citizen - Northside."),
+        ],
+    )
+    def test_with_a_clinic_two_lines(self, phase: str, live_line: str) -> None:
+        view = models.ChromeView(
+            link="connected",
+            patient="Jan Citizen",
+            clinic="Northside",
+            phase=phase,
+            hotkey="not_set_up",
+            refusal="Open the patient's treatment note in Cliniko first.",
+            blocked=True,
+        )
+        assert models.header_link_text(view).split("\n") == [
+            models.CHROME_CONNECTED_LINE,
+            live_line,
+        ]
+        # The same live line as the Record page's own lines.
+        assert live_line in models.chrome_view_text(view).split("\n")
+
+    def test_an_unverified_patient_is_never_named(self) -> None:
+        view = models.ChromeView(link="connected", clinic="Northside")
+        assert models.header_link_text(view).split("\n")[1] == (
+            "Recording for a patient (name not verified) - Northside."
+        )
+
+    def test_withheld_the_live_line_goes(self) -> None:
+        view = models.ChromeView(link="connected", patient="Jan Citizen", clinic="Northside")
+        withheld = models.header_link_text(view, live=False)
+        assert withheld == models.CHROME_CONNECTED_LINE
+        assert "Jan Citizen" not in withheld and "Northside" not in withheld
+
+    @pytest.mark.parametrize("state", list(SessionState))
+    def test_the_rail_cue_for_every_state(self, state: SessionState) -> None:
+        expected = {SessionState.RECORDING: "REC", SessionState.PAUSED: "PAUSED"}.get(state, "")
+        assert models.rail_cue_text(state) == expected
