@@ -39,8 +39,8 @@ transcript line lands in which section.
    from this folder into it. `template_profiles.json` is NOT copied — the shipped default
    (Template A, both clinics) is used when the file is absent.
 3. Launch the app (Explorer double-click on `.venv\Scripts\scribe-app.exe`, or a
-   persistent terminal), finish a session, and check the Transcript screen's
-   "Prefill region" list offers Knee, Shoulder and Lower back. A malformed file
+   persistent terminal), finish a session, and check the Review screen's
+   "Prefill region" list (the Transcript screen's before 0.4.0) offers Knee, Shoulder and Lower back. A malformed file
    fails closed: Generate is unavailable and the status line names the file.
 
 ## Editing

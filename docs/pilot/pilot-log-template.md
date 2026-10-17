@@ -20,7 +20,7 @@ count it in this row's last column.
   the session is completed, its Past sessions entry is marked "(shadow
   recording)" for a shadow one, and the audit record's export shows the mode in
   its `mode` column.
-- **App version** — as the Status tab shows it ("Clinic Scribe version …").
+- **App version** — as Settings → Status shows it ("Clinic Scribe version …").
 - **Kept** — `yes` when Complete said "The recording was kept for development."
   (the patient consented in writing, `development-consent-v1`), else `no`.
   From 0.3.3 a consented recording you removed a next patient's lines from
@@ -69,18 +69,18 @@ answers for Would sign.
 ## Kept recordings — review
 
 Why a recording is still kept (development-recordings plan D9). A year (365
-days) after a kept recording's Complete, the Past sessions tab says it is due for
+days) after a kept recording's Complete, the Past sessions page says it is due for
 review: press **Delete recording**, or keep it and add one row here saying why.
 Add a row too when you delete one at its review. A row is never edited later —
-a later review adds a new row. A kept recording the tab cannot read ("Cannot be
+a later review adds a new row. A kept recording the page cannot read ("Cannot be
 read on this Windows account") is never shown as due: review it with the others
 (`docs/practice/development-recording-consent.md`, "The 12-month review").
 
 - **Row** — the pilot-log row of that consultation (above), or `—` for a recording kept
   outside the pilot log (then the next column identifies it), or `unreadable` for a
-  kept recording the tab cannot read.
+  kept recording the Past sessions page cannot read.
 - **Consulted** — the consultation's date and time (YYYY-MM-DD HH:MM), exactly as the
-  Past sessions tab's row shows it; `—` for an unreadable one. Two kept recordings
+  Past sessions page's row shows it; `—` for an unreadable one. Two kept recordings
   showing the same minute are reviewed together and given the same outcome.
 - **Reviewed** — the review's date (YYYY-MM-DD).
 - **Outcome** — `deleted` or `kept`.

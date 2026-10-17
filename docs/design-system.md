@@ -1,36 +1,73 @@
 # Design system — desktop app
 
-The desktop companion's UI conventions, as built in Phase 2 and extended by the Phase-3A
-note review UI, plus the Chrome-side UI of the Cliniko workflow safeguards plan (the side
-panel, the page frame and the block — "Chrome side" below), which follows the same
-interaction posture in a different toolkit. Each cue points at the code that owns it; the
-code wins on any disagreement.
+The desktop companion's UI conventions, as built in Phase 2, extended by the Phase-3A
+note review UI and laid out anew by the ui-refresh plan (0.4.0: the theme, the Review
+screen, the navigation rail, the header strip and the Settings strip), plus the
+Chrome-side UI of the Cliniko workflow safeguards plan (the side panel, the page frame
+and the block — "Chrome side" below), which follows the same interaction posture in a
+different toolkit. Each cue points at the code that owns it; the code wins on any
+disagreement.
 
 Suggested sections as this grows: surfaces & layout · dialogs · menus · forms & inputs ·
 view patterns · tokens · microcopy.
 
 ## Surfaces & layout
-- One window, tabbed: Microphone / Session / Recovery / Transcript / **Note** /
-  **Past sessions** / **Practitioner** / **Clinics** / Status —
-  `desktop/src/scribe_desktop/ui/main_window.py`.
-  The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
+- One window with a navigation rail, a header strip and eight pages (since 0.4.0,
+  ui-refresh plan D4/D5 — `desktop/src/scribe_desktop/ui/main_window.py`, the shell in
+  `ui/shell.py`). The four everyday pages are **Record** (the recording screen,
+  `ui/session_screen.py`), **Review** (below), **Past sessions** and **Recovery**; the
+  four setup pages — **Microphone**, **Practitioner**, **Clinics** and **Status** — sit
+  behind **Settings**. Every page is a direct page of the one tab container, whose own
+  tab bar is hidden, so every navigation (the rail, the Settings strip, the window's
+  own routing, Ctrl+Tab) changes the current page the same way and Past sessions still
+  drops its opened entry on leave while Recovery re-lists on entry.
+  - **The rail** runs down the left: Record, Review, Past sessions and Recovery, each an
+    icon over its text (never an icon alone; the icons are drawn in code,
+    `ui/icons.py`, and re-tinted with the theme), then the Settings gear at the bottom.
+    The current everyday page's entry is lit; a Settings page lights none (the gear is
+    an action, not a lit entry). Under Record a cue reads "REC" while recording and
+    "PAUSED" while paused, from the state the Record page shows
+    (`models.rail_cue_text`), and is hidden otherwise; a status-bar message never hides
+    it.
+  - **The header strip** across the top shows "Clinic Scribe" and the Chrome line: the
+    link line ("Chrome: connected." and its siblings) and, while a linked recording is
+    live, finishing or waiting for review, the live line ("Recording for <name> -
+    <clinic>.", "Finishing …", "Ready for review: …"), built from the Chrome view's own
+    fields (`models.header_link_text`) — never a hotkey, recheck,
+    block or refusal line, which stay on the Record page. It is the SECOND place the
+    window shows the Chrome line (the Record page's own lines are the first). While Past
+    sessions is the current page the live line is withheld, so "Hide names" keeps its
+    meaning there. The app starts its side of the Chrome link at launch, so the link
+    line is always shown — "Chrome: not connected - …" until the extension connects;
+    only a window built without the link (the tests) shows no line.
+  - **The Settings strip** appears under the header only while a setup page is
+    current: the caption "Settings" and a tab bar of Microphone / Practitioner /
+    Clinics / Status. The gear opens Microphone; choosing a rail entry hides the strip.
+    So a line that says "the Clinics tab" or "the Status tab" is literally true: those
+    are the strip's tabs (ui-refresh plan D8).
+  - The window opens on Record (or, with no voice profile, on Settings → Practitioner —
+    Interaction posture below), at 1200 × 800 bounded by the screen's work area (so the
+    title bar and the bottom row stay on screen at 150 % scaling) and never smaller than
+    960 × 640. The status bar is unchanged and styled only.
+- The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
   replaced or removed (since 2026-09-30 it holds no draft-write setting: the
   "Starting text" group went with cliniko-draft-write D14, retired by D15). The **Past
-  sessions** tab (`ui/past_sessions.py`, its Qt-free lines in `ui/past_sessions_view.py`;
+  sessions** page (`ui/past_sessions.py`, its Qt-free lines in `ui/past_sessions_view.py`;
   privacy-professional-controls plan Flow 5) is the look-back over completed sessions:
   the list (date + patient name, or "Patient hidden" under **Hide names**), the opened
   entry's generated note beside its saved note with the Cliniko write outcome, "Copy
   saved note" and "Show transcript", the two-click Delete now, the retention setting
-  with its warning, Export audit record (CSV) and a status line. LEAVING the tab drops
+  with its warning, Export audit record (CSV) and a status line. LEAVING the page drops
   the opened entry's text and the names from every panel; opening it re-lists. Both the
-  Status tab and the Past sessions tab head with the intended-use line ("Documentation
+  Status tab and the Past sessions page head with the intended-use line ("Documentation
   aid, not clinical decision support. You review and finalise every note in Cliniko." —
   `ui/models.py` `INTENDED_USE_LINE`) and show the start-up exclusion warnings
   (`exclusions.py`) when there are any. No secondary
   windows beyond short confirmations: the Practitioner tab's delete questions, the
-  learned-style review dialogs, the Past sessions tab's two confirmations — lowering
+  learned-style review dialogs, the Past sessions page's two confirmations — lowering
   the retention setting and "Start a new audit record" — and, since 0.3.3, the
-  Transcript tab's "Remove lines N-end from this recording..." question, all of which
+  "Remove lines N-end from this recording..." question (on the Review screen since
+  0.4.0), all of which
   name their buttons for what they do ("Delete older sessions" / "Start a new audit
   record" against "Keep things as they are"; "Remove lines" against "Keep the whole
   transcript"), the safe one the default — plus two file dialogs (the
@@ -43,16 +80,31 @@ view patterns · tokens · microcopy.
   installation plan Task 2.7). No new UI framework (PySide6 only, extending the Phase-1 status panel rather
   than replacing it). The Practitioner tab (`ui/practitioner.py`) is the one place the
   practitioner's OWN data is set up: consent, voice enrolment, deletion, and the learned
-  phrases with their delete. A tab whose groups stack beyond one window height SCROLLS
+  phrases with their delete. A page whose groups stack beyond one window height SCROLLS
   vertically inside a `QScrollArea` with every group at its natural height and the width
   following the window (no horizontal bar — long labels word-wrap); the Practitioner tab
   is the one that needs it today (nine groups; the Phase 4 live smoke found its lists
-  collapsed to slivers at 1920×1200), the other tabs hold a handful of widgets or an
-  expanding text view and do not. Every group box is a card (the "Tokens" section
-  below).
-- The **Note review tab** shows the generated note and the full uncertainty-marked
-  transcript SIDE BY SIDE through the whole review, until copy, write or Complete —
-  `ui/note.py`. This is presentational coverage of anything cue routing dropped: the
+  collapsed to slivers at 1920×1200), the other pages hold a handful of widgets or an
+  expanding text view and do not. No page hides a group behind a collapsible section,
+  a sub-tab or a stacked page (ui-refresh plan C6). Every group box is a card (the
+  "Tokens" section below).
+- The **Review screen** (since 0.4.0 — one page in place of the Transcript and Note
+  tabs; `ui/review.py`, ui-refresh plan D6/D14) shows the full uncertainty-marked
+  transcript on the LEFT and the note on the RIGHT, SIDE BY SIDE through the whole
+  review, until copy, write or Complete. Left, top to bottom: the warning, the live
+  header, the display-only transcript, its legend and the attribution, link and shadow
+  lines (`ui/transcript.py`). Right, top to bottom: the "Generate note" group (shown
+  only while a note can be generated or regenerated — after Save it stays, with
+  "Regenerate (replaces the saved note)"; its first row is the next-patient line and
+  "Remove lines N-end from this recording..."), the note with its warnings, style line,
+  proposals and the note's own row ("Cancel review and regenerate" beside "Delete note and
+  complete without one" — ui-refresh decision 0.2, built as option (a), open for the
+  practitioner), then "Edit the note" (`ui/note.py`). Under both: ONE button row —
+  Save note, Write draft to Cliniko, Copy note, then Complete and Discard on the right,
+  keyboard order left to right — and one status strip of the session's message line,
+  the note's message line, the write line and the note's shadow line. Every control
+  keeps its own enablement and reason (a disabled control is shown with its reason,
+  never hidden). This is presentational coverage of anything cue routing dropped: the
   clinician can always see a low-confidence phrase the note omitted; no automated
   check detects low-confidence or materiality omission (Check 4 `omission_warnings`
   separately flags omitted TOKENS, a different scoped heuristic — since 0.3.1 a side,
@@ -84,10 +136,11 @@ view patterns · tokens · microcopy.
   and an enrolment is refused while a session or benchmark runs (`ui/microphone.py`,
   `session.py` `begin_enrolment`). The failure being prevented is lost consultation audio
   or a destroyed worker, so refusal beats a confirmation dialog.
-- **First-run surfaces ask, never block.** With no voice profile the app opens on the
-  Practitioner tab with a one-line banner saying what setting it up gains and that
-  recording works without it; every other screen behaves as before (`ui/main_window.py`,
-  `ui/models.py` `FIRST_RUN_BANNER`; plan D10). Consent is a visible checkbox directly
+- **First-run surfaces ask, never block.** With no voice profile the app opens on
+  Settings → Practitioner with a one-line banner saying what setting it up gains and that
+  recording works without it; every other page behaves as before (`ui/main_window.py`,
+  `ui/models.py` `FIRST_RUN_BANNER`; plan D10; unchanged by 0.4.0 — the ui-refresh plan's
+  setup checklist is 0.4.1's). Consent is a visible checkbox directly
   above the action it gates, under the FULL ratified text shown verbatim
   (`ui/models.py` `CONSENT_TEXT_V3`, the current version; v1 and v2 are history); the action is disabled, not
   error-handled, until the box is ticked, and withdrawing consent is the visible Delete,
@@ -102,7 +155,7 @@ view patterns · tokens · microcopy.
   with "Confirm consent" saving the new consent (and the learning opt-in) without a
   re-record.
 - **Recording consent is per recording and never pre-ticked** (Cliniko workflow safeguards
-  plan, Task 3.3; PLAN.md Flow 2 step 4). The Session screen's box, directly above Start
+  plan, Task 3.3; PLAN.md Flow 2 step 4). The Record page's box, directly above Start
   under the verbatim text (`ui/models.py` `RECORDING_CONSENT_LABEL`), starts unticked,
   Start is disabled until it is ticked, and every Start press clears it — the explicit
   exception to "a stored consent record pre-ticks the box" above, because this consent
@@ -113,7 +166,7 @@ view patterns · tokens · microcopy.
   (the Chrome link line, `ui/bridge.py`). A recovered session names its link
   status only after it is opened (the listing says "Cliniko link checked when opened").
   The side panel's box follows the same rule (Chrome side below).
-- **Discard of a live recording takes two clicks.** The Session screen's Discard becomes
+- **Discard of a live recording takes two clicks.** The Record page's Discard becomes
   "Confirm discard" for 10 seconds for the same session (`ui/session_screen.py`); the
   side panel's Discard previous becomes "Confirm discard" with the line
   "Discard this recording? This cannot be undone. Press Confirm discard to delete it." for
@@ -123,10 +176,10 @@ view patterns · tokens · microcopy.
   clicks on a hidden block, so discarding stays on surfaces Cliniko cannot script — the
   side panel and the desktop. A disarmed button reverts silently; none of these
   deletes on one click. THREE desktop Discards act on ONE click, on a stopped session the
-  practitioner has already selected or opened (round 60 PR-LOW-332): the Transcript
-  screen's Discard (`ui/transcript.py`), and the Recovery tab's Discard in both its lists —
+  practitioner has already selected or opened (round 60 PR-LOW-332): the Review
+  screen's Discard (`ui/transcript.py`), and the Recovery page's Discard in both its lists —
   the recoverable list and the Unreviewed list (`ui/recovery.py`; the Unreviewed one reuses
-  the Recovery list's discard by Task 5.4's decision). The Past sessions tab's **Delete
+  the Recovery list's discard by Task 5.4's decision). The Past sessions page's **Delete
   now** follows the two-click pattern: it becomes "Confirm delete" for 10 seconds for the
   same entry with "Delete this past session now? Use Delete now only for a recording made
   in error - the wrong patient, a test, or one recorded without consent - because a kept
@@ -142,8 +195,8 @@ view patterns · tokens · microcopy.
   practitioner decision 2026-10-02): it asks first, names what goes ("Keep past sessions
   for only 7 years? Every kept session older than that is deleted now and cannot be
   recovered."), and a declined choice puts the setting back and writes nothing.
-- **Edits over whole lines, with typing only OVER a line.** The Note tab's "Edit the note"
-  group offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
+- **Edits over whole lines, with typing only OVER a line.** The Review screen's "Edit the
+  note" group, under the note, offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
   transcript utterances under the router's ownership rule as before; Edit opens a one-line
   inline editor in the row (Enter applies, Escape cancels) and replaces that line or
   proposal with the clinician's own wording as a `clinician`-provenance line labelled
@@ -174,15 +227,16 @@ view patterns · tokens · microcopy.
   the reason flagged lines are marked there — so a line that belongs to this patient
   can be added back knowingly (`ui/models.py` `NEXT_PATIENT_LINE_MARK`; validation-pass
   plan D6, the practitioner's front-mark choice of 2026-10-13).
-- **The next patient's lines are removed only by the clinician, from the Transcript
-  tab (since 0.3.3).** When a live recording's transcript shows a possible next
+- **The next patient's lines are removed only by the clinician, from the Review
+  screen (since 0.3.3; the Transcript tab until 0.4.0).** When a live recording's
+  transcript shows a possible next
   patient, the "Generate note" group shows the plain-text line "A possible next patient
   starts at line N [mm:ss-mm:ss]." (line N's span exactly as the transcript view prints
   it, because the view numbers no line) and a button "Remove lines N-end from this recording..." (the
   "..." because it asks first). It is never automatic. It is disabled, with its reason
   as the tooltip, while a note is being generated or reviewed ("Lines cannot be
   removed while a note is being generated or reviewed - use Cancel review and
-  regenerate on the Note tab first."), after Save ("Lines cannot be removed once a note
+  regenerate on the Review screen first."), after Save ("Lines cannot be removed once a note
   is saved - Discard the recording to start again, or complete it as it is."), during
   a recovery ("A recovery is in progress - wait for it to finish before removing
   lines.") and during a draft write. The question says what goes and what follows:
@@ -235,7 +289,7 @@ view patterns · tokens · microcopy.
   (`ui/models.py` `SUSPECT_SEGMENT_MARK` / `suspect_prefix`).
 - **Say what was learned, and what was not, on the spot — and name the control that
   writes it.** After an add or a move the edit group's status line says either "Will
-  learn '<phrase>' for <section> when you press Save note on this tab", "Not learned:
+  learn '<phrase>' for <section> when you press Save note on the Review screen.", "Not learned:
   contains a name/number/date/medication (<class>)", "Not learned: this line is not
   attributed to you …", or the one-line reason learning is off (naming the Practitioner
   tab) — a status line, never a modal, never a prompt (plan D9 as amended: auto-learn,
@@ -246,15 +300,15 @@ view patterns · tokens · microcopy.
   characters at most)" (`note_config.plain_rule_problem`) — never the rules file's
   authoring message (a rule id, an entry position, the JSON override, "Value error"),
   which stays in the writer's record and the logs; the same check covers a correction
-  to an already-learned shorthand (Phase H live smoke, 2026-09-26). While phrases are queued the learning line above it reads "N phrases
-  queued - press Save note on this tab to learn them (Cancel, Delete and Complete learn
-  nothing)": the live smoke of 2026-09-17 showed a queued phrase read as the outcome and
+  to an already-learned shorthand (Phase H live smoke, 2026-09-26). While phrases are queued the learning line above it reads "Phrase
+  learning is on: N phrases queued - press Save note on the Review screen to learn them
+  (Cancel, Delete and Complete learn nothing).": the live smoke of 2026-09-17 showed a queued phrase read as the outcome and
   the review left by another exit. On Save the same status line reports what was written,
   why the write failed, or — when lines were added but nothing queued — why nothing was
   learned. And when a review IS left by another exit with phrases still queued (Cancel,
-  Delete-and-complete, Discard), the Transcript screen's status line — where the
-  practitioner lands — gains "N queued phrases were not learned - only Save note on the
-  Note tab learns them." after the exit's own message (plan Task 5.6; window close is
+  Delete-and-complete, Discard), the session's message line in the Review
+  screen's status strip — where the practitioner lands — gains "N queued phrases were not learned - only Save note on the
+  Review screen learns them." after the exit's own message (plan Task 5.6; window close is
   exempt by practitioner decision: it already drops the whole unsaved draft). The "Not
   learned … (name)" note does not fire for a line opening with one of the practitioner's
   listed clinical openers ("Keep …", "Try …", "Ice …" — `LEARNING_OPENER_EXEMPTIONS`,
@@ -327,8 +381,8 @@ view patterns · tokens · microcopy.
   line — "Paste the clinic's Cliniko API key, then press Validate or Replace key." —
   never the bad-key line.
 - **A write to a chart is one click, checked afresh, adds and never replaces, and
-  never completes on its own** (cliniko-draft-write D2–D6, D15). The Note tab's
-  button row carries "Write draft to Cliniko" beside Copy. The write keeps every
+  never completes on its own** (cliniko-draft-write D2–D6, D15). The Review screen's
+  button row carries "Write draft to Cliniko" between Save note and Copy. The write keeps every
   answer already in the Cliniko note — typed text and the template's starting
   prompts alike — and puts the app's text below it after one empty line; an empty
   question simply takes the app's text. It is enabled only for a saved, ratified note of a LINKED
@@ -336,9 +390,9 @@ view patterns · tokens · microcopy.
   rendering in flight; when it is disabled, the reason is a persistent plain-text
   line under the buttons (and the tooltip), and a click that still arrives repeats
   it. A click shows "Checking the note with Cliniko …" then "Writing the draft to
-  Cliniko …"; closing the window, the Transcript row, the Recovery screen and a
-  Chrome Start / Discard / Open for review are refused while it runs, and the Session
-  screen's Start and its consent tick are disabled (a tick already given stays ticked),
+  Cliniko …"; closing the window, the row's Complete and Discard, the Recovery page and a
+  Chrome Start / Discard / Open for review are refused while it runs, and the Record
+  page's Start and its consent tick are disabled (a tick already given stays ticked),
   with "A draft is being written to Cliniko. Wait for it to finish." as Start's tooltip
   (`ui/session_screen.py` `refresh`, re-run at both ends of the write). Success does
   NOT end the recording: the line becomes "Draft written to Cliniko. Reload the note
@@ -346,8 +400,8 @@ view patterns · tokens · microcopy.
   was updated elsewhere, choose Discard my changes." (an editor already open on the
   note holds the pre-write copy; Cliniko's own button keeps the written draft), Write
   stays disabled,
-  Copy stays, and only the Transcript screen's Complete finishes the recording (the
-  Session screen then reads "Draft written to Cliniko and this recording is
+  Copy stays, and only the Review screen's Complete finishes the recording (the
+  Record page then reads "Draft written to Cliniko and this recording is
   complete. Past sessions shows what was kept. Review and finalise the note in
   Cliniko."). Every refusal is ONE line
   that names what happened and gives the next step — wait, try again, save, or fix
@@ -400,7 +454,7 @@ view patterns · tokens · microcopy.
   `possible_next_patient` ("The note stops where a new patient may have arrived"; its
   hint: "Later lines were left out - add back any that belong with Add line to section,
   then acknowledge. If they are another patient's, use Cancel review and regenerate,
-  then remove them from the recording on the Transcript tab."), because it withholds
+  then remove them from the recording on the Review screen."), because it withholds
   content (validation-pass plan D5). The button's tooltip names every code of the set
   from the same mapping, so the two cannot drift apart: "Acknowledges every review
   warning except those that each need their own Acknowledge: something said that is not
@@ -433,16 +487,16 @@ view patterns · tokens · microcopy.
   `LANGUAGE_MODEL_LOAD_FAILED_LINE` / `STYLE_PROFILE_MISSING_LINE` /
   `SAVE_WHILE_RENDERING_MESSAGE`; note-learning plan Task 4.4, C8).
 - **Live transcript is an append-only display under a header.** While recording, the
-  Transcript tab shows the header `Live — updates while recording` and appends each
+  Review screen's transcript (the left pane) shows the header `Live — updates while recording` and appends each
   transcribed window's lines (timestamps and `[word?]` marks, no speaker — attribution
   runs only when the recording ends) into the SAME non-interactive box; Discard clears it
   and the final transcript replaces it wholesale (`ui/transcript.py`, `ui/models.py`
   `format_live_segments`; note-learning plan Task 1.4).
 - **Start waits — briefly — while Clinic Scribe is getting ready.** Just after it opens,
-  while the transcription software loads, every Start (the Session tab's and the side
+  while the transcription software loads, every Start (the Record page's and the side
   panel's) and a voice enrolment's Record are refused with one line, "Clinic Scribe is still getting ready - start again
   in a moment." (`START_GETTING_READY_MESSAGE`, Chrome code `getting_ready`); nothing is
-  made, and the Session tab keeps its consent tick for the next press. The wait is
+  made, and the Record page keeps its consent tick for the next press. The wait is
   bounded to 60 seconds after the loading starts (`ml_warmup.START_HOLD_SECONDS`,
   measured from the warm-up's start, which is moments after launch): after that a Start
   records even if loading has not finished, without live transcription, and the empty
@@ -452,9 +506,9 @@ view patterns · tokens · microcopy.
   (b)).
 - **A Discard that must wait says so.** With live transcription running, a confirmed
   Discard first waits for it to stop (up to 10 seconds) so nothing is deleted while it
-  still holds audio. The window stays responsive, and the Session tab shows
+  still holds audio. The window stays responsive, and the Record page shows
   "Discarding - stopping live transcription first..." above its progress bar
-  (`DISCARD_STOPPING_LIVE_LINE`). Every Session control, every Chrome command (refused
+  (`DISCARD_STOPPING_LIVE_LINE`). Every Record page control, every Chrome command (refused
   `busy`, "The app is busy with a recording - wait for it to finish."; a Start
   `session_active`), "Open for review" (`REVIEW_OPEN_DISCARDING_LINE`) and closing the
   window wait until it ends. If live transcription outlasts the wait, nothing is
@@ -469,7 +523,13 @@ view patterns · tokens · microcopy.
 
 ## Chrome side (Cliniko workflow safeguards plan D1, D13; Phase 6)
 The extension REPORTS and the app DECIDES: every button becomes a command the app may
-refuse, and a refusal comes back as a line in the panel, never an error dialog.
+refuse, and a refusal comes back as a line in the panel, never an error dialog. The
+panel's look is unchanged by 0.4.0 (matching it to the desktop tokens is the ui-refresh
+plan's optional 0.4.1 Task 6.5). Its four lines that send the practitioner to "Clinic
+Scribe's Clinics tab" (the not-set-up message and three note-check reasons,
+`extension/src/panel-view.ts`) stay as they are, because Clinics is a tab of the
+desktop's Settings strip; its one line that named a renamed screen now reads "Pause
+hotkey unavailable — see Clinic Scribe's Record page." (`HOTKEY_UNAVAILABLE`, 0.4.0).
 - **The side panel carries consent and every control; Cliniko's page carries only the
   cue.** Chrome's global side panel (opened from the pinned icon) shows one of five
   layouts (`extension/src/panel-view.ts` `panelModel`, drawn by `panel.ts`):
@@ -501,7 +561,7 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   change redraws the panel, and focus returns to the same button only for the same
   session (`panel.ts`; round 60 PR-MED-330).
 - **Recording consent in the panel is never pre-ticked** — the same explicit exception
-  as the Session screen's box (Interaction posture above): the box sits directly above
+  as the Record page's box (Interaction posture above): the box sits directly above
   Start under PLAN.md's verbatim text, Start is disabled until it is ticked, and the tick
   is cleared by every Start press, whenever the note it was given for changes, and when
   the Ready layout goes away (`panel.ts`). Nothing stored ever ticks it.
@@ -519,18 +579,18 @@ refuse, and a refusal comes back as a line in the panel, never an error dialog.
   the desktop (round 57 SEC-003). Its buttons act only on a real click.
 - **The machine's own pauses say so on the desktop, and waking or unlocking resumes
   nothing** (D5 as amended 2026-09-28). Sleep and the Windows session locking pause any
-  recording, with the same desktop cue as every pause — the status line, the Session
-  screen's message and a taskbar flash: "Paused - the computer went to sleep." / "Paused -
+  recording, with the same desktop cue as every pause — the status line, the Record
+  page's message, the rail's "PAUSED" and a taskbar flash: "Paused - the computer went to sleep." / "Paused -
   the computer was locked.", followed by "Press Resume to carry on recording." (or, for a
   linked recording, the resume-on-its-own-note line). Resume stays a deliberate press.
-  Between a lock and signing back in, every Resume — the Session tab's, the hotkey's and
-  the side panel's — and every Start (the Session tab's and the side panel's) are refused by name: "The computer is
+  Between a lock and signing back in, every Resume — the Record page's, the hotkey's and
+  the side panel's — and every Start (the Record page's and the side panel's) are refused by name: "The computer is
   locked - sign in, then press it again." (or, if the app cannot confirm the unlock, "…lock
   it and sign in again (Windows key + L), then press it again."); the panel shows the app's own refusal line
   (`CHROME_REFUSALS["locked"]` / `["lock_unknown"]`). A voice enrolment on the Practitioner
   tab stops on sleep or a lock as if Stop were pressed — "Enrolment stopped - nothing was
   saved." — and Record is refused while locked with "Cannot record now - voice enrolment
-  refused: The computer is locked - sign in, then press it again." (round 57 SEC-019). If Windows refuses either notification, the Session screen says so in plain words and
+  refused: The computer is locked - sign in, then press it again." (round 57 SEC-019). If Windows refuses either notification, the Record page says so in plain words and
   names what to do instead ("Pause the recording before you leave the computer.")
   (`ui/models.py` `PAUSE_CUES`, `SYSTEM_PAUSE_FAILED_LINES`).
 - **The toolbar badge reflects the APP, not only the link**: green **OK** while it runs
@@ -556,9 +616,12 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - Transcript text is display-only (`NoTextInteraction`) and cleared on close —
   `ui/transcript.py`. It is never logged, never written outside the encrypted stores
   (the session, then — at Complete — its Past-sessions entry, under that entry's own
-  key). The Past sessions tab shows a kept transcript only behind "Show transcript",
+  key). Moving it onto the Review screen (0.4.0) changed no interaction flag: the
+  left pane is the same display-only box, and the note engine's own copy of the
+  transcript stays built, display-only and hidden there until 0.4.1 removes it. The
+  Past sessions page shows a kept transcript only behind "Show transcript",
   also `NoTextInteraction`, and never copies it: its one Copy is "Copy saved note",
-  through the same clipboard placement as the Note tab's Copy (`ui/note.py`
+  through the same clipboard placement as the Review screen's Copy note (`ui/note.py`
   `_place_note_text`), refused with its reason when no saved note was kept, the note
   has an unresolved error, or the copy flag is off.
 - The generated NOTE is the copyable surface — but ONLY while the recorded copy flag is on
@@ -574,7 +637,7 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
   insufficient because selectable text keeps native copy shortcuts. Every copy of note
   text — the Copy button, Ctrl+C / Ctrl+Insert or the panel's own right-click Copy
   over the ratified note's selection (`ui/note.py` `_NotePanel`, whose menu replaces
-  Qt's), the Past sessions tab's "Copy saved note", and the inline line editor's Copy
+  Qt's), the Past sessions page's "Copy saved note", and the inline line editor's Copy
   and Cut of its selection (needing the copy flag but not ratification — the line is
   mid-edit; pilot review rounds 22–23) — also carries the registered Windows formats that keep it out of Windows
   clipboard history and cloud clipboard sync (`ui/models.py` `clipboard_mime_formats`,
@@ -583,8 +646,9 @@ provenance tags, pre-filled marks or "[includes …]" lines reach the chart.
 - No list or combo box copies its rows: every list in the app is `ui/lists.py`
   `NoCopyListWidget` and every combo box `NoCopyComboBox`, whose Copy shortcut does nothing
   (Qt's own would copy a row — a patient's name in Past sessions, Recover or Unreviewed, or a
-  transcript line's first words in the Note tab's "Line:" popup — with a plain clipboard
-  write). A new list or combo box uses them.
+  transcript line's first words in the Review screen's "Line:" popup — with a plain clipboard
+  write). A new list or combo box uses them. The rail's entries are tool buttons and
+  the Settings strip is a tab bar — neither is a list or an item view.
 - Provenance is visibly distinguished in the note — transcript-derived vs
   clinician-authored vs autofill/prefill — so the clinician can see the source of every
   line at a glance (`ui/note.py` / `ui/models.py` rendering).
@@ -620,25 +684,33 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   `surface_alt` (disabled fields, the progress trough), `border`, `text`, `text_muted`,
   `text_disabled`, `accent` / `accent_hover` / `on_accent` (primary buttons, selection,
   the selected tab), `focus` (the focus border), `link`, `danger`, `success`, `hover` /
-  `pressed` (control states), `rec` (the rail's recording cue); `warning` and `paused`
-  are defined in both schemes and not yet drawn.
+  `pressed` (control states), `rec` (the rail's cue — "REC" and "PAUSED" alike);
+  `warning` and `paused` are defined in both schemes and not yet drawn. The rail's
+  icons take `text_muted`, and `accent` for the lit entry, through `theme.colour` —
+  the one place a token becomes Qt's colour, accepting only a value a token set holds.
 - **Type:** one family list (Segoe UI Variable Text, then Segoe UI, then Arial — the
   application font) and four sizes: `size_body` (the application font), `size_caption`
-  (the rail cue), `size_title` (a title label, the app title), `size_heading` (defined,
-  not yet drawn). **Spacing** `space_1`–`space_5`, **radii** `radius_control` and
+  (the rail cue and the rail entries' text), `size_title` (a title label, the app
+  title), `size_heading` (defined, not yet drawn). **Spacing** `space_1`–`space_5`, **radii** `radius_control` and
   `radius_card`, and the `rail_width`.
 - **Emphasis is a role, never rich text.** Every message label stays `PlainText`
   (user-written text is never read as markup); its colour and weight come from
   `theme.set_role(label, role)`: `danger` (red and bold — a warning that must be read),
   `error` (red — a failed or refused line), `strong` (bold), `muted`, `title`,
   `success`.
-- **Button variants** (`theme.set_variant`): `primary`, `danger` (outlined in red) and
-  `link` (flat and underlined, with the hand cursor — the Transcript tab's "change").
+- **Button variants** (`theme.set_variant`): `primary` (Start on the Record page, Save
+  note, the Clinics tab's Validate), `danger` (outlined in red: the Record page's and the
+  Review screen's Discard, Delete now, Delete recording, Delete voice profile, Delete
+  learned style — the Recovery page's two Discards, "Delete note and complete without
+  one" and the Practitioner tab's "Delete selected" buttons keep the plain look) and `link` (flat
+  and underlined, with the hand cursor — the role confirmation line's "change" on the
+  Review screen). A variant changes the look only, never a button's text.
 - **Cards:** every group box is a card; a plain frame becomes one through
   `theme.mark_card` (the note's proposal rows).
 - **The shell's object ids** (`#rail`, `#railButton`, `#railCue`, `#header`,
-  `#appTitle`, `#settingsStrip`, `#settingsTabs`) have their rules already; the widgets
-  arrive with the ui-refresh plan's Phase 3.
+  `#appTitle`, `#settingsStrip`, `#settingsTabs`) are the rail, its entries and cue,
+  the header strip and its title, and the Settings strip and its tab bar
+  (`ui/shell.py`; Surfaces & layout above).
 - **Disabled reads as disabled.** Every control class the stylesheet colours has a
   disabled rule (buttons and their variants, inputs, lists, group-box titles, menu
   items, tabs, the progress bar, the rail buttons), and check and radio indicators get
@@ -673,7 +745,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   the key, "Completed. The Past-sessions copy will appear after the next check."
   (`COMPLETE_DEFERRED_LINE`). A Complete that ACTUALLY kept the recording (the
   controller's outcome, never the consent tick) adds "The recording was kept for
-  development." (`COMPLETE_KEPT_LINE`), on the Transcript screen and on the Session tab
+  development." (`COMPLETE_KEPT_LINE`), on the Review screen and on the Record page
   the window lands on.
 - A Past-sessions line carries a date, the patient's name as the entry's label holds it
   (never under Hide names) and authored words — never an id (but for an exported
@@ -706,7 +778,8 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   `custody_refusal_text`, shared by Start, Pause, Resume, Finish, Save, Complete and
   Discard; draft-write round 49).
 - A typed line's learning status names the trigger and the wording: "Will learn shorthand:
-  '<trigger>' -> '<wording>' for <Section> when you press Save note on this tab"; a
+  '<trigger>' -> '<wording>' for <Section> when you press Save note on the Review
+  screen."; a
   not-learned reason names the class ("the trigger contains a name/number/date/medication
   (<class>)", "the typed wording contains a number/date/medication (<class>)").
 - A learning outcome names what was kept and what happened to the sources: "Learned
@@ -754,16 +827,17 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   says "The shadow-mode setting could not be saved; the box shows the setting in use."
   and re-reads the box — or, when the file then cannot be read, shows the unreadable
   line instead (`ui/main_window.py` `SHADOW_MODE_*`). A recording takes the
-  setting at Start and keeps it. The Session tab says, above Start while the setting
+  setting at Start and keeps it. The Record page says, above Start while the setting
   is on, "Shadow mode is on: new recordings are shadow recordings - their notes cannot
   be copied or written to Cliniko.", and for a live or queued shadow recording (one
   reopened from Unreviewed included) "This is a shadow recording: its note cannot be copied or written to
   Cliniko." — the second line stays after the setting is turned off (`ui/models.py`
-  `SHADOW_SETTING_LINE` / `SHADOW_RECORDING_LINE`); the Transcript tab shows that
-  same second line, under the link line, for a recovered or reopened shadow recording
-  (an unreadable record counts as one). The Note tab shows "This is a
+  `SHADOW_SETTING_LINE` / `SHADOW_RECORDING_LINE`); the Review screen's transcript pane
+  shows that same second line, under the link line, for a recovered or reopened shadow
+  recording (an unreadable record counts as one). The Review screen's status strip shows
+  "This is a
   shadow recording for the pilot: its note cannot be copied or written to Cliniko, and
-  saving it teaches the app nothing." under its buttons; Copy is disabled with the
+  saving it teaches the app nothing." under the button row; Copy is disabled with the
   tooltip "This is a shadow recording for the pilot, so its note cannot be copied.",
   the note cannot be selected (so a keyboard or menu Copy has nothing to copy and
   places nothing), the line editor offers no Copy or Cut and no drag, Write says "This is a
@@ -778,11 +852,11 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   setting "Keep recordings for development (written consent only)" carries the help
   line "Each kept recording needs the patient's written consent and the tick above
   Start; the recording stays on this computer and can be deleted on the Past sessions
-  tab." and, when its file cannot be read, "The keep-recordings setting could not be
+  page." and, when its file cannot be read, "The keep-recordings setting could not be
   read, so no recording is kept. Tick the box again to turn it on." (and, when a change
   cannot be saved, "The keep-recordings setting could not be saved; the box shows the
   setting in use.") — the opposite polarity to shadow mode: anything unresolved keeps
-  NOTHING (`ui/main_window.py` `DEVELOPMENT_*`). With the setting on, the Session tab shows a second box above Start,
+  NOTHING (`ui/main_window.py` `DEVELOPMENT_*`). With the setting on, the Record page shows a second box above Start,
   "I confirm the patient has consented in writing to this recording being kept for
   developing the program" (`ui/models.py` `DEVELOPMENT_CONSENT_LABEL` and the lines
   below), never pre-ticked, hidden while
@@ -797,7 +871,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   sleeping (while that pause is available) — is NAMED, never silent: "The keep-for-development
   tick was cleared - the Cliniko note changed, the computer locked or a Start was
   refused. Tick it again before Start if the patient consented in writing."
-  (`DEVELOPMENT_TICK_CLEARED_LINE`). On the Past sessions tab an entry holding a kept
+  (`DEVELOPMENT_TICK_CLEARED_LINE`). On the Past sessions page an entry holding a kept
   recording ends "(recording kept)" (also on the unreadable row, so it can still be
   deleted); its opened entry shows the group "Recording kept for development" with
   "Recording kept for development - review due October 2027." (the month in local time,
@@ -813,7 +887,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   seconds for the same entry with "Delete this recording? The transcript and notes stay.
   Use it when the patient withdraws consent for the recording, or at its review. The
   recording cannot be recovered. Press Confirm delete recording to delete it." (a
-  selection change, Delete now's or Export's click, a refresh, leaving the tab or the
+  selection change, Delete now's or Export's click, a refresh, leaving the page or the
   deadline disarms it), then "Recording deleted."; a failure reads "The recording could
   not be deleted: <reason>. The transcript and notes are unchanged - try again."
   **Export recording (WAV)** carries "Export makes one unencrypted copy of the
@@ -869,7 +943,7 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   slow prose stage adds "The prose writing styles are slow on this machine. They stay
   local; the Clean clinical style does not wait for them." to the warning label. Only
   timings — never text the model wrote (`benchmark.py`, `ui/microphone.py`). Run it
-  with no prose rendering in flight on the Note tab: the two share the one loaded
+  with no prose rendering in flight on the Review screen: the two share the one loaded
   model, so a section's time would include the wait for the other's call and could
   read slower than the machine is (accepted, round 22).
 - The installer's words (`packaging/scribe.iss`; the app never runs elevated, so
@@ -908,8 +982,8 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
     "Writing the draft to Cliniko …";
   - outcome: "Draft written to Cliniko. Reload the note page in Chrome; press Complete
     once you can see it there. If Cliniko says the note was updated elsewhere, choose
-    Discard my changes." (`written_seen`); after that Complete, on the Session
-    screen, "Draft written to Cliniko and this recording is complete. Past sessions
+    Discard my changes." (`written_seen`); after that Complete, on the Record
+    page, "Draft written to Cliniko and this recording is complete. Past sessions
     shows what was kept. Review and finalise the note in Cliniko." (`written_done`);
     "The write did not confirm.
     Nothing is lost - press Write again to check the note before anything is sent."

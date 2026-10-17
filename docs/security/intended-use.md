@@ -65,7 +65,7 @@ reviews and finalises every note in Cliniko.
   until they delete them, the default (practitioner decision 2026-10-02;
   Delete now is for a recording made in error). Past sessions is a look-back for the practitioner, not the record:
   a kept transcript becomes part of the practitioner's health record and can
-  be reached by an access request or a subpoena (the tab's warning;
+  be reached by an access request or a subpoena (the page's warning;
   `docs/practice/`), but the note the patient's care relies on is the one
   finalised in Cliniko. A content-free audit row per session (consent,
   Cliniko ids, models, the write's outcome and what was deleted — never a
@@ -76,7 +76,7 @@ reviews and finalises every note in Cliniko.
 ## In the app
 
 Since 2026-10-01 (D14) the app states its intended use in one line at the top
-of the Status tab and of the Past sessions tab: "Documentation aid, not
+of the Status tab (under Settings) and of the Past sessions page: "Documentation aid, not
 clinical decision support. You review and finalise every note in Cliniko."
 (`ui/models.py` `INTENDED_USE_LINE`; change it together with this document).
 
@@ -118,7 +118,7 @@ when Windows delivers those notifications and accepted the app's
 registration for them (the threat model's pause-rule residue names when it
 does not). Also built: back-to-back consultations
 with an Unreviewed list, and a pause hotkey and spoken pause. And, since
-2026-10-01 (PLAN.md Phase 6): the Past sessions tab and its archive, the
+2026-10-01 (PLAN.md Phase 6): the Past sessions page and its archive, the
 content-free audit record with its CSV export, the per-user crash-report
 exclusions, the not-indexed data folder with a start-up location check that
 warns, type-name-only crash logging, and the intended-use line.
@@ -133,7 +133,7 @@ checks of the treatment note a recording belongs to, and — since 2026-09-29
 (PLAN.md Phase 4, the cliniko-draft-write plan; tested against clinic 1's
 template — clinic 2's template is unverified until its own test write, so
 there the write-time template match is the only check) — the draft write:
-after Save, "Write draft to Cliniko" on the Note tab reads the linked note
+after Save, "Write draft to Cliniko" on the Review screen reads the linked note
 again and adds the reviewed note to its draft content. Since 2026-09-30
 (practitioner decision D15) it never replaces anything already in the note:
 an empty question takes the app's text, and a question that already holds
@@ -149,7 +149,7 @@ between the app's read and its write is lost, so the clinician does not
 edit the note in Cliniko while a write runs (threat model, THE DRAFT WRITE
 residue (a)).
 A note can still be moved into Cliniko by hand: since 2026-09-27
-(practitioner decision) a fully ratified note can be copied from the Note tab
+(practitioner decision) a fully ratified note can be copied from the Review screen
 and pasted into the Cliniko treatment note. The copy goes through the Windows
 clipboard, which is outside the app. Since 2026-09-28 every copy of the note
 (the Copy button, or Ctrl+C / right-click Copy on the selected note — and,

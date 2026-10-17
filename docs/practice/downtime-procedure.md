@@ -19,8 +19,8 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 |---|---|---|
 | The app will not open, or Chrome's icon shows grey **OFF** | Write the note in Cliniko yourself | Open the app from its usual shortcut (not from a terminal that will be closed). If it says it is already running, look for its window. |
 | "Start failed: AuditWriteError: the audit record could not be saved (…). Nothing was recorded." | Do not record. Write the note yourself | See [The audit record](#the-audit-record) |
-| Cliniko cannot be reached | Record from the Session tab if the patient consents; the recording is not linked to the Cliniko note | Copy the reviewed note into Cliniko by hand once Cliniko is back |
-| The recording stopped (crash, power cut, restart) | Reopen the app; read the transcript from the Recovery tab and write the note yourself | Within 24 hours — see [An interrupted recording](#an-interrupted-recording) |
+| Cliniko cannot be reached | Record from the Record page if the patient consents; the recording is not linked to the Cliniko note | Copy the reviewed note into Cliniko by hand once Cliniko is back |
+| The recording stopped (crash, power cut, restart) | Reopen the app; read the transcript from the Recovery page and write the note yourself | Within 24 hours — see [An interrupted recording](#an-interrupted-recording) |
 | "Cliniko is rate-limiting this clinic" | Wait the time it shows, or copy the note into Cliniko by hand | — |
 | "An earlier write may have reached Cliniko" | Open the note in Cliniko and look before copying anything | — |
 | The note went to the wrong patient or note in Cliniko | Stop. Remove the text in Cliniko before anyone finalises it; do not press Complete | Follow the incident process |
@@ -30,7 +30,8 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 ## Before the first patient each day
 
 - Open the app and check the Chrome icon shows a green **OK**.
-- Look at the Status tab: it should show no warning lines under the intended-use line.
+- Look at the Status tab (Settings, then Status): it should show no warning lines under
+  the intended-use line.
 - Have a way to write notes without the app (Cliniko open as usual). The patient
   information sheet (its current version: `patient-info-v3`) should be at hand, and the
   development-recording consent form (`development-consent-v1`) if you may ask for one.
@@ -47,8 +48,9 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 - A recording started from a Cliniko note while Cliniko cannot be checked is marked as
   not verified. A note from it cannot be written into Cliniko until the app can check the
   note again with Cliniko.
-- A recording started from the app's Session tab (not from a Cliniko note) is never
-  linked to a Cliniko note and can never be written back. Use **Copy** on the Note tab and
+- A recording started from the app's Record page (not from a Cliniko note) is never
+  linked to a Cliniko note and can never be written back. Use **Copy note** on the Review
+  screen and
   paste the reviewed note into the right Cliniko note yourself once Cliniko is back —
   check the patient and the appointment first. (A shadow recording's note — a pilot
   comparison appointment — cannot be copied either: write your own note.)
@@ -59,10 +61,10 @@ in Cliniko yourself, the usual way; nothing about the patient's care waits for t
 
 If the app or the computer stops during a recording:
 
-1. Reopen the app. An interrupted recording is listed on the **Recovery** tab. It stays
+1. Reopen the app. An interrupted recording is listed on the **Recovery** page. It stays
    encrypted and can be opened **for up to 24 hours from when it started**; after that
    the app deletes it the next time it runs.
-2. Open it from the Recovery tab and let the app finish transcribing it. A recovered
+2. Open it from the Recovery page and let the app finish transcribing it. A recovered
    recording shows its **transcript only**: the app does not draft a note from it and
    cannot write it into Cliniko. Read the transcript (it cannot be copied) and write the
    note in Cliniko yourself.
@@ -87,14 +89,14 @@ write the note yourself. Then:
 
 - **"… its key cannot be read on this Windows account …"** or **"… its key is missing
   …"** — this happens, for example, after an administrator resets your Windows password.
-  On the **Past sessions** tab press **Start a new audit record** and confirm. The old
+  On the **Past sessions** page press **Start a new audit record** and confirm. The old
   record is set aside, unread, in a folder beside it; nothing is deleted. Recording can
   start again straight away.
 - **"… the audit folder could not be written"** or **"… could not be read"** — check the
   computer has free disk space, then close and reopen the app. If it keeps happening, stop
   using the app and investigate before recording again.
 - **"N audit record updates could not be saved since Clinic Scribe started"** on the Past
-  sessions tab — your recordings and notes were not affected; only the record of what
+  sessions page — your recordings and notes were not affected; only the record of what
   happened to them is incomplete. If the number keeps rising, restart the app; if it still
   rises, investigate.
 
@@ -132,7 +134,7 @@ write the note yourself. Then:
 
 ## Start-up warnings
 
-Shown on the Status tab and the Past sessions tab. Recording still works; fix the cause
+Shown on the Status tab (under Settings) and the Past sessions page. Recording still works; fix the cause
 when you can.
 
 - **"… data folder is inside OneDrive …"**, **"… on a network drive …"** or **"… in the
@@ -190,5 +192,5 @@ when you can.
 ## After any downtime
 
 - Make sure every consultation from the period has a finalised note in Cliniko.
-- Check the Recovery tab and the Unreviewed list are empty, or deal with what is there.
+- Check the Recovery page and the Unreviewed list are empty, or deal with what is there.
 - Record what happened and what you did.

@@ -121,7 +121,7 @@ the app's warning and these documents together.
   least 7 years**, the Victorian, NSW and ACT minimum. What the app now offers:
   - The Past sessions setting has two choices only: "Until I delete them" (the default)
     and "7 years". The shorter choices it once offered (1, 7, 30 or 90 days, 1 year) are
-    gone; a setting saved with one of them is read as 7 years, and the Past sessions tab
+    gone; a setting saved with one of them is read as 7 years, and the Past sessions page
     says so until the setting is saved again.
   - The app does not know a patient's age. For a patient who was a child, the transcript
     must be kept until they turn 25, so the practitioner chooses "Until I delete them"

@@ -13,13 +13,13 @@ recording consent and the encounter record, the host↔app named pipe with
 protocol v2, the pause rule and the Unreviewed review, the Chrome side panel,
 page frame and block, and the hands-free controls; plus the Cliniko draft
 write (PLAN.md Phase 4, the cliniko-draft-write plan, built 2026-09-29): the
-Note tab's "Write draft to Cliniko", the client's ONE write (a `PATCH` that
+Review screen's "Write draft to Cliniko" (the Note tab's before 0.4.0), the client's ONE write (a `PATCH` that
 fills the open draft treatment note), the per-session write record
 `write.enc`, completion after a confirmed write, and — since 2026-09-30 (D15)
 — the append that keeps every answer already in the note ("THE DRAFT WRITE"
 under "Cliniko API client" below); plus the privacy and professional controls
 (PLAN.md Phase 6, the privacy-professional-controls plan, built 2026-10-01):
-the durable audit record, the Past-sessions archive and its tab, the CSV
+the durable audit record, the Past-sessions archive and its page, the CSV
 export, the exclusions and the exception hooks ("Privacy and professional
 controls" below); plus the installation (PLAN.md Phase 7, the installation
 plan, built 2026-10-02 → 2026-10-03; installed on this computer at its Phase
@@ -378,7 +378,7 @@ note inherit exactly that posture.
    phrase's section and date in a sidecar `section_cues.learned.json` that
    the loader never reads; `delete_user_cue` removes one. What can be written
    is bounded by structure at five points, each a call site: (a) only the
-   Note tab's add/move path enqueues a candidate (`ui/note.py`
+   Review screen's add/move path enqueues a candidate (`ui/note.py`
    `_consider_learning` queues what the Qt-free
    `ui/note_review.consider_learning` decides — Task H6) and only after
    `note.spoken_by_confirmed_clinician` (tested there FIRST, before the
@@ -405,7 +405,7 @@ note inherit exactly that posture.
    removal leg and a cancelled or abandoned review write nothing — and the
    exact bytes are validated by the loader's own two rules before either file
    is replaced (each replace atomic; a failure leaves the file as it was and
-   is reported on the tab, never un-saving the note). The honest limit,
+   is reported on the Review screen, never un-saving the note). The honest limit,
    stated plainly (round 1 PR-HIGH-001): the filter classifies SHAPE, not
    meaning. A benign-looking phrase that IS patient-identifying in context
    passes it; so does a drug name carrying none of the listed suffixes with
@@ -435,7 +435,7 @@ note inherit exactly that posture.
    name-like at any position, and (b) a capitalised REAL-first word is
    admitted when its lowercase form is in the caller's `known_common`
    evidence — which only the sample-note learner supplies (the words seen in
-   lowercase anywhere in the chosen notes); the two Note-tab callers pass no
+   lowercase anywhere in the chosen notes); the two note-review callers pass no
    evidence, so rule (b) never reaches the transcript-derived paths (pinned
    on the source) and a name opening an utterance is still refused there,
    while rule (a) applies to them like every caller — a listed abbreviation
@@ -552,7 +552,7 @@ note inherit exactly that posture.
    them, the next patient's lines stay in this patient's transcript — so in
    its Past-sessions entry for its retention and in any replay.
    THE TRIM (validation-pass plan D9, decision 0.6 (a); 0.3.3). Where the
-   boundary fires on a live session's transcript, the Transcript tab shows "A
+   boundary fires on a live session's transcript, the Review screen (the Transcript tab before 0.4.0) shows "A
    possible next patient starts at line N [mm:ss-mm:ss]." (the span as its
    view prints it) and "Remove lines N-end from this
    recording...", disabled with its reason while a note is being generated or
@@ -584,7 +584,7 @@ note inherit exactly that posture.
    after Save the trim is refused ("Discard the recording to start again, or
    complete it as it is"), while Check 6's hint still names it; (k) a trim
    whose removed lines held every line of the voice-matched speaker drops the
-   voice attribution — the tab says so at the trim ("None of the lines left
+   voice attribution — the Review screen says so at the trim ("None of the lines left
    were matched to your voice, so choose the clinician speaker before you
    generate."), but the shortened transcript keeps no trace of it, so the same
    transcript reopened later shows the general "Voice attribution did not
@@ -637,7 +637,7 @@ note inherit exactly that posture.
    detector of it.
 3. **The extended in-memory transcript lifetime across the review window.** The
    full uncertainty-marked transcript now stays in process memory beside the
-   note through the WHOLE Note-tab review (`ui/note.py`), longer than the
+   note through the WHOLE note review on the Review screen (`ui/note.py`), longer than the
    Phase-2 transcript-inspection view, because the clinician must be able to see
    a phrase the note omitted on the basis of LOW CONFIDENCE — that path is
    reached by no automated check (Check 4 `omission_warnings` separately flags
@@ -652,10 +652,11 @@ note inherit exactly that posture.
    sentence with none of those words stays unflagged; see the honest limit
    below). Plaintext transcript and note
    therefore coexist in memory for the review duration. This is inside
-   boundary 2 (a same-user process can already read process memory); the Note
-   tab's transcript panel stays display-only (`NoTextInteraction`) so casual
-   selection cannot drift clinical text into the Windows clipboard, and the tab's
-   plaintext is cleared when a new transcript loads over a stale note. The app
+   boundary 2 (a same-user process can already read process memory); the Review
+   screen's transcript (and the note engine's hidden copy of it, until 0.4.1
+   removes it) stays display-only (`NoTextInteraction`) so casual
+   selection cannot drift clinical text into the Windows clipboard, and the note
+   review's plaintext is cleared when a new transcript loads over a stale note. The app
    introduces no new on-disk plaintext and no new logging channel (the note
    and transcript it keeps at Complete stay ENCRYPTED in a Past-sessions
    entry — "Privacy and professional controls" below; the routes
@@ -695,7 +696,7 @@ note inherit exactly that posture.
    moment of copying, so nothing those routes copy is placed before
    ratification (the line editor's mid-edit Copy and Cut, below, are the one
    exception) — plus, since the
-   privacy-professional-controls plan, the Past sessions tab's "Copy saved
+   privacy-professional-controls plan, the Past sessions page's "Copy saved
    note" (`ui/past_sessions.py`: `format_note_body` of a kept SAVED note,
    which was ratified before it could be saved; refused with its reason when
    the copy flag is off, no saved note was kept or the note has an unresolved
@@ -714,7 +715,7 @@ note inherit exactly that posture.
    Qt's item views copy the current row's text on Ctrl+C or Ctrl+Insert with
    a plain clipboard write, and the app's lists show patients' names (Past
    sessions, Recover, Unreviewed), learned phrases and rules and sample-note
-   sentences; a combo box's popup is such a view, and the Note tab's "Line:"
+   sentences; a combo box's popup is such a view, and the Review screen's "Line:"
    choice shows each transcript line's number, speaker and first words — so
    every list is `ui/lists.py` `NoCopyListWidget`, whose Copy shortcut does
    nothing, and every combo box `NoCopyComboBox`, whose popup view has an
@@ -745,8 +746,8 @@ note inherit exactly that posture.
    only mitigation. A DRAG out of the inline line editor does not start:
    drag is Qt's default-off for a line edit, set off explicitly when the
    editor refuses Copy, and no widget turns it on (`test_shadow_exits.py`).
-   **The draft write shares the gate (cliniko-draft-write D2, D7).** The Note
-   tab's "Write draft to Cliniko" sits beside Copy and is enabled only when
+   **The draft write shares the gate (cliniko-draft-write D2, D7).** The Review
+   screen's "Write draft to Cliniko" sits beside Copy and is enabled only when
    `_copy_ready` holds AND the recording is linked AND the note is not from
    the test provider (D10) AND the session's write record can be read and
    does not already read `written` (`ui/models.py` `write_control`) AND no
@@ -1098,7 +1099,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
    defaulted fields, set together or not at all: a cluster label
    (`enrolled_speaker`, structurally required to name a segment that has
    transcribed text — a document naming any other label is refused at
-   construction, so the Transcript screen cannot be shown one), a finite
+   construction, so the Review screen cannot be shown one), a finite
    cosine in [-1, 1] (`enrolment_similarity`) and the embedder's `model_id`.
    None of the three is clinical content; none is a field name the log
    tripwire needs, because none carries text. Old `transcript.enc` artefacts
@@ -1107,7 +1108,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
    way, and a profile made by a different embedder (`model_id` or the
    model's verified digest), an absent model file, an unusable profile or a
    model file that refuses to load all yield NO attribution rather than a
-   failed transcription — the fallback is REPORTED on the Transcript screen
+   failed transcription — the fallback is REPORTED on the Review screen
    (D2), never silent, and the readiness probe that names it loads no model
    on the GUI thread. Residual: the readiness probe compares a stored profile
    against the PIN, not against bytes; a present-but-wrong model file is
@@ -1124,7 +1125,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
    clinician chooses the clinician speaker by hand.
 7. **The confirmed role stays a UI selection; the attribution field is a
    pre-check, not a label (D1).** `enrolled_speaker` never reaches
-   `compose_draft`'s `clinician_speaker` from the document: the Transcript
+   `compose_draft`'s `clinician_speaker` from the document: the Review
    screen checks the matching radio and `generate()` reads the checked
    radio exactly as for a hand-chosen role; the note checker's provenance
    check keeps deriving speaker roles from coordinates, so the spoken-
@@ -1195,7 +1196,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
    that is so the tab shows the D2 fallback line in place of the record,
    neither the stored consent tick nor the learning opt-in, so the opt-in
    cannot be changed there, while the LAST SAVED opt-in stays in force for
-   the Note tab (`ui.models.learning_status` reads the record without the
+   the Review screen (`ui.models.learning_status` reads the record without the
    identity check: learning needs consent, not the speaker model) until the
    profile is re-enrolled or deleted — Delete withdraws it (round 51
    LOW-002; decoupling the tab's consent display from attribution usability
@@ -1268,7 +1269,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
     Task 3.7 admissions (surface 1 of the Phase 3A section) reach this
     surface through rule (a) only — a shipped abbreviation is never
     name-like at any position, and the shipped list holds no given name —
-    because rule (b) needs evidence the Note tab never supplies, so what
+    because rule (b) needs evidence the Review screen never supplies, so what
     this surface learns from a transcript widened by exactly the shipped
     abbreviations and by nothing else; on the sample-note path (surface 15 of
     the note-learning section) rule (b) admits a name the practitioner ALSO
@@ -1277,7 +1278,7 @@ boundary 2: the defended adversary is outside the user's Windows session.
     file and the
     sidecar are two
     atomic writes, not one — on learning, a sidecar write that fails after
-    the cue file was replaced is REPORTED on the Note tab (the phrase is
+    the cue file was replaced is REPORTED on the Review screen (the phrase is
     learned, listed under "Learned phrases" without a date), never raised as
     "not learned"; on deletion, a sidecar write that fails after the cue was
     removed leaves the entry in the sidecar, the tab keeps the row for a
@@ -1339,8 +1340,8 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     intact, and the next Discard retries), the three Complete paths and
     `_retire_locked` on a new Start (`_stop_live_locked`, the 1 s in-lock
     bound); the one caller allowed to ignore the verdict is `_fail_locked`,
-    which destroys nothing. Since installation plan round 40 LOW-002 the Session
-    screen runs a Discard with a worker attached on a `TaskThread`, so the
+    which destroys nothing. Since installation plan round 40 LOW-002 the Record
+    page runs a Discard with a worker attached on a `TaskThread`, so the
     window is not frozen through its wait. The screen shows "Discarding -
     stopping live transcription first...". Until the wait ends, every control
     is held, and so is every Chrome command (through `is_busy`). So are the
@@ -1358,7 +1359,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `assemble_transcript` and consults `stop()`'s verdict before the batch
     path may build a second model. FALLBACKS (C8): a model-load failure,
     `fell_behind`, a worker error or a drain error each name their reason on
-    the Session screen's status line and the consultation continues through
+    the Record page's status line and the consultation continues through
     the batch stage (flow 7). THE LIVE VIEW (C2): the worker posts each
     window through a queued Qt signal to the same display-only
     `NoTextInteraction` transcript widget (`ui/transcript.py`); a post after
@@ -1367,7 +1368,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     RETIRED worker emitted before it was stopped, still queued when the next
     Start opens its view, is neither drawn in the next patient's view nor
     fed to the spoken-pause and new-consultation rules (round 57 SEC-022);
-    the view is cleared on the Session screen's
+    the view is cleared on the Record page's
     Discard, the final document replaces it wholesale, and live segments
     carry `LIVE_SPEAKER_PENDING`, never a cluster label. LOGGING (C9): the
     worker holds no logger; the ONE new log record is
@@ -1387,7 +1388,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     `ml_warmup.ImportWarmup` imports numpy, onnxruntime and faster-whisper
     once at app start on its own thread (modules only — no model, audio,
     session or connection; the offline switches asserted first). While it
-    runs, EVERY Start — the Session tab's and Chrome's — is REFUSED with
+    runs, EVERY Start — the Record page's and Chrome's — is REFUSED with
     "Clinic Scribe is still getting ready - start again in a moment" (round
     36 MED-001, the practitioner's option (b), 2026-10-03:
     `SessionScreen.start_held`, asked by `on_start` / `start_linked` and by
@@ -1457,7 +1458,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     filter for PRACTITIONER-TYPED text, sharing the number, date and medication
     classifiers and running NO name heuristic (D11, practitioner decision
     2026-09-18; consent v3 says so). Writing (C6): `append_learned_rules` runs
-    ONLY from the Note tab's Save (Cancel, Discard, Delete-and-complete and Undo
+    ONLY from the Review screen's Save (Cancel, Discard, Delete-and-complete and Undo
     write nothing and the exit notice names the dropped rules), validates each
     candidate as an `AutofillRule` under a fresh `learned-<ulid>` id and checks
     its trigger against every trigger the file already holds BEFORE any write
@@ -1488,7 +1489,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     config-decided line cannot name a config it was not minted under. The
     minting and the gate are as boundary 2's amendment above states:
     `note_fill.config_decisions` mints, `NoteDraft.config_decisions` carries,
-    `finalise_note` accepts only a carried decision; the Note tab shows
+    `finalise_note` accepts only a carried decision; the Review screen shows
     pre-filled lines marked with no confirm/decline row, offers Remove (the
     clinician's decline, recorded at Save) and Edit, labels the Save button with
     the count it confirms, and stays refused while any proposal the config did
@@ -1562,7 +1563,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     two counts, never a field's text) and both "Learned style" lists render
     from that one in-memory copy; the ONE other reader is the Own-voice prose
     stage (that plan's Phase 4, `ui/models.build_prose_stage`): one decrypt
-    per rendering job on the Note tab's worker thread, the profile handed to
+    per rendering job on the note engine's worker thread, the profile handed to
     the prompt builder as conditioning for every section call of that job and
     dropped when the job returns — and refused as conditioning when its own
     consent record is not the current text version (the same rule that turns
@@ -1784,7 +1785,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     written and before Copy — and `note_input_digest` binds a job to the note
     it started for; `render_note(note, style)` remains the ONE rendering path
     all three go through (D7, `ui/models.format_note_body`).
-    ON SCREEN (C8). The stage runs on the Note tab's `TaskThread` after each
+    ON SCREEN (C8). The stage runs on the note engine's `TaskThread` after each
     finalisation (`ui/note.py` `_start_style_stage`); the model is built ONCE
     per process on that worker thread (`ui/models._LanguageModelCache` — a
     failed load is remembered and named, so the remedy is a restart after the
@@ -1801,7 +1802,7 @@ plan's Phase H (task H3, 2026-09-25, after the whole-surface review rounds
     refused the prose, how many could not be rendered at all),
     `LANGUAGE_MODEL_LOAD_FAILED_LINE` and `STYLE_PROFILE_MISSING_LINE` (the
     Phase-3 `style_fallback_line` now appears in the info label only on a
-    Note tab built without a stage provider — never in the shipped window).
+    note engine built without a stage provider — never in the shipped window).
     A job orphaned by `clear()` keeps its thread until
     it reports and its result is dropped; an edit during a job invalidates
     only the sections it changed and a fresh job renders those. CUSTODY
@@ -1883,7 +1884,7 @@ data-flow map); the native host has none and never imports it. It reads
 `PATCH` that fills an open draft treatment note (THE DRAFT WRITE below). It
 has three app callers, each making its client calls on a worker thread in
 answer to a practitioner action or a report from Chrome, never at startup, on
-a timer or while idle: the draft write (`draft_write.py`), on the Note tab's
+a timer or while idle: the draft write (`draft_write.py`), on the Review screen's
 "Write draft to Cliniko" click only — two client calls per click, the note
 read then the write; the clinic registry (`clinics.py`, Phase 2) on a Validate or
 Replace key press on the Clinics tab (CLINIC KEYS below), and note
@@ -1913,7 +1914,7 @@ class's own `self.<name>` of a member that class itself defines, call any
 `x.request(…)`, subclass a client class or reach `__globals__` / `__dict__` — the
 private members and the capability list are DERIVED from the client's
 source, so a new one is covered with no pin change. `TestWriteSlot` pins
-that a write starts only from the Note tab's button slot (THE DRAFT WRITE
+that a write starts only from the note engine's button slot (THE DRAFT WRITE
 below). Residue: these are SOURCE checks, so a dynamic import
 (`importlib.import_module`), a name built at run time, `vars()` or
 `sys.modules` is outside them, and the transport's `request` is checked in
@@ -2127,7 +2128,7 @@ session id: the bridge's verified Start display, else its live
 re-verification, else a checkout's Verified result — D5) is written into the
 session's Past-sessions entry label, encrypted under the entry's key, and
 nowhere else ("Privacy and professional controls" below). Phase 3 showed them nowhere; since Phase 4 the Chrome bridge
-shows them — on the Session screen and in `state`, for a verified note only
+shows them — on the Record page (and, since 0.4.0, the header strip) and in `state`, for a verified note only
 ("The Chrome link" below). A result is applied on the GUI
 thread only when it is the one the current checkout dispatched (request
 identity) and, for the ledger, only for the current connection generation,
@@ -2174,7 +2175,7 @@ running for as long as it lasts. The logging tripwire refuses `patient_id`, `tre
 `patient_display_name` field names in a log payload.
 
 THE ENCOUNTER RECORD. `SessionController.start` refuses without a
-`ConsentAttestation` (the practitioner's tick; the Session screen never
+`ConsentAttestation` (the practitioner's tick; the Record page never
 pre-ticks it and clears it after every Start) and binds it to the optional
 `EncounterContext`: an unlinked consent names no note; a linked one names
 exactly the context's note and, if it names a practitioner (the field is
@@ -2205,7 +2206,7 @@ anything else of the session exists: the consent time and text version,
 and treatment-note ids — never the patient id or a name — kept 7 years, with
 the write's outcome and the deletion added as they happen ("Privacy and
 professional controls" below). Its
-consent is the practitioner's tick on the Session screen or the panel's box
+consent is the practitioner's tick on the Record page or the panel's box
 as relayed by the extension (pipe residue (1)(a) below): what it records is
 that the tick was given, not that consent was gained.
 
@@ -2223,9 +2224,9 @@ below), so a checkout's stored result or the bridge's reconnect re-check is
 never accepted (draft-write Constraint 3); `writeback_context` gains no age
 bound — the freshness comes from each click making its own read. The main
 window's `live_writeback_target` and `recovered_writeback_target` remain, but
-nothing in production calls them; the crash-recovery checkout has no Note
-tab and cannot write, and an Unreviewed session opened for review writes
-through the live session's Note tab like any other. `encounter.py` itself has
+nothing in production calls them; the crash-recovery checkout has no note
+review and cannot write, and an Unreviewed session opened for review writes
+through the live session's Review screen like any other. `encounter.py` itself has
 no write method; the client's one write is reached only from `draft_write.py`
 (CONFINEMENT above).
 
@@ -2233,7 +2234,7 @@ THE DRAFT WRITE (cliniko-draft-write plan, D1–D15; Phases 1–5 built
 2026-09-29, Phase 7 — D15, append instead of refuse — built 2026-09-30;
 `draft_write.py`, `ui/main_window.py` `_on_write_requested`,
 `ui/note.py`). After the clinician Saves a ratified note of a LINKED
-recording, one click on the Note tab's "Write draft to Cliniko" fills the
+recording, one click on the Review screen's "Write draft to Cliniko" fills the
 Cliniko draft treatment note the recording was started from — never a second
 note, never anything but the note's `content`. What the structure enforces:
 - ONE START. A write, and the reconcile of an earlier one, starts only from
@@ -2241,7 +2242,7 @@ note, never anything but the note's `content`. What the structure enforces:
   a timer, from the sweep, on a clinic change or a reconnect (Constraint 2).
   `TestWriteSlot` pins, on the source, that the hop functions are named
   outside `draft_write.py` only there and in `_after_hop1`, that the slot is
-  connected exactly once, to the Note tab's `write_requested`, and that the
+  connected exactly once, to the note engine's `write_requested`, and that the
   signal is emitted only by the button's click handler, which is connected
   only to the button's `clicked`. Residue: a programmatic
   `write_button.click()` or `clicked.emit()` elsewhere, and names built at run
@@ -2364,16 +2365,16 @@ note, never anything but the note's `content`. What the structure enforces:
   FROZEN for that session: Regenerate (including "Regenerate (replaces the
   saved note)"), a second Save and "Delete note and complete without one" are
   refused (`write_pending`; "Cancel review and regenerate" is already disabled
-  once the note is saved) — decided on the Transcript screen for the live
+  once the note is saved) — decided on the Review screen for the live
   session, from the record's content-free status, so the controller's plain
   `complete` does not read the record itself (the enforcing gate is that
   screen, the only route a written session takes to it); an unreadable record refuses the write and shows its own
   line (`record_unreadable`), never a Cliniko rejection.
 - COMPLETION IS SEEN (D6; Task 2.1 on P.1 Q5). A `written` outcome releases
-  the reservation and completes NOTHING: the Note tab keeps Copy and says to
+  the reservation and completes NOTHING: the Review screen keeps Copy and says to
   reload the note in Chrome and press Complete once it shows there; Write
   stays disabled and no further request is made for that session. Only the
-  Transcript screen's Complete, when the record reads `written` for THIS saved
+  Review screen's Complete, when the record reads `written` for THIS saved
   note, runs `complete_after_write`: under one controller lock it re-checks
   the reservation, the record and the saved note's identity, then fsync →
   decrypt-verify → the Past-sessions entry written, verified and published
@@ -2539,7 +2540,7 @@ before the server's connect call does not end the server (round 57
 SEC-002), a descriptor Windows refuses at creation is `create_failed` like
 any creation failure (round 65), and any other end of the serve loop — a
 failed connect, an unexpected error — reports the current connection lost
-(a linked recording pauses) and then tells the app, whose Session screen
+(a linked recording pauses) and then tells the app, whose Record page
 shows the "Chrome link unavailable" line (round 57 SEC-017). RESIDUE
 (accepted under Task 4.3 (b) as boundary 2 — these are things the design
 does NOT prevent, not controls): (1) the DACL admits
@@ -2566,7 +2567,7 @@ that creates the name BEFORE the app, with the app's own DACL, PASSES the
 host's verification (below: same session, same user, same DACL, same owner) — the host
 then relays Chrome's reports and commands to it and its `state` to the
 panel. The app, finding the name held, says the Chrome link is unavailable
-on the Session screen, and both ends log the other's executable path
+on the Record page, and both ends log the other's executable path
 (`pipe_peer`) — a tripwire, not a gate. A squatter of ANOTHER user, or one
 with any other DACL, fails verification: a hard error in the host. The user
 check reads the token of the process id Windows recorded when the pipe was
@@ -2651,8 +2652,12 @@ reference resolves to a session still in the reminder index (the "Open for
 review" paragraph below). Resume is governed by the pause rule's resume
 check (next paragraph).
 Refusals travel in `state.last_refusal`, never as `error` (Constraint 9).
-The patient's name reaches `state` and the Session screen (a plain-text
-label) only from a note Cliniko verified, and has TWO in-memory lifetimes
+The patient's name reaches `state` and the Record page (a plain-text
+label) — and, since 0.4.0, the window's header strip (ui-refresh plan D4, C8:
+the link line, plus the live line while a linked recording is live or queued,
+built from the view's own fields, never by splitting the Record page's text;
+withheld while the Past sessions page is current, so "Hide names" keeps its
+meaning) — only from a note Cliniko verified, and has TWO in-memory lifetimes
 (codex round 29 PR-LOW-151): the BOUND REPORT's name is published while that
 verified report stays bound — before any Start, and after a recording ends
 — and is no longer published once the report changes (another note or tab,
@@ -2666,10 +2671,11 @@ while its clinic is unchanged (D9): a Replace key or Remove voids it and
 checks again under the current key, or reports the clinic gone (codex round
 29 PR-MED-150). RESIDUE: (1) the consent tick is the extension's assertion
 (pipe residue (1)(a) above). (2) The reconnect re-check of a linked live
-session is shown on the Session screen only; the draft write does not read
+session is shown on the Record page only; the draft write does not read
 it — each Write click makes its own note read (MED-012; Constraint 3). (3)
-The name is on screen while the session records — the same exposure as
-Cliniko's own page. (4) The snapshot is rebuilt every 500 ms and on every
+The name is on screen while the session records — since 0.4.0 on every page of
+the window while the session is live or queued (the header strip, withheld on
+Past sessions) — the same exposure as Cliniko's own page. (4) The snapshot is rebuilt every 500 ms and on every
 event, so what the panel shows can trail the controller by that long; the
 controller still refuses any transition that is no longer legal.
 
@@ -2690,7 +2696,7 @@ both (`system_events.py`: `RegisterSuspendResumeNotification` with the
 window handle, and `WTSRegisterSessionNotification` for this session) after
 it exists, and gives both back on close, at quit and after a failed start;
 a refused registration never raises and is shown on the status line and
-the Session screen. A suspend that finds no recording — as one delivered
+the Record page. A suspend that finds no recording — as one delivered
 INSIDE a Start would, while the device opens — is looked at once more
 after that dispatch returns, and pauses the recording the Start made
 (round 57 SEC-021; nothing happens when there is still no recording). An
@@ -2701,11 +2707,11 @@ round 51 PR-MED-300): a Resume or "Resume previous" click already on its way
 through Chrome when the lock arrived would otherwise be handled after the
 lock's pause, so the lock message sets a flag during its own dispatch —
 before the queued pause runs — and the one resume check every path runs
-(the Session screen's Resume, the hotkey, Chrome's `resume`, a waiting
+(the Record page's Resume, the hotkey, Chrome's `resume`, a waiting
 "Resume previous") refuses `locked` FIRST, for linked and unlinked
 recordings alike, until `WTS_SESSION_UNLOCK` clears it; `resume_previous`
 creates nothing while it stands, and every Start — a Chrome `start` and the
-Session tab's button alike (the Session screen's start guard, installed by
+Record page's button alike (the Record page's start guard, installed by
 the bridge) — is refused `locked` the same way (H1 rounds 53–54, MED-039 and
 MED-052: a Start still on its way, or a click still queued, when the lock
 arrived would otherwise begin a new recording after the lock's pause had run
@@ -2734,13 +2740,13 @@ answer, the unlock is believed as delivered.
 The young-flag window keeps a query racing the lock itself from reopening
 the gap; a suspend or lock names the
 block only when it starts one, so a block Chrome already put up for a
-patient change keeps that reason. Every pause runs through the Session screen's slot
+patient change keeps that reason. Every pause runs through the Record page's slot
 and shows a desktop cue. A PAUSED session only gains the block; nothing
 else changes state. A tab that is neither bound nor focused never pauses,
 and neither does a SEPARATE tab showing a page that is not Cliniko's (the
 bound tab itself leaving its note for such a page does pause, as above;
 codex round 34 PR-LOW-191). The rule never resumes. THE RESUME
-CHECK: every Resume through the Session screen's slot (its button, a Chrome
+CHECK: every Resume through the Record page's slot (its button, a Chrome
 `resume`, the pause hotkey) is refused, by name and before the controller
 is called, for a linked session unless a pipe client is connected and the
 focused tab's current report on this connection names the session's exact
@@ -2749,7 +2755,7 @@ binds the session to that tab. A tab is re-bound after pipe loss only to a
 report naming those exact ids — a session is never re-bound to another
 note. `resume_previous` resumes the paused session only when such a report
 arrives within 30 seconds of the click on the same connection, and then
-only through the same check. The Session screen's own Discard needs a second
+only through the same check. The Record page's own Discard needs a second
 click within 10 seconds for the same session; a Chrome `discard` carries its
 second click in the protocol. A Start that retires a queued linked session
 adds it to the Unreviewed reminder index (ids only, in memory, never
@@ -2785,7 +2791,7 @@ process on the pipe can forge the report the resume check and
 `resume_previous` accept.
 
 OPEN FOR REVIEW (Task 5.4, decided option (a): `SessionController.adopt_queued`
-+ the Recovery screen's Unreviewed section + `ui/main_window.py`; D6).
++ the Recovery page's Unreviewed section + `ui/main_window.py`; D6).
 Enforced: a session with a transcript is listed as Unreviewed and offers
 "Open for review" and Discard — never "Resume processing", which
 re-transcribes and unlinks a saved note. Opening ADOPTS it as the
@@ -2809,7 +2815,7 @@ for it (`write_pending`, THE DRAFT WRITE above). Copying it follows the
 recorded copy flag and re-checks it carries no unresolved error. An adopted
 linked session is re-verified with Cliniko from the record the adoption
 decrypted (no second decrypt), for display only; it is written like any live
-session, from the Note tab, whose click makes its own note read (MED-012) —
+session, from the Review screen, whose click makes its own note read (MED-012) —
 and a session whose record already reads `written` reopens with Write
 disabled and completes only on Complete. Adopting retires a live queued or
 failed session exactly as a Start does (its reminder entry and reference
@@ -2860,12 +2866,12 @@ on a `WM_HOTKEY` carrying the app's id while the chord is reserved, and
 re-delivers it as a queued call, so nothing runs inside Windows' message
 dispatch and nothing raises into it. A press while RECORDING pauses through
 `pause_for` (the desktop cue; no block — a hands-free reason is not a context
-reason); while PAUSED it asks the Session screen's guarded Resume — the
+reason); while PAUSED it asks the Record page's guarded Resume — the
 resume check above, with no bypass: a linked session resumes only on a
 current report of its own note — and a refusal is shown with a taskbar
 flash; in any other state it does nothing. It never starts, finishes,
 discards or opens anything. A refused registration is a status: the status
-line, the Session screen and `state.hotkey` (the panel says the hotkey is
+line, the Record page and `state.hotkey` (the panel says the hotkey is
 unavailable) show it.
 THE SPOKEN PAUSE — "scribe pause" is matched as whole words in each live
 window (so "prescribe, pause" and "scribe paused" do not match) and counts
@@ -2874,7 +2880,7 @@ captured-audio time plus one capture chunk — never by a window's end time,
 since a window can span a Pause and a Resume. It can only PAUSE, through
 `pause_for` (nothing while paused, finishing or idle); the words stay in the
 transcript. Whether it works for the recording (a live transcriber attached
-and not failed) is shown on the Session screen and in `state.spoken_pause`.
+and not failed) is shown on the Record page and in `state.spoken_pause`.
 THE WARNING — a closing phrase followed, in the same window or within three
 windows, by a greeting (the count is a constant in `voice_commands.py`; the
 lists, since 0.3.3, live in `consultation_phrases.py`, which `voice_commands`
@@ -3183,8 +3189,8 @@ stays ids-only), never in the audit row, the CSV or a log; otherwise the
 label reads "Name not available", or "Desktop recording (no Cliniko note)" for
 a desktop Start.
 
-THE PAST SESSIONS TAB (`ui/past_sessions.py`, Qt-free lines in
-`ui/past_sessions_view.py`; Flow 5). Opening the tab lists the entries
+THE PAST SESSIONS TAB (the Past sessions page since 0.4.0; `ui/past_sessions.py`, Qt-free lines in
+`ui/past_sessions_view.py`; Flow 5). Opening the page lists the entries
 (decrypting each `label.enc` once); LEAVING it drops the opened entry's text
 and every name from every panel. An opened entry shows its generated and
 saved notes side by side, the write outcome read from the audit row, "Copy
@@ -3201,7 +3207,7 @@ nothing in the code tells an error from any other entry. THE 7-YEAR MINIMUM
 them" (the default) or "7 years" — nothing shorter; a settings file holding a
 shorter window an earlier build offered (1, 7, 30 or 90 days, 1 year) loads as
 7 years (a before-validator mapping only a genuine integer of exactly those
-values, so the strict type check still refuses `true` or `1.0`), the tab
+values, so the strict type check still refuses `true` or `1.0`), the page
 says so until the next save writes 7 years, and any other value fails closed;
 `sweep_report` refuses a window under 7 years before any read (`too_short`,
 logged `retention_too_short`, nothing deleted, never a raise). The app does
@@ -3247,7 +3253,7 @@ THE AUDIT RECORD (`audit.py`; D7, D8, D9; C2, C3).
   codes (Task 1.4), Complete's models and outcomes, Discard, expiry,
   `orphan_gc`, Past-sessions events — goes through `update`, which NEVER
   raises: a failure is counted, logged as `audit_update_failed
-  detail_code=<stage>` and shown on the Past sessions tab, and the custody
+  detail_code=<stage>` and shown on the Past sessions page, and the custody
   action goes ahead.
 - Fail-closed store: a NEWER-schema row is kept byte for byte, never
   rewritten, and pruned only with its month; an unreadable row is counted and
@@ -3266,12 +3272,12 @@ formula guard (a leading `=`, `+`, `-`, `@`, tab or carriage return gets an
 apostrophe). It holds no name or text, but it is NOT encrypted and it carries
 the Cliniko treatment-note, booking, practitioner and user ids, which
 identify the appointment to anyone with access to that Cliniko account; the
-tab says it is not encrypted. The export's status line never names the file.
+Past sessions page says it is not encrypted. The export's status line never names the file.
 Its temporary file is a fresh name in the chosen folder
 (`.clinic-scribe-*.tmp`), so a file of the practitioner's own called
 `<name>.tmp` is never overwritten or deleted (H3 round 35 SEC-004); the temp
 file is removed on every path unless Windows refuses that removal, when it
-stays and the tab shows its one export-failed line.
+stays and the page shows its one export-failed line.
 
 EXCLUSIONS (`exclusions.py`, `scripts/register-native-host.py`; D10; since
 the installation plan also `packaging/scribe.iss`, its D6/D10).
@@ -3322,7 +3328,7 @@ the installation plan also `packaging/scribe.iss`, its D6/D10).
   warning "… not marked to be left out of Windows backups and snapshots (a
   best-effort setting) — reinstall Clinic Scribe.", an unreadable one "could
   not check").
-  The warnings show on the Status tab and the Past sessions tab and never stop
+  The warnings show on the Status tab and the Past sessions page and never stop
   recording; each is logged by its code only. Every attribute, drive-type,
   environment, path-resolution and registry call goes through an injected
   `WindowsLayer`, and tests never reach the real one (a sentinel); the folder
@@ -3359,13 +3365,13 @@ indefinitely on this PC and this Windows login only. A dead disk, a lost
 profile or an administrator's reset of the Windows password (which breaks
 DPAPI) loses every entry; the entries are then listed as unreadable — kept,
 never deleted by age and never readable again (Delete now still works on
-them; the tab limits it by wording to a recording made in error, round 40
+them; the Past sessions page limits it by wording to a recording made in error, round 40
 PR-LOW-034). Passphrase-protected backup/restore is deferred.
 (d) EXPIRY ONLY WHILE THE APP RUNS, and it trusts the wall clock: an entry
 can outlive its setting while the app is closed (deleted at the next start),
 and a clock jumped forward can expire entries early (as the 24 h sweep can).
 An entry whose date this account cannot read is never deleted by age (the
-tab says so, says it is still kept, and limits Delete now to a recording
+page says so, says it is still kept, and limits Delete now to a recording
 made in error — every read-failure line carries that limit, round 40
 PR-LOW-034).
 (e) HIDE NAMES MASKS THE LABEL ONLY. A name spoken in the transcript or
@@ -3472,7 +3478,7 @@ leaves an earlier generation's body to be kept; an unreadable
 `generated.enc` is not kept and the entry reads "Generated note not kept".
 (s) A KEPT TRANSCRIPT IS A HEALTH RECORD. Its retention and access duties
 (state health-records law, APP 11.2 and APP 12, subpoena) are the
-practitioner's; the tab's warning says so, and `docs/practice/` carries the
+practitioner's; the Past sessions page's warning says so, and `docs/practice/` carries the
 research and the practitioner's 2026-10-02 answer (7 years minimum) for the
 independent review. What the app enforces is the floor on the SETTING (no
 choice under 7 years, a legacy shorter value read as 7 years, the sweep
@@ -3732,7 +3738,7 @@ write path. FAIL CLOSED (D3): an ABSENT file is shadow off; a file that is
 present but cannot be read, is over its bound, is not valid or does not name
 `shadow_mode` (no default — peer round 9) reads as shadow ON, and the Status
 tab says "The shadow-mode setting could not be read, so shadow mode is on."
-It is read only at each Start click and by the Status and Session tabs.
+It is read only at each Start click and by the Status tab and the Record page.
 RESIDUE: it is a USER setting, not an enforced control (D2) — the file is as
 writable as `config\dev.json`, so any process of this Windows user (boundary
 2), or the practitioner, can turn it off between recordings; it decides only
@@ -3742,8 +3748,8 @@ FIXED AT START (D1). `ui/session_screen._start` reads the setting at the click
 for BOTH a desktop Start and a linked Start from Chrome, and passes the mode
 to `SessionController.start`, which writes it into the frozen
 `RecordingSession`, `encounter.enc` (v2) and the audit row before any audio.
-Changing the setting afterwards changes nothing for that recording: the Session
-tab keeps saying "This is a shadow recording" for it. EVERY REBUILD carries the
+Changing the setting afterwards changes nothing for that recording: the Record
+page keeps saying "This is a shadow recording" for it. EVERY REBUILD carries the
 recorded mode, through the three authorised `read_encounter_record` callers
 only (Constraint 1 — no fourth reader): an Unreviewed adoption
 (`adopt_queued`) takes it from the record it already decrypts (an unreadable
@@ -3782,7 +3788,7 @@ state (nothing to select, so nothing to copy by keyboard or drag); the panel's
 keyboard and context-menu Copy refuse; the inline line editor (a `QLineEdit`
 opened holding the line's text) keeps typing, Paste, Undo and Escape but its
 Copy and Cut shortcuts do nothing, its context menu loses Copy and Cut, and its
-drag is off; the Past sessions tab's "Copy saved note" is refused for an entry
+drag is off; the Past sessions page's "Copy saved note" is refused for an entry
 whose label says shadow ("This was a shadow recording for the pilot, so its
 note cannot be copied. Read it as shown."), and an unreadable label refuses
 too (D3; a label nothing resolved is a shadow one). LAST LINE: the one
@@ -3862,7 +3868,7 @@ declined, 2026-10-04).
 NAMED RESIDUES (shadow mode). (1) THE USER SETTING (above). (2) THE ROLLBACK
 RULE (above). (3) NO CHROME INDICATOR: Chrome's side panel does not show the
 mode (it would need a protocol change — the plan's Excluded item); the desktop
-app's Session, Transcript, Note and Past-sessions tabs show it, and the
+app's Record, Review and Past sessions pages show it (the Session, Transcript, Note and Past-sessions tabs before 0.4.0), and the
 refusals name it. (4) WHAT THE APP CANNOT STOP: the note is on screen, so a
 screenshot, a photo or retyping it by hand carries it out; a drag is closed only
 because the panel is display-only and the line editor's drag is off. (5) THE
@@ -3871,7 +3877,7 @@ as the fallback, in both modes; the app ships no translation, so a translated
 Qt menu is the case that match would miss — a shadow editor's menu would then
 keep a Copy or Cut, and a normal one's would run Qt's own copy, without the
 formats. (6) A LABEL'S SHADOW FLAG is the only record of the mode the Past
-sessions tab reads once the session's key is gone (the audit row records the
+sessions page reads once the session's key is gone (the audit row records the
 mode too, but nothing there consults it): a same-user process that rewrote a
 label under the entry key (boundary 2) could clear it.
 
@@ -3987,7 +3993,7 @@ valid, naming no version or a non-integer one, or not naming
 RESIDUE: a user setting, writable by any process of this Windows user — it
 decides only whether the second tick is offered.
 
-THE SECOND CONSENT (D2, D3, C3, C7). With the setting on, the Session tab
+THE SECOND CONSENT (D2, D3, C3, C7). With the setting on, the Record page
 shows a second tick above Start, `encounter.DEVELOPMENT_CONSENT_TEXT` ("I
 confirm the patient has consented in writing to this recording being kept for
 developing the program"), never pre-ticked. Both Start funnels (desktop and a
@@ -4008,9 +4014,9 @@ another note or patient than the ids bound when it was armed (ids only —
 compared in the bridge's context handler, for every report of the bound tab,
 whatever the session state), a dropped Chrome link (for a tick armed while
 Chrome reported a note), a lock or a suspend (while Windows reports it to the
-app — the Session tab and the status line name a lock or sleep registration
+app — the Record page and the status line name a lock or sleep registration
 that failed, `SYSTEM_PAUSE_FAILED_LINES`) clears
-it, and the Session tab says so ("The keep-for-development tick was cleared
+it, and the Record page says so ("The keep-for-development tick was cleared
 …"); the setting going off clears it too, unannounced (the tick is hidden
 then).
 Kept is decided ONCE: a live Complete from the controller's copy; a recovered
@@ -4112,7 +4118,7 @@ between the rename and its audit write (review round 22 LOW-004) is not
 repaired (the ledger row is already gone — or, for a kill before its drop,
 dropped at the next start as resolved, with no count).
 
-DELETE RECORDING (D8, D6). Two clicks within 10 s on the Past sessions tab,
+DELETE RECORDING (D8, D6). Two clicks within 10 s on the Past sessions page,
 for a kept entry only, deletes the recording ALONE: `audio-key.enc` is opened
 `r+b` — refused when it is a link, a hard link naming another file, not a
 regular file or larger than a key file — overwritten with zeros IN PLACE
@@ -4144,9 +4150,9 @@ writes ONE unencrypted `<session id>.wav` (16 kHz mono PCM16, the whole
 consultation) by the practitioner's explicit choice — the planner's
 recommendation was no export (declined 2026-10-07); the app does not limit how
 many exports are made (to different folders, or after a WAV is deleted) — it
-counts them (residue (5): a count write can be lost). The custody, in order: the TAB refuses with no injected
+counts them (residue (5): a count write can be lost). The custody, in order: the Past sessions PAGE refuses with no injected
 `WindowsLayer` (fail closed); the save dialog, whose FOLDER only is used (the
-name is fixed); the tab's `exclusions.check_export_location` on that folder;
+name is fixed); the page's `exclusions.check_export_location` on that folder;
 then, for a shadow entry (or one whose label cannot be read), the one
 question. Then the STORE: a relative folder refuses; the folder is RESOLVED
 (`os.path.realpath`); every earlier unresolved ledger row is resolved (one

@@ -24,8 +24,8 @@ note in Cliniko, and what you finalise is your record.
 - Ask for consent every time (see [Patient information and consent](patient-information-and-consent.md)),
   then tick the box above Start. Record the patient's response in Cliniko yourself — the
   app never does.
-- Check the side panel or the Session tab names the right patient and appointment before
-  you start. A recording started on the Session tab, not from a Cliniko note, is not linked
+- Check the side panel or the Record page names the right patient and appointment before
+  you start. A recording started on the Record page, not from a Cliniko note, is not linked
   and can only be copied into Cliniko by hand.
 - If someone else is in the room (a parent, carer, interpreter or student), the
   transcript will still show only two speakers: their words will be labelled as yours or
@@ -50,7 +50,7 @@ note.
   note is drawn from the transcript as it stands when you finish.
 - The speaker labels can be wrong, especially when people talk over each other.
 - **"A possible next patient starts at line N [time]."** If the recording heard a goodbye
-  and then a greeting, the Transcript tab says where a new patient may have arrived — the
+  and then a greeting, the Review screen says where a new patient may have arrived — the
   line's number, and the time shown at the start of that line in the transcript — and the
   note will stop before that line (below). If those lines really are the next patient's —
   you forgot to stop or switch the recording — press **Remove lines N-end from this
@@ -61,7 +61,7 @@ note.
   greeting were part of this consultation (a phone call, someone at the door), choose
   **Keep the whole transcript**. You can only remove lines while no note is open for
   review and none is saved: if a note is open, use **Cancel review and regenerate** on
-  the Note tab first. If the removed lines held every line matched to your voice, the
+  the Review screen first. If the removed lines held every line matched to your voice, the
   app says so; choose the clinician speaker yourself before you generate (opened again
   later, that transcript may say voice attribution "did not run" — the speaker model is
   not at fault).
@@ -106,14 +106,14 @@ where each line came from: the transcript, something you typed, or your own pre-
    does not state as fact what they were unsure of. "Acknowledge all review warnings"
    does clear that one, and doubt said in other words ("not sure", "I don't know") is
    not marked. The copied note and the draft written to Cliniko leave the check marks out.
-5. **The note stops where a new patient may have arrived.** When the Transcript tab
+5. **The note stops where a new patient may have arrived.** When the Review screen
    named a possible next patient (above) and you generated anyway, the note leaves out
    every line from there on, and the review warning "The note stops where a new patient
    may have arrived" is shown. In the line list under **Edit the note**, those lines are
    marked `[after possible next patient]`. If any of them belongs to this patient — the
    goodbye and greeting were part of this consultation — add it back with **Add line to
    section**. If they are another patient's, use **Cancel review and regenerate**, then
-   remove them on the Transcript tab. This warning, too, is cleared only by its own
+   remove them on the Review screen. This warning, too, is cleared only by its own
    Acknowledge. The app recognises only a few common goodbyes and greetings, so a next
    patient greeted in other words is not caught: check the end of every transcript.
 6. **Blocking warnings must be fixed** before you can save — for example a symptom the
@@ -156,7 +156,7 @@ where each line came from: the transcript, something you typed, or your own pre-
   [Keeping a recording to help develop the program](development-recording-consent.md)):
   its audio is kept with the past session until you delete it, and Complete says "The
   recording was kept for development." If it says so for a patient who did not sign
-  that form, press **Delete recording** on the Past sessions tab at once.
+  that form, press **Delete recording** on the Past sessions page at once.
 - **Finalise the note in Cliniko** yourself, after reading it there in full. The app
   never finalises a note.
 - If you **copy** the note instead, paste it into the right patient's note and check the
@@ -183,7 +183,7 @@ where each line came from: the transcript, something you typed, or your own pre-
 
 ## Looking back: Past sessions
 
-The **Past sessions** tab shows each completed session's **generated note** (the draft as
+The **Past sessions** page shows each completed session's **generated note** (the draft as
 the app first showed it in the most recent generation — an earlier generation is not
 kept; "Generated note not kept" when there was none or it could not be read back) beside the **saved
 note** (what you saved), with the transcript behind

@@ -131,7 +131,7 @@ Offer Part A to read or take home.
   yours to do.
 - **For a comparison appointment, in Clinic Scribe:** tick "Shadow mode (pilot)" on the
   Status tab BEFORE you press Start — each recording keeps the setting it had when it
-  started, and the Session tab says "Shadow mode is on: new recordings are shadow
+  started, and the Record page says "Shadow mode is on: new recordings are shadow
   recordings". For such a recording the program refuses to copy the note or write it to
   Cliniko, and saving it teaches the program nothing. Write your own note in Cliniko the
   usual way. Untick the box when the comparison appointments are done.
@@ -162,7 +162,7 @@ Offer Part A to read or take home.
   clipboard until something else is copied; and short phrases the program learned from
   a note you had already saved stay in your settings until you delete them on the
   Practitioner tab.
-- After a recording is completed, its transcript and notes are in the Past sessions tab.
+- After a recording is completed, its transcript and notes are on the Past sessions page.
   Delete now removes one (it cannot be undone) — use it only for a recording made in
   error: the wrong patient, a test, or one recorded without consent. Otherwise a kept
   transcript is kept for at least 7 years (see the README).

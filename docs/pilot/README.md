@@ -59,7 +59,7 @@ result is recorded there as a dated RUN line.
      consented recording with a third adult in the room comes along, the
      three-voice measurement is recorded as not measured, not as failed.
    - **One recording at a time** (the consent allows one unencrypted copy at a
-     time): on the Past sessions tab export ONE kept recording to the
+     time): on the Past sessions page export ONE kept recording to the
      measurement folder; after the success line rename it `k-01.wav` (then
      `k-02` …); label its speakers in Audacity and export the labels as
      `k-01.txt`; close Audacity WITHOUT saving a project, check that

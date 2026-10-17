@@ -33,7 +33,7 @@ When in doubt, stop using the software and investigate before resuming.
   `ClinikoScribe/` (one `cliniko_api_key` per clinic listed on the Clinics tab
   is expected)
 - Extension behaving on non-Cliniko pages, or an extension ID mismatch
-- (Cliniko workflow safeguards) the Session screen says the Chrome link is
+- (Cliniko workflow safeguards) the Record page says the Chrome link is
   unavailable because the pipe name is taken while no other `scribe-app` runs,
   or a `pipe_peer` log line names an executable you did not expect (threat
   model, "The Chrome link" — a same-user squatter); a recording that ended up
@@ -52,8 +52,8 @@ When in doubt, stop using the software and investigate before resuming.
   present after Delete now or after its retention setting expired it while
   the app was running, an entry for a session that was discarded, a
   patient's name or any note text in the audit record or its CSV, or a Past
-  sessions tab showing the wrong patient's name on an entry
-- (PLAN.md Phase 6) the Past sessions tab says audit updates could not be
+  sessions page showing the wrong patient's name on an entry
+- (PLAN.md Phase 6) the Past sessions page says audit updates could not be
   saved, or Start is refused because the audit record could not be saved —
   not an incident on its own (recording and notes are unaffected; see
   `docs/practice/downtime-procedure.md`), but a run of them, or an audit
@@ -113,7 +113,7 @@ follow the steps below — then enter the finding. The clinic's exit gate
    Credential Manager.
 4. **Preserve evidence:** copy `%LOCALAPPDATA%\ClinikoScribe\logs\` somewhere
    safe BEFORE reinstalling anything; note the time and what you observed.
-   Since PLAN.md Phase 6 also export the audit record (Past sessions tab,
+   Since PLAN.md Phase 6 also export the audit record (Past sessions page,
    "Export audit record (CSV)") — it is the durable, content-free account of
    every session's consent, links, write outcome and deletion. Export it
    BEFORE closing `scribe-app` if it is still open. Reopening it (with Chrome
@@ -154,7 +154,7 @@ follow the steps below — then enter the finding. The clinic's exit gate
    (`write.enc`, with its per-question digests) — keeping only the
    transcript and notes in Past sessions (and, for a recording kept for
    development, its audio) and the outcome in the audit row.
-   Leave it on the Transcript screen or in the Unreviewed list, and note its
+   Leave it on the Review screen or in the Unreviewed list, and note its
    time — once the app is closed it lasts only until the 24 h expiry, run at
    the next start-up (Immediate steps, step 4).
 3. Evidence: Cliniko's own history of the note (who changed it and when);
@@ -168,7 +168,7 @@ follow the steps below — then enter the finding. The clinic's exit gate
    verified, the clinic, practitioner, user, booking and treatment-note ids it
    was linked to, the models, the write's attempts, last outcome, last
    refusal code and written-at, and what was deleted when. Export it from the
-   Past sessions tab ("Export audit record (CSV)"); the CSV is not encrypted
+   Past sessions page ("Export audit record (CSV)"); the CSV is not encrypted
    — keep it with the incident evidence and delete it when done. The
    session's Past-sessions entry, once completed, holds the transcript and
    notes as they were saved.

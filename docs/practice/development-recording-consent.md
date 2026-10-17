@@ -129,26 +129,26 @@ Give them Part A to read or take home.
 
 ### What to do in Clinic Scribe
 
-1. On the **Status** tab, tick **"Keep recordings for development (written consent
-   only)"**. This setting stays on until you untick it; on its own it keeps nothing. If
+1. On the **Status** tab (under **Settings**), tick **"Keep recordings for development
+   (written consent only)"**. This setting stays on until you untick it; on its own it keeps nothing. If
    the Status tab says the setting could not be read, no recording is kept until you
    tick it again.
 2. **For a recording started from Chrome** (the usual way): open the patient's
-   treatment note in Chrome FIRST. Then, on the desktop **Session** tab, tick the second
+   treatment note in Chrome FIRST. Then, on the desktop **Record** page, tick the second
    box above Start: **"I confirm the patient has consented in writing to this recording
    being kept for developing the program"** — it is tied to the note Chrome shows at that
    moment. Then give the ordinary consent in Chrome's side panel and press Start there.
    **For a recording started on the desktop**: tick the ordinary consent box and the
-   second box on the Session tab, then press Start. The Session tab says "Next recording
+   second box on the Record page, then press Start. The Record page says "Next recording
    will be kept for development" while the box is ticked, and "This recording is being
    kept for development" while it records.
 3. Like the ordinary consent box, the second box is never ticked in advance and clears
    after every Start, so it is given for each recording. If it was ticked while Chrome
    showed a treatment note, it also clears when Chrome shows a different note or leaves
    that note, or if Chrome's link to the app drops. It also clears if the computer locks
-   or sleeps (unless the Session tab says "Lock pause unavailable" or "Sleep pause may
+   or sleeps (unless the Record page says "Lock pause unavailable" or "Sleep pause may
    not work"), or if a Start is refused (except "still getting ready", which keeps it)
-   — the Session tab then says "The keep-for-development tick was cleared …" — and when
+   — the Record page then says "The keep-for-development tick was cleared …" — and when
    the Status-tab setting is turned off. Tick it again before Start if the patient
    consented in writing. A box ticked while Chrome shows no treatment note is tied to no
    patient: moving to other pages in Chrome, another patient's included, does not clear
@@ -174,7 +174,7 @@ with the practice's other consent forms.
 
 Find every kept recording of the patient: the patient's notes in Cliniko give the date
 of each (above), and a patient who agreed for future appointments may have several. On
-the **Past sessions** tab, untick **Hide names**; each row shows the appointment's date
+the **Past sessions** page, untick **Hide names**; each row shows the appointment's date
 and time, then the patient's name — or "Desktop recording (no Cliniko note)" or "Name not
 available", which you match by the date and time — and ends "(recording kept)". A row
 that says "Cannot be read on this Windows account" shows no date or name: if it may be
@@ -193,7 +193,7 @@ principle recover a trace of the deleted key from the disk. Full-disk encryption
 
 ### The 12-month review
 
-A year (365 days) after you pressed Complete for a kept recording, the Past sessions tab
+A year (365 days) after you pressed Complete for a kept recording, the Past sessions page
 says so ("1 kept recording is due for review - delete it or note in the pilot log why it
 is kept.", or the same for several) and the session's own line says "Review due." Delete
 the recording, or note in the pilot log's review table why it is still needed. The app
@@ -208,7 +208,7 @@ pilot log's review table why it is kept.
 
 ### Making an unencrypted copy to label speakers
 
-**Export recording (WAV)** on the Past sessions tab saves an unencrypted copy, for
+**Export recording (WAV)** on the Past sessions page saves an unencrypted copy, for
 marking who is speaking — make one only when you need it, and keep at most one at a
 time. The program refuses the places it can recognise — a folder inside OneDrive (only
 where Windows tells it where OneDrive is), a network drive, a roaming folder, a removable

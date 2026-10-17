@@ -39,7 +39,7 @@ pressed on the Clinics tab; note verification (the safeguards plan's Phase 3), o
 recovered or Unreviewed session opened for checkout or review whose encounter
 record names a Cliniko note, and — through the Chrome bridge (flow 19) — on a
 note report from the focused Chrome tab and on a new pipe connection under a
-linked live session; and the draft write, on the Note tab's "Write draft to
+linked live session; and the draft write, on the Review screen's "Write draft to
 Cliniko" click only (its reads, then its one `PATCH`); each runs on a
 practitioner action or a Chrome report,
 never on startup or a timer. The other network users are TWO explicit SETUP-TIME steps outside the
@@ -243,7 +243,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    cluster label, a cosine, a model id) under the same key — the recovery
    path (resume-processing) applies the profile identically. No profile, an
    absent model or a profile made by another model leaves this flow exactly
-   as before and the Transcript screen names the fallback; nothing about the
+   as before and the Review screen names the fallback; nothing about the
    profile is written back and no audio or embedding is retained.
    Offline enforcement: `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`,
    `HF_HUB_DISABLE_TELEMETRY=1` set AND asserted at startup and before every
@@ -273,7 +273,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    **The trim — a second, clinician-confirmed writer of `transcript.enc`
    (validation-pass plan D9, decision 0.6 (a); 0.3.3; threat model Phase 3A
    surface 2, THE TRIM).** When a live session's transcript shows a possible
-   next patient (flow 10), the Transcript tab's "Remove lines N-end from this
+   next patient (flow 10), the Review screen's "Remove lines N-end from this
    recording..." — after its confirmation, with no review open and no note
    saved — rewrites the transcript to hold only the lines before N, in one
    controller operation under the session lock: (1) the content-free
@@ -317,7 +317,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
    inside an auto-deleted temp directory — no clinical content ever takes
    that path. Since the installation plan (D11, Task 2.5) the same hardware
    check also times the prose stage in-process over fixed NON-CLINICAL lines
-   held in memory (`ui/hardware_check.py`), through the Note tab's one loaded
+   held in memory (`ui/hardware_check.py`), through the note review's one loaded
    language model; nothing is written, and its report holds timings only,
    never text the model wrote. A packaged build runs whisper's timing by
    starting itself as the worker (`scribe-app.exe --benchmark-worker …`); a
@@ -392,8 +392,8 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `scribe-app` composes a draft note from the immutable transcript
     (`note.py` `compose_draft`: verbatim transcript spans under canonical
     headings, plus autofill/prefill PROPOSALS from config, flow 11). The
-    clinician then confirms or declines each non-`transcript` line in the Note
-    review tab (`ui/note.py`), the exact rendered wording is digested from the
+    clinician then confirms or declines each non-`transcript` line on the
+    Review screen (`ui/note.py`, `ui/review.py`), the exact rendered wording is digested from the
     widget, and `note_check.py` runs four pure, digest-gated, LOG-FREE checks
     over the confirmed note (reconstruction, contradiction, provenance,
     omission — see the threat model for what each does and does NOT establish).
@@ -447,7 +447,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     action and is outside the app's custody from there. Since Task 8.2 every
     copy of note text — the Copy button, and the keyboard's Copy or the
     context menu's Copy over the ratified note panel's selection, and (since
-    the privacy-professional-controls plan) the Past sessions tab's "Copy saved
+    the privacy-professional-controls plan) the Past sessions page's "Copy saved
     note", and (since pilot review round 22) the inline line editor's Copy and
     Cut of the selected text of a line being typed over, which needs the copy
     flag but is not gated on ratification — carries three registered Windows
@@ -464,7 +464,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     combo box in the app copies its rows (rounds 23–24: every list's and
     combo-box popup's Copy shortcut does nothing, so a patient's name in Past
     sessions, Recover or Unreviewed, or a transcript line's first words in the
-    Note tab's "Line:" choice, never reaches the clipboard that way) — see the
+    Review screen's "Line:" choice, never reaches the clipboard that way) — see the
     threat model, Phase 3A surface 4, and the
     retention schedule. THE SHADOW
     BRANCH (pilot plan, flow 25): for a shadow recording neither exception
@@ -542,14 +542,14 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     change and, from its 5 s model-file poll, only when the speaker model's
     presence has flipped since the last read — the line names that presence,
     so an install or removal is one re-read, a steady poll none), and by the
-    Note tab's
+    note review's
     learning-status read (flow 13). Nothing about the
     profile is logged (flow 2's tripwire markers), and no audio from this flow
     touches disk (the non-flow below).
 
 13. **Review edit → queued phrase → Save → cue file + sidecar (practitioner-
     profile plan Phase 5, D9 as amended; in-process, zero network).** On the
-    Note tab (`ui/note.py`), the clinician adds a whole transcript utterance
+    Review screen (`ui/note.py`), the clinician adds a whole transcript utterance
     to a section, or moves a routed line to another section, through the
     "Edit the note" controls (the transcript panel stays display-only). If
     the utterance is the CONFIRMED clinician's (`note.spoken_by_confirmed_
@@ -561,7 +561,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     (`note_config.propose_learning_phrase`) are checked by
     `note_config.refuse_learning_candidate` — a name-like, numeric,
     date-shaped or medication-shaped source token refuses the candidate with
-    a "not learned" note on the tab's status line — and an accepted phrase is
+    a "not learned" note on the Review screen's status line — and an accepted phrase is
     QUEUED in memory on the screen with its section. Undo drops it; Cancel,
     Delete-and-complete and a new transcript clear the queue. On Save, after
     `write_note` has committed `note.enc` (flow 10), the status is re-read
@@ -595,7 +595,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     widget (`ui/transcript.py`; a post after the view closed is dropped, and
     so is one carrying an earlier Start's token — round 57 SEC-022: a window
     the retired worker posted never reaches the next patient's view or the
-    phrase rules; the view is cleared on the Session screen's Discard and replaced wholesale by
+    phrase rules; the view is cleared on the Record page's Discard and replaced wholesale by
     the final document). The same queued signal also reaches the main
     window's phrase rules (Cliniko workflow safeguards plan Tasks 7.2–7.3,
     `voice_commands.py`) while the recording is live: they read each window's
@@ -618,20 +618,20 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     (`buffers_cleared`) BEFORE the session key is destroyed — an uncleared
     stop refuses the key deletion, routes the recording to FAILED with key +
     chunks intact and is retried by the next Discard. Since installation plan
-    round 40 LOW-002 that wait runs on a `TaskThread`, with the Session
-    screen's controls, Chrome's commands and "Open for review" held until it
+    round 40 LOW-002 that wait runs on a `TaskThread`, with the Record
+    page's controls, Chrome's commands and "Open for review" held until it
     ends; it is never retried automatically. The same verdict gates
     the three Complete paths and retirement on a new Start (threat-model
     surface 11). A load failure, `fell_behind`, a worker error or a drain error
-    falls back to the batch stage (flow 7) with its reason on the Session
-    screen. No new logging channel: the one new record is
+    falls back to the batch stage (flow 7) with its reason on the Record
+    page. No new logging channel: the one new record is
     `live_transcriber_stop_timeout` (session id and state only). Since
     installation plan round 35 MED-001 the stack's imports (numpy,
     onnxruntime, faster-whisper) are warmed once per process at app start on
     their own thread (`ml_warmup.py`: modules only — no model file, no audio,
     no session, no connection; offline switches asserted first; logged as
     `ml_warmup` with state, duration and, on a failure, the type name).
-    While it runs every Start (Session tab and Chrome) is refused as
+    While it runs every Start (Record page and Chrome) is refused as
     "still getting ready" before anything is made — no audit row, no session
     folder, no key (round 36 MED-001, the practitioner's option (b)) — for
     at most 60 s from its start; a Start admitted after that bound while it
@@ -665,9 +665,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `shown_text_digest` and `config_digest`; and `note_config.
     refuse_typed_wording` (numbers, dates, medication tokens; NO name
     heuristic) with `LEARNED_RULE_AUTO_CONFIRM_AFTER = 3`. Phase 2 BUILT the
-    flow: the Note tab's Edit control (`ui/note.py` `edit_line`) produces the
+    flow: the Review screen's Edit control (`ui/note.py` `edit_line`) produces the
     typed line over a note line or proposal (in memory, beside the draft — the
-    same review-window plaintext as the rest of the tab); when the replaced
+    same review-window plaintext as the rest of the note review); when the replaced
     line is the confirmed clinician's own utterance the trigger (its tail
     through `refuse_learning_candidate`) and the typed wording (through
     `refuse_typed_wording`) are QUEUED in memory and written by the Save-time
@@ -738,7 +738,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     FINALISED note, grouped by section — never the transcript and never a
     pending proposal, refused BY TYPE (`prose_style.ProseInput.from_note`
     takes a `GeneratedNote`; a `TranscriptDocument` or a `NoteDraft` raises).
-    The Note tab starts ONE stage job per finalisation on its `TaskThread`
+    The note review (`ui/note.py`) starts ONE stage job per finalisation on its `TaskThread`
     (`ui/note.py` `_start_style_stage`; `ui/models.build_prose_stage`): the
     model is built once per process on that worker thread from the LOCAL file
     only — `assert_offline_env`, UNC refused, presence, size and SHA-256
@@ -855,7 +855,9 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     trigger for the same call: a note report from the bound Chrome tab on an
     allow-listed host, and — once per new pipe connection — the linked live
     session's own note; the display value then reaches the pipe's `state`
-    and the Session screen, for the verified note only (flow 19). The
+    and the Record page — and, since 0.4.0, the window's header strip, which
+    withholds it while the Past sessions page is current — for the verified
+    note only (flow 19). The
     bridge's calls start at least one second apart, and for 60 s after a
     429 that clinic's bridge checks (Chrome reports, a reconnect's re-check,
     a clinic change) make no call and read `unverified_offline` until the
@@ -864,7 +866,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     checkout re-verification and the draft write (draft-write D13): a 429 any
     of the three sees makes the others wait too.
     THE DRAFT WRITE (cliniko-draft-write plan; threat model, "THE DRAFT
-    WRITE"). Trigger: ONLY the Note tab's "Write draft to Cliniko" click on a
+    WRITE"). Trigger: ONLY the Review screen's "Write draft to Cliniko" click on a
     saved, ratified note of a LINKED recording (live, or an Unreviewed one
     opened for review) — never at startup, idle, on a timer, a reconnect or a
     clinic change; a desktop-started (unlinked) recording and a note from the
@@ -912,13 +914,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     The app creates `\\.\pipe\ClinikoScribe-<user SID>` (the developer
     build's is `\\.\pipe\ClinikoScribe-dev-<user SID>`, flow 24) after its
     single-instance guard (`pipe_server.py`): first instance only (a held name
-    is refused, never shared — the Session screen then says the Chrome link is
+    is refused, never shared — the Record page then says the Chrome link is
     unavailable and desktop recording still works), one instance, remote
     clients rejected, a protected DACL granting only the current user, and a
     Medium no-read-up integrity label, so no lower-integrity process can open
     it (round 57 SEC-014). If the server stops serving for any reason but the
-    app's own stop, the current connection is reported lost and the Session
-    screen shows the Chrome link unavailable (round 57 SEC-017); a frame for
+    app's own stop, the current connection is reported lost and the Record
+    page shows the Chrome link unavailable (round 57 SEC-017); a frame for
     one connection never reaches the next (round 57 SEC-016).
     Its client is the native host (Task 4.4), which relays flow 1's v2
     messages, and which connects only after VERIFYING the server — the same
@@ -967,7 +969,13 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     clicked "Resume previous" (a time, lapsing after 30 seconds); the hotkey's
     status and the session id a warning was raised on (dropped when that
     recording finishes or ends); and the
-    last snapshot sent, for change detection. The main window keeps the
+    last snapshot sent, for change detection. Since 0.4.0 (ui-refresh plan D4,
+    C8) the window's header strip holds two strings built from the same view —
+    the Chrome link line with the live line (the patient's display name and
+    the clinic, while a linked recording is live or queued) and the same
+    without it — until the next view replaces them; it shows the second while
+    the Past sessions page is current. It holds nothing the Record page does
+    not already show. The main window keeps the
     Unreviewed reminder index (Task 5.3: clinic id, note id and session id
     per retired linked queued session — and per recovered linked session
     whose view is replaced without a Complete or Discard, from its
@@ -1064,7 +1072,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       events. Kept 7 years by month; pruned at start-up and every 24 h. An
       unreadable key refuses every Start until "Start a new audit record"
       renames the whole store aside (`audit.unreadable-…`) unread.
-    - EXPORT. "Export audit record (CSV)" on the Past sessions tab writes every
+    - EXPORT. "Export audit record (CSV)" on the Past sessions page writes every
       readable row (no event codes; a spreadsheet-formula guard on every cell)
       as UTF-8 CSV with a byte-order mark to the path the practitioner picks in a save dialog
       (starting in Documents). The file is NOT encrypted and leaves the app's
@@ -1111,11 +1119,11 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       SEC-002/SEC-003). The three roots themselves are not checked, and a
       linked audit row FILE is read like any row (its AAD binds it to its
       session id).
-    - THE TAB. Opening the Past sessions tab decrypts each entry's
+    - THE TAB (the Past sessions page since 0.4.0). Opening the Past sessions page decrypts each entry's
       `label.enc` to list date + name ("Patient hidden" under Hide names);
       opening an entry decrypts its notes AND its transcript into memory (the
       notes shown at once, the transcript only behind "Show transcript"), in
-      `NoTextInteraction` panels; leaving the tab drops all of it. "Copy saved note" places the kept SAVED note on the Windows clipboard
+      `NoTextInteraction` panels; leaving the page drops all of it. "Copy saved note" places the kept SAVED note on the Windows clipboard
       through the one placement with the three history- and sync-excluding
       formats (flow 10) — never for an entry marked "(shadow recording)" or
       one whose label cannot be read (flow 25). Delete now (two clicks; worded for a recording made
@@ -1147,7 +1155,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       channel's WER values (HKLM then HKCU for the installed app, HKCU for a
       source checkout) plus the running program's name, and, installed app
       only, the two HKLM backup and snapshot values — whose warning lines
-      show on the Status and Past sessions tabs and are logged by code only;
+      show on the Status tab and the Past sessions page and are logged by code only;
       nothing is moved and recording is never refused. Both processes install the type-name-only exception hooks
       (flow 2). Every attribute, drive-type, environment, path-resolution and
       registry call goes through one injected layer, which tests replace (C6);
@@ -1214,7 +1222,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
     `config\pilot.json` (`{"schema_version": 1, "shadow_mode": bool}`, at most
     4 KiB, no patient data) in the channel's data folder through the config
     folder's atomic write path. It is READ only at each Start click (desktop
-    or linked) and by the Status and Session tabs; absent = off, present but
+    or linked) and by the Status tab and the Record page; absent = off, present but
     unreadable or invalid = ON (named on the Status tab). At Start the mode is
     fixed for the recording and goes into the in-memory session,
     `encounter.enc` (flow 6) and the audit row (flow 22). Every rebuild takes
@@ -1282,7 +1290,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       "keep_recordings": bool}`, at most 4 KiB, no patient data) through the
       config folder's atomic write path; absent, unreadable or invalid = OFF
       (the opposite polarity to flow 25's `pilot.json`).
-    - START. With the setting on, the Session tab shows a second, never
+    - START. With the setting on, the Record page shows a second, never
       pre-ticked tick above Start (`encounter.DEVELOPMENT_CONSENT_TEXT`). At
       the click — desktop or linked from Chrome — the setting is re-read and
       the tick read then cleared; both → a `DevelopmentConsent` (time,
@@ -1331,7 +1339,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
       OneDrive roots the environment names (one it does not name is not
       detected, residue (7)), a network share
       or remote drive, the roaming profile, any drive not `DRIVE_FIXED`, and
-      either app data folder are REFUSED) by the tab and again by the store
+      either app data folder are REFUSED) by the page and again by the store
       just before the exclusive create of `<folder>\<id>.wav.part`; a row in
       the export ledger (`past_sessions\exports.enc` under
       `exports-key.dpapi`: the folder and the file's identity, no content)
@@ -1426,7 +1434,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   (`refuse_learning_candidate`), and its wording is text the practitioner
   TYPED over a line, through the narrower `refuse_typed_wording` — numbers,
   dates and medication names refused, and NO name check (D11) — written
-  only on the Note tab's Save into `autofill_rules.json`, with its metadata
+  only on the Review screen's Save into `autofill_rules.json`, with its metadata
   sidecar `autofill_rules.learned.json` (retention: the learned-rules row).
   Since the note-learning-and-styles plan's Phase 0 there is a SECOND encrypted
   practitioner store beside the voice profile: `style\style.enc` under its own
@@ -1566,7 +1574,7 @@ practitioner-run measurement tool over synthetic audio only (flow 28).
   its teardown attempted on every path, a leftover being keyless ciphertext
   named for deletion by hand — flow 27, REPLAY),
   never a backup — and nothing that
-  reads or writes it opens a connection: the archive, the Past sessions tab
+  reads or writes it opens a connection: the archive, the Past sessions page
   and the export import no network module (the confinement test of flow 18
   covers them), and the replay tool applies and asserts the offline
   environment before any model loads. Export is the only path to a plaintext
