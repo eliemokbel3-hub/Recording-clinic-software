@@ -1,6 +1,6 @@
 # Feature Implementation Plan
 **Feature:** ui-refresh (a visual redesign of Clinic Scribe's desktop app — a design-token theme with a Windows-following dark variant, one Review screen in place of the Transcript and Note tabs, a four-entry navigation rail with the setup screens behind a Settings gear, and the wording that names renamed screens — every privacy-load-bearing UI rule kept — shipped as 0.4.0; the first-run setup checklist, the full Review composition and the Chrome side panel follow as 0.4.1)
-**Overall Progress:** `50%` (19 of 38 tasks; Phases 1–5 closed 2026-10-17 — Phases 1–4 with their live smokes OWED and Task 5.4's packaging smoke OWED, practitioner instruction 2026-10-17)
+**Overall Progress:** `61%` (23 of 38 tasks; Phases 1–5 and hardening H1–H4 done 2026-10-17 — the live smokes of Phases 1–4 and Task 5.4 OWED to the practitioner, practitioner instruction 2026-10-17; H5, Phase P and Phase 6 remain)
 
 ## Lifecycle State
 - Active
@@ -264,9 +264,20 @@ Task 1.2's in-body `QApplication` creators are still exactly four: `test_status_
   - PRACTITIONER INSTRUCTION (2026-10-17, in chat, before sleeping): "work on it as much as you can without absolutely needing me. When i wake up i will smoke everything." So the run builds on without waiting for a live smoke: each phase is reviewed, suite-green and committed on this branch with its live smoke OWED (never recorded as passed), and the practitioner runs every owed smoke (Phases 1-4, and Task 5.4's packaging smoke) together in the morning, from the commits in order. Decision 0.2 ("Decide after: the Phase 2 smoke"; "Blocks: nothing") is built as its recommended option (a) — the two buttons stay in the note engine's own row, which is what is built today — and stays open for the practitioner to confirm or change at that smoke. A smoke failure is fixed on the branch as a new commit on top. The run stops before H5 and Phase P; nothing is pushed.
   - Stages: stage-1 = Phase 1; stage-2 = Phase 2; stage-3 = Phase 3; stage-4 = Phase 4; stage-5 = Phase 5; stage-6 = Hardening H1-H4. H5 and Phase P are the practitioner's.
   - QA (verify=composer): the main venv's tools run from this worktree's `desktop\` with `PYTHONPATH` set to this worktree's `desktop\src` (R8).
-  - Current: stage-5 (Phase 5, documents and version 0.4.0) CLOSED 2026-10-17 and committed; composer suites: desktop 8044 passed / 9 skipped in 9:39, extension `npm run qa` 313 passed and the dev build clean; ruff and mypy clean (70 files); review rounds 18-19 (executor) and peer pass stage-5.p1 round 20 (0 findings, converged). Stages 1-4 closed before it (`77d950c`, `5f5141c`, `4305e34`, `69c33fa`). The practitioner was given one merged 41-step smoke script for Phases 1-4 (`.cursor/loops/SMOKE-0.4.0-phases-1-4.md`, gitignored) on 2026-10-17. NEXT: stage-6 (hardening H1-H3 by the executor, then H4 at the composer seat).
+  - Current: the run is PAUSED before H5 and Phase P (2026-10-17). Stages 1-5 committed (`77d950c`, `5f5141c`, `4305e34`, `69c33fa`, `c1f047f`); stage-6 (hardening H1-H4) committed as the hardening commit, the run-of-record commit for H5. Suites at it: desktop 8044 passed / 9 skipped, extension 313 passed, ruff and mypy clean (70 files); `test_shadow_exits.py`'s pins unchanged. Reviews: rounds 4-26, every codex pass converged. Nothing pushed.
   - Before that, leg u1x3 verified and closed peer Round 6: all three LOWs confirmed and applied with their same-family siblings, and the two slow scheme tests rebuilt.
-- Last completed step: stage-5 leg u5x2 (2026-10-17, executor `claude-opus-5-5`). The composer's QA over leg u5x1: ruff clean, mypy clean (70 files), the six version fields 0.4.0, `npm run qa` 313 passed, the dev build clean; the full desktop pytest was running in parallel with this leg. /review-loop over `git diff 69c33fa` (documents, for over-claims and mismatches against Phases 1-4's code): Round 18 (0 CRIT / 0 HIGH / 0 MED / 4 LOW, all applied) and Round 19 (1 LOW, applied — CONVERGED at round 2 of the cap of 3). Review History integrity: OK after each round (`loop-history-check.py`). ruff clean; mypy clean (70 source files). No pytest in this leg (verify=composer).
+- Last completed step: stage-6 leg u6x1 (2026-10-17, executor `claude-opus-5-5`) — hardening H1, H2 and H3 over the whole branch diff `git diff 509f954` (Phases 1-5). ruff clean; mypy clean (70 source files). No pytest and no npm in this leg (verify=composer).
+  - H1 — /review-loop, Rounds 21-22, CONVERGED at round 2 of the cap of 3. Review History integrity: OK after each round (`loop-history-check.py`).
+    - Round 21 LOW-001: Phase 1's edit to `test_integration_no_sockets.py`'s second child script had also turned `name = '…'` into `name ='…'`. The slip is inside a string the child runs, so ruff could not see it, and it was the branch's only whitespace-only code change. The space is restored, and the file's `-w` and plain diffs against `509f954` now agree.
+    - The cross-phase seams, all conforming and recorded on Round 21: the theme × the adopted Review widgets (properties travel with the widget; the rules go by class and property, never parent); the rail and header × the Review routing (all seven engine routes go through `show_page` → `_sync_shell`; the first-run landing comes after the `currentChanged` connect; no frame shows the live line on Past sessions); the wording × the new pages; the documents × the final code; `test_shadow_exits.py`'s pins unchanged.
+    - Four candidates dropped on verification in Round 21 and one in Round 22 (reasons on each round).
+  - H2 — /simplify, Round 23: no simplifications worth a maintainer's attention; five candidates left alone under the conservatism guard (listed on the round). No code changed.
+  - H3 — /security-review, Round 24, scoped to the H3 line: 0 findings and no new residue. Checked with evidence: surface 4's one placement, the shadow and pilot Copy refusals, the header strip's content and Past-sessions withholding, the adopted widgets' text-interaction flags, and `ui/theme.py`, `ui/review.py`, `ui/shell.py`, `ui/icons.py` as surfaces. No code changed.
+  - Files changed in this leg: `desktop/tests/test_integration_no_sockets.py` (one space, inside the second child script), this plan.
+  - For the composer, run these first: `tests/test_integration_no_sockets.py` (it drives the edited child script; Windows-only legs), then `tests/test_shadow_exits.py`, then the full desktop pytest. The extension is unchanged since the composer's `npm run qa` (313 passed).
+  - Most likely to move: nothing expected — the space changes no token of the child's Python.
+  - No MUST-PAUSE gate: no `test_shadow_exits.py` pin change, no HIGH or CRIT, no Defer/Accept, nothing changed that the practitioner sees, no scope expansion.
+- Before that: stage-5 leg u5x2 (2026-10-17, executor `claude-opus-5-5`). The composer's QA over leg u5x1: ruff clean, mypy clean (70 files), the six version fields 0.4.0, `npm run qa` 313 passed, the dev build clean; the full desktop pytest was running in parallel with this leg. /review-loop over `git diff 69c33fa` (documents, for over-claims and mismatches against Phases 1-4's code): Round 18 (0 CRIT / 0 HIGH / 0 MED / 4 LOW, all applied) and Round 19 (1 LOW, applied — CONVERGED at round 2 of the cap of 3). Review History integrity: OK after each round (`loop-history-check.py`). ruff clean; mypy clean (70 source files). No pytest in this leg (verify=composer).
   - Round 18 LOW-001: the design system's header line said "With no Chrome link set up the line is empty and hidden". The app starts its Chrome link at launch (`app.py:646-652`), so the link line always shows, "Chrome: not connected - …" until the extension connects; the line now says so.
   - Round 18 LOW-002: the CHANGELOG said "the Discards and the Delete buttons" were destructive. It now names the five danger buttons; the Recovery page's two Discards, "Delete note and complete without one" and "Delete selected" keep the plain look. It also says `test_shadow_exits.py`'s PINS are unchanged, since two of its tests gained the theme line in Phase 1. The design system's "both Discards" is named the same way.
   - Round 18 LOW-003 + Round 19 LOW-001: 38 back-references to renamed screens ("the tab", "that tab", "Note-tab"), outside Task 5.2's grep, are reworded. They were in the threat model (14), data-flow map (4), retention schedule (15), intended use (1), pilot log template (2, prose only) and `AGENTS.md` (2). Five whose antecedent was far away now say "the Past sessions page". Every "the tab" left in those files is a Settings tab or a Chrome tab.
@@ -353,8 +364,8 @@ Task 1.2's in-body `QApplication` creators are still exactly four: `test_status_
   - Task 1.3: the 16 sites at R3's anchors — `set_role` danger / error / strong as R3 lists; `ui/note.py` proposal row `NoFrame` + `mark_card(row)`; `change_role_button` → `set_variant(..., "link")` keeping `setFlat(True)` and the hand cursor. Each file gained one `from scribe_desktop.ui.theme import …` line (note.py: `mark_card, set_role` only — it never imports `apply_theme` / `ensure_applied`, C9). Nothing else moved; no construction left its method.
   - Task 1.4: `docs/design-system.md` — the new "## Tokens" section (before "Microcopy") and "Every group box is a card" in "Surfaces & layout".
 - Then: codex plan peer-review rounds 1–3 (2026-10-09, `gpt-6-astra` medium, the cap): 4 + 1 + 1 findings verified and applied (Review History); not converged by the letter of the rule, the tail three inventory-omission LOWs; ACCEPT-CLOSED at the cap by the practitioner 2026-10-09.
-- Current in-progress step: Tasks 5.1, 5.2 and 5.3 🟨 (built in stage-5 leg u5x1, reviewed in leg u5x2 — /review-loop Rounds 18–19 CONVERGED; `npm run qa` 313 passed and the dev build clean over u5x1; the composer's desktop full pytest with `PYTHONPATH` = this worktree's `desktop\src` (R8) owed over both legs). Phases 1–4 are 🟩 and committed (`77d950c`, `5f5141c`, `4305e34`, `69c33fa`). Task 5.4 is the practitioner's (script below).
-- Immediate next action: stage-6 — a fresh executor runs H1 (/review-loop over the whole branch, from Round 21), H2 (/simplify) and H3 (/security-review); then the composer's H4 (the final cross-family peer, the full suite, /document, the hardening commit); the run pauses before H5. Open for the practitioner: the Phases 1-4 smokes (merged script), decision 0.2, Task 5.4's (a)/(b), then Task 5.4 itself.
+- Current in-progress step: hardening — H1 🟨 (its one test fix, suite owed), H2 and H3 🟩 (stage-6 leg u6x1). Phases 1–5 are 🟩 and committed (`77d950c`, `5f5141c`, `4305e34`, `69c33fa`, `c1f047f`). Task 5.4 is the practitioner's (script below).
+- Immediate next action (practitioner): run the merged smoke for Phases 1-4 (`.cursor/loops/SMOKE-0.4.0-phases-1-4.md` in this worktree, 41 steps) and report failures by step number; answer decision 0.2 (its step 41) and Task 5.4's (a)/(b); then Task 5.4. A smoke failure is fixed on this branch as a new commit (a new /execute-loop leg or a scoped session). Then H5 on the practitioner's word: the merge to `main` waits on 0.3.3's build of record (R7). The composer's run-close is owed after H5 or a decision to stop.
 - Task 5.4 packaging-smoke script (draft) — practitioner, a normal persistent PowerShell (never an agent shell, `docs/lessons.md`), after Phase 5 is committed on this branch; record PASS/FAIL per step here. THIS LOCAL BUILD IS NOT THE BUILD OF RECORD (H5 is: CI's `Release` workflow on `main`, attested) — never install it on the clinic computer and never put its `setup.exe` where the installed app's would go:
   1. Close Clinic Scribe (the installed app and any developer run) and confirm no `scribe-app.exe` in Task Manager.
   2. The local build, exactly as the installation plan's Task 3.5 run did (`plan-installation.md` Task 3.5; where this computer keeps its release folders: `AGENTS.local.md`): a clean PyInstaller clone at the pinned tag (`git clone --depth 1 --branch v6.22.3 https://github.com/pyinstaller/pyinstaller.git <release folder>\pyinstaller-src`, or reuse the existing one if it is still at that commit), then from this worktree `cd "C:\Recording clinic software\.claude\worktrees\ui-refresh-bf9282"` and `& "C:\Recording clinic software\.venv\Scripts\python.exe" scripts\build-release.py --pyinstaller-src <release folder>\pyinstaller-src --out <a NEW empty out folder>`. PASS when it finishes: its bundle audit fails closed, and it already runs `scribe-app.exe --self-check-offline` with hostile variables and needs exit 0 — so a finished build IS the "self-check exit 0" check (it runs from the build folder; the install-folder refusal comes after it).
@@ -430,7 +441,7 @@ Task 1.2's in-body `QApplication` creators are still exactly four: `test_status_
   9. Switch Windows app mode (Light, then Dark) on Review with a note: every reworded line still reads, in both schemes.
 - Open blockers / open questions: none for building. No MUST-PAUSE gate in leg u5x1: no `[decision]` task (0.2 stays open as built, "Blocks: nothing"; 0.3 is after H5), no `test_shadow_exits.py` pin change, no scope expansion, no document change beyond a screen name (so no question for the practitioner), no new dependency. No MUST-PAUSE gate in leg u4x2 (Round 15's one LOW was do-the-work and auto-disposed; no Defer/Accept, no HIGH, no pin change). No MUST-PAUSE gate in leg u4x1: no `[decision]` task, no `test_shadow_exits.py` pin change, no scope expansion, no new screen-name hit beyond R5 (the sweep is on Task 4.1's line). No MUST-PAUSE gate in leg u3x1: no `[decision]` task, no `test_shadow_exits.py` pin change, no scope expansion, no new dependency or file asset; the one recorded deviation (Task 3.4's `Signal(str, str)`) is how C8's "never split" and D4's withholding are both kept, and changes nothing the practitioner sees. Decision 0.2 is open for the practitioner at the Phase 2 smoke (built as option (a); no MUST-PAUSE — "Blocks: nothing"). No `test_shadow_exits.py` pin change, no scope expansion, no new dependency or file asset in leg u2x1. Stage-1 history follows.
 - Stage-1 blockers note (kept for the record): No MUST-PAUSE gate fired in either leg (no `[decision]`, no scope expansion, no HIGH, no fifth in-body creator; every Round 4 finding was LOW/MED, do-the-work and non-production, so auto-disposed). The suite-time residual is closed: 11:20 against 11:33 after Round 4, and the slowest test is removed in leg u1x3 (Round 6's suite-time line). No must-pause gate in leg u1x3: no recovery changes what the theme does at run time.
-- Last plan sync: 2026-10-17T12:29:54+11:00 (stage-5 leg u5x2, /review-loop Rounds 18–19 converged; the composer's desktop suite owed).
+- Last plan sync: 2026-10-17T12:47:32+11:00 (stage-6 leg u6x1, hardening H1–H3: Rounds 21–24; the composer's desktop suite owed over one test-whitespace fix; H4 is the composer's).
 
 ## Review History
 - 2026-10-09 — `/review-loop hardened plan, astra medium` run as the plan-aware cross-family `/peer-review`, round 1 (codex `gpt-6-astra` medium, read-only sandbox, composer-recorded; 3 min, 95.6 k tokens): 4 findings (0 CRIT, 0 HIGH, 2 MED, 2 LOW; 3 build-affecting, 1 record-only), all verified against the code and applied as amendments the same day: the theme call moved to the line after `QApplication([])` so both refusal boxes are themed — a call after the guard could not reach them (PR-MED-001); Phase 3's Record-first order makes a profile-present window open on Record, so Task 3.5 re-points `test_ui_screens.py:4167` (PR-MED-002); `ui/practitioner.py:505` names the Note tab and moves from D8's verbatim list to Task 4.1 (PR-LOW-003); Flow 4's Friday is 2026-10-09 (PR-LOW-004). Round 2 to follow (convergence needs a round with no new build-affecting finding).
@@ -467,6 +478,22 @@ Task 1.2's in-body `QApplication` creators are still exactly four: `test_status_
   - Five rewritten back-references whose antecedent was far away now say "the Past sessions page" (LOW-001, completing Round 18 LOW-003); one candidate dropped on verification.
   - CONVERGED at round 2 of the cap of 3. The composer's suites over the fixes and the stage-5 peer pass follow.
 - 2026-10-17 round 20: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=converged — Phase 5 cross-family codex peer round (pass stage-5.p1, peer_round 1 of cap 5; composer seat): all six jobs checked with per-job evidence (design-system and security docs against the code, practice documents' meaning and versions, pilot tables, plan addenda, version fields and CHANGELOG claims, remaining grep hits); 0 findings on the first round, so the pass converges.
+- 2026-10-17 round 21: 0 CRIT / 0 HIGH / 0 MED / 1 LOW; skew=none; action=none — Hardening H1 /review-loop round 1 over the whole branch (executor, stage-6 leg u6x1):
+  - Fixed: a whitespace slip inside a child-process script in `test_integration_no_sockets.py` (`name ='…'`), from Phase 1's edit (LOW-001). It was the branch's only whitespace-only code change.
+  - The cross-phase seams conform: the theme × the adopted Review widgets, the rail/header × the Review routing, the wording × the new pages, the documents × the final code, and `test_shadow_exits.py`'s pins.
+  - Four candidates dropped on verification.
+  - Applied; round 22 follows.
+- 2026-10-17 round 22: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=converged — Hardening H1 /review-loop round 2 (executor, stage-6 leg u6x1): Round 21's fix verified with no regression; one candidate dropped on verification. CONVERGED at round 2 of the cap of 3.
+- 2026-10-17 round 23: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — Hardening H2 /simplify over the whole branch (executor, stage-6 leg u6x1): no simplifications worth a maintainer's attention. Five candidates were left alone under the conservatism guard: test-only read handles, the per-module `_plain_label` idiom, D1's tokens not yet used, the header's two calls, and the row split.
+- 2026-10-17 round 24: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — Hardening H3 /security-review over the whole branch, scoped to the plan's H3 line (executor, stage-6 leg u6x1). Each surface holds, with its evidence on the round:
+  - surface 4's one placement;
+  - the shadow and pilot Copy refusals;
+  - the header strip's content and its Past-sessions withholding;
+  - the adopted widgets' text-interaction flags;
+  - the four new modules as surfaces.
+- 2026-10-17 round 25: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=none — H4 final cross-family codex re-check, slice A of 2 (production code, 21 files; pass stage-6.p1, peer_round 1 of cap 5; composer seat): privacy end to end, cross-phase routing, the theme against the new widgets, signal lifecycles, C1/C9/C10 — five jobs with per-job evidence, nothing found. Slice B (tests and the extension) follows as Round 26.
+- 2026-10-17 round 26: 0 CRIT / 0 HIGH / 0 MED / 0 LOW; skew=none; action=converged — H4 final cross-family codex re-check, slice B of 2 (tests and the extension; pass stage-6.p1, peer_round 2 of cap 5; composer seat): existing assertions changed only where the plan names them, none weakened; test isolation, privacy proofs, the theme fixture and in-body creators, the extension diff — five jobs with per-job evidence, nothing found. With slice A (Round 25) the H4 pass converges.
+  No new residue. The threat model's residue (3) states the header's exposure.
 
 ## Review Findings Log
 
@@ -1098,6 +1125,135 @@ Recorded by: the composer (composer-seat codex round, read-only sandbox; transcr
 - Verification counts: 6 claims checked, 6 confirmed, 0 dropped as unverifiable
 - Last reviewed: 2026-10-17
 
+### Round 21 - 2026-10-17 - Hardening H1 (Phases 1–5, the whole branch), /review-loop round 1 of 3
+Recorded by: the executor (stage-6 leg u6x1, `claude-opus-5-5`), headless under `/execute-loop` run `ui-refresh-20261016-215623-c918`
+Source: /review (in-loop, same-family)
+Scope: `git diff 509f954` (Phases 1–5, `77d950c`..`c1f047f`, 64 files), read for what only shows ACROSS phases. Read in full: `ui/theme.py`, `ui/review.py`, `ui/shell.py`, `ui/icons.py`, `desktop/tests/test_ui_review.py`; the diffs of `ui/main_window.py`, `ui/session_screen.py`, `ui/bridge.py`, `app.py`, `ui/models.py`, every screen module, `tests/conftest.py`, the four in-body-`QApplication` tests, `test_integration_no_sockets.py`, `CHANGELOG.md`, `PLAN.md`; the header cases of `test_ui_shell.py`; `docs/design-system.md` "Surfaces & layout" and the threat model's Chrome-link paragraph against the final code. Input from the composer: baseline `c1f047f`, desktop 8044 passed / 9 skipped, ruff and mypy clean (70 files), `npm run qa` 313 passed.
+Severity: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+Round status: Closed
+Verification: ruff clean; mypy clean (70 source files) after the fix; no pytest in this leg (verify=composer)
+Finding verification: 5 candidates; 4 dropped; 0 downgraded. Dropped: (1) "on a 640-px-high window the right column (Generate group, note, Edit the note) cannot fit and widgets overlap" — the line rows and the proposals sit in their own `QScrollArea`s (`ui/note.py:706`, `:850`), so the column shrinks to its scroll areas. Whether the window looks crowded at the 960 × 640 minimum is the Phase 3 smoke's step 10 ("nothing overlaps"), not a static finding. (2) "the first-run landing could leave the rail and strip unsynced" — `currentChanged` is connected (`ui/main_window.py:780`) before the landing's `setCurrentWidget(practitioner_screen)` (`:814`), so `_sync_shell` runs on it. (3) "the rail's `ThemeBus` connection outlives a deleted window" — PySide disconnects a slot whose QObject receiver is destroyed. The suite also bears this out: `test_ui_theme.py`'s scheme flips run after `test_ui_shell.py` has deleted its windows, and they pass. (4) "the Review screen shows two shadow lines" — they are different lines with different texts: the recording's `SHADOW_RECORDING_LINE` on the left and the note's `SHADOW_NOTE_LINE` in the strip. D6 places both.
+
+#### LOW-001: desktop/tests/test_integration_no_sockets.py:534 — a whitespace slip inside a child-process script (`name ='…'`)
+- Phase 1's leg added the theme line to this child script (Round 4 MED-002). The same edit also changed `name = '\\\\…'` to `name ='\\\\…'`. It sits inside a Python string that the child runs, so ruff never sees it. It is the only whitespace-only change in the branch's desktop and extension diff (`git diff 509f954 --numstat` against `-w --numstat`: the only other difference is `ui/models.py`'s re-wrapped `review_in_progress`, which is the same text). Behaviour is unaffected; it is an unintended edit to a pinned no-sockets test, the same class as Round 8 LOW-002.
+- Fix: the space restored. The file's `-w` and plain diffs against `509f954` now agree (8 added, 0 removed).
+- Triage: Fix-now (LOW, do-the-work, not production-impacting — headless AUTO-DISPOSABLE); /fix decision: Applied; /fix date: 2026-10-17
+
+#### Review inputs — the cross-phase seams (no finding)
+- **The theme × the adopted Review widgets.** The adopted widgets keep the property each phase gave them: `set_variant` primary on Save, danger on the Discard, link on `change_role_button` inside `generate_box`, and the roles on `warning_label` and the blocking/review headers. `generate_box` and `edit_group` are `QGroupBox`es, so they are cards on the right. Every strip label is unstyled plain text. `ReviewScreen` calls no theme function, and the move changes no property; the rules are by class and property, never by parent. CONFORMS.
+- **The rail/header × the Review routing.** All seven engine routes go through `show_page`, which walks up to `review_screen` (`transcript_screen` → splitter → page; `note_screen` → `right_pane` → splitter → page). Each route then reaches `_on_tab_changed` → `_sync_shell`, so the Review entry lights. The direct `setCurrentWidget(recovery)` sites (`:1275-1331`, `:1605`) name a page and go through `currentChanged` too. `_sync_shell` runs after Past sessions' `on_left()` / `refresh()` in the same slot, before any repaint, so no frame shows the live line on Past sessions. CONFORMS.
+- **The wording × the new pages.** Every rewritten line names a page the rail or strip shows by that name ("Record page", "Review screen", "Recovery page", "Past sessions page"; the Settings tabs as the strip's tabs). A grep of every quoted string in `desktop/src` for the old names finds only docstrings, comments, the four consent "this tab" texts and `:4145` — all on the Practitioner page (D8). The "Note generated - review it on the Review screen." line is shown on that screen; it was dropped at Round 15 because the Phase 4 smoke names that wording. CONFORMS.
+- **Documents × the final code.** Phase 5's documents were checked against Phases 1–4 at Rounds 18–20, and no code changed after Phase 4, so the final code is the code they were checked against. Re-read here: the design system's rail, header, strip, opening size and Review screen; the threat model's header paragraph and residue (3); the CHANGELOG's 0.4.0 claims (the five danger buttons, the opening size, the unchanged pins) and the PLAN.md delivery note. CONFORMS.
+- **`test_shadow_exits.py`.** Its pins are unchanged since `509f954`; the only change is Phase 1's two theme lines, one at each in-body creator. CONFORMS.
+
+#### Round classification
+- Round 1 of this loop over the whole branch: no classification.
+- Termination: no CRIT / HIGH / MED; the one LOW applied — converged by the letter of the rule at round 1; Round 22 re-checks the fix before the loop stops.
+
+### Round 22 - 2026-10-17 - Hardening H1 (Phases 1–5, the whole branch), /review-loop round 2 of 3
+Recorded by: the executor (stage-6 leg u6x1, `claude-opus-5-5`), headless under `/execute-loop` run `ui-refresh-20261016-215623-c918`
+Source: /review (in-loop, same-family)
+Scope: Round 21's fix (`desktop/tests/test_integration_no_sockets.py:534`) and its reach, plus a second pass over the cross-phase seams Round 21 listed.
+Severity: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+Round status: Closed
+Verification: ruff clean; mypy clean (70 source files); no pytest in this leg (verify=composer)
+Finding verification: 1 candidate; 1 dropped; 0 downgraded. Dropped: "`HeaderStrip` keeps the live line's full text (`_with_live`) while it withholds it on Past sessions". This is Round 11's dropped (3): the Record page's `chrome_label` holds the same string for the same lifetime, so nothing new is kept.
+
+#### Post-fix regression check
+- LOW-001: the child script's line is plain Python assignment inside the string; the space changes no token. The other two child scripts in the file (`:383`, `:621`) have no `=` slip (`git diff -w` agrees with the plain diff for the whole file).
+
+#### Round classification
+- Round 21's LOW-001: ✅ fixed and verified.
+- New this round: none.
+- Termination: CONVERGED at round 2 of the cap of 3 (no CRIT/HIGH/MED, no new finding). H2 follows.
+
+### Round 23 - 2026-10-17 - Hardening H2 (Phases 1–5, the whole branch), /simplify
+Recorded by: the executor (stage-6 leg u6x1, `claude-opus-5-5`), headless under `/execute-loop` run `ui-refresh-20261016-215623-c918`
+Source: Claude Code simplify
+Scope: `git diff 509f954`. The source modules were read in full: `ui/theme.py`, `ui/review.py`, `ui/shell.py`, `ui/icons.py`, and the changed regions of `ui/main_window.py`, `ui/session_screen.py`, `ui/bridge.py`, `ui/models.py` and the screen modules. Also read in full: `tests/test_ui_review.py`. `tests/test_ui_theme.py` and `tests/test_ui_shell.py` were read in their own phases (Rounds 4–7, 11–14) and only their header and re-tint cases here. Plan-chosen shapes are excluded: `_adopt` (D6's one mechanism), the two-string header signal (Task 3.4), the token set (D1).
+Severity: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+Round status: Closed
+Verification: no code changed by this pass
+
+#### Simplifications found
+- None — no simplifications worth a maintainer's attention.
+
+#### Consciously left alone (the conservatism guard)
+- `NavigationRail.lit_pages` / `button_for`, `SettingsStrip.titles` / `current_title`, `HeaderStrip.text` are read only by tests (`test_ui_shell.py`). They are small read-only handles, the same pattern as `ReviewScreen.button_row` / `status_strip`. Moving them into the tests would reach into private state. Left alone.
+- `shell._plain_label` repeats the per-module `_plain_label` helper (`ui/clinics.py`, `ui/past_sessions.py`). The per-module helper is the codebase's existing idiom, and a shared one would touch three modules for two lines. Taste. Left alone.
+- `Tokens.paused` and `size_heading`, and the role `success`, are not used in 0.4.0. D1 names them, and 0.4.1's checklist uses `success` (D7). Plan-chosen. Left alone.
+- `SessionScreen.set_header_view` calls `models.header_link_text` twice, once per string. Both calls are needed and cheap; folding them would put a split back in. Left alone.
+- `ReviewScreen`'s `row_buttons[:3]` / `[3:]` around the stretch, and `_retint`'s `isinstance` (the bus is `Signal(object)`), are legible as they are. Left alone.
+
+#### Summary
+- 0 findings (0 Fix-now, 0 Include in plan). No simplifications worth a maintainer's attention.
+
+### Round 24 - 2026-10-17 - Hardening H3 (Phases 1–5, the whole branch), /security-review
+Recorded by: the executor (stage-6 leg u6x1, `claude-opus-5-5`), headless under `/execute-loop` run `ui-refresh-20261016-215623-c918`
+Source: Claude Code security-review (same-family, in-session; no native reviewer delegated)
+Scope: `git diff 509f954`, limited to the plan's H3 line: Phase 3A surface 4 (every Copy through the one placement); the shadow residues and the pilot's Copy refusals; the header strip as the Chrome line's second display site and its Past-sessions withholding; the adopted widgets' text-interaction flags; and the new modules `ui/theme.py`, `ui/review.py`, `ui/shell.py`, `ui/icons.py` as new surfaces. Read against `docs/security/threat-model.md`'s Chrome-link paragraph (the name's display sites, residue (3)) and `docs/design-system.md`.
+Severity: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+Round status: Closed
+Verification: no code changed by this pass
+
+#### Checked and holding (no finding)
+- **Surface 4 — Copy through the one placement.**
+  - `ReviewScreen` moves `copy_button`, `save_button` and `write_button` with `addWidget`. Their `clicked` connections stay in the engines: `NoteScreen._copy_note` re-checks `_copy_allowed` at the click, and `write_requested` keeps its one pinned connect.
+  - A package grep finds no new `QShortcut`, `setShortcut`, `QAction`, `installEventFilter`, context-menu policy, drag or `clipboard` in the four new modules or anywhere in the branch's code.
+  - Ctrl+C and the right-click Copy on the note stay in `_NotePanel.keyPressEvent` / `contextMenuEvent`, and Copy/Cut in `_LineEditor`; their owner's methods are unchanged.
+  - `test_shadow_exits.py` runs with its pins unchanged: the placement callers, the clipboard calls, the selectable-text flags only in `_apply_copy_binding`, the text-widget counts in `ui/note.py` and `ui/past_sessions.py`, the lists and combos.
+- **The shadow residues and the pilot's Copy refusals.**
+  - In shadow, Copy is off with `SHADOW_COPY_REFUSED`, the note body is `NoTextInteraction`, and the line editor has no Copy/Cut. All three are the engines' own code, unchanged; through the window they are asserted by `test_ui_review.py::TestStateMatrix::test_shadow`.
+  - Past sessions' Copy saved note is untouched (`ui/past_sessions.py` gained one `set_variant` line on Delete).
+  - Shadow is fixed at Start (`session_mode.py`, untouched); no shell part reads the mode.
+- **The header strip — the second display site.**
+  - What it can show is built from the view's own fields by `models.header_link_text`: one of three fixed link lines and, only with `view.clinic`, the same live line the Record page shows. It never shows a block, recheck, hands-free, warning or refusal line. Pinned by `test_ui_models.py::TestHeaderAndRailCue` and `test_ui_shell.py::TestHeader`.
+  - The label is plain text with Qt's default label interaction, which is not selectable — the Record page's `chrome_label` behaves the same. So the header adds no selection or copy path.
+  - The live line is withheld while Past sessions is current. `_sync_shell` runs in the same `currentChanged` slot as Past sessions' clear, before any repaint, so no frame shows the name there. A view that arrives while Past sessions is current stays withheld (`test_the_live_line_is_withheld_on_past_sessions`).
+  - The wider exposure — the live line on every other page while a linked recording is live or queued — is the one D4 accepted. The threat model writes it into residue (3) and the data-flow map into flows 18 and 19.
+  - The header's held strings are Round 11's dropped (3): nothing kept beyond the Record page's own label.
+- **The adopted widgets' text-interaction flags.**
+  - Adoption is `addWidget` only, so no flag changes (C15).
+  - The left transcript keeps `NoTextInteraction` (`ui/transcript.py:244`), and so does the hidden duplicate (`ui/note.py:656`, under a hidden ancestor).
+  - `note_body`'s flags are set only in `_apply_copy_binding`.
+  - Asserted by `test_ui_review.py::TestPanes::test_the_hidden_duplicate_keeps_its_display_only_flags` and the matrix's saved and shadow rows.
+- **The new modules as surfaces.**
+  - `ui/theme.py` reads only the app's `styleHints().colorScheme()` and sets the app's style, palette, font and stylesheet. It reads and writes no file, setting or registry, makes no network or logging call, and keeps no content. Its `ValueError` messages carry code-supplied values only. It runs before the single-instance guard (D2) and touches no shared data.
+  - `ui/icons.py` paints in memory: no file asset, no `QtSvg`, `QPainter(pixmap)` never `.begin(` (C1, C10).
+  - `ui/review.py` constructs no text widget, list, combo, clipboard, drag or `QApplication` call.
+  - `ui/shell.py` holds display strings only. It has no logger, no list or combo (the strip is a `QTabBar`, outside C2), and every label is plain text (pinned by `TestHeader::test_no_bridge_no_chrome_line` and `TestNewModulesKeepTheConstraints`).
+  - The rail cue shows the session state only ("REC" / "PAUSED"), never content.
+  - The offline contract is unchanged: no new import of a network module (C10).
+
+#### Summary
+- 0 findings. No new residue; the threat model's existing residue (3) states the header's exposure exactly.
+
+### Round 25 - 2026-10-17 - Stage-6 (H4 final re-check, slice A production code), independent cross-family codex peer review (pass stage-6.p1)
+Recorded by: the composer (composer-seat codex round, read-only sandbox; transcribed verbatim from `.cursor/loops/stage-6-peer-r25.log`, the last line-start header; the five per-job evidence lines precede the block in the log)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Production changes against `509f954` across 21 files; cross-phase privacy, routing, styling, lifecycle and constraint checks. Read-only inspection; no tests or application execution.
+
+#### Findings
+
+- Verification counts: 5 claims checked, 0 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-17
+
+### Round 26 - 2026-10-17 - Stage-6 (H4 final re-check, slice B tests and extension), independent cross-family codex peer review (pass stage-6.p1)
+Recorded by: the composer (composer-seat codex round, read-only sandbox; transcribed verbatim from `.cursor/loops/stage-6-peer-r26.log`, the last line-start header; the five per-job evidence lines precede the block in the log)
+
+- Round status: Closed (0 pending)
+- Source: independent cross-family codex peer review
+- Reviewer: codex gpt-6-astra (medium)
+- Scope: Tests and extension changes against `509f954`, including the working-tree whitespace fix; assertion preservation, isolation, privacy proof, theme coverage and extension scope. Read-only inspection; no tests or application execution.
+
+#### Findings
+
+- Verification counts: 5 claims checked, 0 confirmed, 0 dropped as unverifiable
+- Last reviewed: 2026-10-17
+
 ## Tasks
 Every agent-built phase ends with the full `desktop` QA (`ruff check . && mypy && pytest`) green and a live UI smoke the PRACTITIONER runs on the developer build (`.venv\Scripts\scribe-app.exe` from Explorer or a persistent terminal, the installed app closed). Each phase names its test changes; a change not named here is a finding, not a fix.
 
@@ -1199,10 +1355,10 @@ Every agent-built phase ends with the full `desktop` QA (`ruff check . && mypy &
 - No live smoke beyond 5.4 (documents and version).
 
 ### Hardening stage
-- [ ] 🟥 **H1** `/review-loop` to convergence over Phases 1–5.
-- [ ] 🟥 **H2** `/simplify` — findings logged; trivial → `/fix`, substantial → scoped `/review-plan`.
-- [ ] 🟥 **H3** `/security-review` — the UI surfaces of the threat model (Phase 3A surface 4 Copy, the shadow residues, the pilot's Copy refusals, the header strip as the Chrome line's second display site and its Past-sessions withholding, the adopted widgets' text-interaction flags); findings logged the same way.
-- [ ] 🟥 **H4** final cross-family `/peer-review` (codex `gpt-6-astra`, sliced per `codex-window-pacing`) re-check; the full suite; `/document`; the hardening commit.
+- [x] 🟩 **H1** `/review-loop` to convergence over Phases 1–5. `[done 2026-10-17; composer suite green — 8044 passed / 9 skipped]` Stage-6 leg u6x1, over `git diff 509f954`: Round 21 (1 LOW — a whitespace slip inside `test_integration_no_sockets.py`'s child script, fixed) and Round 22 (0 findings) — CONVERGED at round 2 of the cap of 3. The cross-phase seams (the theme × the adopted widgets, the rail/header × the routing, the wording × the pages, the documents × the final code) are recorded on Round 21.
+- [x] 🟩 **H2** `/simplify` — findings logged; trivial → `/fix`, substantial → scoped `/review-plan`. `[done 2026-10-17]` Round 23: no simplifications worth a maintainer's attention (five candidates left alone, listed); no code changed.
+- [x] 🟩 **H3** `/security-review` — the UI surfaces of the threat model (Phase 3A surface 4 Copy, the shadow residues, the pilot's Copy refusals, the header strip as the Chrome line's second display site and its Past-sessions withholding, the adopted widgets' text-interaction flags); findings logged the same way. `[done 2026-10-17]` Round 24: 0 findings — each named surface and the four new modules checked with evidence; no new residue; no code changed.
+- [x] 🟩 **H4** final cross-family `/peer-review` (codex `gpt-6-astra`, sliced per `codex-window-pacing`) re-check; the full suite; `/document`; the hardening commit. `[done 2026-10-17 by the composer]` The final cross-family peer as two read-only slices — Round 25 (production code, 21 files) and Round 26 (tests and the extension), each 0 findings with per-job evidence, so pass stage-6.p1 converged; the full desktop suite 8044 passed / 9 skipped in 9:59 over H1's one fix, extension 313 passed; /document: AGENTS.md's UI refresh status entry, a Subsystem pointer for the theme, Review screen and shell, and Documentation Status (the run's per-phase plan syncs were made at each phase close); the hardening commit is this plan's run-of-record commit for H5.
 - [ ] 🟥 **H5 Build of record 0.4.0** — push on the practitioner's word; `Release` on `main`; `gh attestation verify` + `SHA256SUMS.txt`; the row in `docs/release/pilot-builds.md` with the note "UI redesign; no store, record, config or model change; rollback to 0.3.0 needs only 'finish or discard every recording first', then reload the extension and restart Chrome"; the 0.3.0 row's "Not yet installed" corrected to its install date (it has been the clinic build since 2026-10-08). `[2026-10-16 reconciliation]` See R7 (the rollback note names 0.3.3; the merge waits on 0.3.3's build of record).
 
 ### Phase P — Practitioner-run (installed app)

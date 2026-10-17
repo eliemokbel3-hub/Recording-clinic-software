@@ -531,7 +531,7 @@ w = MainWindow(controller, backend, sessions_root=root,
                clinic_registry=ClinicRegistry(base / 'clinics.json'),
                past_sessions=PastSessionStore(base / 'past_sessions'))
 bridge = w.attach_chrome_link()
-name ='\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
+name = '\\\\\\\\.\\\\pipe\\\\ClinikoScribe-test-' + uuid.uuid4().hex
 server = PipeServer(name, bridge, sddl=pipe_sddl(current_user_sid()))
 bridge.attach(server)
 server.start()
