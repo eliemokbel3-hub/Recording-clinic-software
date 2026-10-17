@@ -895,7 +895,7 @@ CHROME_WAITING_LINE: Final = (
 CHROME_CONNECTED_LINE: Final = "Chrome: connected."
 CHROME_UNAVAILABLE_LINE: Final = (
     "Chrome link unavailable - another program is using its channel. Close Clinic Scribe "
-    "and open it again; recording from the Session tab still works."
+    "and open it again; recording from the Record page still works."
 )
 CHROME_SPOKEN_PAUSE_UNAVAILABLE_LINE: Final = (
     "Spoken pause unavailable for this recording - live transcription is off or has stopped."
@@ -920,7 +920,7 @@ SPOKEN_PAUSE_LINES: Final[Mapping[str, str]] = {
 }
 HOTKEY_FAILED_STATUS: Final = (
     "The pause hotkey {chord} is unavailable - another program may be using it. Pause and "
-    "Resume still work on the Session tab and in Chrome's side panel."
+    "Resume still work on the Record page and in Chrome's side panel."
 )
 HOTKEY_RESUMED_STATUS: Final = "Recording resumed by the hotkey."
 # D5 as amended 2026-09-28: a registration Windows refused, keyed by
@@ -974,7 +974,7 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
     "checking": "Still checking the note with Cliniko - wait a moment, then press Start.",
     "not_verified": "Cliniko did not verify this note: {reason}.",
     "session_active": "A recording is already in progress - finish it first.",
-    "review_open": "Save or cancel the open note review on the Note tab to start.",
+    "review_open": "Save or cancel the open note review on the Review screen to start.",
     "no_microphone": "Select an input device on the Microphone tab first.",
     # Round 41: transcribing, a draft write, or (round 40 LOW-002) a Discard
     # waiting for live transcription to stop — never only "transcribing".
@@ -1000,17 +1000,18 @@ CHROME_REFUSALS: Final[Mapping[str, str]] = {
         "The computer was locked and Clinic Scribe cannot confirm it is unlocked - lock it "
         "and sign in again (Windows key + L), then press it again."
     ),
-    "failed": "It did not work - see the Session tab in Clinic Scribe.",
+    "failed": "It did not work - see the Record page in Clinic Scribe.",
     # Installation plan round 36 MED-001 (the practitioner's option (b)):
     # every Start, Chrome's and the desktop's, waits out the start-up import
     # warm-up — bounded (``ml_warmup.START_HOLD_SECONDS``).
     "getting_ready": START_GETTING_READY_MESSAGE,
     # Task 5.5 (D6): the banner's "Open for review".
     "review_in_progress": (
-        "Save or cancel the note review open on the Note tab first, then open this recording."
+        "Save or cancel the note review open on the Review screen first, then open this "
+        "recording."
     ),
     "cannot_open": (
-        "Clinic Scribe could not open that recording for review - see its Recovery tab."
+        "Clinic Scribe could not open that recording for review - see its Recovery page."
     ),
 }
 
@@ -1034,7 +1035,7 @@ REVIEW_OPEN_DISCARDING_LINE: Final = (
 )
 # Task 5.3 (D6): why Start waits while a note review is open.
 REVIEW_OPEN_START_HINT: Final = (
-    "Save or cancel the open note review on the Note tab to start the next recording."
+    "Save or cancel the open note review on the Review screen to start the next recording."
 )
 
 # Task 5.1 (D5): the desktop cue shown with every pause the rule makes (the
@@ -1592,12 +1593,12 @@ EXPIRY_WARNING_SECONDS: Final = 2 * 3600
 # window quits (a modal box would block every close path, tests included).
 CLOSE_CONFIRM_SECONDS: Final = 10.0
 SAVED_NOTE_LINE: Final = (
-    "Saved note - shown as it was saved. Copy it here; Complete, or Regenerate "
-    "(replaces the saved note), on the Transcript screen."
+    "Saved note - shown as it was saved. Copy it, Complete, or Regenerate (replaces "
+    "the saved note) here on the Review screen."
 )
 SAVED_NOTE_CONFIG_CHANGED_LINE: Final = (
     "This note was saved under a different note configuration from the one now in "
-    "use, so it is shown read-only as it was saved. Regenerate on the Transcript "
+    "use, so it is shown read-only as it was saved. Regenerate on the Review "
     "screen to write it under the current configuration."
 )
 SAVED_NOTE_CONFIG_UNREADABLE_LINE: Final = (
@@ -2236,7 +2237,7 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
     "role_unconfirmed": WarningCopy(
         "The clinician speaker is not confirmed for a clinician-owned section",
         "saving the note",
-        "Cancel review, confirm the clinician on the Transcript screen, then regenerate.",
+        "Cancel review, confirm the clinician on the Review screen, then regenerate.",
     ),
     "low_confidence_source": WarningCopy(
         "A quoted line includes a word the transcription was unsure about",
@@ -2346,7 +2347,7 @@ WARNING_COPY: Final[Mapping[str, WarningCopy]] = {
         None,
         "Later lines were left out - add back any that belong with Add line to section, "
         "then acknowledge. If they are another patient's, use Cancel review and "
-        "regenerate, then remove them from the recording on the Transcript tab.",
+        "regenerate, then remove them from the recording on the Review screen.",
     ),
     # Invented-text guard Task 2.8: a stored review warning written by a newer
     # version of the app, read back after a rollback (``note.from_bytes``).
@@ -2765,7 +2766,7 @@ REMOVE_TAIL_TOOLTIP: Final = (
 )
 REMOVE_TAIL_REVIEW_OPEN: Final = (
     "Lines cannot be removed while a note is being generated or reviewed - use Cancel "
-    "review and regenerate on the Note tab first."
+    "review and regenerate on the Review screen first."
 )
 REMOVE_TAIL_NOTE_SAVED: Final = (
     "Lines cannot be removed once a note is saved - Discard the recording to start again, "
@@ -3225,7 +3226,7 @@ LEARNING_OPTED_OUT_HINT: Final = (
 )
 LEARNING_ON_LINE: Final = (
     "Phrase learning is on: lines you add or move, and shorthand you type over your own "
-    "lines, are learned when you press Save note on this tab."
+    "lines, are learned when you press Save note on the Review screen."
 )
 # Shown on the Note tab's learning line while phrases are QUEUED (live smoke
 # 2026-09-17: the practitioner read the queue as done and left the review
@@ -3257,7 +3258,7 @@ def learning_queued_line(count: int, rules: int = 0) -> str:
     it is."""
     nouns = _queued_nouns(count, rules, queued_first=False)
     return (
-        f"Phrase learning is on: {nouns} - press Save note on this tab to learn them "
+        f"Phrase learning is on: {nouns} - press Save note on the Review screen to learn them "
         "(Cancel, Delete and Complete learn nothing)."
     )
 
@@ -3270,7 +3271,7 @@ def unlearned_on_exit_line(count: int, rules: int = 0) -> str:
     once, where the practitioner lands, never a modal."""
     verb = "was" if count + rules == 1 else "were"
     nouns = _queued_nouns(count, rules, queued_first=True)
-    return f"{nouns} {verb} not learned - only Save note on the Note tab learns them."
+    return f"{nouns} {verb} not learned - only Save note on the Review screen learns them."
 
 
 def check_typed_text(text: str) -> str | None:

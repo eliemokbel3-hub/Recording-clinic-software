@@ -193,6 +193,8 @@ describe("Live", () => {
     expect(hotkeyLine("Ctrl+Shift+F9")).toBe("Ctrl+Shift+F9 pauses and resumes.");
     const off = state({ live: { ...LIVE, phase } });
     expect(panelModel(view(off), FMT).layout).toMatchObject({ hands_free: [HOTKEY_UNAVAILABLE, SPOKEN_PAUSE_UNAVAILABLE] });
+    // UI refresh plan Task 4.1 (D8): the hint names the renamed screen.
+    expect(HOTKEY_UNAVAILABLE).toBe("Pause hotkey unavailable — see Clinic Scribe's Record page.");
   });
 
   test("an unlinked recording says so", () => {

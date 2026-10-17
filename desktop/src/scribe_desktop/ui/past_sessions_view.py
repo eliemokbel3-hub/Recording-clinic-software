@@ -166,7 +166,7 @@ SHADOW_MARK: Final = "shadow recording"
 COPY_NOTHING_OPEN: Final = "Select a past session with a saved note first."
 SELECT_FIRST: Final = "Select a past session first."
 STORE_UNAVAILABLE: Final = "Past sessions are not set up in this window."
-LIST_UNREADABLE: Final = "The Past sessions list could not be read just now. Open the tab again."
+LIST_UNREADABLE: Final = "The Past sessions list could not be read just now. Open the page again."
 
 # --- Delete now: two clicks (the Session screen's Discard pattern) ----------
 

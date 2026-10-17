@@ -36,7 +36,7 @@ export const CONSENT_TEXT = "I confirm the patient has consented to AI-assisted 
 export const DISCARD_CONFIRM = "Discard this recording? This cannot be undone. Press Confirm discard to delete it.";
 // Phase 7 (D7): the hands-free status under a recording or paused session.
 // The chord comes from the app (`state.hotkey.chord`, shown as text).
-export const HOTKEY_UNAVAILABLE = "Pause hotkey unavailable — see Clinic Scribe's Session tab.";
+export const HOTKEY_UNAVAILABLE = "Pause hotkey unavailable — see Clinic Scribe's Record page.";
 export const SPOKEN_PAUSE_ON = 'Say "scribe pause" to pause.';
 export const SPOKEN_PAUSE_UNAVAILABLE = "Spoken pause unavailable for this recording.";
 // The Blocked layout's "On screen" line when the app's report is not the

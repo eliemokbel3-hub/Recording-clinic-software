@@ -6400,9 +6400,9 @@ class TestNoteScreenEdits:
         assert screen.add_line(_LEARNABLE_INDEX, key) is True
         line = screen.learning_label.text()
         assert line == models.learning_queued_line(1)
-        assert "Save note on this tab" in line
+        assert "Save note on the Review screen" in line
         assert "Cancel, Delete and Complete learn nothing" in line
-        assert "Save note on this tab" in screen.edit_status_label.text()
+        assert "Save note on the Review screen" in screen.edit_status_label.text()
         assert screen.undo_line(manual_assertion_id(_LEARNABLE_INDEX)) is True
         assert screen.learning_label.text() == models.LEARNING_ON_LINE
         assert screen.add_line(_LEARNABLE_INDEX, key) is True
@@ -6886,7 +6886,7 @@ class TestNoteScreenTypedEdits:
         )
         status = screen.edit_status_label.text()
         assert f"Will learn shorthand: '{_DIAGNOSIS_TRIGGER}' -> '{_TYPED}'" in status
-        assert "Save note on this tab" in status
+        assert "Save note on the Review screen" in status
         assert screen.learning_label.text() == models.learning_queued_line(0, 1)
         assert screen.queued_rule_count() == 1
         assert not config_root.exists()  # nothing before Save
@@ -6928,7 +6928,7 @@ class TestNoteScreenTypedEdits:
         assert screen.edit_status_label.text() == (
             f"Line replaced with your wording in {title}. Undo restores the original until "
             f"Save. Will learn shorthand: '{_DIAGNOSIS_TRIGGER}' -> '{_TYPED}' for {title} "
-            "when you press Save note on this tab."
+            "when you press Save note on the Review screen."
         )
         self._ratify(screen)
         screen.save()
@@ -7477,14 +7477,14 @@ class TestNoteScreenTypedEdits:
 
     def test_the_exit_and_queue_lines_name_rules(self) -> None:
         assert models.unlearned_on_exit_line(0, 1) == (
-            "1 queued shorthand rule was not learned - only Save note on the Note tab "
+            "1 queued shorthand rule was not learned - only Save note on the Review screen "
             "learns them."
         )
         assert models.unlearned_on_exit_line(2, 1).startswith(
             "2 queued phrases and 1 queued shorthand rule were not learned"
         )
         assert models.unlearned_on_exit_line(1) == (
-            "1 queued phrase was not learned - only Save note on the Note tab learns them."
+            "1 queued phrase was not learned - only Save note on the Review screen learns them."
         )
         assert "1 phrase and 2 shorthand rules queued" in models.learning_queued_line(1, 2)
         assert models.save_button_label(0) == models.SAVE_BUTTON_LABEL == "Save note"
@@ -8833,7 +8833,7 @@ class TestNoteWiring:
         assert "Note generated" not in message
         assert message.endswith(models.unlearned_on_exit_line(1))
         assert "1 queued phrase was not learned" in message
-        assert "only Save note on the Note tab learns them" in message
+        assert "only Save note on the Review screen learns them" in message
         assert window.note_screen.queued_learning_count() == 0  # the tab cleared after
         assert not (tmp_path / "config").exists()  # nothing was written
         window.close()

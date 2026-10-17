@@ -668,7 +668,7 @@ class SessionScreen(QWidget):
             # Disk failure during the final flush: failed but RECOVERABLE.
             self._show_message(
                 "Recording could not be sealed; the session is recoverable "
-                "from the Recovery screen after an app restart, or can be discarded."
+                "from the Recovery page after an app restart, or can be discarded."
             )
             self.refresh()
             return False
@@ -842,7 +842,7 @@ class SessionScreen(QWidget):
         # key + audio retained; Flow 3 offers resume-processing or discard.
         self._show_message(
             f"Transcription failed ({message}). The recording is kept and "
-            "recoverable: resume processing from the Recovery screen after "
+            "recoverable: resume processing from the Recovery page after "
             "an app restart, or discard it below."
         )
         self.refresh()

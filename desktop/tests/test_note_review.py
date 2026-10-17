@@ -456,7 +456,7 @@ class TestShorthandLearning:
         assert valid.replacement == RuleReplacement(_LEARNED_DIAGNOSIS, "Mild knee sprain")
         assert valid.messages == (
             f"Will update the learned shorthand for '{_DIAGNOSIS_TRIGGER}' to your wording "
-            "when you press Save note on this tab.",
+            "when you press Save note on the Review screen.",
         )
         # A dash wording (the Phase H smoke case): nothing queued, the plain reason.
         dash = self._consider(config, "Mild knee sprain - rest advised", _Status(True))
@@ -476,7 +476,7 @@ class TestShorthandLearning:
         )
         assert verdict.messages == (
             f"Will learn shorthand: '{_DIAGNOSIS_TRIGGER}' -> 'Mild knee sprain' for "
-            f"{models.section_title(section)} when you press Save note on this tab.",
+            f"{models.section_title(section)} when you press Save note on the Review screen.",
         )
 
     def test_another_speakers_line_never_reads_the_status(self) -> None:
@@ -525,7 +525,7 @@ class TestPhraseLearning:
         [message] = verdict.messages
         assert message.startswith(
             f"Will learn 'the knee felt steady' for {models.section_title(added.section_key)} "
-            "when you press Save note on this tab."
+            "when you press Save note on the Review screen."
         )
 
     def test_another_speakers_line_never_reads_the_status(self) -> None:

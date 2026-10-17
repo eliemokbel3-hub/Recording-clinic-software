@@ -1226,7 +1226,7 @@ def render_report(results: Sequence[RecordingResult], *, model_name: str) -> str
         "degenerate clustering after none did - the labels alone do not say which). "
         "Cluster accuracy is the best injective predicted->true mapping, duration-weighted "
         "(s) and by segment count (n), over labelled segments only. `Auto-confirm` is the "
-        "verdict for the cluster the voice profile confirmed (what the Transcript screen "
+        "verdict for the cluster the voice profile confirmed (what the Review screen "
         "pre-checks) and `Similarity` its mean cosine against the enrolment vector.",
         "",
         "| Recording | Segments | Unlabelled | Mixed | Labels | Condition | Clusters pred/true "

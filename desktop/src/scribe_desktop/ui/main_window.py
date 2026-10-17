@@ -252,7 +252,7 @@ SHADOW_MODE_SAVE_FAILED: Final = (
 DEVELOPMENT_CHECKBOX_TEXT: Final = "Keep recordings for development (written consent only)"
 DEVELOPMENT_HELP: Final = (
     "Each kept recording needs the patient's written consent and the tick above Start; "
-    "the recording stays on this computer and can be deleted on the Past sessions tab."
+    "the recording stays on this computer and can be deleted on the Past sessions page."
 )
 DEVELOPMENT_UNREADABLE: Final = (
     "The keep-recordings setting could not be read, so no recording is kept. Tick the "

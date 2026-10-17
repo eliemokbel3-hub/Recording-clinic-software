@@ -794,8 +794,8 @@ class NoteScreen(QWidget):
         self.save_button.clicked.connect(self.save)
         self.cancel_button = QPushButton("Cancel review and regenerate")
         self.cancel_button.setToolTip(
-            "Discard this draft note and return to the Transcript screen to "
-            "generate again. The recording and session are kept; nothing is "
+            "Discard this draft note and return to Generate note on the Review "
+            "screen to generate again. The recording and session are kept; nothing is "
             "deleted."
         )
         self.cancel_button.clicked.connect(self.cancel_review)
@@ -2349,7 +2349,7 @@ class NoteScreen(QWidget):
         self._note_saved = True
         self.message_label.setText(
             "Note saved. Acknowledge any review warnings, then Complete on the "
-            "Transcript screen."
+            "Review screen."
         )
         # D9 as amended: phrases are written ONLY here, after the note is
         # committed; a learning failure never un-saves the note. Shorthand

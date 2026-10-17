@@ -291,7 +291,8 @@ def consider_rule_learning(
             replacement=RuleReplacement(proposal.rule_id, typed.text),
             messages=(
                 "Will update this learned shorthand rule's wording to your line when you "
-                "press Save note on this tab (it will propose again until confirmed 3 times).",
+                "press Save note on the Review screen (it will propose again until "
+                "confirmed 3 times).",
             ),
         )
     if segment_index is None:
@@ -351,7 +352,7 @@ def consider_rule_learning(
                 replacement=RuleReplacement(rule.rule_id, typed.text),
                 messages=(
                     f"Will update the learned shorthand for '{candidate.phrase}' to your "
-                    "wording when you press Save note on this tab.",
+                    "wording when you press Save note on the Review screen.",
                 ),
             )
         return RuleLearningVerdict(
@@ -363,7 +364,8 @@ def consider_rule_learning(
         rule=queued,
         messages=(
             f"Will learn shorthand: '{candidate.phrase}' -> '{typed.text}' for "
-            f"{models.section_title(typed.section_key)} when you press Save note on this tab.",
+            f"{models.section_title(typed.section_key)} when you press Save note on the "
+            "Review screen.",
         ),
     )
 
@@ -442,7 +444,7 @@ def consider_learning(
     )
     message = (
         f"Will learn '{candidate.phrase}' for {models.section_title(section_key)} "
-        "when you press Save note on this tab."
+        "when you press Save note on the Review screen."
     )
     if winner is not None and winner != section_key:
         # PR-MED-011: noted, never a silent cue deletion — the earlier

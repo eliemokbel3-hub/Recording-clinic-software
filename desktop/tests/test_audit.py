@@ -301,7 +301,7 @@ class TestNoContentByConstruction:
         assert f"Start failed: {text}" == (
             "Start failed: AuditWriteError: the audit record could not be saved "
             "(its key cannot be read on this Windows account - start a new audit "
-            "record on the Past sessions tab). Nothing was recorded."
+            "record on the Past sessions page). Nothing was recorded."
         )
 
 

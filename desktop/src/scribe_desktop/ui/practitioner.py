@@ -504,7 +504,7 @@ class PractitionerScreen(QWidget):
         style_layout = QVBoxLayout()
         style_layout.addWidget(
             QLabel(
-                "How the note body reads on the Note tab (Verbatim and Clean clinical "
+                "How the note body reads on the Review screen (Verbatim and Clean clinical "
                 "need no model):"
             )
         )

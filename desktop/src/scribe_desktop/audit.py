@@ -179,10 +179,10 @@ def _utc_now() -> datetime:
 AUDIT_REASONS: Final[dict[str, str]] = {
     "key_unreadable": (
         "its key cannot be read on this Windows account - "
-        "start a new audit record on the Past sessions tab"
+        "start a new audit record on the Past sessions page"
     ),
     "key_missing": (
-        "its key is missing - start a new audit record on the Past sessions tab"
+        "its key is missing - start a new audit record on the Past sessions page"
     ),
     "unavailable": "the audit folder could not be read",
     "write_failed": "the audit folder could not be written",

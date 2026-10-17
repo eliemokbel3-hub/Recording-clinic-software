@@ -932,7 +932,7 @@ class TranscriptScreen(QWidget):
         self.progress_bar.hide()
         assert isinstance(result, models.NoteGenerationResult)
         self._generation_result = result
-        self.message_label.setText("Note generated - review it on the Note tab.")
+        self.message_label.setText("Note generated - review it on the Review screen.")
         self.draft_ready.emit(result)
         self._update_controls()
 
