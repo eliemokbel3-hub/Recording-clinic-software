@@ -7,7 +7,7 @@
 - the `syn-28` decision;
 - a held-out synthetic set and a repeated validation run as the acceptance check.
 
-**Overall Progress:** `90%` (27 of 30 tasks)
+**Overall Progress:** `93%` (28 of 30 tasks)
 
 ## Lifecycle State
 - Active
@@ -1698,10 +1698,11 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
     4. The Status tab shows 0.3.3.
   - Done when: the counts are on this task and AGENTS.md says 0.3.3 is installed.
   - `[2026-10-21]` Developer-build pre-smoke PASS (before P.1, on `main` at `b08a920`, code identical to `1e5707d`; two-person mock, no patient, both recordings Discarded, no development tick): mock 1 items 1, 3 and 4 above and the Status tab at 0.3.3; the chooser's front mark on every line from the boundary; Acknowledge all hidden while only separately-acknowledged warnings are open; a mark-free Copy; mock 2 item 2 (the default button "Keep the whole transcript"; the boundary line and button gone after removal). Observations, not findings: without a voice profile the two speakers were mislabelled (the known diarization item), so the hedge mark was shown by choosing the other speaker as clinician; the chooser's middle-elided labels cut the mark short on long lines. P.2 on the installed 0.3.3 still owed.
-- [ ] 🟥 **P.3 Register**
+- [x] 🟩 **P.3 Register**
   - Move the rows in Key Findings to `resolved` ("0.3.3 (commit <H4 short hash>)") or keep them `controlled` with control text of 200 characters or fewer, by the run's result.
   - If any residue remains, the P.5 question goes to the practitioner as a dated decision on `plan-pilot.md`.
   - Done when: `test_pilot_docs.py` green and committed.
+  - `[2026-10-22]` DONE: the register updated by run 5's result. Resolved "0.3.3 (commit 1e5707d)": F-061, F-068, F-085 (the next patient), F-055 (the correction carry), F-013, F-047, F-051, F-057 (the hedge mark). Kept controlled with new control text: F-033, F-038 (doubt by tone or another sentence), F-078, F-083 (an unlisted greeting). Unchanged: F-071, F-072, F-087. Added from the held-out run: F-089–F-099, all high and controlled. The register's Encounter cell now admits `hld-NN` (`test_pilot_docs.py`, register and pilot README). The P.5 question is on `plan-pilot.md` P.5 as a pending dated decision. `test_pilot_docs.py` 10 passed.
 
 ## Retained Follow-Up Items
 Not yet applicable — the plan is Active.

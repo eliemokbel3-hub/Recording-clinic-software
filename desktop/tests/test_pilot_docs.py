@@ -110,7 +110,7 @@ REGISTER_CELL_PATTERNS = {
     # id); a kept recording measured in the smoke is the "smoke" stage, and a
     # real consultation's encounter is "—".
     "Stage": r"validation|smoke|shadow|reviewed|everyday|other",
-    "Encounter": r"syn-[0-9]{2,}|—",
+    "Encounter": r"(?:syn|hld)-[0-9]{2,}|—",
     "Severity": r"high|medium|low",
     "Category": (
         r"wrong-side|wrong-dose|negation-flipped|patient-speculation|cross-patient"

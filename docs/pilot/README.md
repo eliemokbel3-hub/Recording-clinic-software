@@ -158,7 +158,7 @@ result is recorded there as a dated RUN line.
   holds no clinical content: no name, nothing said or written in a note, no
   Cliniko id and no session id. Describe what the app did in terms of the app
   (its category and the part of the app), never the patient.
-- **Synthetic encounter ids** (`syn-01` …) may appear in the register; they
+- **Synthetic encounter ids** (`syn-01` …, and the held-out set's `hld-01` …) may appear in the register; they
   identify invented content only. A real consultation's encounter is `—`, and
   a smoke measurement's `k-01` … name stays in your pilot log.
 - **Real consultations are never fed to the validation harness** (pilot plan
