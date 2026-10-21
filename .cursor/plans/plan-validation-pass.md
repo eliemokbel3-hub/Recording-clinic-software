@@ -1682,11 +1682,12 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
 - [ ] 🟥 **H5** 0.3.3 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
 
 ### Phase P — Practitioner (normal terminal; C1, C8, C10)
-- [ ] 🟥 **P.1 The held-out run and this plan's run of record (D10, D11, C2)**
+- [ ] 🟨 **P.1 The held-out run and this plan's run of record (D10, D11, C2)**
   - From a clean, committed checkout at the H4 commit: build `validation/heldout` and `validation/scripts` into empty folders outside the repository and run each with `--rule validation\rules\option-a-proposed.json`.
   - Record in `validation-harness.md` "Runs of record" and pilot Task P.3: commit, manifest hash, voices, cue and rule blobs, the amendment(s) in force, the totals, PASS/FAIL as reported, and the held-out numbers beside them.
   - Read against Task 0.10's predictions. Anything outside them is a finding for H1, never a rule edit.
   - Delete the set folders; check `%TEMP%` for `scribe-speaker-eval-*`.
+  - `[2026-10-22]` RUN (practitioner, normal terminal, developer build, installed app closed; checkout detached at `1e5707d`, clean): the run of record (run 5) FAIL as reported, 44 passed / 6 failed (`syn-22`, `-28`, `-30`, `-35`, `-38`, `-46`) — Task 0.10's predictions met on every term (Check 6 on `syn-06`, `-20`, `-21`, `-43` only; omission tallies +1/+2/+2/+1; 9 hedge marks in 6 encounters; correct 124, material wrong 3, silent 1, uncertainty missed 3; transcript lines −5 net), so nothing outside them and no finding for H1. Held-out: 14 passed / 8 failed, WER 0.004; its boundary (`hld-10`, `-13`), carry and hedge (`hld-20`) outcomes as predicted at transcript level; outside them 5 silent omissions of uncued clinician lines (WER 0.000 in each) and 2 one-word recogniser errors — recorded, not tuned to (D10), for P.3's register rows. Recorded in `docs/testing/validation-harness.md` "Runs of record" and `plan-pilot.md` Task P.3. Open: delete `C:\run5-set` and `C:\run5-heldout`; check `%TEMP%` for `scribe-speaker-eval-*`.
   - Done when: the record is committed.
 - [ ] 🟥 **P.2 Install 0.3.3 and the smoke**
   - Verify and install at a pilot-allowed point; reload the extension; restart Chrome.
