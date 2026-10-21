@@ -1696,6 +1696,7 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
     3. A hedged patient line shows `[check: unsure]` (if 0.1 (a)).
     4. The Status tab shows 0.3.3.
   - Done when: the counts are on this task and AGENTS.md says 0.3.3 is installed.
+  - `[2026-10-21]` Developer-build pre-smoke PASS (before P.1, on `main` at `b08a920`, code identical to `1e5707d`; two-person mock, no patient, both recordings Discarded, no development tick): mock 1 items 1, 3 and 4 above and the Status tab at 0.3.3; the chooser's front mark on every line from the boundary; Acknowledge all hidden while only separately-acknowledged warnings are open; a mark-free Copy; mock 2 item 2 (the default button "Keep the whole transcript"; the boundary line and button gone after removal). Observations, not findings: without a voice profile the two speakers were mislabelled (the known diarization item), so the hedge mark was shown by choosing the other speaker as clinician; the chooser's middle-elided labels cut the mark short on long lines. P.2 on the installed 0.3.3 still owed.
 - [ ] 🟥 **P.3 Register**
   - Move the rows in Key Findings to `resolved` ("0.3.3 (commit <H4 short hash>)") or keep them `controlled` with control text of 200 characters or fewer, by the run's result.
   - If any residue remains, the P.5 question goes to the practitioner as a dated decision on `plan-pilot.md`.
