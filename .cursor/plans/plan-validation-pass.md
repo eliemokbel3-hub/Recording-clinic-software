@@ -7,7 +7,7 @@
 - the `syn-28` decision;
 - a held-out synthetic set and a repeated validation run as the acceptance check.
 
-**Overall Progress:** `93%` (28 of 30 tasks)
+**Overall Progress:** `97%` (29 of 30 tasks)
 
 ## Lifecycle State
 - Active
@@ -1679,7 +1679,8 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
 - [x] 🟩 **H2** `/simplify`: log findings; trivial → `/fix`, substantial → scoped `/review-plan`. — DONE 2026-10-13 (stage-9 vh1): round 29, one trivial LOW (SIMP-001, `validation.py` reuses `note_check._words_for_coords`), applied; nothing substantial. 🟨 while the desktop suite is owed.
 - [x] 🟩 **H3** `/security-review`: same routing. The trim action, the marker and the boundary's privacy effect are in scope. — DONE 2026-10-13 (stage-9 vh1): round 30, 0 findings (no code change; the suite owed over H1–H2 still covers what it read).
 - [x] 🟩 **H4** Final cross-family `/peer-review` (codex `gpt-6-astra` medium). — DONE 2026-10-13 (composer): Round 31 over the hardening delta and the cross-phase view of `e5c3183..02359fd`, 0 findings with per-job evidence — CONVERGED; H3's informational item (the recovery runner has no second transcript check) weighed: no reachable bypass, a runner-level check would be defence in depth only. Suite over the hardening fixes 7913 passed / 9 skipped (`stage-9-pytest-1.txt`).
-- [ ] 🟥 **H5** 0.3.3 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
+- [x] 🟩 **H5** 0.3.3 built of record after P.1 on the H4 commit: the `Release` workflow, `gh attestation verify`, the `docs/release/pilot-builds.md` row, CI green. If P.1 forces a code change, H1–H4 and P.1 run again before H5.
+  - `[2026-10-22]` DONE (pushed on the practitioner's word): `main` pushed to `3da26ee`; `Release` run 39650345676 green (build and attest), CI green on the same commit; `BUILD-INFO.txt` version 0.3.3, `tree=clean`; `gh attestation verify` exit 0 for the installer and `SHA256SUMS.txt` (source `refs/heads/main` at `3da26ee`); every hash matches; models manifest unchanged (`10a83493…`). Row in `docs/release/pilot-builds.md`; the download is kept in this computer's release folder (`AGENTS.local.md`). P.1 forced no code change.
 
 ### Phase P — Practitioner (normal terminal; C1, C8, C10)
 - [x] 🟩 **P.1 The held-out run and this plan's run of record (D10, D11, C2)**
