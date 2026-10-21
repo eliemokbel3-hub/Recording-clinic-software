@@ -278,6 +278,22 @@ def _clear_layout(layout: QLayout) -> None:
             widget.deleteLater()
 
 
+def _text_over_controls(row: QWidget, text: str) -> QHBoxLayout:
+    """UI refresh Task S.11 (F10): lay out a "Lines in the note" row — the
+    line's text, PLAIN TEXT and word-wrapped across the whole row, then the
+    row's controls on their own line under it. The caller adds the controls
+    to the returned layout, then a stretch; they stay the row's direct
+    children (C5)."""
+    layout = QVBoxLayout(row)
+    label = QLabel(text)
+    label.setTextFormat(Qt.TextFormat.PlainText)
+    label.setWordWrap(True)
+    layout.addWidget(label)
+    controls = QHBoxLayout()
+    layout.addLayout(controls)
+    return controls
+
+
 # The standard context-menu actions of a ``QLineEdit`` that put its text on
 # the clipboard, by Qt's object name with the English menu text as the
 # fallback match (the app ships no translation).
@@ -523,6 +539,10 @@ class NoteScreen(QWidget):
     # for the bound session (its id). ONE slot owns every write job —
     # ``MainWindow._on_write_requested``.
     write_requested = Signal(str)
+    # UI refresh Task S.2: a note came onto this screen (a fresh review, a
+    # reopened saved note) or left it (``clear``) — the Review screen folds
+    # and unfolds its Generate note group on it.
+    review_changed = Signal()
     # Privacy-professional-controls D2 (Task 2.1): the note body a fresh
     # review SHOWED first (``models.GeneratedBody``) — at ``begin_review``,
     # and again when the first prose rendering lands before any edit — for
@@ -703,11 +723,13 @@ class NoteScreen(QWidget):
         flagged_row.addWidget(self.flagged_count_label, stretch=1)
         self.lines_header = QLabel("Lines in the note - remove, move, edit or undo:")
         self._lines_box = QVBoxLayout()
-        lines_scroll = QScrollArea()
-        lines_scroll.setWidgetResizable(True)
+        # UI refresh Task S.11 (F10): no scroll box of its own. The rows sit
+        # in the group as they are, so their width and wrapped height reach
+        # the Review screen's column, which scrolls (S.2) and asks for its
+        # content's width (S.9): a row is never cut at a short list's foot,
+        # and the list never scrolls sideways.
         lines_content = QWidget()
         lines_content.setLayout(self._lines_box)
-        lines_scroll.setWidget(lines_content)
         self.learning_label = QLabel()
         self.learning_label.setTextFormat(Qt.TextFormat.PlainText)
         self.learning_label.setWordWrap(True)
@@ -720,7 +742,7 @@ class NoteScreen(QWidget):
         edit_layout.addLayout(add_row)
         edit_layout.addLayout(flagged_row)
         edit_layout.addWidget(self.lines_header)
-        edit_layout.addWidget(lines_scroll)
+        edit_layout.addWidget(lines_content)
         edit_layout.addWidget(self.learning_label)
         edit_layout.addWidget(self.edit_status_label)
         self.edit_group.setLayout(edit_layout)
@@ -831,6 +853,9 @@ class NoteScreen(QWidget):
         self.message_label.setWordWrap(True)
 
         note_side = QWidget()
+        # UI refresh Task S.10: the Review screen lifts it out of the
+        # splitter below into this screen's own layout.
+        self.review_side = note_side
         note_layout = QVBoxLayout(note_side)
         note_layout.addWidget(self.info_label)
         note_layout.addWidget(self.consent_reminder_label)
@@ -949,6 +974,7 @@ class NoteScreen(QWidget):
             if self._style_job is not None:
                 self._first_render_digest = note_input_digest(note)
             self.generated_shown.emit(models.generated_body(note))
+        self.review_changed.emit()
 
     def clear(self) -> None:
         """Clear all plaintext and review state. Called when a different
@@ -1019,6 +1045,7 @@ class NoteScreen(QWidget):
         self.review_header.hide()
         self.acknowledge_all_button.hide()
         self._update_controls()
+        self.review_changed.emit()
 
     def show_saved_note(
         self,
@@ -1053,6 +1080,7 @@ class NoteScreen(QWidget):
         self.note_body.setPlainText(models.format_note_body(note))
         self.info_label.setText(info)
         self._update_controls()
+        self.review_changed.emit()
 
     @property
     def showing_saved_note(self) -> bool:
@@ -1862,15 +1890,12 @@ class NoteScreen(QWidget):
         edited_id = request[0] if request is not None else None
         for line in self.editable_lines():
             row = QWidget()
-            row_layout = QHBoxLayout(row)
             if request is not None and line.assertion_id == edited_id:
-                self._build_editor_row(row_layout, request)
+                editor_layout = QHBoxLayout(row)
+                self._build_editor_row(editor_layout, request)
                 self._lines_box.addWidget(row)
                 continue
-            label = QLabel(line.label)
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setWordWrap(True)
-            row_layout.addWidget(label, stretch=1)
+            row_layout = _text_over_controls(row, line.label)
             if line.state == "replaced":
                 # Typed over (Task 2.1): one undo, from either row.
                 replaced_label = QLabel("(replaced by your typed line)")
@@ -1934,19 +1959,17 @@ class NoteScreen(QWidget):
                 )
                 row_layout.addWidget(undo)
                 self._line_widgets.append(undo)
+            row_layout.addStretch(1)
             self._lines_box.addWidget(row)
         for prefilled in self.prefilled_lines():
             row = QWidget()
-            row_layout = QHBoxLayout(row)
             if request is not None and prefilled.proposal_id == edited_id:
-                self._build_editor_row(row_layout, request)
+                editor_layout = QHBoxLayout(row)
+                self._build_editor_row(editor_layout, request)
                 self._lines_box.addWidget(row)
                 continue
             # ``label`` already carries the pre-filled mark (D5).
-            label = QLabel(prefilled.label)
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setWordWrap(True)
-            row_layout.addWidget(label, stretch=1)
+            row_layout = _text_over_controls(row, prefilled.label)
             if prefilled.state == "prefilled":
                 remove = QPushButton("Remove line")
                 remove.setToolTip(
@@ -1982,18 +2005,16 @@ class NoteScreen(QWidget):
                 )
                 row_layout.addWidget(undo)
                 self._line_widgets.append(undo)
+            row_layout.addStretch(1)
             self._lines_box.addWidget(row)
         for typed in self.typed_lines():
             row = QWidget()
-            row_layout = QHBoxLayout(row)
             if request is not None and typed.assertion_id == edited_id:
-                self._build_editor_row(row_layout, request)
+                editor_layout = QHBoxLayout(row)
+                self._build_editor_row(editor_layout, request)
                 self._lines_box.addWidget(row)
                 continue
-            label = QLabel(f"{typed.label} [typed]")
-            label.setTextFormat(Qt.TextFormat.PlainText)
-            label.setWordWrap(True)
-            row_layout.addWidget(label, stretch=1)
+            row_layout = _text_over_controls(row, f"{typed.label} [typed]")
             edit = QPushButton("Edit")
             edit.setToolTip("Change your wording.")
             edit.clicked.connect(
@@ -2009,18 +2030,16 @@ class NoteScreen(QWidget):
             row_layout.addWidget(edit)
             row_layout.addWidget(undo)
             self._line_widgets.extend((edit, undo))
+            row_layout.addStretch(1)
             self._lines_box.addWidget(row)
         if request is not None and self._editor is None:
             # The target has no row of its own — a proposal still awaiting a
             # decision, whose row sits in the proposals panel (which is built
             # once, at ``begin_review``). Its editor opens here, where every
-            # other edit is made.
+            # other edit is made. Task S.11: the heading over the field.
             row = QWidget()
-            row_layout = QHBoxLayout(row)
-            heading = QLabel("Your wording for the proposed line:")
-            heading.setTextFormat(Qt.TextFormat.PlainText)
-            row_layout.addWidget(heading)
-            self._build_editor_row(row_layout, request)
+            editor_layout = _text_over_controls(row, "Your wording for the proposed line:")
+            self._build_editor_row(editor_layout, request)
             self._lines_box.addWidget(row)
 
     def _line_text(self, assertion_id: str) -> str:

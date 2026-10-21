@@ -700,6 +700,11 @@ class MainWindow(QMainWindow):
         # `attach_hotkey`, which only `app.py` calls — a test's window reserves
         # nothing) and the phrase rules over the live windows, per recording.
         self._hotkey: GlobalHotkey | None = None
+        # UI refresh Task S.6: the pause cue the status bar shows (None when
+        # none), and the session state the Record page last announced — the
+        # cue goes when the recording leaves PAUSED (`_clear_pause_cue`).
+        self._pause_cue: str | None = None
+        self._shown_state: SessionState | None = None
         self._spoken_pause = SpokenPauseDetector()
         self._new_consultation = NewConsultationWatcher()
         self._hotkey_pressed_q.connect(
@@ -1057,8 +1062,19 @@ class MainWindow(QMainWindow):
         """D5: every pause shows a desktop cue — the status line, the Session
         screen's message, and a taskbar flash."""
         self.statusBar().showMessage(text)
+        self._pause_cue = text
         self.session_screen.show_notice(text)
         QApplication.alert(self)
+
+    def _clear_pause_cue(self) -> None:
+        """UI refresh Task S.6: the ONE place a pause cue leaves the status
+        bar — when the recording leaves PAUSED, whichever way (the Resume
+        button, Chrome's Resume, the hotkey, Finish or Discard). Only the
+        cue this window showed is cleared: any line shown after it (the
+        hotkey Resume's own line, an expiry warning) stays."""
+        cue, self._pause_cue = self._pause_cue, None
+        if cue is not None and self.statusBar().currentMessage() == cue:
+            self.statusBar().clearMessage()
 
     # --- the Unreviewed reminder index (Task 5.3, D6) ------------------------
 
@@ -1111,6 +1127,7 @@ class MainWindow(QMainWindow):
         # The rail's REC / PAUSED cue follows the state the Record page shows
         # (C8: the session state machine, the existing 500 ms watch).
         self.rail.set_cue(models.rail_cue_text(self._controller.state))
+        self._shown_state = self._controller.state
         self.session_screen.state_shown.connect(self._on_state_shown)
         # The header's Chrome line, from the bridge's view (C8).
         self.session_screen.chrome_view_changed.connect(self.header_strip.set_chrome_text)
@@ -1140,6 +1157,12 @@ class MainWindow(QMainWindow):
     def _on_state_shown(self, state: object) -> None:
         if isinstance(state, SessionState):
             self.rail.set_cue(models.rail_cue_text(state))
+            left_pause = (
+                self._shown_state is SessionState.PAUSED and state is not SessionState.PAUSED
+            )
+            self._shown_state = state
+            if left_pause:
+                self._clear_pause_cue()
 
     def show_page(self, widget: QWidget) -> None:
         """UI refresh plan D4/D6: show the page that holds ``widget`` — the

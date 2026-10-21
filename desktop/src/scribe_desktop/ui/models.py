@@ -1587,6 +1587,24 @@ REVIEW_OPEN_RECOVERY_BUSY_LINE: Final = (
 )
 GENERATE_NOTE_LABEL: Final = "Generate note"
 REGENERATE_NOTE_LABEL: Final = "Regenerate (replaces the saved note)"
+# UI refresh Task S.2: while a note is shown the Review screen folds the
+# "Generate note" group to one row — the chosen clinician's speaker label and
+# the template profile's name, never a quoted transcript sentence — with a
+# button that shows the group again.
+GENERATE_SUMMARY_NOT_CHOSEN: Final = "not chosen"
+GENERATE_CHANGE_LABEL: Final = "Change"
+GENERATE_CHANGE_TOOLTIP: Final = (
+    "Show the Generate note group again: the clinician, the template profile and "
+    "Generate note."
+)
+
+
+def generate_summary_text(role: str | None, profile: str | None) -> str:
+    """The folded Generate row's line: a speaker label and a profile name."""
+    return (
+        f"Generate note - clinician: {role or GENERATE_SUMMARY_NOT_CHOSEN}; "
+        f"template profile: {profile or GENERATE_SUMMARY_NOT_CHOSEN}."
+    )
 # D6: warn this long before a session's 24-hour window closes.
 EXPIRY_WARNING_SECONDS: Final = 2 * 3600
 # The on-close list is shown on a first close; a second close inside this
@@ -4810,6 +4828,10 @@ __all__ = [
     "REVIEW_OPEN_BUSY_LINE",
     "GENERATE_NOTE_LABEL",
     "REGENERATE_NOTE_LABEL",
+    "GENERATE_SUMMARY_NOT_CHOSEN",
+    "GENERATE_CHANGE_LABEL",
+    "GENERATE_CHANGE_TOOLTIP",
+    "generate_summary_text",
     "EXPIRY_WARNING_SECONDS",
     "CLOSE_CONFIRM_SECONDS",
     "SAVED_NOTE_LINE",

@@ -38,7 +38,7 @@ from typing import Any, Final, NamedTuple
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
-from scribe_desktop import install_layout
+from scribe_desktop import identity, install_layout
 from scribe_desktop.audio_capture import SoundDeviceBackend
 from scribe_desktop.audit import AuditLog
 from scribe_desktop.benchmark import apply_offline_env, assert_offline_env
@@ -54,6 +54,7 @@ from scribe_desktop.past_sessions import PastSessionStore
 from scribe_desktop.pipe_server import PipeServer, PipeUnavailable, current_user_sid
 from scribe_desktop.session import SessionController
 from scribe_desktop.session_store import SweepResult, default_sessions_root, sweep_sessions
+from scribe_desktop.taskbar import declare_taskbar_identity
 from scribe_desktop.ui import theme
 from scribe_desktop.ui.main_window import MainWindow
 from scribe_desktop.ui.past_sessions_view import audit_moment, unattended_write
@@ -745,6 +746,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     assert_offline_env()
     log_event(logger, "app_start", state="starting")
 
+    # UI refresh Task S.7: the channel's taskbar identity, declared before
+    # the QApplication — so before any window, the refusal boxes included —
+    # and the same id the installer's Start-menu shortcut carries. Best
+    # effort: a refusal loses only the taskbar grouping.
+    declare_taskbar_identity(identity.app_user_model_id())
     app = QApplication([])
     # Ui-refresh plan D2: themed before the guard, so its two refusal boxes
     # are themed too. The theme sets only this app's style, palette, font and

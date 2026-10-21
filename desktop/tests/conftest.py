@@ -5,7 +5,9 @@ privacy-professional-controls C6 sentinel for the Windows layer and the
 exception hooks (Task 4.1), the installation plan's models-root pin
 (Task H.6) and inert ML warm-up importer (round 35 MED-001), the pilot
 plan's speech-engine sentinel for the validation-set builder, and the
-ui-refresh plan's theme on every test's ``QApplication`` (D2)."""
+ui-refresh plan's theme on every test's ``QApplication`` (D2) and its
+taskbar-identity seam with the fail-closed guard below it (Task S.7;
+codex round 34 PR-MED-001)."""
 
 import io
 import itertools
@@ -26,6 +28,7 @@ from scribe_desktop import (
     note_config,
     past_sessions,
     replay_kept,
+    taskbar,
     validation_set,
 )
 from scribe_desktop.encounter import unlinked_consent
@@ -274,6 +277,51 @@ def _no_real_windows_layer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     yield
     if exclusions.remove_exception_hooks():
         pytest.fail("a test left the app's exception hooks installed (C6)")
+
+
+class TaskbarGuard:
+    """Stands in for ``ctypes`` inside ``scribe_desktop.taskbar`` (codex
+    round 34 PR-MED-001): the real implementation looks ``ctypes.WinDLL`` up
+    when it is called, so ANY route to it — the seam's original binding, a
+    direct call, an alias taken at import — reaches this instead of Windows.
+    It records the reach and raises; ``declare_taskbar_identity`` swallows
+    every ``Exception`` (a lost taskbar grouping never stops the app), so
+    the record, checked at teardown, is what fails the test."""
+
+    def __init__(self) -> None:
+        self.reached: list[str] = []
+
+    def WinDLL(self, name: str, *args: object, **kwargs: object) -> object:  # noqa: N802 - ctypes' name
+        self.reached.append(name)
+        raise AssertionError(
+            "a test reached the real taskbar identity call (C6) - keep the "
+            "conftest's taskbar seam in place"
+        )
+
+
+@pytest.fixture(autouse=True)
+def taskbar_guard(monkeypatch: pytest.MonkeyPatch) -> Iterator[TaskbarGuard]:
+    """UI refresh Task S.7 (C6), for EVERY test: the real Windows call below
+    the taskbar seam fails closed (``TaskbarGuard``), and a test that reached
+    it fails at teardown even when ``declare_taskbar_identity`` swallowed
+    the error."""
+    guard = TaskbarGuard()
+    monkeypatch.setattr(taskbar, "ctypes", guard)
+    yield guard
+    if guard.reached:
+        pytest.fail(f"a test reached the real taskbar identity call (C6): {guard.reached}")
+
+
+@pytest.fixture(autouse=True)
+def taskbar_ids(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """UI refresh Task S.7 (C6), for EVERY test (every ``app.main`` test
+    included): the taskbar-identity seam records the ids a test's code would
+    have declared, so no test declares one for the test process through the
+    real Windows API. A test reads what was declared through this fixture;
+    ``taskbar_guard`` fails any route below the seam."""
+    declared: list[str] = []
+    monkeypatch.setattr(taskbar, "set_process_app_id", declared.append)
+    return declared
 
 
 class FsPartKernel:

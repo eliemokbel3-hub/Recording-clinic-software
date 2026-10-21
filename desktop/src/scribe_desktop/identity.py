@@ -37,6 +37,15 @@ DEV_HOST_NAME: Final = "com.scribe.cliniko_host_dev"
 DEV_EXTENSION_ID: Final = "pecfiifdlmdbkifmjkbkeiaflpenfejd"
 DEV_PIPE_PREFIX: Final = "\\\\.\\pipe\\ClinikoScribe-dev-"
 
+# UI refresh Task S.7: the Windows taskbar identity (AppUserModelID) the app
+# process declares before its first window, so its taskbar button groups
+# under the app mark rather than the launching program's. The installer's
+# Start-menu shortcut carries the production one (``packaging/scribe.iss``),
+# so a pinned button and the running window are one button. The developer
+# build's differs, so the two channels never group together.
+APP_USER_MODEL_ID: Final = "ClinicScribe.App"
+DEV_APP_USER_MODEL_ID: Final = "ClinicScribe.App.Dev"
+
 _REGISTRY_PARENT: Final = r"Software\Google\Chrome\NativeMessagingHosts"
 
 # 32 random bytes hex-encoded (see HostSession.nonce_factory).
@@ -73,7 +82,14 @@ def pipe_prefix(of: Channel | None = None) -> str:
     return PIPE_PREFIX if _which(of) == "production" else DEV_PIPE_PREFIX
 
 
+def app_user_model_id(of: Channel | None = None) -> str:
+    """The channel's Windows taskbar identity (Task S.7)."""
+    return APP_USER_MODEL_ID if _which(of) == "production" else DEV_APP_USER_MODEL_ID
+
+
 __all__ = [
+    "APP_USER_MODEL_ID",
+    "DEV_APP_USER_MODEL_ID",
     "DEV_EXTENSION_ID",
     "DEV_HOST_NAME",
     "DEV_PIPE_PREFIX",
@@ -83,6 +99,7 @@ __all__ = [
     "NONCE_HEX_LENGTH",
     "PIPE_PREFIX",
     "REGISTRY_KEY",
+    "app_user_model_id",
     "expected_origin",
     "extension_id",
     "host_name",

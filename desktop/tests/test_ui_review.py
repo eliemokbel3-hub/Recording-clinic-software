@@ -302,11 +302,15 @@ class TestPanes:
         note, transcript = window.note_screen, window.transcript_screen
         right = review.right_pane.layout()
         order = [right.itemAt(index).widget() for index in range(right.count())]
-        assert order == [transcript.generate_box, note, note.edit_group]
+        # Task S.2: the Generate group's holder, its folded row, the note, Edit.
+        assert order == [review.generate_holder, review.generate_summary, note, note.edit_group]
+        assert review.generate_holder.isAncestorOf(transcript.generate_box)
         # The left pane is the Transcript engine whole, its display-only view
-        # still its own; the note engine's duplicate pane is hidden.
+        # still its own; the note engine's duplicate pane is hidden. The right
+        # column scrolls (Task S.2).
         assert review.splitter.widget(0) is transcript
-        assert review.splitter.widget(1) is review.right_pane
+        assert review.splitter.widget(1) is review.right_scroll
+        assert review.right_scroll.widget() is review.right_pane
         assert transcript.isAncestorOf(transcript.transcript_view)
         assert note.transcript_pane.isHidden()
         assert note.transcript_pane.isAncestorOf(note.transcript_view)
@@ -421,7 +425,11 @@ class TestStateMatrix:
         assert note.copy_button.isEnabled()
         assert note.note_body.textInteractionFlags() != Qt.TextInteractionFlag.NoTextInteraction
         assert transcript.complete_button.isEnabled()
-        # D14: Generate stays reachable beside the saved note.
+        # D14 as changed by Task S.2 (practitioner, 2026-10-20): beside the
+        # saved note Generate is folded to one row, and reachable by Change.
+        assert not _shown(transcript.generate_box, window)
+        assert _shown(window.review_screen.generate_summary, window)
+        window.review_screen.change_generate_button.click()
         assert _shown(transcript.generate_box, window)
         # As on 0.3.3's Note tab (`test_an_unlinked_session_never_reads_the_
         # record`): a live session's note is bound, so Write shows, disabled,
@@ -508,7 +516,8 @@ class TestReconciliationRows:
         window, controller, _config = self._boundary_window(qapp, tmp_path)
         transcript = window.transcript_screen
         right = window.review_screen.right_pane.layout()
-        assert right.itemAt(0).widget() is transcript.generate_box
+        assert right.itemAt(0).widget() is window.review_screen.generate_holder  # Task S.2
+        assert window.review_screen.generate_holder.isAncestorOf(transcript.generate_box)
         assert _shown(transcript.next_patient_label, window)
         assert _shown(transcript.remove_tail_button, window)
         assert transcript.next_patient_label.text().startswith(
@@ -534,6 +543,9 @@ class TestReconciliationRows:
         transcript.set_profile(config.template_profiles[0].template_profile_id)
         transcript.generate()
         _await_draft(qapp, window)
+        # Task S.2: the review folds the group; Change shows it as it is.
+        assert not _shown(transcript.remove_tail_button, window)
+        window.review_screen.change_generate_button.click()
         assert _shown(transcript.remove_tail_button, window)
         assert not transcript.remove_tail_button.isEnabled()
         assert transcript.remove_tail_button.toolTip() == models.REMOVE_TAIL_REVIEW_OPEN

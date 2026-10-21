@@ -167,10 +167,20 @@ class TestTokens:
             "paused",
             "hover",
             "pressed",
+            "indicator",  # Task S.1: the empty tick box's and radio circle's border
         }
 
     def test_light_and_dark_differ_in_their_surfaces_and_text(self) -> None:
-        for name in ("canvas", "surface", "surface_alt", "border", "text", "hover", "pressed"):
+        for name in (
+            "canvas",
+            "surface",
+            "surface_alt",
+            "border",
+            "text",
+            "hover",
+            "pressed",
+            "indicator",
+        ):
             assert getattr(theme.LIGHT, name) != getattr(theme.DARK, name), name
 
     def test_light_and_dark_agree_on_type_spacing_and_radii(self) -> None:
@@ -467,6 +477,10 @@ class TestApply:
             return real_create(key)
 
         monkeypatch.setattr(theme.QStyleFactory, "create", spy)
+        # The module's hold on the application's real style is put back after,
+        # and so is its current token set (codex round 34 PR-LOW-003).
+        monkeypatch.setattr(theme, "_style", theme._style)
+        monkeypatch.setattr(theme, "_current", theme._current)
         surface = _FakeAppSurface(monkeypatch)
         saved = qapp.property(theme.SCHEME_PROPERTY)
         qapp.setProperty(theme.SCHEME_PROPERTY, None)
@@ -476,6 +490,10 @@ class TestApply:
             assert created == ["Fusion"]
             # D2's order: style, palette, font, stylesheet.
             assert surface.names() == ["setStyle", "setPalette", "setFont", "setStyleSheet"]
+            # Task S.1: the style set is Fusion inside the indicator border.
+            style = surface.calls[0][1]
+            assert isinstance(style, theme.IndicatorStyle)
+            assert style.baseStyle().name().lower() == "fusion"
             font = surface.state["font"]
             assert font.families()[0] == theme.LIGHT.family[0]
             assert font.pointSize() == theme.LIGHT.size_body
@@ -497,6 +515,8 @@ class TestApply:
         from PySide6.QtGui import QPalette
 
         surface = _FakeAppSurface(monkeypatch)
+        # The current token set is put back after (codex round 34 PR-LOW-003).
+        monkeypatch.setattr(theme, "_current", theme._current)
         announced: list[object] = []
 
         def record(tokens: object) -> None:
@@ -615,6 +635,131 @@ class TestApply:
         monkeypatch.setattr(theme, "apply_theme", lambda app, scheme=None: applied.append(app))
         theme._on_scheme_changed(object())
         assert applied == [qapp]
+
+
+def _luminance(value: str) -> float:
+    """WCAG 2 relative luminance of a ``#rrggbb`` colour."""
+
+    def channel(index: int) -> float:
+        c = int(value[1 + 2 * index : 3 + 2 * index], 16) / 255
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    red, green, blue = channel(0), channel(1), channel(2)
+    return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+def _contrast(first: str, second: str) -> float:
+    """WCAG 2 contrast ratio of two ``#rrggbb`` colours."""
+    lighter, darker = sorted((_luminance(first), _luminance(second)), reverse=True)
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+# Task S.1's stated contrasts: an enabled indicator's border meets WCAG 2's
+# 3:1 for user-interface components against every surface it sits on; a
+# disabled one still shows (2:1) while reading weaker than an enabled one.
+_ENABLED_CONTRAST = 3.0
+_DISABLED_CONTRAST = 2.0
+
+
+class TestIndicatorBorder:
+    """Task S.1 (the live smoke's F2): an UNTICKED box or unselected radio
+    showed no outline on the dark window — Fusion's outline is a shade of the
+    window colour. The theme draws its own border, from a token."""
+
+    def test_the_border_token_stands_out_in_both_schemes(
+        self, qapp: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Both schemes injected through ``force_scheme`` (C14), applied on
+        the fake surface (no live widget restyled): the border the style
+        draws for an enabled indicator is the ``indicator`` token, at 3:1 or
+        more against the window and both card surfaces; a disabled one is the
+        disabled text colour, at 2:1 or more and weaker than the enabled."""
+        from PySide6.QtWidgets import QStyle
+
+        _FakeAppSurface(monkeypatch)
+        # Codex round 34 PR-LOW-003: ``apply_theme`` sets the module's current
+        # tokens; they are put back after, so later painting reads the token
+        # set the application actually has.
+        monkeypatch.setattr(theme, "_current", theme._current)
+        style = theme.IndicatorStyle()  # reads the applied tokens, as the app's does
+        enabled = QStyle.StateFlag.State_Enabled
+        disabled = QStyle.StateFlag.State_None
+        saved = qapp.property(theme.SCHEME_PROPERTY)
+        seen: list[str] = []
+        try:
+            for scheme in ("dark", "light"):
+                theme.force_scheme(scheme)
+                tokens = theme.apply_theme(qapp)
+                assert theme.current_tokens() is tokens
+                border = style.outline_colour(enabled)
+                faint = style.outline_colour(disabled)
+                assert border == tokens.indicator
+                assert faint == tokens.text_disabled
+                seen.append(border)
+                for ground in (tokens.canvas, tokens.surface, tokens.surface_alt):
+                    assert _contrast(border, ground) >= _ENABLED_CONTRAST, (scheme, ground)
+                    assert _contrast(faint, ground) >= _DISABLED_CONTRAST, (scheme, ground)
+                    assert _contrast(faint, ground) < _contrast(border, ground), (scheme, ground)
+        finally:
+            theme.force_scheme(None)
+            qapp.setProperty(theme.SCHEME_PROPERTY, saved)
+        assert seen == [theme.DARK.indicator, theme.LIGHT.indicator]
+
+    def test_keyboard_focus_keeps_its_own_outline(self) -> None:
+        from PySide6.QtWidgets import QStyle
+
+        flag = QStyle.StateFlag
+        style = theme.IndicatorStyle(tokens=lambda: theme.DARK)
+        focused = flag.State_Enabled | flag.State_HasFocus | flag.State_KeyboardFocusChange
+        assert style.outline_colour(focused) == theme.DARK.focus
+        # A mouse focus is not a keyboard focus: the plain border.
+        assert style.outline_colour(flag.State_Enabled | flag.State_HasFocus) == (
+            theme.DARK.indicator
+        )
+
+    @pytest.mark.parametrize("tokens", [theme.LIGHT, theme.DARK], ids=["light", "dark"])
+    @pytest.mark.parametrize("radio", [False, True], ids=["checkbox", "radio"])
+    @pytest.mark.parametrize("enabled", [True, False], ids=["enabled", "disabled"])
+    def test_an_empty_indicator_is_drawn_with_its_border(
+        self, qapp: Any, tokens: theme.Tokens, radio: bool, enabled: bool
+    ) -> None:
+        """The real drawing path (lessons: the value the practitioner SEES):
+        Fusion's own empty indicator, painted on the scheme's window colour,
+        then this style's outline — the left edge's middle pixel is the
+        border colour, not the window's."""
+        from PySide6.QtCore import QRect
+        from PySide6.QtGui import QColor, QImage, QPainter
+        from PySide6.QtWidgets import QStyle, QStyleFactory, QStyleOptionButton
+
+        flag = QStyle.StateFlag
+        style = theme.IndicatorStyle(QStyleFactory.create("Fusion"), tokens=lambda: tokens)
+        image = QImage(20, 20, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(QColor(tokens.canvas))
+        option = QStyleOptionButton()
+        option.rect = QRect(2, 2, 16, 16)
+        option.state = (flag.State_Enabled if enabled else flag.State_None) | flag.State_Off
+        option.palette = theme.build_palette(tokens)
+        element = (
+            QStyle.PrimitiveElement.PE_IndicatorRadioButton
+            if radio
+            else QStyle.PrimitiveElement.PE_IndicatorCheckBox
+        )
+        painter = QPainter(image)
+        style.drawPrimitive(element, option, painter)
+        painter.end()
+        expected = QColor(tokens.indicator if enabled else tokens.text_disabled)
+        ground = QColor(tokens.canvas)
+        drawn = image.pixelColor(2, 10)
+
+        def distance(first: Any, second: Any) -> int:
+            return max(
+                abs(first.red() - second.red()),
+                abs(first.green() - second.green()),
+                abs(first.blue() - second.blue()),
+            )
+
+        assert distance(drawn, expected) <= 24, drawn.name()
+        assert distance(drawn, expected) < distance(drawn, ground), drawn.name()
 
 
 class TestRolesAndVariants:

@@ -59,6 +59,16 @@ SETTINGS_LABEL: Final = "Settings"
 
 # One rail entry: its text, its icon's name (``icons.ICON_NAMES``) and the page.
 RailEntry = tuple[str, str, QWidget]
+# UI refresh Task S.4 (practitioner's choice 2026-10-20): an entry whose name
+# is too wide for the rail shows it on two lines under its icon; its
+# accessible name and tooltip stay the one-line name. Every other entry's
+# caption is its name.
+RAIL_CAPTIONS: Final = {"Past sessions": "Past\nsessions"}
+
+
+def rail_caption(name: str) -> str:
+    """What the rail shows under the icon for the entry ``name``."""
+    return RAIL_CAPTIONS.get(name, name)
 # D4: the window's opening size (its client area), in logical pixels.
 OPENING_SIZE: Final = (1200, 800)
 # What Windows adds round the client area — the title bar and the frame —
@@ -153,7 +163,11 @@ class NavigationRail(QFrame):
     def _button(text: str) -> QToolButton:
         button = QToolButton()
         button.setObjectName("railButton")
-        button.setText(text)
+        caption = rail_caption(text)
+        button.setText(caption)
+        button.setAccessibleName(text)
+        if caption != text:
+            button.setToolTip(text)
         button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         button.setIconSize(QSize(RAIL_ICON_SIZE, RAIL_ICON_SIZE))
         button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -346,8 +360,10 @@ __all__ = [
     "HeaderStrip",
     "NavigationRail",
     "OPENING_SIZE",
+    "RAIL_CAPTIONS",
     "RAIL_ICON_SIZE",
     "SettingsStrip",
     "opening_size",
     "opening_size_for",
+    "rail_caption",
 ]

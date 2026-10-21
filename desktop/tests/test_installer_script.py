@@ -230,6 +230,13 @@ class TestNeverLaunchesTheApp:
         [icon] = [_entry(line) for line in _section("Icons")]
         assert icon["Filename"] == r"{app}\scribe-app.exe"
 
+    def test_the_shortcut_carries_the_apps_production_taskbar_identity(self) -> None:
+        """UI refresh Task S.7: the Start-menu shortcut and the running app
+        declare the same id, so a pinned button and the window are one."""
+        [icon] = [_entry(line) for line in _section("Icons")]
+        assert icon["AppUserModelID"] == identity.APP_USER_MODEL_ID
+        assert icon["AppUserModelID"] == identity.app_user_model_id("production")
+
 
 class TestTheRegistry:
     def test_the_chrome_link_is_the_production_host_in_hklm(self) -> None:

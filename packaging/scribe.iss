@@ -82,7 +82,10 @@ Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs cr
 #include ModelsFiles
 
 [Icons]
-Name: "{autoprograms}\Clinic Scribe"; Filename: "{app}\scribe-app.exe"
+; UI refresh Task S.7: the same taskbar identity the app declares at start-up
+; (identity.APP_USER_MODEL_ID), so a pinned button and the running window are
+; one taskbar button.
+Name: "{autoprograms}\Clinic Scribe"; Filename: "{app}\scribe-app.exe"; AppUserModelID: "ClinicScribe.App"
 
 [Registry]
 ; The Chrome link (production host name, C2). Chrome reads a per-user link

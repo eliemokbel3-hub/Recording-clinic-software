@@ -4,7 +4,8 @@ plan D1–D3).
 Every colour, type size, spacing and radius the desktop app draws with lives
 here and nowhere else: ``docs/design-system.md``'s "Tokens" section names the
 roles, this module holds the values (``LIGHT`` and ``DARK``). The theme is
-Qt's Fusion style, a ``QPalette`` built from the tokens (so the parts Qt
+Qt's Fusion style (inside ``IndicatorStyle``, which gives every tick box and
+radio circle a visible border), a ``QPalette`` built from the tokens (so the parts Qt
 paints itself — menus, message boxes, scroll bars, disabled text — match)
 and ONE generated stylesheet whose selectors are widget classes, three
 dynamic properties (``role`` on a label, ``variant`` on a button, ``card`` on
@@ -28,13 +29,23 @@ from ``set_role``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, fields
 from functools import cache
 from typing import Final, Literal
 
-from PySide6.QtCore import QCoreApplication, QObject, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPalette
-from PySide6.QtWidgets import QApplication, QFrame, QPushButton, QStyleFactory, QWidget
+from PySide6.QtCore import QCoreApplication, QObject, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QPainter, QPalette, QPen
+from PySide6.QtWidgets import (
+    QApplication,
+    QFrame,
+    QProxyStyle,
+    QPushButton,
+    QStyle,
+    QStyleFactory,
+    QStyleOption,
+    QWidget,
+)
 
 Scheme = Literal["light", "dark"]
 
@@ -85,6 +96,8 @@ class Tokens:
     paused: str
     hover: str
     pressed: str
+    # The border of an empty tick box or radio circle (UI refresh Task S.1).
+    indicator: str
     # Type.
     family: tuple[str, ...]
     size_body: int
@@ -124,6 +137,7 @@ LIGHT: Final = Tokens(
     paused="#b45309",
     hover="#eef2f7",
     pressed="#e2e8f0",
+    indicator="#6b7280",
     family=_FAMILY,
     size_body=10,
     size_caption=9,
@@ -159,6 +173,7 @@ DARK: Final = Tokens(
     paused="#fbbf24",
     hover="#2a313d",
     pressed="#323a47",
+    indicator="#9ca3af",
     family=_FAMILY,
     size_body=10,
     size_caption=9,
@@ -197,7 +212,8 @@ def render_qss(t: Tokens) -> str:
     """The one application stylesheet for ``t``. Every control class that
     gets a colour here also gets its disabled state (C13), so a disabled
     control still reads as disabled; check and radio indicators get a size
-    only, so Fusion still draws the tick from the palette."""
+    only, so Fusion still draws the tick from the palette (their border is
+    ``IndicatorStyle``'s, below)."""
     r, rc = t.radius_control, t.radius_card
     s1, s2, s3 = t.space_1, t.space_2, t.space_3
     inputs = "QLineEdit, QPlainTextEdit, QTextEdit, QSpinBox, QComboBox"
@@ -382,7 +398,9 @@ def render_qss(t: Tokens) -> str:
             f"color: {t.text_disabled}",
             f"background-color: {t.border}",
         ),
-        # Check and radio buttons: a size only — Fusion draws the tick.
+        # Check and radio buttons: a size only — Fusion draws the tick and
+        # ``IndicatorStyle`` the border (a border here would stop Fusion
+        # drawing the tick).
         _rule("QCheckBox, QRadioButton", f"spacing: {s2}px"),
         _rule("QCheckBox::indicator, QRadioButton::indicator", "width: 16px", "height: 16px"),
         _rule(
@@ -510,7 +528,8 @@ def render_qss(t: Tokens) -> str:
             "border: 1px solid transparent",
             f"border-radius: {r}px",
             f"padding: {s1}px",
-            # The caption size keeps "Past sessions" inside the rail's width.
+            # The caption size keeps each caption line inside the rail's
+            # width ("Past sessions" is two lines, ``shell.RAIL_CAPTIONS``).
             f"font-size: {t.size_caption}pt",
         ),
         _rule("QToolButton#railButton:hover", f"color: {t.text}", f"background-color: {t.hover}"),
@@ -593,6 +612,7 @@ class ThemeBus(QObject):
 _bus: ThemeBus | None = None
 _forced: Scheme | None = None
 _current: Tokens | None = None
+_style: QStyle | None = None
 
 
 def theme_bus() -> ThemeBus:
@@ -618,6 +638,74 @@ def colour(value: str) -> QColor:
     if value not in _TOKEN_COLOURS:
         raise ValueError(f"not a token colour: {value}")
     return QColor(value)
+
+
+_INDICATORS: Final = frozenset(
+    {QStyle.PrimitiveElement.PE_IndicatorCheckBox, QStyle.PrimitiveElement.PE_IndicatorRadioButton}
+)
+
+
+class IndicatorStyle(QProxyStyle):
+    """Fusion with a border that shows on every tick box and radio circle,
+    empty or not, in both schemes (UI refresh Task S.1). Fusion outlines an
+    indicator in a shade it derives from the window colour, which on the
+    dark scheme's near-black window is near-black too — an EMPTY consent
+    tick vanished. This draws Fusion's indicator first (its fill and its
+    tick or dot, unchanged), then strokes the outline over Fusion's own: the
+    ``indicator`` token; ``text_disabled`` for a disabled control, so it
+    still reads disabled; ``focus`` while it has keyboard focus, as Fusion's
+    own outline does. Painted with the painter Qt hands in — no file asset,
+    no QtSvg (C10) — and the tokens are read at each paint, so a scheme
+    change shows at Qt's repolish. ``tokens`` is the test seam."""
+
+    def __init__(
+        self, base: QStyle | None = None, tokens: Callable[[], Tokens] | None = None
+    ) -> None:
+        super().__init__(base)
+        self._tokens: Callable[[], Tokens] = tokens if tokens is not None else current_tokens
+
+    def drawPrimitive(  # noqa: N802 - Qt's name
+        self,
+        element: QStyle.PrimitiveElement,
+        option: QStyleOption,
+        painter: QPainter,
+        widget: QWidget | None = None,
+    ) -> None:
+        super().drawPrimitive(element, option, painter, widget)
+        if element in _INDICATORS:
+            self._outline(element, option, painter)
+
+    def outline_colour(self, state: QStyle.StateFlag) -> str:
+        """The outline's token value for an indicator in ``state``."""
+        tokens = self._tokens()
+        if not state & QStyle.StateFlag.State_Enabled:
+            return tokens.text_disabled
+        if state & QStyle.StateFlag.State_HasFocus and state & (
+            QStyle.StateFlag.State_KeyboardFocusChange
+        ):
+            return tokens.focus
+        return tokens.indicator
+
+    def _outline(
+        self, element: QStyle.PrimitiveElement, option: QStyleOption, painter: QPainter
+    ) -> None:
+        rect = option.rect
+        painter.save()
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(self.outline_colour(option.state))))
+            if element == QStyle.PrimitiveElement.PE_IndicatorRadioButton:
+                # Fusion's own circle: centred, its radius from the width.
+                width = rect.width()
+                radius = (width + (width + 1) % 2) / 2.0 - 1
+                painter.drawEllipse(QRectF(rect).center(), radius, radius)
+            else:
+                # Fusion's own box: half-pixel aligned, one pixel in.
+                painter.translate(0.5, 0.5)
+                painter.drawRect(rect.adjusted(0, 0, -1, -1))
+        finally:
+            painter.restore()
 
 
 def force_scheme(scheme: Scheme | None) -> None:
@@ -653,9 +741,13 @@ def apply_theme(app: QApplication, scheme: Scheme | None = None) -> Tokens:
     tokens = tokens_for(chosen)
     _current = tokens
     if app.property(SCHEME_PROPERTY) is None:
-        style = QStyleFactory.create("Fusion")
-        if style is not None:
-            app.setStyle(style)
+        global _style
+        fusion = QStyleFactory.create("Fusion")
+        if fusion is not None:
+            # Task S.1: Fusion inside the indicator border. Held here too, so
+            # the Python override lives as long as the application uses it.
+            _style = IndicatorStyle(fusion)
+            app.setStyle(_style)
     palette = build_palette(tokens)
     if app.palette() != palette:
         app.setPalette(palette)

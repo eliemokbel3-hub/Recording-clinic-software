@@ -98,6 +98,23 @@ def test_each_host_accepts_only_its_own_extension(
     assert not native_host.verify_origin(["scribe-host", "--parent-window=1", foreign])
 
 
+@pytest.mark.parametrize(
+    ("which", "expected"), [("production", "ClinicScribe.App"), ("dev", "ClinicScribe.App.Dev")]
+)
+def test_the_taskbar_identity_follows_the_channel(
+    monkeypatch: pytest.MonkeyPatch, which: Channel, expected: str
+) -> None:
+    """UI refresh Task S.7: one taskbar identity per channel, by value — the
+    two never group together — read from the channel unless named."""
+    assert identity.app_user_model_id(which) == expected
+    use_channel(monkeypatch, which)
+    assert identity.app_user_model_id() == expected
+    assert identity.APP_USER_MODEL_ID == "ClinicScribe.App"
+    assert identity.DEV_APP_USER_MODEL_ID != identity.APP_USER_MODEL_ID
+    # Windows' rules for the id: at most 128 characters, no spaces.
+    assert len(expected) <= 128 and " " not in expected
+
+
 def _chrome_id(key: str) -> str:
     digest = hashlib.sha256(base64.b64decode(key)).digest()
     return "".join(chr(97 + (b >> 4)) + chr(97 + (b & 0xF)) for b in digest[:16])

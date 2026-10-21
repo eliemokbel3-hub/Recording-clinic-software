@@ -24,6 +24,9 @@ view patterns · tokens · microcopy.
   - **The rail** runs down the left: Record, Review, Past sessions and Recovery, each an
     icon over its text (never an icon alone; the icons are drawn in code,
     `ui/icons.py`, and re-tinted with the theme), then the Settings gear at the bottom.
+    "Past sessions" reads on two lines, "Past" over "sessions" (`shell.RAIL_CAPTIONS`),
+    so it is never cut at the rail's width; its accessible name and tooltip stay "Past
+    sessions" (the practitioner's choice after the 0.4.0 smoke, Task S.4).
     The current everyday page's entry is lit; a Settings page lights none (the gear is
     an action, not a lit entry). Under Record a cue reads "REC" while recording and
     "PAUSED" while paused, from the state the Record page shows
@@ -48,7 +51,12 @@ view patterns · tokens · microcopy.
   - The window opens on Record (or, with no voice profile, on Settings → Practitioner —
     Interaction posture below), at 1200 × 800 bounded by the screen's work area (so the
     title bar and the bottom row stay on screen at 150 % scaling) and never smaller than
-    960 × 640. The status bar is unchanged and styled only.
+    960 × 640. The status bar is unchanged and styled only. The app declares its own
+    taskbar identity at start-up (`identity.app_user_model_id` — the installed app's and
+    the developer build's differ), which the installer's Start-menu shortcut shares, so
+    Windows groups its taskbar button as the app's own rather than the launching
+    program's (Task S.7, for the practitioner's live re-check of the app mark there; the
+    executable's own file icon is a recorded follow-up).
 - The Clinics tab (`ui/clinics.py`) is where each clinic's Cliniko API key is added,
   replaced or removed (since 2026-09-30 it holds no draft-write setting: the
   "Starting text" group went with cliniko-draft-write D14, retired by D15). The **Past
@@ -86,20 +94,41 @@ view patterns · tokens · microcopy.
   is the one that needs it today (nine groups; the Phase 4 live smoke found its lists
   collapsed to slivers at 1920×1200), the other pages hold a handful of widgets or an
   expanding text view and do not. No page hides a group behind a collapsible section,
-  a sub-tab or a stacked page (ui-refresh plan C6). Every group box is a card (the
-  "Tokens" section below).
+  a sub-tab or a stacked page (ui-refresh plan C6) — with ONE exception, the Review
+  screen's folded "Generate note" group below (the practitioner's choice after the 0.4.0
+  smoke, Task S.2), which always shows its one-row form and its "Change" button. Every
+  group box is a card (the "Tokens" section below).
 - The **Review screen** (since 0.4.0 — one page in place of the Transcript and Note
   tabs; `ui/review.py`, ui-refresh plan D6/D14) shows the full uncertainty-marked
   transcript on the LEFT and the note on the RIGHT, SIDE BY SIDE through the whole
   review, until copy, write or Complete. Left, top to bottom: the warning, the live
   header, the display-only transcript, its legend and the attribution, link and shadow
   lines (`ui/transcript.py`). Right, top to bottom: the "Generate note" group (shown
-  only while a note can be generated or regenerated — after Save it stays, with
-  "Regenerate (replaces the saved note)"; its first row is the next-patient line and
-  "Remove lines N-end from this recording..."), the note with its warnings, style line,
-  proposals and the note's own row ("Cancel review and regenerate" beside "Delete note and
-  complete without one" — ui-refresh decision 0.2, built as option (a), open for the
-  practitioner), then "Edit the note" (`ui/note.py`). Under both: ONE button row —
+  only while a note can be generated or regenerated; its first row is the next-patient
+  line and "Remove lines N-end from this recording..."), the note with its warnings,
+  style line, proposals and the note's own row ("Cancel review and regenerate" beside
+  "Delete note and complete without one" — ui-refresh decision 0.2, built as option
+  (a)), then "Edit the note" (`ui/note.py`). While a note is under review or saved, the
+  "Generate note" group FOLDS to one card row — "Generate note - clinician: <speaker
+  label>; template profile: <profile name>." (`models.generate_summary_text`; the
+  speaker's label and the profile's name only, never the clinician radio's quoted
+  sentence) with a **Change** button that shows the group as it is (so "Regenerate
+  (replaces the saved note)" is one click away after Save); Cancel review and
+  regenerate shows the group again, Complete, Discard and a new recording take the row
+  away with the note, and a new note folds the group again. The right column SCROLLS
+  rather than squeeze anything,
+  and the note body keeps about twelve lines and takes the column's spare height, so a
+  note with many review warnings shows each warning's whole text and its
+  **Acknowledge** button at full size (the 0.4.0 smoke's F5; the practitioner's choice
+  "shrink Generate + scroll", Task S.2). It asks the splitter for the width its content
+  needs, so it scrolls DOWN only wherever the window can give both sides their minimum
+  (a window near the 960-px minimum with a long clinician quote may not), and the
+  transcript pane's legend and the
+  Generate group's two fixed lines wrap when they must (still asking for one line, so
+  the handle sits where it did) so the transcript side can give way (the 2026-10-21
+  re-check's F8 at 150 %, Task S.9). Its height follows every warning's wrapped height
+  at the column's real width, so a narrow column makes the column longer, never a
+  warning shorter (F9, Task S.10). Under both: ONE button row —
   Save note, Write draft to Cliniko, Copy note, then Complete and Discard on the right,
   keyboard order left to right — and one status strip of the session's message line,
   the note's message line, the write line and the note's shadow line. Every control
@@ -196,7 +225,10 @@ view patterns · tokens · microcopy.
   for only 7 years? Every kept session older than that is deleted now and cannot be
   recovered."), and a declined choice puts the setting back and writes nothing.
 - **Edits over whole lines, with typing only OVER a line.** The Review screen's "Edit the
-  note" group, under the note, offers Add line / Remove line / Move / Edit / Undo: Add/Move/Remove work over whole
+  note" group, under the note, offers Add line / Remove line / Move / Edit / Undo (each
+  "Lines in the note" row shows its line's whole text across the row with its controls
+  on their own line under it, and the rows sit in the group with no scroll box of their
+  own — the column scrolls; Task S.11): Add/Move/Remove work over whole
   transcript utterances under the router's ownership rule as before; Edit opens a one-line
   inline editor in the row (Enter applies, Escape cancels) and replaces that line or
   proposal with the clinician's own wording as a `clinician`-provenance line labelled
@@ -583,6 +615,10 @@ hotkey unavailable — see Clinic Scribe's Record page." (`HOTKEY_UNAVAILABLE`, 
   page's message, the rail's "PAUSED" and a taskbar flash: "Paused - the computer went to sleep." / "Paused -
   the computer was locked.", followed by "Press Resume to carry on recording." (or, for a
   linked recording, the resume-on-its-own-note line). Resume stays a deliberate press.
+  A pause cue leaves the status line when the recording leaves PAUSED — any Resume
+  (the Record page's, the side panel's, the hotkey's, which then shows its own
+  "Recording resumed by the hotkey."), Finish or Discard — and a line shown after the
+  cue stays (since the 0.4.0 smoke fixes, Task S.6; `MainWindow._clear_pause_cue`).
   Between a lock and signing back in, every Resume — the Record page's, the hotkey's and
   the side panel's — and every Start (the Record page's and the side panel's) are refused by name: "The computer is
   locked - sign in, then press it again." (or, if the app cannot confirm the unlock, "…lock
@@ -684,7 +720,11 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
   `surface_alt` (disabled fields, the progress trough), `border`, `text`, `text_muted`,
   `text_disabled`, `accent` / `accent_hover` / `on_accent` (primary buttons, selection,
   the selected tab), `focus` (the focus border), `link`, `danger`, `success`, `hover` /
-  `pressed` (control states), `rec` (the rail's cue — "REC" and "PAUSED" alike);
+  `pressed` (control states), `rec` (the rail's cue — "REC" and "PAUSED" alike),
+  `indicator` (the border of every tick box and radio circle, empty or ticked — at
+  3:1 or more against the window (`canvas`), the card surface (`surface`) and the
+  indicator's own fill (`surface_alt`, the palette's Base) in each scheme; since the
+  0.4.0 smoke fixes, Task S.1);
   `warning` and `paused` are defined in both schemes and not yet drawn. The rail's
   icons take `text_muted`, and `accent` for the lit entry, through `theme.colour` —
   the one place a token becomes Qt's colour, accepting only a value a token set holds.
@@ -714,7 +754,12 @@ style or background setter fails `desktop/tests/test_ui_theme.py`.
 - **Disabled reads as disabled.** Every control class the stylesheet colours has a
   disabled rule (buttons and their variants, inputs, lists, group-box titles, menu
   items, tabs, the progress bar, the rail buttons), and check and radio indicators get
-  a size only, so Fusion still draws the tick from the palette; a disabled control's
+  a size only, so Fusion still draws the tick from the palette, while the theme's style
+  (`theme.IndicatorStyle`, Fusion inside it, drawn in code — no image file) strokes each
+  indicator's border in `indicator`, in `text_disabled` when the control is disabled
+  and in `focus` while it has keyboard focus (Fusion's own outline is a shade of the
+  window colour and vanished on the dark window, so an empty consent tick could not be
+  seen — the 0.4.0 smoke's F2); a disabled control's
   selected text or selected list row loses its enabled selection colours too. Every
   control that takes keyboard focus (buttons and all three variants, inputs, lists, the
   rail buttons) shows it as a border whose colour differs from its unfocused border: the

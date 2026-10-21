@@ -51,7 +51,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSize, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup,
     QGroupBox,
@@ -105,6 +105,28 @@ def _clear_layout(layout: QLayout) -> None:
         if widget is not None:
             widget.setParent(None)
             widget.deleteLater()
+
+
+class _WrappingLine(QLabel):
+    """UI refresh Task S.9 (F8): a fixed line that wraps when its column is
+    narrower than it, yet still ASKS for its one-line size. The Review
+    screen's splitter shares its width out by what each side asks for, so
+    that share is as it was; only the minimum falls, to the widest word (a
+    plain word-wrapped label would also ask for far less, moving the handle
+    at every scale)."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__(text)
+        self.setWordWrap(True)
+
+    def sizeHint(self) -> QSize:
+        margins = self.contentsMargins()
+        line = self.fontMetrics().size(0, self.text())
+        extra = 2 * self.margin()
+        return QSize(
+            line.width() + margins.left() + margins.right() + extra,
+            line.height() + margins.top() + margins.bottom() + extra,
+        )
 
 
 class WritePendingError(models.WriteLineRefusal):
@@ -245,7 +267,9 @@ class TranscriptScreen(QWidget):
             Qt.TextInteractionFlag.NoTextInteraction
         )
 
-        self.legend_label = QLabel(
+        # UI refresh Task S.9: wraps, so on the Review screen it never holds
+        # the transcript pane wider than the note column can spare.
+        self.legend_label = _WrappingLine(
             "Uncertain words are shown as [word?] - verify them. A line marked "
             f"{models.SUSPECT_SEGMENT_MARK} may be music or noise, not speech."
         )
@@ -295,8 +319,10 @@ class TranscriptScreen(QWidget):
         next_patient_row.addWidget(self.next_patient_label, 1)
         next_patient_row.addWidget(self.remove_tail_button)
         generate_layout.addLayout(next_patient_row)
+        # UI refresh Task S.9: the group's two fixed lines wrap, so the
+        # Review screen's note column can narrow to them.
         generate_layout.addWidget(
-            QLabel("Confirm the clinician and template before generating a note:")
+            _WrappingLine("Confirm the clinician and template before generating a note:")
         )
         # --- practitioner-profile plan D4: the auto-confirm line -------------
         attribution_row = QHBoxLayout()
@@ -319,7 +345,9 @@ class TranscriptScreen(QWidget):
         attribution_row.addWidget(self.change_role_button)
         generate_layout.addLayout(attribution_row)
         self._role_box = QVBoxLayout()
-        self.role_prompt_label = QLabel("Clinician (choose the speaker who is the clinician):")
+        self.role_prompt_label = _WrappingLine(
+            "Clinician (choose the speaker who is the clinician):"
+        )
         generate_layout.addWidget(self.role_prompt_label)
         generate_layout.addLayout(self._role_box)
         profile_row = QHBoxLayout()
@@ -344,6 +372,8 @@ class TranscriptScreen(QWidget):
         self.progress_bar.setRange(0, 0)  # indeterminate
         self.progress_bar.hide()
         generate_layout.addWidget(self.progress_bar)
+        # D14's visibility (show_document, _clear) is this engine's; the
+        # Review screen folds the group while a note is shown (Task S.2).
         self.generate_box.hide()
 
         self.complete_button = QPushButton("Complete")
@@ -784,6 +814,14 @@ class TranscriptScreen(QWidget):
     def selected_profile_id(self) -> str | None:
         data = self.profile_combo.currentData()
         return data if isinstance(data, str) else None
+
+    def generation_choice(self) -> tuple[str | None, str | None]:
+        """UI refresh Task S.2: the chosen clinician's speaker LABEL and the
+        chosen template profile's NAME, for the Review screen's folded
+        Generate summary — never the radio's quoted transcript sentence.
+        None for a choice not made."""
+        profile = self.profile_combo.currentText() if self._profile_confirmed() else None
+        return self._selected_role(), profile
 
     def _profile_confirmed(self) -> bool:
         return self.selected_profile_id() is not None

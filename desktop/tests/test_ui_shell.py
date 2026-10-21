@@ -262,7 +262,14 @@ class TestWindowShell:
     ) -> None:
         window = _main_window(tmp_path)
         rail = window.rail
-        assert [button.text() for button, _name, _page in rail.entries] == _EVERYDAY_TITLES
+        # Task S.4: "Past sessions" shows on two lines; its name is unchanged.
+        assert [button.text() for button, _name, _page in rail.entries] == [
+            "Record",
+            "Review",
+            "Past\nsessions",
+            "Recovery",
+        ]
+        assert [button.accessibleName() for button, _n, _p in rail.entries] == _EVERYDAY_TITLES
         assert [page for _button, _name, page in rail.entries] == _everyday_pages(window)
         assert all(not button.icon().isNull() for button, _name, _page in rail.entries)
         assert rail.settings_button.text() == "Settings"
@@ -271,6 +278,62 @@ class TestWindowShell:
         # The Settings strip carries the four setup titles the container has.
         assert window.settings_strip.titles() == _SETTINGS_TITLES
         _close(window)
+
+    def test_past_sessions_reads_on_two_lines_and_no_caption_is_cut(
+        self, qapp: Any, tmp_path: Path
+    ) -> None:
+        """Task S.4 (the live smoke's F1, "Past ...sions"): its caption is
+        "Past" over "sessions", its accessible name and tooltip the whole
+        name; the other entries are unchanged; the rail keeps its fixed width.
+
+        Font-independent by design (stage-7 leg u7x4). Qt's tool-button label
+        splits a caption at its line breaks and elides a LINE (in the middle —
+        the smoke's "Past ...sions") only when it is wider than the label's
+        rectangle. At the practitioner's display the one-line captions —
+        "Record", "Review", "Recovery", "Settings" — were never cut, and only
+        "Past sessions" was. So, in the button's OWN font (whatever font the
+        test platform has — offscreen is not Segoe UI), each line of "Past
+        sessions" is no wider than the widest of those captions, and the
+        one-line name was wider: the split brings it to a width the rail
+        already shows whole. Pixel fit at 100 % and 150 % is the live
+        re-check's (step 9), not this test's: an absolute pixel check failed
+        offscreen on "Record", which the live display renders uncut."""
+        window = _main_window(tmp_path)
+        window.resize(1200, 800)
+        window.show()
+        qapp.processEvents()
+        try:
+            past = window.rail.button_for(window.past_sessions_screen)
+            assert past is not None
+            assert past.text() == "Past\nsessions"
+            assert past.accessibleName() == "Past sessions"
+            assert past.toolTip() == "Past sessions"
+            assert shell.rail_caption("Past sessions") == "Past\nsessions"
+            for other in ("Record", "Review", "Recovery", "Settings"):
+                assert shell.rail_caption(other) == other
+            # The rail keeps its width: `QFrame#rail`'s min-width and
+            # max-width are both the token, and Qt's style-sheet box model
+            # sizes them as CONTENT widths, adding the rule's border (its one
+            # 1-px border-right) — so the widget is fixed at token + 1 since
+            # Phase 3, whatever its captions' size hints ask for.
+            rail_width = theme.current_tokens().rail_width
+            rail = window.rail
+            assert rail.minimumWidth() == rail.maximumWidth() == rail_width + 1
+            assert rail.width() == rail_width + 1
+            # Every rail button is the same width, so a caption line no wider
+            # than one shown whole is shown whole too.
+            buttons = [button for button, _name, _page in rail.entries]
+            buttons.append(rail.settings_button)
+            assert len({button.width() for button in buttons}) == 1
+            metrics = past.fontMetrics()
+            shown_whole = max(
+                metrics.horizontalAdvance(button.text()) for button in buttons if button is not past
+            )
+            for line in past.text().split("\n"):
+                assert metrics.horizontalAdvance(line) <= shown_whole, line
+            assert metrics.horizontalAdvance(past.accessibleName()) > shown_whole
+        finally:
+            _close(window)
 
     def test_a_rail_click_lands_on_its_page_and_lights_only_it(
         self, qapp: Any, tmp_path: Path
