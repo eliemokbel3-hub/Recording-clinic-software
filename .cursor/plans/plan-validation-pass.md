@@ -7,7 +7,7 @@
 - the `syn-28` decision;
 - a held-out synthetic set and a repeated validation run as the acceptance check.
 
-**Overall Progress:** `97%` (29 of 30 tasks)
+**Overall Progress:** `100%` (30 of 30 tasks)
 
 ## Lifecycle State
 - Active
@@ -1690,7 +1690,7 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
   - Delete the set folders; check `%TEMP%` for `scribe-speaker-eval-*`.
   - `[2026-10-22]` RUN (practitioner, normal terminal, developer build, installed app closed; checkout detached at `1e5707d`, clean): the run of record (run 5) FAIL as reported, 44 passed / 6 failed (`syn-22`, `-28`, `-30`, `-35`, `-38`, `-46`) — Task 0.10's predictions met on every term (Check 6 on `syn-06`, `-20`, `-21`, `-43` only; omission tallies +1/+2/+2/+1; 9 hedge marks in 6 encounters; correct 124, material wrong 3, silent 1, uncertainty missed 3; transcript lines −5 net), so nothing outside them and no finding for H1. Held-out: 14 passed / 8 failed, WER 0.004; its boundary (`hld-10`, `-13`), carry and hedge (`hld-20`) outcomes as predicted at transcript level; outside them 5 silent omissions of uncued clinician lines (WER 0.000 in each) and 2 one-word recogniser errors — recorded, not tuned to (D10), for P.3's register rows. Recorded in `docs/testing/validation-harness.md` "Runs of record" and `plan-pilot.md` Task P.3. `[2026-10-22]` DONE: `C:\run5-set`, `C:\run5-heldout`, `C:\run4b-set` and `C:\run4-set` deleted by the practitioner; no `scribe-speaker-eval-*` folder in `%TEMP%`.
   - Done when: the record is committed.
-- [ ] 🟥 **P.2 Install 0.3.3 and the smoke**
+- [x] 🟩 **P.2 Install 0.3.3 and the smoke**
   - Verify and install at a pilot-allowed point; reload the extension; restart Chrome.
   - Mock smoke (developer-style desktop recording, no patient):
     1. A closing, a greeting, then a second "patient": the Transcript tab names the line; Generate stops the note there; Check 6 is shown; Acknowledge all leaves it and the per-code click clears it; a chooser row labelled "after possible next patient" can be added back.
@@ -1699,6 +1699,7 @@ The invented-text guard (0.3.2) is COMPLETE and installed: `plan-invented-text-g
     4. The Status tab shows 0.3.3.
   - Done when: the counts are on this task and AGENTS.md says 0.3.3 is installed.
   - `[2026-10-21]` Developer-build pre-smoke PASS (before P.1, on `main` at `b08a920`, code identical to `1e5707d`; two-person mock, no patient, both recordings Discarded, no development tick): mock 1 items 1, 3 and 4 above and the Status tab at 0.3.3; the chooser's front mark on every line from the boundary; Acknowledge all hidden while only separately-acknowledged warnings are open; a mark-free Copy; mock 2 item 2 (the default button "Keep the whole transcript"; the boundary line and button gone after removal). Observations, not findings: without a voice profile the two speakers were mislabelled (the known diarization item), so the hedge mark was shown by choosing the other speaker as clinician; the chooser's middle-elided labels cut the mark short on long lines. P.2 on the installed 0.3.3 still owed.
+  - `[2026-10-22]` DONE: 0.3.3 installed over 0.3.2 by the practitioner (the H5 download, existing model pack; extension reloaded, Chrome restarted) and smoked on the INSTALLED app — PASS. Two desktop-started mocks, no patient, shadow on, no development tick, both Discarded. Mock 1: the Transcript tab named line 10; the note stopped there; the review list held Check 6 (1), number (2), unsure (2), word-unsure (1) and omission (5); Acknowledge all cleared unsure and word-unsure only, leaving number, omission and Check 6; the chooser showed `[after possible next patient]` on lines 10–13 (13 also `[flagged]`); adding line 13 back put it in the note and omission went 5 → 4; the Narrative style showed the marks as section tails; the copied note held no mark. Mock 2: Check 6 at line 12; the confirmation named lines 12–15 with "Keep the whole transcript" the default; after Remove lines the transcript ended at line 11, the boundary line and button were gone and the status line named the removed lines; Generate gave no Check 6 (number 2, unsure 2, word-unsure 2, omission 1). The Status tab at 0.3.3. Observations, not findings: the two-speaker labelling mislabelled several lines (the known diarization item); the chooser's middle-elided labels cut the mark short.
 - [x] 🟩 **P.3 Register**
   - Move the rows in Key Findings to `resolved` ("0.3.3 (commit <H4 short hash>)") or keep them `controlled` with control text of 200 characters or fewer, by the run's result.
   - If any residue remains, the P.5 question goes to the practitioner as a dated decision on `plan-pilot.md`.
