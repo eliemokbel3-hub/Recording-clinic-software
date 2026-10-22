@@ -10,7 +10,7 @@ approved by the practitioner the same day; the kept-recording line added 2026-10
 version 0.3.0, awaiting the practitioner's approval; the background-music, marked-line and
 number lines added 2026-10-12 for version 0.3.2, awaiting the practitioner's approval; the
 next-patient, removing-lines, self-correction and "unsure" lines added 2026-10-13 for
-version 0.3.3, awaiting the practitioner's approval). For the practitioner, before saving a
+version 0.3.3, approved by the practitioner on 2026-10-22). For the practitioner, before saving a
 note and before finalising it in Cliniko.
 
 **Why this matters.** Ahpra's guidance on AI in healthcare ("Meeting your professional
