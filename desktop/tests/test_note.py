@@ -2941,7 +2941,7 @@ class TestBoundedCarry:
         counts = {
             name: len(cases) for name, cases in _PREDICTED_CORRECTION_DIVERGENCES_BY_SET.items()
         }
-        assert counts == {"heldout": 2, "heldout-2": 0}
+        assert counts == {"heldout": 2, "heldout-2": 4}
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
@@ -2949,7 +2949,7 @@ _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "c
 # Task 0.10's predicted correction divergences under the frozen markers (C3):
 # held-out set -> case id -> (the case's expected corrections, the
 # frozen-marker result). Keyed per set since validation-run6 Task 0.11;
-# ``heldout-2``'s entries are written by its Task 0.12.
+# ``heldout-2``'s entries were written in its Task 0.12 (2026-10-24).
 _PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
     str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
 ] = {
@@ -2957,7 +2957,13 @@ _PREDICTED_CORRECTION_DIVERGENCES_BY_SET: dict[
         "hld-16": ((2,), ()),  # its opener is not a frozen marker
         "hld-18": ((2,), ()),  # its opener is not a frozen marker
     },
-    "heldout-2": {},
+    # Task 0.12 (2026-10-24), read off the product before run 6.
+    "heldout-2": {
+        "h2-02": ((2,), ()),  # its opener is not a frozen marker
+        "h2-08": ((2,), ()),  # its opener is not a frozen marker
+        "h2-15": ((), (2,)),  # a marker opening new information is carried (D4's residue)
+        "h2-19": ((3,), ()),  # its opener is not a frozen marker (the marker comes later)
+    },
 }
 _PREDICTED_CORRECTION_DIVERGENCES = by_case(_PREDICTED_CORRECTION_DIVERGENCES_BY_SET)
 

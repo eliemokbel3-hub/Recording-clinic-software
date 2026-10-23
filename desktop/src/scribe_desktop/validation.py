@@ -566,7 +566,7 @@ REFERENCE_HEDGES: Final[tuple[str, ...]] = (*HEDGE_PHRASES, *_REFERENCE_ONLY_HED
 
 
 # D8's R3 reference provenance, frozen in Task 0.9 (synthetic scripts only;
-# ``heldout-2`` joins in Task 0.12): for EVERY script carrying the axis
+# ``heldout-2``'s rows written in Task 0.12): for EVERY script carrying the axis
 # ``end_and_new_patient``, the line holding the next patient's greeting and
 # the first line withheld — two tables, since a closing and a greeting can
 # share a line (``hld-11``). None means the script has no next patient (a
@@ -594,6 +594,21 @@ REFERENCE_GREETING_LINES: Final[Mapping[str, int | None]] = {
     "hld-12": 5,
     "hld-13": 5,
     "hld-14": 5,
+    "h2-01": 13,
+    "h2-02": None,
+    "h2-04": None,
+    "h2-05": 12,
+    "h2-06": None,
+    "h2-07": 10,
+    "h2-09": 9,
+    "h2-10": None,
+    "h2-11": 12,
+    "h2-13": None,
+    "h2-14": 8,
+    "h2-16": None,
+    "h2-17": 10,
+    "h2-21": None,
+    "h2-22": 10,
 }
 REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "syn-06": 4,
@@ -616,6 +631,21 @@ REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
     "hld-12": 5,
     "hld-13": 5,
     "hld-14": 5,
+    "h2-01": 13,
+    "h2-02": None,
+    "h2-04": None,
+    "h2-05": 12,
+    "h2-06": None,
+    "h2-07": 10,
+    "h2-09": 9,
+    "h2-10": None,
+    "h2-11": 12,
+    "h2-13": None,
+    "h2-14": 8,
+    "h2-16": None,
+    "h2-17": 10,
+    "h2-21": None,
+    "h2-22": 10,
 }
 
 

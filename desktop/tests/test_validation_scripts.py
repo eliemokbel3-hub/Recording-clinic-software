@@ -493,9 +493,11 @@ class TestHeldOutTranscripts:
         for indices in (case.corrections, case.unsure):
             assert list(indices) == sorted(set(indices))
             assert all(spoken(index) for index in indices)
-            assert all(turns[index].speaker != case.clinician_speaker for index in indices)
             # Nothing at or after the cut reaches the note to be marked or carried.
             assert case.boundary is None or all(index < case.boundary for index in indices)
+        # The mark is never the clinician's (D7); a correction may be, since D4
+        # carries any speaker and ``heldout-2``'s spec says "a speaker" (Task 0.12).
+        assert all(turns[index].speaker != case.clinician_speaker for index in case.unsure)
         for index in case.corrections:
             # The same speaker's routed line is the segment just before.
             assert index > 0 and turns[index - 1].speaker == turns[index].speaker
@@ -564,8 +566,10 @@ _NEXT_PATIENT_AXIS = "end_and_new_patient"
 
 
 def _held_out_documents_sha256() -> str:
+    """Over the ``heldout`` set's cases, the ones the builder moved under
+    (``heldout-2``'s cases, written in Task 0.12, came after the move)."""
     digest = hashlib.sha256()
-    for case in HELD_OUT_CASES:
+    for case in held_out_set("heldout").all_cases():
         digest.update(case.case_id.encode())
         digest.update(b"\0")
         digest.update(case.document().model_dump_json().encode())
@@ -598,7 +602,7 @@ class TestReferenceDocument:
     and the fixture a thin call of the same builder."""
 
     def test_the_moved_builder_gives_every_held_out_case_the_same_document(self) -> None:
-        assert len(HELD_OUT_CASES) == 32
+        assert len(held_out_set("heldout").all_cases()) == 32
         assert _held_out_documents_sha256() == _HELD_OUT_DOCUMENTS_SHA256
 
     def test_the_fixture_builds_through_the_harness(self) -> None:
@@ -678,20 +682,23 @@ class TestNextPatientReferenceTables:
                 if fact.kind == "absent" and fact.material:
                     assert tail is not None and fact.line >= tail, script.encounter_id
 
-    def test_every_fact_in_a_tail_is_a_material_absent_fact(self) -> None:
+    def test_every_fact_in_a_tail_is_an_absent_fact(self) -> None:
         """The other side, read off the facts rather than the table: nothing
         the note should hold lies at or after a tail start, so a tail start
         placed on a first-patient fact's line fails. A start moved onto a
         fact-free line, or a pair moved one line late, passes here and is
         caught by the boundary equality (held-out) or the exact pin of the
-        six run-of-record pairs (Task 0.9 review)."""
+        six run-of-record pairs (Task 0.9 review). Task 0.12 (2026-10-24):
+        ABSENT, not material absent — ``heldout-2`` puts nonmaterial absent
+        facts in its tails (the note should hold none of them either); R3
+        still counts the material ones only."""
         for script in _axis_scripts():
             tail = REFERENCE_TAIL_STARTS[script.encounter_id]
             if tail is None:
                 continue
             for fact in script.facts:
                 if fact.line >= tail:
-                    assert fact.kind == "absent" and fact.material, script.encounter_id
+                    assert fact.kind == "absent", script.encounter_id
 
     def test_the_run_of_record_pairs_are_pinned_exactly(self) -> None:
         """The six run-of-record scripts have no held-out boundary to equal,

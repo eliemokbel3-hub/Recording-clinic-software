@@ -108,7 +108,7 @@ _TAIL: Final = Turn(_N, "My hip is sore again.")
 # held-out set -> case id -> (the case's expected boundary, the frozen-list
 # result). Each is asserted BOTH ways below, so a later vocabulary decision
 # shows here. Keyed per set since validation-run6 Task 0.11; ``heldout-2``'s
-# entries are written by its Task 0.12.
+# entries were written in its Task 0.12 (2026-10-24).
 _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
     dict[str, dict[str, tuple[int | None, int | None]]]
 ] = {
@@ -121,7 +121,15 @@ _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET: Final[
         "edge-greeting-third-segment": (5, None),  # its closing is not a frozen closing
         "edge-second-sentence-greeting": (3, None),  # its closing is not a frozen closing
     },
-    "heldout-2": {},
+    # Task 0.12 (2026-10-24), read off the product before run 6.
+    "heldout-2": {
+        "h2-01": (13, None),  # its greeting is not in the frozen greeting list
+        "h2-05": (12, None),  # its closing is not a frozen closing
+        "h2-07": (10, None),  # neither its closing nor its greeting is listed
+        "h2-09": (9, None),  # its closing is not a frozen closing
+        "h2-14": (8, None),  # neither is listed; its "hello" opens no sentence
+        "h2-22": (10, None),  # an unlisted closing; a bare time-of-day greeting
+    },
 }
 _PREDICTED_BOUNDARY_DIVERGENCES: Final = by_case(_PREDICTED_BOUNDARY_DIVERGENCES_BY_SET)
 
@@ -368,7 +376,7 @@ class TestHeldOutBoundaries:
         counts = {
             name: len(cases) for name, cases in _PREDICTED_BOUNDARY_DIVERGENCES_BY_SET.items()
         }
-        assert counts == {"heldout": 7, "heldout-2": 0}
+        assert counts == {"heldout": 7, "heldout-2": 6}
 
     @pytest.mark.parametrize("case", HELD_OUT_CASES, ids=_case_id)
     def test_a_boundary_is_always_a_spoken_segment(

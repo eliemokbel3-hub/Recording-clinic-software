@@ -2271,7 +2271,7 @@ class TestCheck1HedgeMark:
     def test_every_predicted_unsure_divergence_is_a_case_of_its_set(self) -> None:
         assert misfiled(_PREDICTED_UNSURE_DIVERGENCES_BY_SET) == []
         counts = {name: len(cases) for name, cases in _PREDICTED_UNSURE_DIVERGENCES_BY_SET.items()}
-        assert counts == {"heldout": 3, "heldout-2": 0}
+        assert counts == {"heldout": 3, "heldout-2": 10}
         heldout = {c.case_id for c in held_out_set("heldout").all_cases()}
         assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= heldout
 
@@ -2313,7 +2313,7 @@ _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "c
 # frozen-hedge result). Since validation-run6 Task 0.9 (2026-10-23) the
 # result is under the widened list; an entry it changed keeps its 0.3.3
 # value below. Keyed per set since Task 0.11; ``heldout-2``'s entries are
-# written by its Task 0.12.
+# written in its Task 0.12 (2026-10-24).
 _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
     str, dict[str, tuple[tuple[int, ...], tuple[int, ...]]]
 ] = {
@@ -2322,7 +2322,20 @@ _PREDICTED_UNSURE_DIVERGENCES_BY_SET: dict[
         "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
         "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
     },
-    "heldout-2": {},
+    # Task 0.12 (2026-10-24), read off the product before run 6 (the
+    # widened list): no hedge here is listed, and scope (ii) joins none.
+    "heldout-2": {
+        "h2-01": ((3,), ()),  # its hedge is outside the frozen list
+        "h2-03": ((1,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h2-05": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-08": ((7,), ()),  # its hedge is outside the frozen list
+        "h2-10": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-12": ((2,), ()),  # the doubt is a separate line, its hedge unlisted
+        "h2-13": ((3,), ()),  # its hedge is outside the frozen list
+        "h2-15": ((1,), ()),  # its hedge is outside the frozen list
+        "h2-18": ((1, 6), (6,)),  # line 1's hedge is outside the frozen list
+        "h2-21": ((4,), ()),  # its hedge is outside the frozen list
+    },
 }
 _PREDICTED_UNSURE_DIVERGENCES = by_case(_PREDICTED_UNSURE_DIVERGENCES_BY_SET)
 
