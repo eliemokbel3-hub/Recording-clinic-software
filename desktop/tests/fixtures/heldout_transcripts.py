@@ -50,24 +50,17 @@ exist yet. The text is invented.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
 from scribe_desktop.speaker_eval import CLINICIAN_LABEL
-from scribe_desktop.transcription import TranscriptDocument, TranscriptSegment, TranscriptWord
-from scribe_desktop.validation import load_script
+from scribe_desktop.transcription import TranscriptDocument
+from scribe_desktop.validation import document_from_turns, load_script
 
 REPO: Final = Path(__file__).resolve().parents[3]
 HELDOUT_DIR: Final = REPO / "validation" / "heldout"
 SCRIPT_CASE_PREFIX: Final = "hld-"
 EDGE_CASE_PREFIX: Final = "edge-"
-
-_SESSION_ID: Final = "0123456789abcdef" * 2
-_CREATED_AT: Final = datetime(2026, 10, 13, tzinfo=UTC)
-_WORD_MS: Final = 300
-_GAP_MS: Final = 600
-_PROBABILITY: Final = 0.95
 
 NO_CORRECTION: Final = "no routed non-clinician line is followed by that speaker's self-correction"
 NO_HEDGE: Final = "no quoted non-clinician line hedges about the speaker's own state"
@@ -83,41 +76,10 @@ class Turn:
 
 
 def build_document(turns: tuple[Turn, ...]) -> TranscriptDocument:
-    """A transcript with one segment per turn, its words split on whitespace,
-    every word confident and certain, timed back to back (whole milliseconds,
-    so the times are exact)."""
-    segments: list[TranscriptSegment] = []
-    clock = 0
-    for turn in turns:
-        start = clock
-        words: list[TranscriptWord] = []
-        for text in turn.text.split():
-            words.append(
-                TranscriptWord(
-                    word_text=text,
-                    start_seconds=clock / 1000,
-                    end_seconds=(clock + _WORD_MS) / 1000,
-                    probability=_PROBABILITY,
-                    uncertain=False,
-                )
-            )
-            clock += _WORD_MS
-        segments.append(
-            TranscriptSegment(
-                start_seconds=start / 1000,
-                end_seconds=clock / 1000,
-                speaker=turn.speaker,
-                transcript_words=tuple(words),
-            )
-        )
-        clock += _GAP_MS
-    return TranscriptDocument(
-        session_id=_SESSION_ID,
-        created_at=_CREATED_AT,
-        model_name="heldout-fixture",
-        sample_rate=16_000,
-        transcript_segments=tuple(segments),
-    )
+    """The turns as a transcript, through the harness's own builder
+    (``validation.document_from_turns``, moved there by validation-run6
+    plan Task 0.9 unchanged)."""
+    return document_from_turns(turns)
 
 
 def script_turns(encounter_id: str) -> tuple[Turn, ...]:

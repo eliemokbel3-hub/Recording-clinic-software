@@ -79,7 +79,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final, Literal, NamedTuple, get_args
+from typing import Final, Literal, NamedTuple, Protocol, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -98,21 +98,25 @@ from scribe_desktop.note import (
     text_holds_hedge,
     words_hold_hedge,
 )
+
+# Package-private by name, shared deliberately (the note.py convention):
+# the structured-claim word classes and the omission check's predicates
+# are READ here, never re-spelled, so the harness and the checker cannot
+# disagree about what a side, a dose or a negation is. Since the metric
+# amendment of 2026-10-09 (note-routing-omissions plan D3, decision 0.2
+# (b)) ``warned`` reads Check 4's predicate ``_omission_flag_token``;
+# ``_is_high_risk_token`` stays for the run-1 comparison column. The
+# metric amendment of 2026-10-11 (D10) reads the strength-unit table and
+# the number-with-suffix pattern for its canonical spelling. The metric
+# amendment of 2026-10-13 (D7) reads a hedge mark's words through the
+# checker's own coordinate resolver (stage-9 simplify round 29 SIMP-001).
+# Validation-run6 Task 0.9 reads ``HEDGE_PHRASES`` as the head of the
+# reference lexicon ``REFERENCE_HEDGES``.
 from scribe_desktop.note_check import (
-    # Package-private by name, shared deliberately (the note.py convention):
-    # the structured-claim word classes and the omission check's predicates
-    # are READ here, never re-spelled, so the harness and the checker cannot
-    # disagree about what a side, a dose or a negation is. Since the metric
-    # amendment of 2026-10-09 (note-routing-omissions plan D3, decision 0.2
-    # (b)) ``warned`` reads Check 4's predicate ``_omission_flag_token``;
-    # ``_is_high_risk_token`` stays for the run-1 comparison column. The
-    # metric amendment of 2026-10-11 (D10) reads the strength-unit table and
-    # the number-with-suffix pattern for its canonical spelling. The metric
-    # amendment of 2026-10-13 (D7) reads a hedge mark's words through the
-    # checker's own coordinate resolver (stage-9 simplify round 29 SIMP-001).
     _LATERALITY_TOKENS,
     _NUMBER_WITH_SUFFIX_RE,
     _STRENGTH_UNITS,
+    HEDGE_PHRASES,
     _dose_quantity,
     _is_high_risk_token,
     _omission_flag_token,
@@ -153,6 +157,8 @@ from scribe_desktop.speech import (
 from scribe_desktop.transcription import (
     DEFAULT_WHISPER_MODEL,
     TranscriptDocument,
+    TranscriptSegment,
+    TranscriptWord,
     WhisperSpeechProvider,
     is_number_token,
     resolve_whisper_model,
@@ -431,6 +437,174 @@ def load_script_with_bytes(path: Path) -> tuple[EncounterScript, bytes]:
     if script.encounter_id != path.stem:
         raise ScriptError(f"{path.name}: its encounter_id names a different encounter")
     return script, blob
+
+
+# ---------------------------------------------------------------------------
+# Validation-run6 plan D8 — the reference transcript (one builder, two
+# adapters; moved from the held-out fixture in Task 0.9, unchanged).
+# ---------------------------------------------------------------------------
+
+_REFERENCE_SESSION_ID: Final = "0123456789abcdef" * 2
+_REFERENCE_CREATED_AT: Final = datetime(2026, 10, 13, tzinfo=UTC)
+_REFERENCE_WORD_MS: Final = 300
+_REFERENCE_GAP_MS: Final = 600
+_REFERENCE_PROBABILITY: Final = 0.95
+REFERENCE_MODEL_NAME: Final = "heldout-fixture"
+
+
+class SpokenTurn(Protocol):
+    """One segment's speaker label and text ("" for a segment with no
+    words) — the held-out fixture's ``Turn`` satisfies it."""
+
+    @property
+    def speaker(self) -> str: ...
+
+    @property
+    def text(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class _LineTurn:
+    speaker: str
+    text: str
+
+
+def document_from_turns(turns: Iterable[SpokenTurn]) -> TranscriptDocument:
+    """A transcript with one segment per turn, its words split on whitespace,
+    every word confident and certain, timed back to back (whole milliseconds,
+    so the times are exact)."""
+    segments: list[TranscriptSegment] = []
+    clock = 0
+    for turn in turns:
+        start = clock
+        words: list[TranscriptWord] = []
+        for text in turn.text.split():
+            words.append(
+                TranscriptWord(
+                    word_text=text,
+                    start_seconds=clock / 1000,
+                    end_seconds=(clock + _REFERENCE_WORD_MS) / 1000,
+                    probability=_REFERENCE_PROBABILITY,
+                    uncertain=False,
+                )
+            )
+            clock += _REFERENCE_WORD_MS
+        segments.append(
+            TranscriptSegment(
+                start_seconds=start / 1000,
+                end_seconds=clock / 1000,
+                speaker=turn.speaker,
+                transcript_words=tuple(words),
+            )
+        )
+        clock += _REFERENCE_GAP_MS
+    return TranscriptDocument(
+        session_id=_REFERENCE_SESSION_ID,
+        created_at=_REFERENCE_CREATED_AT,
+        model_name=REFERENCE_MODEL_NAME,
+        sample_rate=16_000,
+        transcript_segments=tuple(segments),
+    )
+
+
+def reference_document(script: EncounterScript) -> TranscriptDocument:
+    """The script's own words as a transcript: one segment per line, the
+    line's role as its speaker label (D8's reference for R1)."""
+    return document_from_turns(_LineTurn(line.role, line.text) for line in script.lines)
+
+
+# D8's R2 reference lexicon, frozen in Task 0.9 (2026-10-23) by the same
+# BLIND session as the widened ``HEDGE_PHRASES``, harness-only: a script
+# line holding one of these (whole tokens in a row, as
+# ``note.text_holds_hedge`` reads) voices its doubt in WORDS, so a fact on it
+# is never "tone only". The product's list plus what its selection rule
+# keeps out of the app but which still voices doubt: the session's
+# unverified or self-rendered entries, the four possibility modals and the
+# attribution shields of the sources, and statements of the limits of
+# knowledge. Approximators, frequency words, fillers and words with a common
+# plain sense stay out of both — they mark imprecision, not doubt (Prince,
+# Frader & Bosk's shield/approximator split). Sources: Namsaraev (1997),
+# Shomoossi & Shokrpour (2024), Fraser (2010), Hyland (2005) and Coates
+# (2013) for the modals; Prince, Frader & Bosk (1982) for the attribution
+# shields; Huddleston & Pullum (2002) and Biber et al. (1999) for the
+# evidential adverbs; Visser et al. (2020) for the knowledge limits;
+# Kärkkäinen (2003) for the two stance phrases. Never read by the app.
+_REFERENCE_ONLY_HEDGES: Final[tuple[str, ...]] = (
+    "presumably",
+    "i don't think",
+    "i do not think",
+    "don't know for sure",
+    "may",
+    "might",
+    "could",
+    "would",
+    "apparently",
+    "apparent",
+    "evidently",
+    "allegedly",
+    "reportedly",
+    "it is believed",
+    "it is said",
+    "according to",
+    "we don't know",
+    "we do not know",
+    "nobody knows",
+)
+REFERENCE_HEDGES: Final[tuple[str, ...]] = (*HEDGE_PHRASES, *_REFERENCE_ONLY_HEDGES)
+
+
+# D8's R3 reference provenance, frozen in Task 0.9 (synthetic scripts only;
+# ``heldout-2`` joins in Task 0.12): for EVERY script carrying the axis
+# ``end_and_new_patient``, the line holding the next patient's greeting and
+# the first line withheld — two tables, since a closing and a greeting can
+# share a line (``hld-11``). None means the script has no next patient (a
+# negative), so no fact of it is ever R3; a script with the axis and no
+# entry is a harness error. The tail starts equal the held-out fixture's
+# ``boundary`` wherever it has one.
+REFERENCE_GREETING_LINES: Final[Mapping[str, int | None]] = {
+    "syn-06": 4,
+    "syn-20": 4,
+    "syn-21": 4,
+    "syn-38": 4,
+    "syn-43": 6,
+    "syn-46": 4,
+    "hld-01": None,
+    "hld-02": None,
+    "hld-03": None,
+    "hld-04": None,
+    "hld-05": None,
+    "hld-06": None,
+    "hld-07": None,
+    "hld-08": None,
+    "hld-09": 5,
+    "hld-10": 4,
+    "hld-11": 3,
+    "hld-12": 5,
+    "hld-13": 5,
+    "hld-14": 5,
+}
+REFERENCE_TAIL_STARTS: Final[Mapping[str, int | None]] = {
+    "syn-06": 4,
+    "syn-20": 4,
+    "syn-21": 4,
+    "syn-38": 4,
+    "syn-43": 6,
+    "syn-46": 4,
+    "hld-01": None,
+    "hld-02": None,
+    "hld-03": None,
+    "hld-04": None,
+    "hld-05": None,
+    "hld-06": None,
+    "hld-07": None,
+    "hld-08": None,
+    "hld-09": 5,
+    "hld-10": 4,
+    "hld-11": 4,
+    "hld-12": 5,
+    "hld-13": 5,
+    "hld-14": 5,
+}
 
 
 class EncounterFiles(NamedTuple):
@@ -2369,6 +2543,10 @@ __all__ = [
     "ENCOUNTER_ID_PATTERN",
     "FACT_KINDS",
     "FACT_VERDICTS",
+    "REFERENCE_GREETING_LINES",
+    "REFERENCE_HEDGES",
+    "REFERENCE_MODEL_NAME",
+    "REFERENCE_TAIL_STARTS",
     "REPO_ROOT",
     "ROLE_TIE_SECONDS",
     "SCRIPT_SCHEMA_VERSION",
@@ -2387,6 +2565,7 @@ __all__ = [
     "RunInfo",
     "ScriptError",
     "ScriptLine",
+    "SpokenTurn",
     "SyntheticConditions",
     "TranscriptAlignment",
     "ValidationHarnessError",
@@ -2395,6 +2574,7 @@ __all__ = [
     "canonical_tokens",
     "clinician_speaker",
     "confirm_all",
+    "document_from_turns",
     "encounter_metrics",
     "evaluate_encounter",
     "find_encounters",
@@ -2407,6 +2587,7 @@ __all__ = [
     "models_manifest_sha256",
     "read_commit",
     "read_label_track",
+    "reference_document",
     "render_report",
     "rule_failures",
     "run_encounters",

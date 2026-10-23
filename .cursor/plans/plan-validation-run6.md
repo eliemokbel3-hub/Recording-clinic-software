@@ -264,7 +264,7 @@ A pass under rule v2 on all THREE sets — the 50 scripts, `heldout`, `heldout-2
 | `NOTE_WARNING_SEVERITY` codes | 18 | 19 |
 | `SEPARATELY_ACKNOWLEDGED_CODES` | 4 | 5 |
 | `ACKNOWLEDGE_ALL_TOOLTIP` pin `test_ui_models.py:1979-1985` | quotes `[after possible next patient]` | quotes `[next patient?]` and the new name |
-| `HEDGE_PHRASES` | 16 | the 0.9 count (0.6 (b)) |
+| `HEDGE_PHRASES` | 16 | 33 (Task 0.9, 2026-10-23); `REFERENCE_HEDGES` 52 |
 | `CLOSING_PHRASES` / `GREETING_PHRASES` | 14 / 12 | unchanged (0.5 (a)) |
 | Report separator `"---|" * 25` at `validation.py:1943`; `cells = ["-"] * 18` :1956; the Facts table's 9 columns :2044 | 25 / 18 / 9 | each grows by the Phase 4 columns (counts pinned in Task 4.3) |
 | `PassRule.schema_version` | `Literal[1]` | `Literal[1, 2]` |
@@ -296,6 +296,7 @@ See the Planning Extraction Summary (the canonical list).
 - `[2026-10-23]` Scoped `/review-plan` of D1 (Fable 5.1): D1's predicate unchanged; D11 added (the harness attributes with an enrolment of the synthetic clinician voice, the builder's passage per voice slot; `--attribution clustering` keeps runs 1–5's reading); Tasks 0.2a (measure first, scratch), 0.13 (the gate, written before the numbers) and 0.14 (the harness path, its own dated commit before 0.11) added; decision 0.4 (2)'s sibling sweep applied (D2, D3, D7, Phase 2, Task 0.9, 0.12, 4.2, P.1, P.2, Schema, C3, C4, the Validation table, the forecast, Excluded). Nothing built.
 - ~~Next: the agent writes Task 0.2a's scratch (`--enrol`), the practitioner runs it; then 0.13; then Task 0.9.~~ Done 2026-10-23.
 - `[2026-10-23]` Task 0.2a measured (record on the task); decision 0.13 GATE MET under the practitioner's outcome reading (D1 stands; D11 built in Task 0.14). Next: Task 0.9 (the dated lexicon commit), then 0.14, 0.11, 0.10, 0.12.
+- `[2026-10-23]` Task 0.9 built (record on the task): `HEDGE_PHRASES` 33, `REFERENCE_HEDGES` 52, the builder moved, the R3 tables, `hld-19` reconciled; uncommitted. Reviewed; codex peer pass rounds 11–15 CONVERGED (6 LOW fixed); /simplify round 16 (1 LOW applied). The practitioner kept all three risky phrases and gave the word to commit (2026-10-23); committed. Next: 0.14.
 
 ## Review History
 - 2026-10-22 `/review-plan` (Opus 5.5): Plan-subagent design critique + Explore subagent + coverage, practicality, risk and simplicity lenses, every finding checked against `0be35d7` / `4ff5f26`. Plan-scoped; no code reviewed. Step 3.5 gate: missed-speech warning Include in plan; chooser mark Include in plan; ui-refresh at its merge; larger model Excluded.
@@ -303,6 +304,8 @@ See the Planning Extraction Summary (the canonical list).
 - 2026-10-22 `/peer-loop` plan pass (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 1 1 HIGH + 6 MED; Round 2 10 MED + 1 LOW; Round 3 3 MED; Round 4 2 MED; Round 5 1 MED + 1 LOW (record-only). Every finding verified against the code at `4ff5f26` and amended with siblings swept; no invalid findings; every round's read-only sandbox left the working tree unchanged. Ended at the cap with round 5 build-affecting; a fresh one-round pass at the practitioner's word (Round 6) found no findings — CONVERGED.
 
 - 2026-10-23 scoped `/review-plan` of D1 (Fable 5.1), after Task 0.2: coverage (the harness's attribution read against the app's), practicality (the enrolment audio's source; the order — the harness path before 0.12 so the diagnosis runs on the shipped path), simplicity (no companion column; the flag), risk (the threshold residue; masking stated and answered). Two practitioner answers. Decision 0.4 (2)'s sibling sweep in the same pass. Plan-scoped; no code reviewed; nothing built.
+- 2026-10-23 `/peer-loop` code pass over Task 0.9's diff (codex `gpt-6-astra` high, read-only, cap 5; composer Opus 5.5): Round 11 1 LOW; Round 12 2 LOW; Round 13 1 LOW; Round 14 2 LOW; Round 15 0 — converged. Every finding verified (probes for the hedge-line set and both-way mutations) and fixed; full suite 7987 passed, 9 skipped.
+- 2026-10-23 `/simplify` (Claude Code, Opus 5.5) over Task 0.9's diff before its commit: Round 16, 1 LOW (SIMP-001, test-only) Fix-now.
 
 ## Review Findings Log
 ### Round 1 — 2026-10-22
@@ -610,6 +613,122 @@ Materiality: 0 build-affecting / 1 record-only / 0 invalid
 
 **/fix notes (round 10 amendment, 2026-10-23):** applied with one exact replacement, re-read on disk; sibling sweep for "expected to FAIL" / "FAIL on `heldout`": no other occurrence.
 
+### Round 11 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-007** — `.cursor/plans/plan-validation-run6.md:677` — Freeze record omits a newly hedged script line
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: The freeze record claims an exhaustive account of the lexicon’s effect, but conflates hedge matching with whether an unsure mark is emitted.
+  - Current behaviour: `hld-19` line 6 also changes from unhedged to hedged through `"i reckon"`. Its confirmed-clinician status suppresses the unsure mark, and its fact has no uncertainty expectation, so current scoring remains unchanged.
+  - Desired behaviour: Record all three changed script lines—`syn-30:3`, `hld-19:3`, and `hld-19:6`—and explain why the last does not change the current unsure result or scoring.
+  - Verification: Read-only comparison of HEAD’s 16 phrases against the current 33 across all 72 scripts found exactly these three changes. Pure-function probes confirmed line 6 matches, produces no mark with `clinician=True`, and produces `unsure` with `clinician=False`.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+**Round 11 disposition (composer, 2026-10-23):** round 1 of the Task 0.9 code pass. PR-LOW-007 verified (a scratch probe comparing HEAD's 16 phrases with the 33 over all 72 scripts found exactly `syn-30` line 3, `hld-19` line 3 and `hld-19` line 6; line 6 is a clinician line, `note.line_marks` puts no unsure mark on the confirmed clinician's line, and `validation._judge` reads `script_hedged` only for a fact with `expect_uncertain`, which line 6's fact lacks) and accepted: surface=docs, fixed now.
+
+**/fix notes (round 11, 2026-10-23):** Task 0.9's "Record (2026-10-23)" lexicon-reconciliation sentence now names `hld-19` lines 3 and 6 and says why line 6 changes neither the marks nor the scoring; re-read on disk; sibling sweep for "line 3" claims of the unhedged-to-hedged set: no other occurrence.
+
+### Round 12 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-008** — `desktop/src/scribe_desktop/note_check.py:509` — First-person selection rule omits the “seem” exception
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: The freeze records an unconditional selection rule that its vocabulary does not follow.
+  - Current behaviour: The comment says a listed verb enters in the first person, repeated in `.cursor/plans/plan-validation-run6.md:690`. The added bare verb `seem`, like existing `seems` and `seemed`, has no first-person restriction.
+  - Desired behaviour: Explicitly distinguish first-person stance verbs from the admitted “seem” forms in both descriptions; preserve the intended vocabulary.
+  - Verification: `HEDGE_PHRASES` contains all three bare forms. A read-only probe confirms “They seem a bit better.” matches; `desktop/tests/test_note_check.py:2071` deliberately requires that result.
+
+- **PR-LOW-009** — `desktop/tests/test_validation_scripts.py:485` — Digest comment overstates what changes it detects
+  - Triage: Fix-now (docs-only).
+  - Fix route: fix-on-fast.
+  - Why it matters: Readers could mistake the document-parity pin for protection of frozen case expectations or script facts.
+  - Current behaviour: The comment claims a change to a case or held-out script changes the digest. The digest includes only case IDs and generated document JSON; expectations, facts and other non-document fields are excluded.
+  - Desired behaviour: Limit the claim to changes affecting case IDs or serialized documents, explicitly excluding expectations and script facts.
+  - Verification: Read-only, in-memory probes changed `hld-19`’s `unsure` expectation and a script fact’s `expect_uncertain` value independently; both left the corresponding document hash payload unchanged. The actual builder-parity pin remains valid across all 32 cases.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+**Round 12 disposition (composer, 2026-10-23):** round 2 of the Task 0.9 code pass. PR-LOW-008 verified (`HEDGE_PHRASES` holds bare "seem", "seems", "seemed"; the comment and the plan's selection line stated an unconditional first-person rule) and accepted: surface=docs. PR-LOW-009 verified (`_held_out_documents_sha256` hashes case ids and document JSON only) and accepted: surface=test-harness.
+
+**/fix notes (round 12, 2026-10-23):** `note_check.py`'s hedge comment and Task 0.9's "The selection, by rule" line now name the bare forms of "seem" as the exception to the first-person rule; the digest comment in `test_validation_scripts.py` now says what the pin covers (the builder, case ids, a case's document inputs) and that expectations and script facts are outside it. Re-read on disk; sibling sweep for "first person" / "first-person" over the plan, `note_check.py`, `test_vocabulary.py` and the harness document: no other statement; ruff clean; `test_vocabulary.py`, `test_validation_scripts.py`, `test_note_check.py` 487 passed.
+
+### Round 13 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-010** — `desktop/tests/test_validation_scripts.py:557` — R3 pins allow both reference indices to move past the greeting
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: D8 evaluates greeting recognition on the reference greeting line. An undetected change to that index could make a listed greeting appear absent and incorrectly satisfy that R3 condition.
+  - Current behaviour: The current table values are correct, but the assertions permit both greeting and tail indices to move one line later for every run-of-record script carrying the axis. The indices then point at the next patient’s material fact rather than the greeting. Held-out boundary equality does not cover these scripts; range, shared-line and fact-containment checks all still hold. The comment at lines 581–582 names only an early, fact-free displacement as the remaining limitation.
+  - Desired behaviour: Add exact dated pins for the six run-of-record greeting/tail pairs, retaining the existing structural checks. Ensure a one-line-late pair fails.
+  - Pattern siblings: `syn-06`, `syn-20`, `syn-21`, `syn-38`, `syn-43`, `syn-46`—all six run-of-record entries.
+  - Verification: Read-only, in-memory evaluation of every assertion predicate in `TestNextPatientReferenceTables` accepted each pair independently shifted by +1. For example, `syn-06` accepts `(5, 5)`, although its greeting is line 4 and its material absent fact is line 5. No test suite or harness was run.
+  - Regression risk: Test-only strengthening; current table values and product behaviour remain unchanged.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 1 LOW
+
+**Round 13 disposition (composer, 2026-10-23):** round 3 of the Task 0.9 code pass. PR-LOW-010 verified (`TestNextPatientReferenceTables` ties a `syn-` pair to nothing exact: the boundary equality covers held-out ids only) and accepted: surface=test-harness.
+
+**/fix notes (round 13, 2026-10-23):** new `test_the_run_of_record_pairs_are_pinned_exactly` pins the six `syn-` greeting/tail pairs as read on 2026-10-23; the fact-side test's docstring now names where a moved start is caught; Task 0.9's record line names the exact pin. Both ways: an in-memory +1 shift of `syn-06` fails the new pin; the class passes 7/7; ruff clean.
+
+### Round 14 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+- **PR-LOW-011** — `desktop/tests/test_note_check.py:2280` — Historical reconciliation accepts incorrect original predictions
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: Task 0.9 requires preserving the original 0.3.3 prediction and recording which predictions changed.
+  - Current behaviour: The historical result is checked only for inequality with today’s result. Replacing `hld-19`’s original `()` with `(5,)` passes. Replacing the entire history with `{"hld-20": ((3, 5), ())}` also passes, despite omitting the changed case and inventing a change to an unchanged case.
+  - Desired behaviour: Pin the dated history’s exact keys and original values, retaining the current behavioural assertions.
+  - Verification: Read-only evaluation of every historical assertion accepted both mutations. HEAD records `hld-19`’s prediction as `()` and `hld-20`’s as `(5,)`. The other references to the historical dictionary check only case membership and nonemptiness.
+
+- **PR-LOW-012** — `desktop/tests/test_validation_scripts.py:519` — Shared-builder pin checks equality but not delegation
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: Task 0.9 explicitly requires the fixture to call the harness’s single builder. An independent copy can later drift.
+  - Current behaviour: The implementation delegates correctly, but `test_the_fixture_builds_through_the_harness` compares only returned documents. Restoring HEAD’s independent fixture builder satisfies this assertion and the document digest unchanged.
+  - Desired behaviour: Add a delegation check that substitutes the fixture’s imported builder and verifies the turns passed and the returned result. Retain the document-parity checks.
+  - Verification: Executed HEAD’s pure builder in memory over all 32 cases, including all 10 explicit-turns cases. Every document equals the current harness result, and both aggregate digests equal the frozen SHA-256. Thus the new pins accept restoration of the duplicate builder.
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 2 LOW
+
+**Round 14 disposition (composer, 2026-10-23):** round 4 of the Task 0.9 code pass. PR-LOW-011 verified (the history test checked only `got != predicted_0_3_3`) and accepted: surface=test-harness. PR-LOW-012 verified (document equality alone accepts a restored private builder) and accepted: surface=test-harness.
+
+**/fix notes (round 14, 2026-10-23):** `test_the_widened_hedges_changed_these_predictions_and_no_expectation` now re-runs every held-out case under the 0.3.3 sixteen (`_HEDGE_PHRASES_0_3_3`, a literal frozen tuple, patched onto `note_check.HEDGE_PHRASES`) and asserts the dated record equals exactly the changed cases with their 0.3.3 results; new `test_the_fixture_delegates_to_the_harness_builder` swaps the fixture's imported builder for a recording fake. Both ways: `{"hld-19": ((3, 5), (5,))}` and `{"hld-20": ((3, 5), ())}` each fail the history test; a fixture `build_document` that does not call the module's builder fails the delegation test. Task 0.9's record lines on the reconciliation and the move updated. ruff clean; the touched tests pass.
+
+### Round 15 — 2026-10-23
+Source: Codex peer-review (gpt-6-astra high; code review of Task 0.9's uncommitted diff)
+
+No findings
+
+Findings: 0 CRIT / 0 HIGH / 0 MED / 0 LOW
+
+**Round 15 disposition (composer, 2026-10-23):** round 5 of the Task 0.9 code pass; 0 findings, so the pass CONVERGED (rounds 11–15: 6 LOW, all fixed — 3 wording, 3 test pins; no CRIT, HIGH or MED; no product behaviour change after round 11).
+
+### Round 16 — 2026-10-23
+Source: Claude Code simplify
+
+**Scope:** Task 0.9's uncommitted diff (8 files) before its commit, read in full: `note_check.py`, `note.py`, `validation.py`, `fixtures/heldout_transcripts.py`, `test_vocabulary.py`, `test_note_check.py`, `test_validation_scripts.py`, and the plan's Task 0.9 record.
+
+- **SIMP-001** — LOW — `desktop/tests/test_note_check.py` `test_the_widened_hedges_changed_these_predictions_and_no_expectation` — the closing loop recomputes the result it already holds
+  - Triage: Fix-now.
+  - Fix route: fix-on-fast.
+  - Why it matters: the loop calls `_held_out_unsure(case)` again (a config load, a request and a note per case) although `today[case_id]` holds that value, and asserts `got != predicted_0_3_3`, which `changed == _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9` already implies (a recorded case is in `changed` only when its 0.3.3 result differs from today's).
+  - Current behaviour: one extra `_held_out_unsure` per recorded case and one implied assertion.
+  - Desired behaviour: read `today[case_id]`; drop the implied inequality; the expectation and divergence assertions stay.
+  - Pattern to follow: the `today` / `before` dictionaries computed above in the same test.
+  - Verification: the test passes; the two round-14 mutations (`hld-19` → `(5,)`, history keyed on `hld-20`) still fail it.
+  - Regression risk: none (test-only; the same values compared).
+  - /fix decision: Applied
+  - /fix notes: 2026-10-23 — the loop reads `today[case_id]` and the implied inequality is gone; the test passes and both round-14 mutations still fail it; ruff clean.
+
+**Consciously left alone:** the two R3 tables (one pair table would be shorter, but D8 and the comment choose two because a closing and a greeting can share a line); the fixture's thin `build_document` (callers keep their import; the delegation test pins it); `test_the_reference_is_a_superset_of_the_hedges` (implied by the exact pin, but it states the plan's named superset contract); the literal `_HEDGE_PHRASES_0_3_3` (frozen history on purpose, peer round 14); `_LineTurn` (a two-field adapter, the plainest shape).
+
+**Summary:** 1 LOW, Fix-now → `/fix`. No other simplification worth a maintainer's attention.
+
 ## Tasks
 
 ### Phase 0 — Budget, measurement, decisions, freeze, predictions
@@ -662,11 +781,21 @@ Materiality: 0 build-affecting / 1 record-only / 0 invalid
   - **The written override, in the practitioner's words:** "take all the recommendations" (2026-10-22), given in reply to the plan's recommendation of (b) and its statement that (b) overrides pilot Constraint 12 and the 2026-10-09 stop rule. The reasoning adopted is D8's: the recogniser- and tone-level failures cannot be fixed by the note pipeline. Each class is mechanical and capped, never named by encounter id. The v1 verdict stays visible, so nothing is hidden. The blind `heldout-2` is the real test. The practitioner may add a sentence of their own here before Task 0.12; it is not required.
   - Consequence: Task 4.3 builds `rule-v2.json`; P.1 runs with it.
 - [x] 🟩 **0.8 The P.5 pass gate (D9)** `[decision]` — Chosen: a pass under rule v2 on all three sets (the 50 scripts, `heldout`, `heldout-2`), the v1 verdict recorded beside each (2026-10-22, "take all the recommendations").
-- [ ] 🟥 **0.9 The dated freeze commit (C3)**
+- [x] 🟩 **0.9 The dated freeze commit (C3)** — **`[2026-10-23]` Built, reviewed, peer-converged (rounds 11–15), simplified (round 16); committed by the practitioner's word** (record below).
   - Files: `note_check.HEDGE_PHRASES` (0.6 (b): a blind session given only the selection rule and named published sources; its sources and a contamination note in the commit message); `validation.REFERENCE_HEDGES` (the same blind method, harness-only, broader; pinned a superset of `HEDGE_PHRASES`; the known-failure phrases' membership recorded on this task either way); the acknowledgement set (only under 0.3 (c)); `validation.document_from_turns` moved from the fixture, with `validation.reference_document` its script adapter (D8; `fixtures/heldout_transcripts.build_document` becomes a thin call of `document_from_turns`; identical documents pinned for every scripted AND every explicit-turns held-out case, captured before the move — peer round 5 PR-MED-022); `validation.REFERENCE_GREETING_LINES` and `validation.REFERENCE_TAIL_STARTS` for every `end_and_new_patient` script of the 50 and `heldout` (D8's R3; synthetic scripts only; the tail starts pinned equal to `HeldOutCase.boundary` where one exists).
   - **Lexicon-only reconciliation in the same commit** (peer round 2 PR-MED-015): a widened `HEDGE_PHRASES` can resolve a predicted held-out divergence (`test_note_check.py:2240-2244`, `hld-19` / `-20` / `-21`) and fail the suite before Task 0.11. The freeze commit re-runs the held-out unsure, boundary and correction tests and moves each entry the new phrases resolve out of `_PREDICTED_UNSURE_DIVERGENCES` into a dated record (case id → its original 0.3.3 prediction), asserted both ways (the original prediction kept as history, the case now equal to its expectation); no case expectation changes (C2, C3). Scope (ii)'s changes stay with Task 3.1. The suite is green on the freeze commit.
   - Tests: exact pins in `test_vocabulary.py`; near-miss cases for every added phrase; the superset pin.
   - Done when: reviewed, peer-checked and committed with the date BEFORE 0.10 starts.
+  - **Record (2026-10-23).**
+    - **The blind session.** A subagent given only the 0.3.3 selection rule (D5) and asked for named published sources; it saw no script, no held-out case, no register row and no frozen list. Its sources: S1 Prince, Frader & Bosk (1982); S2 Lakoff (1972/73); S3 Fraser (2010); S4 Namsaraev (1997); S5 Huddleston & Pullum (2002), p. 102; S6 Biber et al. (1999), §10.2; S7 Salager-Meyer (1994); S8 Hyland (2005), Appendix; S9 Kärkkäinen (2003); S10 Weatherall (2011); S11 Visser et al. (2020), ABIDE; S12 Shomoossi & Shokrpour (2024); S13 Carter, McCarthy, Mark & O'Keeffe (2011), *English Grammar Today*; S14 Carter & McCarthy (2006); S15 Coates (2013); S16 Nissen et al. (2026), *Health Expectations*; S17 a 2019 *Patient Education and Counseling* systematic comparison (authors not retrieved). It returned List A (the speaker's own doubt) and List B (the rest), each entry with its source.
+    - **The selection, by rule (this session).** `HEDGE_PHRASES` (16 → **33**): List A entries a named source holds that pass the 0.3.3 rule — a stance verb in the first person (the bare forms of "seem" excepted, as "seems" / "seemed" were in 0.3.3), no entry that IS a modal, no excluded token ("presumably" holds one, so it is reference-only), no phrase another entry already holds ("it seems", "it would seem", "most likely" and the like are skipped), a contraction and its full form both listed. Added: "i reckon" (S13), "i believe" (S7, S3, S4), "i'm not sure", "i am not sure", "not completely sure" (S11), "i don't know", "i do not know" (S10), "if i'm correct", "if i am correct" (S3), "i assume", "doubtful" (S4, S8), "conceivably", "arguably", "seemingly" (S5), "potentially", "probable" (S12, S4), "seem" (S7). `validation.REFERENCE_HEDGES` (52) = `HEDGE_PHRASES` followed by 19 harness-only entries: "presumably"; List A's unverified or self-rendered entries ("i don't think", "i do not think", "don't know for sure"); the possibility modals "may", "might", "could", "would" (S8, S15); the evidentials "apparently", "apparent", "evidently", "allegedly", "reportedly" (S5, S6); the attribution shields "it is believed", "it is said", "according to" (S1); the knowledge limits "we don't know", "we do not know", "nobody knows" (S11). Out of both: approximators, frequency words, fillers and words with a common plain sense ("possible", "appear", "feel", "suggest", "i'm afraid"), and "can", "will", "must", "should", "ought". One disagreement recorded, not acted on: the blind session put "uncertain" in List B; it stays in `HEDGE_PHRASES` from 0.3.3 (frozen; removing it is a separate dated decision).
+    - **Known-failure membership, either way:** "i reckon" — in both; "i don't know" — in both; bare "not sure" — in neither (only "i'm not sure" / "i am not sure"); "not too sure" — in neither; "i dunno" — in neither. Each enters only where a named source holds it.
+    - **Contamination note.** The blind session was clean; the selecting session was not — it had read the 50 scripts and `heldout`, Task 0.2's numbers and the known-failure phrases. It applied the rule to the blind lists without adding, rewording or reordering an entry; the known-failure phrases entered only as the sources hold them. Disclosed, not avoided (A3).
+    - **What changed in the pins.** `test_vocabulary.py`: the exact pin is 33; the "no apostrophe" pin is narrowed to "no TYPOGRAPHIC apostrophe" (a plain one is now listed, "i'm not sure"; the matcher folds the typographic one in the line, never in the list — a contract change, flagged to the practitioner); the excluded-token and modal pins hold unchanged; new `TestReferenceHedges`: the exact reference pin, the superset pin, content-token form, the approximator/frequency/filler exclusion, the known-failure membership, and an AST pin that no app module but `validation.py` reads `REFERENCE_HEDGES`. `test_note_check.py`: 0.3.3's near miss "It seem sore." matches now that "seem" is listed, so it is replaced by "The seam of the brace rubs."; one hedged line and one near miss per added phrase (each also with typographic apostrophes).
+    - **Lexicon-only reconciliation (no expectation changed, C2, C3).** `hld-19` (expected (3, 5); 0.3.3 result ()) now reads (3,): line 3 is resolved by the widened list and line 5 still diverges, so it STAYS in `_PREDICTED_UNSURE_DIVERGENCES` with the new result, and its 0.3.3 value moves to the dated record `_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9`, asserted both ways (the record is EXACTLY the cases whose result under the 0.3.3 sixteen, re-run in the test, differs from today's — peer round 14; the expectation unchanged; today's result is the recorded divergence). `hld-20` and `hld-21` are unchanged. The boundary and correction tests are unaffected (full suite). **On the 50 (review finding):** the harness's script-side hedge test reads the same list, so `syn-30` line 3 ("i'm not sure") is now hedged in the script and markable in the app — one of run 5's six failures may change in run 6 for this reason alone; no other line of the 50 or `heldout` changes from unhedged to hedged except `hld-19` lines 3 and 6 (`syn-04`, `-12`, `-49` gain matches on lines already hedged). `hld-19` line 6 ("i reckon") is a clinician line: the unsure mark is never put on the confirmed clinician's line, and its fact carries no uncertainty expectation, so neither the app's marks nor the harness's scoring changes there (PR-LOW-007; the three lines found by comparing HEAD's 16 phrases with the 33 over all 72 scripts). Run 5 stays the run of record for 0.3.3; Task 0.2's premise check already ran on the unfrozen code (PR-MED-005), so nothing later compares with run 5 as identical.
+    - **Risks for the practitioner, not acted on** (review): "i don't know" is often a patient's filler ("I don't know, it just aches") and will add `[check: unsure]` marks, each acknowledged separately; "seem" marks reports such as "it doesn't seem to help" (consistent with "seems" / "seemed" already listed); "i believe" can report someone else's words. Removing any is a new dated decision before Task 0.10. **Decided 2026-10-23 (the practitioner): keep all three.**
+    - **The move.** `validation.document_from_turns` / `reference_document` / `SpokenTurn` / `REFERENCE_MODEL_NAME`; the fixture's `build_document` is a thin call (a delegation test proves it calls the harness's builder — peer round 14); every scripted and explicit-turns held-out document is pinned by one SHA-256 taken before the move (`test_validation_scripts.py` `_HELD_OUT_DOCUMENTS_SHA256`), unchanged after it. `REFERENCE_GREETING_LINES` / `REFERENCE_TAIL_STARTS` for every `end_and_new_patient` script (6 of the 50, 14 held-out), the tail starts pinned equal to `HeldOutCase.boundary`, the six run-of-record pairs pinned exactly (peer round 13), the axis coverage pinned both ways. The acknowledgement set is not written (0.3 is (b) without (c): Task 0.2a's counts are within the budget).
+    - Task 0.2a's enrolment passage still holds no listed hedge and no `REFERENCE_HEDGES` entry (hash unchanged).
 - [ ] 🟥 **0.14 The harness's enrolment path (D11) — its own dated commit, after 0.13 and before 0.11**
   - `validation_set.py`: `ENROLMENT_PASSAGE` (Task 0.2a's text, hash-equal); `build_set` writes `enrolment/slot-<n>.wav` for every clinician slot the built scripts use (the folder made once; whole-then-move; a write failure refused by name like a triple's); `scripts/README.md` and the builder's docstring.
   - `validation.py`: `HarnessInputs.enrolments` / `.attribution`; `evaluate_encounter`'s enrolled judgement and the track confirmation (`clinician_speaker` on the enrolled document must equal `enrolled_speaker`); `main`'s `--attribution` flag, the three refusals in the model block, the needed slots read from the set's scripts (the same `load_script`); `EncounterOutcome` carries the clinician seconds labelled other and the other seconds labelled clinician; the report header line and the two seconds columns (separator and cell counts re-pinned in Task 4.3's inventory).

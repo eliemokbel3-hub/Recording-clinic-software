@@ -396,7 +396,8 @@ def check_mark(kind: str) -> str:
 def text_holds_hedge(text: str) -> bool:
     """True when ``text``'s content tokens — typographic apostrophes folded
     first — hold a spoken hedge (``note_check.HEDGE_PHRASES``, frozen by the
-    validation-pass plan's Task 0.8) as whole tokens in a row. THE one hedge
+    validation-pass plan's Task 0.8, widened by the validation-run6 plan's
+    Task 0.9) as whole tokens in a row. THE one hedge
     test: the line mark reads it through ``words_hold_hedge`` and the
     validation harness reads it over a script line (D7). Returns a bool; no
     text leaves it."""

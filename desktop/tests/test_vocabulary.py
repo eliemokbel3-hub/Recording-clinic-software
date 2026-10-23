@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from scribe_desktop import consultation_phrases, note, note_check, voice_commands
+from scribe_desktop import consultation_phrases, note, note_check, validation, voice_commands
 from scribe_desktop.consultation_phrases import (
     BOUNDARY_SEGMENTS,
     CLOSING_PHRASES,
@@ -23,6 +23,7 @@ from scribe_desktop.consultation_phrases import (
 )
 from scribe_desktop.note import CORRECTION_LEAD_IN, CORRECTION_MARKERS, content_tokens
 from scribe_desktop.note_check import HEDGE_PHRASES
+from scribe_desktop.validation import REFERENCE_HEDGES
 from scribe_desktop.voice_commands import phrase_tokens
 
 _LEAF = Path(consultation_phrases.__file__)
@@ -195,14 +196,34 @@ class TestHedgePhrases:
             "i doubt",
             "uncertain",
             "to my knowledge",
+            # Validation-run6 plan Task 0.9 (2026-10-23).
+            "i reckon",
+            "i believe",
+            "i'm not sure",
+            "i am not sure",
+            "not completely sure",
+            "i don't know",
+            "i do not know",
+            "if i'm correct",
+            "if i am correct",
+            "i assume",
+            "doubtful",
+            "conceivably",
+            "arguably",
+            "seemingly",
+            "potentially",
+            "probable",
+            "seem",
         )
-        assert len(HEDGE_PHRASES) == 16
+        assert len(HEDGE_PHRASES) == 33
         assert isinstance(HEDGE_PHRASES, tuple)
 
     def test_every_hedge_is_in_content_token_form_and_unique(self) -> None:
         assert all(" ".join(content_tokens(phrase)) == phrase for phrase in HEDGE_PHRASES)
         assert len(set(HEDGE_PHRASES)) == len(HEDGE_PHRASES)
-        assert all("'" not in phrase and "’" not in phrase for phrase in HEDGE_PHRASES)
+        # A plain apostrophe only (validation-run6 Task 0.9: "i'm not sure");
+        # the matcher folds the typographic one in the line, never the list.
+        assert all("’" not in phrase for phrase in HEDGE_PHRASES)
 
     def test_the_selection_rules_exclusions_hold(self) -> None:
         """Task 0.8's selection rule. (i) No hedge IS a modal verb — a fixed
@@ -231,3 +252,96 @@ class TestHedgePhrases:
 
     def test_the_hedges_live_in_note_check(self) -> None:
         assert "HEDGE_PHRASES" in note_check.__all__
+
+
+class TestReferenceHedges:
+    """Validation-run6 plan D8's R2 lexicon (Task 0.9, 2026-10-23): the
+    harness-only reference, pinned exactly and as a SUPERSET of
+    ``HEDGE_PHRASES``, never read by the app."""
+
+    def test_the_reference_hedges_are_the_hedges_and_these_pinned_exactly(self) -> None:
+        assert REFERENCE_HEDGES[: len(HEDGE_PHRASES)] == HEDGE_PHRASES
+        assert REFERENCE_HEDGES[len(HEDGE_PHRASES) :] == (
+            "presumably",
+            "i don't think",
+            "i do not think",
+            "don't know for sure",
+            "may",
+            "might",
+            "could",
+            "would",
+            "apparently",
+            "apparent",
+            "evidently",
+            "allegedly",
+            "reportedly",
+            "it is believed",
+            "it is said",
+            "according to",
+            "we don't know",
+            "we do not know",
+            "nobody knows",
+        )
+        assert len(REFERENCE_HEDGES) == 52
+        assert isinstance(REFERENCE_HEDGES, tuple)
+
+    def test_the_reference_is_a_superset_of_the_hedges(self) -> None:
+        assert set(HEDGE_PHRASES) <= set(REFERENCE_HEDGES)
+        assert set(REFERENCE_HEDGES) - set(HEDGE_PHRASES)
+
+    def test_every_reference_hedge_is_in_content_token_form_and_unique(self) -> None:
+        assert all(" ".join(content_tokens(p)) == p for p in REFERENCE_HEDGES)
+        assert len(set(REFERENCE_HEDGES)) == len(REFERENCE_HEDGES)
+        assert all("’" not in phrase for phrase in REFERENCE_HEDGES)
+
+    def test_no_approximator_frequency_or_filler_word_is_a_reference_hedge(self) -> None:
+        excluded = {
+            "about", "around", "approximately", "roughly", "some", "somewhat",
+            "sort", "kind", "bit", "often", "sometimes", "usually", "generally",
+            "feel", "felt", "like", "mean", "know",
+        }
+        loose = {p for p in REFERENCE_HEDGES if set(p.split()) & excluded}
+        # "know" only inside a statement of not knowing.
+        assert loose == {
+            "i don't know", "i do not know", "don't know for sure",
+            "we don't know", "we do not know",
+        }
+
+    def test_the_known_failure_phrases_membership_is_recorded(self) -> None:
+        """Task 0.9 records it either way: a phrase enters only when a named
+        source holds it."""
+        membership = {
+            phrase: (phrase in HEDGE_PHRASES, phrase in REFERENCE_HEDGES)
+            for phrase in ("not too sure", "i dunno", "i reckon", "not sure", "i don't know")
+        }
+        assert membership == {
+            "not too sure": (False, False),
+            "i dunno": (False, False),
+            "i reckon": (True, True),
+            "not sure": (False, False),
+            "i don't know": (True, True),
+        }
+
+    def test_the_app_never_reads_the_reference(self) -> None:
+        """By AST, so a comment naming it (``note_check``'s pointer) is not a
+        read."""
+
+        def names(path: Path) -> set[str]:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            found: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name):
+                    found.add(node.id)
+                elif isinstance(node, ast.Attribute):
+                    found.add(node.attr)
+                elif isinstance(node, ast.alias):
+                    found.add(node.name)
+            return found
+
+        package = Path(validation.__file__).parent
+        readers = sorted(
+            path.relative_to(package).as_posix()
+            for path in package.rglob("*.py")
+            if "REFERENCE_HEDGES" in names(path)
+        )
+        assert readers == ["validation.py"]

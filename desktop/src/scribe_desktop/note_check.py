@@ -495,21 +495,30 @@ def _resolved_coords(assertion: NoteAssertion) -> SourceCoords:
 
 
 # The spoken hedges (validation-pass plan D7, frozen in its Task 0.8 — C3;
+# widened in validation-run6 plan Task 0.9, 2026-10-23, decision 0.6 (b);
 # read by ``note.text_holds_hedge`` since the hedge mark's Task 3.1): a quoted
 # line from a speaker who is not the clinician that holds one of these phrases
 # (whole tokens, in a row, typographic apostrophes folded first) is the
 # "unsure" line mark's evidence (Check 1's ``hedged_source``). A CLOSED tuple
-# taken from two published hedging lists, never from the validation scripts
-# — Prince, Frader & Bosk (1982), "On hedging in physician-physician discourse", plausibility
-# shields; and Hyland (2005), "Metadiscourse", appendix list of hedges —
+# taken from published hedging sources, never from the validation scripts,
 # keeping only what a speaker says about their OWN certainty: no entry that
 # IS a modal verb ("may" is also a month; a fixed phrase holding one, "as far
 # as i can tell", is not), no word with a common plain sense in a
 # consultation (frequency, sensation, a description such as "unclear",
 # quantity, a preposition), no attribution to someone else's knowledge and no
-# degree word ("sort of", "a bit"). Lower-case, in ``content_tokens`` form. The plan's Task 0.8
-# records the source, the rule and the contamination note (A3). A change is
-# a new dated decision with a repeated validation run.
+# degree word ("sort of", "a bit"). A listed stance verb enters in the first
+# person ("i doubt"), except the bare forms of "seem" ("seem", "seems",
+# "seemed"), which hedge whatever their subject; a phrase another entry
+# already holds is not repeated ("it seems"); a contraction and its full
+# form are both listed. Lower-case, in
+# ``content_tokens`` form; a plain apostrophe only. The 0.3.3 sixteen came
+# from Prince, Frader & Bosk (1982), "On hedging in physician-physician
+# discourse" (plausibility shields), and Hyland (2005), "Metadiscourse"
+# (appendix hedges); Task 0.9's additions from a BLIND session given only this
+# rule and named sources (the run6 plan's Task 0.9 records each source and
+# the contamination note). ``validation.REFERENCE_HEDGES`` is the harness's
+# broader superset. A change is a new dated decision with a repeated
+# validation run.
 HEDGE_PHRASES: Final[tuple[str, ...]] = (
     # Prince, Frader & Bosk (1982), plausibility shields.
     "i think",
@@ -529,6 +538,33 @@ HEDGE_PHRASES: Final[tuple[str, ...]] = (
     "i doubt",
     "uncertain",
     "to my knowledge",
+    # Validation-run6 plan Task 0.9 (2026-10-23), the blind session's sources:
+    # Carter, McCarthy, Mark & O'Keeffe (2011), English Grammar Today, "Hedges".
+    "i reckon",
+    # Salager-Meyer (1994), personal doubt; Fraser (2010); Namsaraev (1997).
+    "i believe",
+    # Visser et al. (2020), uncertainty in diagnostic disclosure (ABIDE).
+    "i'm not sure",
+    "i am not sure",
+    "not completely sure",
+    # Weatherall (2011), "I don't know" as a prepositioned epistemic hedge.
+    "i don't know",
+    "i do not know",
+    # Fraser (2010), a conditional clause of uncertainty.
+    "if i'm correct",
+    "if i am correct",
+    # Namsaraev (1997); Hyland (2005), "assume", "doubtful".
+    "i assume",
+    "doubtful",
+    # Huddleston & Pullum (2002), p. 102, graded modal adverbs.
+    "conceivably",
+    "arguably",
+    "seemingly",
+    # Shomoossi & Shokrpour (2024), medical hedging; Namsaraev (1997).
+    "potentially",
+    "probable",
+    # Salager-Meyer (1994), the semi-auxiliary "to seem".
+    "seem",
 )
 
 

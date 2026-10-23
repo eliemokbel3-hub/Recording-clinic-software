@@ -21,6 +21,7 @@ only.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import Counter
 from collections.abc import Iterable
@@ -28,6 +29,7 @@ from pathlib import Path
 
 import pytest
 
+from fixtures import heldout_transcripts
 from fixtures.heldout_transcripts import (
     EDGE_CASE_PREFIX,
     HELD_OUT_CASES,
@@ -51,9 +53,14 @@ from scribe_desktop.transcription import TranscriptDocument
 from scribe_desktop.validation import (
     AXES,
     FACT_KINDS,
+    REFERENCE_GREETING_LINES,
+    REFERENCE_MODEL_NAME,
+    REFERENCE_TAIL_STARTS,
     EncounterScript,
     _occurrences,
+    document_from_turns,
     load_script,
+    reference_document,
 )
 from scribe_desktop.validation_set import render_encounter, to_pcm16
 
@@ -472,3 +479,156 @@ class TestHeldOutTranscripts:
             [bool(case.unsure) for case in HELD_OUT_CASES],
         ):
             assert sum(expected) >= 3 and expected.count(False) >= 3
+
+
+# Validation-run6 plan Task 0.9 (peer round 5 PR-MED-022): the fixture's
+# builder moved into the harness unchanged — the SHA-256 over every case's
+# id and document JSON, captured before the move. A change to the builder,
+# a case id or anything a case's document is built from (a held-out script's
+# lines, a case's explicit turns) changes it, and is a dated decision (C3);
+# a case's expectations and a script's facts are not in the document, so
+# this pin does not cover them.
+_HELD_OUT_DOCUMENTS_SHA256 = "88d190e841448fe0088936ebfcf9bd0f2ca51372a19b9c2678577818e824a1ff"
+_NEXT_PATIENT_AXIS = "end_and_new_patient"
+
+
+def _held_out_documents_sha256() -> str:
+    digest = hashlib.sha256()
+    for case in HELD_OUT_CASES:
+        digest.update(case.case_id.encode())
+        digest.update(b"\0")
+        digest.update(case.document().model_dump_json().encode())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _axis_scripts() -> list[EncounterScript]:
+    return [
+        script for script in [*_scripts(), *_heldout_scripts()] if _NEXT_PATIENT_AXIS in script.axes
+    ]
+
+
+class TestReferenceDocument:
+    """Validation-run6 plan D8: one turn-level builder in the harness
+    (``document_from_turns``), the script adapter ``reference_document``,
+    and the fixture a thin call of the same builder."""
+
+    def test_the_moved_builder_gives_every_held_out_case_the_same_document(self) -> None:
+        assert len(HELD_OUT_CASES) == 32
+        assert _held_out_documents_sha256() == _HELD_OUT_DOCUMENTS_SHA256
+
+    def test_the_fixture_builds_through_the_harness(self) -> None:
+        for case in HELD_OUT_CASES:
+            assert case.document() == document_from_turns(case.turns()), case.case_id
+
+    def test_the_fixture_delegates_to_the_harness_builder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Equal documents would also pass a restored copy of the old
+        builder; the fixture must CALL the harness's one builder (peer round
+        14 PR-LOW-012)."""
+        seen: list[object] = []
+        sentinel = object()
+
+        def fake(turns: object) -> object:
+            seen.append(turns)
+            return sentinel
+
+        monkeypatch.setattr(heldout_transcripts, "document_from_turns", fake)
+        turns = HELD_OUT_CASES[0].turns()
+        assert heldout_transcripts.build_document(turns) is sentinel
+        assert seen == [turns]
+
+    @pytest.mark.parametrize("path", _heldout_paths(), ids=lambda path: path.stem)
+    def test_the_reference_document_is_the_scripts_own_lines(self, path: Path) -> None:
+        script = load_script(path)
+        document = reference_document(script)
+        segments = document.transcript_segments
+        assert [segment.speaker for segment in segments] == [line.role for line in script.lines]
+        for line, segment in zip(script.lines, segments, strict=True):
+            assert [word.word_text for word in segment.transcript_words] == line.text.split()
+            assert not any(word.uncertain for word in segment.transcript_words)
+        assert document.model_name == REFERENCE_MODEL_NAME
+
+    def test_every_run_of_record_script_has_a_reference_document(self) -> None:
+        for script in _scripts():
+            segments = reference_document(script).transcript_segments
+            assert len(segments) == len(script.lines), script.encounter_id
+
+
+class TestNextPatientReferenceTables:
+    """D8's R3 provenance: both tables name exactly the scripts carrying the
+    axis, a negative (no next patient) is None in both, the greeting line is
+    the tail start or the line before it (a shared closing-and-greeting
+    line), and the tail starts equal the held-out fixture's boundary."""
+
+    def test_both_tables_name_exactly_the_scripts_with_the_axis(self) -> None:
+        ids = {script.encounter_id for script in _axis_scripts()}
+        assert set(REFERENCE_GREETING_LINES) == ids
+        assert set(REFERENCE_TAIL_STARTS) == ids
+
+    def test_the_tail_starts_equal_the_held_out_boundaries(self) -> None:
+        boundaries = {case.case_id: case.boundary for case in HELD_OUT_CASES}
+        for encounter_id, tail in REFERENCE_TAIL_STARTS.items():
+            if encounter_id.startswith(SCRIPT_CASE_PREFIX):
+                assert tail == boundaries[encounter_id], encounter_id
+
+    def test_the_greeting_line_is_the_tail_start_or_shares_the_closing_line(self) -> None:
+        shared = []
+        for script in _axis_scripts():
+            greeting = REFERENCE_GREETING_LINES[script.encounter_id]
+            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
+            assert (greeting is None) == (tail is None), script.encounter_id
+            if greeting is None or tail is None:
+                continue
+            assert 0 < tail < len(script.lines), script.encounter_id
+            assert greeting in (tail - 1, tail), script.encounter_id
+            if greeting == tail - 1:
+                shared.append(script.encounter_id)
+        assert shared == ["hld-11"]
+
+    def test_every_material_absent_fact_lies_in_a_tail(self) -> None:
+        for script in _axis_scripts():
+            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
+            for fact in script.facts:
+                if fact.kind == "absent" and fact.material:
+                    assert tail is not None and fact.line >= tail, script.encounter_id
+
+    def test_every_fact_in_a_tail_is_a_material_absent_fact(self) -> None:
+        """The other side, read off the facts rather than the table: nothing
+        the note should hold lies at or after a tail start, so a tail start
+        placed on a first-patient fact's line fails. A start moved onto a
+        fact-free line, or a pair moved one line late, passes here and is
+        caught by the boundary equality (held-out) or the exact pin of the
+        six run-of-record pairs (Task 0.9 review)."""
+        for script in _axis_scripts():
+            tail = REFERENCE_TAIL_STARTS[script.encounter_id]
+            if tail is None:
+                continue
+            for fact in script.facts:
+                if fact.line >= tail:
+                    assert fact.kind == "absent" and fact.material, script.encounter_id
+
+    def test_the_run_of_record_pairs_are_pinned_exactly(self) -> None:
+        """The six run-of-record scripts have no held-out boundary to equal,
+        so a pair moved one line late (onto the next patient's fact) would
+        pass every structural pin above (Task 0.9 review, peer round 13
+        PR-LOW-010): each pair is pinned as read off its script's greeting
+        line on 2026-10-23; a change is a dated decision (C3)."""
+        run_of_record = {
+            encounter_id: (REFERENCE_GREETING_LINES[encounter_id], tail)
+            for encounter_id, tail in REFERENCE_TAIL_STARTS.items()
+            if not encounter_id.startswith(SCRIPT_CASE_PREFIX)
+        }
+        assert run_of_record == {
+            "syn-06": (4, 4),
+            "syn-20": (4, 4),
+            "syn-21": (4, 4),
+            "syn-38": (4, 4),
+            "syn-43": (6, 6),
+            "syn-46": (4, 4),
+        }
+
+    def test_both_ways(self) -> None:
+        tails = list(REFERENCE_TAIL_STARTS.values())
+        assert tails.count(None) >= 3 and len(tails) - tails.count(None) >= 3

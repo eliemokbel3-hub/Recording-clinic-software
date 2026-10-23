@@ -2039,13 +2039,44 @@ class TestHedgeTest:
             "Think about the exercises.",
             "I don't think so.",  # not "i think" in a row
             "No doubt it is the knee.",  # "doubt" alone is a booster here
-            "It seem sore.",
+            # Validation-run6 Task 0.9 listed "seem" (Salager-Meyer 1994), so
+            # 0.3.3's "It seem sore." near miss went with the old list.
+            "The seam of the brace rubs.",
             "If I had to guess, the left.",  # "guess" alone, not "i guess"
             "",
         ],
     )
     def test_a_near_miss_is_not_a_hedge(self, text: str) -> None:
         assert not text_holds_hedge(text)
+
+    @pytest.mark.parametrize(
+        ("hedged", "near_miss"),
+        [
+            ("I reckon it started on Monday.", "Do you reckon it is broken?"),
+            ("I believe it was Tuesday.", "Believe me, it hurts."),
+            ("I'm not sure when it began.", "I'm sure it began on Monday."),
+            ("I am not sure when it began.", "I am sure it began on Monday."),
+            ("We're not completely sure yet.", "I'm completely sure."),
+            ("I don't know when it started.", "You don't know when it started?"),
+            ("I do not know when it started.", "I do know when it started."),
+            ("If I'm correct, it was Friday.", "I'm correct about the date."),
+            ("If I am correct, it was Friday.", "I am correct about the date."),
+            ("I assume it is the same knee.", "They assume it is the same knee."),
+            ("I'm doubtful it helped.", "There is no doubt it helped."),
+            ("It is conceivably the new shoes.", "It is inconceivable."),
+            ("It is arguably better.", "We argued about it."),
+            ("It is seemingly better.", "The seeming change was small."),
+            ("It is potentially from lifting.", "The potential is good."),
+            ("A probable sprain of the ankle.", "An improbable story."),
+            ("They seem a bit better.", "The seam of the brace rubs."),
+        ],
+    )
+    def test_each_task_0_9_hedge_against_its_near_miss(self, hedged: str, near_miss: str) -> None:
+        """Validation-run6 plan Task 0.9: every added phrase is found, and a
+        neighbouring line holding none (whole tokens, in a row) is not."""
+        assert text_holds_hedge(hedged)
+        assert text_holds_hedge(hedged.replace("'", "’"))
+        assert not text_holds_hedge(near_miss)
 
     def test_case_punctuation_fillers_and_typographic_apostrophes_are_read_through(
         self,
@@ -2233,17 +2264,79 @@ class TestCheck1HedgeMark:
 
     def test_every_predicted_unsure_divergence_is_a_held_out_case(self) -> None:
         assert set(_PREDICTED_UNSURE_DIVERGENCES) <= {c.case_id for c in HELD_OUT_CASES}
+        assert set(_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9) <= {c.case_id for c in HELD_OUT_CASES}
+
+    def test_the_widened_hedges_changed_these_predictions_and_no_expectation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Validation-run6 plan Task 0.9's lexicon-only reconciliation, both
+        ways: the dated history is EXACTLY the cases whose result under the
+        0.3.3 sixteen differs from today's, each with its 0.3.3 result (peer
+        round 14 PR-LOW-011); the case's expectation is unchanged (C2, C3),
+        and today's result is the expectation (resolved) or today's recorded
+        divergence."""
+        assert _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9
+        cases = {c.case_id: c for c in HELD_OUT_CASES}
+        today = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
+        monkeypatch.setattr(note_check_module, "HEDGE_PHRASES", _HEDGE_PHRASES_0_3_3)
+        before = {case_id: _held_out_unsure(case) for case_id, case in cases.items()}
+        monkeypatch.undo()
+        changed = {
+            case_id: (case.unsure, before[case_id])
+            for case_id, case in cases.items()
+            if before[case_id] != today[case_id]
+        }
+        assert changed == _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9
+        for case_id, (expected, _predicted_0_3_3) in _UNSURE_PREDICTIONS_BEFORE_RUN6_0_9.items():
+            assert cases[case_id].unsure == expected, case_id
+            got = today[case_id]
+            if case_id in _PREDICTED_UNSURE_DIVERGENCES:
+                assert _PREDICTED_UNSURE_DIVERGENCES[case_id] == (expected, got), case_id
+            else:
+                assert got == expected, case_id
 
 
 _VALIDATION_CONFIG_DIR = Path(__file__).resolve().parents[2] / "validation" / "config"
 
 # Task 0.10's predicted unsure divergences under the frozen hedges (C3):
 # case id -> (the case's expected unsure lines, the frozen-hedge result).
+# Since validation-run6 Task 0.9 (2026-10-23) the result is under the
+# widened list; an entry it changed keeps its 0.3.3 value below.
 _PREDICTED_UNSURE_DIVERGENCES: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
-    "hld-19": ((3, 5), ()),  # both hedges are outside the frozen list
+    "hld-19": ((3, 5), (3,)),  # line 5's hedge is still outside the list
     "hld-20": ((3, 5), (5,)),  # line 3's hedge is not a contiguous frozen phrase
     "hld-21": ((3, 5), ()),  # both hedges are outside the frozen list
 }
+
+
+# Validation-run6 plan Task 0.9 (2026-10-23), the dated record: case id ->
+# (its expected unsure lines, the 0.3.3 frozen-hedge result), for each
+# prediction the widened ``HEDGE_PHRASES`` changed. History only — no
+# expectation was edited.
+_UNSURE_PREDICTIONS_BEFORE_RUN6_0_9: dict[str, tuple[tuple[int, ...], tuple[int, ...]]] = {
+    "hld-19": ((3, 5), ()),  # both hedges were outside the 0.3.3 list
+}
+
+# The 0.3.3 sixteen (validation-pass plan Task 0.8), frozen history: the
+# list the dated record above was predicted under.
+_HEDGE_PHRASES_0_3_3: tuple[str, ...] = (
+    "i think",
+    "as far as i can tell",
+    "probably",
+    "maybe",
+    "perhaps",
+    "possibly",
+    "likely",
+    "unlikely",
+    "seems",
+    "seemed",
+    "i guess",
+    "i suppose",
+    "i suspect",
+    "i doubt",
+    "uncertain",
+    "to my knowledge",
+)
 
 
 def _held_out_unsure(case: HeldOutCase) -> tuple[int, ...]:
